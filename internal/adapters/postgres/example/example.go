@@ -1,0 +1,40 @@
+package example
+
+import (
+	"database/sql"
+	exampleModel "golang-plugin-boilerplate/pkg/model"
+	"time"
+
+	libCommons "github.com/LerianStudio/lib-commons/commons"
+)
+
+// ExamplePostgreSQLModel represents the entity Example into SQL context in Database
+type ExamplePostgreSQLModel struct {
+	ID        string
+	Name      string
+	Age       int
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	DeletedAt sql.NullTime
+}
+
+// FromEntity converts a request entity Account to AccountPostgreSQLModel
+func (expm *ExamplePostgreSQLModel) FromEntity(example *exampleModel.Example) {
+	*expm = ExamplePostgreSQLModel{
+		ID:        libCommons.GenerateUUIDv7().String(),
+		Name:      example.Name,
+		Age:       example.Age,
+		CreatedAt: example.CreatedAt,
+		UpdatedAt: example.UpdatedAt,
+	}
+}
+
+func (expm *ExamplePostgreSQLModel) ToEntity() *exampleModel.ExampleOutput {
+	return &exampleModel.ExampleOutput{
+		ID:        expm.ID,
+		Name:      expm.Name,
+		Age:       expm.Age,
+		CreatedAt: expm.CreatedAt,
+		UpdatedAt: expm.UpdatedAt,
+	}
+}

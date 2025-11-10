@@ -1,0 +1,51 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+```markdown
+```markdown
+```markdown
+## [v1.0.0-rc.2] - 2025-04-24
+
+### ✨ Features
+- Configure CHANGELOG and RELEASE_NOTES management for streamlined documentation processes.
+- Validate and test configurations on an empty repository to ensure initial setup integrity.
+- Configure using old module version to maintain compatibility with legacy systems.
+- Integrate gptmodule for enhanced functionality and performance.
+
+### 🗑️ Removed
+- Remove helm chart templates from the app project to simplify project structure.
+
+### 🔧 Maintenance
+- Update CHANGELOG entries to reflect the latest changes and improvements.
+```
+
+
+## [v1.0.0-rc.2] - 2025-04-24
+
+### ✨ Features
+- Configure CHANGELOG generation to automate release documentation
+- Implement RELEASE_NOTES configuration for streamlined release processes
+- Validate and test with an empty repository scenario to ensure robustness
+- Configure using an old module version for compatibility testing
+- Set up and configure gptmodule to enhance plugin functionality
+
+### 🗑️ Removed
+- Remove helm chart templates from app project to streamline project structure
+
+### 🔧 Maintenance
+- Update CHANGELOG entries for consistency and clarity
+```
+
+## [v1.0.0-rc.2] - 2025-04-24
+
+### ✨ Features
+- Configure and validate `RELEASE_NOTES` for improved release process management.
+- Add configuration for using old module version to ensure compatibility with legacy systems.
+- Implement configuration and testing for scenarios with an empty repository to enhance robustness.
+- Introduce `gptmodule` configuration for advanced module management.
+
+### 🔧 Maintenance
+- Remove helm chart templates from app project to streamline project structure.
+- Update CHANGELOG to reflect recent changes and improvements.
+```

@@ -1,0 +1,249 @@
+openapi: 3.0.1
+info:
+  contact: {}
+  description: This is a swagger documentation for Golang plugin boilerplate
+  termsOfService: http://swagger.io/terms/
+  title: Golang plugin boilerplate
+  version: 1.0.0
+servers:
+- url: //localhost:4000/
+paths:
+  /v1/example:
+    get:
+      description: Get all Example with the input metadata or without metadata
+      parameters:
+      - description: Limit
+        in: query
+        name: limit
+        schema:
+          default: 10
+          type: integer
+      - description: Page
+        in: query
+        name: page
+        schema:
+          default: 1
+          type: integer
+      - description: Start Date
+        in: query
+        name: start_date
+        schema:
+          type: string
+      - description: End Date
+        in: query
+        name: end_date
+        schema:
+          type: string
+      - description: Sort Order
+        in: query
+        name: sort_order
+        schema:
+          enum:
+          - asc
+          - desc
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/inline_response_200'
+          description: OK
+      summary: Get all Example
+      tags:
+      - Example
+    post:
+      description: Create an Example with the input payload
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateExampleInput'
+        description: Example Input
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/golang-plugin-boilerplate_pkg_model.ExampleOutput'
+          description: OK
+      summary: Create an Example
+      tags:
+      - Example
+      x-codegen-request-body-name: example
+  /v1/example/{id}:
+    delete:
+      description: Delete an Example with the input ID
+      parameters:
+      - description: Example ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          content: {}
+          description: No Content
+      summary: Delete an Example by ID
+      tags:
+      - Example
+    get:
+      description: Get an Example with the input ID
+      parameters:
+      - description: Example ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/golang-plugin-boilerplate_pkg_model.ExampleOutput'
+          description: OK
+      summary: Get an Example by ID
+      tags:
+      - Example
+    patch:
+      description: Update an Example with the input payload
+      parameters:
+      - description: Example ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateExampleInput'
+        description: Example Input
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/golang-plugin-boilerplate_pkg_model.ExampleOutput'
+          description: OK
+      summary: Update an Example
+      tags:
+      - Example
+      x-codegen-request-body-name: organization
+components:
+  schemas:
+    CreateExampleInput:
+      description: CreateExampleInput is the input payload to create an example_model.
+      example:
+        name: name
+        age: 0
+      properties:
+        age:
+          type: integer
+        name:
+          maxLength: 256
+          type: string
+      required:
+      - age
+      - name
+      type: object
+    Pagination:
+      description: Pagination is the struct designed to store the pagination data
+        of an entity list.
+      example:
+        prev_cursor: MDAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAwMA==
+        next_cursor: MDAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAwMA==
+        limit: 10
+        page: 1
+        items: '{}'
+      properties:
+        items:
+          type: object
+        limit:
+          example: 10
+          type: integer
+        next_cursor:
+          example: MDAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAwMA==
+          type: string
+          x-omitempty: true
+        page:
+          example: 1
+          type: integer
+        prev_cursor:
+          example: MDAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAwMA==
+          type: string
+          x-omitempty: true
+      type: object
+    UpdateExampleInput:
+      description: UpdateExampleInput is the input payload to update an example.
+      example:
+        name: Example test
+        age: 12
+      properties:
+        age:
+          example: 12
+          type: integer
+        name:
+          example: Example test
+          maxLength: 256
+          type: string
+      type: object
+    golang-plugin-boilerplate_pkg_model.ExampleOutput:
+      description: ExampleOutput is the output payload.
+      example:
+        updated_at: updated_at
+        name: name
+        created_at: created_at
+        id: id
+        age: 0
+      properties:
+        age:
+          type: integer
+        created_at:
+          type: string
+        id:
+          type: string
+        name:
+          type: string
+        updated_at:
+          type: string
+      type: object
+    inline_response_200:
+      example:
+        Pagination:
+          prev_cursor: MDAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAwMA==
+          next_cursor: MDAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAwMA==
+          limit: 10
+          page: 1
+          items: '{}'
+        limit: 6
+        page: 1
+        items:
+        - updated_at: updated_at
+          name: name
+          created_at: created_at
+          id: id
+          age: 0
+        - updated_at: updated_at
+          name: name
+          created_at: created_at
+          id: id
+          age: 0
+      properties:
+        Pagination:
+          $ref: '#/components/schemas/Pagination'
+        items:
+          items:
+            $ref: '#/components/schemas/golang-plugin-boilerplate_pkg_model.ExampleOutput'
+          type: array
+        limit:
+          type: integer
+        page:
+          type: integer
+      type: object
+x-original-swagger-version: "2.0"
