@@ -1,9 +1,9 @@
 package http
 
 import (
+	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/gofiber/fiber/v2"
 	"github.com/pkg/errors"
-	"golang-plugin-boilerplate/pkg"
 )
 
 // WithError returns an error with the given status code and message.

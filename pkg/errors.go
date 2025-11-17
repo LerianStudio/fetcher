@@ -3,8 +3,9 @@ package pkg
 import (
 	"errors"
 	"fmt"
-	"golang-plugin-boilerplate/pkg/constant"
 	"strings"
+
+	"github.com/LerianStudio/fetcher/pkg/constant"
 )
 
 // EntityNotFoundError records an error indicating an entity was not found in any case that caused it.

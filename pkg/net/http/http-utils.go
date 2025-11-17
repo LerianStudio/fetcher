@@ -1,13 +1,14 @@
 package http
 
 import (
-	libCommons "github.com/LerianStudio/lib-commons/commons"
-	"go.mongodb.org/mongo-driver/bson"
-	"golang-plugin-boilerplate/pkg"
-	"golang-plugin-boilerplate/pkg/constant"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/LerianStudio/fetcher/pkg"
+	"github.com/LerianStudio/fetcher/pkg/constant"
+	libCommons "github.com/LerianStudio/lib-commons/commons"
+	"go.mongodb.org/mongo-driver/bson"
 )
 
 // QueryHeader entity from query parameter from get apis
