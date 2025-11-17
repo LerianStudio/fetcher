@@ -1,42 +1,47 @@
 package in
 
 import (
-	"github.com/LerianStudio/fetcher/pkg/model"
-	"github.com/LerianStudio/fetcher/pkg/net/http"
+	libLicense "github.com/LerianStudio/lib-license-go/v2/middleware"
 
-	libLog "github.com/LerianStudio/lib-commons/commons/log"
-	libHTTP "github.com/LerianStudio/lib-commons/commons/net/http"
-	libOtel "github.com/LerianStudio/lib-commons/commons/opentelemetry"
+	middlewareAuth "github.com/LerianStudio/lib-auth/v2/auth/middleware"
+	"github.com/LerianStudio/lib-commons/v2/commons/log"
+	commonsHttp "github.com/LerianStudio/lib-commons/v2/commons/net/http"
+	"github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	fiberSwagger "github.com/swaggo/fiber-swagger"
 )
 
-func NewRoutes(lg libLog.Logger, tl *libOtel.Telemetry, exampleHandler *ExampleHandler) *fiber.App {
+const (
+	applicationName    = "reporter"
+	templateResource   = "templates"
+	reportResource     = "reports"
+	dataSourceResource = "data-source"
+)
+
+// NewRoutes creates a new fiber router with the specified handlers and middleware.
+func NewRoutes(lg log.Logger, tl *opentelemetry.Telemetry, auth *middlewareAuth.AuthClient, licenseClient *libLicense.LicenseClient) *fiber.App {
 	f := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
+		ErrorHandler: func(ctx *fiber.Ctx, err error) error {
+			return commonsHttp.HandleFiberError(ctx, err)
+		},
 	})
-	tlMid := libHTTP.NewTelemetryMiddleware(tl)
+	tlMid := commonsHttp.NewTelemetryMiddleware(tl)
 
 	f.Use(tlMid.WithTelemetry(tl))
 	f.Use(cors.New())
-	f.Use(libHTTP.WithHTTPLogging(libHTTP.WithCustomLogger(lg)))
-
-	// Example routes
-	f.Post("/v1/example", http.WithBody(new(model.CreateExampleInput), exampleHandler.CreateExample))
-	f.Get("/v1/example/:id", http.ParseUUIDPathParameters, exampleHandler.GetExampleByID)
-	f.Get("/v1/example", exampleHandler.GetAllExample)
-	f.Patch("/v1/example/:id", http.ParseUUIDPathParameters, http.WithBody(new(model.UpdateExampleInput), exampleHandler.UpdateExample))
-	f.Delete("/v1/example/:id", http.ParseUUIDPathParameters, exampleHandler.DeleteExampleByID)
-
-	// Health
-	f.Get("/health", libHTTP.Ping)
-
-	// Version
-	f.Get("/version", libHTTP.Version)
+	f.Use(commonsHttp.WithHTTPLogging(commonsHttp.WithCustomLogger(lg)))
+	// f.Use(licenseClient.Middleware())
 
 	// Doc Swagger
 	f.Get("/swagger/*", WithSwaggerEnvConfig(), fiberSwagger.WrapHandler)
+
+	// Health
+	f.Get("/health", commonsHttp.Ping)
+
+	// Version
+	f.Get("/version", commonsHttp.Version)
 
 	f.Use(tlMid.EndTracingSpans)
 

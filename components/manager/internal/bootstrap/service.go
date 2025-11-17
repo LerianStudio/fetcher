@@ -1,23 +1,21 @@
 package bootstrap
 
 import (
-	libCommons "github.com/LerianStudio/lib-commons/commons"
-	libLog "github.com/LerianStudio/lib-commons/commons/log"
+	"github.com/LerianStudio/lib-commons/v2/commons"
+	"github.com/LerianStudio/lib-commons/v2/commons/log"
 )
 
-// Service is the application glue where we put all top level components to be used.
+// Service is the application glue where we put all top-level components to be used.
 type Service struct {
 	*Server
-	*ServerGRPC
-	libLog.Logger
+	log.Logger
 }
 
 // Run starts the application.
-// This is the only necessary code to run an app in main.go
+// This is the only necessary code to run an app in the main.go
 func (app *Service) Run() {
-	libCommons.NewLauncher(
-		libCommons.WithLogger(app.Logger),
-		libCommons.RunApp("HTTP Service", app.Server),
-		libCommons.RunApp("gRPC server", app.ServerGRPC),
+	commons.NewLauncher(
+		commons.WithLogger(app.Logger),
+		commons.RunApp("HTTP Service", app.Server),
 	).Run()
 }
