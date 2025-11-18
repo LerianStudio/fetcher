@@ -1,4 +1,10 @@
-service_name := fetcher-infra
+# Reporter Makefile
+ifneq ("$(wildcard .env.local)","")
+	include .env.local
+	export
+endif
+
+service_name := reporter-worker
 bin_dir := ./.bin
 
 BLUE := \033[36m
@@ -6,6 +12,7 @@ NC := \033[0m
 
 DOCKER_VERSION := $(shell docker version --format '{{.Server.Version}}')
 DOCKER_MIN_VERSION := 20.10.13
+
 DOCKER_CMD := $(shell \
 	if [ "$(shell printf '%s\n' "$(DOCKER_MIN_VERSION)" "$(DOCKER_VERSION)" | sort -V | head -n1)" = "$(DOCKER_MIN_VERSION)" ]; then \
 		echo "docker compose"; \
@@ -15,8 +22,8 @@ DOCKER_CMD := $(shell \
 )
 
 # Display available commands
-.PHONY: help
-help:
+.PHONY: info
+info:
 	@echo "                                                                                                                                       "
 	@echo "                                                                                                                                       "
 	@echo "To run a specific command inside the audit container using make, you can execute:                                                     "
@@ -53,7 +60,7 @@ up:
 
 .PHONY: start
 start:
-	@$(DOCKER_CMD) -f docker-compose.yml start $(c)
+	@docker compose -f docker-compose.yml start $(c)
 
 .PHONY: down
 down:
@@ -81,3 +88,26 @@ set-env:
 	@echo "$(BLUE)Setting up environment files...$(NC)"
 	cp -r ./.env.example ./.env
 	@echo "$(BLUE)Environment files created successfully$(NC)"
+
+.PHONY: lint
+lint:
+	$(call title1,"Running linters on all components")
+	@for dir in $(COMPONENTS); do \
+		echo "$(CYAN)Checking for Go files in $$dir...$(NC)"; \
+		if find "$$dir" -name "*.go" -type f | grep -q .; then \
+			echo "$(CYAN)Linting in $$dir...$(NC)"; \
+			(cd $$dir && $(MAKE) lint) || exit 1; \
+		else \
+			echo "$(YELLOW)No Go files found in $$dir, skipping linting$(NC)"; \
+		fi; \
+	done
+	@echo "$(GREEN)$(BOLD)[ok]$(NC) Linting completed successfully$(GREEN) ✔️$(NC)"
+
+.PHONY: test
+test:
+	@echo "$(BLUE)Running tests...$(NC)"
+		@if ! command -v go >/dev/null 2>&1; then \
+		echo "$(RED)Error: go is not installed$(NC)"; \
+		exit 1; \
+	fi
+	go test -v ./... ./...
