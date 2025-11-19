@@ -1,4 +1,4 @@
-package model
+package job_queue_rabbitmq
 
 // JobQueuePayload represents the message structure for an extraction job.
 //
@@ -27,30 +27,29 @@ type FilterCondition struct {
 	// Example: {"eq": ["active", "pending"]} matches records where field equals "active" OR "pending"
 	Equals []any `json:"eq,omitempty"`
 
-	// GreaterThan specifies values that must be greater than the provided value.
-	// Should contain exactly one value for comparison.
-	// Example: {"gt": [100]} matches records where field > 100
-	GreaterThan []any `json:"gt,omitempty"`
+	// GreaterThan specifies value that must be greater than the provided value.
+	// Example: {"gt": 100} matches records where field > 100
+	GreaterThan any `json:"gt,omitempty"`
 
-	// GreaterOrEqual specifies values that must be greater than or equal to the provided value.
-	// Should contain exactly one value for comparison.
-	// Example: {"gte": ["2025-06-01"]} matches records where field >= "2025-06-01"
-	GreaterOrEqual []any `json:"gte,omitempty"`
+	// GreaterOrEqual specifies value that must be greater than or equal to the provided value.
+	// Example: {"gte": "2025-06-01"} matches records where field >= "2025-06-01"
+	GreaterOrEqual any `json:"gte,omitempty"`
 
-	// LessThan specifies values that must be less than the provided value.
-	// Should contain exactly one value for comparison.
-	// Example: {"lt": [1000]} matches records where field < 1000
-	LessThan []any `json:"lt,omitempty"`
+	// LessThan specifies value that must be less than the provided value.
+	// Example: {"lt": 1000} matches records where field < 1000
+	LessThan any `json:"lt,omitempty"`
 
-	// LessOrEqual specifies values that must be less than or equal to the provided value.
-	// Should contain exactly one value for comparison.
-	// Example: {"lte": ["2025-06-30"]} matches records where field <= "2025-06-30"
-	LessOrEqual []any `json:"lte,omitempty"`
+	// LessOrEqual specifies value that must be less than or equal to the provided value.
+	// Example: {"lte": "2025-06-30"} matches records where field <= "2025-06-30"
+	LessOrEqual any `json:"lte,omitempty"`
 
-	// Between specifies a range condition with exactly two values [min, max].
-	// Matches records where min <= field <= max
-	// Example: {"between": [100, 1000]} matches records where 100 <= field <= 1000
-	Between []any `json:"between,omitempty"`
+	// Between specifies a range condition.
+	// Matches records where Min <= field <= Max
+	// Example: {"between": {"min": 100, "max": 1000}}
+	Between *struct {
+		Min any `json:"min"`
+		Max any `json:"max"`
+	} `json:"between,omitempty"`
 
 	// In specifies a list of values where the field must match any one of them.
 	// Multiple values treated as OR conditions.

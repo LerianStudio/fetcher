@@ -1,22 +1,15 @@
 package in
 
 import (
-	libLicense "github.com/LerianStudio/lib-license-go/v2/middleware"
-
 	middlewareAuth "github.com/LerianStudio/lib-auth/v2/auth/middleware"
 	"github.com/LerianStudio/lib-commons/v2/commons/log"
 	commonsHttp "github.com/LerianStudio/lib-commons/v2/commons/net/http"
 	"github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
+	libLicense "github.com/LerianStudio/lib-license-go/v2/middleware"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	fiberSwagger "github.com/swaggo/fiber-swagger"
-)
-
-const (
-	applicationName    = "reporter"
-	templateResource   = "templates"
-	reportResource     = "reports"
-	dataSourceResource = "data-source"
 )
 
 // NewRoutes creates a new fiber router with the specified handlers and middleware.

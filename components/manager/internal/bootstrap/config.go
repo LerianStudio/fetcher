@@ -1,6 +1,7 @@
 package bootstrap
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 
@@ -8,6 +9,8 @@ import (
 
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
+	"github.com/LerianStudio/fetcher/pkg/mongodb/connection"
+	"github.com/LerianStudio/fetcher/pkg/rabbitmq"
 	simpleClient "github.com/LerianStudio/fetcher/pkg/seaweedfs"
 
 	"github.com/LerianStudio/lib-auth/v2/auth/middleware"
@@ -65,8 +68,12 @@ func InitServers() *Service {
 		panic(err)
 	}
 
+	ctx := context.Background()
+
+	// Init Logger
 	logger := zap.InitializeLogger()
 
+	// Init OpenTelemetry telemetr
 	telemetry := libOtel.InitializeTelemetry(&libOtel.TelemetryConfig{
 		LibraryName:               cfg.OtelLibraryName,
 		ServiceName:               cfg.OtelServiceName,
@@ -77,23 +84,36 @@ func InitServers() *Service {
 		Logger:                    logger,
 	})
 
+	// 	Init SeaweedFS
 	seaweedFSEndpoint := fmt.Sprintf("http://%s:%s", cfg.SeaweedFSHost, cfg.SeaweedFSFilerPort)
 	_ = simpleClient.NewSeaweedFSClient(seaweedFSEndpoint)
 
+	// Init MongoDB
 	escapedPass := url.QueryEscape(cfg.MongoDBPassword)
 	mongoSource := fmt.Sprintf("%s://%s:%s@%s:%s",
 		cfg.MongoURI, cfg.MongoDBUser, escapedPass, cfg.MongoDBHost, cfg.MongoDBPort)
 
-	_ = &mongoDB.MongoConnection{
+	mongoConnection := &mongoDB.MongoConnection{
 		ConnectionStringSource: mongoSource,
 		Database:               cfg.MongoDBName,
 		Logger:                 logger,
 	}
 
+	connectionRepository, err := connection.NewConnectionMongoDBRepository(ctx, mongoConnection)
+	if err != nil {
+		logger.Fatalf("Failed to create MongoDB repository: %v", err)
+	}
+
+	logger.Info("Ensuring MongoDB indexes exist for templates and reports...")
+	if err := connectionRepository.EnsureIndexes(ctx); err != nil {
+		logger.Fatalf("Failed to ensure MongoDB indexes: %v", err)
+	}
+
+	// Init RabbitMQ
 	rabbitSource := fmt.Sprintf("%s://%s:%s@%s:%s",
 		cfg.RabbitURI, cfg.RabbitMQUser, cfg.RabbitMQPass, cfg.RabbitMQHost, cfg.RabbitMQPortAMQP)
 
-	_ = &libRabbitmq.RabbitMQConnection{
+	rabbitMQConnection := &libRabbitmq.RabbitMQConnection{
 		ConnectionStringSource: rabbitSource,
 		HealthCheckURL:         cfg.RabbitMQHealthCheckURL,
 		Host:                   cfg.RabbitMQHost,
@@ -104,10 +124,12 @@ func InitServers() *Service {
 		Logger:                 logger,
 	}
 
-	logger.Info("Ensuring MongoDB indexes exist for templates and reports...")
+	_ = rabbitmq.NewRabbitMQAdapter(rabbitMQConnection)
 
+	// Init Auth middleware client
 	authClient := middleware.NewAuthClient(cfg.AuthAddress, cfg.AuthEnabled, &logger)
 
+	// Init License middleware client
 	licenseClient := libLicense.NewLicenseClient(
 		constant.ApplicationName,
 		cfg.LicenseKey,
@@ -115,6 +137,7 @@ func InitServers() *Service {
 		&logger,
 	)
 
+	// Init HTTP server
 	httpApp := in2.NewRoutes(logger, telemetry, authClient, licenseClient)
 	serverAPI := NewServer(cfg, httpApp, logger, telemetry, licenseClient)
 

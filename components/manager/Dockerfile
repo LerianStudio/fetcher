@@ -30,7 +30,7 @@ RUN CGO_ENABLED=0 GOOS=linux garble -tiny build -tags netgo \
   -o /manager ./components/manager/cmd/app/main.go
 
 # Stage 2: Final image using minimal runtime dependencies
-FROM alpine:latest
+FROM alpine:3.19
 
 WORKDIR /app
 
