@@ -1,4 +1,4 @@
-package job_queue_rabbitmq
+package model
 
 // JobQueuePayload represents the message structure for an extraction job.
 //

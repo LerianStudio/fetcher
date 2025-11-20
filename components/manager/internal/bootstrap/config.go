@@ -73,7 +73,7 @@ func InitServers() *Service {
 	// Init Logger
 	logger := zap.InitializeLogger()
 
-	// Init OpenTelemetry telemetr
+	// Init OpenTelemetry telemetry
 	telemetry := libOtel.InitializeTelemetry(&libOtel.TelemetryConfig{
 		LibraryName:               cfg.OtelLibraryName,
 		ServiceName:               cfg.OtelServiceName,
@@ -89,9 +89,10 @@ func InitServers() *Service {
 	_ = simpleClient.NewSeaweedFSClient(seaweedFSEndpoint)
 
 	// Init MongoDB
+	escapedUser := url.PathEscape(cfg.MongoDBUser)
 	escapedPass := url.QueryEscape(cfg.MongoDBPassword)
 	mongoSource := fmt.Sprintf("%s://%s:%s@%s:%s",
-		cfg.MongoURI, cfg.MongoDBUser, escapedPass, cfg.MongoDBHost, cfg.MongoDBPort)
+		cfg.MongoURI, escapedUser, escapedPass, cfg.MongoDBHost, cfg.MongoDBPort)
 
 	mongoConnection := &mongoDB.MongoConnection{
 		ConnectionStringSource: mongoSource,
@@ -104,14 +105,15 @@ func InitServers() *Service {
 		logger.Fatalf("Failed to create MongoDB repository: %v", err)
 	}
 
-	logger.Info("Ensuring MongoDB indexes exist for templates and reports...")
+	logger.Info("Ensuring MongoDB indexes exist for connections...")
 	if err := connectionRepository.EnsureIndexes(ctx); err != nil {
 		logger.Fatalf("Failed to ensure MongoDB indexes: %v", err)
 	}
 
 	// Init RabbitMQ
-	rabbitSource := fmt.Sprintf("%s://%s:%s@%s:%s",
-		cfg.RabbitURI, cfg.RabbitMQUser, cfg.RabbitMQPass, cfg.RabbitMQHost, cfg.RabbitMQPortAMQP)
+	escapedUserRMQ := url.PathEscape(cfg.RabbitMQUser)
+	escapedPassRMQ := url.PathEscape(cfg.RabbitMQPass)
+	rabbitSource := fmt.Sprintf("%s://%s:%s@%s:%s", cfg.RabbitURI, escapedUserRMQ, escapedPassRMQ, cfg.RabbitMQHost, cfg.RabbitMQPortAMQP)
 
 	rabbitMQConnection := &libRabbitmq.RabbitMQConnection{
 		ConnectionStringSource: rabbitSource,

@@ -106,6 +106,7 @@ volumes:
   fetcher-seaweedfs-filer-data:
   fetcher-redis-data:
 
+
 networks:
   fetcher-infra-network:
     name: fetcher-infra-network

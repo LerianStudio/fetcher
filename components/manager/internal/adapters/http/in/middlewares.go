@@ -5,7 +5,6 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/net/http"
 
-	"github.com/LerianStudio/lib-commons/v2/commons"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 )
@@ -19,7 +18,7 @@ var (
 func ParsePathParametersUUID(c *fiber.Ctx) error {
 	pathParam := c.Params(UUIDPathParameter)
 
-	if commons.IsNilOrEmpty(&pathParam) {
+	if pkg.IsNilOrEmpty(&pathParam) {
 		err := pkg.ValidateBusinessError(constant.ErrInvalidPathParameter, "", UUIDPathParameter)
 		return http.WithError(c, err)
 	}
@@ -39,7 +38,7 @@ func ParsePathParametersUUID(c *fiber.Ctx) error {
 func ParseHeaderParameters(c *fiber.Ctx) error {
 	headerParam := c.Get(OrgIDHeaderParameter)
 
-	if commons.IsNilOrEmpty(&headerParam) {
+	if pkg.IsNilOrEmpty(&headerParam) {
 		err := pkg.ValidateBusinessError(constant.ErrInvalidHeaderParameter, "", OrgIDHeaderParameter)
 		return http.WithError(c, err)
 	}
