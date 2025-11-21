@@ -112,8 +112,8 @@ func TestRabbitMQStressProducerAndConsumer(t *testing.T) {
 	defer consumeCancel()
 
 	// Total messages to send and receive. Adjust as needed for stress level.
-	const totalMessages = 1
-	const concurrency = 1
+	const totalMessages = 1000
+	const concurrency = 10
 	const consumerSleep = 500 * time.Millisecond // Simulated processing time per message
 
 	var (

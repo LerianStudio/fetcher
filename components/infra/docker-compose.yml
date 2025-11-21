@@ -104,7 +104,6 @@ volumes:
   fetcher-seaweedfs-master-data:
   fetcher-seaweedfs-volume-data:
   fetcher-seaweedfs-filer-data:
-  fetcher-redis-data:
 
 
 networks:
