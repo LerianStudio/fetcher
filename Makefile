@@ -191,20 +191,6 @@ build:
 	$(call title1,"Building component")
 	@echo "$(GREEN)$(BOLD)[ok]$(NC) Build completed successfully$(GREEN) ✔️$(NC)"
 
-.PHONY: cover-html
-cover-html:
-	$(call title1,"Generating HTML test coverage report")
-	@PACKAGES=$$(go list ./... | grep -v -f ./scripts/coverage_ignore.txt); \
-	go test -coverprofile=$(ARTIFACTS_DIR)/coverage.out $$PACKAGES
-	@go tool cover -html=$(ARTIFACTS_DIR)/coverage.out -o $(ARTIFACTS_DIR)/coverage.html
-	@echo "$(GREEN)Coverage report generated at $(ARTIFACTS_DIR)/coverage.html$(NC)"
-	@echo ""
-	@echo "$(CYAN)Coverage Summary:$(NC)"
-	@echo "$(CYAN)----------------------------------------$(NC)"
-	@go tool cover -func=$(ARTIFACTS_DIR)/coverage.out | grep total | awk '{print "Total coverage: " $$3}'
-	@echo "$(CYAN)----------------------------------------$(NC)"
-	@echo "$(YELLOW)Open $(ARTIFACTS_DIR)/coverage.html in your browser to view detailed coverage report$(NC)"
-
 #-------------------------------------------------------
 # Test Commands
 #-------------------------------------------------------

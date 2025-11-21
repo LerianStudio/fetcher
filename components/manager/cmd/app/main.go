@@ -5,9 +5,9 @@ import (
 	"github.com/LerianStudio/fetcher/pkg"
 )
 
-// @title					Golang plugin boilerplate
+// @title					Fetcher Manager API
 // @version					1.0.0
-// @description				This is a swagger documentation for Golang plugin boilerplate
+// @description				API documentation for the Fetcher Manager component
 // @termsOfService			http://swagger.io/terms/
 // @host					localhost:4000
 // @BasePath					/

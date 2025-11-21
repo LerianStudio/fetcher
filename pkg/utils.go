@@ -3,6 +3,8 @@ package pkg
 import (
 	"errors"
 	"math"
+	"regexp"
+	"strings"
 )
 
 // SafeIntToInt32 Function to safely convert int to int32 with overflow check
@@ -12,4 +14,20 @@ func SafeIntToInt32(val int) (int32, error) {
 	}
 
 	return int32(val), nil
+}
+
+// IsNilOrEmpty returns a boolean indicating if a *string is nil or empty.
+// It's use TrimSpace so, a string "  " and "" and "null" and "nil" will be considered empty
+func IsNilOrEmpty(s *string) bool {
+	return s == nil || strings.TrimSpace(*s) == "" || strings.TrimSpace(*s) == "null" || strings.TrimSpace(*s) == "nil"
+}
+
+// ValidateServerAddress checks if the value matches the pattern <some-address>:<some-port> and returns the value if it does.
+func ValidateServerAddress(value string) string {
+	matched, _ := regexp.MatchString(`^[^:]+:\d+$`, value)
+	if !matched {
+		return ""
+	}
+
+	return value
 }

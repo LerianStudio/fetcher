@@ -53,7 +53,7 @@ up:
 
 .PHONY: start
 start:
-	@docker compose -f docker-compose.yml start $(c)
+	@$(DOCKER_CMD) -f docker-compose.yml start $(c)
 
 .PHONY: down
 down:
