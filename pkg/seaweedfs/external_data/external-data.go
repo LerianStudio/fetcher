@@ -34,7 +34,7 @@ func NewSimpleRepository(client *seaweedfs.SeaweedFSClient, bucket string) *Simp
 // Get the content of a .tpl file from the SeaweedFS storage.
 func (repo *SimpleRepository) Get(ctx context.Context, objectName string) ([]byte, error) {
 	// Add .tpl extension for templates
-	path := fmt.Sprintf("/%s/%s.tpl", repo.bucket, objectName)
+	path := fmt.Sprintf("/%s/%s.json", repo.bucket, objectName)
 
 	data, err := repo.client.DownloadFile(ctx, path)
 	if err != nil {

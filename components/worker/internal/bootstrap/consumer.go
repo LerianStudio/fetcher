@@ -9,6 +9,7 @@ import (
 
 	"github.com/LerianStudio/fetcher/components/worker/internal/adapters/rabbitmq"
 	"github.com/LerianStudio/fetcher/components/worker/internal/services"
+	"github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
 
 	"github.com/LerianStudio/lib-commons/v2/commons"
 	"go.opentelemetry.io/otel/attribute"
@@ -70,14 +71,14 @@ func (mq *MultiQueueConsumer) handlerGenerateReport(ctx context.Context, body []
 
 	logger.Info("Processing message from generate report queue")
 
-	// err := mq.UseCase.GenerateReport(ctx, body)
-	// if err != nil {
-	// 	opentelemetry.HandleSpanError(&span, "Error generating report.", err)
+	err := mq.UseCase.ExtractExternalData(ctx, body)
+	if err != nil {
+		opentelemetry.HandleSpanError(&span, "Error generating report.", err)
 
-	// 	logger.Errorf("Error generating report: %v", err)
+		logger.Errorf("Error generating report: %v", err)
 
-	// 	return err
-	// }
+		return err
+	}
 
 	return nil
 }
