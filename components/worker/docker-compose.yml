@@ -13,9 +13,12 @@ services:
       - .:/usr/src/worker
     networks:
       - fetcher-infra-network
+      - infra-network
 
 networks:
   fetcher-infra-network:
+    external: true
+  infra-network:
     external: true
 
 secrets:
