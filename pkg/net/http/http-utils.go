@@ -8,6 +8,8 @@ import (
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	libCommons "github.com/LerianStudio/lib-commons/commons"
+	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	"go.mongodb.org/mongo-driver/bson"
 )
 
@@ -131,6 +133,52 @@ func validateDates(startDate, endDate *time.Time) error {
 	}
 
 	return nil
+}
+
+// GetOrganizationID extracts and validates X-Organization-Id header as UUID.
+func GetOrganizationID(c *fiber.Ctx) (uuid.UUID, error) {
+	orgHeader := strings.TrimSpace(c.Get("X-Organization-Id"))
+	orgID, err := uuid.Parse(orgHeader)
+	if err != nil {
+		return uuid.Nil, pkg.ValidationError{
+			EntityType: "request",
+			Code:       constant.ErrInvalidHeaderParameter.Error(),
+			Title:      "Invalid header",
+			Message:    "X-Organization-Id header is required and must be a valid UUID",
+			Err:        err,
+		}
+	}
+	return orgID, nil
+}
+
+// ParseIntDefault parses int with fallback.
+func ParseIntDefault(val string, def int) int {
+	if val == "" {
+		return def
+	}
+	if parsed, err := strconv.Atoi(val); err == nil {
+		return parsed
+	}
+	return def
+}
+
+// ClampLimit ensures limit is within bounds, applying default if <=0.
+func ClampLimit(limit, def, max int) int {
+	if limit <= 0 {
+		return def
+	}
+	if limit > max {
+		return max
+	}
+	return limit
+}
+
+// ClampNonNegative ensures page is not negative.
+func ClampNonNegative(page int) int {
+	if page < 0 {
+		return 0
+	}
+	return page
 }
 
 func validatePagination(cursor, sortOrder string, limit int) error {

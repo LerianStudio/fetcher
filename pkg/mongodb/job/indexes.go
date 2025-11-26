@@ -47,6 +47,16 @@ func (jr *JobMongoDBRepository) EnsureIndexes(ctx context.Context) error {
 		},
 		{
 			Keys: bson.D{
+				{Key: "organization_id", Value: 1},
+				{Key: "connection_id", Value: 1},
+				{Key: "status", Value: 1},
+			},
+			Options: options.Index().
+				SetName("idx_job_org_conn_status_active").
+				SetPartialFilterExpression(bson.D{{Key: "status", Value: bson.D{{Key: "$in", Value: bson.A{JobStatusPending, JobStatusProcessing}}}}}),
+		},
+		{
+			Keys: bson.D{
 				{Key: "status", Value: 1},
 				{Key: "created_at", Value: -1},
 			},

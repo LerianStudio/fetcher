@@ -44,6 +44,7 @@ type Repository interface {
 	Update(ctx context.Context, job *Job) (*Job, error)
 	FindByID(ctx context.Context, id, organizationID uuid.UUID) (*Job, error)
 	List(ctx context.Context, filters *ListFilter) ([]*Job, error)
+	ExistsRunningByConnection(ctx context.Context, organizationID, connectionID uuid.UUID) (bool, error)
 }
 
 type mongoDatabaseProvider interface {
@@ -94,6 +95,9 @@ func (jr *JobMongoDBRepository) Create(ctx context.Context, job *Job) (*Job, err
 	}
 	if job.ID != uuid.Nil {
 		attributes = append(attributes, attribute.String("app.request.job_id", job.ID.String()))
+	}
+	if job.ConnectionID != uuid.Nil {
+		attributes = append(attributes, attribute.String("app.request.connection_id", job.ConnectionID.String()))
 	}
 
 	span.SetAttributes(attributes...)
@@ -156,6 +160,7 @@ func (jr *JobMongoDBRepository) Update(ctx context.Context, job *Job) (*Job, err
 		attribute.String("app.request.request_id", reqId),
 		attribute.String("app.request.job_id", job.ID.String()),
 		attribute.String("app.request.organization_id", job.OrganizationID.String()),
+		attribute.String("app.request.connection_id", job.ConnectionID.String()),
 	}
 	span.SetAttributes(attributes...)
 
@@ -187,6 +192,7 @@ func (jr *JobMongoDBRepository) Update(ctx context.Context, job *Job) (*Job, err
 	filter := bson.M{
 		"_id":             job.ID,
 		"organization_id": job.OrganizationID,
+		"connection_id":   job.ConnectionID,
 	}
 
 	update := bson.M{
@@ -252,6 +258,49 @@ func (jr *JobMongoDBRepository) FindByID(ctx context.Context, id, organizationID
 	}
 
 	return record.ToEntity(), nil
+}
+
+// ExistsRunningByConnection reports whether there is any running job for a connection (pending or processing).
+func (jr *JobMongoDBRepository) ExistsRunningByConnection(ctx context.Context, organizationID, connectionID uuid.UUID) (bool, error) {
+	_, tracer, reqId, _ := commons.NewTrackingFromContext(ctx)
+
+	ctx, span := tracer.Start(ctx, "mongodb.exists_running_job_by_connection")
+	defer span.End()
+
+	attributes := []attribute.KeyValue{
+		attribute.String("app.request.request_id", reqId),
+		attribute.String("app.request.organization_id", organizationID.String()),
+		attribute.String("app.request.connection_id", connectionID.String()),
+	}
+	span.SetAttributes(attributes...)
+
+	db, err := jr.connection.GetDB(ctx)
+	if err != nil {
+		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
+		return false, err
+	}
+
+	coll := db.Database(strings.ToLower(jr.Database)).Collection(strings.ToLower(constant.MongoCollectionJob))
+
+	filter := bson.M{
+		"organization_id": organizationID,
+		"connection_id":   connectionID,
+		"status": bson.M{
+			"$in": bson.A{JobStatusPending, JobStatusProcessing},
+		},
+	}
+
+	if err := setSpanAttributesFromStruct(&span, "app.request.repository_filter", filter); err != nil {
+		libOpentelemetry.HandleSpanError(&span, "Failed to convert filter to JSON", err)
+	}
+
+	count, err := coll.CountDocuments(ctx, filter, options.Count().SetLimit(1))
+	if err != nil {
+		libOpentelemetry.HandleSpanError(&span, "Failed to count running jobs", err)
+		return false, err
+	}
+
+	return count > 0, nil
 }
 
 // List returns a paginated set of jobs for the given organization.

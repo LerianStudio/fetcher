@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/LerianStudio/fetcher/pkg/constant"
+	domainConn "github.com/LerianStudio/fetcher/pkg/domain"
 	libLog "github.com/LerianStudio/lib-commons/v2/commons/log"
 	libMongo "github.com/LerianStudio/lib-commons/v2/commons/mongo"
 	"github.com/google/uuid"
@@ -74,11 +75,11 @@ func clearConnectionsCollection(t *testing.T) {
 	}
 }
 
-func connectionFixture() *Connection {
-	return &Connection{
+func connectionFixture() *domainConn.Connection {
+	return &domainConn.Connection{
 		OrganizationID:    uuid.New(),
 		ConfigName:        fmt.Sprintf("cfg-%s", uuid.NewString()),
-		Type:              ConnectionTypePostgreSQL,
+		Type:              domainConn.TypePostgreSQL,
 		Host:              "db.test.internal",
 		Port:              5432,
 		DatabaseName:      "db",
@@ -87,7 +88,7 @@ func connectionFixture() *Connection {
 	}
 }
 
-func createConnection(t *testing.T, repo *ConnectionMongoDBRepository, conn *Connection) *Connection {
+func createConnection(t *testing.T, repo *ConnectionMongoDBRepository, conn *domainConn.Connection) *domainConn.Connection {
 	t.Helper()
 	created, err := repo.Create(context.Background(), conn)
 	if err != nil {
@@ -194,8 +195,8 @@ func TestConnectionMongoDBRepository_Update(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if updated.ConfigName != "Updated" {
-			t.Fatalf("expected trimmed config name")
+		if updated.ConfigName != "updated" {
+			t.Fatalf("expected trimmed and lowercased config name")
 		}
 		if updated.Host != "updated.internal" {
 			t.Fatalf("expected trimmed host")
@@ -258,8 +259,12 @@ func TestConnectionMongoDBRepository_Delete(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		// Ensure deleted record is no longer returned by FindByID.
-		if _, err := repo.FindByID(context.Background(), created.ID, created.OrganizationID); err == nil {
-			t.Fatalf("expected find to fail after delete")
+		found, err := repo.FindByID(context.Background(), created.ID, created.OrganizationID)
+		if err != nil {
+			t.Fatalf("expected nil error after delete, got %v", err)
+		}
+		if found != nil {
+			t.Fatalf("expected no record after delete")
 		}
 	})
 
@@ -306,8 +311,12 @@ func TestConnectionMongoDBRepository_FindByID(t *testing.T) {
 
 	t.Run("not found", func(t *testing.T) {
 		repo := newRepository(t)
-		if _, err := repo.FindByID(context.Background(), uuid.New(), uuid.New()); err == nil {
-			t.Fatalf("expected error")
+		found, err := repo.FindByID(context.Background(), uuid.New(), uuid.New())
+		if err != nil {
+			t.Fatalf("expected nil error for not found, got %v", err)
+		}
+		if found != nil {
+			t.Fatalf("expected nil result for not found")
 		}
 	})
 
@@ -353,6 +362,39 @@ func TestConnectionMongoDBRepository_FindByOrganizationAndName(t *testing.T) {
 	})
 }
 
+func TestConnectionMongoDBRepository_FindByOrganizationAndDatabaseName(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		repo := newRepository(t)
+		conn := connectionFixture()
+		conn.DatabaseName = "  DBName  "
+		created := createConnection(t, repo, conn)
+		found, err := repo.FindByOrganizationAndDatabaseName(context.Background(), created.OrganizationID, "dbname")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if found.ID != created.ID {
+			t.Fatalf("expected IDs to match")
+		}
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		repo := newRepository(t)
+		if _, err := repo.FindByOrganizationAndDatabaseName(context.Background(), uuid.New(), "missing"); err == nil {
+			t.Fatalf("expected error")
+		}
+	})
+
+	t.Run("database error", func(t *testing.T) {
+		repo := &ConnectionMongoDBRepository{
+			connection: &fakeMongoConnection{err: errors.New("db down")},
+			Database:   testDatabaseName,
+		}
+		if _, err := repo.FindByOrganizationAndDatabaseName(context.Background(), uuid.New(), "dbname"); err == nil || err.Error() != "db down" {
+			t.Fatalf("expected db error, got %v", err)
+		}
+	})
+}
+
 func TestConnectionMongoDBRepository_List(t *testing.T) {
 	t.Run("applies filters and pagination", func(t *testing.T) {
 		repo := newRepository(t)
@@ -362,13 +404,13 @@ func TestConnectionMongoDBRepository_List(t *testing.T) {
 		alpha := connectionFixture()
 		alpha.OrganizationID = orgID
 		alpha.ConfigName = "alpha"
-		alpha.Type = ConnectionTypeMySQL
+		alpha.Type = "MySQL"
 		createConnection(t, repo, alpha)
 
 		beta := connectionFixture()
 		beta.OrganizationID = orgID
 		beta.ConfigName = "beta"
-		beta.Type = ConnectionTypePostgreSQL
+		beta.Type = "PostgreSQL"
 		createdBeta := createConnection(t, repo, beta)
 
 		gamma := connectionFixture()
@@ -376,12 +418,12 @@ func TestConnectionMongoDBRepository_List(t *testing.T) {
 		gamma.ConfigName = "gamma"
 		createConnection(t, repo, gamma)
 
-		filters := &ListFilter{
+		filters := &domainConn.ListFilterParams{
 			OrganizationID: orgID,
 			ConfigName:     "  beta  ",
-			Types:          []ConnectionType{ConnectionTypePostgreSQL},
+			Types:          []domainConn.Type{domainConn.TypePostgreSQL},
 			Limit:          1,
-			Page:           1,
+			Page:           0,
 			SortOrder:      constant.Asc,
 		}
 
@@ -400,7 +442,7 @@ func TestConnectionMongoDBRepository_List(t *testing.T) {
 		if err := repo.Delete(context.Background(), conn.ID, conn.OrganizationID, time.Time{}); err != nil {
 			t.Fatalf("unexpected delete error: %v", err)
 		}
-		filters := &ListFilter{OrganizationID: conn.OrganizationID, IncludeDeleted: true}
+		filters := &domainConn.ListFilterParams{OrganizationID: conn.OrganizationID, IncludeDeleted: true}
 		list, err := repo.List(context.Background(), filters)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -414,11 +456,11 @@ func TestConnectionMongoDBRepository_List(t *testing.T) {
 		repo := newRepository(t)
 		createConnection(t, repo, connectionFixture())
 		// limit <= 0 uses default
-		if _, err := repo.List(context.Background(), &ListFilter{OrganizationID: uuid.New(), Limit: -1}); err != nil {
+		if _, err := repo.List(context.Background(), &domainConn.ListFilterParams{OrganizationID: uuid.New(), Limit: -1}); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		// limit > max is clamped
-		if _, err := repo.List(context.Background(), &ListFilter{OrganizationID: uuid.New(), Limit: 1000}); err != nil {
+		if _, err := repo.List(context.Background(), &domainConn.ListFilterParams{OrganizationID: uuid.New(), Limit: 2000}); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if _, err := repo.List(context.Background(), nil); err != nil {
@@ -430,7 +472,7 @@ func TestConnectionMongoDBRepository_List(t *testing.T) {
 		repo := newRepository(t)
 		createConnection(t, repo, connectionFixture())
 		stubSpanAttributes(t, errors.New("span failure"))
-		if _, err := repo.List(context.Background(), &ListFilter{OrganizationID: uuid.New()}); err != nil {
+		if _, err := repo.List(context.Background(), &domainConn.ListFilterParams{OrganizationID: uuid.New()}); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
@@ -440,7 +482,7 @@ func TestConnectionMongoDBRepository_List(t *testing.T) {
 			connection: &fakeMongoConnection{err: errors.New("db down")},
 			Database:   testDatabaseName,
 		}
-		if _, err := repo.List(context.Background(), &ListFilter{OrganizationID: uuid.New()}); err == nil || err.Error() != "db down" {
+		if _, err := repo.List(context.Background(), &domainConn.ListFilterParams{OrganizationID: uuid.New()}); err == nil || err.Error() != "db down" {
 			t.Fatalf("expected db error, got %v", err)
 		}
 	})
@@ -449,7 +491,7 @@ func TestConnectionMongoDBRepository_List(t *testing.T) {
 		repo := newRepository(t)
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
-		if _, err := repo.List(ctx, &ListFilter{OrganizationID: uuid.New()}); err == nil {
+		if _, err := repo.List(ctx, &domainConn.ListFilterParams{OrganizationID: uuid.New()}); err == nil {
 			t.Fatalf("expected error")
 		}
 	})

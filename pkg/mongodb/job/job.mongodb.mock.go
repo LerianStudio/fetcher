@@ -71,6 +71,21 @@ func (mr *MockRepositoryMockRecorder) FindByID(ctx, id, organizationID any) *gom
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FindByID", reflect.TypeOf((*MockRepository)(nil).FindByID), ctx, id, organizationID)
 }
 
+// ExistsRunningByConnection mocks base method.
+func (m *MockRepository) ExistsRunningByConnection(ctx context.Context, organizationID, connectionID uuid.UUID) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ExistsRunningByConnection", ctx, organizationID, connectionID)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ExistsRunningByConnection indicates an expected call of ExistsRunningByConnection.
+func (mr *MockRepositoryMockRecorder) ExistsRunningByConnection(ctx, organizationID, connectionID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExistsRunningByConnection", reflect.TypeOf((*MockRepository)(nil).ExistsRunningByConnection), ctx, organizationID, connectionID)
+}
+
 // List mocks base method.
 func (m *MockRepository) List(ctx context.Context, filters *ListFilter) ([]*Job, error) {
 	m.ctrl.T.Helper()

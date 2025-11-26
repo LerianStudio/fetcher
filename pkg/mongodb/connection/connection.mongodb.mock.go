@@ -14,6 +14,7 @@ import (
 	reflect "reflect"
 	time "time"
 
+	domainConn "github.com/LerianStudio/fetcher/pkg/domain"
 	uuid "github.com/google/uuid"
 	gomock "go.uber.org/mock/gomock"
 )
@@ -43,10 +44,10 @@ func (m *MockRepository) EXPECT() *MockRepositoryMockRecorder {
 }
 
 // Create mocks base method.
-func (m *MockRepository) Create(ctx context.Context, connection *Connection) (*Connection, error) {
+func (m *MockRepository) Create(ctx context.Context, connection *domainConn.Connection) (*domainConn.Connection, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Create", ctx, connection)
-	ret0, _ := ret[0].(*Connection)
+	ret0, _ := ret[0].(*domainConn.Connection)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -72,10 +73,10 @@ func (mr *MockRepositoryMockRecorder) Delete(ctx, id, organizationID, deletedAt 
 }
 
 // FindByID mocks base method.
-func (m *MockRepository) FindByID(ctx context.Context, id, organizationID uuid.UUID) (*Connection, error) {
+func (m *MockRepository) FindByID(ctx context.Context, id, organizationID uuid.UUID) (*domainConn.Connection, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "FindByID", ctx, id, organizationID)
-	ret0, _ := ret[0].(*Connection)
+	ret0, _ := ret[0].(*domainConn.Connection)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -87,10 +88,10 @@ func (mr *MockRepositoryMockRecorder) FindByID(ctx, id, organizationID any) *gom
 }
 
 // FindByOrganizationAndName mocks base method.
-func (m *MockRepository) FindByOrganizationAndName(ctx context.Context, organizationID uuid.UUID, configName string) (*Connection, error) {
+func (m *MockRepository) FindByOrganizationAndName(ctx context.Context, organizationID uuid.UUID, configName string) (*domainConn.Connection, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "FindByOrganizationAndName", ctx, organizationID, configName)
-	ret0, _ := ret[0].(*Connection)
+	ret0, _ := ret[0].(*domainConn.Connection)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -101,11 +102,26 @@ func (mr *MockRepositoryMockRecorder) FindByOrganizationAndName(ctx, organizatio
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FindByOrganizationAndName", reflect.TypeOf((*MockRepository)(nil).FindByOrganizationAndName), ctx, organizationID, configName)
 }
 
+// FindByOrganizationAndDatabaseName mocks base method.
+func (m *MockRepository) FindByOrganizationAndDatabaseName(ctx context.Context, organizationID uuid.UUID, databaseName string) (*domainConn.Connection, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "FindByOrganizationAndDatabaseName", ctx, organizationID, databaseName)
+	ret0, _ := ret[0].(*domainConn.Connection)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// FindByOrganizationAndDatabaseName indicates an expected call of FindByOrganizationAndDatabaseName.
+func (mr *MockRepositoryMockRecorder) FindByOrganizationAndDatabaseName(ctx, organizationID, databaseName any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FindByOrganizationAndDatabaseName", reflect.TypeOf((*MockRepository)(nil).FindByOrganizationAndDatabaseName), ctx, organizationID, databaseName)
+}
+
 // List mocks base method.
-func (m *MockRepository) List(ctx context.Context, filters *ListFilter) ([]*Connection, error) {
+func (m *MockRepository) List(ctx context.Context, filters *domainConn.ListFilterParams) ([]*domainConn.Connection, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "List", ctx, filters)
-	ret0, _ := ret[0].([]*Connection)
+	ret0, _ := ret[0].([]*domainConn.Connection)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -117,10 +133,10 @@ func (mr *MockRepositoryMockRecorder) List(ctx, filters any) *gomock.Call {
 }
 
 // Update mocks base method.
-func (m *MockRepository) Update(ctx context.Context, connection *Connection) (*Connection, error) {
+func (m *MockRepository) Update(ctx context.Context, connection *domainConn.Connection) (*domainConn.Connection, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Update", ctx, connection)
-	ret0, _ := ret[0].(*Connection)
+	ret0, _ := ret[0].(*domainConn.Connection)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }

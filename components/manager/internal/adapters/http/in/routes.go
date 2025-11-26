@@ -13,7 +13,13 @@ import (
 )
 
 // NewRoutes creates a new fiber router with the specified handlers and middleware.
-func NewRoutes(lg log.Logger, tl *opentelemetry.Telemetry, auth *middlewareAuth.AuthClient, licenseClient *libLicense.LicenseClient) *fiber.App {
+func NewRoutes(
+	lg log.Logger,
+	tl *opentelemetry.Telemetry,
+	auth *middlewareAuth.AuthClient,
+	licenseClient *libLicense.LicenseClient,
+	connectionHandler *ConnectionHandler,
+) *fiber.App {
 	f := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
 		ErrorHandler: func(ctx *fiber.Ctx, err error) error {
@@ -35,6 +41,13 @@ func NewRoutes(lg log.Logger, tl *opentelemetry.Telemetry, auth *middlewareAuth.
 
 	// Version
 	f.Get("/version", commonsHttp.Version)
+
+	// Connections
+	f.Post("/v1/management/connections", connectionHandler.CreateConnection)
+	f.Get("/v1/management/connections", connectionHandler.ListConnections)
+	f.Get("/v1/management/connections/:id", connectionHandler.GetConnection)
+	f.Patch("/v1/management/connections/:id", connectionHandler.UpdateConnection)
+	f.Delete("/v1/management/connections/:id", connectionHandler.DeleteConnection)
 
 	f.Use(tlMid.EndTracingSpans)
 
