@@ -6,6 +6,7 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/LerianStudio/fetcher/components/worker/internal/adapters/rabbitmq"
 	"github.com/LerianStudio/fetcher/components/worker/internal/services"
@@ -36,7 +37,14 @@ func NewMultiQueueConsumer(routes *rabbitmq.ConsumerRoutes, useCase *services.Us
 
 // Run starts consumers for all registered queues.
 func (mq *MultiQueueConsumer) Run(l *commons.Launcher) error {
-	ctx, cancel := context.WithCancel(context.Background())
+	// Create initial context with logger from ConsumerRoutes
+	requestID := commons.GenerateUUIDv7().String()
+	baseCtx := commons.ContextWithLogger(
+		commons.ContextWithHeaderID(context.Background(), requestID),
+		mq.consumerRoutes.Logger,
+	)
+
+	ctx, cancel := context.WithCancel(baseCtx)
 	defer cancel()
 
 	wg := &sync.WaitGroup{}
@@ -46,6 +54,7 @@ func (mq *MultiQueueConsumer) Run(l *commons.Launcher) error {
 
 	go func() {
 		<-sigs
+		mq.consumerRoutes.Info("Received shutdown signal, starting graceful shutdown...")
 		cancel()
 	}()
 
@@ -55,18 +64,27 @@ func (mq *MultiQueueConsumer) Run(l *commons.Launcher) error {
 
 	wg.Wait()
 
+	// Shutdown ConsumerRoutes gracefully after all workers are done
+	shutdownCtx, shutdownCancel := context.WithTimeout(baseCtx, 30*time.Second)
+	defer shutdownCancel()
+
+	if err := mq.consumerRoutes.Shutdown(shutdownCtx); err != nil {
+		mq.consumerRoutes.Errorf("Error during ConsumerRoutes shutdown: %v", err)
+		return err
+	}
+
 	return nil
 }
 
 // handlerGenerateReport processes messages from the generate report queue.
 func (mq *MultiQueueConsumer) handlerGenerateReport(ctx context.Context, body []byte, headers map[string]any) error {
-	logger, tracer, reqId, _ := commons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	_, span := tracer.Start(ctx, "consumer.handler_generate_report")
 	defer span.End()
 
 	span.SetAttributes(
-		attribute.String("app.request.request_id", reqId),
+		attribute.String("app.request.request_id", reqID),
 	)
 
 	logger.Info("Processing message from generate report queue")

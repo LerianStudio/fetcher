@@ -16,6 +16,8 @@ import (
 	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
 	libRabbitmq "github.com/LerianStudio/lib-commons/v2/commons/rabbitmq"
 
+	"github.com/LerianStudio/fetcher/pkg"
+
 	amqp "github.com/rabbitmq/amqp091-go"
 	errgroup "golang.org/x/sync/errgroup"
 
@@ -289,7 +291,8 @@ func (prmq *RabbitMQAdapter) ProducerDefault(ctx context.Context, exchange, key 
 }
 
 // ConsumerLoop fetches messages from the queue, delegates processing to handler, and applies ACK/NACK.
-func (prmq *RabbitMQAdapter) ConsumerLoop(ctx context.Context, queue string, concurrency int, handler func(ctx context.Context, body []byte) error) error {
+// The handler always receives headers (may be empty map if message has no headers).
+func (prmq *RabbitMQAdapter) ConsumerLoop(ctx context.Context, queue string, concurrency int, handler func(ctx context.Context, body []byte, headers map[string]any) error) error {
 	logger, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
 	logger.Infof("Starting consumer loop for queue=%s", queue)
 
@@ -334,7 +337,7 @@ func (prmq *RabbitMQAdapter) runConsumerCycle(
 	logger libLog.Logger,
 	queue, reqID string,
 	concurrency int,
-	handler func(ctx context.Context, body []byte) error,
+	handler func(ctx context.Context, body []byte, headers map[string]any) error,
 ) error {
 	ctxSpan, span := tracer.Start(ctx, "rabbitmq.consumer.connection_cycle")
 
@@ -378,7 +381,7 @@ func (prmq *RabbitMQAdapter) runConsumerCycle(
 		return err
 	}
 
-	sessionErr := prmq.dispatchDeliveries(ctxSpan, tracer, logger, consumerTag, channel, deliveries, concurrency, handler)
+	sessionErr := prmq.dispatchDeliveries(ctxSpan, logger, consumerTag, channel, deliveries, concurrency, handler)
 	if sessionErr == nil {
 		return nil
 	}
@@ -399,13 +402,12 @@ func (prmq *RabbitMQAdapter) runConsumerCycle(
 // dispatchDeliveries processes incoming RabbitMQ deliveries with concurrency control.
 func (prmq *RabbitMQAdapter) dispatchDeliveries(
 	ctx context.Context,
-	tracer trace.Tracer,
 	logger libLog.Logger,
 	consumerTag string,
 	channel amqpChannel,
 	deliveries <-chan amqp.Delivery,
 	concurrency int,
-	handler func(ctx context.Context, body []byte) error,
+	handler func(ctx context.Context, body []byte, headers map[string]any) error,
 ) error {
 	// Cancela o consumer apenas uma vez
 	var cancelOnce sync.Once
@@ -451,7 +453,7 @@ func (prmq *RabbitMQAdapter) dispatchDeliveries(
 			group.Go(func() error {
 				defer prmq.consumerWg.Done()
 
-				prmq.processDelivery(workerCtx, tracer, logger, delivery, handler)
+				prmq.processDelivery(logger, delivery, handler)
 
 				return nil
 			})
@@ -459,39 +461,83 @@ func (prmq *RabbitMQAdapter) dispatchDeliveries(
 	}
 }
 
-// processDelivery handles a single RabbitMQ message delivery.
+// processDelivery handles a single RabbitMQ message delivery, always extracting headers and creating proper context.
 func (prmq *RabbitMQAdapter) processDelivery(
-	ctx context.Context,
-	tracer trace.Tracer,
 	logger libLog.Logger,
 	d amqp.Delivery,
-	handler func(ctx context.Context, body []byte) error,
+	handler func(ctx context.Context, body []byte, headers map[string]any) error,
 ) {
-	hctx, hspan := tracer.Start(ctx, "rabbitmq.consumer.handle_message")
+	// Extract headers from delivery
+	headers := make(map[string]any)
+
+	if d.Headers != nil {
+		for k, v := range d.Headers {
+			headers[k] = v
+		}
+	}
+
+	// Extract request ID from headers or generate new one
+	requestID, found := headers[libConstants.HeaderID]
+	if !found {
+		requestID = libCommons.GenerateUUIDv7().String()
+	}
+
+	requestIDStr, ok := requestID.(string)
+	if !ok {
+		requestIDStr = libCommons.GenerateUUIDv7().String()
+	}
+
+	// Create context with request ID and logger
+	logWithFields := logger.WithFields(
+		libConstants.HeaderID, requestIDStr,
+	).WithDefaultMessageTemplate(requestIDStr + libConstants.LoggerDefaultSeparator)
+
+	msgCtx := libCommons.ContextWithLogger(
+		libCommons.ContextWithHeaderID(context.Background(), requestIDStr),
+		logWithFields,
+	)
+
+	// Extract trace context from message headers
+	msgCtx = libOpentelemetry.ExtractTraceContextFromQueueHeaders(msgCtx, d.Headers)
+
+	// Create tracer from context and start span
+	msgTracer := pkg.NewTracerFromContext(msgCtx)
+
+	hctx, hspan := msgTracer.Start(msgCtx, "rabbitmq.consumer.handle_message")
 	defer hspan.End()
 
+	hspan.SetAttributes(
+		attribute.String("app.request.rabbitmq.consumer.request_id", requestIDStr),
+	)
+
+	err := libOpentelemetry.SetSpanAttributesFromStruct(&hspan, "app.request.rabbitmq.consumer.message", d)
+	if err != nil {
+		libOpentelemetry.HandleSpanError(&hspan, "Failed to convert message to JSON string", err)
+	}
+
+	// Use the logger with fields created above (logWithFields) for all logging
 	// Recover from panics during message processing
 	defer func() {
 		if r := recover(); r != nil {
 			_ = d.Nack(false, false)
 			err := fmt.Errorf("%v", r)
-			logger.Errorf("Panic while processing message: %v", r)
+			logWithFields.Errorf("Panic while processing message: %v", r)
 			libOpentelemetry.HandleSpanError(&hspan, "Panic while processing message", err)
 		}
 	}()
 
-	if err := handler(hctx, d.Body); err != nil {
+	if err := handler(hctx, d.Body, headers); err != nil {
 		_ = d.Nack(false, false)
 
 		libOpentelemetry.HandleSpanError(&hspan, "Handler failed to process consumed message", err)
-		logger.Errorf("Handler failed to process consumed message: %v", err)
+		logWithFields.Errorf("Handler failed to process consumed message: %v", err)
 
 		return
 	}
 
 	if err := d.Ack(false); err != nil {
 		libOpentelemetry.HandleSpanError(&hspan, "Failed to ACK consumed message", err)
-		logger.Errorf("Failed to ACK consumed message: %v", err)
+		logWithFields.Errorf("Failed to ACK consumed message: %v", err)
 	}
 }
 

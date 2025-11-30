@@ -131,7 +131,7 @@ func TestRabbitMQStressProducerAndConsumer(t *testing.T) {
 	recvWG := sync.WaitGroup{}
 	recvWG.Add(totalMessages) // We expect to receive 'totalMessages' messages
 
-	handler := func(ctx context.Context, body []byte) error {
+	handler := func(ctx context.Context, body []byte, headers map[string]any) error {
 		defer recvWG.Done()
 
 		var msg stressMessage
