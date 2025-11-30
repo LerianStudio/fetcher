@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/LerianStudio/fetcher/pkg/constant"
-	"github.com/LerianStudio/fetcher/pkg/model"
+	"github.com/LerianStudio/fetcher/pkg/model/job"
 
 	libCommons "github.com/LerianStudio/lib-commons/v2/commons"
 	"github.com/LerianStudio/lib-commons/v2/commons/log"
@@ -23,7 +23,7 @@ import (
 //go:generate mockgen --destination=datasource.postgres.mock.go --package=postgres . Repository
 type Repository interface {
 	Query(ctx context.Context, schema []TableSchema, table string, fields []string, filter map[string][]any) ([]map[string]any, error)
-	QueryWithAdvancedFilters(ctx context.Context, schema []TableSchema, table string, fields []string, filter map[string]model.FilterCondition) ([]map[string]any, error)
+	QueryWithAdvancedFilters(ctx context.Context, schema []TableSchema, table string, fields []string, filter map[string]job.FilterCondition) ([]map[string]any, error)
 	GetDatabaseSchema(ctx context.Context) ([]TableSchema, error)
 	CloseConnection() error
 }
@@ -470,7 +470,7 @@ func applyFilter(queryBuilder squirrel.SelectBuilder, fieldName string, values [
 }
 
 // QueryWithAdvancedFilters executes a SELECT SQL query with advanced FilterCondition support
-func (ds *ExternalDataSource) QueryWithAdvancedFilters(ctx context.Context, schema []TableSchema, table string, fields []string, filter map[string]model.FilterCondition) ([]map[string]any, error) {
+func (ds *ExternalDataSource) QueryWithAdvancedFilters(ctx context.Context, schema []TableSchema, table string, fields []string, filter map[string]job.FilterCondition) ([]map[string]any, error) {
 	logger, tracer, reqId, _ := libCommons.NewTrackingFromContext(ctx)
 
 	_, span := tracer.Start(ctx, "postgres.data_source.query_with_advanced_filters")
@@ -533,7 +533,7 @@ func (ds *ExternalDataSource) QueryWithAdvancedFilters(ctx context.Context, sche
 }
 
 // buildAdvancedFilters applies FilterCondition criteria to the query builder
-func (ds *ExternalDataSource) buildAdvancedFilters(queryBuilder squirrel.SelectBuilder, schema []TableSchema, table string, filter map[string]model.FilterCondition) (squirrel.SelectBuilder, error) {
+func (ds *ExternalDataSource) buildAdvancedFilters(queryBuilder squirrel.SelectBuilder, schema []TableSchema, table string, filter map[string]job.FilterCondition) (squirrel.SelectBuilder, error) {
 	var tableColumns []ColumnInformation
 
 	for _, t := range schema {
@@ -572,7 +572,7 @@ func (ds *ExternalDataSource) buildAdvancedFilters(queryBuilder squirrel.SelectB
 }
 
 // applyAdvancedFilter applies a single FilterCondition to the query builder
-func (ds *ExternalDataSource) applyAdvancedFilter(queryBuilder squirrel.SelectBuilder, field string, condition model.FilterCondition) squirrel.SelectBuilder {
+func (ds *ExternalDataSource) applyAdvancedFilter(queryBuilder squirrel.SelectBuilder, field string, condition job.FilterCondition) squirrel.SelectBuilder {
 	// Handle equals (IN clause for multiple values, = for single value)
 	if len(condition.Equals) > 0 {
 		if len(condition.Equals) == 1 {
@@ -636,7 +636,7 @@ func (ds *ExternalDataSource) applyAdvancedFilter(queryBuilder squirrel.SelectBu
 }
 
 // isFilterConditionEmpty checks if a FilterCondition has no active filters
-func isFilterConditionEmpty(condition model.FilterCondition) bool {
+func isFilterConditionEmpty(condition job.FilterCondition) bool {
 	return len(condition.Equals) == 0 &&
 		len(condition.GreaterThan) == 0 &&
 		len(condition.GreaterOrEqual) == 0 &&
@@ -648,7 +648,7 @@ func isFilterConditionEmpty(condition model.FilterCondition) bool {
 }
 
 // validateFilterCondition validates that a FilterCondition has proper values for each operator
-func validateFilterCondition(fieldName string, condition model.FilterCondition) error {
+func validateFilterCondition(fieldName string, condition job.FilterCondition) error {
 	// Validate between operator has exactly 2 values
 	if len(condition.Between) > 0 && len(condition.Between) != 2 {
 		return fmt.Errorf("between operator for field '%s' must have exactly 2 values, got %d", fieldName, len(condition.Between))
@@ -693,7 +693,7 @@ func isLikelyUUIDField(fieldName string) bool {
 }
 
 // validateUUIDFieldValues validates that values for UUID fields are valid UUIDs
-func validateUUIDFieldValues(fieldName string, condition model.FilterCondition) error {
+func validateUUIDFieldValues(fieldName string, condition job.FilterCondition) error {
 	allValues := [][]any{
 		condition.Equals,
 		condition.GreaterThan,

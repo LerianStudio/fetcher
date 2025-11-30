@@ -43,6 +43,7 @@ type ListFilter struct {
 type Repository interface {
 	Create(ctx context.Context, job *Job) (*Job, error)
 	Update(ctx context.Context, job *Job) (*Job, error)
+	UpdateStatus(ctx context.Context, id, organizationID uuid.UUID, status JobStatus, metadata map[string]any) error
 	FindByID(ctx context.Context, id, organizationID uuid.UUID) (*Job, error)
 	List(ctx context.Context, filters *ListFilter) ([]*Job, error)
 	ExistsRunningByConnection(ctx context.Context, organizationID, connectionID uuid.UUID) (bool, error)
@@ -61,11 +62,14 @@ type JobMongoDBRepository struct {
 }
 
 // NewJobMongoDBRepository provisions a repository using the given client.
-func NewJobMongoDBRepository(ctx context.Context, mc *libMongo.MongoConnection) (*JobMongoDBRepository, error) {
+func NewJobMongoDBRepository(mc *libMongo.MongoConnection) (*JobMongoDBRepository, error) {
 	repo := &JobMongoDBRepository{
 		connection: mc,
 		Database:   mc.Database,
 	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
 	if _, err := repo.connection.GetDB(ctx); err != nil {
 		return nil, err
@@ -223,6 +227,85 @@ func (jr *JobMongoDBRepository) Update(ctx context.Context, job *Job) (*Job, err
 	}
 
 	return record.ToEntity(), nil
+}
+
+// UpdateStatus updates only the status and metadata of a job, automatically managing CompletedAt.
+func (jr *JobMongoDBRepository) UpdateStatus(ctx context.Context, id, organizationID uuid.UUID, status JobStatus, metadata map[string]any) error {
+	_, tracer, reqId, _ := commons.NewTrackingFromContext(ctx)
+
+	ctx, span := tracer.Start(ctx, "mongodb.update_job_status")
+	defer span.End()
+
+	attributes := []attribute.KeyValue{
+		attribute.String("app.request.request_id", reqId),
+		attribute.String("app.request.job_id", id.String()),
+		attribute.String("app.request.organization_id", organizationID.String()),
+		attribute.String("app.request.status", string(status)),
+	}
+	span.SetAttributes(attributes...)
+
+	if !status.IsValid() {
+		err := errors.New("invalid job status")
+		libOpentelemetry.HandleSpanError(&span, "Invalid status", err)
+		return err
+	}
+
+	db, err := jr.connection.GetDB(ctx)
+	if err != nil {
+		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
+		return err
+	}
+
+	coll := db.Database(strings.ToLower(jr.Database)).Collection(strings.ToLower(constant.MongoCollectionJob))
+
+	filter := bson.M{
+		"_id":             id,
+		"organization_id": organizationID,
+	}
+
+	update := bson.M{
+		"$set": bson.M{
+			"status": status,
+		},
+	}
+
+	// Automatically set CompletedAt for terminal statuses
+	if status == JobStatusCompleted || status == JobStatusFailed {
+		now := time.Now().UTC()
+		update["$set"].(bson.M)["completed_at"] = now
+	} else {
+		// Clear CompletedAt for non-terminal statuses
+		update["$unset"] = bson.M{
+			"completed_at": "",
+		}
+	}
+
+	// Update metadata if provided
+	if metadata != nil {
+		update["$set"].(bson.M)["metadata"] = metadata
+	}
+
+	ctx, spanUpdate := tracer.Start(ctx, "mongodb.update_job_status.update_one")
+	defer spanUpdate.End()
+
+	spanUpdate.SetAttributes(attributes...)
+	if err := setSpanAttributesFromStruct(&spanUpdate, "app.request.repository_filter", filter); err != nil {
+		libOpentelemetry.HandleSpanError(&spanUpdate, "Failed to convert filter to JSON", err)
+	}
+
+	result, err := coll.UpdateOne(ctx, filter, update)
+	if err != nil {
+		libOpentelemetry.HandleSpanError(&spanUpdate, "Failed to update job status", err)
+		return err
+	}
+
+	if result.MatchedCount == 0 {
+		err := errors.New("job not found")
+		libOpentelemetry.HandleSpanError(&spanUpdate, "Job not found", err)
+		return err
+	}
+
+	return nil
 }
 
 // FindByID fetches a job by its ID scoped to an organization.
