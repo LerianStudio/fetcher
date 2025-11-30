@@ -12,10 +12,8 @@ import (
 	datasourceMongoConfig "github.com/LerianStudio/fetcher/pkg/model/datasource/mongodb"
 	datasourcePostgresConfig "github.com/LerianStudio/fetcher/pkg/model/datasource/postgres"
 	modelJob "github.com/LerianStudio/fetcher/pkg/model/job"
-	"github.com/LerianStudio/fetcher/pkg/mongodb"
 	"github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 	"github.com/LerianStudio/fetcher/pkg/mongodb/job"
-	"github.com/LerianStudio/fetcher/pkg/postgres"
 	libCommons "github.com/LerianStudio/lib-commons/v2/commons"
 	libCrypto "github.com/LerianStudio/lib-commons/v2/commons/crypto"
 	"github.com/LerianStudio/lib-commons/v2/commons/log"
@@ -55,7 +53,7 @@ func (uc *UseCase) ExtractExternalData(ctx context.Context, body []byte) error {
 	ctx, span := tracer.Start(ctx, "service.extract_external_data")
 	defer span.End()
 
-	message, err := uc.parseMessage(ctx, body, &span, logger)
+	message, err := uc.parseMessage(body, &span, logger)
 	if err != nil {
 		return err
 	}
@@ -75,16 +73,12 @@ func (uc *UseCase) ExtractExternalData(ctx context.Context, body []byte) error {
 	// Find connections by config names
 	connections, err := uc.ConnectionRepository.FindByConfigNames(ctx, message.OrganizationID, configNames)
 	if err != nil {
-		return uc.handleErrorWithUpdate(ctx, message.JobID, &span, "Error finding connections by config names", err, logger)
+		return uc.handleErrorWithUpdate(ctx, message.JobID, message.OrganizationID, &span, "Error finding connections by config names", err, logger)
 	}
 
-	// Convert connections to DataSourceConfig
-	//dataSourcesConnections := convertConnectionsToDataSourceConfig(connections)
-
 	result := make(map[string]map[string][]map[string]any)
-
 	if err := uc.queryExternalData(ctx, *message, connections, result); err != nil {
-		return uc.handleErrorWithUpdate(ctx, message.JobID, &span, "Error querying external data", err, logger)
+		return uc.handleErrorWithUpdate(ctx, message.JobID, message.OrganizationID, &span, "Error querying external data", err, logger)
 	}
 
 	if err := uc.saveExternalDataToSeaweedFS(ctx, tracer, *message, result, &span, logger); err != nil {
@@ -95,7 +89,7 @@ func (uc *UseCase) ExtractExternalData(ctx context.Context, body []byte) error {
 }
 
 // parseMessage parses the RabbitMQ message body into ExtractExternalDataMessage struct.
-func (uc *UseCase) parseMessage(ctx context.Context, body []byte, span *trace.Span, logger log.Logger) (*ExtractExternalDataMessage, error) {
+func (uc *UseCase) parseMessage(body []byte, span *trace.Span, logger log.Logger) (*ExtractExternalDataMessage, error) {
 	var message *ExtractExternalDataMessage
 
 	err := json.Unmarshal(body, &message)
@@ -119,54 +113,9 @@ func (uc *UseCase) parseMessage(ctx context.Context, body []byte, span *trace.Sp
 	return message, nil
 }
 
-//// renderTemplate renders the template with data from external sources.
-//func (uc *UseCase) renderTemplate(ctx context.Context, tracer trace.Tracer, templateBytes []byte, result map[string]map[string][]map[string]any, message ExtractExternalDataMessage, span *trace.Span, logger log.Logger) (string, error) {
-//	ctx, spanRender := tracer.Start(ctx, "service.generate_report.render_template")
-//	defer spanRender.End()
-//
-//	renderer := pongo.NewTemplateRenderer()
-//
-//	out, err := renderer.RenderFromBytes(ctx, templateBytes, result, logger)
-//	if err != nil {
-//		if errUpdate := uc.updateReportWithErrors(ctx, message.ReportID, err.Error()); errUpdate != nil {
-//			libOtel.HandleSpanError(span, "Error to update report status with error.", errUpdate)
-//			logger.Errorf("Error update report status with error: %s", errUpdate.Error())
-//
-//			return "", errUpdate
-//		}
-//
-//		libOtel.HandleSpanError(&spanRender, "Error rendering template.", err)
-//		logger.Errorf("Error rendering template: %s", err.Error())
-//
-//		return "", err
-//	}
-//
-//	return out, nil
-//}
-//
-//// markReportAsFinished updates report status to finished.
-//func (uc *UseCase) markReportAsFinished(ctx context.Context, reportID uuid.UUID, span *trace.Span, logger log.Logger) error {
-//	err := uc.ReportDataRepo.UpdateReportStatusById(ctx, constant.FinishedStatus, reportID, time.Now(), nil)
-//	if err != nil {
-//		if errUpdate := uc.updateReportWithErrors(ctx, reportID, err.Error()); errUpdate != nil {
-//			libOtel.HandleSpanError(span, "Error to update report status with error.", errUpdate)
-//			logger.Errorf("Error update report status with error: %s", errUpdate.Error())
-//
-//			return errUpdate
-//		}
-//
-//		libOtel.HandleSpanError(span, "Error to update report status.", err)
-//		logger.Errorf("Error saving report: %s", err.Error())
-//
-//		return err
-//	}
-//
-//	return nil
-//}
-
 // handleErrorWithUpdate logs error and updates report status to error.
-func (uc *UseCase) handleErrorWithUpdate(ctx context.Context, jobID uuid.UUID, span *trace.Span, errorMsg string, err error, logger log.Logger) error {
-	if errUpdate := uc.updateJobWithErrors(ctx, jobID, err.Error()); errUpdate != nil {
+func (uc *UseCase) handleErrorWithUpdate(ctx context.Context, jobID, orgID uuid.UUID, span *trace.Span, errorMsg string, err error, logger log.Logger) error {
+	if errUpdate := uc.updateJobWithErrors(ctx, jobID, orgID, err.Error()); errUpdate != nil {
 		libOtel.HandleSpanError(span, "Error to update report status with error.", errUpdate)
 		logger.Errorf("Error update report status with error: %s", errUpdate.Error())
 
@@ -180,15 +129,14 @@ func (uc *UseCase) handleErrorWithUpdate(ctx context.Context, jobID uuid.UUID, s
 }
 
 // updateJobWithErrors updates the status of a job to "Error" with the provided error message.
-func (uc *UseCase) updateJobWithErrors(ctx context.Context, reportId uuid.UUID, errorMessage string) error {
+func (uc *UseCase) updateJobWithErrors(ctx context.Context, jobID, orgID uuid.UUID, errorMessage string) error {
 	metadata := make(map[string]any)
 	metadata["error"] = errorMessage
 
-	//errUpdate := uc.ReportDataRepo.UpdateReportStatusById(ctx, constant.ErrorStatus,
-	//	reportId, time.Now(), metadata)
-	//if errUpdate != nil {
-	//	return errUpdate
-	//}
+	errUpdate := uc.JobRepository.UpdateStatus(ctx, jobID, orgID, job.JobStatusFailed, metadata)
+	if errUpdate != nil {
+		return errUpdate
+	}
 
 	return nil
 }
@@ -269,23 +217,29 @@ func (uc *UseCase) queryDatabase(
 
 	databaseFilters := allFilters[databaseName]
 
-	// Delegate to specific database query method based on type
-	switch dataSource.GetType() {
-	case constant.PostgreSQLType:
-		postgresDS, ok := dataSource.(*datasourcePostgresConfig.DataSourceConfigPostgres)
-		if !ok {
-			return fmt.Errorf("invalid PostgreSQL data source type")
-		}
-		return uc.queryPostgresDatabase(ctx, postgresDS, databaseName, tables, databaseFilters, result, logger)
-	case constant.MongoDBType:
+	// Handle MongoDB with special plugin_crm logic
+	if dataSource.GetType() == constant.MongoDBType && databaseName == "plugin_crm" {
+		// MongoDB plugin_crm requires special handling (decryption, collection name transformation)
+		// Fall back to the specific method for this case
 		mongoDS, ok := dataSource.(*datasourceMongoConfig.DataSourceConfigMongoDB)
 		if !ok {
 			return fmt.Errorf("invalid MongoDB data source type")
 		}
 		return uc.queryMongoDatabase(ctx, mongoDS, databaseName, tables, databaseFilters, result, logger)
-	default:
-		return fmt.Errorf("unsupported database type: %s for database: %s", dataSource.GetType(), databaseName)
 	}
+
+	queryResult, errQuery := dataSource.Query(ctx, tables, databaseFilters, logger)
+	if errQuery != nil {
+		libOtel.HandleSpanError(&dbSpan, "Error querying data source", errQuery)
+		return fmt.Errorf("failed to query %s: %w", databaseName, errQuery)
+	}
+
+	// Merge query results into the result map
+	for tableOrCollection, tableResult := range queryResult {
+		result[databaseName][tableOrCollection] = tableResult
+	}
+
+	return nil
 }
 
 // queryPostgresDatabase handles querying PostgreSQL databases.
@@ -298,14 +252,8 @@ func (uc *UseCase) queryPostgresDatabase(
 	result map[string]map[string][]map[string]any,
 	logger log.Logger,
 ) error {
-	// Type assert PostgresRepository
-	postgresRepo, ok := dataSource.PostgresRepository.(*postgres.ExternalDataSource)
-	if !ok {
-		return fmt.Errorf("invalid PostgreSQL repository type")
-	}
-
 	// Execute schema query
-	schemaResult, err := postgresRepo.GetDatabaseSchema(ctx)
+	schemaResult, err := dataSource.PostgresRepository.GetDatabaseSchema(ctx)
 	if err != nil {
 		logger.Errorf("Error getting database schema for %s: %s", databaseName, err.Error())
 		return err
@@ -321,9 +269,9 @@ func (uc *UseCase) queryPostgresDatabase(
 		)
 
 		if len(tableFilters) > 0 {
-			queryResult, errQuery = postgresRepo.QueryWithAdvancedFilters(ctx, schemaResult, table, fields, tableFilters)
+			queryResult, errQuery = dataSource.PostgresRepository.QueryWithAdvancedFilters(ctx, schemaResult, table, fields, tableFilters)
 		} else {
-			queryResult, errQuery = postgresRepo.Query(ctx, schemaResult, table, fields, nil)
+			queryResult, errQuery = dataSource.PostgresRepository.Query(ctx, schemaResult, table, fields, nil)
 		}
 
 		if errQuery != nil {
@@ -332,14 +280,6 @@ func (uc *UseCase) queryPostgresDatabase(
 		}
 
 		tableResult = queryResult.([]map[string]any)
-
-		//if len(tableFilters) > 0 {
-		//	logger.Infof("Successfully queried table %s with advanced filters (circuit breaker: %s)",
-		//		table, uc.CircuitBreakerManager.GetState(databaseName))
-		//} else {
-		//	logger.Infof("Successfully queried table %s (circuit breaker: %s)",
-		//		table, uc.CircuitBreakerManager.GetState(databaseName))
-		//}
 
 		result[databaseName][table] = tableResult
 	}
@@ -519,36 +459,10 @@ func (uc *UseCase) queryMongoCollectionWithFilters(
 	logger log.Logger,
 	databaseName string,
 ) ([]map[string]any, error) {
-	// Execute query with circuit breaker protection
-	//queryResult, err := uc.CircuitBreakerManager.Execute(databaseName, func() (any, error) {
-	//	if len(collectionFilters) > 0 {
-	//		// Check if this is plugin_crm and needs filter transformation
-	//		if strings.Contains(collection, "_") && !strings.Contains(collection, "organization") {
-	//			transformedFilter, err := uc.transformPluginCRMAdvancedFilters(collectionFilters, logger)
-	//			if err != nil {
-	//				return nil, fmt.Errorf("error transforming advanced filters for collection %s: %w", collection, err)
-	//			}
-	//
-	//			collectionFilters = transformedFilter
-	//		}
-	//
-	//		return dataSource.MongoDBRepository.QueryWithAdvancedFilters(ctx, collection, fields, collectionFilters)
-	//	}
-	//
-	//	// No filters, use legacy method
-	//	return dataSource.MongoDBRepository.Query(ctx, collection, fields, nil)
-	//})
-
 	var (
 		queryResult    []map[string]any
 		errQueryResult error
 	)
-
-	// Type assert MongoDBRepository
-	mongoRepo, ok := dataSource.MongoDBRepository.(*mongodb.ExternalDataSource)
-	if !ok {
-		return nil, fmt.Errorf("invalid MongoDB repository type")
-	}
 
 	if len(collectionFilters) > 0 {
 		// Check if this is plugin_crm and needs filter transformation
@@ -561,24 +475,16 @@ func (uc *UseCase) queryMongoCollectionWithFilters(
 			collectionFilters = transformedFilter
 		}
 
-		queryResult, errQueryResult = mongoRepo.QueryWithAdvancedFilters(ctx, collection, fields, collectionFilters)
+		queryResult, errQueryResult = dataSource.MongoDBRepository.QueryWithAdvancedFilters(ctx, collection, fields, collectionFilters)
 	} else {
 		// No filters, use simple query method
-		queryResult, errQueryResult = mongoRepo.Query(ctx, collection, fields, nil)
+		queryResult, errQueryResult = dataSource.MongoDBRepository.Query(ctx, collection, fields, nil)
 	}
 
 	if errQueryResult != nil {
 		logger.Errorf("Error querying collection %s in %s: %s", collection, databaseName, errQueryResult.Error())
 		return nil, errQueryResult
 	}
-
-	//if len(collectionFilters) > 0 {
-	//	logger.Infof("Successfully queried collection %s with advanced filters (circuit breaker: %s)",
-	//		collection, uc.CircuitBreakerManager.GetState(databaseName))
-	//} else {
-	//	logger.Infof("Successfully queried collection %s (circuit breaker: %s)",
-	//		collection, uc.CircuitBreakerManager.GetState(databaseName))
-	//}
 
 	return queryResult, nil
 }
@@ -686,17 +592,6 @@ func (uc *UseCase) hashFilterValues(values []any, crypto *libCrypto.Crypto) []an
 	return hashedValues
 }
 
-// // getContentType returns the MIME type for a given file extension.
-// // If the extension is not recognized, it returns "text/plain".
-//
-//	func getContentType(ext string) string {
-//		if contentType, ok := mimeTypes[ext]; ok {
-//			return contentType
-//		}
-//
-//		return "text/plain"
-//	}
-//
 // decryptPluginCRMData decrypts sensitive fields for plugin_crm database
 func (uc *UseCase) decryptPluginCRMData(logger log.Logger, collectionResult []map[string]any, fields []string) ([]map[string]any, error) {
 	// Check if we need to decrypt any fields

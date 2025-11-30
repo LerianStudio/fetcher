@@ -23,8 +23,9 @@ import (
 
 // Config holds the application's configurable parameters read from environment variables.
 type Config struct {
-	EnvName                     string `env:"ENV_NAME"`
-	LogLevel                    string `env:"LOG_LEVEL"`
+	EnvName  string `env:"ENV_NAME"`
+	LogLevel string `env:"LOG_LEVEL"`
+	// RabbitMQ envs
 	RabbitURI                   string `env:"RABBITMQ_URI"`
 	RabbitMQHost                string `env:"RABBITMQ_HOST"`
 	RabbitMQPortHost            string `env:"RABBITMQ_PORT_HOST"`
@@ -34,12 +35,13 @@ type Config struct {
 	RabbitMQGenerateReportQueue string `env:"RABBITMQ_GENERATE_REPORT_QUEUE"`
 	RabbitMQNumWorkers          int    `env:"RABBITMQ_NUMBERS_OF_WORKERS"`
 	RabbitMQHealthCheckURL      string `env:"RABBITMQ_HEALTH_CHECK_URL"`
-	OtelServiceName             string `env:"OTEL_RESOURCE_SERVICE_NAME"`
-	OtelLibraryName             string `env:"OTEL_LIBRARY_NAME"`
-	OtelServiceVersion          string `env:"OTEL_RESOURCE_SERVICE_VERSION"`
-	OtelDeploymentEnv           string `env:"OTEL_RESOURCE_DEPLOYMENT_ENVIRONMENT"`
-	OtelColExporterEndpoint     string `env:"OTEL_EXPORTER_OTLP_ENDPOINT"`
-	EnableTelemetry             bool   `env:"ENABLE_TELEMETRY"`
+	// Otel Collector configurations
+	OtelServiceName         string `env:"OTEL_RESOURCE_SERVICE_NAME"`
+	OtelLibraryName         string `env:"OTEL_LIBRARY_NAME"`
+	OtelServiceVersion      string `env:"OTEL_RESOURCE_SERVICE_VERSION"`
+	OtelDeploymentEnv       string `env:"OTEL_RESOURCE_DEPLOYMENT_ENVIRONMENT"`
+	OtelColExporterEndpoint string `env:"OTEL_EXPORTER_OTLP_ENDPOINT"`
+	EnableTelemetry         bool   `env:"ENABLE_TELEMETRY"`
 	// SeaweedFS configuration envs
 	SeaweedFSHost      string `env:"SEAWEEDFS_HOST"`
 	SeaweedFSFilerPort string `env:"SEAWEEDFS_FILER_PORT"`
@@ -58,7 +60,7 @@ type Config struct {
 }
 
 // InitWorker initializes and configures the application's dependencies and returns the Service instance.
-func InitWorker() (*Service, error) {
+func InitWorker() *Service {
 	cfg := &Config{}
 	if err := libCommons.SetConfigFromEnvVars(cfg); err != nil {
 		panic(err)
@@ -120,12 +122,12 @@ func InitWorker() (*Service, error) {
 	// Initialize MongoDB repositories
 	jobRepository, errJobRepo := job.NewJobMongoDBRepository(mongoConnection)
 	if errJobRepo != nil {
-		return nil, errJobRepo
+		logger.Fatalf("Failed to initialize job repository: %v", errJobRepo)
 	}
 
 	connectionRepository, errConnectRepo := connection.NewConnectionMongoDBRepository(mongoConnection)
 	if errConnectRepo != nil {
-		return nil, errJobRepo
+		logger.Fatalf("Failed to initialize connection repository: %v", errConnectRepo)
 	}
 
 	service := &services.UseCase{
@@ -153,5 +155,5 @@ func InitWorker() (*Service, error) {
 		MultiQueueConsumer: multiQueueConsumer,
 		Logger:             logger,
 		licenseShutdown:    licenseClient.GetLicenseManagerShutdown(),
-	}, nil
+	}
 }
