@@ -7,9 +7,15 @@ import (
 	"os"
 	"strings"
 
-	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
-	"github.com/LerianStudio/fetcher/pkg/model"
+	"github.com/LerianStudio/fetcher/pkg/datasource"
+	datasourceMongoConfig "github.com/LerianStudio/fetcher/pkg/model/datasource/mongodb"
+	datasourcePostgresConfig "github.com/LerianStudio/fetcher/pkg/model/datasource/postgres"
+	modelJob "github.com/LerianStudio/fetcher/pkg/model/job"
+	"github.com/LerianStudio/fetcher/pkg/mongodb"
+	"github.com/LerianStudio/fetcher/pkg/mongodb/connection"
+	"github.com/LerianStudio/fetcher/pkg/mongodb/job"
+	"github.com/LerianStudio/fetcher/pkg/postgres"
 	libCommons "github.com/LerianStudio/lib-commons/v2/commons"
 	libCrypto "github.com/LerianStudio/lib-commons/v2/commons/crypto"
 	"github.com/LerianStudio/lib-commons/v2/commons/log"
@@ -25,6 +31,9 @@ type ExtractExternalDataMessage struct {
 	// JobID is the unique identifier of the job extract.
 	JobID uuid.UUID `json:"jobId"`
 
+	// OrganizationID is the unique identifier of the organization.
+	OrganizationID uuid.UUID `json:"organizationId"`
+
 	// DataQueries maps database names to tables and their fields.
 	// Format: map[databaseName]map[tableName][]fieldName.
 	// Example: {"onboarding": {"organization": ["name"], "ledger": ["id"]}}.
@@ -33,7 +42,7 @@ type ExtractExternalDataMessage struct {
 	// Filters specify advanced filtering criteria using FilterCondition for complex queries.
 	// Format: map[databaseName]map[tableName]map[fieldName]model.FilterCondition
 	// Example: {"db": {"table": {"created_at": {"gte": ["2025-06-01"], "lte": ["2025-06-30"]}}}}
-	Filters map[string]map[string]map[string]model.FilterCondition `json:"filters"`
+	Filters map[string]map[string]map[string]modelJob.FilterCondition `json:"filters"`
 
 	// Metadata contains additional metadata for the report.
 	Metadata map[string]any `json:"metadata"`
@@ -51,57 +60,34 @@ func (uc *UseCase) ExtractExternalData(ctx context.Context, body []byte) error {
 		return err
 	}
 
-	//ATUALIZAR: Ajustar quando tiver o job entity
-	//if skip := uc.shouldSkipProcessing(ctx, message.ReportID, logger); skip {
-	//	return nil
-	//}
-
-	dataSourcesConnections := []pkg.DataSourceConfig{
-		{
-			ID:                "a059d33d-2e9c-4087-94e7-8f7ec0e42c2f",
-			OrganizationID:    "06c4f684-19b0-449a-81f4-f9a4e503db83",
-			ConfigName:        "midaz_onboarding",
-			Type:              "postgresql",
-			Host:              "localhost",
-			Port:              "5702",
-			DatabaseName:      "onboarding",
-			Username:          "midaz",
-			PasswordEncrypted: "lerian",
-			SSL:               nil,
-		},
-		{
-			ID:                "a059d33d-2e9c-4087-94e7-8f7ec0e42c2f",
-			OrganizationID:    "06c4f684-19b0-449a-81f4-f9a4e503db83",
-			ConfigName:        "midaz_transaction",
-			Type:              "postgresql",
-			Host:              "localhost",
-			Port:              "5702",
-			DatabaseName:      "transaction",
-			Username:          "midaz",
-			PasswordEncrypted: "lerian",
-			SSL:               nil,
-		},
-		{
-			ID:                "a059d33d-2e9c-4087-94e7-8f7ec0e42c2g",
-			OrganizationID:    "06c4f684-19b0-449a-81f4-f9a4e503db83",
-			ConfigName:        "plugin_crm",
-			Type:              "mongodb",
-			Host:              "localhost",
-			Port:              "5706",
-			DatabaseName:      "plugin-crm-db",
-			Username:          "plugin-crm",
-			PasswordEncrypted: "lerian",
-			SSL:               nil,
-		},
+	if skip := uc.shouldSkipProcessing(ctx, message.JobID, logger); skip {
+		return nil
 	}
+
+	_, errJob := uc.JobRepository.FindByID(ctx, message.JobID, message.OrganizationID)
+	if errJob != nil {
+		return errJob
+	}
+
+	// Extract config names from mappedFields
+	configNames := extractConfigNamesFromMappedFields(message.MappedFields)
+
+	// Find connections by config names
+	connections, err := uc.ConnectionRepository.FindByConfigNames(ctx, message.OrganizationID, configNames)
+	if err != nil {
+		return uc.handleErrorWithUpdate(ctx, message.JobID, &span, "Error finding connections by config names", err, logger)
+	}
+
+	// Convert connections to DataSourceConfig
+	//dataSourcesConnections := convertConnectionsToDataSourceConfig(connections)
 
 	result := make(map[string]map[string][]map[string]any)
 
-	if err := uc.queryExternalData(ctx, message, dataSourcesConnections, result); err != nil {
+	if err := uc.queryExternalData(ctx, *message, connections, result); err != nil {
 		return uc.handleErrorWithUpdate(ctx, message.JobID, &span, "Error querying external data", err, logger)
 	}
 
-	if err := uc.saveExternalDataToSeaweedFS(ctx, tracer, message, result, &span, logger); err != nil {
+	if err := uc.saveExternalDataToSeaweedFS(ctx, tracer, *message, result, &span, logger); err != nil {
 		return fmt.Errorf("saveExternalDataToSeaweedFS: %w", err)
 	}
 
@@ -109,17 +95,19 @@ func (uc *UseCase) ExtractExternalData(ctx context.Context, body []byte) error {
 }
 
 // parseMessage parses the RabbitMQ message body into ExtractExternalDataMessage struct.
-func (uc *UseCase) parseMessage(ctx context.Context, body []byte, span *trace.Span, logger log.Logger) (ExtractExternalDataMessage, error) {
-	var message ExtractExternalDataMessage
+func (uc *UseCase) parseMessage(ctx context.Context, body []byte, span *trace.Span, logger log.Logger) (*ExtractExternalDataMessage, error) {
+	var message *ExtractExternalDataMessage
 
 	err := json.Unmarshal(body, &message)
 	if err != nil {
-		// ATUALIZAR: ADICIONAR UPDATE STATUS DO JOB
-		//if errUpdate := uc.updateReportWithErrors(ctx, message, err.Error()); errUpdate != nil {
-		//	libOtel.HandleSpanError(span, "Error to update report status with error.", errUpdate)
-		//	logger.Errorf("Error update report status with error: %s", errUpdate.Error())
+
+		////TODO: Validar como atualizar o job para error
+		//errJob := uc.JobRepository.UpdateStatus(ctx, message.JobID, message.OrganizationID, job.JobStatusFailed, nil)
+		//if errJob != nil {
+		//	libOtel.HandleSpanError(span, "Error update job status, Err: ", err)
+		//	logger.Errorf("Error update job status, Err: %s", err.Error())
 		//
-		//	return message, errUpdate
+		//	return nil, errJob
 		//}
 
 		libOtel.HandleSpanError(span, "Error unmarshalling message.", err)
@@ -206,14 +194,14 @@ func (uc *UseCase) updateJobWithErrors(ctx context.Context, reportId uuid.UUID, 
 }
 
 // queryExternalData retrieves data from external data sources specified in the message and populates the result map.
-func (uc *UseCase) queryExternalData(ctx context.Context, message ExtractExternalDataMessage, dataSourcesConnections []pkg.DataSourceConfig, result map[string]map[string][]map[string]any) error {
+func (uc *UseCase) queryExternalData(ctx context.Context, message ExtractExternalDataMessage, connections []*connection.Connection, result map[string]map[string][]map[string]any) error {
 	logger, tracer, _, _ := libCommons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "service.extract_external_data.query_external_data")
 	defer span.End()
 
 	for databaseName, tables := range message.MappedFields {
-		if err := uc.queryDatabase(ctx, databaseName, tables, dataSourcesConnections, message.Filters, result, logger, tracer); err != nil {
+		if err := uc.queryDatabase(ctx, databaseName, tables, connections, message.Filters, result, logger, tracer); err != nil {
 			return err
 		}
 	}
@@ -221,13 +209,15 @@ func (uc *UseCase) queryExternalData(ctx context.Context, message ExtractExterna
 	return nil
 }
 
-// queryDatabase handles data retrieval for a specific database
+// queryDatabase handles data retrieval for a specific database.
+// It finds the connection, creates the appropriate DataSource using the factory pattern,
+// and delegates to the specific database query method.
 func (uc *UseCase) queryDatabase(
 	ctx context.Context,
 	databaseName string,
 	tables map[string][]string,
-	dataSourcesConnections []pkg.DataSourceConfig,
-	allFilters map[string]map[string]map[string]model.FilterCondition,
+	connections []*connection.Connection,
+	allFilters map[string]map[string]map[string]modelJob.FilterCondition,
 	result map[string]map[string][]map[string]any,
 	logger log.Logger,
 	tracer trace.Tracer,
@@ -237,37 +227,40 @@ func (uc *UseCase) queryDatabase(
 
 	logger.Infof("Querying database %s", databaseName)
 
-	// Check circuit breaker state before attempting query
-	//if !uc.CircuitBreakerManager.IsHealthy(databaseName) {
-	//	cbState := uc.CircuitBreakerManager.GetState(databaseName)
-	//	err := fmt.Errorf("datasource %s is unhealthy - circuit breaker state: %s", databaseName, cbState)
-	//	libOtel.HandleSpanError(&dbSpan, "Circuit breaker blocking request", err)
-	//	logger.Errorf("⚠️  Circuit breaker blocking request to datasource %s (state: %s)", databaseName, cbState)
-	//
-	//	return err
-	//}
-
-	var dataSource pkg.DataSourceConfig
-	for _, data := range dataSourcesConnections {
-		if data.ConfigName == databaseName {
-			dataSource = data
+	// Find the connection for this database
+	var foundConnection *connection.Connection
+	for _, conn := range connections {
+		if conn.ConfigName == databaseName {
+			foundConnection = conn
+			break
 		}
 	}
 
-	// Check if datasource is marked as unavailable from initialization
-	//if dataSource.Status == libConstants.DataSourceStatusUnavailable {
-	//	err := fmt.Errorf("datasource %s is unavailable (initialization failed)", databaseName)
-	//	libOtel.HandleSpanError(&dbSpan, "Datasource unavailable", err)
-	//	logger.Errorf("⚠️  Datasource %s is unavailable - last error: %v", databaseName, dataSource.LastError)
-	//
-	//	return err
-	//}
-
-	// Attempt to connect
-	if err := pkg.ConnectToDataSource(&dataSource, logger); err != nil {
-		libOtel.HandleSpanError(&dbSpan, "Error initializing database connection.", err)
+	if foundConnection == nil {
+		err := fmt.Errorf("connection not found for database: %s", databaseName)
+		libOtel.HandleSpanError(&dbSpan, "Connection not found", err)
 		return err
 	}
+
+	// Create DataSource using factory pattern
+	dataSource, err := datasource.NewDataSourceFromConnection(ctx, foundConnection, logger)
+	if err != nil {
+		libOtel.HandleSpanError(&dbSpan, "Error creating data source", err)
+		return fmt.Errorf("failed to create data source for %s: %w", databaseName, err)
+	}
+
+	// Establish connection
+	if err := dataSource.Connect(ctx, logger); err != nil {
+		libOtel.HandleSpanError(&dbSpan, "Error connecting to data source", err)
+		return fmt.Errorf("failed to connect to %s: %w", databaseName, err)
+	}
+
+	// Ensure connection is closed after query
+	defer func() {
+		if closeErr := dataSource.Close(ctx); closeErr != nil {
+			logger.Warnf("Error closing connection for %s: %v", databaseName, closeErr)
+		}
+	}()
 
 	// Prepare a result map for this database
 	if _, databaseExists := result[databaseName]; !databaseExists {
@@ -276,60 +269,61 @@ func (uc *UseCase) queryDatabase(
 
 	databaseFilters := allFilters[databaseName]
 
-	switch dataSource.Type {
+	// Delegate to specific database query method based on type
+	switch dataSource.GetType() {
 	case constant.PostgreSQLType:
-		return uc.queryPostgresDatabase(ctx, &dataSource, databaseName, tables, databaseFilters, result, logger)
+		postgresDS, ok := dataSource.(*datasourcePostgresConfig.DataSourceConfigPostgres)
+		if !ok {
+			return fmt.Errorf("invalid PostgreSQL data source type")
+		}
+		return uc.queryPostgresDatabase(ctx, postgresDS, databaseName, tables, databaseFilters, result, logger)
 	case constant.MongoDBType:
-		return uc.queryMongoDatabase(ctx, &dataSource, databaseName, tables, databaseFilters, result, logger)
+		mongoDS, ok := dataSource.(*datasourceMongoConfig.DataSourceConfigMongoDB)
+		if !ok {
+			return fmt.Errorf("invalid MongoDB data source type")
+		}
+		return uc.queryMongoDatabase(ctx, mongoDS, databaseName, tables, databaseFilters, result, logger)
 	default:
-		return fmt.Errorf("unsupported database type: %s for database: %s", dataSource.Type, databaseName)
+		return fmt.Errorf("unsupported database type: %s for database: %s", dataSource.GetType(), databaseName)
 	}
 }
 
-// queryPostgresDatabase handles querying PostgresSQL databases
+// queryPostgresDatabase handles querying PostgreSQL databases.
 func (uc *UseCase) queryPostgresDatabase(
 	ctx context.Context,
-	dataSource *pkg.DataSourceConfig,
+	dataSource *datasourcePostgresConfig.DataSourceConfigPostgres,
 	databaseName string,
 	tables map[string][]string,
-	databaseFilters map[string]map[string]model.FilterCondition,
+	databaseFilters map[string]map[string]modelJob.FilterCondition,
 	result map[string]map[string][]map[string]any,
 	logger log.Logger,
 ) error {
-	// Execute schema query with circuit breaker protection
-	//schemaResult, err := uc.CircuitBreakerManager.Execute(databaseName, func() (any, error) {
-	//	return dataSource.PostgresRepository.GetDatabaseSchema(ctx)
-	//})
-	schemaResult, err := dataSource.PostgresRepository.GetDatabaseSchema(ctx)
-	if err != nil {
-		logger.Errorf("Error getting database schema for %s (circuit breaker): %s", databaseName, err.Error())
-		return err
+	// Type assert PostgresRepository
+	postgresRepo, ok := dataSource.PostgresRepository.(*postgres.ExternalDataSource)
+	if !ok {
+		return fmt.Errorf("invalid PostgreSQL repository type")
 	}
 
-	//schema := schemaResult.([]postgres.TableSchema)
+	// Execute schema query
+	schemaResult, err := postgresRepo.GetDatabaseSchema(ctx)
+	if err != nil {
+		logger.Errorf("Error getting database schema for %s: %s", databaseName, err.Error())
+		return err
+	}
 
 	for table, fields := range tables {
 		tableFilters := getTableFilters(databaseFilters, table)
 
-		// Execute query with circuit breaker protection
 		var (
 			tableResult []map[string]any
 			queryResult any
 			errQuery    error
 		)
 
-		//queryResult, err := uc.CircuitBreakerManager.Execute(databaseName, func() (any, error) {
-		//	if len(tableFilters) > 0 {
-		//		return dataSource.PostgresRepository.QueryWithAdvancedFilters(ctx, schema, table, fields, tableFilters)
-		//	}
-		//
-		//	return dataSource.PostgresRepository.Query(ctx, schema, table, fields, nil)
-		//})
-
 		if len(tableFilters) > 0 {
-			queryResult, errQuery = dataSource.PostgresRepository.QueryWithAdvancedFilters(ctx, schemaResult, table, fields, tableFilters)
+			queryResult, errQuery = postgresRepo.QueryWithAdvancedFilters(ctx, schemaResult, table, fields, tableFilters)
 		} else {
-			queryResult, errQuery = dataSource.PostgresRepository.Query(ctx, schemaResult, table, fields, nil)
+			queryResult, errQuery = postgresRepo.Query(ctx, schemaResult, table, fields, nil)
 		}
 
 		if errQuery != nil {
@@ -354,7 +348,7 @@ func (uc *UseCase) queryPostgresDatabase(
 }
 
 // getTableFilters extracts filters for a specific table/collection
-func getTableFilters(databaseFilters map[string]map[string]model.FilterCondition, tableName string) map[string]model.FilterCondition {
+func getTableFilters(databaseFilters map[string]map[string]modelJob.FilterCondition, tableName string) map[string]modelJob.FilterCondition {
 	if databaseFilters == nil {
 		return nil
 	}
@@ -395,13 +389,13 @@ func (uc *UseCase) saveExternalDataToSeaweedFS(
 	return nil
 }
 
-// queryMongoDatabase handles querying MongoDB databases
+// queryMongoDatabase handles querying MongoDB databases.
 func (uc *UseCase) queryMongoDatabase(
 	ctx context.Context,
-	dataSource *pkg.DataSourceConfig,
+	dataSource *datasourceMongoConfig.DataSourceConfigMongoDB,
 	databaseName string,
 	collections map[string][]string,
-	databaseFilters map[string]map[string]model.FilterCondition,
+	databaseFilters map[string]map[string]modelJob.FilterCondition,
 	result map[string]map[string][]map[string]any,
 	logger log.Logger,
 ) error {
@@ -426,13 +420,13 @@ func (uc *UseCase) queryMongoDatabase(
 	return nil
 }
 
-// processMongoCollection processes a single MongoDB collection
+// processMongoCollection processes a single MongoDB collection.
 func (uc *UseCase) processMongoCollection(
 	ctx context.Context,
-	dataSource *pkg.DataSourceConfig,
+	dataSource *datasourceMongoConfig.DataSourceConfigMongoDB,
 	databaseName, collection string,
 	fields []string,
-	collectionFilters map[string]model.FilterCondition,
+	collectionFilters map[string]modelJob.FilterCondition,
 	allCollections map[string][]string,
 	result map[string]map[string][]map[string]any,
 	logger log.Logger,
@@ -446,13 +440,13 @@ func (uc *UseCase) processMongoCollection(
 	return uc.processRegularMongoCollection(ctx, dataSource, collection, fields, collectionFilters, result, logger)
 }
 
-// processPluginCRMCollection handles plugin_crm specific collection processing
+// processPluginCRMCollection handles plugin_crm specific collection processing.
 func (uc *UseCase) processPluginCRMCollection(
 	ctx context.Context,
-	dataSource *pkg.DataSourceConfig,
+	dataSource *datasourceMongoConfig.DataSourceConfigMongoDB,
 	collection string,
 	fields []string,
-	collectionFilters map[string]model.FilterCondition,
+	collectionFilters map[string]modelJob.FilterCondition,
 	allCollections map[string][]string,
 	result map[string]map[string][]map[string]any,
 	logger log.Logger,
@@ -460,6 +454,7 @@ func (uc *UseCase) processPluginCRMCollection(
 	// Get organization field to create collection name
 	orgFields, exists := allCollections["organization"]
 	if !exists || len(orgFields) == 0 {
+		// TODO: estourar um erro geral pois preciso do filtro
 		logger.Errorf("Organization field not found for plugin_crm collection %s", collection)
 		return nil
 	}
@@ -487,13 +482,13 @@ func (uc *UseCase) processPluginCRMCollection(
 	return nil
 }
 
-// processRegularMongoCollection handles regular MongoDB collection processing
+// processRegularMongoCollection handles regular MongoDB collection processing.
 func (uc *UseCase) processRegularMongoCollection(
 	ctx context.Context,
-	dataSource *pkg.DataSourceConfig,
+	dataSource *datasourceMongoConfig.DataSourceConfigMongoDB,
 	collection string,
 	fields []string,
-	collectionFilters map[string]model.FilterCondition,
+	collectionFilters map[string]modelJob.FilterCondition,
 	result map[string]map[string][]map[string]any,
 	logger log.Logger,
 ) error {
@@ -514,13 +509,13 @@ func (uc *UseCase) processRegularMongoCollection(
 	return nil
 }
 
-// queryMongoCollectionWithFilters queries a MongoDB collection with or without filters
+// queryMongoCollectionWithFilters queries a MongoDB collection with or without filters.
 func (uc *UseCase) queryMongoCollectionWithFilters(
 	ctx context.Context,
-	dataSource *pkg.DataSourceConfig,
+	dataSource *datasourceMongoConfig.DataSourceConfigMongoDB,
 	collection string,
 	fields []string,
-	collectionFilters map[string]model.FilterCondition,
+	collectionFilters map[string]modelJob.FilterCondition,
 	logger log.Logger,
 	databaseName string,
 ) ([]map[string]any, error) {
@@ -548,6 +543,13 @@ func (uc *UseCase) queryMongoCollectionWithFilters(
 		queryResult    []map[string]any
 		errQueryResult error
 	)
+
+	// Type assert MongoDBRepository
+	mongoRepo, ok := dataSource.MongoDBRepository.(*mongodb.ExternalDataSource)
+	if !ok {
+		return nil, fmt.Errorf("invalid MongoDB repository type")
+	}
+
 	if len(collectionFilters) > 0 {
 		// Check if this is plugin_crm and needs filter transformation
 		if strings.Contains(collection, "_") && !strings.Contains(collection, "organization") {
@@ -559,12 +561,14 @@ func (uc *UseCase) queryMongoCollectionWithFilters(
 			collectionFilters = transformedFilter
 		}
 
-		queryResult, errQueryResult = dataSource.MongoDBRepository.QueryWithAdvancedFilters(ctx, collection, fields, collectionFilters)
+		queryResult, errQueryResult = mongoRepo.QueryWithAdvancedFilters(ctx, collection, fields, collectionFilters)
+	} else {
+		// No filters, use simple query method
+		queryResult, errQueryResult = mongoRepo.Query(ctx, collection, fields, nil)
 	}
 
-	queryResult, errQueryResult = dataSource.MongoDBRepository.Query(ctx, collection, fields, nil)
 	if errQueryResult != nil {
-		logger.Errorf("Error querying collection %s in %s (circuit breaker): %s", collection, databaseName, errQueryResult.Error())
+		logger.Errorf("Error querying collection %s in %s: %s", collection, databaseName, errQueryResult.Error())
 		return nil, errQueryResult
 	}
 
@@ -580,7 +584,7 @@ func (uc *UseCase) queryMongoCollectionWithFilters(
 }
 
 // transformPluginCRMAdvancedFilters transforms advanced FilterCondition filters for plugin_crm to use search fields
-func (uc *UseCase) transformPluginCRMAdvancedFilters(filter map[string]model.FilterCondition, logger log.Logger) (map[string]model.FilterCondition, error) {
+func (uc *UseCase) transformPluginCRMAdvancedFilters(filter map[string]modelJob.FilterCondition, logger log.Logger) (map[string]modelJob.FilterCondition, error) {
 	if filter == nil {
 		return nil, nil
 	}
@@ -595,7 +599,7 @@ func (uc *UseCase) transformPluginCRMAdvancedFilters(filter map[string]model.Fil
 		Logger:        logger,
 	}
 
-	transformedFilter := make(map[string]model.FilterCondition)
+	transformedFilter := make(map[string]modelJob.FilterCondition)
 
 	// Define field mappings: encrypted field -> search field
 	fieldMappings := map[string]string{
@@ -612,7 +616,7 @@ func (uc *UseCase) transformPluginCRMAdvancedFilters(filter map[string]model.Fil
 	for fieldName, condition := range filter {
 		if searchField, exists := fieldMappings[fieldName]; exists {
 			// Transform the condition by hashing string values
-			transformedCondition := model.FilterCondition{}
+			transformedCondition := modelJob.FilterCondition{}
 
 			// Transform Equals values
 			if len(condition.Equals) > 0 {
@@ -923,34 +927,50 @@ func (uc *UseCase) decryptFieldValue(container map[string]any, fieldName string,
 	return nil
 }
 
-//// shouldSkipProcessing checks if report should be skipped due to idempotency.
-//func (uc *UseCase) shouldSkipProcessing(ctx context.Context, reportID uuid.UUID, logger log.Logger) bool {
-//	reportStatus, err := uc.checkReportStatus(ctx, reportID, logger)
-//	if err == nil {
-//		if reportStatus == constant.FinishedStatus {
-//			logger.Infof("Report %s is already finished, skipping reprocessing", reportID)
-//			return true
-//		}
-//
-//		if reportStatus == constant.ErrorStatus {
-//			logger.Warnf("Report %s is in error state, skipping reprocessing", reportID)
-//			return true
-//		}
-//	}
-//
-//	return false
-//}
-//
-//// checkReportStatus checks the current status of a report to implement idempotency.
-//func (uc *UseCase) checkReportStatus(ctx context.Context, reportID uuid.UUID, logger log.Logger) (string, error) {
-//	zeroUUID := uuid.UUID{}
-//	report, err := uc.ReportDataRepo.FindByID(ctx, reportID, zeroUUID)
-//	if err != nil {
-//		logger.Debugf("Could not check report status for %s (may be first attempt): %v", reportID, err)
-//		return "", err
-//	}
-//
-//	logger.Debugf("Report %s current status: %s", reportID, report.Status)
-//
-//	return report.Status, nil
-//}
+// shouldSkipProcessing checks if job should be skipped due to idempotency.
+func (uc *UseCase) shouldSkipProcessing(ctx context.Context, jobID uuid.UUID, logger log.Logger) bool {
+	jobStatus, err := uc.checkReportStatus(ctx, jobID, logger)
+	if err == nil {
+		if jobStatus == job.JobStatusCompleted {
+			logger.Infof("Job %s is already completed, skipping reprocessing", jobID)
+			return true
+		}
+
+		if jobStatus == job.JobStatusFailed {
+			logger.Warnf("Job %s is in error state, skipping reprocessing", jobID)
+			return true
+		}
+	}
+
+	return false
+}
+
+// checkReportStatus checks the current status of a report to implement idempotency.
+func (uc *UseCase) checkReportStatus(ctx context.Context, jobID uuid.UUID, logger log.Logger) (job.JobStatus, error) {
+	zeroUUID := uuid.UUID{}
+	jobData, err := uc.JobRepository.FindByID(ctx, jobID, zeroUUID)
+	if err != nil {
+		logger.Debugf("Could not check job status for %s (may be first attempt): %v", jobID, err)
+		return "", err
+	}
+
+	logger.Debugf("Report %s current status: %s", jobID, jobData.Status)
+
+	return jobData.Status, nil
+}
+
+// extractConfigNamesFromMappedFields extracts the first-level keys from mappedFields.
+// Returns an array of strings containing the database/config names.
+// Example: {"plugin_crm": {...}, "midaz_onboarding": {...}} -> ["plugin_crm", "midaz_onboarding"]
+func extractConfigNamesFromMappedFields(mappedFields map[string]map[string][]string) []string {
+	if mappedFields == nil || len(mappedFields) == 0 {
+		return []string{}
+	}
+
+	configNames := make([]string, 0, len(mappedFields))
+	for configName := range mappedFields {
+		configNames = append(configNames, configName)
+	}
+
+	return configNames
+}

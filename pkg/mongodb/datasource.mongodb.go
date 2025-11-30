@@ -6,7 +6,7 @@ import (
 	"fmt"
 
 	"github.com/LerianStudio/fetcher/pkg/constant"
-	"github.com/LerianStudio/fetcher/pkg/model"
+	"github.com/LerianStudio/fetcher/pkg/model/job"
 
 	"github.com/LerianStudio/lib-commons/v2/commons/log"
 
@@ -26,7 +26,7 @@ import (
 //go:generate mockgen --destination=datasource.mongodb.mock.go --package=mongodb . Repository
 type Repository interface {
 	Query(ctx context.Context, collection string, fields []string, filter map[string][]any) ([]map[string]any, error)
-	QueryWithAdvancedFilters(ctx context.Context, collection string, fields []string, filter map[string]model.FilterCondition) ([]map[string]any, error)
+	QueryWithAdvancedFilters(ctx context.Context, collection string, fields []string, filter map[string]job.FilterCondition) ([]map[string]any, error)
 	GetDatabaseSchema(ctx context.Context) ([]CollectionSchema, error)
 	CloseConnection(ctx context.Context) error
 }
@@ -572,7 +572,7 @@ func (ds *ExternalDataSource) isMoreSpecificType(newType, currentType string) bo
 }
 
 // QueryWithAdvancedFilters executes a query with advanced FilterCondition support
-func (ds *ExternalDataSource) QueryWithAdvancedFilters(ctx context.Context, collection string, fields []string, filter map[string]model.FilterCondition) ([]map[string]any, error) {
+func (ds *ExternalDataSource) QueryWithAdvancedFilters(ctx context.Context, collection string, fields []string, filter map[string]job.FilterCondition) ([]map[string]any, error) {
 	logger, tracer, reqId, _ := libCommons.NewTrackingFromContext(ctx)
 
 	logger.Infof("Querying %s collection with advanced filters on fields %v", collection, fields)
@@ -616,7 +616,7 @@ func (ds *ExternalDataSource) QueryWithAdvancedFilters(ctx context.Context, coll
 }
 
 // buildMongoFilter converts FilterCondition map to MongoDB filter format
-func (ds *ExternalDataSource) buildMongoFilter(filter map[string]model.FilterCondition) (bson.M, error) {
+func (ds *ExternalDataSource) buildMongoFilter(filter map[string]job.FilterCondition) (bson.M, error) {
 	mongoFilter := bson.M{}
 
 	for field, condition := range filter {
@@ -713,7 +713,7 @@ func (ds *ExternalDataSource) processQueryResults(
 }
 
 // convertFilterConditionToMongoFilter converts a FilterCondition to MongoDB filter
-func (ds *ExternalDataSource) convertFilterConditionToMongoFilter(field string, condition model.FilterCondition) (map[string]any, error) {
+func (ds *ExternalDataSource) convertFilterConditionToMongoFilter(field string, condition job.FilterCondition) (map[string]any, error) {
 	if isFilterConditionEmpty(condition) {
 		return nil, nil
 	}
@@ -779,7 +779,7 @@ func (ds *ExternalDataSource) convertFilterConditionToMongoFilter(field string, 
 }
 
 // isFilterConditionEmpty checks if a FilterCondition has no active filters
-func isFilterConditionEmpty(condition model.FilterCondition) bool {
+func isFilterConditionEmpty(condition job.FilterCondition) bool {
 	return len(condition.Equals) == 0 &&
 		len(condition.GreaterThan) == 0 &&
 		len(condition.GreaterOrEqual) == 0 &&
@@ -791,7 +791,7 @@ func isFilterConditionEmpty(condition model.FilterCondition) bool {
 }
 
 // validateFilterCondition validates that a FilterCondition has proper values for each operator
-func (ds *ExternalDataSource) validateFilterCondition(fieldName string, condition model.FilterCondition) error {
+func (ds *ExternalDataSource) validateFilterCondition(fieldName string, condition job.FilterCondition) error {
 	// Validate between operator has exactly 2 values
 	if len(condition.Between) > 0 && len(condition.Between) != 2 {
 		return fmt.Errorf("between operator for field '%s' must have exactly 2 values, got %d", fieldName, len(condition.Between))

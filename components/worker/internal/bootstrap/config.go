@@ -7,12 +7,14 @@ import (
 	"github.com/LerianStudio/fetcher/components/worker/internal/adapters/rabbitmq"
 	"github.com/LerianStudio/fetcher/components/worker/internal/services"
 	"github.com/LerianStudio/fetcher/pkg/constant"
-	externalConnection "github.com/LerianStudio/fetcher/pkg/mongodb/externalConnections"
+	"github.com/LerianStudio/fetcher/pkg/mongodb/connection"
+	mongoDB "github.com/LerianStudio/lib-commons/v2/commons/mongo"
+
+	"github.com/LerianStudio/fetcher/pkg/mongodb/job"
 	simpleClient "github.com/LerianStudio/fetcher/pkg/seaweedfs"
 	"github.com/LerianStudio/fetcher/pkg/seaweedfs/external_data"
 
 	libCommons "github.com/LerianStudio/lib-commons/v2/commons"
-	mongoDB "github.com/LerianStudio/lib-commons/v2/commons/mongo"
 	libOtel "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
 	libRabbitMQ "github.com/LerianStudio/lib-commons/v2/commons/rabbitmq"
 	libZap "github.com/LerianStudio/lib-commons/v2/commons/zap"
@@ -56,7 +58,7 @@ type Config struct {
 }
 
 // InitWorker initializes and configures the application's dependencies and returns the Service instance.
-func InitWorker() *Service {
+func InitWorker() (*Service, error) {
 	cfg := &Config{}
 	if err := libCommons.SetConfigFromEnvVars(cfg); err != nil {
 		panic(err)
@@ -116,12 +118,21 @@ func InitWorker() *Service {
 	externalDataSeaweedFSRepository := external_data.NewSimpleRepository(seaweedFSClient, constant.ExternalDataBucketName)
 
 	// Initialize MongoDB repositories
-	externalConnectionMongoDBRepository := externalConnection.NewExternalConnectionMongoDBRepository(mongoConnection)
+	jobRepository, errJobRepo := job.NewJobMongoDBRepository(mongoConnection)
+	if errJobRepo != nil {
+		return nil, errJobRepo
+	}
+
+	connectionRepository, errConnectRepo := connection.NewConnectionMongoDBRepository(mongoConnection)
+	if errConnectRepo != nil {
+		return nil, errJobRepo
+	}
 
 	service := &services.UseCase{
-		ExternalDataSeaweedFS:     externalDataSeaweedFSRepository,
-		ExternalConnectionMongoDB: externalConnectionMongoDBRepository,
-		FileTTL:                   cfg.SeaweedFSTTL,
+		ExternalDataSeaweedFS: externalDataSeaweedFSRepository,
+		JobRepository:         jobRepository,
+		ConnectionRepository:  connectionRepository,
+		FileTTL:               cfg.SeaweedFSTTL,
 	}
 
 	if cfg.SeaweedFSTTL != "" {
@@ -142,5 +153,5 @@ func InitWorker() *Service {
 		MultiQueueConsumer: multiQueueConsumer,
 		Logger:             logger,
 		licenseShutdown:    licenseClient.GetLicenseManagerShutdown(),
-	}
+	}, nil
 }

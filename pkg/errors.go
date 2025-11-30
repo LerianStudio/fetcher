@@ -373,6 +373,12 @@ func ValidateBusinessError(err error, entityType string, args ...any) error {
 			Title:      "Invalid Metadata Nesting",
 			Message:    fmt.Sprintf("The metadata object cannot contain nested values. Please ensure that the value %v is not nested and try again.", args...),
 		},
+		constant.ErrCommunicateSeaweedFS: ValidationError{
+			EntityType: entityType,
+			Code:       constant.ErrCommunicateSeaweedFS.Error(),
+			Title:      "Communication Error with SeaweedFS",
+			Message:    "Error to communicate with SeaweedFS to download or upload file. Please try again.",
+		},
 	}
 
 	if mappedError, found := errorMap[err]; found {

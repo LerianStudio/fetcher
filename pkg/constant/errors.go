@@ -27,4 +27,5 @@ var (
 	ErrInvalidMetadataNesting       = errors.New("FET-0018")
 	ErrInvalidPathParameter         = errors.New("FET-0019")
 	ErrInvalidHeaderParameter       = errors.New("FET-0020")
+	ErrCommunicateSeaweedFS         = errors.New("FET-0021")
 )

@@ -23,7 +23,7 @@
   ],
   "queues": [
     {
-      "name": "fetcher.generate-fetcher.queue",
+      "name": "fetcher.extract-external-data.queue",
       "vhost": "/",
       "durable": true,
       "arguments": {
@@ -43,7 +43,7 @@
   ],
   "exchanges": [
     {
-      "name": "fetcher.generate-fetcher.exchange",
+      "name": "fetcher.extract-external-data.exchange",
       "vhost": "/",
       "type": "direct",
       "durable": true
@@ -57,9 +57,9 @@
   ],
   "bindings": [
     {
-      "source": "fetcher.generate-fetcher.exchange",
+      "source": "fetcher.extract-external-data.exchange",
       "vhost": "/",
-      "destination": "fetcher.generate-fetcher.queue",
+      "destination": "fetcher.extract-external-data.queue",
       "destination_type": "queue",
       "routing_key": "fetcher.job.key"
     },

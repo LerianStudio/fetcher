@@ -100,7 +100,7 @@ func InitServers() *Service {
 		Logger:                 logger,
 	}
 
-	connectionRepository, err := connection.NewConnectionMongoDBRepository(ctx, mongoConnection)
+	connectionRepository, err := connection.NewConnectionMongoDBRepository(mongoConnection)
 	if err != nil {
 		logger.Fatalf("Failed to create MongoDB repository: %v", err)
 	}
