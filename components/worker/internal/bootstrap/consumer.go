@@ -59,7 +59,7 @@ func (mq *MultiQueueConsumer) Run(l *commons.Launcher) error {
 }
 
 // handlerGenerateReport processes messages from the generate report queue.
-func (mq *MultiQueueConsumer) handlerGenerateReport(ctx context.Context, body []byte) error {
+func (mq *MultiQueueConsumer) handlerGenerateReport(ctx context.Context, body []byte, headers map[string]any) error {
 	logger, tracer, reqId, _ := commons.NewTrackingFromContext(ctx)
 
 	_, span := tracer.Start(ctx, "consumer.handler_generate_report")
@@ -71,7 +71,7 @@ func (mq *MultiQueueConsumer) handlerGenerateReport(ctx context.Context, body []
 
 	logger.Info("Processing message from generate report queue")
 
-	err := mq.UseCase.ExtractExternalData(ctx, body)
+	err := mq.UseCase.ExtractExternalData(ctx, body, headers)
 	if err != nil {
 		opentelemetry.HandleSpanError(&span, "Error generating report.", err)
 

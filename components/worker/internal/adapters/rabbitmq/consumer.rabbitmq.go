@@ -24,7 +24,7 @@ type ConsumerRepository interface {
 }
 
 // QueueHandlerFunc is a function that processes a specific queue.
-type QueueHandlerFunc func(ctx context.Context, body []byte) error
+type QueueHandlerFunc func(ctx context.Context, body []byte, headers map[string]any) error
 
 // ConsumerRoutes struct
 type ConsumerRoutes struct {
@@ -144,7 +144,14 @@ func (cr *ConsumerRoutes) processMessage(workerID int, queue string, handlerFunc
 
 	cr.Infof("Worker %d: Starting processing for queue %s", workerID, queue)
 
-	err = handlerFunc(ctx, message.Body)
+	headers := make(map[string]any)
+	if message.Headers != nil {
+		for k, v := range message.Headers {
+			headers[k] = v
+		}
+	}
+
+	err = handlerFunc(ctx, message.Body, headers)
 	if err != nil {
 		cr.Errorf("Worker %d: Error processing message from queue %s: %v", workerID, queue, err)
 		opentelemetry.HandleSpanError(&spanConsumer, "Error processing message", err)

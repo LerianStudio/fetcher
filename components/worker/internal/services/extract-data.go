@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
+	"regexp"
 	"strings"
 
 	"github.com/LerianStudio/fetcher/pkg/constant"
@@ -15,7 +15,6 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 	"github.com/LerianStudio/fetcher/pkg/mongodb/job"
 	libCommons "github.com/LerianStudio/lib-commons/v2/commons"
-	libCrypto "github.com/LerianStudio/lib-commons/v2/commons/crypto"
 	"github.com/LerianStudio/lib-commons/v2/commons/log"
 	libOtel "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
 
@@ -47,13 +46,13 @@ type ExtractExternalDataMessage struct {
 }
 
 // ExtractExternalData handles the extraction of data from external sources.
-func (uc *UseCase) ExtractExternalData(ctx context.Context, body []byte) error {
+func (uc *UseCase) ExtractExternalData(ctx context.Context, body []byte, headers map[string]any) error {
 	logger, tracer, _, _ := libCommons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "service.extract_external_data")
 	defer span.End()
 
-	message, err := uc.parseMessage(body, &span, logger)
+	message, err := uc.parseMessage(ctx, body, headers, &span, logger)
 	if err != nil {
 		return err
 	}
@@ -89,28 +88,110 @@ func (uc *UseCase) ExtractExternalData(ctx context.Context, body []byte) error {
 }
 
 // parseMessage parses the RabbitMQ message body into ExtractExternalDataMessage struct.
-func (uc *UseCase) parseMessage(body []byte, span *trace.Span, logger log.Logger) (*ExtractExternalDataMessage, error) {
+// If parsing fails, it attempts to extract jobID from headers or partial JSON to update job status.
+func (uc *UseCase) parseMessage(ctx context.Context, body []byte, headers map[string]any, span *trace.Span, logger log.Logger) (*ExtractExternalDataMessage, error) {
 	var message *ExtractExternalDataMessage
 
 	err := json.Unmarshal(body, &message)
 	if err != nil {
-
-		////TODO: Validar como atualizar o job para error
-		//errJob := uc.JobRepository.UpdateStatus(ctx, message.JobID, message.OrganizationID, job.JobStatusFailed, nil)
-		//if errJob != nil {
-		//	libOtel.HandleSpanError(span, "Error update job status, Err: ", err)
-		//	logger.Errorf("Error update job status, Err: %s", err.Error())
-		//
-		//	return nil, errJob
-		//}
-
 		libOtel.HandleSpanError(span, "Error unmarshalling message.", err)
 		logger.Errorf("Error unmarshalling message: %s", err.Error())
 
-		return message, err
+		// Try to extract jobID from multiple sources to update job status
+		jobID, orgID := uc.extractJobIDFromMultipleSources(ctx, body, headers, logger)
+		if jobID != uuid.Nil {
+			updateErr := uc.updateJobWithErrors(ctx, jobID, orgID, fmt.Sprintf("Failed to parse message: %v", err))
+			if updateErr != nil {
+				logger.Errorf("Failed to update job status after parse error: %v", updateErr)
+			} else {
+				logger.Infof("Updated job %s to failed status due to parse error", jobID)
+			}
+		} else {
+			logger.Warnf("Could not extract jobID from headers or partial JSON, job status will not be updated")
+		}
+
+		return nil, fmt.Errorf("failed to parse message: %w", err)
 	}
 
 	return message, nil
+}
+
+// extractJobIDFromMultipleSources attempts to extract jobID and organizationID from multiple sources.
+// Priority: 1) Headers, 2) Partial JSON parse, 3) Returns zero UUIDs if both fail.
+func (uc *UseCase) extractJobIDFromMultipleSources(ctx context.Context, body []byte, headers map[string]any, logger log.Logger) (uuid.UUID, uuid.UUID) {
+	if headers != nil {
+		if jobIDHeader, exists := headers[constant.HeaderJobID]; exists {
+			if jobIDStr, ok := jobIDHeader.(string); ok {
+				jobID, err := uuid.Parse(jobIDStr)
+				if err == nil {
+					logger.Infof("Extracted jobID from header: %s", jobID)
+					var orgID uuid.UUID
+					if orgIDHeader, exists := headers["organizationId"]; exists {
+						if orgIDStr, ok := orgIDHeader.(string); ok {
+							orgID, _ = uuid.Parse(orgIDStr)
+						}
+					}
+					return jobID, orgID
+				}
+			}
+		}
+	}
+
+	jobID, orgID := uc.extractJobIDFromPartialJSON(body, logger)
+	if jobID != uuid.Nil {
+		return jobID, orgID
+	}
+
+	return uuid.Nil, uuid.Nil
+}
+
+// extractJobIDFromPartialJSON attempts to extract jobID and organizationID from a potentially malformed JSON.
+// Uses regex to find UUIDs in the JSON structure, looking for "jobId" and "organizationId" fields.
+func (uc *UseCase) extractJobIDFromPartialJSON(body []byte, logger log.Logger) (uuid.UUID, uuid.UUID) {
+	bodyStr := string(body)
+	var partial struct {
+		JobID          *string `json:"jobId"`
+		OrganizationID *string `json:"organizationId"`
+	}
+
+	// Use json.Decoder which is more lenient
+	decoder := json.NewDecoder(strings.NewReader(bodyStr))
+	decoder.DisallowUnknownFields()
+	_ = decoder.Decode(&partial)
+
+	if partial.JobID != nil {
+		jobID, err := uuid.Parse(*partial.JobID)
+		if err == nil {
+			logger.Infof("Extracted jobID from partial JSON: %s", jobID)
+
+			var orgID uuid.UUID
+			if partial.OrganizationID != nil {
+				orgID, _ = uuid.Parse(*partial.OrganizationID)
+			}
+
+			return jobID, orgID
+		}
+	}
+
+	jobIDRegex := regexp.MustCompile(`"jobId"\s*:\s*"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"`)
+	matches := jobIDRegex.FindStringSubmatch(bodyStr)
+	if len(matches) > 1 {
+		jobID, err := uuid.Parse(matches[1])
+		if err == nil {
+			logger.Infof("Extracted jobID from regex: %s", jobID)
+
+			orgIDRegex := regexp.MustCompile(`"organizationId"\s*:\s*"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"`)
+			orgMatches := orgIDRegex.FindStringSubmatch(bodyStr)
+			var orgID uuid.UUID
+			if len(orgMatches) > 1 {
+				orgID, _ = uuid.Parse(orgMatches[1])
+			}
+
+			return jobID, orgID
+		}
+	}
+
+	return uuid.Nil, uuid.Nil
 }
 
 // handleErrorWithUpdate logs error and updates report status to error.
@@ -217,15 +298,13 @@ func (uc *UseCase) queryDatabase(
 
 	databaseFilters := allFilters[databaseName]
 
-	// Handle MongoDB with special plugin_crm logic
 	if dataSource.GetType() == constant.MongoDBType && databaseName == "plugin_crm" {
 		// MongoDB plugin_crm requires special handling (decryption, collection name transformation)
-		// Fall back to the specific method for this case
 		mongoDS, ok := dataSource.(*datasourceMongoConfig.DataSourceConfigMongoDB)
 		if !ok {
 			return fmt.Errorf("invalid MongoDB data source type")
 		}
-		return uc.queryMongoDatabase(ctx, mongoDS, databaseName, tables, databaseFilters, result, logger)
+		return uc.QueryPluginCRM(ctx, mongoDS, databaseName, tables, databaseFilters, result, logger)
 	}
 
 	queryResult, errQuery := dataSource.Query(ctx, tables, databaseFilters, logger)
@@ -329,7 +408,7 @@ func (uc *UseCase) saveExternalDataToSeaweedFS(
 	return nil
 }
 
-// queryMongoDatabase handles querying MongoDB databases.
+// queryMongoDatabase handles querying MongoDB databases (excluding plugin_crm which has special handling).
 func (uc *UseCase) queryMongoDatabase(
 	ctx context.Context,
 	dataSource *datasourceMongoConfig.DataSourceConfigMongoDB,
@@ -339,117 +418,31 @@ func (uc *UseCase) queryMongoDatabase(
 	result map[string]map[string][]map[string]any,
 	logger log.Logger,
 ) error {
-	_, tracer, reqId, _ := libCommons.NewTrackingFromContext(ctx)
+	_, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
 
 	_, span := tracer.Start(ctx, "service.extract_external_data.query_mongo_database")
 	defer span.End()
 
 	span.SetAttributes(
-		attribute.String("app.request.request_id", reqId),
+		attribute.String("app.request.request_id", reqID),
 		attribute.String("app.request.database_name", databaseName),
 	)
 
 	for collection, fields := range collections {
 		collectionFilters := getTableFilters(databaseFilters, collection)
 
-		if err := uc.processMongoCollection(ctx, dataSource, databaseName, collection, fields, collectionFilters, collections, result, logger); err != nil {
+		collectionResult, err := uc.queryMongoCollectionWithFilters(ctx, dataSource, collection, fields, collectionFilters, logger, databaseName)
+		if err != nil {
 			return err
 		}
+
+		result[databaseName][collection] = collectionResult
 	}
 
 	return nil
 }
 
-// processMongoCollection processes a single MongoDB collection.
-func (uc *UseCase) processMongoCollection(
-	ctx context.Context,
-	dataSource *datasourceMongoConfig.DataSourceConfigMongoDB,
-	databaseName, collection string,
-	fields []string,
-	collectionFilters map[string]modelJob.FilterCondition,
-	allCollections map[string][]string,
-	result map[string]map[string][]map[string]any,
-	logger log.Logger,
-) error {
-	// Handle plugin_crm special case
-	if databaseName == "plugin_crm" && collection != "organization" {
-		return uc.processPluginCRMCollection(ctx, dataSource, collection, fields, collectionFilters, allCollections, result, logger)
-	}
-
-	// Handle regular collections
-	return uc.processRegularMongoCollection(ctx, dataSource, collection, fields, collectionFilters, result, logger)
-}
-
-// processPluginCRMCollection handles plugin_crm specific collection processing.
-func (uc *UseCase) processPluginCRMCollection(
-	ctx context.Context,
-	dataSource *datasourceMongoConfig.DataSourceConfigMongoDB,
-	collection string,
-	fields []string,
-	collectionFilters map[string]modelJob.FilterCondition,
-	allCollections map[string][]string,
-	result map[string]map[string][]map[string]any,
-	logger log.Logger,
-) error {
-	// Get organization field to create collection name
-	orgFields, exists := allCollections["organization"]
-	if !exists || len(orgFields) == 0 {
-		// TODO: estourar um erro geral pois preciso do filtro
-		logger.Errorf("Organization field not found for plugin_crm collection %s", collection)
-		return nil
-	}
-
-	newCollection := collection + "_" + orgFields[0]
-
-	// Query the collection
-	collectionResult, err := uc.queryMongoCollectionWithFilters(ctx, dataSource, newCollection, fields, collectionFilters, logger, "plugin_crm")
-	if err != nil {
-		return err
-	}
-
-	result["plugin_crm"][collection] = collectionResult
-
-	// Decrypt data for plugin_crm
-	decryptedResult, err := uc.decryptPluginCRMData(logger, result["plugin_crm"][collection], fields)
-	if err != nil {
-		logger.Errorf("Error decrypting data for collection %s: %s", collection, err.Error())
-		//return pkg.ValidateBusinessError(constant.ErrDecryptionData, "", err)
-		return fmt.Errorf("error decrypting data for collection %s: %w", collection, err)
-	}
-
-	result["plugin_crm"][collection] = decryptedResult
-
-	return nil
-}
-
-// processRegularMongoCollection handles regular MongoDB collection processing.
-func (uc *UseCase) processRegularMongoCollection(
-	ctx context.Context,
-	dataSource *datasourceMongoConfig.DataSourceConfigMongoDB,
-	collection string,
-	fields []string,
-	collectionFilters map[string]modelJob.FilterCondition,
-	result map[string]map[string][]map[string]any,
-	logger log.Logger,
-) error {
-	// Determine database name from context (assuming it's available in the result map)
-	var databaseName string
-	for dbName := range result {
-		databaseName = dbName
-		break
-	}
-
-	collectionResult, err := uc.queryMongoCollectionWithFilters(ctx, dataSource, collection, fields, collectionFilters, logger, databaseName)
-	if err != nil {
-		return err
-	}
-
-	result[databaseName][collection] = collectionResult
-
-	return nil
-}
-
-// queryMongoCollectionWithFilters queries a MongoDB collection with or without filters.
+// queryMongoCollectionWithFilters queries a MongoDB collection with or without filters (generic version without plugin_crm transformation).
 func (uc *UseCase) queryMongoCollectionWithFilters(
 	ctx context.Context,
 	dataSource *datasourceMongoConfig.DataSourceConfigMongoDB,
@@ -465,19 +458,8 @@ func (uc *UseCase) queryMongoCollectionWithFilters(
 	)
 
 	if len(collectionFilters) > 0 {
-		// Check if this is plugin_crm and needs filter transformation
-		if strings.Contains(collection, "_") && !strings.Contains(collection, "organization") {
-			transformedFilter, err := uc.transformPluginCRMAdvancedFilters(collectionFilters, logger)
-			if err != nil {
-				return nil, fmt.Errorf("error transforming advanced filters for collection %s: %w", collection, err)
-			}
-
-			collectionFilters = transformedFilter
-		}
-
 		queryResult, errQueryResult = dataSource.MongoDBRepository.QueryWithAdvancedFilters(ctx, collection, fields, collectionFilters)
 	} else {
-		// No filters, use simple query method
 		queryResult, errQueryResult = dataSource.MongoDBRepository.Query(ctx, collection, fields, nil)
 	}
 
@@ -487,339 +469,6 @@ func (uc *UseCase) queryMongoCollectionWithFilters(
 	}
 
 	return queryResult, nil
-}
-
-// transformPluginCRMAdvancedFilters transforms advanced FilterCondition filters for plugin_crm to use search fields
-func (uc *UseCase) transformPluginCRMAdvancedFilters(filter map[string]modelJob.FilterCondition, logger log.Logger) (map[string]modelJob.FilterCondition, error) {
-	if filter == nil {
-		return nil, nil
-	}
-
-	hashSecretKey := os.Getenv("CRYPTO_HASH_SECRET_KEY_PLUGIN_CRM")
-	if hashSecretKey == "" {
-		return nil, fmt.Errorf("CRYPTO_HASH_SECRET_KEY_PLUGIN_CRM environment variable not set")
-	}
-
-	crypto := &libCrypto.Crypto{
-		HashSecretKey: hashSecretKey,
-		Logger:        logger,
-	}
-
-	transformedFilter := make(map[string]modelJob.FilterCondition)
-
-	// Define field mappings: encrypted field -> search field
-	fieldMappings := map[string]string{
-		"document":                "search.document",
-		"name":                    "search.name",
-		"banking_details.account": "search.banking_details_account",
-		"banking_details.iban":    "search.banking_details_iban",
-		"contact.primary_email":   "search.contact_primary_email",
-		"contact.secondary_email": "search.contact_secondary_email",
-		"contact.mobile_phone":    "search.contact_mobile_phone",
-		"contact.other_phone":     "search.contact_other_phone",
-	}
-
-	for fieldName, condition := range filter {
-		if searchField, exists := fieldMappings[fieldName]; exists {
-			// Transform the condition by hashing string values
-			transformedCondition := modelJob.FilterCondition{}
-
-			// Transform Equals values
-			if len(condition.Equals) > 0 {
-				transformedCondition.Equals = uc.hashFilterValues(condition.Equals, crypto)
-			}
-
-			// Transform GreaterThan values
-			if len(condition.GreaterThan) > 0 {
-				transformedCondition.GreaterThan = uc.hashFilterValues(condition.GreaterThan, crypto)
-			}
-
-			// Transform GreaterOrEqual values
-			if len(condition.GreaterOrEqual) > 0 {
-				transformedCondition.GreaterOrEqual = uc.hashFilterValues(condition.GreaterOrEqual, crypto)
-			}
-
-			// Transform LessThan values
-			if len(condition.LessThan) > 0 {
-				transformedCondition.LessThan = uc.hashFilterValues(condition.LessThan, crypto)
-			}
-
-			// Transform LessOrEqual values
-			if len(condition.LessOrEqual) > 0 {
-				transformedCondition.LessOrEqual = uc.hashFilterValues(condition.LessOrEqual, crypto)
-			}
-
-			// Transform Between values
-			if len(condition.Between) > 0 {
-				transformedCondition.Between = uc.hashFilterValues(condition.Between, crypto)
-			}
-
-			// Transform In values
-			if len(condition.In) > 0 {
-				transformedCondition.In = uc.hashFilterValues(condition.In, crypto)
-			}
-
-			// Transform NotIn values
-			if len(condition.NotIn) > 0 {
-				transformedCondition.NotIn = uc.hashFilterValues(condition.NotIn, crypto)
-			}
-
-			transformedFilter[searchField] = transformedCondition
-
-			logger.Infof("Transformed advanced filter: %s -> %s", fieldName, searchField)
-		} else {
-			// Keep non-mapped fields as-is
-			transformedFilter[fieldName] = condition
-		}
-	}
-
-	return transformedFilter, nil
-}
-
-// hashFilterValues hashes string values in a filter condition array
-func (uc *UseCase) hashFilterValues(values []any, crypto *libCrypto.Crypto) []any {
-	hashedValues := make([]any, len(values))
-
-	for i, value := range values {
-		if strValue, ok := value.(string); ok && strValue != "" {
-			hash := crypto.GenerateHash(&strValue)
-			hashedValues[i] = hash
-		} else {
-			hashedValues[i] = value // Keep non-string values as-is
-		}
-	}
-
-	return hashedValues
-}
-
-// decryptPluginCRMData decrypts sensitive fields for plugin_crm database
-func (uc *UseCase) decryptPluginCRMData(logger log.Logger, collectionResult []map[string]any, fields []string) ([]map[string]any, error) {
-	// Check if we need to decrypt any fields
-	needsDecryption := false
-
-	for _, field := range fields {
-		// Check for top-level encrypted fields
-		if isEncryptedField(field) {
-			needsDecryption = true
-			break
-		}
-		// Check for nested fields that might need decryption
-		if strings.Contains(field, ".") {
-			needsDecryption = true
-			break
-		}
-	}
-
-	if !needsDecryption {
-		return collectionResult, nil
-	}
-
-	// Initialize crypto instance
-	hashSecretKey := "fe8af9629a42c16b13d933365ed37366d1cb6e19812154804e794fe5e30a2d9f"
-	encryptSecretKey := "5044a8d5a3a3110871c99473af43f83f0150e293a09cdc29107235d028ed91e0"
-	// TODO: Adicionar depois no .env as chaves de crypto
-	//if encryptSecretKey == "" {
-	//	return nil, fmt.Errorf("CRYPTO_ENCRYPT_SECRET_KEY_PLUGIN_CRM environment variable not set")
-	//}
-	//
-	//if hashSecretKey == "" {
-	//	return nil, fmt.Errorf("CRYPTO_HASH_SECRET_KEY_PLUGIN_CRM environment variable not set")
-	//}
-
-	crypto := &libCrypto.Crypto{
-		HashSecretKey:    hashSecretKey,
-		EncryptSecretKey: encryptSecretKey,
-		Logger:           logger,
-	}
-
-	err := crypto.InitializeCipher()
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize cipher: %w", err)
-	}
-
-	// Process each record in the collection
-	for i, record := range collectionResult {
-		decryptedRecord, err := uc.decryptRecord(record, crypto)
-		if err != nil {
-			return nil, fmt.Errorf("failed to decrypt record %d: %w", i, err)
-		}
-
-		collectionResult[i] = decryptedRecord
-	}
-
-	return collectionResult, nil
-}
-
-// isEncryptedField checks if a field is known to be encrypted in plugin_crm
-func isEncryptedField(field string) bool {
-	encryptedFields := map[string]bool{
-		"document": true,
-		"name":     true,
-	}
-
-	return encryptedFields[field]
-}
-
-// decryptRecord decrypts a single record's encrypted fields
-func (uc *UseCase) decryptRecord(record map[string]any, crypto *libCrypto.Crypto) (map[string]any, error) {
-	// Create a copy of the record to avoid modifying the original
-	decryptedRecord := make(map[string]any)
-	for k, v := range record {
-		decryptedRecord[k] = v
-	}
-
-	// Decrypt top-level fields
-	if err := uc.decryptTopLevelFields(decryptedRecord, crypto); err != nil {
-		return nil, err
-	}
-
-	// Decrypt nested fields
-	if err := uc.decryptNestedFields(decryptedRecord, crypto); err != nil {
-		return nil, err
-	}
-
-	return decryptedRecord, nil
-}
-
-// decryptTopLevelFields decrypts top-level encrypted fields
-func (uc *UseCase) decryptTopLevelFields(record map[string]any, crypto *libCrypto.Crypto) error {
-	for fieldName, fieldValue := range record {
-		if isEncryptedField(fieldName) && fieldValue != nil {
-			if err := uc.decryptFieldValue(record, fieldName, fieldValue, crypto); err != nil {
-				return fmt.Errorf("failed to decrypt field %s: %w", fieldName, err)
-			}
-		}
-	}
-
-	return nil
-}
-
-// decryptNestedFields decrypts nested encrypted fields in the record
-func (uc *UseCase) decryptNestedFields(record map[string]any, crypto *libCrypto.Crypto) error {
-	if err := uc.decryptContactFields(record, crypto); err != nil {
-		return err
-	}
-
-	if err := uc.decryptBankingDetailsFields(record, crypto); err != nil {
-		return err
-	}
-
-	if err := uc.decryptLegalPersonFields(record, crypto); err != nil {
-		return err
-	}
-
-	if err := uc.decryptNaturalPersonFields(record, crypto); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// decryptContactFields decrypts fields within the contact object
-func (uc *UseCase) decryptContactFields(record map[string]any, crypto *libCrypto.Crypto) error {
-	contact, ok := record["contact"].(map[string]any)
-	if !ok {
-		return nil
-	}
-
-	contactFields := []string{"primary_email", "secondary_email", "mobile_phone", "other_phone"}
-	for _, fieldName := range contactFields {
-		if fieldValue, exists := contact[fieldName]; exists && fieldValue != nil {
-			if err := uc.decryptFieldValue(contact, fieldName, fieldValue, crypto); err != nil {
-				return fmt.Errorf("failed to decrypt contact.%s: %w", fieldName, err)
-			}
-		}
-	}
-
-	record["contact"] = contact
-
-	return nil
-}
-
-// decryptBankingDetailsFields decrypts fields within the banking_details object
-func (uc *UseCase) decryptBankingDetailsFields(record map[string]any, crypto *libCrypto.Crypto) error {
-	bankingDetails, ok := record["banking_details"].(map[string]any)
-	if !ok {
-		return nil
-	}
-
-	bankingFields := []string{"account", "iban"}
-	for _, fieldName := range bankingFields {
-		if fieldValue, exists := bankingDetails[fieldName]; exists && fieldValue != nil {
-			if err := uc.decryptFieldValue(bankingDetails, fieldName, fieldValue, crypto); err != nil {
-				return fmt.Errorf("failed to decrypt banking_details.%s: %w", fieldName, err)
-			}
-		}
-	}
-
-	record["banking_details"] = bankingDetails
-
-	return nil
-}
-
-// decryptLegalPersonFields decrypts fields within the legal_person object
-func (uc *UseCase) decryptLegalPersonFields(record map[string]any, crypto *libCrypto.Crypto) error {
-	legalPerson, ok := record["legal_person"].(map[string]any)
-	if !ok {
-		return nil
-	}
-
-	representative, ok := legalPerson["representative"].(map[string]any)
-	if !ok {
-		return nil
-	}
-
-	representativeFields := []string{"name", "document", "email"}
-	for _, fieldName := range representativeFields {
-		if fieldValue, exists := representative[fieldName]; exists && fieldValue != nil {
-			if err := uc.decryptFieldValue(representative, fieldName, fieldValue, crypto); err != nil {
-				return fmt.Errorf("failed to decrypt legal_person.representative.%s: %w", fieldName, err)
-			}
-		}
-	}
-
-	legalPerson["representative"] = representative
-	record["legal_person"] = legalPerson
-
-	return nil
-}
-
-// decryptNaturalPersonFields decrypts fields within the natural_person object
-func (uc *UseCase) decryptNaturalPersonFields(record map[string]any, crypto *libCrypto.Crypto) error {
-	naturalPerson, ok := record["natural_person"].(map[string]any)
-	if !ok {
-		return nil
-	}
-
-	naturalPersonFields := []string{"mother_name", "father_name"}
-	for _, fieldName := range naturalPersonFields {
-		if fieldValue, exists := naturalPerson[fieldName]; exists && fieldValue != nil {
-			if err := uc.decryptFieldValue(naturalPerson, fieldName, fieldValue, crypto); err != nil {
-				return fmt.Errorf("failed to decrypt natural_person.%s: %w", fieldName, err)
-			}
-		}
-	}
-
-	record["natural_person"] = naturalPerson
-
-	return nil
-}
-
-// decryptFieldValue decrypts a single field value if it's a non-empty string
-func (uc *UseCase) decryptFieldValue(container map[string]any, fieldName string, fieldValue any, crypto *libCrypto.Crypto) error {
-	strValue, ok := fieldValue.(string)
-	if !ok || strValue == "" {
-		return nil
-	}
-
-	decryptedValue, err := crypto.Decrypt(&strValue)
-	if err != nil {
-		return err
-	}
-
-	container[fieldName] = *decryptedValue
-
-	return nil
 }
 
 // shouldSkipProcessing checks if job should be skipped due to idempotency.
@@ -858,7 +507,7 @@ func (uc *UseCase) checkReportStatus(ctx context.Context, jobID uuid.UUID, logge
 // Returns an array of strings containing the database/config names.
 // Example: {"plugin_crm": {...}, "midaz_onboarding": {...}} -> ["plugin_crm", "midaz_onboarding"]
 func extractConfigNamesFromMappedFields(mappedFields map[string]map[string][]string) []string {
-	if mappedFields == nil || len(mappedFields) == 0 {
+	if len(mappedFields) == 0 {
 		return []string{}
 	}
 
