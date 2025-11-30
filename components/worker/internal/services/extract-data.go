@@ -10,7 +10,6 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/datasource"
 	datasourceMongoConfig "github.com/LerianStudio/fetcher/pkg/model/datasource/mongodb"
-	datasourcePostgresConfig "github.com/LerianStudio/fetcher/pkg/model/datasource/postgres"
 	modelJob "github.com/LerianStudio/fetcher/pkg/model/job"
 	"github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 	"github.com/LerianStudio/fetcher/pkg/mongodb/job"
@@ -19,7 +18,6 @@ import (
 	libOtel "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
 
 	"github.com/google/uuid"
-	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -97,8 +95,7 @@ func (uc *UseCase) parseMessage(ctx context.Context, body []byte, headers map[st
 		libOtel.HandleSpanError(span, "Error unmarshalling message.", err)
 		logger.Errorf("Error unmarshalling message: %s", err.Error())
 
-		// Try to extract jobID from multiple sources to update job status
-		jobID, orgID := uc.extractJobIDFromMultipleSources(ctx, body, headers, logger)
+		jobID, orgID := uc.extractJobIDFromMultipleSources(body, headers, logger)
 		if jobID != uuid.Nil {
 			updateErr := uc.updateJobWithErrors(ctx, jobID, orgID, fmt.Sprintf("Failed to parse message: %v", err))
 			if updateErr != nil {
@@ -117,20 +114,22 @@ func (uc *UseCase) parseMessage(ctx context.Context, body []byte, headers map[st
 }
 
 // extractJobIDFromMultipleSources attempts to extract jobID and organizationID from multiple sources.
-// Priority: 1) Headers, 2) Partial JSON parse, 3) Returns zero UUIDs if both fail.
-func (uc *UseCase) extractJobIDFromMultipleSources(ctx context.Context, body []byte, headers map[string]any, logger log.Logger) (uuid.UUID, uuid.UUID) {
+func (uc *UseCase) extractJobIDFromMultipleSources(body []byte, headers map[string]any, logger log.Logger) (uuid.UUID, uuid.UUID) {
 	if headers != nil {
 		if jobIDHeader, exists := headers[constant.HeaderJobID]; exists {
 			if jobIDStr, ok := jobIDHeader.(string); ok {
 				jobID, err := uuid.Parse(jobIDStr)
 				if err == nil {
 					logger.Infof("Extracted jobID from header: %s", jobID)
+
 					var orgID uuid.UUID
-					if orgIDHeader, exists := headers["organizationId"]; exists {
+
+					if orgIDHeader, existOrg := headers["organizationId"]; existOrg {
 						if orgIDStr, ok := orgIDHeader.(string); ok {
 							orgID, _ = uuid.Parse(orgIDStr)
 						}
 					}
+
 					return jobID, orgID
 				}
 			}
@@ -149,12 +148,12 @@ func (uc *UseCase) extractJobIDFromMultipleSources(ctx context.Context, body []b
 // Uses regex to find UUIDs in the JSON structure, looking for "jobId" and "organizationId" fields.
 func (uc *UseCase) extractJobIDFromPartialJSON(body []byte, logger log.Logger) (uuid.UUID, uuid.UUID) {
 	bodyStr := string(body)
+
 	var partial struct {
 		JobID          *string `json:"jobId"`
 		OrganizationID *string `json:"organizationId"`
 	}
 
-	// Use json.Decoder which is more lenient
 	decoder := json.NewDecoder(strings.NewReader(bodyStr))
 	decoder.DisallowUnknownFields()
 	_ = decoder.Decode(&partial)
@@ -174,6 +173,7 @@ func (uc *UseCase) extractJobIDFromPartialJSON(body []byte, logger log.Logger) (
 	}
 
 	jobIDRegex := regexp.MustCompile(`"jobId"\s*:\s*"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"`)
+
 	matches := jobIDRegex.FindStringSubmatch(bodyStr)
 	if len(matches) > 1 {
 		jobID, err := uuid.Parse(matches[1])
@@ -182,6 +182,7 @@ func (uc *UseCase) extractJobIDFromPartialJSON(body []byte, logger log.Logger) (
 
 			orgIDRegex := regexp.MustCompile(`"organizationId"\s*:\s*"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"`)
 			orgMatches := orgIDRegex.FindStringSubmatch(bodyStr)
+
 			var orgID uuid.UUID
 			if len(orgMatches) > 1 {
 				orgID, _ = uuid.Parse(orgMatches[1])
@@ -258,6 +259,7 @@ func (uc *UseCase) queryDatabase(
 
 	// Find the connection for this database
 	var foundConnection *connection.Connection
+
 	for _, conn := range connections {
 		if conn.ConfigName == databaseName {
 			foundConnection = conn
@@ -268,6 +270,7 @@ func (uc *UseCase) queryDatabase(
 	if foundConnection == nil {
 		err := fmt.Errorf("connection not found for database: %s", databaseName)
 		libOtel.HandleSpanError(&dbSpan, "Connection not found", err)
+
 		return err
 	}
 
@@ -304,6 +307,7 @@ func (uc *UseCase) queryDatabase(
 		if !ok {
 			return fmt.Errorf("invalid MongoDB data source type")
 		}
+
 		return uc.QueryPluginCRM(ctx, mongoDS, databaseName, tables, databaseFilters, result, logger)
 	}
 
@@ -316,51 +320,6 @@ func (uc *UseCase) queryDatabase(
 	// Merge query results into the result map
 	for tableOrCollection, tableResult := range queryResult {
 		result[databaseName][tableOrCollection] = tableResult
-	}
-
-	return nil
-}
-
-// queryPostgresDatabase handles querying PostgreSQL databases.
-func (uc *UseCase) queryPostgresDatabase(
-	ctx context.Context,
-	dataSource *datasourcePostgresConfig.DataSourceConfigPostgres,
-	databaseName string,
-	tables map[string][]string,
-	databaseFilters map[string]map[string]modelJob.FilterCondition,
-	result map[string]map[string][]map[string]any,
-	logger log.Logger,
-) error {
-	// Execute schema query
-	schemaResult, err := dataSource.PostgresRepository.GetDatabaseSchema(ctx)
-	if err != nil {
-		logger.Errorf("Error getting database schema for %s: %s", databaseName, err.Error())
-		return err
-	}
-
-	for table, fields := range tables {
-		tableFilters := getTableFilters(databaseFilters, table)
-
-		var (
-			tableResult []map[string]any
-			queryResult any
-			errQuery    error
-		)
-
-		if len(tableFilters) > 0 {
-			queryResult, errQuery = dataSource.PostgresRepository.QueryWithAdvancedFilters(ctx, schemaResult, table, fields, tableFilters)
-		} else {
-			queryResult, errQuery = dataSource.PostgresRepository.Query(ctx, schemaResult, table, fields, nil)
-		}
-
-		if errQuery != nil {
-			logger.Errorf("Error querying table %s in %s: %s", table, databaseName, errQuery.Error())
-			return errQuery
-		}
-
-		tableResult = queryResult.([]map[string]any)
-
-		result[databaseName][table] = tableResult
 	}
 
 	return nil
@@ -391,6 +350,7 @@ func (uc *UseCase) saveExternalDataToSeaweedFS(
 	if err != nil {
 		libOtel.HandleSpanError(span, "Error marshalling result to JSON", err)
 		logger.Errorf("Error marshalling result to JSON: %s", err.Error())
+
 		return fmt.Errorf("marshalling result to JSON: %w", err)
 	}
 
@@ -400,75 +360,13 @@ func (uc *UseCase) saveExternalDataToSeaweedFS(
 	if err := uc.ExternalDataSeaweedFS.Put(ctx, objectName, contentType, jsonData); err != nil {
 		libOtel.HandleSpanError(span, "Error saving external data to SeaweedFS", err)
 		logger.Errorf("Error saving external data to SeaweedFS: %s", err.Error())
+
 		return fmt.Errorf("saving external data to SeaweedFS: %w", err)
 	}
 
 	logger.Infof("Successfully saved external data to SeaweedFS: %s", objectName)
 
 	return nil
-}
-
-// queryMongoDatabase handles querying MongoDB databases (excluding plugin_crm which has special handling).
-func (uc *UseCase) queryMongoDatabase(
-	ctx context.Context,
-	dataSource *datasourceMongoConfig.DataSourceConfigMongoDB,
-	databaseName string,
-	collections map[string][]string,
-	databaseFilters map[string]map[string]modelJob.FilterCondition,
-	result map[string]map[string][]map[string]any,
-	logger log.Logger,
-) error {
-	_, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
-
-	_, span := tracer.Start(ctx, "service.extract_external_data.query_mongo_database")
-	defer span.End()
-
-	span.SetAttributes(
-		attribute.String("app.request.request_id", reqID),
-		attribute.String("app.request.database_name", databaseName),
-	)
-
-	for collection, fields := range collections {
-		collectionFilters := getTableFilters(databaseFilters, collection)
-
-		collectionResult, err := uc.queryMongoCollectionWithFilters(ctx, dataSource, collection, fields, collectionFilters, logger, databaseName)
-		if err != nil {
-			return err
-		}
-
-		result[databaseName][collection] = collectionResult
-	}
-
-	return nil
-}
-
-// queryMongoCollectionWithFilters queries a MongoDB collection with or without filters (generic version without plugin_crm transformation).
-func (uc *UseCase) queryMongoCollectionWithFilters(
-	ctx context.Context,
-	dataSource *datasourceMongoConfig.DataSourceConfigMongoDB,
-	collection string,
-	fields []string,
-	collectionFilters map[string]modelJob.FilterCondition,
-	logger log.Logger,
-	databaseName string,
-) ([]map[string]any, error) {
-	var (
-		queryResult    []map[string]any
-		errQueryResult error
-	)
-
-	if len(collectionFilters) > 0 {
-		queryResult, errQueryResult = dataSource.MongoDBRepository.QueryWithAdvancedFilters(ctx, collection, fields, collectionFilters)
-	} else {
-		queryResult, errQueryResult = dataSource.MongoDBRepository.Query(ctx, collection, fields, nil)
-	}
-
-	if errQueryResult != nil {
-		logger.Errorf("Error querying collection %s in %s: %s", collection, databaseName, errQueryResult.Error())
-		return nil, errQueryResult
-	}
-
-	return queryResult, nil
 }
 
 // shouldSkipProcessing checks if job should be skipped due to idempotency.
@@ -492,6 +390,7 @@ func (uc *UseCase) shouldSkipProcessing(ctx context.Context, jobID uuid.UUID, lo
 // checkReportStatus checks the current status of a report to implement idempotency.
 func (uc *UseCase) checkReportStatus(ctx context.Context, jobID uuid.UUID, logger log.Logger) (job.JobStatus, error) {
 	zeroUUID := uuid.UUID{}
+
 	jobData, err := uc.JobRepository.FindByID(ctx, jobID, zeroUUID)
 	if err != nil {
 		logger.Debugf("Could not check job status for %s (may be first attempt): %v", jobID, err)
