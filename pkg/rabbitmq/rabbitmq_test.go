@@ -130,7 +130,7 @@ func TestConsumerLoopAckOnSuccess(t *testing.T) {
 	adapter := &RabbitMQAdapter{conn: conn}
 
 	handled := make(chan []byte, 1)
-	handler := func(ctx context.Context, body []byte) error {
+	handler := func(ctx context.Context, body []byte, headers map[string]any) error {
 		handled <- body
 		cancel()
 		return nil
@@ -169,7 +169,7 @@ func TestConsumerLoopNackOnHandlerError(t *testing.T) {
 	adapter := &RabbitMQAdapter{conn: conn}
 
 	processed := make(chan struct{})
-	handler := func(context.Context, []byte) error {
+	handler := func(context.Context, []byte, map[string]any) error {
 		close(processed)
 		return errors.New("handler failed")
 	}
