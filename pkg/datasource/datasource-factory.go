@@ -26,11 +26,7 @@ func NewDataSourceFromConnection(ctx context.Context, conn *connection.Connectio
 		return nil, fmt.Errorf("connection cannot be nil")
 	}
 
-	baseConfig, err := newDataSourceConfigFromConnection(conn)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create base config: %w", err)
-	}
-
+	baseConfig := newDataSourceConfigFromConnection(conn)
 	switch conn.Type {
 	case connection.ConnectionTypeMongoDB:
 		return newDataSourceConfigMongoDB(ctx, baseConfig, conn, logger)
@@ -42,7 +38,7 @@ func NewDataSourceFromConnection(ctx context.Context, conn *connection.Connectio
 }
 
 // newDataSourceConfigFromConnection creates a base DataSourceConfig from a Connection entity.
-func newDataSourceConfigFromConnection(conn *connection.Connection) (datasource.DataSourceConfig, error) {
+func newDataSourceConfigFromConnection(conn *connection.Connection) datasource.DataSourceConfig {
 	var sslConfig connection.SSLConfig
 	if conn.SSL != nil {
 		sslConfig = *conn.SSL
@@ -60,7 +56,7 @@ func newDataSourceConfigFromConnection(conn *connection.Connection) (datasource.
 		PasswordEncrypted: conn.PasswordEncrypted,
 		SSL:               sslConfig,
 		Status:            "",
-	}, nil
+	}
 }
 
 // newDataSourceConfigMongoDB creates a MongoDB-specific DataSourceConfig.
@@ -112,7 +108,9 @@ func newDataSourceConfigMongoDB(ctx context.Context, base datasource.DataSourceC
 
 	if err := client.Ping(testCtx, nil); err != nil {
 		_ = client.Disconnect(testCtx)
+
 		logger.Errorf("Failed to ping MongoDB [%s]: %v", conn.ConfigName, err)
+
 		return nil, fmt.Errorf("failed to ping MongoDB: %w", err)
 	}
 

@@ -26,7 +26,7 @@ func (ds *DataSourceConfigPostgres) GetConfig() datasource.DataSourceConfig {
 
 // GetType returns the database type.
 func (ds *DataSourceConfigPostgres) GetType() string {
-	return ds.DataSourceConfig.Type
+	return ds.Type
 }
 
 // Connect establishes a connection to PostgreSQL.
@@ -34,6 +34,7 @@ func (ds *DataSourceConfigPostgres) GetType() string {
 func (ds *DataSourceConfigPostgres) Connect(ctx context.Context, logger log.Logger) error {
 	ds.Status = libConstant.DataSourceStatusAvailable
 	logger.Infof("PostgreSQL connection ready for %s", ds.ConfigName)
+
 	return nil
 }
 
@@ -44,13 +45,16 @@ func (ds *DataSourceConfigPostgres) Close(ctx context.Context) error {
 			return err
 		}
 	}
+
 	ds.Status = libConstant.DataSourceStatusUnavailable
+
 	return nil
 }
 
 // Query executes queries on multiple PostgreSQL tables.
 func (ds *DataSourceConfigPostgres) Query(ctx context.Context, tables map[string][]string, filters map[string]map[string]job.FilterCondition, logger log.Logger) (map[string][]map[string]any, error) {
 	result := make(map[string][]map[string]any)
+
 	schemaResult, err := ds.PostgresRepository.GetDatabaseSchema(ctx)
 	if err != nil {
 		logger.Errorf("Error getting database schema: %s", err.Error())

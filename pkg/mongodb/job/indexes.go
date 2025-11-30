@@ -99,6 +99,7 @@ func (jr *JobMongoDBRepository) EnsureIndexes(ctx context.Context) error {
 
 		libOpentelemetry.HandleSpanError(&span, "Failed to create job indexes", err)
 		logger.Errorf("Failed to create indexes for %s: %v", constant.MongoCollectionJob, err)
+
 		return err
 	}
 
@@ -135,6 +136,7 @@ func (jr *JobMongoDBRepository) DropIndexes(ctx context.Context) error {
 	if _, err := coll.Indexes().DropAll(ctx); err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to drop job indexes", err)
 		logger.Errorf("Failed to drop indexes for %s: %v", constant.MongoCollectionJob, err)
+
 		return err
 	}
 

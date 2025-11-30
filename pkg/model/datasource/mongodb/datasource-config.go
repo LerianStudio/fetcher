@@ -28,7 +28,7 @@ func (ds *DataSourceConfigMongoDB) GetConfig() datasource.DataSourceConfig {
 
 // GetType returns the database type.
 func (ds *DataSourceConfigMongoDB) GetType() string {
-	return ds.DataSourceConfig.Type
+	return ds.Type
 }
 
 // Connect establishes a connection to MongoDB.
@@ -36,6 +36,7 @@ func (ds *DataSourceConfigMongoDB) GetType() string {
 func (ds *DataSourceConfigMongoDB) Connect(ctx context.Context, logger log.Logger) error {
 	ds.Status = libConstant.DataSourceStatusAvailable
 	logger.Infof("MongoDB connection ready for %s", ds.ConfigName)
+
 	return nil
 }
 
@@ -46,13 +47,16 @@ func (ds *DataSourceConfigMongoDB) Close(ctx context.Context) error {
 			return err
 		}
 	}
+
 	ds.Status = libConstant.DataSourceStatusUnavailable
+
 	return nil
 }
 
 // Query executes queries on multiple MongoDB collections.
 func (ds *DataSourceConfigMongoDB) Query(ctx context.Context, collections map[string][]string, filters map[string]map[string]job.FilterCondition, logger log.Logger) (map[string][]map[string]any, error) {
 	result := make(map[string][]map[string]any)
+
 	for collection, fields := range collections {
 		collectionFilters := getCollectionFilters(filters, collection)
 

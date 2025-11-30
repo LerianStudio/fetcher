@@ -222,6 +222,7 @@ func (uc *UseCase) decryptPluginCRMData(logger log.Logger, collectionResult []ma
 			needsDecryption = true
 			break
 		}
+
 		if strings.Contains(field, ".") {
 			needsDecryption = true
 			break
