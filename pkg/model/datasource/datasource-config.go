@@ -3,6 +3,7 @@ package datasource
 import (
 	"context"
 
+	"github.com/LerianStudio/fetcher/pkg/model/job"
 	"github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 	"github.com/LerianStudio/lib-commons/v2/commons/log"
 )
@@ -37,4 +38,7 @@ type DataSource interface {
 
 	// GetType returns the database type (e.g., "mongodb", "postgresql").
 	GetType() string
+
+	// Query executes a query on the specified table/collection with the given fields and filters.
+	Query(ctx context.Context, tables map[string][]string, filters map[string]map[string]job.FilterCondition, logger log.Logger) (map[string][]map[string]any, error)
 }
