@@ -106,6 +106,7 @@ func InitServers() *Service {
 	}
 
 	logger.Info("Ensuring MongoDB indexes exist for connections...")
+
 	if err := connectionRepository.EnsureIndexes(ctx); err != nil {
 		logger.Fatalf("Failed to ensure MongoDB indexes: %v", err)
 	}

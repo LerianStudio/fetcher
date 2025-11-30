@@ -85,6 +85,7 @@ func (job *Job) ValidateForCreate() error {
 	if err != nil {
 		return err
 	}
+
 	job.Status = normalizedStatus
 
 	return nil
@@ -146,6 +147,7 @@ func (jm *JobMongoDBModel) FromEntity(job *Job) error {
 	if err != nil {
 		return err
 	}
+
 	job.Status = normalizedStatus
 
 	id := job.ID
@@ -154,6 +156,7 @@ func (jm *JobMongoDBModel) FromEntity(job *Job) error {
 		if err != nil {
 			return err
 		}
+
 		id = generated
 		job.ID = generated
 	}

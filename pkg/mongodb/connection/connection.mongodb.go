@@ -86,6 +86,7 @@ func (cr *ConnectionMongoDBRepository) Create(ctx context.Context, conn *Connect
 	if conn == nil {
 		err := errors.New("connection is required")
 		libOpentelemetry.HandleSpanError(&span, "Connection payload is nil", err)
+
 		return nil, err
 	}
 
@@ -96,6 +97,7 @@ func (cr *ConnectionMongoDBRepository) Create(ctx context.Context, conn *Connect
 	if conn.OrganizationID != uuid.Nil {
 		attributes = append(attributes, attribute.String("app.request.organization_id", conn.OrganizationID.String()))
 	}
+
 	if conn.ID != uuid.Nil {
 		attributes = append(attributes, attribute.String("app.request.connection_id", conn.ID.String()))
 	}
@@ -139,10 +141,12 @@ func (cr *ConnectionMongoDBRepository) Create(ctx context.Context, conn *Connect
 		if mongo.IsDuplicateKeyError(err) {
 			err := fmt.Errorf("connection with config_name '%s' already exists for organization '%s'", conn.ConfigName, conn.OrganizationID.String())
 			libOpentelemetry.HandleSpanError(&spanInsert, "Duplicate connection", err)
+
 			return nil, err
 		}
 
 		libOpentelemetry.HandleSpanError(&spanInsert, "Failed to insert connection", err)
+
 		return nil, err
 	}
 
@@ -159,6 +163,7 @@ func (cr *ConnectionMongoDBRepository) Update(ctx context.Context, conn *Connect
 	if conn == nil {
 		err := errors.New("connection is required")
 		libOpentelemetry.HandleSpanError(&span, "Connection payload is nil", err)
+
 		return nil, err
 	}
 
@@ -211,11 +216,13 @@ func (cr *ConnectionMongoDBRepository) Update(ctx context.Context, conn *Connect
 	defer spanUpdate.End()
 
 	spanUpdate.SetAttributes(attributes...)
+
 	if err := setSpanAttributesFromStruct(&spanUpdate, "app.request.repository_filter", filter); err != nil {
 		libOpentelemetry.HandleSpanError(&spanUpdate, "Failed to convert filter to JSON", err)
 	}
 
 	var record ConnectionMongoDBModel
+
 	opts := options.FindOneAndUpdate().SetReturnDocument(options.After)
 	if err := coll.FindOneAndUpdate(ctx, filter, update, opts).Decode(&record); err != nil {
 		libOpentelemetry.HandleSpanError(&spanUpdate, "Failed to update connection", err)
@@ -272,6 +279,7 @@ func (cr *ConnectionMongoDBRepository) Delete(ctx context.Context, id, organizat
 	if res.MatchedCount == 0 {
 		err := mongo.ErrNoDocuments
 		libOpentelemetry.HandleSpanError(&span, "Connection not found for delete", err)
+
 		return err
 	}
 
@@ -301,6 +309,7 @@ func (cr *ConnectionMongoDBRepository) FindByID(ctx context.Context, id, organiz
 	coll := db.Database(strings.ToLower(cr.Database)).Collection(strings.ToLower(constant.MongoCollectionConnection))
 
 	var record ConnectionMongoDBModel
+
 	filter := bson.M{
 		"_id":             id,
 		"organization_id": organizationID,
@@ -333,6 +342,7 @@ func (cr *ConnectionMongoDBRepository) FindByOrganizationAndName(ctx context.Con
 	if configName == "" {
 		err := errors.New("config_name cannot be empty")
 		libOpentelemetry.HandleSpanError(&span, "Invalid config_name", err)
+
 		return nil, err
 	}
 
@@ -345,6 +355,7 @@ func (cr *ConnectionMongoDBRepository) FindByOrganizationAndName(ctx context.Con
 	coll := db.Database(strings.ToLower(cr.Database)).Collection(strings.ToLower(constant.MongoCollectionConnection))
 
 	var record ConnectionMongoDBModel
+
 	filter := bson.M{
 		"organization_id": organizationID,
 		"config_name":     configName,
@@ -415,12 +426,14 @@ func (cr *ConnectionMongoDBRepository) FindByConfigNames(ctx context.Context, or
 	defer cur.Close(ctx)
 
 	connections := make([]*Connection, 0)
+
 	for cur.Next(ctx) {
 		var record ConnectionMongoDBModel
 		if err := cur.Decode(&record); err != nil {
 			libOpentelemetry.HandleSpanError(&span, "Failed to decode connection record", err)
 			return nil, err
 		}
+
 		connections = append(connections, record.ToEntity())
 	}
 
@@ -479,6 +492,7 @@ func (cr *ConnectionMongoDBRepository) List(ctx context.Context, filters *ListFi
 	if limit <= 0 {
 		limit = defaultConnectionPageLimit
 	}
+
 	if limit > maxConnectionPageLimit {
 		limit = maxConnectionPageLimit
 	}
@@ -490,6 +504,7 @@ func (cr *ConnectionMongoDBRepository) List(ctx context.Context, filters *ListFi
 
 	skip := int64((page - 1) * limit)
 	limit64 := int64(limit)
+
 	sortDirection := int32(-1)
 	if strings.EqualFold(string(filters.SortOrder), string(constant.Asc)) {
 		sortDirection = 1
@@ -513,12 +528,14 @@ func (cr *ConnectionMongoDBRepository) List(ctx context.Context, filters *ListFi
 	defer cur.Close(ctx)
 
 	connections := make([]*Connection, 0, limit)
+
 	for cur.Next(ctx) {
 		var record ConnectionMongoDBModel
 		if err := cur.Decode(&record); err != nil {
 			libOpentelemetry.HandleSpanError(&span, "Failed to decode connection record", err)
 			return nil, err
 		}
+
 		connections = append(connections, record.ToEntity())
 	}
 

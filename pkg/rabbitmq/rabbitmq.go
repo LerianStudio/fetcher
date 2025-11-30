@@ -63,6 +63,7 @@ func (a *rabbitmqConnectionAdapter) Close() error {
 		if err := a.conn.Channel.Close(); err != nil && !errors.Is(err, amqp.ErrClosed) {
 			return err
 		}
+
 		a.conn.Channel = nil
 	}
 
@@ -70,6 +71,7 @@ func (a *rabbitmqConnectionAdapter) Close() error {
 		if err := a.conn.Connection.Close(); err != nil && !errors.Is(err, amqp.ErrClosed) {
 			return err
 		}
+
 		a.conn.Connection = nil
 	}
 
@@ -148,6 +150,7 @@ func (prmq *RabbitMQAdapter) startChannelWatcher(logger libLog.Logger, channel a
 
 		prmq.mu.Lock()
 		defer prmq.mu.Unlock()
+
 		prmq.channel = nil
 	}()
 }
@@ -172,6 +175,7 @@ func (prmq *RabbitMQAdapter) ensureChannel(span *trace.Span, logger libLog.Logge
 	logger.Warn("RabbitMQ channel not initialized - attempting to connect...")
 
 	const maxAttempts = 3
+
 	var lastErr error
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
@@ -179,12 +183,14 @@ func (prmq *RabbitMQAdapter) ensureChannel(span *trace.Span, logger libLog.Logge
 		if err == nil {
 			prmq.channel = ch
 			prmq.startChannelWatcher(logger, ch)
+
 			lastErr = nil
 
 			break
 		}
 
 		lastErr = err
+
 		time.Sleep(time.Duration(attempt) * 200 * time.Millisecond)
 	}
 
@@ -192,6 +198,7 @@ func (prmq *RabbitMQAdapter) ensureChannel(span *trace.Span, logger libLog.Logge
 		if span != nil {
 			libOpentelemetry.HandleSpanError(span, "Failed to establish RabbitMQ connection", lastErr)
 		}
+
 		logger.Errorf("Failed to establish RabbitMQ connection: %v", lastErr)
 
 		return nil, lastErr
@@ -249,6 +256,7 @@ func (prmq *RabbitMQAdapter) ProducerDefault(ctx context.Context, exchange, key 
 	}
 
 	const maxPublishAttempts = 2
+
 	var lastErr error
 
 	prmq.publishMu.Lock()
@@ -266,6 +274,7 @@ func (prmq *RabbitMQAdapter) ProducerDefault(ctx context.Context, exchange, key 
 		}
 
 		lastErr = err
+
 		prmq.invalidateChannel(logger)
 
 		if attempt < maxPublishAttempts {
@@ -328,6 +337,7 @@ func (prmq *RabbitMQAdapter) runConsumerCycle(
 	handler func(ctx context.Context, body []byte) error,
 ) error {
 	ctxSpan, span := tracer.Start(ctx, "rabbitmq.consumer.connection_cycle")
+
 	span.SetAttributes(
 		attribute.String("app.request.request_id", reqID),
 		attribute.String("app.request.queue", queue),
@@ -345,6 +355,7 @@ func (prmq *RabbitMQAdapter) runConsumerCycle(
 		libOpentelemetry.HandleSpanError(&span, "Failed to set RabbitMQ QoS", errCh)
 		logger.Errorf("Failed to set RabbitMQ QoS: %v", errCh)
 		prmq.invalidateChannel(logger)
+
 		return errCh
 	}
 
@@ -363,6 +374,7 @@ func (prmq *RabbitMQAdapter) runConsumerCycle(
 		libOpentelemetry.HandleSpanError(&span, "Failed to start RabbitMQ consumer", err)
 		logger.Errorf("Failed to start RabbitMQ consumer: %v", err)
 		prmq.invalidateChannel(logger)
+
 		return err
 	}
 
@@ -376,6 +388,7 @@ func (prmq *RabbitMQAdapter) runConsumerCycle(
 	}
 
 	libOpentelemetry.HandleSpanError(&span, "RabbitMQ consumer session exited with error", sessionErr)
+
 	if errors.Is(sessionErr, errDeliveriesClosed) {
 		prmq.invalidateChannel(logger)
 	}
@@ -396,6 +409,7 @@ func (prmq *RabbitMQAdapter) dispatchDeliveries(
 ) error {
 	// Cancela o consumer apenas uma vez
 	var cancelOnce sync.Once
+
 	cancelConsumer := func() {
 		cancelOnce.Do(func() {
 			if cancelErr := channel.Cancel(consumerTag, false); cancelErr != nil && !errors.Is(cancelErr, amqp.ErrClosed) {
@@ -413,25 +427,32 @@ func (prmq *RabbitMQAdapter) dispatchDeliveries(
 		select {
 		case <-workerCtx.Done():
 			cancelConsumer()
+
 			if err := group.Wait(); err != nil {
 				return err
 			}
+
 			return workerCtx.Err()
 
 		case msg, ok := <-deliveries:
 			if !ok {
 				cancelConsumer()
+
 				if err := group.Wait(); err != nil {
 					return err
 				}
+
 				return errDeliveriesClosed
 			}
 
 			delivery := msg
+
 			prmq.consumerWg.Add(1)
 			group.Go(func() error {
 				defer prmq.consumerWg.Done()
+
 				prmq.processDelivery(workerCtx, tracer, logger, delivery, handler)
+
 				return nil
 			})
 		}
@@ -461,8 +482,10 @@ func (prmq *RabbitMQAdapter) processDelivery(
 
 	if err := handler(hctx, d.Body); err != nil {
 		_ = d.Nack(false, false)
+
 		libOpentelemetry.HandleSpanError(&hspan, "Handler failed to process consumed message", err)
 		logger.Errorf("Handler failed to process consumed message: %v", err)
+
 		return
 	}
 
@@ -474,7 +497,7 @@ func (prmq *RabbitMQAdapter) processDelivery(
 
 // Shutdown gracefully closes open channels and the underlying connection.
 func (prmq *RabbitMQAdapter) Shutdown(ctx context.Context) error {
-	logger, _, _, _ := libCommons.NewTrackingFromContext(ctx)
+	logger := libCommons.NewLoggerFromContext(ctx)
 
 	// Indicate shutdown in progress
 	prmq.shutdown.Store(true)
@@ -492,5 +515,6 @@ func (prmq *RabbitMQAdapter) Shutdown(ctx context.Context) error {
 	}
 
 	logger.Info("RabbitMQ repository shut down gracefully")
+
 	return nil
 }

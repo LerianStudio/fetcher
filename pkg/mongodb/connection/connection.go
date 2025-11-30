@@ -163,6 +163,7 @@ func (cm *ConnectionMongoDBModel) FromEntity(conn *Connection) error {
 		if err != nil {
 			return err
 		}
+
 		id = generated
 		conn.ID = generated
 	}

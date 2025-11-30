@@ -72,6 +72,7 @@ func (cr *ConnectionMongoDBRepository) EnsureIndexes(ctx context.Context) error 
 
 		libOpentelemetry.HandleSpanError(&span, "Failed to create connection indexes", err)
 		logger.Errorf("Failed to create indexes for %s: %v", constant.MongoCollectionConnection, err)
+
 		return err
 	}
 
@@ -108,6 +109,7 @@ func (cr *ConnectionMongoDBRepository) DropIndexes(ctx context.Context) error {
 	if _, err := coll.Indexes().DropAll(ctx); err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to drop connection indexes", err)
 		logger.Errorf("Failed to drop indexes for %s: %v", constant.MongoCollectionConnection, err)
+
 		return err
 	}
 

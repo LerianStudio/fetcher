@@ -145,6 +145,7 @@ func (cr *ConsumerRoutes) processMessage(workerID int, queue string, handlerFunc
 	cr.Infof("Worker %d: Starting processing for queue %s", workerID, queue)
 
 	headers := make(map[string]any)
+
 	if message.Headers != nil {
 		for k, v := range message.Headers {
 			headers[k] = v
