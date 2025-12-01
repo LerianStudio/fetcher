@@ -461,7 +461,7 @@ func (rm *ConnectionMongoDBRepository) List(ctx context.Context, organizationID 
 		Sort:  bson.D{{Key: "created_at", Value: -1}},
 	}
 
-	err = libOpentelemetry.SetSpanAttributesFromStruct(&span, "app.request.repository_filter", filters)
+	err = libOpentelemetry.SetSpanAttributesFromStruct(&span, "app.request.repository_filter", queryFilter)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to convert filters to JSON string", err)
 	}
@@ -469,11 +469,12 @@ func (rm *ConnectionMongoDBRepository) List(ctx context.Context, organizationID 
 	coll := db.Database(strings.ToLower(rm.Database)).Collection(strings.ToLower(constant.MongoCollectionConnection))
 	cur, err := coll.Find(ctx, queryFilter, &opts)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to find reports", err)
-		return nil, err
+		libOpentelemetry.HandleSpanError(&span, "Failed to list connections", err)
+		return nil, pkg.ValidateInternalError(err, "connection")
 	}
+	defer cur.Close(ctx)
 
-	connections := make([]*model.Connection, 0, limit)
+	connections := make([]*model.Connection, 0, int(limit))
 	for cur.Next(ctx) {
 		var record ConnectionMongoDBModel
 		if err := cur.Decode(&record); err != nil {
