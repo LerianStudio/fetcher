@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 	"github.com/LerianStudio/fetcher/pkg/mongodb/job"
 	libCommons "github.com/LerianStudio/lib-commons/v2/commons"
+	libCrypto "github.com/LerianStudio/lib-commons/v2/commons/crypto"
 	"github.com/LerianStudio/lib-commons/v2/commons/log"
 	libOtel "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
 
@@ -334,7 +336,7 @@ func getTableFilters(databaseFilters map[string]map[string]modelJob.FilterCondit
 	return databaseFilters[tableName]
 }
 
-// saveExternalDataToSeaweedFS converts the result map to JSON and saves it to SeaweedFS storage.
+// saveExternalDataToSeaweedFS converts the result map to JSON, encrypts it, and saves it to SeaweedFS storage.
 func (uc *UseCase) saveExternalDataToSeaweedFS(
 	ctx context.Context,
 	tracer trace.Tracer,
@@ -354,19 +356,58 @@ func (uc *UseCase) saveExternalDataToSeaweedFS(
 		return fmt.Errorf("marshalling result to JSON: %w", err)
 	}
 
+	encryptedData, err := uc.encryptDataForSeaweedFS(jsonData, logger)
+	if err != nil {
+		libOtel.HandleSpanError(span, "Error encrypting data for SeaweedFS", err)
+		logger.Errorf("Error encrypting data for SeaweedFS: %s", err.Error())
+
+		return fmt.Errorf("encrypting data for SeaweedFS: %w", err)
+	}
+
 	objectName := fmt.Sprintf("%s.json", message.JobID.String())
 	contentType := "application/json"
 
-	if err := uc.ExternalDataSeaweedFS.Put(ctx, objectName, contentType, jsonData); err != nil {
+	if err := uc.ExternalDataSeaweedFS.Put(ctx, objectName, contentType, encryptedData); err != nil {
 		libOtel.HandleSpanError(span, "Error saving external data to SeaweedFS", err)
 		logger.Errorf("Error saving external data to SeaweedFS: %s", err.Error())
 
 		return fmt.Errorf("saving external data to SeaweedFS: %w", err)
 	}
 
-	logger.Infof("Successfully saved external data to SeaweedFS: %s", objectName)
+	logger.Infof("Successfully saved encrypted external data to SeaweedFS: %s", objectName)
 
 	return nil
+}
+
+// encryptDataForSeaweedFS encrypts the data using the crypto library before saving to SeaweedFS.
+func (uc *UseCase) encryptDataForSeaweedFS(data []byte, logger log.Logger) ([]byte, error) {
+	encryptSecretKey := os.Getenv("CRYPTO_ENCRYPT_SECRET_KEY_SEAWEEDFS")
+	if encryptSecretKey == "" {
+		return nil, fmt.Errorf("CRYPTO_ENCRYPT_SECRET_KEY_SEAWEEDFS environment variable not set")
+	}
+
+	hashSecretKey := os.Getenv("CRYPTO_HASH_SECRET_KEY_SEAWEEDFS")
+	if hashSecretKey == "" {
+		return nil, fmt.Errorf("CRYPTO_HASH_SECRET_KEY_SEAWEEDFS environment variable not set")
+	}
+
+	crypto := &libCrypto.Crypto{
+		HashSecretKey:    hashSecretKey,
+		EncryptSecretKey: encryptSecretKey,
+		Logger:           logger,
+	}
+
+	if err := crypto.InitializeCipher(); err != nil {
+		return nil, fmt.Errorf("failed to initialize cipher: %w", err)
+	}
+
+	dataStr := string(data)
+	encryptedStr, err := crypto.Encrypt(&dataStr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encrypt data: %w", err)
+	}
+
+	return []byte(*encryptedStr), nil
 }
 
 // shouldSkipProcessing checks if job should be skipped due to idempotency.
