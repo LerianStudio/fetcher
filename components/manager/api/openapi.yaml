@@ -1,46 +1,80 @@
 openapi: 3.0.1
 info:
   contact: {}
-  description: This is a swagger documentation for Golang plugin boilerplate
+  description: API documentation for the Fetcher Manager component
   termsOfService: http://swagger.io/terms/
-  title: Golang plugin boilerplate
+  title: Fetcher Manager API
   version: 1.0.0
 servers:
-- url: //localhost:4000/
+- url: //localhost:4006/
 paths:
-  /v1/example:
+  /v1/management/connections:
     get:
-      description: Get all Example with the input metadata or without metadata
+      description: List connections with pagination and filters.
       parameters:
-      - description: Limit
-        in: query
-        name: limit
+      - description: The authorization token in the 'Bearer access_token' format.
+          Only required when auth plugin is enabled.
+        in: header
+        name: Authorization
         schema:
-          default: 10
-          type: integer
-      - description: Page
+          type: string
+      - description: Organization ID
+        in: header
+        name: X-Organization-Id
+        required: true
+        schema:
+          type: string
+      - description: Page number (default 0)
         in: query
         name: page
         schema:
-          default: 1
+          default: 0
           type: integer
-      - description: Start Date
+      - description: Page size (default 50, max 1000)
         in: query
-        name: start_date
+        name: limit
         schema:
-          type: string
-      - description: End Date
+          default: 50
+          type: integer
+      - description: Sort order
         in: query
-        name: end_date
+        name: sortOrder
         schema:
-          type: string
-      - description: Sort Order
-        in: query
-        name: sort_order
-        schema:
+          default: desc
           enum:
           - asc
           - desc
+          type: string
+      - description: Filter by database type
+        in: query
+        name: type
+        schema:
+          enum:
+          - ORACLE
+          - SQL_SERVER
+          - POSTGRESQL
+          - MONGODB
+          - MYSQL
+          type: string
+      - description: Filter by host
+        in: query
+        name: host
+        schema:
+          type: string
+      - description: Filter by database name
+        in: query
+        name: databaseName
+        schema:
+          type: string
+      - description: Filter by start date (YYYY-MM-DD)
+        in: query
+        name: startDate
+        schema:
+          type: string
+      - description: Filter by end date (YYYY-MM-DD)
+        in: query
+        name: endDate
+        schema:
           type: string
       responses:
         "200":
@@ -49,50 +83,100 @@ paths:
               schema:
                 $ref: '#/components/schemas/inline_response_200'
           description: OK
-      summary: Get all Example
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Internal Server Error
+      summary: List connections
       tags:
-      - Example
+      - Connections
     post:
-      description: Create an Example with the input payload
+      description: Create a new database connection for the organization. ConfigName
+        must be unique per organization; password is encrypted and a UUID is generated
+        on creation.
+      parameters:
+      - description: The authorization token in the 'Bearer access_token' format.
+          Only required when auth plugin is enabled.
+        in: header
+        name: Authorization
+        schema:
+          type: string
+      - description: Organization ID
+        in: header
+        name: X-Organization-Id
+        required: true
+        schema:
+          type: string
       requestBody:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreateExampleInput'
-        description: Example Input
+              $ref: '#/components/schemas/github_com_LerianStudio_fetcher_pkg_model.ConnectionInput'
+        description: Connection payload
         required: true
       responses:
-        "200":
+        "201":
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/golang-plugin-boilerplate_pkg_model.ExampleOutput'
-          description: OK
-      summary: Create an Example
+                additionalProperties:
+                  type: string
+                type: object
+          description: Created connection identifier
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Bad Request
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Internal Server Error
+      summary: Create connection
       tags:
-      - Example
-      x-codegen-request-body-name: example
-  /v1/example/{id}:
+      - Connections
+      x-codegen-request-body-name: connection
+  /v1/management/connections/{id}:
     delete:
-      description: Delete an Example with the input ID
+      description: Soft delete a connection when no active jobs are running for it.
+        Returns 409 if there is any active job.
       parameters:
-      - description: Example ID
-        in: path
-        name: id
+      - description: The authorization token in the 'Bearer access_token' format.
+          Only required when auth plugin is enabled.
+        in: header
+        name: Authorization
+        schema:
+          type: string
+      - description: Organization ID
+        in: header
+        name: X-Organization-Id
         required: true
         schema:
           type: string
-      responses:
-        "204":
-          content: {}
-          description: No Content
-      summary: Delete an Example by ID
-      tags:
-      - Example
-    get:
-      description: Get an Example with the input ID
-      parameters:
-      - description: Example ID
+      - description: Connection ID
         in: path
         name: id
         required: true
@@ -103,15 +187,103 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/golang-plugin-boilerplate_pkg_model.ExampleOutput'
-          description: OK
-      summary: Get an Example by ID
+                additionalProperties:
+                  type: string
+                type: object
+          description: Deleted connection identifier
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Internal Server Error
+      summary: Delete connection
       tags:
-      - Example
-    patch:
-      description: Update an Example with the input payload
+      - Connections
+    get:
+      description: Get connection details by ID for the given organization.
       parameters:
-      - description: Example ID
+      - description: The authorization token in the 'Bearer access_token' format.
+          Only required when auth plugin is enabled.
+        in: header
+        name: Authorization
+        schema:
+          type: string
+      - description: Organization ID
+        in: header
+        name: X-Organization-Id
+        required: true
+        schema:
+          type: string
+      - description: Connection ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_LerianStudio_fetcher_pkg_model.ConnectionResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Internal Server Error
+      summary: Get connection
+      tags:
+      - Connections
+    patch:
+      description: Apply a partial update to a connection. Returns 409 if there is
+        any active job.
+      parameters:
+      - description: The authorization token in the 'Bearer access_token' format.
+          Only required when auth plugin is enabled.
+        in: header
+        name: Authorization
+        schema:
+          type: string
+      - description: Organization ID
+        in: header
+        name: X-Organization-Id
+        required: true
+        schema:
+          type: string
+      - description: Connection ID
         in: path
         name: id
         required: true
@@ -121,43 +293,51 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/UpdateExampleInput'
-        description: Example Input
+              $ref: '#/components/schemas/github_com_LerianStudio_fetcher_pkg_model.ConnectionInput'
+        description: Fields to update (partial payload)
         required: true
       responses:
         "200":
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/golang-plugin-boilerplate_pkg_model.ExampleOutput'
+                $ref: '#/components/schemas/github_com_LerianStudio_fetcher_pkg_model.ConnectionResponse'
           description: OK
-      summary: Update an Example
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Internal Server Error
+      summary: Update connection
       tags:
-      - Example
-      x-codegen-request-body-name: organization
+      - Connections
+      x-codegen-request-body-name: connection
 components:
   schemas:
-    CreateExampleInput:
-      description: CreateExampleInput is the input payload to create an example_model.
-      example:
-        name: name
-        age: 0
-      properties:
-        age:
-          type: integer
-        name:
-          maxLength: 256
-          type: string
-      required:
-      - age
-      - name
-      type: object
     Pagination:
       description: Pagination is the struct designed to store the pagination data
         of an entity list.
       example:
-        prev_cursor: MDAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAwMA==
-        next_cursor: MDAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAwMA==
+        total: 10
         limit: 10
         page: 1
         items: '{}'
@@ -167,83 +347,174 @@ components:
         limit:
           example: 10
           type: integer
-        next_cursor:
-          example: MDAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAwMA==
-          type: string
-          x-omitempty: true
         page:
           example: 1
           type: integer
-        prev_cursor:
-          example: MDAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAwMA==
-          type: string
-          x-omitempty: true
-      type: object
-    UpdateExampleInput:
-      description: UpdateExampleInput is the input payload to update an example.
-      example:
-        name: Example test
-        age: 12
-      properties:
-        age:
-          example: 12
+        total:
+          example: 10
           type: integer
-        name:
-          example: Example test
-          maxLength: 256
-          type: string
       type: object
-    golang-plugin-boilerplate_pkg_model.ExampleOutput:
-      description: ExampleOutput is the output payload.
+    github_com_LerianStudio_fetcher_pkg_model.ConnectionInput:
+      properties:
+        configName:
+          example: production-db
+          maxLength: 100
+          minLength: 3
+          type: string
+        databaseName:
+          example: mydatabase
+          type: string
+        host:
+          example: db.example.com
+          type: string
+        password:
+          example: secretpassword
+          type: string
+        port:
+          example: 5432
+          maximum: 65535
+          minimum: 1
+          type: integer
+        ssl:
+          $ref: '#/components/schemas/github_com_LerianStudio_fetcher_pkg_model.SSLInput'
+        type:
+          enum:
+          - ORACLE
+          - SQL_SERVER
+          - POSTGRESQL
+          - MONGODB
+          - MYSQL
+          example: POSTGRESQL
+          type: string
+        username:
+          example: dbuser
+          type: string
+      required:
+      - configName
+      - databaseName
+      - host
+      - password
+      - port
+      - type
+      - username
+      type: object
+    github_com_LerianStudio_fetcher_pkg_model.ConnectionResponse:
       example:
-        updated_at: updated_at
-        name: name
-        created_at: created_at
+        configName: configName
+        createdAt: createdAt
+        databaseName: databaseName
+        port: 0
+        host: host
         id: id
-        age: 0
+        type: type
+        ssl:
+          mode: mode
+        updatedAt: updatedAt
+        username: username
       properties:
-        age:
-          type: integer
-        created_at:
+        configName:
+          type: string
+        createdAt:
+          type: string
+        databaseName:
+          type: string
+        host:
           type: string
         id:
           type: string
-        name:
+        port:
+          type: integer
+        ssl:
+          $ref: '#/components/schemas/github_com_LerianStudio_fetcher_pkg_model.SSLResponse'
+        type:
           type: string
-        updated_at:
+        updatedAt:
+          type: string
+        username:
+          type: string
+      type: object
+    github_com_LerianStudio_fetcher_pkg_model.SSLInput:
+      properties:
+        ca:
+          example: |-
+            -----BEGIN CERTIFICATE-----
+            ...
+          type: string
+        cert:
+          type: string
+        key:
+          type: string
+        mode:
+          example: require
+          type: string
+      required:
+      - mode
+      type: object
+    github_com_LerianStudio_fetcher_pkg_model.SSLResponse:
+      example:
+        mode: mode
+      properties:
+        mode:
+          type: string
+      type: object
+    pkg.HTTPError:
+      properties:
+        code:
+          type: string
+        entityType:
+          type: string
+        err:
+          type: object
+        message:
+          type: string
+        title:
           type: string
       type: object
     inline_response_200:
       example:
         Pagination:
-          prev_cursor: MDAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAwMA==
-          next_cursor: MDAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAwMA==
+          total: 10
           limit: 10
           page: 1
           items: '{}'
+        total: 5
         limit: 6
         page: 1
         items:
-        - updated_at: updated_at
-          name: name
-          created_at: created_at
+        - configName: configName
+          createdAt: createdAt
+          databaseName: databaseName
+          port: 0
+          host: host
           id: id
-          age: 0
-        - updated_at: updated_at
-          name: name
-          created_at: created_at
+          type: type
+          ssl:
+            mode: mode
+          updatedAt: updatedAt
+          username: username
+        - configName: configName
+          createdAt: createdAt
+          databaseName: databaseName
+          port: 0
+          host: host
           id: id
-          age: 0
+          type: type
+          ssl:
+            mode: mode
+          updatedAt: updatedAt
+          username: username
       properties:
         Pagination:
           $ref: '#/components/schemas/Pagination'
         items:
           items:
-            $ref: '#/components/schemas/golang-plugin-boilerplate_pkg_model.ExampleOutput'
+            $ref: '#/components/schemas/github_com_LerianStudio_fetcher_pkg_model.ConnectionResponse'
           type: array
         limit:
           type: integer
         page:
+          type: integer
+        total:
           type: integer
       type: object
 x-original-swagger-version: "2.0"

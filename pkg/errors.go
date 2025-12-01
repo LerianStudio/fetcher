@@ -416,18 +416,6 @@ func ValidateBusinessError(err error, entityType string, args ...any) error {
 			Title:      "Update Output format without template File",
 			Message:    "Can not update output format without passing template file. Please check information passed and try again.",
 		},
-		constant.ErrInvalidTemplateID: ValidationError{
-			EntityType: entityType,
-			Code:       constant.ErrInvalidTemplateID.Error(),
-			Title:      "Invalid templateID",
-			Message:    "The specified templateID is not a valid UUID. Please check the value passed.",
-		},
-		constant.ErrInvalidLedgerIDList: ValidationError{
-			EntityType: entityType,
-			Code:       constant.ErrInvalidLedgerIDList.Error(),
-			Title:      "Invalid ledgerID",
-			Message:    fmt.Sprintf("The specified ledgerID inside ledger ID list is not a valid UUID. Please check the value passed %v.", args),
-		},
 		constant.ErrMissingTableFields: ValidationError{
 			EntityType: entityType,
 			Code:       constant.ErrMissingTableFields.Error(),
@@ -463,6 +451,17 @@ func ValidateBusinessError(err error, entityType string, args ...any) error {
 			Code:       constant.ErrCommunicateSeaweedFS.Error(),
 			Title:      "Communication Error with SeaweedFS",
 			Message:    "Error to communicate with SeaweedFS to download or upload file. Please try again.",
+		},
+		constant.ErrJobInProgress: EntityConflictError{
+			EntityType: entityType,
+			Code:       constant.ErrJobInProgress.Error(),
+			Title:      "Job In Progress",
+			Message: func() string {
+				if len(args) > 0 {
+					return fmt.Sprint(args...)
+				}
+				return "The operation cannot be completed because there are active jobs for this connection."
+			}(),
 		},
 	}
 

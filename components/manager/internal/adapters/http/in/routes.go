@@ -12,6 +12,11 @@ import (
 	fiberSwagger "github.com/swaggo/fiber-swagger"
 )
 
+const (
+	applicationName     = "fetcher"
+	connectionsResource = "connections"
+)
+
 // NewRoutes creates a new fiber router with the specified handlers and middleware.
 func NewRoutes(
 	lg log.Logger,
@@ -43,11 +48,11 @@ func NewRoutes(
 	f.Get("/version", commonsHttp.Version)
 
 	// Connections
-	f.Post("/v1/management/connections", connectionHandler.CreateConnection)
-	f.Get("/v1/management/connections", connectionHandler.ListConnections)
-	f.Get("/v1/management/connections/:id", connectionHandler.GetConnection)
-	f.Patch("/v1/management/connections/:id", connectionHandler.UpdateConnection)
-	f.Delete("/v1/management/connections/:id", connectionHandler.DeleteConnection)
+	f.Post("/v1/management/connections", auth.Authorize(applicationName, connectionsResource, "post"), connectionHandler.CreateConnection)
+	f.Get("/v1/management/connections", auth.Authorize(applicationName, connectionsResource, "get"), connectionHandler.ListConnections)
+	f.Get("/v1/management/connections/:id", auth.Authorize(applicationName, connectionsResource, "get"), connectionHandler.GetConnection)
+	f.Patch("/v1/management/connections/:id", auth.Authorize(applicationName, connectionsResource, "patch"), connectionHandler.UpdateConnection)
+	f.Delete("/v1/management/connections/:id", auth.Authorize(applicationName, connectionsResource, "delete"), connectionHandler.DeleteConnection)
 
 	f.Use(tlMid.EndTracingSpans)
 

@@ -1,50 +1,51 @@
 {
     "swagger": "2.0",
     "info": {
-        "description": "This is a swagger documentation for Golang plugin boilerplate",
-        "title": "Golang plugin boilerplate",
+        "description": "API documentation for the Fetcher Manager component",
+        "title": "Fetcher Manager API",
         "termsOfService": "http://swagger.io/terms/",
         "contact": {},
         "version": "1.0.0"
     },
-    "host": "localhost:4000",
+    "host": "localhost:4006",
     "basePath": "/",
     "paths": {
-        "/v1/example": {
+        "/v1/management/connections": {
             "get": {
-                "description": "Get all Example with the input metadata or without metadata",
+                "description": "List connections with pagination and filters.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
-                    "Example"
+                    "Connections"
                 ],
-                "summary": "Get all Example",
+                "summary": "List connections",
                 "parameters": [
                     {
-                        "type": "integer",
-                        "default": 10,
-                        "description": "Limit",
-                        "name": "limit",
-                        "in": "query"
+                        "type": "string",
+                        "description": "The authorization token in the 'Bearer access_token' format. Only required when auth plugin is enabled.",
+                        "name": "Authorization",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Organization ID",
+                        "name": "X-Organization-Id",
+                        "in": "header",
+                        "required": true
                     },
                     {
                         "type": "integer",
-                        "default": 1,
-                        "description": "Page",
+                        "default": 0,
+                        "description": "Page number (default 0)",
                         "name": "page",
                         "in": "query"
                     },
                     {
-                        "type": "string",
-                        "description": "Start Date",
-                        "name": "start_date",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "End Date",
-                        "name": "end_date",
+                        "type": "integer",
+                        "default": 50,
+                        "description": "Page size (default 50, max 1000)",
+                        "name": "limit",
                         "in": "query"
                     },
                     {
@@ -53,8 +54,46 @@
                             "desc"
                         ],
                         "type": "string",
-                        "description": "Sort Order",
-                        "name": "sort_order",
+                        "default": "desc",
+                        "description": "Sort order",
+                        "name": "sortOrder",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "ORACLE",
+                            "SQL_SERVER",
+                            "POSTGRESQL",
+                            "MONGODB",
+                            "MYSQL"
+                        ],
+                        "type": "string",
+                        "description": "Filter by database type",
+                        "name": "type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by host",
+                        "name": "host",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by database name",
+                        "name": "databaseName",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by start date (YYYY-MM-DD)",
+                        "name": "startDate",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by end date (YYYY-MM-DD)",
+                        "name": "endDate",
                         "in": "query"
                     }
                 ],
@@ -72,7 +111,7 @@
                                         "items": {
                                             "type": "array",
                                             "items": {
-                                                "$ref": "#/definitions/golang-plugin-boilerplate_pkg_model.ExampleOutput"
+                                                "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.ConnectionResponse"
                                             }
                                         },
                                         "limit": {
@@ -80,16 +119,37 @@
                                         },
                                         "page": {
                                             "type": "integer"
+                                        },
+                                        "total": {
+                                            "type": "integer"
                                         }
                                     }
                                 }
                             ]
                         }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/pkg.HTTPError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/pkg.HTTPError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/pkg.HTTPError"
+                        }
                     }
                 }
             },
             "post": {
-                "description": "Create an Example with the input payload",
+                "description": "Create a new database connection for the organization. ConfigName must be unique per organization; password is encrypted and a UUID is generated on creation.",
                 "consumes": [
                     "application/json"
                 ],
@@ -97,44 +157,91 @@
                     "application/json"
                 ],
                 "tags": [
-                    "Example"
+                    "Connections"
                 ],
-                "summary": "Create an Example",
+                "summary": "Create connection",
                 "parameters": [
                     {
-                        "description": "Example Input",
-                        "name": "example",
+                        "type": "string",
+                        "description": "The authorization token in the 'Bearer access_token' format. Only required when auth plugin is enabled.",
+                        "name": "Authorization",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Organization ID",
+                        "name": "X-Organization-Id",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "Connection payload",
+                        "name": "connection",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/CreateExampleInput"
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.ConnectionInput"
                         }
                     }
                 ],
                 "responses": {
-                    "200": {
-                        "description": "OK",
+                    "201": {
+                        "description": "Created connection identifier",
                         "schema": {
-                            "$ref": "#/definitions/golang-plugin-boilerplate_pkg_model.ExampleOutput"
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/pkg.HTTPError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/pkg.HTTPError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/pkg.HTTPError"
                         }
                     }
                 }
             }
         },
-        "/v1/example/{id}": {
+        "/v1/management/connections/{id}": {
             "get": {
-                "description": "Get an Example with the input ID",
+                "description": "Get connection details by ID for the given organization.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
-                    "Example"
+                    "Connections"
                 ],
-                "summary": "Get an Example by ID",
+                "summary": "Get connection",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Example ID",
+                        "description": "The authorization token in the 'Bearer access_token' format. Only required when auth plugin is enabled.",
+                        "name": "Authorization",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Organization ID",
+                        "name": "X-Organization-Id",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Connection ID",
                         "name": "id",
                         "in": "path",
                         "required": true
@@ -144,34 +251,98 @@
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/golang-plugin-boilerplate_pkg_model.ExampleOutput"
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.ConnectionResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/pkg.HTTPError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/pkg.HTTPError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/pkg.HTTPError"
                         }
                     }
                 }
             },
             "delete": {
-                "description": "Delete an Example with the input ID",
-                "tags": [
-                    "Example"
+                "description": "Soft delete a connection when no active jobs are running for it. Returns 409 if there is any active job.",
+                "produces": [
+                    "application/json"
                 ],
-                "summary": "Delete an Example by ID",
+                "tags": [
+                    "Connections"
+                ],
+                "summary": "Delete connection",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Example ID",
+                        "description": "The authorization token in the 'Bearer access_token' format. Only required when auth plugin is enabled.",
+                        "name": "Authorization",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Organization ID",
+                        "name": "X-Organization-Id",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Connection ID",
                         "name": "id",
                         "in": "path",
                         "required": true
                     }
                 ],
                 "responses": {
-                    "204": {
-                        "description": "No Content"
+                    "200": {
+                        "description": "Deleted connection identifier",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/pkg.HTTPError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/pkg.HTTPError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/pkg.HTTPError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/pkg.HTTPError"
+                        }
                     }
                 }
             },
             "patch": {
-                "description": "Update an Example with the input payload",
+                "description": "Apply a partial update to a connection. Returns 409 if there is any active job.",
                 "consumes": [
                     "application/json"
                 ],
@@ -179,24 +350,37 @@
                     "application/json"
                 ],
                 "tags": [
-                    "Example"
+                    "Connections"
                 ],
-                "summary": "Update an Example",
+                "summary": "Update connection",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Example ID",
+                        "description": "The authorization token in the 'Bearer access_token' format. Only required when auth plugin is enabled.",
+                        "name": "Authorization",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Organization ID",
+                        "name": "X-Organization-Id",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Connection ID",
                         "name": "id",
                         "in": "path",
                         "required": true
                     },
                     {
-                        "description": "Example Input",
-                        "name": "organization",
+                        "description": "Fields to update (partial payload)",
+                        "name": "connection",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/UpdateExampleInput"
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.ConnectionInput"
                         }
                     }
                 ],
@@ -204,7 +388,31 @@
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/golang-plugin-boilerplate_pkg_model.ExampleOutput"
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.ConnectionResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/pkg.HTTPError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/pkg.HTTPError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/pkg.HTTPError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/pkg.HTTPError"
                         }
                     }
                 }
@@ -212,23 +420,6 @@
         }
     },
     "definitions": {
-        "CreateExampleInput": {
-            "description": "CreateExampleInput is the input payload to create an example_model.",
-            "type": "object",
-            "required": [
-                "age",
-                "name"
-            ],
-            "properties": {
-                "age": {
-                    "type": "integer"
-                },
-                "name": {
-                    "type": "string",
-                    "maxLength": 256
-                }
-            }
-        },
         "Pagination": {
             "description": "Pagination is the struct designed to store the pagination data of an entity list.",
             "type": "object",
@@ -238,54 +429,151 @@
                     "type": "integer",
                     "example": 10
                 },
-                "next_cursor": {
-                    "type": "string",
-                    "x-omitempty": true,
-                    "example": "MDAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAwMA=="
-                },
                 "page": {
                     "type": "integer",
                     "example": 1
                 },
-                "prev_cursor": {
-                    "type": "string",
-                    "x-omitempty": true,
-                    "example": "MDAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAwMA=="
-                }
-            }
-        },
-        "UpdateExampleInput": {
-            "description": "UpdateExampleInput is the input payload to update an example.",
-            "type": "object",
-            "properties": {
-                "age": {
+                "total": {
                     "type": "integer",
-                    "example": 12
-                },
-                "name": {
-                    "type": "string",
-                    "maxLength": 256,
-                    "example": "Example test"
+                    "example": 10
                 }
             }
         },
-        "golang-plugin-boilerplate_pkg_model.ExampleOutput": {
-            "description": "ExampleOutput is the output payload.",
+        "github_com_LerianStudio_fetcher_pkg_model.ConnectionInput": {
+            "type": "object",
+            "required": [
+                "configName",
+                "databaseName",
+                "host",
+                "password",
+                "port",
+                "type",
+                "username"
+            ],
+            "properties": {
+                "configName": {
+                    "type": "string",
+                    "maxLength": 100,
+                    "minLength": 3,
+                    "example": "production-db"
+                },
+                "databaseName": {
+                    "type": "string",
+                    "example": "mydatabase"
+                },
+                "host": {
+                    "type": "string",
+                    "example": "db.example.com"
+                },
+                "password": {
+                    "type": "string",
+                    "example": "secretpassword"
+                },
+                "port": {
+                    "type": "integer",
+                    "maximum": 65535,
+                    "minimum": 1,
+                    "example": 5432
+                },
+                "ssl": {
+                    "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.SSLInput"
+                },
+                "type": {
+                    "type": "string",
+                    "enum": [
+                        "ORACLE",
+                        "SQL_SERVER",
+                        "POSTGRESQL",
+                        "MONGODB",
+                        "MYSQL"
+                    ],
+                    "example": "POSTGRESQL"
+                },
+                "username": {
+                    "type": "string",
+                    "example": "dbuser"
+                }
+            }
+        },
+        "github_com_LerianStudio_fetcher_pkg_model.ConnectionResponse": {
             "type": "object",
             "properties": {
-                "age": {
-                    "type": "integer"
+                "configName": {
+                    "type": "string"
                 },
-                "created_at": {
+                "createdAt": {
+                    "type": "string"
+                },
+                "databaseName": {
+                    "type": "string"
+                },
+                "host": {
                     "type": "string"
                 },
                 "id": {
                     "type": "string"
                 },
-                "name": {
+                "port": {
+                    "type": "integer"
+                },
+                "ssl": {
+                    "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.SSLResponse"
+                },
+                "type": {
                     "type": "string"
                 },
-                "updated_at": {
+                "updatedAt": {
+                    "type": "string"
+                },
+                "username": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_LerianStudio_fetcher_pkg_model.SSLInput": {
+            "type": "object",
+            "required": [
+                "mode"
+            ],
+            "properties": {
+                "ca": {
+                    "type": "string",
+                    "example": "-----BEGIN CERTIFICATE-----\n..."
+                },
+                "cert": {
+                    "type": "string"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "mode": {
+                    "type": "string",
+                    "example": "require"
+                }
+            }
+        },
+        "github_com_LerianStudio_fetcher_pkg_model.SSLResponse": {
+            "type": "object",
+            "properties": {
+                "mode": {
+                    "type": "string"
+                }
+            }
+        },
+        "pkg.HTTPError": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "entityType": {
+                    "type": "string"
+                },
+                "err": {},
+                "message": {
+                    "type": "string"
+                },
+                "title": {
                     "type": "string"
                 }
             }

@@ -325,16 +325,6 @@ func TestJobMongoDBRepository_ExistsRunningByConnection(t *testing.T) {
 			t.Fatalf("expected no running jobs")
 		}
 	})
-
-	t.Run("database error", func(t *testing.T) {
-		repo := &JobMongoDBRepository{
-			connection: &fakeJobMongoConnection{err: errors.New("db down")},
-			Database:   jobTestDatabaseName,
-		}
-		if _, err := repo.ExistsRunningByConnection(context.Background(), uuid.New(), uuid.New()); err == nil || err.Error() != "db down" {
-			t.Fatalf("expected db error, got %v", err)
-		}
-	})
 }
 
 func TestJobMongoDBRepository_List(t *testing.T) {

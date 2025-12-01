@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/lib-commons/v2/commons"
 	libMongo "github.com/LerianStudio/lib-commons/v2/commons/mongo"
@@ -262,13 +263,13 @@ func (jr *JobMongoDBRepository) FindByID(ctx context.Context, id, organizationID
 
 // ExistsRunningByConnection reports whether there is any running job for a connection (pending or processing).
 func (jr *JobMongoDBRepository) ExistsRunningByConnection(ctx context.Context, organizationID, connectionID uuid.UUID) (bool, error) {
-	_, tracer, reqId, _ := commons.NewTrackingFromContext(ctx)
+	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "mongodb.exists_running_job_by_connection")
 	defer span.End()
 
 	attributes := []attribute.KeyValue{
-		attribute.String("app.request.request_id", reqId),
+		attribute.String("app.request.request_id", reqID),
 		attribute.String("app.request.organization_id", organizationID.String()),
 		attribute.String("app.request.connection_id", connectionID.String()),
 	}
@@ -277,7 +278,7 @@ func (jr *JobMongoDBRepository) ExistsRunningByConnection(ctx context.Context, o
 	db, err := jr.connection.GetDB(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
-		return false, err
+		return false, pkg.ValidateInternalError(err, "connection")
 	}
 
 	coll := db.Database(strings.ToLower(jr.Database)).Collection(strings.ToLower(constant.MongoCollectionJob))
@@ -290,14 +291,14 @@ func (jr *JobMongoDBRepository) ExistsRunningByConnection(ctx context.Context, o
 		},
 	}
 
-	if err := setSpanAttributesFromStruct(&span, "app.request.repository_filter", filter); err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to convert filter to JSON", err)
+	if errSpan := setSpanAttributesFromStruct(&span, "app.request.repository_filter", filter); errSpan != nil {
+		libOpentelemetry.HandleSpanError(&span, "Failed to convert filter to JSON", errSpan)
 	}
 
 	count, err := coll.CountDocuments(ctx, filter, options.Count().SetLimit(1))
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to count running jobs", err)
-		return false, err
+		return false, pkg.ValidateInternalError(err, "connection")
 	}
 
 	return count > 0, nil

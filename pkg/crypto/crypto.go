@@ -11,9 +11,9 @@ import (
 	"io"
 )
 
-// Service exposes encryption and decryption helpers backed by AES-GCM.
+// Cryptor exposes encryption and decryption helpers backed by AES-GCM.
 // It keeps track of the key version to support rotations.
-type Service interface {
+type Cryptor interface {
 	Encrypt(ctx context.Context, plain string) (cipherTextBase64 string, keyVersion string, err error)
 	Decrypt(ctx context.Context, cipherTextBase64, keyVersion string) (plain string, err error)
 	KeyVersion() string

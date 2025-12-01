@@ -6,8 +6,8 @@ import (
 	"net/url"
 
 	in2 "github.com/LerianStudio/fetcher/components/manager/internal/adapters/http/in"
-	connectionCommand "github.com/LerianStudio/fetcher/components/manager/internal/services/connection/command"
-	connectionQuery "github.com/LerianStudio/fetcher/components/manager/internal/services/connection/query"
+	connectionCommand "github.com/LerianStudio/fetcher/components/manager/internal/services/command"
+	connectionQuery "github.com/LerianStudio/fetcher/components/manager/internal/services/query"
 
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"

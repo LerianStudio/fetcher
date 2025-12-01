@@ -48,7 +48,7 @@ func (qh *QueryHeader) ToOffsetPagination() Pagination {
 // ValidateParameters validate and return struct of default parameters
 func ValidateParameters(params map[string]string) (*QueryHeader, error) {
 	var (
-		metadata    *bson.M
+		metadata    = bson.M{}
 		startDate   time.Time
 		endDate     time.Time
 		cursor      string
@@ -61,21 +61,28 @@ func ValidateParameters(params map[string]string) (*QueryHeader, error) {
 	for key, value := range params {
 		switch {
 		case strings.Contains(key, "metadata."):
-			metadata = &bson.M{key: value}
-			useMetadata = true
+			metadata[key] = value
 		case strings.Contains(key, "limit"):
 			limit, _ = strconv.Atoi(value)
 		case strings.Contains(key, "page"):
 			page, _ = strconv.Atoi(value)
 		case strings.Contains(key, "cursor"):
 			cursor = value
-		case strings.Contains(key, "sort_order"):
+		case strings.Contains(key, "sortOrder"):
 			sortOrder = strings.ToLower(value)
-		case strings.Contains(key, "start_date"):
+		case strings.Contains(key, "startDate"):
 			startDate, _ = time.Parse("2006-01-02", value)
-		case strings.Contains(key, "end_date"):
+		case strings.Contains(key, "endDate"):
 			endDate, _ = time.Parse("2006-01-02", value)
+		default:
+			metadata[key] = value
 		}
+	}
+
+	var metadataPtr *bson.M
+	if len(metadata) > 0 {
+		metadataPtr = &metadata
+		useMetadata = true
 	}
 
 	err := validateDates(&startDate, &endDate)
@@ -89,7 +96,7 @@ func ValidateParameters(params map[string]string) (*QueryHeader, error) {
 	}
 
 	query := &QueryHeader{
-		Metadata:    metadata,
+		Metadata:    metadataPtr,
 		Limit:       limit,
 		Page:        page,
 		Cursor:      cursor,
@@ -105,31 +112,44 @@ func ValidateParameters(params map[string]string) (*QueryHeader, error) {
 func validateDates(startDate, endDate *time.Time) error {
 	maxDateRangeMonths := libCommons.SafeInt64ToInt(pkg.GetenvIntOrDefault("MAX_PAGINATION_MONTH_DATE_RANGE", 1))
 
-	defaultStartDate := time.Now().AddDate(0, -maxDateRangeMonths, 0)
-	defaultEndDate := time.Now()
+	today := time.Date(
+		time.Now().Year(),
+		time.Now().Month(),
+		time.Now().Day(),
+		0, 0, 0, 0,
+		time.Now().Location(),
+	)
 
-	if !startDate.IsZero() && !endDate.IsZero() {
-		if !pkg.IsValidDate(pkg.NormalizeDate(*startDate, nil)) || !pkg.IsValidDate(pkg.NormalizeDate(*endDate, nil)) {
-			return pkg.ValidateBusinessError(constant.ErrInvalidDateFormat, "")
-		}
+	bothDatesEmpty := startDate.IsZero() && endDate.IsZero()
 
-		if !pkg.IsInitialDateBeforeFinalDate(*startDate, *endDate) {
-			return pkg.ValidateBusinessError(constant.ErrInvalidFinalDate, "")
-		}
-
-		if !pkg.IsDateRangeWithinMonthLimit(*startDate, *endDate, maxDateRangeMonths) {
-			return pkg.ValidateBusinessError(constant.ErrDateRangeExceedsLimit, "", maxDateRangeMonths)
-		}
+	if bothDatesEmpty {
+		*endDate = today.AddDate(0, 0, 1)
+		*startDate = endDate.AddDate(0, -maxDateRangeMonths, 0)
+		return nil
 	}
 
-	if startDate.IsZero() && endDate.IsZero() {
-		*startDate = defaultStartDate
-		*endDate = defaultEndDate
+	if startDate.IsZero() {
+		*startDate = today.AddDate(0, -maxDateRangeMonths, 0)
 	}
 
-	if (!startDate.IsZero() && endDate.IsZero()) ||
-		(startDate.IsZero() && !endDate.IsZero()) {
-		return pkg.ValidateBusinessError(constant.ErrInvalidDateRange, "")
+	if endDate.IsZero() {
+		*endDate = startDate.AddDate(0, 0, 1)
+	}
+
+	if !pkg.IsValidDate(pkg.NormalizeDate(*startDate, nil)) || !pkg.IsValidDate(pkg.NormalizeDate(*endDate, nil)) {
+		return pkg.ValidateBusinessError(constant.ErrInvalidDateFormat, "")
+	}
+
+	if startDate.Equal(*endDate) {
+		*endDate = endDate.AddDate(0, 0, 1)
+	}
+
+	if !pkg.IsInitialDateBeforeFinalDate(*startDate, *endDate) {
+		return pkg.ValidateBusinessError(constant.ErrInvalidFinalDate, "")
+	}
+
+	if !pkg.IsDateRangeWithinMonthLimit(*startDate, *endDate, maxDateRangeMonths) {
+		*startDate = endDate.AddDate(0, -maxDateRangeMonths, 0)
 	}
 
 	return nil

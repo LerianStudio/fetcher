@@ -1,4 +1,4 @@
-service_name := reporter-infra
+service_name := fetcher-infra
 bin_dir := ./.bin
 
 BLUE := \033[36m
