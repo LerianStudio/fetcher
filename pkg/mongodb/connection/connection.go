@@ -1,6 +1,7 @@
 package connection
 
 import (
+	"errors"
 	"time"
 
 	"github.com/LerianStudio/fetcher/pkg"
@@ -35,14 +36,14 @@ type SSLConfigMongoDBModel struct {
 }
 
 // ToDomain converts a MongoDB model into the domain entity representation.
-func (cm *ConnectionMongoDBModel) ToDomain() *model.Connection {
+func (cm *ConnectionMongoDBModel) ToDomain() (*model.Connection, error) {
 	if cm == nil {
-		return nil
+		return nil, errors.New("cannot convert nil ConnectionMongoDBModel to domain")
 	}
 
 	connType, err := model.NewTypeFromString(cm.Type)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 
 	var ssl *model.SSLConfig
@@ -70,7 +71,7 @@ func (cm *ConnectionMongoDBModel) ToDomain() *model.Connection {
 		CreatedAt:            cm.CreatedAt,
 		UpdatedAt:            cm.UpdatedAt,
 		DeletedAt:            cm.DeletedAt,
-	}
+	}, nil
 }
 
 // NewConnectionMongoDBModelFromDomain creates a MongoDB model from the domain entity.

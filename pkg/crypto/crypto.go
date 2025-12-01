@@ -70,7 +70,10 @@ func (s *AESGCMService) Encrypt(_ context.Context, plain string) (string, string
 }
 
 // Decrypt converts a Base64 nonce+ciphertext back into plaintext.
-func (s *AESGCMService) Decrypt(_ context.Context, cipherTextBase64, _ string) (string, error) {
+func (s *AESGCMService) Decrypt(_ context.Context, cipherTextBase64, keyVersion string) (string, error) {
+	if keyVersion != s.keyVersion {
+		return "", fmt.Errorf("unsupported key version: %s", keyVersion)
+	}
 	raw, err := base64.StdEncoding.DecodeString(cipherTextBase64)
 	if err != nil {
 		return "", fmt.Errorf("invalid ciphertext (base64): %w", err)

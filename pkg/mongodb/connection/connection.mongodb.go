@@ -109,7 +109,13 @@ func (cr *ConnectionMongoDBRepository) Create(ctx context.Context, conn *model.C
 		return nil, pkg.ValidateInternalError(err, "connection")
 	}
 
-	return record.ToDomain(), nil
+	connection, err := record.ToDomain()
+	if err != nil {
+		libOpentelemetry.HandleSpanError(&span, "Failed to convert record to domain", err)
+		return nil, pkg.ValidateInternalError(err, "connection")
+	}
+
+	return connection, nil
 }
 
 // Update overwrites mutable fields of an existing connection and returns the saved entity.
@@ -191,7 +197,13 @@ func (cr *ConnectionMongoDBRepository) Update(ctx context.Context, conn *model.C
 		return nil, pkg.ValidateInternalError(err, "connection")
 	}
 
-	return record.ToDomain(), nil
+	connection, err := record.ToDomain()
+	if err != nil {
+		libOpentelemetry.HandleSpanError(&span, "Failed to convert record to domain", err)
+		return nil, pkg.ValidateInternalError(err, "connection")
+	}
+
+	return connection, nil
 }
 
 // Delete performs a soft delete by stamping deleted_at and updated_at fields.
@@ -282,7 +294,13 @@ func (cr *ConnectionMongoDBRepository) FindByID(ctx context.Context, connectionI
 		return nil, pkg.ValidateInternalError(err, "connection")
 	}
 
-	return record.ToDomain(), nil
+	connection, err := record.ToDomain()
+	if err != nil {
+		libOpentelemetry.HandleSpanError(&span, "Failed to convert record to domain", err)
+		return nil, pkg.ValidateInternalError(err, "connection")
+	}
+
+	return connection, nil
 }
 
 // FindByOrganizationAndName retrieves a connection by configName scoped to an organization.
@@ -320,7 +338,11 @@ func (cr *ConnectionMongoDBRepository) FindByOrganizationAndName(ctx context.Con
 		return nil, pkg.ValidateInternalError(err, "connection")
 	}
 
-	conn := record.ToDomain()
+	conn, err := record.ToDomain()
+	if err != nil {
+		libOpentelemetry.HandleSpanError(&span, "Failed to convert record to domain", err)
+		return nil, pkg.ValidateInternalError(err, "connection")
+	}
 	if errSpan := setSpanAttributesFromStruct(&span, "app.response.payload", conn.ToMapWithMask()); errSpan != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to convert connection to JSON", errSpan)
 	}
@@ -362,15 +384,21 @@ func (cr *ConnectionMongoDBRepository) FindByOrganizationAndDatabaseName(ctx con
 		"deleted_at":      bson.D{{Key: "$eq", Value: nil}},
 	}
 
-	if err := coll.FindOne(ctx, filter).Decode(&record); err != nil {
-		if errors.Is(err, mongo.ErrNoDocuments) {
+	if errFind := coll.FindOne(ctx, filter).Decode(&record); errFind != nil {
+		if errors.Is(errFind, mongo.ErrNoDocuments) {
 			return nil, nil
 		}
-		libOpentelemetry.HandleSpanError(&span, "Failed to find connection by database_name", err)
+		libOpentelemetry.HandleSpanError(&span, "Failed to find connection by database_name", errFind)
+		return nil, pkg.ValidateInternalError(errFind, "connection")
+	}
+
+	connection, err := record.ToDomain()
+	if err != nil {
+		libOpentelemetry.HandleSpanError(&span, "Failed to convert record to domain", err)
 		return nil, pkg.ValidateInternalError(err, "connection")
 	}
 
-	return record.ToDomain(), nil
+	return connection, nil
 }
 
 // List returns a paginated set of connections for the given organization.
@@ -450,14 +478,19 @@ func (rm *ConnectionMongoDBRepository) List(ctx context.Context, organizationID 
 		var record ConnectionMongoDBModel
 		if err := cur.Decode(&record); err != nil {
 			libOpentelemetry.HandleSpanError(&span, "", err)
-			return nil, err
+			return nil, pkg.ValidateInternalError(err, "connection")
 		}
-		connections = append(connections, record.ToDomain())
+		connection, err := record.ToDomain()
+		if err != nil {
+			libOpentelemetry.HandleSpanError(&span, "Failed to convert record to domain", err)
+			return nil, pkg.ValidateInternalError(err, "connection")
+		}
+		connections = append(connections, connection)
 	}
 
 	if err := cur.Err(); err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to iterate over connections", err)
-		return nil, err
+		return nil, pkg.ValidateInternalError(err, "connection")
 	}
 
 	return connections, nil
