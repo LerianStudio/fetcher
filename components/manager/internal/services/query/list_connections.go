@@ -3,8 +3,6 @@ package query
 import (
 	"context"
 
-	"github.com/LerianStudio/fetcher/pkg"
-	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 	"github.com/LerianStudio/fetcher/pkg/net/http"
@@ -44,12 +42,7 @@ func (s *ListConnections) Execute(ctx context.Context, organizationID uuid.UUID,
 		return nil, err
 	}
 	if list == nil {
-		return nil, pkg.EntityNotFoundError{
-			EntityType: "connection",
-			Code:       constant.ErrEntityNotFound.Error(),
-			Title:      "Entity Not Found",
-			Message:    "connection not found",
-		}
+		return []*model.Connection{}, nil
 	}
 
 	return list, nil
