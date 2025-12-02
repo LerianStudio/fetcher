@@ -7,11 +7,11 @@ import (
 	"strings"
 
 	"github.com/LerianStudio/fetcher/pkg/constant"
+	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/model/datasource"
 	datsourceMongoConfig "github.com/LerianStudio/fetcher/pkg/model/datasource/mongodb"
 	datsourcePostgresConfig "github.com/LerianStudio/fetcher/pkg/model/datasource/postgres"
 	"github.com/LerianStudio/fetcher/pkg/mongodb"
-	"github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 	"github.com/LerianStudio/fetcher/pkg/postgres"
 	"github.com/LerianStudio/lib-commons/v2/commons/log"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -21,16 +21,16 @@ import (
 // NewDataSourceFromConnection creates a DataSource implementation based on the connection type.
 // This factory function encapsulates the logic for converting a Connection entity
 // into the appropriate DataSourceConfig implementation (MongoDB or PostgreSQL).
-func NewDataSourceFromConnection(ctx context.Context, conn *connection.Connection, logger log.Logger) (datasource.DataSource, error) {
+func NewDataSourceFromConnection(ctx context.Context, conn *model.Connection, logger log.Logger) (datasource.DataSource, error) {
 	if conn == nil {
 		return nil, fmt.Errorf("connection cannot be nil")
 	}
 
 	baseConfig := newDataSourceConfigFromConnection(conn)
 	switch conn.Type {
-	case connection.ConnectionTypeMongoDB:
+	case model.TypeMongoDB:
 		return newDataSourceConfigMongoDB(ctx, baseConfig, conn, logger)
-	case connection.ConnectionTypePostgreSQL:
+	case model.TypePostgreSQL:
 		return newDataSourceConfigPostgres(baseConfig, conn, logger)
 	default:
 		return nil, fmt.Errorf("unsupported database type: %s", conn.Type)
@@ -38,8 +38,8 @@ func NewDataSourceFromConnection(ctx context.Context, conn *connection.Connectio
 }
 
 // newDataSourceConfigFromConnection creates a base DataSourceConfig from a Connection entity.
-func newDataSourceConfigFromConnection(conn *connection.Connection) datasource.DataSourceConfig {
-	var sslConfig connection.SSLConfig
+func newDataSourceConfigFromConnection(conn *model.Connection) datasource.DataSourceConfig {
+	var sslConfig model.SSLConfig
 	if conn.SSL != nil {
 		sslConfig = *conn.SSL
 	}
@@ -60,7 +60,7 @@ func newDataSourceConfigFromConnection(conn *connection.Connection) datasource.D
 }
 
 // newDataSourceConfigMongoDB creates a MongoDB-specific DataSourceConfig.
-func newDataSourceConfigMongoDB(ctx context.Context, base datasource.DataSourceConfig, conn *connection.Connection, logger log.Logger) (*datsourceMongoConfig.DataSourceConfigMongoDB, error) {
+func newDataSourceConfigMongoDB(ctx context.Context, base datasource.DataSourceConfig, conn *model.Connection, logger log.Logger) (*datsourceMongoConfig.DataSourceConfigMongoDB, error) {
 	optionsStr := "authSource=admin&directConnection=true"
 	mongoURI := fmt.Sprintf("%s://%s:%s@%s:%d/%s",
 		strings.ToLower(string(conn.Type)),
@@ -131,7 +131,7 @@ func newDataSourceConfigMongoDB(ctx context.Context, base datasource.DataSourceC
 }
 
 // newDataSourceConfigPostgres creates a PostgreSQL-specific DataSourceConfig.
-func newDataSourceConfigPostgres(base datasource.DataSourceConfig, conn *connection.Connection, logger log.Logger) (*datsourcePostgresConfig.DataSourceConfigPostgres, error) {
+func newDataSourceConfigPostgres(base datasource.DataSourceConfig, conn *model.Connection, logger log.Logger) (*datsourcePostgresConfig.DataSourceConfigPostgres, error) {
 	sslMode := "disable"
 	if conn.SSL != nil && conn.SSL.Mode != "" {
 		sslMode = conn.SSL.Mode

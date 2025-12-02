@@ -10,9 +10,9 @@ import (
 
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/datasource"
+	"github.com/LerianStudio/fetcher/pkg/model"
 	datasourceMongoConfig "github.com/LerianStudio/fetcher/pkg/model/datasource/mongodb"
 	modelJob "github.com/LerianStudio/fetcher/pkg/model/job"
-	"github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 	"github.com/LerianStudio/fetcher/pkg/mongodb/job"
 	libCommons "github.com/LerianStudio/lib-commons/v2/commons"
 	libCrypto "github.com/LerianStudio/lib-commons/v2/commons/crypto"
@@ -226,7 +226,7 @@ func (uc *UseCase) updateJobWithErrors(ctx context.Context, jobID, orgID uuid.UU
 }
 
 // queryExternalData retrieves data from external data sources specified in the message and populates the result map.
-func (uc *UseCase) queryExternalData(ctx context.Context, message ExtractExternalDataMessage, connections []*connection.Connection, result map[string]map[string][]map[string]any) error {
+func (uc *UseCase) queryExternalData(ctx context.Context, message ExtractExternalDataMessage, connections []*model.Connection, result map[string]map[string][]map[string]any) error {
 	logger, tracer, _, _ := libCommons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "service.extract_external_data.query_external_data")
@@ -248,7 +248,7 @@ func (uc *UseCase) queryDatabase(
 	ctx context.Context,
 	databaseName string,
 	tables map[string][]string,
-	connections []*connection.Connection,
+	connections []*model.Connection,
 	allFilters map[string]map[string]map[string]modelJob.FilterCondition,
 	result map[string]map[string][]map[string]any,
 	logger log.Logger,
@@ -260,7 +260,7 @@ func (uc *UseCase) queryDatabase(
 	logger.Infof("Querying database %s", databaseName)
 
 	// Find the connection for this database
-	var foundConnection *connection.Connection
+	var foundConnection *model.Connection
 
 	for _, conn := range connections {
 		if conn.ConfigName == databaseName {
@@ -416,11 +416,6 @@ func (uc *UseCase) shouldSkipProcessing(ctx context.Context, jobID uuid.UUID, lo
 	if err == nil {
 		if jobStatus == job.JobStatusCompleted {
 			logger.Infof("Job %s is already completed, skipping reprocessing", jobID)
-			return true
-		}
-
-		if jobStatus == job.JobStatusFailed {
-			logger.Warnf("Job %s is in error state, skipping reprocessing", jobID)
 			return true
 		}
 	}

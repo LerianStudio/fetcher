@@ -31,6 +31,7 @@ type Repository interface {
 	FindByID(ctx context.Context, id, organizationID uuid.UUID) (*model.Connection, error)
 	FindByOrganizationAndName(ctx context.Context, organizationID uuid.UUID, configName string) (*model.Connection, error)
 	FindByOrganizationAndDatabaseName(ctx context.Context, organizationID uuid.UUID, databaseName string) (*model.Connection, error)
+	FindByConfigNames(ctx context.Context, organizationID uuid.UUID, configNames []string) ([]*model.Connection, error)
 	List(ctx context.Context, organizationID uuid.UUID, filters http.QueryHeader) ([]*model.Connection, error)
 }
 
@@ -49,11 +50,14 @@ type ConnectionMongoDBRepository struct {
 }
 
 // NewConnectionMongoDBRepository provisions a repository using the given client.
-func NewConnectionMongoDBRepository(ctx context.Context, mc *libMongo.MongoConnection) (*ConnectionMongoDBRepository, error) {
+func NewConnectionMongoDBRepository(mc *libMongo.MongoConnection) (*ConnectionMongoDBRepository, error) {
 	repo := &ConnectionMongoDBRepository{
 		connection: mc,
 		Database:   mc.Database,
 	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
 	if _, err := repo.connection.GetDB(ctx); err != nil {
 		return nil, err
@@ -399,6 +403,89 @@ func (cr *ConnectionMongoDBRepository) FindByOrganizationAndDatabaseName(ctx con
 	}
 
 	return connection, nil
+}
+
+// FindByConfigNames retrieves connections that match any of the provided config names for the given organization.
+func (cr *ConnectionMongoDBRepository) FindByConfigNames(ctx context.Context, organizationID uuid.UUID, configNames []string) ([]*model.Connection, error) {
+	_, tracer, reqId, _ := commons.NewTrackingFromContext(ctx)
+
+	ctx, span := tracer.Start(ctx, "mongodb.find_connections_by_config_names")
+	defer span.End()
+
+	if len(configNames) == 0 {
+		return []*model.Connection{}, nil
+	}
+
+	// Trim and filter empty config names
+	trimmedNames := make([]string, 0, len(configNames))
+	for _, name := range configNames {
+		if trimmed := strings.TrimSpace(name); trimmed != "" {
+			trimmedNames = append(trimmedNames, trimmed)
+		}
+	}
+
+	if len(trimmedNames) == 0 {
+		return []*model.Connection{}, nil
+	}
+
+	attributes := []attribute.KeyValue{
+		attribute.String("app.request.request_id", reqId),
+		attribute.String("app.request.organization_id", organizationID.String()),
+		attribute.Int("app.request.config_names_count", len(trimmedNames)),
+	}
+	span.SetAttributes(attributes...)
+
+	db, err := cr.connection.GetDB(ctx)
+	if err != nil {
+		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
+		return nil, err
+	}
+
+	coll := db.Database(strings.ToLower(cr.Database)).Collection(strings.ToLower(constant.MongoCollectionConnection))
+
+	filter := bson.M{
+		"organization_id": organizationID,
+		"config_name":     bson.M{"$in": trimmedNames},
+		"deleted_at":      bson.D{{Key: "$eq", Value: nil}},
+	}
+
+	if err := setSpanAttributesFromStruct(&span, "app.request.repository_filter", filter); err != nil {
+		libOpentelemetry.HandleSpanError(&span, "Failed to convert filter to JSON", err)
+	}
+
+	cur, err := coll.Find(ctx, filter)
+	if err != nil {
+		libOpentelemetry.HandleSpanError(&span, "Failed to find connections by config names", err)
+		return nil, err
+	}
+	defer cur.Close(ctx)
+
+	connections := make([]*model.Connection, 0)
+
+	for cur.Next(ctx) {
+		var record ConnectionMongoDBModel
+		if err := cur.Decode(&record); err != nil {
+			libOpentelemetry.HandleSpanError(&span, "Failed to decode connection record", err)
+			return nil, err
+		}
+
+		recordConvert, errDomain := record.ToDomain()
+		if errDomain != nil {
+			libOpentelemetry.HandleSpanError(&span, "Failed to convert connection model", err)
+			return nil, errDomain
+		}
+
+		connections = append(connections, recordConvert)
+	}
+
+	if err := cur.Err(); err != nil {
+		libOpentelemetry.HandleSpanError(&span, "Failed to iterate over connections", err)
+		return nil, err
+	}
+
+	span.SetAttributes(attribute.Int("app.response.connections_count", len(connections)))
+
+	return connections, nil
 }
 
 // List returns a paginated set of connections for the given organization.

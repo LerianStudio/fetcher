@@ -111,8 +111,8 @@ func (conn *Connection) IsValid() error {
 	conn.DatabaseName = strings.TrimSpace(conn.DatabaseName)
 	conn.Username = strings.TrimSpace(conn.Username)
 
-	var requiredFields = make(map[string]string)
-	var knownInvalidFields = make(map[string]string)
+	requiredFields := make(map[string]string)
+	knownInvalidFields := make(map[string]string)
 
 	if !conn.Type.IsValid() {
 		knownInvalidFields["type"] = "invalid connection type"

@@ -3,8 +3,8 @@ package datasource
 import (
 	"context"
 
+	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/model/job"
-	"github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 	"github.com/LerianStudio/lib-commons/v2/commons/log"
 )
 
@@ -19,7 +19,7 @@ type DataSourceConfig struct {
 	DatabaseName      string
 	Username          string
 	PasswordEncrypted string
-	SSL               connection.SSLConfig
+	SSL               model.SSLConfig
 	Status            string
 }
 
