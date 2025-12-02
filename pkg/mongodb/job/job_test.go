@@ -11,6 +11,7 @@ import (
 func newValidJob() *Job {
 	return &Job{
 		OrganizationID: uuid.New(),
+		ConnectionID:   uuid.New(),
 		MappedFields:   map[string]any{"k": "v"},
 		Filters:        map[string]any{"f": "v"},
 		Metadata:       map[string]any{"m": "v"},
@@ -78,6 +79,7 @@ func TestJobValidateForCreate(t *testing.T) {
 	}{
 		{"nil job", nil, "job entity is required"},
 		{"missing org", func() *Job { j := newValidJob(); j.OrganizationID = uuid.Nil; return j }(), "organization ID is required"},
+		{"missing connection", func() *Job { j := newValidJob(); j.ConnectionID = uuid.Nil; return j }(), "connection ID is required"},
 		{"missing mappedFields", func() *Job { j := newValidJob(); j.MappedFields = nil; return j }(), "mappedFields is required"},
 		{"invalid status", func() *Job { j := newValidJob(); j.Status = JobStatus("bad"); return j }(), "invalid job status"},
 	}

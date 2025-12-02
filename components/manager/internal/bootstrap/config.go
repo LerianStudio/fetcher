@@ -6,12 +6,15 @@ import (
 	"net/url"
 
 	in2 "github.com/LerianStudio/fetcher/components/manager/internal/adapters/http/in"
+	connectionCommand "github.com/LerianStudio/fetcher/components/manager/internal/services/command"
+	connectionQuery "github.com/LerianStudio/fetcher/components/manager/internal/services/query"
 
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
+	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/mongodb/connection"
+	"github.com/LerianStudio/fetcher/pkg/mongodb/job"
 	"github.com/LerianStudio/fetcher/pkg/rabbitmq"
-	simpleClient "github.com/LerianStudio/fetcher/pkg/seaweedfs"
 
 	"github.com/LerianStudio/lib-auth/v2/auth/middleware"
 	mongoDB "github.com/LerianStudio/lib-commons/v2/commons/mongo"
@@ -59,6 +62,9 @@ type Config struct {
 	// License configuration envs
 	LicenseKey      string `env:"LICENSE_KEY"`
 	OrganizationIDs string `env:"ORGANIZATION_IDS"`
+	// Encryption
+	AppEncryptionKey        string `env:"APP_ENC_KEY"`
+	AppEncryptionKeyVersion string `env:"APP_ENC_KEY_VERSION"`
 }
 
 // InitServers initiate http and grpc servers.
@@ -84,10 +90,6 @@ func InitServers() *Service {
 		Logger:                    logger,
 	})
 
-	// 	Init SeaweedFS
-	seaweedFSEndpoint := fmt.Sprintf("http://%s:%s", cfg.SeaweedFSHost, cfg.SeaweedFSFilerPort)
-	_ = simpleClient.NewSeaweedFSClient(seaweedFSEndpoint)
-
 	// Init MongoDB
 	escapedUser := url.PathEscape(cfg.MongoDBUser)
 	escapedPass := url.QueryEscape(cfg.MongoDBPassword)
@@ -106,8 +108,18 @@ func InitServers() *Service {
 	}
 
 	logger.Info("Ensuring MongoDB indexes exist for connections...")
-	if err := connectionRepository.EnsureIndexes(ctx); err != nil {
-		logger.Fatalf("Failed to ensure MongoDB indexes: %v", err)
+	if errConnRepo := connectionRepository.EnsureIndexes(ctx); errConnRepo != nil {
+		logger.Fatalf("Failed to ensure MongoDB indexes: %v", errConnRepo)
+	}
+
+	// Init Job repository
+	jobRepository, err := job.NewJobMongoDBRepository(ctx, mongoConnection)
+	if err != nil {
+		logger.Fatalf("Failed to create Job MongoDB repository: %v", err)
+	}
+	logger.Info("Ensuring MongoDB indexes exist for jobs...")
+	if errJobRepo := jobRepository.EnsureIndexes(ctx); errJobRepo != nil {
+		logger.Fatalf("Failed to ensure Job indexes: %v", errJobRepo)
 	}
 
 	// Init RabbitMQ
@@ -139,8 +151,29 @@ func InitServers() *Service {
 		&logger,
 	)
 
+	// Init crypto
+	cryptoService, err := crypto.NewAESGCMServiceFromEnv(cfg.AppEncryptionKey, cfg.AppEncryptionKeyVersion)
+	if err != nil {
+		logger.Fatalf("Failed to initialize crypto service: %v", err)
+	}
+
+	// Init services and handlers
+	createConnectionCmd := connectionCommand.NewCreateConnection(connectionRepository, cryptoService)
+	updateConnectionCmd := connectionCommand.NewUpdateConnection(connectionRepository, jobRepository, cryptoService)
+	deleteConnectionCmd := connectionCommand.NewDeleteConnection(connectionRepository, jobRepository)
+	getConnectionQuery := connectionQuery.NewGetConnection(connectionRepository)
+	listConnectionsQuery := connectionQuery.NewListConnections(connectionRepository)
+
+	connectionHandler := in2.NewConnectionHandler(
+		createConnectionCmd,
+		updateConnectionCmd,
+		deleteConnectionCmd,
+		getConnectionQuery,
+		listConnectionsQuery,
+	)
+
 	// Init HTTP server
-	httpApp := in2.NewRoutes(logger, telemetry, authClient, licenseClient)
+	httpApp := in2.NewRoutes(logger, telemetry, authClient, licenseClient, connectionHandler)
 	serverAPI := NewServer(cfg, httpApp, logger, telemetry, licenseClient)
 
 	return &Service{

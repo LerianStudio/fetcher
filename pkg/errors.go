@@ -11,11 +11,11 @@ import (
 // EntityNotFoundError records an error indicating an entity was not found in any case that caused it.
 // You can use it to representing a Database not found, cache not found or any other repository.
 type EntityNotFoundError struct {
-	EntityType string
-	Title      string
-	Message    string
-	Code       string
-	Err        error
+	EntityType string `json:"entityType,omitempty"`
+	Title      string `json:"title,omitempty"`
+	Message    string `json:"message,omitempty"`
+	Code       string `json:"code,omitempty"`
+	Err        error  `json:"err,omitempty"`
 }
 
 // Error implements the error interface.
@@ -44,10 +44,10 @@ func (e EntityNotFoundError) Unwrap() error {
 // You can use it to representing a Database not found, cache not found or any other repository.
 type ValidationError struct {
 	EntityType string `json:"entityType,omitempty"`
-	Title      string
-	Message    string
-	Code       string
-	Err        error `json:"err,omitempty"`
+	Title      string `json:"title,omitempty"`
+	Message    string `json:"code,omitempty"`
+	Code       string `json:"message,omitempty"`
+	Err        error  `json:"err,omitempty"`
 }
 
 // Error implements the error interface.
@@ -67,11 +67,20 @@ func (e ValidationError) Unwrap() error {
 // EntityConflictError records an error indicating an entity already exists in some repository
 // You can use it to representing a Database conflict, cache or any other repository.
 type EntityConflictError struct {
-	EntityType string
-	Title      string
-	Message    string
-	Code       string
-	Err        error
+	EntityType string `json:"entityType,omitempty"`
+	Title      string `json:"title,omitempty"`
+	Message    string `json:"message,omitempty"`
+	Code       string `json:"code,omitempty"`
+	Err        error  `json:"err,omitempty"`
+}
+
+// ValidationKnownFieldsError records an error that occurred during a validation of known fields.
+type ValidationKnownFieldsError struct {
+	EntityType string           `json:"entityType,omitempty"`
+	Title      string           `json:"title,omitempty"`
+	Code       string           `json:"code,omitempty"`
+	Message    string           `json:"message,omitempty"`
+	Fields     FieldValidations `json:"fields,omitempty"`
 }
 
 // Error implements the error interface.
@@ -116,11 +125,11 @@ func (e ForbiddenError) Error() string {
 
 // UnprocessableOperationError indicates an operation that couldn't be performant because it's invalid.
 type UnprocessableOperationError struct {
-	EntityType string
-	Title      string
-	Message    string
-	Code       string
-	Err        error
+	EntityType string `json:"entityType,omitempty"`
+	Title      string `json:"title,omitempty"`
+	Message    string `json:"message,omitempty"`
+	Code       string `json:"code,omitempty"`
+	Err        error  `json:"err,omitempty"`
 }
 
 func (e UnprocessableOperationError) Error() string {
@@ -129,11 +138,11 @@ func (e UnprocessableOperationError) Error() string {
 
 // HTTPError indicates a http error raised in a http client.
 type HTTPError struct {
-	EntityType string
-	Title      string
-	Message    string
-	Code       string
-	Err        error
+	EntityType string `json:"entityType,omitempty"`
+	Title      string `json:"title,omitempty"`
+	Message    string `json:"message,omitempty"`
+	Code       string `json:"code,omitempty"`
+	Err        error  `json:"err,omitempty"`
 }
 
 func (e HTTPError) Error() string {
@@ -179,15 +188,6 @@ type ResponseError struct {
 // Returns a string.
 func (r ResponseError) Error() string {
 	return r.Message
-}
-
-// ValidationKnownFieldsError records an error that occurred during a validation of known fields.
-type ValidationKnownFieldsError struct {
-	EntityType string           `json:"entityType,omitempty"`
-	Title      string           `json:"title,omitempty"`
-	Code       string           `json:"code,omitempty"`
-	Message    string           `json:"message,omitempty"`
-	Fields     FieldValidations `json:"fields,omitempty"`
 }
 
 // Error returns the error message for a ValidationKnownFieldsError.
@@ -289,31 +289,25 @@ func ValidateBadRequestFieldsError(requiredFields, knownInvalidFields map[string
 // error: The appropriate business error with code, title, and message.
 func ValidateBusinessError(err error, entityType string, args ...any) error {
 	errorMap := map[error]error{
-		constant.ErrCalculationFieldType: ValidationError{
-			EntityType: entityType,
-			Code:       constant.ErrCalculationFieldType.Error(),
-			Title:      "Calculation field type invalid",
-			Message:    "The Calculation field type is invalid. Values can only be percentage or fixed.",
-		},
 		constant.ErrInvalidQueryParameter: ValidationError{
 			EntityType: entityType,
 			Code:       constant.ErrInvalidQueryParameter.Error(),
 			Title:      "Invalid Query Parameter",
 			Message:    fmt.Sprintf("One or more query parameters are in an incorrect format. Please check the following parameters '%v' and ensure they meet the required format before trying again.", args),
 		},
-		constant.ErrInvalidDateFormat: ValidationError{
+		constant.ErrInvalidDateFormat: EntityNotFoundError{
 			EntityType: entityType,
 			Code:       constant.ErrInvalidDateFormat.Error(),
 			Title:      "Invalid Date Format Error",
 			Message:    "The 'initialDate', 'finalDate', or both are in the incorrect format. Please use the 'yyyy-mm-dd' format and try again.",
 		},
-		constant.ErrInvalidFinalDate: ValidationError{
+		constant.ErrInvalidFinalDate: EntityNotFoundError{
 			EntityType: entityType,
 			Code:       constant.ErrInvalidFinalDate.Error(),
 			Title:      "Invalid Final Date Error",
 			Message:    "The 'finalDate' cannot be earlier than the 'initialDate'. Please verify the dates and try again.",
 		},
-		constant.ErrDateRangeExceedsLimit: ValidationError{
+		constant.ErrDateRangeExceedsLimit: EntityNotFoundError{
 			EntityType: entityType,
 			Code:       constant.ErrDateRangeExceedsLimit.Error(),
 			Title:      "Date Range Exceeds Limit Error",
@@ -325,13 +319,13 @@ func ValidateBusinessError(err error, entityType string, args ...any) error {
 			Title:      "Invalid Date Range Error",
 			Message:    "Both 'initialDate' and 'finalDate' fields are required and must be in the 'yyyy-mm-dd' format. Please provide valid dates and try again.",
 		},
-		constant.ErrPaginationLimitExceeded: ValidationError{
+		constant.ErrPaginationLimitExceeded: EntityNotFoundError{
 			EntityType: entityType,
 			Code:       constant.ErrPaginationLimitExceeded.Error(),
 			Title:      "Pagination Limit Exceeded",
 			Message:    fmt.Sprintf("The pagination limit exceeds the maximum allowed of %v items per page. Please verify the limit and try again.", args...),
 		},
-		constant.ErrInvalidSortOrder: ValidationError{
+		constant.ErrInvalidSortOrder: EntityNotFoundError{
 			EntityType: entityType,
 			Code:       constant.ErrInvalidSortOrder.Error(),
 			Title:      "Invalid Sort Order",
@@ -341,19 +335,7 @@ func ValidateBusinessError(err error, entityType string, args ...any) error {
 			EntityType: entityType,
 			Code:       constant.ErrEntityNotFound.Error(),
 			Title:      "Entity Not Found",
-			Message:    "No entity was found for the given ID. Please make sure to use the correct ID for the entity you are trying to manage.",
-		},
-		constant.ErrActionNotPermitted: ValidationError{
-			EntityType: entityType,
-			Code:       constant.ErrActionNotPermitted.Error(),
-			Title:      "Action Not Permitted",
-			Message:    "The action you are attempting is not allowed in the current environment. Please refer to the documentation for guidance.",
-		},
-		constant.ErrParentExampleIDNotFound: EntityNotFoundError{
-			EntityType: entityType,
-			Code:       constant.ErrParentExampleIDNotFound.Error(),
-			Title:      "Parent Example ID Not Found",
-			Message:    "The provided parent example ID does not exist in our records. Please verify the parent example ID and try again.",
+			Message:    fmt.Sprintf("No %v entity was found for the given ID. Please make sure to use the correct ID for the entity you are trying to manage.", args...),
 		},
 		constant.ErrMetadataKeyLengthExceeded: ValidationError{
 			EntityType: entityType,
@@ -372,6 +354,114 @@ func ValidateBusinessError(err error, entityType string, args ...any) error {
 			Code:       constant.ErrInvalidMetadataNesting.Error(),
 			Title:      "Invalid Metadata Nesting",
 			Message:    fmt.Sprintf("The metadata object cannot contain nested values. Please ensure that the value %v is not nested and try again.", args...),
+		},
+
+		constant.ErrMissingRequiredFields: ValidationError{
+			EntityType: entityType,
+			Code:       constant.ErrMissingRequiredFields.Error(),
+			Title:      "Missing required fields",
+			Message:    "One or more required fields are missing. Please ensure all required fields are included.",
+		},
+		constant.ErrInvalidFileFormat: ValidationError{
+			EntityType: entityType,
+			Code:       constant.ErrInvalidFileFormat.Error(),
+			Title:      "Invalid file format",
+			Message:    "The uploaded file must be a .tpl file. Other formats are not supported.",
+		},
+		constant.ErrInvalidOutputFormat: ValidationError{
+			EntityType: entityType,
+			Code:       constant.ErrInvalidOutputFormat.Error(),
+			Title:      "Invalid output format",
+			Message:    "The outputFormat field must be one of: html, csv, or xml.",
+		},
+		constant.ErrInvalidHeaderParameter: ValidationError{
+			EntityType: entityType,
+			Code:       constant.ErrInvalidHeaderParameter.Error(),
+			Title:      "Invalid header",
+			Message:    fmt.Sprintf("One or more header values are missing or incorrectly formatted. Please verify required headers %v.", args),
+		},
+		constant.ErrInvalidFileUploaded: ValidationError{
+			EntityType: entityType,
+			Code:       constant.ErrInvalidFileUploaded.Error(),
+			Title:      "Invalid File Uploaded",
+			Message:    fmt.Sprintf("The file you submitted is invalid. Please check the uploaded file with error: %v", args),
+		},
+		constant.ErrEmptyFile: ValidationError{
+			EntityType: entityType,
+			Code:       constant.ErrEmptyFile.Error(),
+			Title:      "Error File Empty",
+			Message:    "The file you submitted is empty. Please check the uploaded file.",
+		},
+		constant.ErrFileContentInvalid: ValidationError{
+			EntityType: entityType,
+			Code:       constant.ErrFileContentInvalid.Error(),
+			Title:      "Error File Content Invalid",
+			Message:    fmt.Sprintf("The file content is invalid because is not %s. Please check the uploaded file.", args),
+		},
+		constant.ErrInvalidMapFields: ValidationError{
+			EntityType: entityType,
+			Code:       constant.ErrInvalidMapFields.Error(),
+			Title:      "Invalid Map Fields",
+			Message:    fmt.Sprintf("The field on template file is invalid. Invalid field %s on %s.", args...),
+		},
+		constant.ErrInvalidPathParameter: ValidationError{
+			EntityType: entityType,
+			Code:       constant.ErrInvalidPathParameter.Error(),
+			Title:      "Invalid Path Parameter",
+			Message:    fmt.Sprintf("Path parameters is in an incorrect format. Please check the following parameter %v and ensure they meet the required format before trying again.", args),
+		},
+		constant.ErrOutputFormatWithoutTemplateFile: ValidationError{
+			EntityType: entityType,
+			Code:       constant.ErrOutputFormatWithoutTemplateFile.Error(),
+			Title:      "Update Output format without template File",
+			Message:    "Can not update output format without passing template file. Please check information passed and try again.",
+		},
+		constant.ErrMissingTableFields: ValidationError{
+			EntityType: entityType,
+			Code:       constant.ErrMissingTableFields.Error(),
+			Title:      "Missing required fields",
+			Message:    fmt.Sprintf("The fields mapped on template file are missing in the table schema or may be empty. Please check the fields passed: '%v'.", args...),
+		},
+		constant.ErrMissingSchemaTable: ValidationError{
+			EntityType: entityType,
+			Code:       constant.ErrMissingSchemaTable.Error(),
+			Title:      "Missing Schema Table",
+			Message:    fmt.Sprintf("The schema table %v is missing for data source '%v'. Please check the information passed.", args...),
+		},
+		constant.ErrMissingDataSource: ValidationError{
+			EntityType: entityType,
+			Code:       constant.ErrMissingDataSource.Error(),
+			Title:      "Missing Data Source Table",
+			Message:    fmt.Sprintf("The data source %v is missing. Please check the value passed.", args),
+		},
+		constant.ErrScriptTagDetected: ValidationError{
+			EntityType: entityType,
+			Code:       constant.ErrScriptTagDetected.Error(),
+			Title:      "Script Tag Detected",
+			Message:    "The template file contains a script tag and is not allowed. Please check the template file and try again.",
+		},
+		constant.ErrDecryptionData: ValidationError{
+			EntityType: entityType,
+			Code:       constant.ErrDecryptionData.Error(),
+			Title:      "Encryption data error Tag Detected",
+			Message:    fmt.Sprintf("Error to make the encryption of CRM data. Err: %v", args...),
+		},
+		constant.ErrCommunicateSeaweedFS: ValidationError{
+			EntityType: entityType,
+			Code:       constant.ErrCommunicateSeaweedFS.Error(),
+			Title:      "Communication Error with SeaweedFS",
+			Message:    "Error to communicate with SeaweedFS to download or upload file. Please try again.",
+		},
+		constant.ErrJobInProgress: EntityConflictError{
+			EntityType: entityType,
+			Code:       constant.ErrJobInProgress.Error(),
+			Title:      "Job In Progress",
+			Message: func() string {
+				if len(args) > 0 {
+					return fmt.Sprint(args...)
+				}
+				return "The operation cannot be completed because there are active jobs for this connection."
+			}(),
 		},
 	}
 

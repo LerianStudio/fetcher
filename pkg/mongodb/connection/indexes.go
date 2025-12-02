@@ -8,6 +8,7 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/lib-commons/v2/commons"
 	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
+
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -16,13 +17,13 @@ import (
 
 // EnsureIndexes creates MongoDB indexes tailored for the connections collection workload.
 func (cr *ConnectionMongoDBRepository) EnsureIndexes(ctx context.Context) error {
-	logger, tracer, reqId, _ := commons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "mongodb.ensure_connection_indexes")
 	defer span.End()
 
 	span.SetAttributes(
-		attribute.String("app.request.request_id", reqId),
+		attribute.String("app.request.request_id", reqID),
 		attribute.String("app.request.collection", constant.MongoCollectionConnection),
 	)
 
@@ -82,13 +83,13 @@ func (cr *ConnectionMongoDBRepository) EnsureIndexes(ctx context.Context) error 
 
 // DropIndexes removes custom indexes from the connections collection.
 func (cr *ConnectionMongoDBRepository) DropIndexes(ctx context.Context) error {
-	logger, tracer, reqId, _ := commons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "mongodb.drop_connection_indexes")
 	defer span.End()
 
 	span.SetAttributes(
-		attribute.String("app.request.request_id", reqId),
+		attribute.String("app.request.request_id", reqID),
 		attribute.String("app.request.collection", constant.MongoCollectionConnection),
 	)
 

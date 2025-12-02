@@ -31,3 +31,11 @@ func ValidateServerAddress(value string) string {
 
 	return value
 }
+
+// MaskSecret masks the given secret value by returning "[REDACTED]" if the value is not empty.
+func MaskSecret(value string) string {
+	if value == "" {
+		return ""
+	}
+	return "[REDACTED]"
+}
