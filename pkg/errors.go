@@ -295,7 +295,7 @@ func ValidateBusinessError(err error, entityType string, args ...any) error {
 			Title:      "Invalid Query Parameter",
 			Message:    fmt.Sprintf("One or more query parameters are in an incorrect format. Please check the following parameters '%v' and ensure they meet the required format before trying again.", args),
 		},
-		constant.ErrInvalidDateFormat: EntityNotFoundError{
+		constant.ErrInvalidDateFormat: ValidationError{
 			EntityType: entityType,
 			Code:       constant.ErrInvalidDateFormat.Error(),
 			Title:      "Invalid Date Format Error",
