@@ -17,6 +17,7 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -44,6 +45,7 @@ type ListFilter struct {
 type Repository interface {
 	Create(ctx context.Context, job *Job) (*Job, error)
 	Update(ctx context.Context, job *Job) (*Job, error)
+	UpdateStatus(ctx context.Context, id, organizationID uuid.UUID, status JobStatus, metadata map[string]any) error
 	FindByID(ctx context.Context, id, organizationID uuid.UUID) (*Job, error)
 	List(ctx context.Context, filters *ListFilter) ([]*Job, error)
 	ExistsRunningByMappedFieldKey(ctx context.Context, organizationID uuid.UUID, keyPattern string) (bool, error)
@@ -62,11 +64,14 @@ type JobMongoDBRepository struct {
 }
 
 // NewJobMongoDBRepository provisions a repository using the given client.
-func NewJobMongoDBRepository(ctx context.Context, mc *libMongo.MongoConnection) (*JobMongoDBRepository, error) {
+func NewJobMongoDBRepository(mc *libMongo.MongoConnection) (*JobMongoDBRepository, error) {
 	repo := &JobMongoDBRepository{
 		connection: mc,
 		Database:   mc.Database,
 	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
 	if _, err := repo.connection.GetDB(ctx); err != nil {
 		return nil, err
@@ -85,6 +90,7 @@ func (jr *JobMongoDBRepository) Create(ctx context.Context, job *Job) (*Job, err
 	if job == nil {
 		err := errors.New("job is required")
 		libOpentelemetry.HandleSpanError(&span, "Job payload is nil", err)
+
 		return nil, err
 	}
 
@@ -95,6 +101,7 @@ func (jr *JobMongoDBRepository) Create(ctx context.Context, job *Job) (*Job, err
 	if job.OrganizationID != uuid.Nil {
 		attributes = append(attributes, attribute.String("app.request.organization_id", job.OrganizationID.String()))
 	}
+
 	if job.ID != uuid.Nil {
 		attributes = append(attributes, attribute.String("app.request.job_id", job.ID.String()))
 	}
@@ -152,6 +159,7 @@ func (jr *JobMongoDBRepository) Update(ctx context.Context, job *Job) (*Job, err
 	if job == nil {
 		err := errors.New("job is required")
 		libOpentelemetry.HandleSpanError(&span, "Job payload is nil", err)
+
 		return nil, err
 	}
 
@@ -207,11 +215,13 @@ func (jr *JobMongoDBRepository) Update(ctx context.Context, job *Job) (*Job, err
 	defer spanUpdate.End()
 
 	spanUpdate.SetAttributes(attributes...)
+
 	if err := setSpanAttributesFromStruct(&spanUpdate, "app.request.repository_filter", filter); err != nil {
 		libOpentelemetry.HandleSpanError(&spanUpdate, "Failed to convert filter to JSON", err)
 	}
 
 	var record JobMongoDBModel
+
 	opts := options.FindOneAndUpdate().SetReturnDocument(options.After)
 	if err := coll.FindOneAndUpdate(ctx, filter, update, opts).Decode(&record); err != nil {
 		libOpentelemetry.HandleSpanError(&spanUpdate, "Failed to update job", err)
@@ -219,6 +229,88 @@ func (jr *JobMongoDBRepository) Update(ctx context.Context, job *Job) (*Job, err
 	}
 
 	return record.ToEntity(), nil
+}
+
+// UpdateStatus updates only the status and metadata of a job, automatically managing CompletedAt.
+func (jr *JobMongoDBRepository) UpdateStatus(ctx context.Context, id, organizationID uuid.UUID, status JobStatus, metadata map[string]any) error {
+	_, tracer, reqId, _ := commons.NewTrackingFromContext(ctx)
+
+	ctx, span := tracer.Start(ctx, "mongodb.update_job_status")
+	defer span.End()
+
+	attributes := []attribute.KeyValue{
+		attribute.String("app.request.request_id", reqId),
+		attribute.String("app.request.job_id", id.String()),
+		attribute.String("app.request.organization_id", organizationID.String()),
+		attribute.String("app.request.status", string(status)),
+	}
+	span.SetAttributes(attributes...)
+
+	if !status.IsValid() {
+		err := errors.New("invalid job status")
+		libOpentelemetry.HandleSpanError(&span, "Invalid status", err)
+
+		return err
+	}
+
+	db, err := jr.connection.GetDB(ctx)
+	if err != nil {
+		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
+		return err
+	}
+
+	coll := db.Database(strings.ToLower(jr.Database)).Collection(strings.ToLower(constant.MongoCollectionJob))
+
+	filter := bson.M{
+		"_id":             id,
+		"organization_id": organizationID,
+	}
+
+	update := bson.M{
+		"$set": bson.M{
+			"status": status,
+		},
+	}
+
+	// Automatically set CompletedAt for terminal statuses
+	if status == JobStatusCompleted || status == JobStatusFailed {
+		now := time.Now().UTC()
+		update["$set"].(bson.M)["completed_at"] = now
+	} else {
+		// Clear CompletedAt for non-terminal statuses
+		update["$unset"] = bson.M{
+			"completed_at": "",
+		}
+	}
+
+	// Update metadata if provided
+	if metadata != nil {
+		update["$set"].(bson.M)["metadata"] = metadata
+	}
+
+	ctx, spanUpdate := tracer.Start(ctx, "mongodb.update_job_status.update_one")
+	defer spanUpdate.End()
+
+	spanUpdate.SetAttributes(attributes...)
+
+	if err := setSpanAttributesFromStruct(&spanUpdate, "app.request.repository_filter", filter); err != nil {
+		libOpentelemetry.HandleSpanError(&spanUpdate, "Failed to convert filter to JSON", err)
+	}
+
+	result, err := coll.UpdateOne(ctx, filter, update)
+	if err != nil {
+		libOpentelemetry.HandleSpanError(&spanUpdate, "Failed to update job status", err)
+		return err
+	}
+
+	if result.MatchedCount == 0 {
+		err := errors.New("job not found")
+		libOpentelemetry.HandleSpanError(&spanUpdate, "Job not found", err)
+
+		return err
+	}
+
+	return nil
 }
 
 // FindByID fetches a job by its ID scoped to an organization.
@@ -244,6 +336,7 @@ func (jr *JobMongoDBRepository) FindByID(ctx context.Context, id, organizationID
 	coll := db.Database(strings.ToLower(jr.Database)).Collection(strings.ToLower(constant.MongoCollectionJob))
 
 	var record JobMongoDBModel
+
 	filter := bson.M{
 		"_id":             id,
 		"organization_id": organizationID,
@@ -340,63 +433,8 @@ func (jr *JobMongoDBRepository) List(ctx context.Context, filters *ListFilter) (
 
 	coll := db.Database(strings.ToLower(jr.Database)).Collection(strings.ToLower(constant.MongoCollectionJob))
 
-	queryFilter := bson.M{
-		"organization_id": filters.OrganizationID,
-	}
-
-	if len(filters.Statuses) > 0 {
-		queryFilter["status"] = bson.M{"$in": filters.Statuses}
-	} else if filters.Status != "" {
-		queryFilter["status"] = filters.Status
-	}
-
-	createdRange := bson.M{}
-	if filters.CreatedFrom != nil {
-		createdRange["$gte"] = *filters.CreatedFrom
-	}
-	if filters.CreatedTo != nil {
-		createdRange["$lte"] = *filters.CreatedTo
-	}
-	if len(createdRange) > 0 {
-		queryFilter["created_at"] = createdRange
-	}
-
-	completedRange := bson.M{}
-	if filters.CompletedFrom != nil {
-		completedRange["$gte"] = *filters.CompletedFrom
-	}
-	if filters.CompletedTo != nil {
-		completedRange["$lte"] = *filters.CompletedTo
-	}
-	if len(completedRange) > 0 {
-		queryFilter["completed_at"] = completedRange
-	}
-
-	limit := filters.Limit
-	if limit <= 0 {
-		limit = defaultJobPageLimit
-	}
-	if limit > maxJobPageLimit {
-		limit = maxJobPageLimit
-	}
-
-	page := filters.Page
-	if page <= 0 {
-		page = 1
-	}
-
-	skip := int64((page - 1) * limit)
-	limit64 := int64(limit)
-	sortDirection := int32(-1)
-	if strings.EqualFold(string(filters.SortOrder), string(constant.Asc)) {
-		sortDirection = 1
-	}
-
-	opts := options.FindOptions{
-		Limit: &limit64,
-		Skip:  &skip,
-		Sort:  bson.D{{Key: "created_at", Value: sortDirection}},
-	}
+	queryFilter := jr.buildQueryFilter(filters)
+	opts := jr.buildPaginationOptions(filters)
 
 	if err := setSpanAttributesFromStruct(&span, "app.request.repository_filter", queryFilter); err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to convert list filter to JSON", err)
@@ -409,18 +447,125 @@ func (jr *JobMongoDBRepository) List(ctx context.Context, filters *ListFilter) (
 	}
 	defer cur.Close(ctx)
 
+	jobs, err := jr.scanJobs(ctx, cur, &span, int(*opts.Limit))
+	if err != nil {
+		return nil, err
+	}
+
+	return jobs, nil
+}
+
+// buildQueryFilter builds the MongoDB query filter from filters
+func (jr *JobMongoDBRepository) buildQueryFilter(filters *ListFilter) bson.M {
+	queryFilter := bson.M{
+		"organization_id": filters.OrganizationID,
+	}
+
+	jr.addStatusFilter(queryFilter, filters)
+	jr.addDateRangeFilter(queryFilter, filters)
+
+	return queryFilter
+}
+
+// addStatusFilter adds status filter to the query
+func (jr *JobMongoDBRepository) addStatusFilter(queryFilter bson.M, filters *ListFilter) {
+	if len(filters.Statuses) > 0 {
+		queryFilter["status"] = bson.M{"$in": filters.Statuses}
+	} else if filters.Status != "" {
+		queryFilter["status"] = filters.Status
+	}
+}
+
+// addDateRangeFilter adds date range filters to the query
+func (jr *JobMongoDBRepository) addDateRangeFilter(queryFilter bson.M, filters *ListFilter) {
+	createdRange := jr.buildDateRange(filters.CreatedFrom, filters.CreatedTo)
+	if len(createdRange) > 0 {
+		queryFilter["created_at"] = createdRange
+	}
+
+	completedRange := jr.buildDateRange(filters.CompletedFrom, filters.CompletedTo)
+	if len(completedRange) > 0 {
+		queryFilter["completed_at"] = completedRange
+	}
+}
+
+// buildDateRange builds a date range filter
+func (jr *JobMongoDBRepository) buildDateRange(from, to *time.Time) bson.M {
+	dateRange := bson.M{}
+
+	if from != nil {
+		dateRange["$gte"] = *from
+	}
+
+	if to != nil {
+		dateRange["$lte"] = *to
+	}
+
+	return dateRange
+}
+
+// buildPaginationOptions builds MongoDB pagination options
+func (jr *JobMongoDBRepository) buildPaginationOptions(filters *ListFilter) options.FindOptions {
+	limit := jr.calculateLimit(filters.Limit)
+	page := jr.calculatePage(filters.Page)
+	skip := int64((page - 1) * limit)
+	limit64 := int64(limit)
+	sortDirection := jr.calculateSortDirection(filters.SortOrder)
+
+	return options.FindOptions{
+		Limit: &limit64,
+		Skip:  &skip,
+		Sort:  bson.D{{Key: "created_at", Value: sortDirection}},
+	}
+}
+
+// calculateLimit calculates and validates the limit
+func (jr *JobMongoDBRepository) calculateLimit(limit int) int {
+	if limit <= 0 {
+		return defaultJobPageLimit
+	}
+
+	if limit > maxJobPageLimit {
+		return maxJobPageLimit
+	}
+
+	return limit
+}
+
+// calculatePage calculates and validates the page number
+func (jr *JobMongoDBRepository) calculatePage(page int) int {
+	if page <= 0 {
+		return 1
+	}
+
+	return page
+}
+
+// calculateSortDirection calculates the sort direction
+func (jr *JobMongoDBRepository) calculateSortDirection(sortOrder constant.Order) int32 {
+	if strings.EqualFold(string(sortOrder), string(constant.Asc)) {
+		return 1
+	}
+
+	return -1
+}
+
+// scanJobs scans job records from the cursor
+func (jr *JobMongoDBRepository) scanJobs(ctx context.Context, cur *mongo.Cursor, span *trace.Span, limit int) ([]*Job, error) {
 	jobs := make([]*Job, 0, limit)
+
 	for cur.Next(ctx) {
 		var record JobMongoDBModel
 		if err := cur.Decode(&record); err != nil {
-			libOpentelemetry.HandleSpanError(&span, "Failed to decode job record", err)
+			libOpentelemetry.HandleSpanError(span, "Failed to decode job record", err)
 			return nil, err
 		}
+
 		jobs = append(jobs, record.ToEntity())
 	}
 
 	if err := cur.Err(); err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to iterate over jobs", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to iterate over jobs", err)
 		return nil, err
 	}
 

@@ -125,6 +125,7 @@ func validateDates(startDate, endDate *time.Time) error {
 	if bothDatesEmpty {
 		*endDate = today.AddDate(0, 0, 1)
 		*startDate = endDate.AddDate(0, -maxDateRangeMonths, 0)
+
 		return nil
 	}
 
@@ -158,6 +159,7 @@ func validateDates(startDate, endDate *time.Time) error {
 // GetOrganizationID extracts and validates X-Organization-Id header as UUID.
 func GetOrganizationID(c *fiber.Ctx) (uuid.UUID, error) {
 	orgHeader := strings.TrimSpace(c.Get("X-Organization-Id"))
+
 	orgID, err := uuid.Parse(orgHeader)
 	if err != nil {
 		return uuid.Nil, pkg.ValidationError{
@@ -168,6 +170,7 @@ func GetOrganizationID(c *fiber.Ctx) (uuid.UUID, error) {
 			Err:        err,
 		}
 	}
+
 	return orgID, nil
 }
 
@@ -176,20 +179,24 @@ func ParseIntDefault(val string, def int) int {
 	if val == "" {
 		return def
 	}
+
 	if parsed, err := strconv.Atoi(val); err == nil {
 		return parsed
 	}
+
 	return def
 }
 
 // ClampLimit ensures limit is within bounds, applying default if <=0.
-func ClampLimit(limit, def, max int) int {
+func ClampLimit(limit, def, maxLimit int) int {
 	if limit <= 0 {
 		return def
 	}
-	if limit > max {
-		return max
+
+	if limit > maxLimit {
+		return maxLimit
 	}
+
 	return limit
 }
 
@@ -198,6 +205,7 @@ func ClampNonNegative(page int) int {
 	if page < 0 {
 		return 0
 	}
+
 	return page
 }
 

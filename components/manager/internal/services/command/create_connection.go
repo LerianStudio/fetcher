@@ -21,15 +21,16 @@ type CreateConnection struct {
 	cryptor  crypto.Cryptor
 }
 
-func NewCreateConnection(connRepo connRepo.Repository, cryptor crypto.Cryptor) *CreateConnection {
+func NewCreateConnection(connectionRepo connRepo.Repository, cryptor crypto.Cryptor) *CreateConnection {
 	return &CreateConnection{
-		connRepo: connRepo,
+		connRepo: connectionRepo,
 		cryptor:  cryptor,
 	}
 }
 
 func (s *CreateConnection) Execute(ctx context.Context, organizationID uuid.UUID, connInput model.ConnectionInput) (*model.Connection, error) {
 	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+
 	ctx, span := tracer.Start(ctx, "service.create_connection")
 	defer span.End()
 
@@ -38,7 +39,7 @@ func (s *CreateConnection) Execute(ctx context.Context, organizationID uuid.UUID
 		attribute.String("app.request.organization_id", organizationID.String()),
 	)
 
-	err := libOpentelemetry.SetSpanAttributesFromStruct(&span, "app.request.payload", connInput)
+	err := libOpentelemetry.SetSpanAttributesFromStruct(&span, "app.request.payload", connInput.ToMapWithMask())
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to convert fetcher input to JSON string", err)
 	}
@@ -57,24 +58,28 @@ func (s *CreateConnection) Execute(ctx context.Context, organizationID uuid.UUID
 			if connInput.SSL != nil {
 				return &connInput.SSL.Mode
 			}
+
 			return nil
 		}(),
 		func() *string {
 			if connInput.SSL != nil {
 				return &connInput.SSL.CA
 			}
+
 			return nil
 		}(),
 		func() *string {
 			if connInput.SSL != nil && connInput.SSL.Cert != nil {
 				return connInput.SSL.Cert
 			}
+
 			return nil
 		}(),
 		func() *string {
 			if connInput.SSL != nil && connInput.SSL.Key != nil {
 				return connInput.SSL.Key
 			}
+
 			return nil
 		}(),
 	)
@@ -86,6 +91,7 @@ func (s *CreateConnection) Execute(ctx context.Context, organizationID uuid.UUID
 	if errRepo != nil {
 		return nil, errRepo
 	}
+
 	if existing != nil {
 		return nil, pkg.EntityConflictError{
 			EntityType: "connection",

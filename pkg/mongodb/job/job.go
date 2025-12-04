@@ -85,6 +85,7 @@ func (job *Job) ValidateForCreate() error {
 	if err != nil {
 		return err
 	}
+
 	job.Status = normalizedStatus
 
 	return nil
@@ -107,7 +108,6 @@ func (job *Job) ValidateForUpdate() error {
 type JobMongoDBModel struct {
 	ID             uuid.UUID      `bson:"_id"`
 	OrganizationID uuid.UUID      `bson:"organization_id"`
-	ConnectionID   uuid.UUID      `bson:"connection_id"`
 	Metadata       map[string]any `bson:"metadata,omitempty"`
 	MappedFields   map[string]any `bson:"mapped_fields"`
 	Filters        map[string]any `bson:"filters,omitempty"`
@@ -147,6 +147,7 @@ func (jm *JobMongoDBModel) FromEntity(job *Job) error {
 	if err != nil {
 		return err
 	}
+
 	job.Status = normalizedStatus
 
 	id := job.ID
@@ -155,6 +156,7 @@ func (jm *JobMongoDBModel) FromEntity(job *Job) error {
 		if err != nil {
 			return err
 		}
+
 		id = generated
 		job.ID = generated
 	}

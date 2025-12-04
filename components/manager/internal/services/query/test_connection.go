@@ -22,6 +22,8 @@ import (
 	limiter "github.com/sethvargo/go-limiter"
 )
 
+const ConnectionTestTimeout = 10 * time.Second
+
 type TestConnection struct {
 	connRepo connRepo.Repository
 	store    limiter.Store
@@ -99,11 +101,11 @@ func (s *TestConnection) Execute(ctx context.Context, organizationID, connection
 		return nil, pkg.ValidateInternalError(err, "connection")
 	}
 
-	testCtx, cancel := context.WithTimeout(ctx, constant.ConnectionTestTimeout)
+	testCtx, cancel := context.WithTimeout(ctx, ConnectionTestTimeout)
 	defer cancel()
 
 	start := time.Now()
-	ds, err := datasource.NewDataSourceFromConnectionWithTimeout(testCtx, conn, logger, constant.ConnectionTestTimeout)
+	ds, err := datasource.NewDataSourceFromConnection(testCtx, conn, s.cryptor, logger)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "failed to establish datasource connection", err)
 		logger.Errorf("connection test failed id=%s org=%s", connectionID, organizationID)

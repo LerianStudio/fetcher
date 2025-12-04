@@ -20,15 +20,16 @@ type DeleteConnection struct {
 	jobRepo  job.Repository
 }
 
-func NewDeleteConnection(connRepo connRepo.Repository, jobRepo job.Repository) *DeleteConnection {
+func NewDeleteConnection(connectionRepo connRepo.Repository, jobRepo job.Repository) *DeleteConnection {
 	return &DeleteConnection{
-		connRepo: connRepo,
+		connRepo: connectionRepo,
 		jobRepo:  jobRepo,
 	}
 }
 
 func (s *DeleteConnection) Execute(ctx context.Context, organizationID, connectionID uuid.UUID) error {
 	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+
 	ctx, span := tracer.Start(ctx, "service.delete_connection")
 	defer span.End()
 
@@ -42,6 +43,7 @@ func (s *DeleteConnection) Execute(ctx context.Context, organizationID, connecti
 	if err != nil {
 		return err
 	}
+
 	if current == nil {
 		return pkg.EntityNotFoundError{
 			EntityType: "connection",
