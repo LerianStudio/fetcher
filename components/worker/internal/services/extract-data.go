@@ -54,6 +54,20 @@ func (uc *UseCase) ExtractExternalData(ctx context.Context, body []byte, headers
 
 	message, err := uc.parseMessage(ctx, body, headers, &span, logger)
 	if err != nil {
+		jobID, orgID := uc.extractJobIDFromMultipleSources(body, headers, logger)
+		if jobID != uuid.Nil {
+			notificationMessage := ExtractExternalDataMessage{
+				JobID:          jobID,
+				OrganizationID: orgID,
+				Metadata:       make(map[string]any),
+			}
+			errorMetadata := map[string]any{
+				"message": err.Error(),
+			}
+			if errNotify := uc.publishJobNotification(ctx, tracer, notificationMessage, "failed", errorMetadata, logger); errNotify != nil {
+				logger.Warnf("Failed to publish job failure notification after parse error: %v", errNotify)
+			}
+		}
 		return err
 	}
 
@@ -63,7 +77,7 @@ func (uc *UseCase) ExtractExternalData(ctx context.Context, body []byte, headers
 
 	_, errJob := uc.JobRepository.FindByID(ctx, message.JobID, message.OrganizationID)
 	if errJob != nil {
-		return errJob
+		return uc.handleErrorWithUpdate(ctx, message.JobID, message.OrganizationID, *message, &span, "Error finding job by ID", errJob, logger)
 	}
 
 	// Extract config names from mappedFields
@@ -72,16 +86,22 @@ func (uc *UseCase) ExtractExternalData(ctx context.Context, body []byte, headers
 	// Find connections by config names
 	connections, err := uc.ConnectionRepository.FindByConfigNames(ctx, message.OrganizationID, configNames)
 	if err != nil {
-		return uc.handleErrorWithUpdate(ctx, message.JobID, message.OrganizationID, &span, "Error finding connections by config names", err, logger)
+		return uc.handleErrorWithUpdate(ctx, message.JobID, message.OrganizationID, *message, &span, "Error finding connections by config names", err, logger)
 	}
 
 	result := make(map[string]map[string][]map[string]any)
 	if err := uc.queryExternalData(ctx, *message, connections, result); err != nil {
-		return uc.handleErrorWithUpdate(ctx, message.JobID, message.OrganizationID, &span, "Error querying external data", err, logger)
+		return uc.handleErrorWithUpdate(ctx, message.JobID, message.OrganizationID, *message, &span, "Error querying external data", err, logger)
 	}
 
 	if err := uc.saveExternalDataToSeaweedFS(ctx, tracer, *message, result, &span, logger); err != nil {
-		return fmt.Errorf("saveExternalDataToSeaweedFS: %w", err)
+		return uc.handleErrorWithUpdate(ctx, message.JobID, message.OrganizationID, *message, &span, "Error saving external data to SeaweedFS", err, logger)
+	}
+
+	// Publish job completion notification to RabbitMQ topic exchange
+	if err := uc.publishJobNotification(ctx, tracer, *message, "completed", nil, logger); err != nil {
+		libOtel.HandleSpanError(&span, "Error publishing job completion notification", err)
+		logger.Warnf("Failed to publish job completion notification: %v", err)
 	}
 
 	return nil
@@ -197,8 +217,16 @@ func (uc *UseCase) extractJobIDFromPartialJSON(body []byte, logger log.Logger) (
 	return uuid.Nil, uuid.Nil
 }
 
-// handleErrorWithUpdate logs error and updates report status to error.
-func (uc *UseCase) handleErrorWithUpdate(ctx context.Context, jobID, orgID uuid.UUID, span *trace.Span, errorMsg string, err error, logger log.Logger) error {
+// handleErrorWithUpdate logs error, updates report status to error, and publishes failure notification.
+func (uc *UseCase) handleErrorWithUpdate(
+	ctx context.Context,
+	jobID, orgID uuid.UUID,
+	message ExtractExternalDataMessage,
+	span *trace.Span,
+	errorMsg string,
+	err error,
+	logger log.Logger,
+) error {
 	if errUpdate := uc.updateJobWithErrors(ctx, jobID, orgID, err.Error()); errUpdate != nil {
 		libOtel.HandleSpanError(span, "Error to update report status with error.", errUpdate)
 		logger.Errorf("Error update report status with error: %s", errUpdate.Error())
@@ -208,6 +236,20 @@ func (uc *UseCase) handleErrorWithUpdate(ctx context.Context, jobID, orgID uuid.
 
 	libOtel.HandleSpanError(span, errorMsg, err)
 	logger.Errorf("%s: %s", errorMsg, err.Error())
+
+	// Publish job failure notification to RabbitMQ topic exchange
+	// Use the full message to preserve source and other metadata
+	errorMetadata := map[string]any{
+		"message": err.Error(),
+	}
+
+	// Ensure message has correct IDs (in case it was partially parsed)
+	message.JobID = jobID
+	message.OrganizationID = orgID
+
+	if errNotify := uc.publishJobNotification(ctx, nil, message, "failed", errorMetadata, logger); errNotify != nil {
+		logger.Warnf("Failed to publish job failure notification: %v", errNotify)
+	}
 
 	return err
 }
@@ -277,7 +319,7 @@ func (uc *UseCase) queryDatabase(
 	}
 
 	// Create DataSource using factory pattern
-	dataSource, err := datasource.NewDataSourceFromConnection(ctx, foundConnection, logger)
+	dataSource, err := datasource.NewDataSourceFromConnection(ctx, foundConnection, uc.Cryptor, logger)
 	if err != nil {
 		libOtel.HandleSpanError(&dbSpan, "Error creating data source", err)
 		return fmt.Errorf("failed to create data source for %s: %w", databaseName, err)
@@ -303,7 +345,7 @@ func (uc *UseCase) queryDatabase(
 
 	databaseFilters := allFilters[databaseName]
 
-	if dataSource.GetType() == constant.MongoDBType && databaseName == "plugin_crm" {
+	if foundConnection.Type == model.TypeMongoDB && databaseName == "plugin_crm" {
 		// MongoDB plugin_crm requires special handling (decryption, collection name transformation)
 		mongoDS, ok := dataSource.(*datasourceMongoConfig.DataSourceConfigMongoDB)
 		if !ok {

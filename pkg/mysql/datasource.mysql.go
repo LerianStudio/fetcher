@@ -1,4 +1,4 @@
-package postgres
+package mysql
 
 import (
 	"context"
@@ -20,7 +20,7 @@ import (
 
 // Repository defines an interface for querying data from a specified table and fields.
 //
-//go:generate mockgen --destination=datasource.postgres.mock.go --package=postgres . Repository
+//go:generate mockgen --destination=datasource.mysql.mock.go --package=mysql . Repository
 type Repository interface {
 	Query(ctx context.Context, schema []TableSchema, table string, fields []string, filter map[string][]any) ([]map[string]any, error)
 	QueryWithAdvancedFilters(ctx context.Context, schema []TableSchema, table string, fields []string, filter map[string]job.FilterCondition) ([]map[string]any, error)
@@ -42,12 +42,12 @@ type ColumnInformation struct {
 	IsPrimaryKey bool   `json:"is_primary_key"`
 }
 
-// ExternalDataSource provides an interface for interacting with a PostgreSQL database connection.
+// ExternalDataSource provides an interface for interacting with a MySQL database connection.
 type ExternalDataSource struct {
 	connection *Connection
 }
 
-// NewDataSourceRepository creates a new ExternalDataSource instance using the provided postgres.Connection, initializing the database connection.
+// NewDataSourceRepository creates a new ExternalDataSource instance using the provided mysql.Connection, initializing the database connection.
 // Returns nil and error if connection fails.
 func NewDataSourceRepository(pc *Connection) (*ExternalDataSource, error) {
 	c := &ExternalDataSource{
@@ -56,27 +56,27 @@ func NewDataSourceRepository(pc *Connection) (*ExternalDataSource, error) {
 
 	_, err := c.connection.GetDB()
 	if err != nil {
-		pc.Logger.Errorf("Failed to establish PostgreSQL connection: %v", err)
-		return nil, fmt.Errorf("failed to establish PostgreSQL connection: %w", err)
+		pc.Logger.Errorf("Failed to establish MySQL connection: %v", err)
+		return nil, fmt.Errorf("failed to establish MySQL connection: %w", err)
 	}
 
 	return c, nil
 }
 
-// CloseConnection closing the connection with PostgreSQL.
+// CloseConnection closing the connection with MySQL.
 func (ds *ExternalDataSource) CloseConnection() error {
 	if ds.connection.ConnectionDB != nil {
-		ds.connection.Logger.Info("Closing connection to PostgreSQL...")
+		ds.connection.Logger.Info("Closing connection to MySQL...")
 
 		err := ds.connection.ConnectionDB.Close()
 		if err != nil {
-			ds.connection.Logger.Errorf("Error closing PostgreSQL connection: %v", err)
+			ds.connection.Logger.Errorf("Error closing MySQL connection: %v", err)
 			return err
 		}
 
 		ds.connection.Connected = false
 		ds.connection.ConnectionDB = nil
-		ds.connection.Logger.Info("PostgreSQL connection closed successfully.")
+		ds.connection.Logger.Info("MySQL connection closed successfully.")
 	}
 
 	return nil
@@ -87,7 +87,7 @@ func (ds *ExternalDataSource) CloseConnection() error {
 func (ds *ExternalDataSource) Query(ctx context.Context, schema []TableSchema, table string, fields []string, filter map[string][]any) ([]map[string]any, error) {
 	logger, tracer, reqId, _ := libCommons.NewTrackingFromContext(ctx)
 
-	_, span := tracer.Start(ctx, "postgres.data_source.query")
+	_, span := tracer.Start(ctx, "mysql.data_source.query")
 	defer span.End()
 
 	span.SetAttributes(
@@ -111,7 +111,7 @@ func (ds *ExternalDataSource) Query(ctx context.Context, schema []TableSchema, t
 		return nil, err
 	}
 
-	psql := squirrel.StatementBuilder.PlaceholderFormat(squirrel.Dollar)
+	psql := squirrel.StatementBuilder.PlaceholderFormat(squirrel.Question)
 	queryBuilder := psql.Select(queriedFields...).From(table)
 
 	// Apply filters, but only if they correspond to valid columns
@@ -146,7 +146,7 @@ func (ds *ExternalDataSource) Query(ctx context.Context, schema []TableSchema, t
 func (ds *ExternalDataSource) GetDatabaseSchema(ctx context.Context) ([]TableSchema, error) {
 	logger, tracer, reqId, _ := libCommons.NewTrackingFromContext(ctx)
 
-	_, span := tracer.Start(ctx, "postgres.data_source.get_database_schema")
+	_, span := tracer.Start(ctx, "mysql.data_source.get_database_schema")
 	defer span.End()
 
 	span.SetAttributes(
@@ -163,7 +163,7 @@ func (ds *ExternalDataSource) GetDatabaseSchema(ctx context.Context) ([]TableSch
 	tableQuery := `
 		SELECT table_name 
 		FROM information_schema.tables 
-		WHERE table_schema = 'public'
+		WHERE table_schema = DATABASE()
 		AND table_type = 'BASE TABLE'
 		ORDER BY table_name
 	`
@@ -194,7 +194,7 @@ func (ds *ExternalDataSource) GetDatabaseSchema(ctx context.Context) ([]TableSch
 			AND kc.table_schema = tc.table_schema
 			AND kc.constraint_name = tc.constraint_name
 		WHERE tc.constraint_type = 'PRIMARY KEY'
-		AND tc.table_schema = 'public'
+		AND tc.table_schema = DATABASE()
 	`
 
 	pkRows, err := ds.connection.ConnectionDB.QueryContext(schemaCtx, pkQuery)
@@ -215,11 +215,6 @@ func (ds *ExternalDataSource) GetDatabaseSchema(ctx context.Context) ([]TableSch
 		if err := pkRows.Scan(&tableName, &columnName); err != nil {
 			return nil, fmt.Errorf("error scanning primary key info: %w", err)
 		}
-
-		if primaryKeys[tableName] == nil {
-			primaryKeys[tableName] = make(map[string]bool)
-		}
-		primaryKeys[tableName][columnName] = true
 	}
 
 	// Build the complete schema information
@@ -231,8 +226,8 @@ func (ds *ExternalDataSource) GetDatabaseSchema(ctx context.Context) ([]TableSch
 			SELECT column_name, data_type, 
 			       CASE WHEN is_nullable = 'YES' THEN true ELSE false END as is_nullable
 			FROM information_schema.columns
-			WHERE table_schema = 'public'
-			AND table_name = $1
+			WHERE table_schema = DATABASE()
+			AND table_name = ?
 			ORDER BY ordinal_position
 		`
 
@@ -309,21 +304,21 @@ func createRowMap(columns []string, values []any, logger log.Logger) map[string]
 	rowMap := make(map[string]any)
 
 	for i, column := range columns {
-		// Attempt to parse any value that could be JSONB
-		rowMap[column] = parseJSONBField(values[i], logger)
+		// Attempt to parse any value that could be JSON
+		rowMap[column] = parseJSONField(values[i], logger)
 	}
 
 	return rowMap
 }
 
-// parseJSONBField unmarshals any field that might be a JSONB type
-func parseJSONBField(value any, logger log.Logger) any {
+// parseJSONField unmarshals any field that might be a JSON type
+func parseJSONField(value any, logger log.Logger) any {
 	if value == nil {
 		return nil
 	}
 
-	// Check if the value is []uint8, which is how the PostgreSQL driver
-	// represents JSONB and JSON fields
+	// Check if the value is []uint8, which is how the MySQL driver
+	// represents JSON and JSON fields
 	if byteData, ok := value.([]uint8); ok {
 		// Try to deserialize as a generic map[string]any
 		var jsonMap map[string]any
@@ -344,7 +339,7 @@ func parseJSONBField(value any, logger log.Logger) any {
 		}
 
 		// If all attempts fail, log a warning and return the original value
-		logger.Warnf("Failed to unmarshal potential JSONB data for value: %v", string(byteData))
+		logger.Warnf("Failed to unmarshal potential JSON data for value: %v", string(byteData))
 	}
 
 	return value
@@ -356,7 +351,7 @@ func parseJSONBField(value any, logger log.Logger) any {
 func (ds *ExternalDataSource) ValidateTableAndFields(ctx context.Context, tableName string, requestedFields []string, schema []TableSchema) ([]string, error) {
 	logger, tracer, reqId, _ := libCommons.NewTrackingFromContext(ctx)
 
-	_, span := tracer.Start(ctx, "postgres.data_source.validate_table_and_fields")
+	_, span := tracer.Start(ctx, "mysql.data_source.validate_table_and_fields")
 	defer span.End()
 
 	span.SetAttributes(
@@ -478,7 +473,7 @@ func applyFilter(queryBuilder squirrel.SelectBuilder, fieldName string, values [
 func (ds *ExternalDataSource) QueryWithAdvancedFilters(ctx context.Context, schema []TableSchema, table string, fields []string, filter map[string]job.FilterCondition) ([]map[string]any, error) {
 	logger, tracer, reqId, _ := libCommons.NewTrackingFromContext(ctx)
 
-	_, span := tracer.Start(ctx, "postgres.data_source.query_with_advanced_filters")
+	_, span := tracer.Start(ctx, "mysql.data_source.query_with_advanced_filters")
 	defer span.End()
 
 	span.SetAttributes(
@@ -502,7 +497,7 @@ func (ds *ExternalDataSource) QueryWithAdvancedFilters(ctx context.Context, sche
 		return nil, err
 	}
 
-	psql := squirrel.StatementBuilder.PlaceholderFormat(squirrel.Dollar)
+	psql := squirrel.StatementBuilder.PlaceholderFormat(squirrel.Question)
 	queryBuilder := psql.Select(queriedFields...).From(table)
 
 	// Apply advanced filters

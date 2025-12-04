@@ -113,7 +113,7 @@ func InitServers() *Service {
 	}
 
 	// Init Job repository
-	jobRepository, err := job.NewJobMongoDBRepository(ctx, mongoConnection)
+	jobRepository, err := job.NewJobMongoDBRepository(mongoConnection)
 	if err != nil {
 		logger.Fatalf("Failed to create Job MongoDB repository: %v", err)
 	}

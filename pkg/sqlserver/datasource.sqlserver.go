@@ -1,4 +1,4 @@
-package postgres
+package sqlserver
 
 import (
 	"context"
@@ -18,9 +18,34 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 )
 
+// sqlServerPlaceholder is a custom placeholder format for SQL Server
+// SQL Server requires @p1, @p2, @p3, etc. for parameterized queries
+type sqlServerPlaceholder struct{}
+
+// ReplacePlaceholders replaces ? with @p1, @p2, @p3, etc. as required by the mssql driver
+func (p sqlServerPlaceholder) ReplacePlaceholders(sql string) (string, error) {
+	placeholderCount := 1
+	result := make([]byte, 0, len(sql)+20)
+
+	for i := 0; i < len(sql); i++ {
+		if sql[i] == '?' {
+			result = append(result, '@', 'p')
+			result = append(result, fmt.Sprintf("%d", placeholderCount)...)
+			placeholderCount++
+		} else {
+			result = append(result, sql[i])
+		}
+	}
+
+	return string(result), nil
+}
+
+// sqlServerPlaceholderFormat is the PlaceholderFormat instance for SQL Server
+var sqlServerPlaceholderFormat = sqlServerPlaceholder{}
+
 // Repository defines an interface for querying data from a specified table and fields.
 //
-//go:generate mockgen --destination=datasource.postgres.mock.go --package=postgres . Repository
+//go:generate mockgen --destination=datasource.sqlserver.mock.go --package=sqlserver . Repository
 type Repository interface {
 	Query(ctx context.Context, schema []TableSchema, table string, fields []string, filter map[string][]any) ([]map[string]any, error)
 	QueryWithAdvancedFilters(ctx context.Context, schema []TableSchema, table string, fields []string, filter map[string]job.FilterCondition) ([]map[string]any, error)
@@ -42,12 +67,12 @@ type ColumnInformation struct {
 	IsPrimaryKey bool   `json:"is_primary_key"`
 }
 
-// ExternalDataSource provides an interface for interacting with a PostgreSQL database connection.
+// ExternalDataSource provides an interface for interacting with a SQL Server database connection.
 type ExternalDataSource struct {
 	connection *Connection
 }
 
-// NewDataSourceRepository creates a new ExternalDataSource instance using the provided postgres.Connection, initializing the database connection.
+// NewDataSourceRepository creates a new ExternalDataSource instance using the provided sqlserver.Connection, initializing the database connection.
 // Returns nil and error if connection fails.
 func NewDataSourceRepository(pc *Connection) (*ExternalDataSource, error) {
 	c := &ExternalDataSource{
@@ -56,27 +81,27 @@ func NewDataSourceRepository(pc *Connection) (*ExternalDataSource, error) {
 
 	_, err := c.connection.GetDB()
 	if err != nil {
-		pc.Logger.Errorf("Failed to establish PostgreSQL connection: %v", err)
-		return nil, fmt.Errorf("failed to establish PostgreSQL connection: %w", err)
+		pc.Logger.Errorf("Failed to establish SQL Server connection: %v", err)
+		return nil, fmt.Errorf("failed to establish SQL Server connection: %w", err)
 	}
 
 	return c, nil
 }
 
-// CloseConnection closing the connection with PostgreSQL.
+// CloseConnection closing the connection with SQL Server.
 func (ds *ExternalDataSource) CloseConnection() error {
 	if ds.connection.ConnectionDB != nil {
-		ds.connection.Logger.Info("Closing connection to PostgreSQL...")
+		ds.connection.Logger.Info("Closing connection to SQL Server...")
 
 		err := ds.connection.ConnectionDB.Close()
 		if err != nil {
-			ds.connection.Logger.Errorf("Error closing PostgreSQL connection: %v", err)
+			ds.connection.Logger.Errorf("Error closing SQL Server connection: %v", err)
 			return err
 		}
 
 		ds.connection.Connected = false
 		ds.connection.ConnectionDB = nil
-		ds.connection.Logger.Info("PostgreSQL connection closed successfully.")
+		ds.connection.Logger.Info("SQL Server connection closed successfully.")
 	}
 
 	return nil
@@ -87,7 +112,7 @@ func (ds *ExternalDataSource) CloseConnection() error {
 func (ds *ExternalDataSource) Query(ctx context.Context, schema []TableSchema, table string, fields []string, filter map[string][]any) ([]map[string]any, error) {
 	logger, tracer, reqId, _ := libCommons.NewTrackingFromContext(ctx)
 
-	_, span := tracer.Start(ctx, "postgres.data_source.query")
+	_, span := tracer.Start(ctx, "sqlserver.data_source.query")
 	defer span.End()
 
 	span.SetAttributes(
@@ -111,8 +136,9 @@ func (ds *ExternalDataSource) Query(ctx context.Context, schema []TableSchema, t
 		return nil, err
 	}
 
-	psql := squirrel.StatementBuilder.PlaceholderFormat(squirrel.Dollar)
-	queryBuilder := psql.Select(queriedFields...).From(table)
+	// SQL Server uses @p1, @p2, etc. for placeholders (not ?)
+	sqlServer := squirrel.StatementBuilder.PlaceholderFormat(sqlServerPlaceholderFormat)
+	queryBuilder := sqlServer.Select(queriedFields...).From(table)
 
 	// Apply filters, but only if they correspond to valid columns
 	queryBuilder = buildDynamicFilters(queryBuilder, schema, table, filter)
@@ -146,7 +172,7 @@ func (ds *ExternalDataSource) Query(ctx context.Context, schema []TableSchema, t
 func (ds *ExternalDataSource) GetDatabaseSchema(ctx context.Context) ([]TableSchema, error) {
 	logger, tracer, reqId, _ := libCommons.NewTrackingFromContext(ctx)
 
-	_, span := tracer.Start(ctx, "postgres.data_source.get_database_schema")
+	_, span := tracer.Start(ctx, "sqlserver.data_source.get_database_schema")
 	defer span.End()
 
 	span.SetAttributes(
@@ -163,7 +189,7 @@ func (ds *ExternalDataSource) GetDatabaseSchema(ctx context.Context) ([]TableSch
 	tableQuery := `
 		SELECT table_name 
 		FROM information_schema.tables 
-		WHERE table_schema = 'public'
+		WHERE table_schema = 'dbo'
 		AND table_type = 'BASE TABLE'
 		ORDER BY table_name
 	`
@@ -194,7 +220,7 @@ func (ds *ExternalDataSource) GetDatabaseSchema(ctx context.Context) ([]TableSch
 			AND kc.table_schema = tc.table_schema
 			AND kc.constraint_name = tc.constraint_name
 		WHERE tc.constraint_type = 'PRIMARY KEY'
-		AND tc.table_schema = 'public'
+		AND tc.table_schema = 'dbo'
 	`
 
 	pkRows, err := ds.connection.ConnectionDB.QueryContext(schemaCtx, pkQuery)
@@ -227,12 +253,14 @@ func (ds *ExternalDataSource) GetDatabaseSchema(ctx context.Context) ([]TableSch
 
 	for _, tableName := range tables {
 		// Query to get column information for the current table
+		// SQL Server uses @p1, @p2, etc. for placeholders (not ?)
+		// SQL Server doesn't support TRUE/FALSE directly, so we use 1/0 and convert to boolean
 		columnQuery := `
 			SELECT column_name, data_type, 
-			       CASE WHEN is_nullable = 'YES' THEN true ELSE false END as is_nullable
+			       CASE WHEN is_nullable = 'YES' THEN 1 ELSE 0 END as is_nullable
 			FROM information_schema.columns
-			WHERE table_schema = 'public'
-			AND table_name = $1
+			WHERE table_schema = 'dbo'
+			AND table_name = @p1
 			ORDER BY ordinal_position
 		`
 
@@ -249,13 +277,16 @@ func (ds *ExternalDataSource) GetDatabaseSchema(ctx context.Context) ([]TableSch
 
 		for colRows.Next() {
 			var col ColumnInformation
-			if err := colRows.Scan(&col.Name, &col.DataType, &col.IsNullable); err != nil {
+			var isNullableInt int
+			if err := colRows.Scan(&col.Name, &col.DataType, &isNullableInt); err != nil {
 				if closeErr := colRows.Close(); closeErr != nil {
 					logger.Warnf("error closing rows after scan error: %v", closeErr)
 				}
 
 				return nil, fmt.Errorf("error scanning column info: %w", err)
 			}
+			// Convert SQL Server's 1/0 to boolean (1 = true, 0 = false)
+			col.IsNullable = isNullableInt == 1
 
 			// Check if this column is a primary key
 			if pkCols, exists := primaryKeys[tableName]; exists {
@@ -309,21 +340,21 @@ func createRowMap(columns []string, values []any, logger log.Logger) map[string]
 	rowMap := make(map[string]any)
 
 	for i, column := range columns {
-		// Attempt to parse any value that could be JSONB
-		rowMap[column] = parseJSONBField(values[i], logger)
+		// Attempt to parse any value that could be JSON
+		rowMap[column] = parseJSONField(values[i], logger)
 	}
 
 	return rowMap
 }
 
-// parseJSONBField unmarshals any field that might be a JSONB type
-func parseJSONBField(value any, logger log.Logger) any {
+// parseJSONField unmarshals any field that might be a JSON type
+func parseJSONField(value any, logger log.Logger) any {
 	if value == nil {
 		return nil
 	}
 
-	// Check if the value is []uint8, which is how the PostgreSQL driver
-	// represents JSONB and JSON fields
+	// Check if the value is []uint8, which is how the SQL Server driver
+	// represents JSON and JSON fields
 	if byteData, ok := value.([]uint8); ok {
 		// Try to deserialize as a generic map[string]any
 		var jsonMap map[string]any
@@ -344,7 +375,7 @@ func parseJSONBField(value any, logger log.Logger) any {
 		}
 
 		// If all attempts fail, log a warning and return the original value
-		logger.Warnf("Failed to unmarshal potential JSONB data for value: %v", string(byteData))
+		logger.Warnf("Failed to unmarshal potential JSON data for value: %v", string(byteData))
 	}
 
 	return value
@@ -356,7 +387,7 @@ func parseJSONBField(value any, logger log.Logger) any {
 func (ds *ExternalDataSource) ValidateTableAndFields(ctx context.Context, tableName string, requestedFields []string, schema []TableSchema) ([]string, error) {
 	logger, tracer, reqId, _ := libCommons.NewTrackingFromContext(ctx)
 
-	_, span := tracer.Start(ctx, "postgres.data_source.validate_table_and_fields")
+	_, span := tracer.Start(ctx, "sqlserver.data_source.validate_table_and_fields")
 	defer span.End()
 
 	span.SetAttributes(
@@ -463,22 +494,26 @@ func buildDynamicFilters(queryBuilder squirrel.SelectBuilder, schema []TableSche
 }
 
 // applyFilter adds a WHERE condition for a field with multiple possible values.
+// Uses squirrel.Eq which respects the PlaceholderFormat configured in the StatementBuilder
 func applyFilter(queryBuilder squirrel.SelectBuilder, fieldName string, values []any) squirrel.SelectBuilder {
 	if len(values) == 0 {
 		return queryBuilder
 	}
 
-	// No need for conversion since values is already []any
-	placeholder := squirrel.Placeholders(len(values))
+	// Use squirrel.Eq for IN clause which respects PlaceholderFormat
+	// For single value, use direct equality; for multiple values, use IN
+	if len(values) == 1 {
+		return queryBuilder.Where(squirrel.Eq{fieldName: values[0]})
+	}
 
-	return queryBuilder.Where(fieldName+" IN ("+placeholder+")", values...)
+	return queryBuilder.Where(squirrel.Eq{fieldName: values})
 }
 
 // QueryWithAdvancedFilters executes a SELECT SQL query with advanced FilterCondition support
 func (ds *ExternalDataSource) QueryWithAdvancedFilters(ctx context.Context, schema []TableSchema, table string, fields []string, filter map[string]job.FilterCondition) ([]map[string]any, error) {
 	logger, tracer, reqId, _ := libCommons.NewTrackingFromContext(ctx)
 
-	_, span := tracer.Start(ctx, "postgres.data_source.query_with_advanced_filters")
+	_, span := tracer.Start(ctx, "sqlserver.data_source.query_with_advanced_filters")
 	defer span.End()
 
 	span.SetAttributes(
@@ -502,8 +537,9 @@ func (ds *ExternalDataSource) QueryWithAdvancedFilters(ctx context.Context, sche
 		return nil, err
 	}
 
-	psql := squirrel.StatementBuilder.PlaceholderFormat(squirrel.Dollar)
-	queryBuilder := psql.Select(queriedFields...).From(table)
+	// SQL Server uses @p1, @p2, etc. for placeholders (not ?)
+	sqlServer := squirrel.StatementBuilder.PlaceholderFormat(sqlServerPlaceholderFormat)
+	queryBuilder := sqlServer.Select(queriedFields...).From(table)
 
 	// Apply advanced filters
 	queryBuilder, err = ds.buildAdvancedFilters(queryBuilder, schema, table, filter)

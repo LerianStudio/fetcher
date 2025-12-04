@@ -7,6 +7,7 @@ import (
 	"github.com/LerianStudio/fetcher/components/worker/internal/adapters/rabbitmq"
 	"github.com/LerianStudio/fetcher/components/worker/internal/services"
 	"github.com/LerianStudio/fetcher/pkg/constant"
+	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 	mongoDB "github.com/LerianStudio/lib-commons/v2/commons/mongo"
 
@@ -35,6 +36,8 @@ type Config struct {
 	RabbitMQGenerateReportQueue string `env:"RABBITMQ_GENERATE_REPORT_QUEUE"`
 	RabbitMQNumWorkers          int    `env:"RABBITMQ_NUMBERS_OF_WORKERS"`
 	RabbitMQHealthCheckURL      string `env:"RABBITMQ_HEALTH_CHECK_URL"`
+	// Job events topic exchange configuration
+	RabbitMQJobEventsExchange string `env:"RABBITMQ_JOB_EVENTS_EXCHANGE"`
 	// Otel Collector configurations
 	OtelServiceName         string `env:"OTEL_RESOURCE_SERVICE_NAME"`
 	OtelLibraryName         string `env:"OTEL_LIBRARY_NAME"`
@@ -57,6 +60,9 @@ type Config struct {
 	// License configuration envs
 	LicenseKey      string `env:"LICENSE_KEY"`
 	OrganizationIDs string `env:"ORGANIZATION_IDS"`
+	// Encryption
+	AppEncryptionKey        string `env:"APP_ENC_KEY"`
+	AppEncryptionKeyVersion string `env:"APP_ENC_KEY_VERSION"`
 }
 
 // InitWorker initializes and configures the application's dependencies and returns the Service instance.
@@ -95,7 +101,9 @@ func InitWorker() *Service {
 		Logger:                 logger,
 	}
 
-	routes := rabbitmq.NewConsumerRoutes(rabbitMQConnection, cfg.RabbitMQNumWorkers, logger, telemetry)
+	// Initialize RabbitMQ publisher for job event notifications
+	consumerRoutes := rabbitmq.NewConsumerRoutes(rabbitMQConnection, cfg.RabbitMQNumWorkers, logger, telemetry)
+	publisherRoutes := rabbitmq.NewPublisherRoutes(rabbitMQConnection, logger, telemetry)
 
 	// Config SeaweedFS connection
 	seaweedFSEndpoint := fmt.Sprintf("http://%s:%s", cfg.SeaweedFSHost, cfg.SeaweedFSFilerPort)
@@ -130,11 +138,20 @@ func InitWorker() *Service {
 		logger.Fatalf("Failed to initialize connection repository: %v", errConnectRepo)
 	}
 
+	// Init crypto service (same as manager)
+	cryptoService, errCrypto := crypto.NewAESGCMServiceFromEnv(cfg.AppEncryptionKey, cfg.AppEncryptionKeyVersion)
+	if errCrypto != nil {
+		logger.Fatalf("Failed to initialize crypto service: %v", errCrypto)
+	}
+
 	service := &services.UseCase{
 		ExternalDataSeaweedFS: externalDataSeaweedFSRepository,
 		JobRepository:         jobRepository,
 		ConnectionRepository:  connectionRepository,
+		Cryptor:               cryptoService,
 		FileTTL:               cfg.SeaweedFSTTL,
+		RabbitMQPublisher:     publisherRoutes,
+		JobEventsExchange:     cfg.RabbitMQJobEventsExchange,
 	}
 
 	if cfg.SeaweedFSTTL != "" {
@@ -149,7 +166,7 @@ func InitWorker() *Service {
 		cfg.OrganizationIDs,
 		&logger,
 	)
-	multiQueueConsumer := NewMultiQueueConsumer(routes, service)
+	multiQueueConsumer := NewMultiQueueConsumer(consumerRoutes, service)
 
 	return &Service{
 		MultiQueueConsumer: multiQueueConsumer,

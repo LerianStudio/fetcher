@@ -56,7 +56,6 @@ func (js JobStatus) IsValid() bool {
 type Job struct {
 	ID             uuid.UUID      `json:"id"`
 	OrganizationID uuid.UUID      `json:"organizationId"`
-	ConnectionID   uuid.UUID      `json:"connectionId"`
 	Metadata       map[string]any `json:"metadata,omitempty"`
 	MappedFields   map[string]any `json:"mappedFields"`
 	Filters        map[string]any `json:"filters,omitempty"`
@@ -76,10 +75,6 @@ func (job *Job) ValidateForCreate() error {
 
 	if job.OrganizationID == uuid.Nil {
 		return errors.New("organization ID is required")
-	}
-
-	if job.ConnectionID == uuid.Nil {
-		return errors.New("connection ID is required")
 	}
 
 	if job.MappedFields == nil {
@@ -113,7 +108,6 @@ func (job *Job) ValidateForUpdate() error {
 type JobMongoDBModel struct {
 	ID             uuid.UUID      `bson:"_id"`
 	OrganizationID uuid.UUID      `bson:"organization_id"`
-	ConnectionID   uuid.UUID      `bson:"connection_id"`
 	Metadata       map[string]any `bson:"metadata,omitempty"`
 	MappedFields   map[string]any `bson:"mapped_fields"`
 	Filters        map[string]any `bson:"filters,omitempty"`
@@ -132,7 +126,6 @@ func (jm *JobMongoDBModel) ToEntity() *Job {
 	return &Job{
 		ID:             jm.ID,
 		OrganizationID: jm.OrganizationID,
-		ConnectionID:   jm.ConnectionID,
 		Metadata:       jm.Metadata,
 		MappedFields:   jm.MappedFields,
 		Filters:        jm.Filters,
@@ -179,7 +172,6 @@ func (jm *JobMongoDBModel) FromEntity(job *Job) error {
 
 	jm.ID = id
 	jm.OrganizationID = job.OrganizationID
-	jm.ConnectionID = job.ConnectionID
 	jm.Metadata = job.Metadata
 	jm.MappedFields = job.MappedFields
 	jm.Filters = job.Filters

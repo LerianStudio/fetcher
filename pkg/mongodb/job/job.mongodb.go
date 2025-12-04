@@ -101,9 +101,6 @@ func (jr *JobMongoDBRepository) Create(ctx context.Context, job *Job) (*Job, err
 	if job.ID != uuid.Nil {
 		attributes = append(attributes, attribute.String("app.request.job_id", job.ID.String()))
 	}
-	if job.ConnectionID != uuid.Nil {
-		attributes = append(attributes, attribute.String("app.request.connection_id", job.ConnectionID.String()))
-	}
 
 	span.SetAttributes(attributes...)
 
@@ -165,7 +162,6 @@ func (jr *JobMongoDBRepository) Update(ctx context.Context, job *Job) (*Job, err
 		attribute.String("app.request.request_id", reqId),
 		attribute.String("app.request.job_id", job.ID.String()),
 		attribute.String("app.request.organization_id", job.OrganizationID.String()),
-		attribute.String("app.request.connection_id", job.ConnectionID.String()),
 	}
 	span.SetAttributes(attributes...)
 
@@ -197,7 +193,6 @@ func (jr *JobMongoDBRepository) Update(ctx context.Context, job *Job) (*Job, err
 	filter := bson.M{
 		"_id":             job.ID,
 		"organization_id": job.OrganizationID,
-		"connection_id":   job.ConnectionID,
 	}
 
 	update := bson.M{

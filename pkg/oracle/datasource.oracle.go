@@ -1,4 +1,4 @@
-package postgres
+package oracle
 
 import (
 	"context"
@@ -20,7 +20,7 @@ import (
 
 // Repository defines an interface for querying data from a specified table and fields.
 //
-//go:generate mockgen --destination=datasource.postgres.mock.go --package=postgres . Repository
+//go:generate mockgen --destination=datasource.oracle.mock.go --package=oracle . Repository
 type Repository interface {
 	Query(ctx context.Context, schema []TableSchema, table string, fields []string, filter map[string][]any) ([]map[string]any, error)
 	QueryWithAdvancedFilters(ctx context.Context, schema []TableSchema, table string, fields []string, filter map[string]job.FilterCondition) ([]map[string]any, error)
@@ -42,41 +42,41 @@ type ColumnInformation struct {
 	IsPrimaryKey bool   `json:"is_primary_key"`
 }
 
-// ExternalDataSource provides an interface for interacting with a PostgreSQL database connection.
+// ExternalDataSource provides an interface for interacting with an Oracle database connection.
 type ExternalDataSource struct {
 	connection *Connection
 }
 
-// NewDataSourceRepository creates a new ExternalDataSource instance using the provided postgres.Connection, initializing the database connection.
+// NewDataSourceRepository creates a new ExternalDataSource instance using the provided oracle.Connection, initializing the database connection.
 // Returns nil and error if connection fails.
-func NewDataSourceRepository(pc *Connection) (*ExternalDataSource, error) {
+func NewDataSourceRepository(oc *Connection) (*ExternalDataSource, error) {
 	c := &ExternalDataSource{
-		connection: pc,
+		connection: oc,
 	}
 
 	_, err := c.connection.GetDB()
 	if err != nil {
-		pc.Logger.Errorf("Failed to establish PostgreSQL connection: %v", err)
-		return nil, fmt.Errorf("failed to establish PostgreSQL connection: %w", err)
+		oc.Logger.Errorf("Failed to establish Oracle connection: %v", err)
+		return nil, fmt.Errorf("failed to establish Oracle connection: %w", err)
 	}
 
 	return c, nil
 }
 
-// CloseConnection closing the connection with PostgreSQL.
+// CloseConnection closing the connection with Oracle.
 func (ds *ExternalDataSource) CloseConnection() error {
 	if ds.connection.ConnectionDB != nil {
-		ds.connection.Logger.Info("Closing connection to PostgreSQL...")
+		ds.connection.Logger.Info("Closing connection to Oracle...")
 
 		err := ds.connection.ConnectionDB.Close()
 		if err != nil {
-			ds.connection.Logger.Errorf("Error closing PostgreSQL connection: %v", err)
+			ds.connection.Logger.Errorf("Error closing Oracle connection: %v", err)
 			return err
 		}
 
 		ds.connection.Connected = false
 		ds.connection.ConnectionDB = nil
-		ds.connection.Logger.Info("PostgreSQL connection closed successfully.")
+		ds.connection.Logger.Info("Oracle connection closed successfully.")
 	}
 
 	return nil
@@ -87,7 +87,7 @@ func (ds *ExternalDataSource) CloseConnection() error {
 func (ds *ExternalDataSource) Query(ctx context.Context, schema []TableSchema, table string, fields []string, filter map[string][]any) ([]map[string]any, error) {
 	logger, tracer, reqId, _ := libCommons.NewTrackingFromContext(ctx)
 
-	_, span := tracer.Start(ctx, "postgres.data_source.query")
+	_, span := tracer.Start(ctx, "oracle.data_source.query")
 	defer span.End()
 
 	span.SetAttributes(
@@ -111,8 +111,9 @@ func (ds *ExternalDataSource) Query(ctx context.Context, schema []TableSchema, t
 		return nil, err
 	}
 
-	psql := squirrel.StatementBuilder.PlaceholderFormat(squirrel.Dollar)
-	queryBuilder := psql.Select(queriedFields...).From(table)
+	// Oracle uses :1, :2, etc. for placeholders
+	ora := squirrel.StatementBuilder.PlaceholderFormat(squirrel.Colon)
+	queryBuilder := ora.Select(queriedFields...).From(table)
 
 	// Apply filters, but only if they correspond to valid columns
 	queryBuilder = buildDynamicFilters(queryBuilder, schema, table, filter)
@@ -146,7 +147,7 @@ func (ds *ExternalDataSource) Query(ctx context.Context, schema []TableSchema, t
 func (ds *ExternalDataSource) GetDatabaseSchema(ctx context.Context) ([]TableSchema, error) {
 	logger, tracer, reqId, _ := libCommons.NewTrackingFromContext(ctx)
 
-	_, span := tracer.Start(ctx, "postgres.data_source.get_database_schema")
+	_, span := tracer.Start(ctx, "oracle.data_source.get_database_schema")
 	defer span.End()
 
 	span.SetAttributes(
@@ -160,11 +161,10 @@ func (ds *ExternalDataSource) GetDatabaseSchema(ctx context.Context) ([]TableSch
 	defer cancel()
 
 	// Query to get all user tables in the database
+	// Oracle uses USER_TABLES or ALL_TABLES
 	tableQuery := `
 		SELECT table_name 
-		FROM information_schema.tables 
-		WHERE table_schema = 'public'
-		AND table_type = 'BASE TABLE'
+		FROM user_tables 
 		ORDER BY table_name
 	`
 
@@ -187,14 +187,13 @@ func (ds *ExternalDataSource) GetDatabaseSchema(ctx context.Context) ([]TableSch
 
 	// Query to get primary key information
 	pkQuery := `
-		SELECT tc.table_name, kc.column_name
-		FROM information_schema.table_constraints tc
-		JOIN information_schema.key_column_usage kc 
-			ON kc.table_name = tc.table_name 
-			AND kc.table_schema = tc.table_schema
-			AND kc.constraint_name = tc.constraint_name
-		WHERE tc.constraint_type = 'PRIMARY KEY'
-		AND tc.table_schema = 'public'
+		SELECT table_name, column_name
+		FROM user_cons_columns
+		WHERE constraint_name IN (
+			SELECT constraint_name
+			FROM user_constraints
+			WHERE constraint_type = 'P'
+		)
 	`
 
 	pkRows, err := ds.connection.ConnectionDB.QueryContext(schemaCtx, pkQuery)
@@ -227,13 +226,13 @@ func (ds *ExternalDataSource) GetDatabaseSchema(ctx context.Context) ([]TableSch
 
 	for _, tableName := range tables {
 		// Query to get column information for the current table
+		// Oracle doesn't support TRUE/FALSE directly, so we use 1/0 and convert to boolean
 		columnQuery := `
 			SELECT column_name, data_type, 
-			       CASE WHEN is_nullable = 'YES' THEN true ELSE false END as is_nullable
-			FROM information_schema.columns
-			WHERE table_schema = 'public'
-			AND table_name = $1
-			ORDER BY ordinal_position
+			       CASE WHEN nullable = 'Y' THEN 1 ELSE 0 END as is_nullable
+			FROM user_tab_columns
+			WHERE table_name = :1
+			ORDER BY column_id
 		`
 
 		colRows, err := ds.connection.ConnectionDB.QueryContext(schemaCtx, columnQuery, tableName)
@@ -249,13 +248,16 @@ func (ds *ExternalDataSource) GetDatabaseSchema(ctx context.Context) ([]TableSch
 
 		for colRows.Next() {
 			var col ColumnInformation
-			if err := colRows.Scan(&col.Name, &col.DataType, &col.IsNullable); err != nil {
+			var isNullableInt int
+			if err := colRows.Scan(&col.Name, &col.DataType, &isNullableInt); err != nil {
 				if closeErr := colRows.Close(); closeErr != nil {
 					logger.Warnf("error closing rows after scan error: %v", closeErr)
 				}
 
 				return nil, fmt.Errorf("error scanning column info: %w", err)
 			}
+			// Convert Oracle's 1/0 to boolean (1 = true, 0 = false)
+			col.IsNullable = isNullableInt == 1
 
 			// Check if this column is a primary key
 			if pkCols, exists := primaryKeys[tableName]; exists {
@@ -309,21 +311,20 @@ func createRowMap(columns []string, values []any, logger log.Logger) map[string]
 	rowMap := make(map[string]any)
 
 	for i, column := range columns {
-		// Attempt to parse any value that could be JSONB
-		rowMap[column] = parseJSONBField(values[i], logger)
+		// Attempt to parse any value that could be JSON
+		rowMap[column] = parseJSONField(values[i], logger)
 	}
 
 	return rowMap
 }
 
-// parseJSONBField unmarshals any field that might be a JSONB type
-func parseJSONBField(value any, logger log.Logger) any {
+// parseJSONField unmarshals any field that might be a JSON type
+func parseJSONField(value any, logger log.Logger) any {
 	if value == nil {
 		return nil
 	}
 
-	// Check if the value is []uint8, which is how the PostgreSQL driver
-	// represents JSONB and JSON fields
+	// Check if the value is []uint8, which is how some drivers represent JSON fields
 	if byteData, ok := value.([]uint8); ok {
 		// Try to deserialize as a generic map[string]any
 		var jsonMap map[string]any
@@ -344,7 +345,7 @@ func parseJSONBField(value any, logger log.Logger) any {
 		}
 
 		// If all attempts fail, log a warning and return the original value
-		logger.Warnf("Failed to unmarshal potential JSONB data for value: %v", string(byteData))
+		logger.Warnf("Failed to unmarshal potential JSON data for value: %v", string(byteData))
 	}
 
 	return value
@@ -356,7 +357,7 @@ func parseJSONBField(value any, logger log.Logger) any {
 func (ds *ExternalDataSource) ValidateTableAndFields(ctx context.Context, tableName string, requestedFields []string, schema []TableSchema) ([]string, error) {
 	logger, tracer, reqId, _ := libCommons.NewTrackingFromContext(ctx)
 
-	_, span := tracer.Start(ctx, "postgres.data_source.validate_table_and_fields")
+	_, span := tracer.Start(ctx, "oracle.data_source.validate_table_and_fields")
 	defer span.End()
 
 	span.SetAttributes(
@@ -380,7 +381,7 @@ func (ds *ExternalDataSource) ValidateTableAndFields(ctx context.Context, tableN
 	var tableColumns []ColumnInformation
 
 	for _, table := range schema {
-		if table.TableName == tableName {
+		if strings.EqualFold(table.TableName, tableName) {
 			tableFound = true
 			tableColumns = table.Columns
 
@@ -392,10 +393,10 @@ func (ds *ExternalDataSource) ValidateTableAndFields(ctx context.Context, tableN
 		return nil, fmt.Errorf("table '%s' does not exist in the database", tableName)
 	}
 
-	// Create a map of valid column names for efficient lookup
+	// Create a map of valid column names for efficient lookup (case-insensitive for Oracle)
 	validColumns := make(map[string]bool)
 	for _, col := range tableColumns {
-		validColumns[col.Name] = true
+		validColumns[strings.ToUpper(col.Name)] = true
 	}
 
 	// Special case: if "*" is in the fields, return all columns
@@ -408,14 +409,20 @@ func (ds *ExternalDataSource) ValidateTableAndFields(ctx context.Context, tableN
 		return allFields, nil
 	}
 
-	// Validate each requested field
+	// Validate each requested field (case-insensitive)
 	var validFields []string
 
 	var invalidFields []string
 
 	for _, field := range requestedFields {
-		if validColumns[field] {
-			validFields = append(validFields, field)
+		if validColumns[strings.ToUpper(field)] {
+			// Find the original case from schema
+			for _, col := range tableColumns {
+				if strings.EqualFold(col.Name, field) {
+					validFields = append(validFields, col.Name)
+					break
+				}
+			}
 		} else {
 			invalidFields = append(invalidFields, field)
 		}
@@ -440,22 +447,30 @@ func buildDynamicFilters(queryBuilder squirrel.SelectBuilder, schema []TableSche
 	var tableColumns []ColumnInformation
 
 	for _, t := range schema {
-		if t.TableName == table {
+		if strings.EqualFold(t.TableName, table) {
 			tableColumns = t.Columns
 			break
 		}
 	}
 
-	// Create a map of valid column names for efficient lookup
+	// Create a map of valid column names for efficient lookup (case-insensitive)
 	validColumns := make(map[string]bool)
 	for _, col := range tableColumns {
-		validColumns[col.Name] = true
+		validColumns[strings.ToUpper(col.Name)] = true
 	}
 
 	for field, values := range filter {
-		// Only apply filters for valid columns
-		if validColumns[field] && len(values) > 0 {
-			queryBuilder = applyFilter(queryBuilder, field, values)
+		// Only apply filters for valid columns (case-insensitive)
+		if validColumns[strings.ToUpper(field)] && len(values) > 0 {
+			// Find original case
+			var originalField string
+			for _, col := range tableColumns {
+				if strings.EqualFold(col.Name, field) {
+					originalField = col.Name
+					break
+				}
+			}
+			queryBuilder = applyFilter(queryBuilder, originalField, values)
 		}
 	}
 
@@ -468,7 +483,7 @@ func applyFilter(queryBuilder squirrel.SelectBuilder, fieldName string, values [
 		return queryBuilder
 	}
 
-	// No need for conversion since values is already []any
+	// Oracle uses :1, :2, etc. for placeholders
 	placeholder := squirrel.Placeholders(len(values))
 
 	return queryBuilder.Where(fieldName+" IN ("+placeholder+")", values...)
@@ -478,7 +493,7 @@ func applyFilter(queryBuilder squirrel.SelectBuilder, fieldName string, values [
 func (ds *ExternalDataSource) QueryWithAdvancedFilters(ctx context.Context, schema []TableSchema, table string, fields []string, filter map[string]job.FilterCondition) ([]map[string]any, error) {
 	logger, tracer, reqId, _ := libCommons.NewTrackingFromContext(ctx)
 
-	_, span := tracer.Start(ctx, "postgres.data_source.query_with_advanced_filters")
+	_, span := tracer.Start(ctx, "oracle.data_source.query_with_advanced_filters")
 	defer span.End()
 
 	span.SetAttributes(
@@ -502,8 +517,9 @@ func (ds *ExternalDataSource) QueryWithAdvancedFilters(ctx context.Context, sche
 		return nil, err
 	}
 
-	psql := squirrel.StatementBuilder.PlaceholderFormat(squirrel.Dollar)
-	queryBuilder := psql.Select(queriedFields...).From(table)
+	// Oracle uses :1, :2, etc. for placeholders
+	ora := squirrel.StatementBuilder.PlaceholderFormat(squirrel.Colon)
+	queryBuilder := ora.Select(queriedFields...).From(table)
 
 	// Apply advanced filters
 	queryBuilder, err = ds.buildAdvancedFilters(queryBuilder, schema, table, filter)
@@ -542,21 +558,21 @@ func (ds *ExternalDataSource) buildAdvancedFilters(queryBuilder squirrel.SelectB
 	var tableColumns []ColumnInformation
 
 	for _, t := range schema {
-		if t.TableName == table {
+		if strings.EqualFold(t.TableName, table) {
 			tableColumns = t.Columns
 			break
 		}
 	}
 
-	// Create a map of valid column names for efficient lookup
+	// Create a map of valid column names for efficient lookup (case-insensitive)
 	validColumns := make(map[string]bool)
 	for _, col := range tableColumns {
-		validColumns[col.Name] = true
+		validColumns[strings.ToUpper(col.Name)] = true
 	}
 
 	for field, condition := range filter {
-		// Only apply filters for valid columns
-		if !validColumns[field] {
+		// Only apply filters for valid columns (case-insensitive)
+		if !validColumns[strings.ToUpper(field)] {
 			continue
 		}
 
@@ -569,8 +585,17 @@ func (ds *ExternalDataSource) buildAdvancedFilters(queryBuilder squirrel.SelectB
 			return queryBuilder, err
 		}
 
+		// Find original case
+		var originalField string
+		for _, col := range tableColumns {
+			if strings.EqualFold(col.Name, field) {
+				originalField = col.Name
+				break
+			}
+		}
+
 		// Apply each filter operator
-		queryBuilder = ds.applyAdvancedFilter(queryBuilder, field, condition)
+		queryBuilder = ds.applyAdvancedFilter(queryBuilder, originalField, condition)
 	}
 
 	return queryBuilder, nil
@@ -609,15 +634,12 @@ func (ds *ExternalDataSource) applyAdvancedFilter(queryBuilder squirrel.SelectBu
 
 	// Handle between (using AND with >= and <=)
 	if len(condition.Between) == 2 {
-		// For date fields, ensure proper date range handling
 		startValue := condition.Between[0]
 		endValue := condition.Between[1]
 
 		// If it looks like a date field and we have date strings, adjust the end date to include the full day
 		if isDateField(field) && isDateString(startValue) && isDateString(endValue) {
-			// Convert end date to end of day (23:59:59.999)
 			if endStr, ok := endValue.(string); ok {
-				// If it's just a date (YYYY-MM-DD), add time to make it end of day
 				if len(endStr) == 10 { // YYYY-MM-DD format
 					endValue = endStr + "T23:59:59.999Z"
 				}

@@ -53,6 +53,12 @@
       "vhost": "/",
       "type": "direct",
       "durable": true
+    },
+    {
+      "name": "fetcher.job.events",
+      "vhost": "/",
+      "type": "topic",
+      "durable": true
     }
   ],
   "bindings": [
