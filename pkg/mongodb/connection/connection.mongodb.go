@@ -21,6 +21,7 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // Repository defines the domain port for connections.
@@ -534,50 +535,8 @@ func (rm *ConnectionMongoDBRepository) List(ctx context.Context, organizationID 
 		return nil, pkg.ValidateInternalError(err, "connection")
 	}
 
-	queryFilter := bson.M{
-		"organization_id": organizationID,
-		"deleted_at":      bson.D{{Key: "$eq", Value: nil}},
-	}
-
-	if filters.Metadata != nil && filters.UseMetadata {
-		for key, value := range *filters.Metadata {
-			queryFilter[key] = value
-		}
-	}
-
-	if !filters.StartDate.IsZero() || !filters.EndDate.IsZero() {
-		createdAt := bson.M{}
-		if !filters.StartDate.IsZero() {
-			createdAt["$gte"] = filters.StartDate
-		}
-
-		if !filters.EndDate.IsZero() {
-			createdAt["$lte"] = filters.EndDate
-		}
-
-		queryFilter["created_at"] = createdAt
-	}
-
-	limit := int64(filters.Limit)
-	if limit < 0 {
-		limit = 0
-	}
-
-	page := filters.Page
-	if page < 1 {
-		page = 1
-	}
-
-	skip := int64(page*int(limit) - int(limit))
-	if skip < 0 {
-		skip = 0
-	}
-
-	opts := options.FindOptions{
-		Limit: &limit,
-		Skip:  &skip,
-		Sort:  bson.D{{Key: "created_at", Value: -1}},
-	}
+	queryFilter := rm.buildQueryFilter(organizationID, filters)
+	opts := rm.buildPaginationOptions(filters)
 
 	err = libOpentelemetry.SetSpanAttributesFromStruct(&span, "app.request.repository_filter", queryFilter)
 	if err != nil {
@@ -593,7 +552,77 @@ func (rm *ConnectionMongoDBRepository) List(ctx context.Context, organizationID 
 	}
 	defer cur.Close(ctx)
 
-	connections := make([]*model.Connection, 0, int(limit))
+	connections, err := rm.scanConnections(ctx, cur, span, int(*opts.Limit))
+	if err != nil {
+		return nil, err
+	}
+
+	return connections, nil
+}
+
+// buildQueryFilter builds the MongoDB query filter from filters
+func (rm *ConnectionMongoDBRepository) buildQueryFilter(organizationID uuid.UUID, filters http.QueryHeader) bson.M {
+	queryFilter := bson.M{
+		"organization_id": organizationID,
+		"deleted_at":      bson.D{{Key: "$eq", Value: nil}},
+	}
+
+	if filters.Metadata != nil && filters.UseMetadata {
+		for key, value := range *filters.Metadata {
+			queryFilter[key] = value
+		}
+	}
+
+	rm.addDateRangeFilter(queryFilter, filters)
+
+	return queryFilter
+}
+
+// addDateRangeFilter adds date range filters to the query filter
+func (rm *ConnectionMongoDBRepository) addDateRangeFilter(queryFilter bson.M, filters http.QueryHeader) {
+	if filters.StartDate.IsZero() && filters.EndDate.IsZero() {
+		return
+	}
+
+	createdAt := bson.M{}
+	if !filters.StartDate.IsZero() {
+		createdAt["$gte"] = filters.StartDate
+	}
+
+	if !filters.EndDate.IsZero() {
+		createdAt["$lte"] = filters.EndDate
+	}
+
+	queryFilter["created_at"] = createdAt
+}
+
+// buildPaginationOptions builds MongoDB pagination options
+func (rm *ConnectionMongoDBRepository) buildPaginationOptions(filters http.QueryHeader) options.FindOptions {
+	limit := int64(filters.Limit)
+	if limit < 0 {
+		limit = 0
+	}
+
+	page := filters.Page
+	if page < 1 {
+		page = 1
+	}
+
+	skip := int64(page*int(limit) - int(limit))
+	if skip < 0 {
+		skip = 0
+	}
+
+	return options.FindOptions{
+		Limit: &limit,
+		Skip:  &skip,
+		Sort:  bson.D{{Key: "created_at", Value: -1}},
+	}
+}
+
+// scanConnections scans connection records from the cursor
+func (rm *ConnectionMongoDBRepository) scanConnections(ctx context.Context, cur *mongo.Cursor, span trace.Span, limit int) ([]*model.Connection, error) {
+	connections := make([]*model.Connection, 0, limit)
 
 	for cur.Next(ctx) {
 		var record ConnectionMongoDBModel

@@ -109,17 +109,34 @@ func NewConnection(
 
 // IsValid trims and enforces required fields.
 func (conn *Connection) IsValid() error {
+	conn.normalizeFields()
+
+	requiredFields := conn.validateRequiredFields()
+	knownInvalidFields := conn.validateFieldValues()
+
+	if len(requiredFields) == 0 && len(knownInvalidFields) == 0 {
+		return nil
+	}
+
+	return pkg.ValidateBadRequestFieldsError(
+		requiredFields,
+		knownInvalidFields,
+		"connection",
+		nil,
+	)
+}
+
+// normalizeFields trims whitespace from string fields
+func (conn *Connection) normalizeFields() {
 	conn.ConfigName = strings.TrimSpace(conn.ConfigName)
 	conn.Host = strings.TrimSpace(conn.Host)
 	conn.DatabaseName = strings.TrimSpace(conn.DatabaseName)
 	conn.Username = strings.TrimSpace(conn.Username)
+}
 
+// validateRequiredFields validates that all required fields are present
+func (conn *Connection) validateRequiredFields() map[string]string {
 	requiredFields := make(map[string]string)
-	knownInvalidFields := make(map[string]string)
-
-	if !conn.Type.IsValid() {
-		knownInvalidFields["type"] = "invalid connection type"
-	}
 
 	if conn.OrganizationID == uuid.Nil {
 		requiredFields["organization_id"] = "organization ID is required"
@@ -127,10 +144,6 @@ func (conn *Connection) IsValid() error {
 
 	if conn.ConfigName == "" {
 		requiredFields["config_name"] = "config name is required"
-	}
-
-	if len(conn.ConfigName) < 3 || len(conn.ConfigName) > 100 {
-		knownInvalidFields["config_name"] = "config name must be between 3 and 100 characters"
 	}
 
 	if conn.Port <= 0 {
@@ -157,26 +170,39 @@ func (conn *Connection) IsValid() error {
 		requiredFields["id"] = "connection ID is required"
 	}
 
-	if conn.SSL != nil {
-		if conn.SSL.Mode == "" {
-			requiredFields["ssl.mode"] = "SSL mode is required"
-		}
+	conn.validateSSLRequiredFields(requiredFields)
 
-		if conn.SSL.CA == "" {
-			requiredFields["ssl.ca"] = "SSL CA is required"
-		}
+	return requiredFields
+}
+
+// validateSSLRequiredFields validates SSL-related required fields
+func (conn *Connection) validateSSLRequiredFields(requiredFields map[string]string) {
+	if conn.SSL == nil {
+		return
 	}
 
-	if len(requiredFields) == 0 && len(knownInvalidFields) == 0 {
-		return nil
-	} else {
-		return pkg.ValidateBadRequestFieldsError(
-			requiredFields,
-			knownInvalidFields,
-			"connection",
-			nil,
-		)
+	if conn.SSL.Mode == "" {
+		requiredFields["ssl.mode"] = "SSL mode is required"
 	}
+
+	if conn.SSL.CA == "" {
+		requiredFields["ssl.ca"] = "SSL CA is required"
+	}
+}
+
+// validateFieldValues validates field values and formats
+func (conn *Connection) validateFieldValues() map[string]string {
+	knownInvalidFields := make(map[string]string)
+
+	if !conn.Type.IsValid() {
+		knownInvalidFields["type"] = "invalid connection type"
+	}
+
+	if len(conn.ConfigName) < 3 || len(conn.ConfigName) > 100 {
+		knownInvalidFields["config_name"] = "config name must be between 3 and 100 characters"
+	}
+
+	return knownInvalidFields
 }
 
 // ApplyPatch applies partial updates to the Connection.

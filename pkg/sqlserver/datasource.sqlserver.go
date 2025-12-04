@@ -181,11 +181,31 @@ func (ds *ExternalDataSource) GetDatabaseSchema(ctx context.Context) ([]TableSch
 
 	logger.Info("Retrieving database schema information")
 
-	// Create timeout context for schema discovery (longer timeout for this operation)
 	schemaCtx, cancel := context.WithTimeout(ctx, constant.SchemaDiscoveryTimeout)
 	defer cancel()
 
-	// Query to get all user tables in the database
+	tables, err := ds.queryTables(schemaCtx)
+	if err != nil {
+		return nil, err
+	}
+
+	primaryKeys, err := ds.queryPrimaryKeys(schemaCtx)
+	if err != nil {
+		return nil, err
+	}
+
+	schema, err := ds.buildSchema(schemaCtx, tables, primaryKeys, logger)
+	if err != nil {
+		return nil, err
+	}
+
+	logger.Infof("Retrieved schema for %d tables", len(schema))
+
+	return schema, nil
+}
+
+// queryTables retrieves all table names from the database
+func (ds *ExternalDataSource) queryTables(ctx context.Context) ([]string, error) {
 	tableQuery := `
 		SELECT table_name 
 		FROM information_schema.tables 
@@ -194,14 +214,13 @@ func (ds *ExternalDataSource) GetDatabaseSchema(ctx context.Context) ([]TableSch
 		ORDER BY table_name
 	`
 
-	rows, err := ds.connection.ConnectionDB.QueryContext(schemaCtx, tableQuery)
+	rows, err := ds.connection.ConnectionDB.QueryContext(ctx, tableQuery)
 	if err != nil {
 		return nil, fmt.Errorf("error querying tables: %w", err)
 	}
 	defer rows.Close()
 
 	var tables []string
-
 	for rows.Next() {
 		var tableName string
 		if err := rows.Scan(&tableName); err != nil {
@@ -211,7 +230,11 @@ func (ds *ExternalDataSource) GetDatabaseSchema(ctx context.Context) ([]TableSch
 		tables = append(tables, tableName)
 	}
 
-	// Query to get primary key information
+	return tables, nil
+}
+
+// queryPrimaryKeys retrieves primary key information for all tables
+func (ds *ExternalDataSource) queryPrimaryKeys(ctx context.Context) (map[string]map[string]bool, error) {
 	pkQuery := `
 		SELECT tc.table_name, kc.column_name
 		FROM information_schema.table_constraints tc
@@ -223,9 +246,9 @@ func (ds *ExternalDataSource) GetDatabaseSchema(ctx context.Context) ([]TableSch
 		AND tc.table_schema = 'dbo'
 	`
 
-	pkRows, err := ds.connection.ConnectionDB.QueryContext(schemaCtx, pkQuery)
+	pkRows, err := ds.connection.ConnectionDB.QueryContext(ctx, pkQuery)
 	if err != nil {
-		if schemaCtx.Err() == context.DeadlineExceeded {
+		if ctx.Err() == context.DeadlineExceeded {
 			return nil, fmt.Errorf("schema discovery timeout after %v while querying primary keys: %w", constant.SchemaDiscoveryTimeout, err)
 		}
 
@@ -233,9 +256,7 @@ func (ds *ExternalDataSource) GetDatabaseSchema(ctx context.Context) ([]TableSch
 	}
 	defer pkRows.Close()
 
-	// Map to store primary key columns by table name
 	primaryKeys := make(map[string]map[string]bool)
-
 	for pkRows.Next() {
 		var tableName, columnName string
 		if err := pkRows.Scan(&tableName, &columnName); err != nil {
@@ -249,70 +270,89 @@ func (ds *ExternalDataSource) GetDatabaseSchema(ctx context.Context) ([]TableSch
 		primaryKeys[tableName][columnName] = true
 	}
 
-	// Build the complete schema information
+	return primaryKeys, nil
+}
+
+// buildSchema builds the complete schema information for all tables
+func (ds *ExternalDataSource) buildSchema(ctx context.Context, tables []string, primaryKeys map[string]map[string]bool, logger log.Logger) ([]TableSchema, error) {
 	schema := make([]TableSchema, 0, len(tables))
 
 	for _, tableName := range tables {
-		// Query to get column information for the current table
-		// SQL Server uses @p1, @p2, etc. for placeholders (not ?)
-		// SQL Server doesn't support TRUE/FALSE directly, so we use 1/0 and convert to boolean
-		columnQuery := `
-			SELECT column_name, data_type, 
-			       CASE WHEN is_nullable = 'YES' THEN 1 ELSE 0 END as is_nullable
-			FROM information_schema.columns
-			WHERE table_schema = 'dbo'
-			AND table_name = @p1
-			ORDER BY ordinal_position
-		`
-
-		colRows, err := ds.connection.ConnectionDB.QueryContext(schemaCtx, columnQuery, tableName)
+		tableSchema, err := ds.buildTableSchema(ctx, tableName, primaryKeys, logger)
 		if err != nil {
-			if schemaCtx.Err() == context.DeadlineExceeded {
-				return nil, fmt.Errorf("schema discovery timeout after %v while querying columns for table %s: %w", constant.SchemaDiscoveryTimeout, tableName, err)
-			}
-
-			return nil, fmt.Errorf("error querying columns for table %s: %w", tableName, err)
+			return nil, err
 		}
 
-		var columns []ColumnInformation
-
-		for colRows.Next() {
-			var (
-				col           ColumnInformation
-				isNullableInt int
-			)
-
-			if err := colRows.Scan(&col.Name, &col.DataType, &isNullableInt); err != nil {
-				if closeErr := colRows.Close(); closeErr != nil {
-					logger.Warnf("error closing rows after scan error: %v", closeErr)
-				}
-
-				return nil, fmt.Errorf("error scanning column info: %w", err)
-			}
-			// Convert SQL Server's 1/0 to boolean (1 = true, 0 = false)
-			col.IsNullable = isNullableInt == 1
-
-			// Check if this column is a primary key
-			if pkCols, exists := primaryKeys[tableName]; exists {
-				col.IsPrimaryKey = pkCols[col.Name]
-			}
-
-			columns = append(columns, col)
-		}
-
-		if err := colRows.Close(); err != nil {
-			logger.Warnf("error closing column rows: %v", err)
-		}
-
-		schema = append(schema, TableSchema{
-			TableName: tableName,
-			Columns:   columns,
-		})
+		schema = append(schema, tableSchema)
 	}
 
-	logger.Infof("Retrieved schema for %d tables", len(schema))
-
 	return schema, nil
+}
+
+// buildTableSchema builds schema information for a single table
+func (ds *ExternalDataSource) buildTableSchema(ctx context.Context, tableName string, primaryKeys map[string]map[string]bool, logger log.Logger) (TableSchema, error) {
+	columnQuery := `
+		SELECT column_name, data_type, 
+		       CASE WHEN is_nullable = 'YES' THEN 1 ELSE 0 END as is_nullable
+		FROM information_schema.columns
+		WHERE table_schema = 'dbo'
+		AND table_name = @p1
+		ORDER BY ordinal_position
+	`
+
+	colRows, err := ds.connection.ConnectionDB.QueryContext(ctx, columnQuery, tableName)
+	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return TableSchema{}, fmt.Errorf("schema discovery timeout after %v while querying columns for table %s: %w", constant.SchemaDiscoveryTimeout, tableName, err)
+		}
+
+		return TableSchema{}, fmt.Errorf("error querying columns for table %s: %w", tableName, err)
+	}
+	defer colRows.Close()
+
+	columns, err := ds.scanColumns(colRows, tableName, primaryKeys, logger)
+	if err != nil {
+		return TableSchema{}, err
+	}
+
+	return TableSchema{
+		TableName: tableName,
+		Columns:   columns,
+	}, nil
+}
+
+// scanColumns scans column information from query results
+func (ds *ExternalDataSource) scanColumns(colRows *sql.Rows, tableName string, primaryKeys map[string]map[string]bool, logger log.Logger) ([]ColumnInformation, error) {
+	var columns []ColumnInformation
+
+	for colRows.Next() {
+		var (
+			col           ColumnInformation
+			isNullableInt int
+		)
+
+		if err := colRows.Scan(&col.Name, &col.DataType, &isNullableInt); err != nil {
+			if closeErr := colRows.Close(); closeErr != nil {
+				logger.Warnf("error closing rows after scan error: %v", closeErr)
+			}
+
+			return nil, fmt.Errorf("error scanning column info: %w", err)
+		}
+
+		col.IsNullable = isNullableInt == 1
+
+		if pkCols, exists := primaryKeys[tableName]; exists {
+			col.IsPrimaryKey = pkCols[col.Name]
+		}
+
+		columns = append(columns, col)
+	}
+
+	if err := colRows.Close(); err != nil {
+		logger.Warnf("error closing column rows: %v", err)
+	}
+
+	return columns, nil
 }
 
 // scanRows processes the query rows and creates the resulting slice of maps.
