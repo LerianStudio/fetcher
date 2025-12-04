@@ -87,6 +87,7 @@ func NewConnectionMongoDBModelFromDomain(conn *model.Connection) *ConnectionMong
 	}
 
 	var cm ConnectionMongoDBModel
+
 	cm.ID = conn.ID
 	cm.OrganizationID = conn.OrganizationID
 	cm.ConfigName = conn.ConfigName
@@ -106,8 +107,8 @@ func NewConnectionMongoDBModelFromDomain(conn *model.Connection) *ConnectionMong
 }
 
 // ToMapWithMask converts the MongoDB model to a map with sensitive fields masked.
-func (cm *ConnectionMongoDBModel) ToMapWithMask() map[string]interface{} {
-	result := map[string]interface{}{
+func (cm *ConnectionMongoDBModel) ToMapWithMask() map[string]any {
+	result := map[string]any{
 		"id":                     cm.ID,
 		"organization_id":        cm.OrganizationID,
 		"config_name":            cm.ConfigName,
@@ -124,7 +125,7 @@ func (cm *ConnectionMongoDBModel) ToMapWithMask() map[string]interface{} {
 	}
 
 	if cm.SSL != nil {
-		result["ssl"] = map[string]interface{}{
+		result["ssl"] = map[string]any{
 			"mode": cm.SSL.Mode,
 			"ca":   pkg.MaskSecret(cm.SSL.CA),
 			"cert": pkg.MaskSecret(cm.SSL.Cert),

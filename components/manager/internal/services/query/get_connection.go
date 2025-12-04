@@ -18,12 +18,13 @@ type GetConnection struct {
 	connRepo connRepo.Repository
 }
 
-func NewGetConnection(connRepo connRepo.Repository) *GetConnection {
-	return &GetConnection{connRepo: connRepo}
+func NewGetConnection(connectionRepo connRepo.Repository) *GetConnection {
+	return &GetConnection{connRepo: connectionRepo}
 }
 
 func (s *GetConnection) Execute(ctx context.Context, organizationID, connectionID uuid.UUID) (*model.Connection, error) {
 	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+
 	ctx, span := tracer.Start(ctx, "service.get_connection")
 	defer span.End()
 
@@ -37,6 +38,7 @@ func (s *GetConnection) Execute(ctx context.Context, organizationID, connectionI
 	if err != nil {
 		return nil, err
 	}
+
 	if current == nil {
 		return nil, pkg.EntityNotFoundError{
 			EntityType: "connection",

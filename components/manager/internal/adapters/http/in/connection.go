@@ -59,8 +59,10 @@ func NewConnectionHandler(
 func (h *ConnectionHandler) CreateConnection(c *fiber.Ctx) error {
 	ctx := c.UserContext()
 	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+
 	ctx, span := tracer.Start(ctx, "handler.create_connection")
 	defer span.End()
+
 	c.SetUserContext(ctx)
 
 	orgID, err := httpUtils.GetOrganizationID(c)
@@ -77,6 +79,7 @@ func (h *ConnectionHandler) CreateConnection(c *fiber.Ctx) error {
 	var request model.ConnectionInput
 	if errParser := c.BodyParser(&request); errParser != nil {
 		libOpentelemetry.HandleSpanError(&span, "failed to parse payload", errParser)
+
 		return httpUtils.WithError(c, pkg.ValidationError{
 			EntityType: "connection",
 			Code:       constant.ErrBadRequest.Error(),
@@ -90,11 +93,13 @@ func (h *ConnectionHandler) CreateConnection(c *fiber.Ctx) error {
 	if err != nil {
 		logger.Errorf("Failed to execute create connection command, Error: %s", err.Error())
 		libOpentelemetry.HandleSpanError(&span, "failed to create connection", err)
+
 		return httpUtils.WithError(c, err)
 	}
 
 	resp := model.NewConnectionResponseFrom(conn)
 	logger.Infof("connection created id=%s org=%s", resp.ID, orgID)
+
 	return httpUtils.Created(c, fiber.Map{"id": resp.ID})
 }
 
@@ -122,8 +127,10 @@ func (h *ConnectionHandler) CreateConnection(c *fiber.Ctx) error {
 func (h *ConnectionHandler) ListConnections(c *fiber.Ctx) error {
 	ctx := c.UserContext()
 	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+
 	ctx, span := tracer.Start(ctx, "handler.list_connection")
 	defer span.End()
+
 	c.SetUserContext(ctx)
 
 	orgID, err := httpUtils.GetOrganizationID(c)
@@ -141,6 +148,7 @@ func (h *ConnectionHandler) ListConnections(c *fiber.Ctx) error {
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to validate query parameters", err)
 		logger.Errorf("Failed to validate query parameters, Error: %s", err.Error())
+
 		return httpUtils.WithError(c, err)
 	}
 
@@ -153,6 +161,7 @@ func (h *ConnectionHandler) ListConnections(c *fiber.Ctx) error {
 	if err != nil {
 		logger.Errorf("Failed to execute list connections query, Error: %s", err.Error())
 		libOpentelemetry.HandleSpanError(&span, "failed to list connections", err)
+
 		return httpUtils.WithError(c, err)
 	}
 
@@ -160,10 +169,12 @@ func (h *ConnectionHandler) ListConnections(c *fiber.Ctx) error {
 	for _, conn := range conns {
 		connResp = append(connResp, model.NewConnectionResponseFrom(conn))
 	}
+
 	logger.Infof("connections listed org=%s count=%d", orgID, len(connResp))
 
 	pagination.SetItems(connResp)
 	pagination.SetTotal(len(connResp))
+
 	return httpUtils.OK(c, pagination)
 }
 
@@ -184,8 +195,10 @@ func (h *ConnectionHandler) ListConnections(c *fiber.Ctx) error {
 func (h *ConnectionHandler) GetConnection(c *fiber.Ctx) error {
 	ctx := c.UserContext()
 	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+
 	ctx, span := tracer.Start(ctx, "handler.get_connection")
 	defer span.End()
+
 	c.SetUserContext(ctx)
 
 	orgID, err := httpUtils.GetOrganizationID(c)
@@ -209,17 +222,21 @@ func (h *ConnectionHandler) GetConnection(c *fiber.Ctx) error {
 			Err:        err,
 		})
 	}
+
 	span.SetAttributes(attribute.String("app.request.connection_id", id.String()))
 
 	conn, err := h.GetQuery.Execute(ctx, orgID, id)
 	if err != nil {
 		logger.Errorf("Failed to execute get connection query, Error: %s", err.Error())
 		libOpentelemetry.HandleSpanError(&span, "failed to get connection", err)
+
 		return httpUtils.WithError(c, err)
 	}
 
 	resp := model.NewConnectionResponseFrom(conn)
+
 	logger.Infof("connection retrieved id=%s org=%s", id, orgID)
+
 	return httpUtils.OK(c, resp)
 }
 
@@ -243,8 +260,10 @@ func (h *ConnectionHandler) GetConnection(c *fiber.Ctx) error {
 func (h *ConnectionHandler) UpdateConnection(c *fiber.Ctx) error {
 	ctx := c.UserContext()
 	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+
 	ctx, span := tracer.Start(ctx, "handler.update_connection")
 	defer span.End()
+
 	c.SetUserContext(ctx)
 
 	orgID, err := httpUtils.GetOrganizationID(c)
@@ -268,11 +287,13 @@ func (h *ConnectionHandler) UpdateConnection(c *fiber.Ctx) error {
 			Err:        err,
 		})
 	}
+
 	span.SetAttributes(attribute.String("app.request.connection_id", id.String()))
 
 	var request model.ConnectionInput
 	if errParser := c.BodyParser(&request); errParser != nil {
 		libOpentelemetry.HandleSpanError(&span, "failed to parse payload", errParser)
+
 		return httpUtils.WithError(c, pkg.ValidationError{
 			EntityType: "connection",
 			Code:       constant.ErrBadRequest.Error(),
@@ -286,10 +307,12 @@ func (h *ConnectionHandler) UpdateConnection(c *fiber.Ctx) error {
 	if err != nil {
 		logger.Errorf("Failed to execute update connection command, Error: %s", err.Error())
 		libOpentelemetry.HandleSpanError(&span, "failed to update connection", err)
+
 		return httpUtils.WithError(c, err)
 	}
 
 	logger.Infof("connection updated id=%s org=%s", id, orgID)
+
 	return httpUtils.OK(c, model.NewConnectionResponseFrom(conn))
 }
 
@@ -311,8 +334,10 @@ func (h *ConnectionHandler) UpdateConnection(c *fiber.Ctx) error {
 func (h *ConnectionHandler) DeleteConnection(c *fiber.Ctx) error {
 	ctx := c.UserContext()
 	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+
 	ctx, span := tracer.Start(ctx, "handler.delete_connection")
 	defer span.End()
+
 	c.SetUserContext(ctx)
 
 	orgID, err := httpUtils.GetOrganizationID(c)
@@ -336,14 +361,17 @@ func (h *ConnectionHandler) DeleteConnection(c *fiber.Ctx) error {
 			Err:        err,
 		})
 	}
+
 	span.SetAttributes(attribute.String("app.request.connection_id", id.String()))
 
 	if err := h.DeleteCmd.Execute(ctx, orgID, id); err != nil {
 		logger.Errorf("Failed to execute delete connection command, Error: %s", err.Error())
 		libOpentelemetry.HandleSpanError(&span, "failed to delete connection", err)
+
 		return httpUtils.WithError(c, err)
 	}
 
 	logger.Infof("connection deleted id=%s org=%s", id, orgID)
+
 	return httpUtils.OK(c, fiber.Map{"id": id})
 }

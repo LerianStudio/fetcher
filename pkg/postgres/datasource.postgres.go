@@ -219,6 +219,7 @@ func (ds *ExternalDataSource) GetDatabaseSchema(ctx context.Context) ([]TableSch
 		if primaryKeys[tableName] == nil {
 			primaryKeys[tableName] = make(map[string]bool)
 		}
+
 		primaryKeys[tableName][columnName] = true
 	}
 

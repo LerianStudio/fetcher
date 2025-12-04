@@ -55,13 +55,16 @@ func NewConnection(
 	var ssl *SSLConfig
 	if sslMode != nil {
 		ssl = &SSLConfig{}
+
 		ssl.Mode = *sslMode
 		if sslCA != nil {
 			ssl.CA = *sslCA
 		}
+
 		if sslCert != nil {
 			ssl.Cert = *sslCert
 		}
+
 		if sslKey != nil {
 			ssl.Key = *sslKey
 		}
@@ -117,30 +120,39 @@ func (conn *Connection) IsValid() error {
 	if !conn.Type.IsValid() {
 		knownInvalidFields["type"] = "invalid connection type"
 	}
+
 	if conn.OrganizationID == uuid.Nil {
 		requiredFields["organization_id"] = "organization ID is required"
 	}
+
 	if conn.ConfigName == "" {
 		requiredFields["config_name"] = "config name is required"
 	}
+
 	if len(conn.ConfigName) < 3 || len(conn.ConfigName) > 100 {
 		knownInvalidFields["config_name"] = "config name must be between 3 and 100 characters"
 	}
+
 	if conn.Port <= 0 {
 		requiredFields["port"] = "port must be a positive integer"
 	}
+
 	if conn.Host == "" {
 		requiredFields["host"] = "host is required"
 	}
+
 	if conn.DatabaseName == "" {
 		requiredFields["database_name"] = "database name is required"
 	}
+
 	if conn.Username == "" {
 		requiredFields["username"] = "username is required"
 	}
+
 	if conn.PasswordEncrypted == "" {
 		requiredFields["password_encrypted"] = "password_encrypted is required"
 	}
+
 	if conn.ID == uuid.Nil {
 		requiredFields["id"] = "connection ID is required"
 	}
@@ -149,6 +161,7 @@ func (conn *Connection) IsValid() error {
 		if conn.SSL.Mode == "" {
 			requiredFields["ssl.mode"] = "SSL mode is required"
 		}
+
 		if conn.SSL.CA == "" {
 			requiredFields["ssl.ca"] = "SSL CA is required"
 		}
@@ -185,53 +198,67 @@ func (conn *Connection) ApplyPatch(
 	if configName != nil {
 		conn.ConfigName = *configName
 	}
+
 	if typ != nil {
 		connType, errParse := NewTypeFromString(*typ)
 		if errParse != nil {
 			return pkg.ValidateInternalError(errParse, "connection")
 		}
+
 		conn.Type = connType
 	}
+
 	if host != nil {
 		conn.Host = *host
 	}
+
 	if port != nil {
 		conn.Port = *port
 	}
+
 	if dbName != nil {
 		conn.DatabaseName = *dbName
 	}
+
 	if username != nil {
 		conn.Username = *username
 	}
+
 	if password != nil {
 		if enc == nil {
 			return pkg.ValidateInternalError(errors.New("cryptor is required to encrypt password"), "connection")
 		}
+
 		passwordEncrypted, encryptionKeyVersion, err := enc.Encrypt(ctx, *password)
 		if err != nil {
 			return pkg.ValidateInternalError(err, "connection")
 		}
+
 		conn.PasswordEncrypted = passwordEncrypted
 		conn.EncryptionKeyVersion = encryptionKeyVersion
 	}
 
 	if sslMode != nil {
 		ssl := SSLConfig{}
+
 		ssl.Mode = *sslMode
 		if sslCA != nil {
 			ssl.CA = *sslCA
 		}
+
 		if sslCert != nil {
 			ssl.Cert = *sslCert
 		}
+
 		if sslKey != nil {
 			ssl.Key = *sslKey
 		}
+
 		conn.SSL = &ssl
 	}
 
 	conn.UpdatedAt = time.Now().UTC()
+
 	return conn.IsValid()
 }
 
@@ -240,6 +267,7 @@ func (conn *Connection) SoftDelete(ts time.Time) {
 	if ts.IsZero() {
 		ts = time.Now().UTC()
 	}
+
 	conn.DeletedAt = &ts
 	conn.UpdatedAt = ts
 }
@@ -249,25 +277,28 @@ func (conn *Connection) GetPasswordDecrypted(ctx context.Context, cryptor crypto
 	if cryptor == nil {
 		return "", errors.New("cryptor is required to decrypt password")
 	}
+
 	plain, err := cryptor.Decrypt(ctx, conn.PasswordEncrypted, conn.EncryptionKeyVersion)
 	if err != nil {
 		return "", pkg.ValidateInternalError(err, "connection")
 	}
+
 	return plain, nil
 }
 
 // ToMapWithMask converts the Connection to a map with sensitive fields masked.
-func (conn *Connection) ToMapWithMask() map[string]interface{} {
-	var ssl map[string]interface{}
+func (conn *Connection) ToMapWithMask() map[string]any {
+	var ssl map[string]any
 	if conn.SSL != nil {
-		ssl = map[string]interface{}{
+		ssl = map[string]any{
 			"mode": conn.SSL.Mode,
 			"ca":   pkg.MaskSecret(conn.SSL.CA),
 			"cert": pkg.MaskSecret(conn.SSL.Cert),
 			"key":  pkg.MaskSecret(conn.SSL.Key),
 		}
 	}
-	return map[string]interface{}{
+
+	return map[string]any{
 		"id":                     conn.ID,
 		"organization_id":        conn.OrganizationID,
 		"config_name":            conn.ConfigName,
@@ -328,6 +359,7 @@ func NewConnectionResponseFrom(conn *Connection) *ConnectionResponse {
 	if conn == nil {
 		return nil
 	}
+
 	resp := &ConnectionResponse{
 		ID:           conn.ID,
 		ConfigName:   conn.ConfigName,
@@ -344,6 +376,7 @@ func NewConnectionResponseFrom(conn *Connection) *ConnectionResponse {
 			Mode: conn.SSL.Mode,
 		}
 	}
+
 	return resp
 }
 
@@ -375,5 +408,6 @@ func NewTypeFromString(s string) (DBType, error) {
 	if !typ.IsValid() {
 		return "", errors.New("invalid connection type")
 	}
+
 	return typ, nil
 }

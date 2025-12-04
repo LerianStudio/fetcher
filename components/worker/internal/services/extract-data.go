@@ -61,6 +61,7 @@ func (uc *UseCase) ExtractExternalData(ctx context.Context, body []byte, headers
 				OrganizationID: orgID,
 				Metadata:       make(map[string]any),
 			}
+
 			errorMetadata := map[string]any{
 				"message": err.Error(),
 			}
@@ -68,6 +69,7 @@ func (uc *UseCase) ExtractExternalData(ctx context.Context, body []byte, headers
 				logger.Warnf("Failed to publish job failure notification after parse error: %v", errNotify)
 			}
 		}
+
 		return err
 	}
 
@@ -444,6 +446,7 @@ func (uc *UseCase) encryptDataForSeaweedFS(data []byte, logger log.Logger) ([]by
 	}
 
 	dataStr := string(data)
+
 	encryptedStr, err := crypto.Encrypt(&dataStr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to encrypt data: %w", err)

@@ -72,10 +72,12 @@ func (uc *UseCase) publishJobNotification(
 		if notification.Metadata == nil {
 			notification.Metadata = make(map[string]any)
 		}
+
 		notification.Metadata["error"] = errorMetadata
 	}
 
 	source := "unknown"
+
 	if notification.Metadata != nil {
 		if src, ok := notification.Metadata["source"].(string); ok && src != "" {
 			source = src
@@ -83,16 +85,19 @@ func (uc *UseCase) publishJobNotification(
 	}
 
 	routingKey := fmt.Sprintf("job.%s.%s", status, source)
+
 	notificationJSON, err := json.Marshal(notification)
 	if err != nil {
 		libOtel.HandleSpanError(&notifySpan, "Error marshalling job notification", err)
 		logger.Errorf("Error marshalling job notification: %s", err.Error())
+
 		return fmt.Errorf("marshalling job notification: %w", err)
 	}
 
 	if err := uc.RabbitMQPublisher.Publish(ctx, uc.JobEventsExchange, routingKey, notificationJSON); err != nil {
 		libOtel.HandleSpanError(&notifySpan, "Error publishing job notification to RabbitMQ", err)
 		logger.Errorf("Error publishing job notification to RabbitMQ: %s", err.Error())
+
 		return fmt.Errorf("publishing job notification: %w", err)
 	}
 

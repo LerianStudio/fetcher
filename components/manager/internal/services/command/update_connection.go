@@ -23,9 +23,9 @@ type UpdateConnection struct {
 	cryptor  crypto.Cryptor
 }
 
-func NewUpdateConnection(connRepo connRepo.Repository, jobRepo job.Repository, cryptor crypto.Cryptor) *UpdateConnection {
+func NewUpdateConnection(connectionRepo connRepo.Repository, jobRepo job.Repository, cryptor crypto.Cryptor) *UpdateConnection {
 	return &UpdateConnection{
-		connRepo: connRepo,
+		connRepo: connectionRepo,
 		jobRepo:  jobRepo,
 		cryptor:  cryptor,
 	}
@@ -33,6 +33,7 @@ func NewUpdateConnection(connRepo connRepo.Repository, jobRepo job.Repository, c
 
 func (s *UpdateConnection) Execute(ctx context.Context, organizationID, connectionID uuid.UUID, connInput model.ConnectionInput) (*model.Connection, error) {
 	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+
 	ctx, span := tracer.Start(ctx, "service.update_connection")
 	defer span.End()
 
@@ -51,6 +52,7 @@ func (s *UpdateConnection) Execute(ctx context.Context, organizationID, connecti
 	if err != nil {
 		return nil, err
 	}
+
 	if active {
 		return nil, pkg.ValidateBusinessError(constant.ErrJobInProgress, "connection", "cannot update connection with active jobs")
 	}
@@ -59,6 +61,7 @@ func (s *UpdateConnection) Execute(ctx context.Context, organizationID, connecti
 	if err != nil {
 		return nil, err
 	}
+
 	if current == nil {
 		return nil, pkg.EntityNotFoundError{
 			EntityType: "connection",
@@ -112,6 +115,7 @@ func (s *UpdateConnection) Execute(ctx context.Context, organizationID, connecti
 	if err != nil {
 		return nil, err
 	}
+
 	if updated == nil {
 		return nil, pkg.EntityNotFoundError{
 			EntityType: "connection",

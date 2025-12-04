@@ -35,6 +35,7 @@ func NewDataSourceFromConnection(ctx context.Context, conn *model.Connection, cr
 	if conn == nil {
 		return nil, fmt.Errorf("connection cannot be nil")
 	}
+
 	if cryptor == nil {
 		return nil, fmt.Errorf("cryptor cannot be nil")
 	}
@@ -314,6 +315,7 @@ func newDataSourceConfigSQLServer(ctx context.Context, base datasource.DataSourc
 
 	// SQL Server connection string format: sqlserver://user:password@host:port?database=database&encrypt=disable
 	sslMode := "disable"
+
 	if conn.SSL != nil && conn.SSL.Mode != "" {
 		if conn.SSL.Mode == "true" || conn.SSL.Mode == "require" {
 			sslMode = "true"

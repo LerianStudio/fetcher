@@ -218,6 +218,7 @@ func (ds *ExternalDataSource) GetDatabaseSchema(ctx context.Context) ([]TableSch
 		if primaryKeys[tableName] == nil {
 			primaryKeys[tableName] = make(map[string]bool)
 		}
+
 		primaryKeys[tableName][columnName] = true
 	}
 
@@ -247,8 +248,11 @@ func (ds *ExternalDataSource) GetDatabaseSchema(ctx context.Context) ([]TableSch
 		var columns []ColumnInformation
 
 		for colRows.Next() {
-			var col ColumnInformation
-			var isNullableInt int
+			var (
+				col           ColumnInformation
+				isNullableInt int
+			)
+
 			if err := colRows.Scan(&col.Name, &col.DataType, &isNullableInt); err != nil {
 				if closeErr := colRows.Close(); closeErr != nil {
 					logger.Warnf("error closing rows after scan error: %v", closeErr)
@@ -464,12 +468,14 @@ func buildDynamicFilters(queryBuilder squirrel.SelectBuilder, schema []TableSche
 		if validColumns[strings.ToUpper(field)] && len(values) > 0 {
 			// Find original case
 			var originalField string
+
 			for _, col := range tableColumns {
 				if strings.EqualFold(col.Name, field) {
 					originalField = col.Name
 					break
 				}
 			}
+
 			queryBuilder = applyFilter(queryBuilder, originalField, values)
 		}
 	}
@@ -587,6 +593,7 @@ func (ds *ExternalDataSource) buildAdvancedFilters(queryBuilder squirrel.SelectB
 
 		// Find original case
 		var originalField string
+
 		for _, col := range tableColumns {
 			if strings.EqualFold(col.Name, field) {
 				originalField = col.Name

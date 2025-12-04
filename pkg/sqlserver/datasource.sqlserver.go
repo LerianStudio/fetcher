@@ -23,17 +23,17 @@ import (
 type sqlServerPlaceholder struct{}
 
 // ReplacePlaceholders replaces ? with @p1, @p2, @p3, etc. as required by the mssql driver
-func (p sqlServerPlaceholder) ReplacePlaceholders(sql string) (string, error) {
+func (p sqlServerPlaceholder) ReplacePlaceholders(sqlStr string) (string, error) {
 	placeholderCount := 1
-	result := make([]byte, 0, len(sql)+20)
+	result := make([]byte, 0, len(sqlStr)+20)
 
-	for i := 0; i < len(sql); i++ {
-		if sql[i] == '?' {
+	for i := 0; i < len(sqlStr); i++ {
+		if sqlStr[i] == '?' {
 			result = append(result, '@', 'p')
 			result = append(result, fmt.Sprintf("%d", placeholderCount)...)
 			placeholderCount++
 		} else {
-			result = append(result, sql[i])
+			result = append(result, sqlStr[i])
 		}
 	}
 
@@ -245,6 +245,7 @@ func (ds *ExternalDataSource) GetDatabaseSchema(ctx context.Context) ([]TableSch
 		if primaryKeys[tableName] == nil {
 			primaryKeys[tableName] = make(map[string]bool)
 		}
+
 		primaryKeys[tableName][columnName] = true
 	}
 
@@ -276,8 +277,11 @@ func (ds *ExternalDataSource) GetDatabaseSchema(ctx context.Context) ([]TableSch
 		var columns []ColumnInformation
 
 		for colRows.Next() {
-			var col ColumnInformation
-			var isNullableInt int
+			var (
+				col           ColumnInformation
+				isNullableInt int
+			)
+
 			if err := colRows.Scan(&col.Name, &col.DataType, &isNullableInt); err != nil {
 				if closeErr := colRows.Close(); closeErr != nil {
 					logger.Warnf("error closing rows after scan error: %v", closeErr)

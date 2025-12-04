@@ -69,12 +69,14 @@ func NewConnectionMongoDBRepository(mc *libMongo.MongoConnection) (*ConnectionMo
 // Create inserts a new connection respecting the unique constraint per organization.
 func (cr *ConnectionMongoDBRepository) Create(ctx context.Context, conn *model.Connection) (*model.Connection, error) {
 	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+
 	ctx, span := tracer.Start(ctx, "mongodb.create_connection")
 	defer span.End()
 
 	if conn == nil {
 		err := errors.New("connection is required")
 		libOpentelemetry.HandleSpanError(&span, "Connection payload is nil", err)
+
 		return nil, pkg.ValidateInternalError(err, "connection")
 	}
 
@@ -101,6 +103,7 @@ func (cr *ConnectionMongoDBRepository) Create(ctx context.Context, conn *model.C
 		if mongo.IsDuplicateKeyError(err) {
 			err := fmt.Errorf("connection with config_name '%s' already exists for organization '%s'", conn.ConfigName, conn.OrganizationID.String())
 			libOpentelemetry.HandleSpanError(&span, "Duplicate connection", err)
+
 			return nil, pkg.EntityConflictError{
 				EntityType: "connection",
 				Code:       constant.ErrEntityConflict.Error(),
@@ -110,6 +113,7 @@ func (cr *ConnectionMongoDBRepository) Create(ctx context.Context, conn *model.C
 		}
 
 		libOpentelemetry.HandleSpanError(&span, "Failed to insert connection", err)
+
 		return nil, pkg.ValidateInternalError(err, "connection")
 	}
 
@@ -125,12 +129,14 @@ func (cr *ConnectionMongoDBRepository) Create(ctx context.Context, conn *model.C
 // Update overwrites mutable fields of an existing connection and returns the saved entity.
 func (cr *ConnectionMongoDBRepository) Update(ctx context.Context, conn *model.Connection) (*model.Connection, error) {
 	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+
 	ctx, span := tracer.Start(ctx, "mongodb.update_connection")
 	defer span.End()
 
 	if conn == nil {
 		err := errors.New("connection is required")
 		libOpentelemetry.HandleSpanError(&span, "Connection payload is nil", err)
+
 		return nil, pkg.ValidateInternalError(err, "connection")
 	}
 
@@ -176,19 +182,23 @@ func (cr *ConnectionMongoDBRepository) Update(ctx context.Context, conn *model.C
 	}
 
 	span.SetAttributes(attributes...)
+
 	if err := setSpanAttributesFromStruct(&span, "app.request.repository_filter", filter); err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to convert filter to JSON", err)
 	}
 
 	var record ConnectionMongoDBModel
+
 	opts := options.FindOneAndUpdate().SetReturnDocument(options.After)
 	if err := coll.FindOneAndUpdate(ctx, filter, update, opts).Decode(&record); err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
 			return nil, nil
 		}
+
 		if mongo.IsDuplicateKeyError(err) {
 			err := fmt.Errorf("connection with config_name '%s' already exists for organization '%s'", conn.ConfigName, conn.OrganizationID.String())
 			libOpentelemetry.HandleSpanError(&span, "Duplicate connection", err)
+
 			return nil, pkg.EntityConflictError{
 				EntityType: "connection",
 				Code:       constant.ErrEntityConflict.Error(),
@@ -198,6 +208,7 @@ func (cr *ConnectionMongoDBRepository) Update(ctx context.Context, conn *model.C
 		}
 
 		libOpentelemetry.HandleSpanError(&span, "Failed to update connection", err)
+
 		return nil, pkg.ValidateInternalError(err, "connection")
 	}
 
@@ -213,6 +224,7 @@ func (cr *ConnectionMongoDBRepository) Update(ctx context.Context, conn *model.C
 // Delete performs a soft delete by stamping deleted_at and updated_at fields.
 func (cr *ConnectionMongoDBRepository) Delete(ctx context.Context, connectionID, organizationID uuid.UUID, deletedAt time.Time) error {
 	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+
 	ctx, span := tracer.Start(ctx, "mongodb.delete_connection")
 	defer span.End()
 
@@ -251,6 +263,7 @@ func (cr *ConnectionMongoDBRepository) Delete(ctx context.Context, connectionID,
 
 	if res.MatchedCount == 0 {
 		libOpentelemetry.HandleSpanError(&span, "Connection not found for delete", mongo.ErrNoDocuments)
+
 		return pkg.EntityNotFoundError{
 			EntityType: "connection",
 			Code:       constant.ErrEntityNotFound.Error(),
@@ -265,6 +278,7 @@ func (cr *ConnectionMongoDBRepository) Delete(ctx context.Context, connectionID,
 // FindByID fetches a connection by its ID scoped to an organization.
 func (cr *ConnectionMongoDBRepository) FindByID(ctx context.Context, connectionID, organizationID uuid.UUID) (*model.Connection, error) {
 	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+
 	ctx, span := tracer.Start(ctx, "mongodb.find_connection_by_id")
 	defer span.End()
 
@@ -282,6 +296,7 @@ func (cr *ConnectionMongoDBRepository) FindByID(ctx context.Context, connectionI
 	}
 
 	var record ConnectionMongoDBModel
+
 	filter := bson.M{
 		"_id":             connectionID,
 		"organization_id": organizationID,
@@ -295,6 +310,7 @@ func (cr *ConnectionMongoDBRepository) FindByID(ctx context.Context, connectionI
 		}
 
 		libOpentelemetry.HandleSpanError(&span, "Failed to find connection", err)
+
 		return nil, pkg.ValidateInternalError(err, "connection")
 	}
 
@@ -310,6 +326,7 @@ func (cr *ConnectionMongoDBRepository) FindByID(ctx context.Context, connectionI
 // FindByOrganizationAndName retrieves a connection by configName scoped to an organization.
 func (cr *ConnectionMongoDBRepository) FindByOrganizationAndName(ctx context.Context, organizationID uuid.UUID, configName string) (*model.Connection, error) {
 	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+
 	ctx, span := tracer.Start(ctx, "mongodb.find_connection_by_org_name")
 	defer span.End()
 
@@ -327,6 +344,7 @@ func (cr *ConnectionMongoDBRepository) FindByOrganizationAndName(ctx context.Con
 	}
 
 	var record ConnectionMongoDBModel
+
 	filter := bson.M{
 		"organization_id": organizationID,
 		"config_name":     configName,
@@ -338,7 +356,9 @@ func (cr *ConnectionMongoDBRepository) FindByOrganizationAndName(ctx context.Con
 		if errors.Is(err, mongo.ErrNoDocuments) {
 			return nil, nil
 		}
+
 		libOpentelemetry.HandleSpanError(&span, "Failed to find connection by config_name", err)
+
 		return nil, pkg.ValidateInternalError(err, "connection")
 	}
 
@@ -347,6 +367,7 @@ func (cr *ConnectionMongoDBRepository) FindByOrganizationAndName(ctx context.Con
 		libOpentelemetry.HandleSpanError(&span, "Failed to convert record to domain", err)
 		return nil, pkg.ValidateInternalError(err, "connection")
 	}
+
 	if errSpan := setSpanAttributesFromStruct(&span, "app.response.payload", conn.ToMapWithMask()); errSpan != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to convert connection to JSON", errSpan)
 	}
@@ -357,6 +378,7 @@ func (cr *ConnectionMongoDBRepository) FindByOrganizationAndName(ctx context.Con
 // FindByOrganizationAndDatabaseName retrieves a connection by databaseName scoped to an organization.
 func (cr *ConnectionMongoDBRepository) FindByOrganizationAndDatabaseName(ctx context.Context, organizationID uuid.UUID, databaseName string) (*model.Connection, error) {
 	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+
 	ctx, span := tracer.Start(ctx, "mongodb.find_connection_by_org_database")
 	defer span.End()
 
@@ -370,6 +392,7 @@ func (cr *ConnectionMongoDBRepository) FindByOrganizationAndDatabaseName(ctx con
 	if databaseName == "" {
 		err := errors.New("database_name cannot be empty")
 		libOpentelemetry.HandleSpanError(&span, "Invalid database_name", err)
+
 		return nil, pkg.ValidateInternalError(err, "connection")
 	}
 
@@ -382,6 +405,7 @@ func (cr *ConnectionMongoDBRepository) FindByOrganizationAndDatabaseName(ctx con
 	coll := db.Database(strings.ToLower(cr.Database)).Collection(strings.ToLower(constant.MongoCollectionConnection))
 
 	var record ConnectionMongoDBModel
+
 	filter := bson.M{
 		"organization_id": organizationID,
 		"database_name":   databaseName,
@@ -392,7 +416,9 @@ func (cr *ConnectionMongoDBRepository) FindByOrganizationAndDatabaseName(ctx con
 		if errors.Is(errFind, mongo.ErrNoDocuments) {
 			return nil, nil
 		}
+
 		libOpentelemetry.HandleSpanError(&span, "Failed to find connection by database_name", errFind)
+
 		return nil, pkg.ValidateInternalError(errFind, "connection")
 	}
 
@@ -491,10 +517,12 @@ func (cr *ConnectionMongoDBRepository) FindByConfigNames(ctx context.Context, or
 // List returns a paginated set of connections for the given organization.
 func (rm *ConnectionMongoDBRepository) List(ctx context.Context, organizationID uuid.UUID, filters http.QueryHeader) ([]*model.Connection, error) {
 	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+
 	ctx, span := tracer.Start(ctx, "mongodb.list_connections")
 	defer span.End()
 
 	span.SetAttributes(attribute.String("app.request.request_id", reqID))
+
 	err := libOpentelemetry.SetSpanAttributesFromStruct(&span, "app.request.payload", filters)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to convert filters to JSON string", err)
@@ -522,9 +550,11 @@ func (rm *ConnectionMongoDBRepository) List(ctx context.Context, organizationID 
 		if !filters.StartDate.IsZero() {
 			createdAt["$gte"] = filters.StartDate
 		}
+
 		if !filters.EndDate.IsZero() {
 			createdAt["$lte"] = filters.EndDate
 		}
+
 		queryFilter["created_at"] = createdAt
 	}
 
@@ -542,6 +572,7 @@ func (rm *ConnectionMongoDBRepository) List(ctx context.Context, organizationID 
 	if skip < 0 {
 		skip = 0
 	}
+
 	opts := options.FindOptions{
 		Limit: &limit,
 		Skip:  &skip,
@@ -554,6 +585,7 @@ func (rm *ConnectionMongoDBRepository) List(ctx context.Context, organizationID 
 	}
 
 	coll := db.Database(strings.ToLower(rm.Database)).Collection(strings.ToLower(constant.MongoCollectionConnection))
+
 	cur, err := coll.Find(ctx, queryFilter, &opts)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to list connections", err)
@@ -562,17 +594,20 @@ func (rm *ConnectionMongoDBRepository) List(ctx context.Context, organizationID 
 	defer cur.Close(ctx)
 
 	connections := make([]*model.Connection, 0, int(limit))
+
 	for cur.Next(ctx) {
 		var record ConnectionMongoDBModel
 		if err := cur.Decode(&record); err != nil {
 			libOpentelemetry.HandleSpanError(&span, "", err)
 			return nil, pkg.ValidateInternalError(err, "connection")
 		}
+
 		connection, err := record.ToDomain()
 		if err != nil {
 			libOpentelemetry.HandleSpanError(&span, "Failed to convert record to domain", err)
 			return nil, pkg.ValidateInternalError(err, "connection")
 		}
+
 		connections = append(connections, connection)
 	}
 
