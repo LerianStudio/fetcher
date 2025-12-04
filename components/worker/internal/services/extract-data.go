@@ -73,7 +73,7 @@ func (uc *UseCase) ExtractExternalData(ctx context.Context, body []byte, headers
 		return err
 	}
 
-	if skip := uc.shouldSkipProcessing(ctx, message.JobID, logger); skip {
+	if skip := uc.shouldSkipProcessing(ctx, message.JobID, message.OrganizationID, logger); skip {
 		return nil
 	}
 
@@ -409,9 +409,7 @@ func (uc *UseCase) saveExternalDataToSeaweedFS(
 	}
 
 	objectName := fmt.Sprintf("%s.json", message.JobID.String())
-	contentType := "application/json"
-
-	if err := uc.ExternalDataSeaweedFS.Put(ctx, objectName, contentType, encryptedData); err != nil {
+	if err := uc.ExternalDataSeaweedFS.Put(ctx, objectName, encryptedData); err != nil {
 		libOtel.HandleSpanError(span, "Error saving external data to SeaweedFS", err)
 		logger.Errorf("Error saving external data to SeaweedFS: %s", err.Error())
 
@@ -456,8 +454,8 @@ func (uc *UseCase) encryptDataForSeaweedFS(data []byte, logger log.Logger) ([]by
 }
 
 // shouldSkipProcessing checks if job should be skipped due to idempotency.
-func (uc *UseCase) shouldSkipProcessing(ctx context.Context, jobID uuid.UUID, logger log.Logger) bool {
-	jobStatus, err := uc.checkReportStatus(ctx, jobID, logger)
+func (uc *UseCase) shouldSkipProcessing(ctx context.Context, jobID, organizationID uuid.UUID, logger log.Logger) bool {
+	jobStatus, err := uc.checkReportStatus(ctx, jobID, organizationID, logger)
 	if err == nil {
 		if jobStatus == job.JobStatusCompleted {
 			logger.Infof("Job %s is already completed, skipping reprocessing", jobID)
@@ -469,10 +467,8 @@ func (uc *UseCase) shouldSkipProcessing(ctx context.Context, jobID uuid.UUID, lo
 }
 
 // checkReportStatus checks the current status of a report to implement idempotency.
-func (uc *UseCase) checkReportStatus(ctx context.Context, jobID uuid.UUID, logger log.Logger) (job.JobStatus, error) {
-	zeroUUID := uuid.UUID{}
-
-	jobData, err := uc.JobRepository.FindByID(ctx, jobID, zeroUUID)
+func (uc *UseCase) checkReportStatus(ctx context.Context, jobID, organizationID uuid.UUID, logger log.Logger) (job.JobStatus, error) {
+	jobData, err := uc.JobRepository.FindByID(ctx, jobID, organizationID)
 	if err != nil {
 		logger.Debugf("Could not check job status for %s (may be first attempt): %v", jobID, err)
 		return "", err

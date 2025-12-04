@@ -12,10 +12,10 @@ func ValidateFieldsInSchemaMongo(expectedFields []string, schema CollectionSchem
 	}
 
 	for _, field := range expectedFields {
-		*countIfTableExist++
-
 		if _, exists := columnSet[strings.ToLower(field)]; !exists {
 			missing = append(missing, field)
+		} else {
+			*countIfTableExist++
 		}
 	}
 

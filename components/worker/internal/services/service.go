@@ -5,7 +5,7 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 	"github.com/LerianStudio/fetcher/pkg/mongodb/job"
-	externalData "github.com/LerianStudio/fetcher/pkg/seaweedfs/external_data"
+	externalData "github.com/LerianStudio/fetcher/pkg/seaweedfs/external"
 )
 
 // UseCase is a struct that coordinates the handling of template files, report storage, external data sources, and report data.

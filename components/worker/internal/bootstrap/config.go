@@ -13,7 +13,7 @@ import (
 
 	"github.com/LerianStudio/fetcher/pkg/mongodb/job"
 	simpleClient "github.com/LerianStudio/fetcher/pkg/seaweedfs"
-	"github.com/LerianStudio/fetcher/pkg/seaweedfs/external_data"
+	"github.com/LerianStudio/fetcher/pkg/seaweedfs/external"
 
 	libCommons "github.com/LerianStudio/lib-commons/v2/commons"
 	libOtel "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
@@ -87,9 +87,6 @@ func InitWorker() *Service {
 	// Init rabbitmq connection
 	rabbitSource := fmt.Sprintf("%s://%s:%s@%s:%s",
 		cfg.RabbitURI, cfg.RabbitMQUser, cfg.RabbitMQPass, cfg.RabbitMQHost, cfg.RabbitMQPortAMQP)
-
-	logger.Infof(rabbitSource)
-
 	rabbitMQConnection := &libRabbitMQ.RabbitMQConnection{
 		ConnectionStringSource: rabbitSource,
 		HealthCheckURL:         cfg.RabbitMQHealthCheckURL,
@@ -125,7 +122,7 @@ func InitWorker() *Service {
 		MaxPoolSize:            uint64(cfg.MaxPoolSize),
 	}
 
-	externalDataSeaweedFSRepository := external_data.NewSimpleRepository(seaweedFSClient, constant.ExternalDataBucketName)
+	externalDataSeaweedFSRepository := external.NewSimpleRepository(seaweedFSClient, constant.ExternalDataBucketName)
 
 	// Initialize MongoDB repositories
 	jobRepository, errJobRepo := job.NewJobMongoDBRepository(mongoConnection)

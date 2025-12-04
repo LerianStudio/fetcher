@@ -1,4 +1,4 @@
-package external_data
+package external
 
 import (
 	"context"
@@ -14,7 +14,7 @@ import (
 //go:generate mockgen --destination=template.mock.go --package=template . Repository
 type Repository interface {
 	Get(ctx context.Context, objectName string) ([]byte, error)
-	Put(ctx context.Context, objectName string, contentType string, data []byte) error
+	Put(ctx context.Context, objectName string, data []byte) error
 }
 
 // SimpleRepository provides access to SeaweedFS storage for file operations using direct HTTP.
@@ -45,7 +45,7 @@ func (repo *SimpleRepository) Get(ctx context.Context, objectName string) ([]byt
 }
 
 // Put uploads data to the SeaweedFS storage with the given object name and content type.
-func (repo *SimpleRepository) Put(ctx context.Context, objectName string, contentType string, data []byte) error {
+func (repo *SimpleRepository) Put(ctx context.Context, objectName string, data []byte) error {
 	logger := pkg.NewLoggerFromContext(ctx)
 
 	path := fmt.Sprintf("/%s/%s", repo.bucket, objectName)

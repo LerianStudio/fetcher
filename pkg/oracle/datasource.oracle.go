@@ -578,9 +578,9 @@ func (ds *ExternalDataSource) QueryWithAdvancedFilters(ctx context.Context, sche
 		return nil, fmt.Errorf("error generating SQL: %w", err)
 	}
 
-	logger.Infof("[DEBUG] Executing advanced filter SQL: %s", query)
-	logger.Infof("[DEBUG] SQL args: %v", args)
-	logger.Infof("[DEBUG] Original filter conditions: %+v", filter)
+	logger.Debugf("Executing advanced filter SQL: %s", query)
+	logger.Debugf("SQL args: %v", args)
+	logger.Debugf("Original filter conditions: %+v", filter)
 
 	// Create timeout context for query execution (slower timeout for advanced filters)
 	queryCtx, cancel := context.WithTimeout(ctx, constant.QueryTimeoutSlow)

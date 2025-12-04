@@ -72,6 +72,10 @@ func (uc *UseCase) processPluginCRMCollection(
 		return err
 	}
 
+	if result["plugin_crm"] == nil {
+		result["plugin_crm"] = make(map[string][]map[string]any)
+	}
+
 	result["plugin_crm"][collection] = collectionResult
 
 	decryptedResult, err := uc.decryptPluginCRMData(logger, result["plugin_crm"][collection], fields)

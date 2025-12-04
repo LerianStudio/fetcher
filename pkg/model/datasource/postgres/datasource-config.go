@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/LerianStudio/fetcher/pkg/model/datasource"
 	"github.com/LerianStudio/fetcher/pkg/model/job"
@@ -65,7 +66,6 @@ func (ds *DataSourceConfigPostgres) Query(ctx context.Context, tables map[string
 		tableFilters := getTableFilters(filters, table)
 
 		var (
-			tableResult []map[string]any
 			queryResult any
 			errQuery    error
 		)
@@ -81,7 +81,12 @@ func (ds *DataSourceConfigPostgres) Query(ctx context.Context, tables map[string
 			return nil, errQuery
 		}
 
-		tableResult = queryResult.([]map[string]any)
+		tableResult, ok := queryResult.([]map[string]any)
+		if !ok {
+			logger.Errorf("Unexpected query result type for table %s", table)
+			return nil, fmt.Errorf("unexpected query result type for table %s", table)
+		}
+
 		result[table] = tableResult
 	}
 
