@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"time"
 
 	in2 "github.com/LerianStudio/fetcher/components/manager/internal/adapters/http/in"
 	connectionCommand "github.com/LerianStudio/fetcher/components/manager/internal/services/command"
 	connectionQuery "github.com/LerianStudio/fetcher/components/manager/internal/services/query"
+	"github.com/sethvargo/go-limiter/memorystore"
 
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
@@ -157,12 +159,22 @@ func InitServers() *Service {
 		logger.Fatalf("Failed to initialize crypto service: %v", err)
 	}
 
+	// Init rate limiter store for connection tests
+	store, err := memorystore.New(&memorystore.Config{
+		Tokens:   10,
+		Interval: time.Minute,
+	})
+	if err != nil {
+		logger.Fatalf("failed to create connection test rate limiter: %v", err)
+	}
+
 	// Init services and handlers
 	createConnectionCmd := connectionCommand.NewCreateConnection(connectionRepository, cryptoService)
 	updateConnectionCmd := connectionCommand.NewUpdateConnection(connectionRepository, jobRepository, cryptoService)
 	deleteConnectionCmd := connectionCommand.NewDeleteConnection(connectionRepository, jobRepository)
 	getConnectionQuery := connectionQuery.NewGetConnection(connectionRepository)
 	listConnectionsQuery := connectionQuery.NewListConnections(connectionRepository)
+	testConnectionQuery := connectionQuery.NewTestConnection(connectionRepository, cryptoService, store)
 
 	connectionHandler := in2.NewConnectionHandler(
 		createConnectionCmd,
@@ -170,6 +182,7 @@ func InitServers() *Service {
 		deleteConnectionCmd,
 		getConnectionQuery,
 		listConnectionsQuery,
+		testConnectionQuery,
 	)
 
 	// Init HTTP server

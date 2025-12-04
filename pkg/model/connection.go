@@ -3,6 +3,7 @@ package model
 import (
 	"context"
 	"errors"
+	"regexp"
 	"strings"
 	"time"
 
@@ -27,6 +28,7 @@ type Connection struct {
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
 	DeletedAt            *time.Time
+	password             string
 }
 
 type SSLConfig struct {
@@ -122,6 +124,11 @@ func (conn *Connection) IsValid() error {
 	}
 	if conn.ConfigName == "" {
 		requiredFields["config_name"] = "config name is required"
+	} else {
+		configNameRegex := regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+		if !configNameRegex.MatchString(conn.ConfigName) {
+			knownInvalidFields["config_name"] = "config name can only contain alphanumeric characters, underscores, and hyphens"
+		}
 	}
 	if len(conn.ConfigName) < 3 || len(conn.ConfigName) > 100 {
 		knownInvalidFields["config_name"] = "config name must be between 3 and 100 characters"
@@ -253,7 +260,23 @@ func (conn *Connection) GetPasswordDecrypted(ctx context.Context, cryptor crypto
 	if err != nil {
 		return "", pkg.ValidateInternalError(err, "connection")
 	}
+
+	conn.password = plain
 	return plain, nil
+}
+
+// DecryptPassword decrypts and stores the connection password internally.
+func (conn *Connection) DecryptPassword(ctx context.Context, cryptor crypto.Cryptor) error {
+	if cryptor == nil {
+		return errors.New("cryptor is required to decrypt password")
+	}
+	plain, err := cryptor.Decrypt(ctx, conn.PasswordEncrypted, conn.EncryptionKeyVersion)
+	if err != nil {
+		return pkg.ValidateInternalError(err, "connection")
+	}
+
+	conn.password = plain
+	return nil
 }
 
 // ToMapWithMask converts the Connection to a map with sensitive fields masked.
@@ -317,6 +340,12 @@ type ConnectionResponse struct {
 	SSL          *SSLResponse `json:"ssl,omitempty"`
 	CreatedAt    time.Time    `json:"createdAt"`
 	UpdatedAt    time.Time    `json:"updatedAt"`
+}
+
+type ConnectionTestResponse struct {
+	Status    string `json:"status"`
+	Message   string `json:"message"`
+	LatencyMs int64  `json:"latencyMs"`
 }
 
 type SSLResponse struct {

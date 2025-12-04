@@ -23,6 +23,7 @@ type ConnectionHandler struct {
 	DeleteCmd *command.DeleteConnection
 	GetQuery  *query.GetConnection
 	ListQuery *query.ListConnections
+	TestQuery *query.TestConnection
 }
 
 func NewConnectionHandler(
@@ -31,6 +32,7 @@ func NewConnectionHandler(
 	deleteCmd *command.DeleteConnection,
 	getQuery *query.GetConnection,
 	listQuery *query.ListConnections,
+	testQuery *query.TestConnection,
 ) *ConnectionHandler {
 	return &ConnectionHandler{
 		CreateCmd: createCmd,
@@ -38,6 +40,7 @@ func NewConnectionHandler(
 		DeleteCmd: deleteCmd,
 		GetQuery:  getQuery,
 		ListQuery: listQuery,
+		TestQuery: testQuery,
 	}
 }
 
@@ -220,6 +223,63 @@ func (h *ConnectionHandler) GetConnection(c *fiber.Ctx) error {
 
 	resp := model.NewConnectionResponseFrom(conn)
 	logger.Infof("connection retrieved id=%s org=%s", id, orgID)
+	return httpUtils.OK(c, resp)
+}
+
+// TestConnection tests a database connection by attempting to connect and disconnect.
+//
+//	@Summary		Test connection
+//	@Description	Test the configured connection by establishing and closing a connection.
+//	@Tags			Connections
+//	@Produce		json
+//	@Param			Authorization		header		string	false	"The authorization token in the 'Bearer access_token' format. Only required when auth plugin is enabled."
+//	@Param			X-Organization-Id	header		string	true	"Organization ID"
+//	@Param			id					path		string	true	"Connection ID"
+//	@Success		200					{object}	map[string]any	"Connection test result"
+//	@Failure		400					{object}	pkg.HTTPError
+//	@Failure		404					{object}	pkg.HTTPError
+//	@Failure		429					{object}	pkg.HTTPError
+//	@Failure		500					{object}	pkg.HTTPError
+//	@Router			/v1/management/connections/{id}/test [post]
+func (h *ConnectionHandler) TestConnection(c *fiber.Ctx) error {
+	ctx := c.UserContext()
+	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	ctx, span := tracer.Start(ctx, "handler.test_connection")
+	defer span.End()
+	c.SetUserContext(ctx)
+
+	orgID, err := httpUtils.GetOrganizationID(c)
+	if err != nil {
+		libOpentelemetry.HandleSpanError(&span, "missing or invalid org id", err)
+		return httpUtils.WithError(c, err)
+	}
+
+	span.SetAttributes(
+		attribute.String("app.request.request_id", reqID),
+		attribute.String("app.request.organization_id", orgID.String()),
+	)
+
+	id, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		libOpentelemetry.HandleSpanError(&span, "invalid connection id parameter", err)
+		return httpUtils.WithError(c, pkg.ValidationError{
+			EntityType: "connection",
+			Code:       constant.ErrInvalidPathParameter.Error(),
+			Title:      "Invalid Path Parameter",
+			Message:    "invalid connection id",
+			Err:        err,
+		})
+	}
+	span.SetAttributes(attribute.String("app.request.connection_id", id.String()))
+
+	resp, err := h.TestQuery.Execute(ctx, orgID, id)
+	if err != nil {
+		logger.Errorf("Failed to execute test connection query, Error: %s", err.Error())
+		libOpentelemetry.HandleSpanError(&span, "failed to test connection", err)
+		return httpUtils.WithError(c, err)
+	}
+
+	logger.Infof("connection test successful id=%s org=%s latency_ms=%d", id, orgID, resp.LatencyMs)
 	return httpUtils.OK(c, resp)
 }
 
