@@ -1,3 +1,6 @@
 package constant
 
-const ApplicationName = "fetcher"
+const (
+	ApplicationName = "fetcher"
+	HeaderJobID     = "jobId"
+)

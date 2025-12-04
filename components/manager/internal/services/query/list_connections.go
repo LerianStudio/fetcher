@@ -18,12 +18,13 @@ type ListConnections struct {
 	connRepo connRepo.Repository
 }
 
-func NewListConnections(connRepo connRepo.Repository) *ListConnections {
-	return &ListConnections{connRepo: connRepo}
+func NewListConnections(connectionRepo connRepo.Repository) *ListConnections {
+	return &ListConnections{connRepo: connectionRepo}
 }
 
 func (s *ListConnections) Execute(ctx context.Context, organizationID uuid.UUID, filters http.QueryHeader) ([]*model.Connection, error) {
 	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+
 	ctx, span := tracer.Start(ctx, "service.list_connections")
 	defer span.End()
 
@@ -41,6 +42,7 @@ func (s *ListConnections) Execute(ctx context.Context, organizationID uuid.UUID,
 	if err != nil {
 		return nil, err
 	}
+
 	if list == nil {
 		return []*model.Connection{}, nil
 	}

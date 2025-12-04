@@ -147,7 +147,10 @@ func (c *SeaweedFSClient) DownloadFileWithStream(ctx context.Context, path strin
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		resp.Body.Close()
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			return nil, fmt.Errorf("download failed with status %d and error closing response body: %w", resp.StatusCode, closeErr)
+		}
+
 		return nil, fmt.Errorf("download failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -209,8 +212,10 @@ func pathIsValid(path string) (string, error) {
 	if strings.Contains(path, "..") || strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
 		return "", fmt.Errorf("invalid path: potential security issue")
 	}
+
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
 	}
+
 	return path, nil
 }

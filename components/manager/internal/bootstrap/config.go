@@ -102,22 +102,25 @@ func InitServers() *Service {
 		Logger:                 logger,
 	}
 
-	connectionRepository, err := connection.NewConnectionMongoDBRepository(ctx, mongoConnection)
+	connectionRepository, err := connection.NewConnectionMongoDBRepository(mongoConnection)
 	if err != nil {
 		logger.Fatalf("Failed to create MongoDB repository: %v", err)
 	}
 
 	logger.Info("Ensuring MongoDB indexes exist for connections...")
+
 	if errConnRepo := connectionRepository.EnsureIndexes(ctx); errConnRepo != nil {
 		logger.Fatalf("Failed to ensure MongoDB indexes: %v", errConnRepo)
 	}
 
 	// Init Job repository
-	jobRepository, err := job.NewJobMongoDBRepository(ctx, mongoConnection)
+	jobRepository, err := job.NewJobMongoDBRepository(mongoConnection)
 	if err != nil {
 		logger.Fatalf("Failed to create Job MongoDB repository: %v", err)
 	}
+
 	logger.Info("Ensuring MongoDB indexes exist for jobs...")
+
 	if errJobRepo := jobRepository.EnsureIndexes(ctx); errJobRepo != nil {
 		logger.Fatalf("Failed to ensure Job indexes: %v", errJobRepo)
 	}

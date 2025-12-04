@@ -45,8 +45,8 @@ func (e EntityNotFoundError) Unwrap() error {
 type ValidationError struct {
 	EntityType string `json:"entityType,omitempty"`
 	Title      string `json:"title,omitempty"`
-	Message    string `json:"code,omitempty"`
-	Code       string `json:"message,omitempty"`
+	Message    string `json:"message,omitempty"`
+	Code       string `json:"code,omitempty"`
 	Err        error  `json:"err,omitempty"`
 }
 
@@ -295,19 +295,19 @@ func ValidateBusinessError(err error, entityType string, args ...any) error {
 			Title:      "Invalid Query Parameter",
 			Message:    fmt.Sprintf("One or more query parameters are in an incorrect format. Please check the following parameters '%v' and ensure they meet the required format before trying again.", args),
 		},
-		constant.ErrInvalidDateFormat: EntityNotFoundError{
+		constant.ErrInvalidDateFormat: ValidationError{
 			EntityType: entityType,
 			Code:       constant.ErrInvalidDateFormat.Error(),
 			Title:      "Invalid Date Format Error",
 			Message:    "The 'initialDate', 'finalDate', or both are in the incorrect format. Please use the 'yyyy-mm-dd' format and try again.",
 		},
-		constant.ErrInvalidFinalDate: EntityNotFoundError{
+		constant.ErrInvalidFinalDate: ValidationError{
 			EntityType: entityType,
 			Code:       constant.ErrInvalidFinalDate.Error(),
 			Title:      "Invalid Final Date Error",
 			Message:    "The 'finalDate' cannot be earlier than the 'initialDate'. Please verify the dates and try again.",
 		},
-		constant.ErrDateRangeExceedsLimit: EntityNotFoundError{
+		constant.ErrDateRangeExceedsLimit: ValidationError{
 			EntityType: entityType,
 			Code:       constant.ErrDateRangeExceedsLimit.Error(),
 			Title:      "Date Range Exceeds Limit Error",
@@ -319,19 +319,19 @@ func ValidateBusinessError(err error, entityType string, args ...any) error {
 			Title:      "Invalid Date Range Error",
 			Message:    "Both 'initialDate' and 'finalDate' fields are required and must be in the 'yyyy-mm-dd' format. Please provide valid dates and try again.",
 		},
-		constant.ErrPaginationLimitExceeded: EntityNotFoundError{
+		constant.ErrPaginationLimitExceeded: ValidationError{
 			EntityType: entityType,
 			Code:       constant.ErrPaginationLimitExceeded.Error(),
 			Title:      "Pagination Limit Exceeded",
 			Message:    fmt.Sprintf("The pagination limit exceeds the maximum allowed of %v items per page. Please verify the limit and try again.", args...),
 		},
-		constant.ErrInvalidSortOrder: EntityNotFoundError{
+		constant.ErrInvalidSortOrder: ValidationError{
 			EntityType: entityType,
 			Code:       constant.ErrInvalidSortOrder.Error(),
 			Title:      "Invalid Sort Order",
 			Message:    "The 'sort_order' field must be 'asc' or 'desc'. Please provide a valid sort order and try again.",
 		},
-		constant.ErrEntityNotFound: EntityNotFoundError{
+		constant.ErrEntityNotFound: ValidationError{
 			EntityType: entityType,
 			Code:       constant.ErrEntityNotFound.Error(),
 			Title:      "Entity Not Found",

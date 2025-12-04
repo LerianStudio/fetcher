@@ -37,5 +37,6 @@ func MaskSecret(value string) string {
 	if value == "" {
 		return ""
 	}
+
 	return "[REDACTED]"
 }
