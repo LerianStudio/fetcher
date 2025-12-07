@@ -1,0 +1,22 @@
+name: "PR Security Scan"
+
+on:
+  pull_request:
+    branches:
+      - develop
+      - release-candidate
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+jobs:
+  security-scan:
+    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/pr-security-scan.yml@main
+    with:
+      runner_type: "ubuntu-latest"
+      dockerhub_org: "lerianstudio"
+    secrets:
+      docker_username: ${{ secrets.DOCKER_USERNAME }}
+      docker_password: ${{ secrets.DOCKER_PASSWORD }}
