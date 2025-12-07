@@ -1,0 +1,31 @@
+services:
+  fetcher-manager:
+    container_name: fetcher-manager
+    restart: always
+    build:
+      context: ../../
+      dockerfile: ./components/manager/Dockerfile
+      secrets:
+        - github_token
+    env_file:
+      - .env
+    environment:
+      - SEAWEEDFS_HOST=${SEAWEEDFS_HOST}
+      - SEAWEEDFS_FILER_PORT=${SEAWEEDFS_FILER_PORT}
+    ports:
+      - ${SERVER_PORT}:${SERVER_PORT}
+    volumes:
+      - .:/usr/src/manager
+    networks:
+      - fetcher-infra-network
+      - fetcher-manager-network
+
+networks:
+  fetcher-infra-network:
+    external: true
+  fetcher-manager-network:
+    driver: bridge
+
+secrets:
+  github_token:
+    file: ../../.secrets/github_token.txt

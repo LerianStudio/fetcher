@@ -27,8 +27,7 @@ echo "Verifying API documentation and implementations..."
 
 # List of components to verify
 COMPONENTS=(
-  "components/onboarding"
-  "components/transaction"
+  "components/manager"
 )
 
 # Verify workflows

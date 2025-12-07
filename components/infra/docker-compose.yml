@@ -1,0 +1,113 @@
+services:
+  fetcher-mongodb:
+    container_name: fetcher-mongodb
+    image: mongo:latest
+    env_file:
+      - .env
+    restart: always
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok'
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    user: root
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD}
+    ports:
+      - ${MONGO_PORT}:${MONGO_PORT}
+    command: mongod --port ${MONGO_PORT}
+    volumes:
+      - fetcher-mongodb-data:/data/db
+    networks:
+      - fetcher-infra-network
+
+  fetcher-rabbitmq:
+    image: rabbitmq:4.0-management-alpine
+    container_name: fetcher-rabbitmq
+    restart: always
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS}
+    ports:
+      - ${RABBITMQ_PORT_HOST}:${RABBITMQ_PORT_HOST}
+      - ${RABBITMQ_PORT_AMQP}:${RABBITMQ_PORT_AMQP}
+    volumes:
+      - ./rabbitmq/etc/definitions.json:/etc/rabbitmq/definitions.json
+      - ./rabbitmq/etc/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf
+      - ~/.docker-conf/rabbitmq/data/:/var/lib/rabbitmq/
+      - ~/.docker-conf/rabbitmq/log/:/var/log/rabbitmq
+    networks:
+      - fetcher-infra-network
+
+  fetcher-seaweedfs-master:
+    image: chrislusf/seaweedfs:3.97
+    container_name: fetcher-seaweedfs-master
+    ports:
+      - "${SEAWEEDFS_MASTER_PORT:-9335}:9335"
+      - "${SEAWEEDFS_MASTER_UI_PORT:-9336}:9336"
+    command: "master -ip=fetcher-seaweedfs-master -port=9335 -mdir=/data"
+    volumes:
+      - fetcher-seaweedfs-master-data:/data
+    networks:
+      - fetcher-infra-network
+    restart: always
+
+  fetcher-seaweedfs-volume:
+    image: chrislusf/seaweedfs:3.97
+    container_name: fetcher-seaweedfs-volume
+    ports:
+      - "${SEAWEEDFS_VOLUME_PORT:-9081}:9081"
+    command: "volume -ip=fetcher-seaweedfs-volume -port=9081 -mserver=fetcher-seaweedfs-master:9335 -dir=/data -max=0"
+    volumes:
+      - fetcher-seaweedfs-volume-data:/data
+    networks:
+      - fetcher-infra-network
+    depends_on:
+      - fetcher-seaweedfs-master
+    restart: always
+
+  fetcher-seaweedfs-filer:
+    image: chrislusf/seaweedfs:3.97
+    container_name: fetcher-seaweedfs-filer
+    ports:
+      - "${SEAWEEDFS_FILER_PORT:-8889}:8889"
+      - "${SEAWEEDFS_FILER_S3_PORT:-8334}:8334"
+    command: "filer -ip=fetcher-seaweedfs-filer -port=8889 -master=fetcher-seaweedfs-master:9335"
+    volumes:
+      - fetcher-seaweedfs-filer-data:/data
+    networks:
+      - fetcher-infra-network
+    depends_on:
+      - fetcher-seaweedfs-master
+      - fetcher-seaweedfs-volume
+    restart: always
+
+  fetcher-keda:
+    image: ghcr.io/kedacore/keda:2.16.0
+    container_name: fetcher-keda
+    environment:
+      - KEDA_OPERATOR_LOG_LEVEL=info
+      - KEDA_OPERATOR_RABBITMQ_HOST=fetcher-rabbitmq
+      - KEDA_OPERATOR_RABBITMQ_PORT=${RABBITMQ_PORT_AMQP}
+      - KEDA_OPERATOR_RABBITMQ_USERNAME=${RABBITMQ_DEFAULT_USER}
+      - KEDA_OPERATOR_RABBITMQ_PASSWORD=${RABBITMQ_DEFAULT_PASS}
+      - KEDA_OPERATOR_RABBITMQ_QUEUE=fetcher-queue
+    ports:
+      - "8000:8000"
+    depends_on:
+      - fetcher-rabbitmq
+    networks:
+      - fetcher-infra-network
+
+volumes:
+  fetcher-mongodb-data:
+  fetcher-seaweedfs-master-data:
+  fetcher-seaweedfs-volume-data:
+  fetcher-seaweedfs-filer-data:
+
+
+networks:
+  fetcher-infra-network:
+    name: fetcher-infra-network
+    driver: bridge

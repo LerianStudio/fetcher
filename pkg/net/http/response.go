@@ -1,8 +1,9 @@
 package http
 
 import (
-	"golang-plugin-boilerplate/pkg"
 	"net/http"
+
+	"github.com/LerianStudio/fetcher/pkg"
 
 	"github.com/gofiber/fiber/v2"
 )

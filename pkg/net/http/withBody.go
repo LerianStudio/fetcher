@@ -3,20 +3,21 @@ package http
 import (
 	"encoding/json"
 	"errors"
-	libCommons "github.com/LerianStudio/lib-commons/commons"
-	"github.com/go-playground/locales/en"
-	ut "github.com/go-playground/universal-translator"
-	"github.com/gofiber/fiber/v2"
-	"github.com/google/uuid"
-	"golang-plugin-boilerplate/pkg"
-	"gopkg.in/go-playground/validator.v9"
 	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
 
+	"github.com/LerianStudio/fetcher/pkg"
+	libCommons "github.com/LerianStudio/lib-commons/commons"
+	"github.com/go-playground/locales/en"
+	ut "github.com/go-playground/universal-translator"
+	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
+	"gopkg.in/go-playground/validator.v9"
+
+	cn "github.com/LerianStudio/fetcher/pkg/constant"
 	en2 "github.com/go-playground/validator/translations/en"
-	cn "golang-plugin-boilerplate/pkg/constant"
 )
 
 var UUIDPathParameters = []string{
@@ -259,6 +260,7 @@ func malformedRequestErr(err validator.ValidationErrors, trans ut.Translator) pk
 	requiredFields := fieldsRequired(invalidFieldsMap)
 
 	var vErr pkg.ValidationKnownFieldsError
+
 	_ = errors.As(pkg.ValidateBadRequestFieldsError(requiredFields, invalidFieldsMap, "", make(map[string]any)), &vErr)
 
 	return vErr

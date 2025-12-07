@@ -1,0 +1,129 @@
+package command
+
+import (
+	"context"
+
+	"github.com/LerianStudio/fetcher/pkg"
+	"github.com/LerianStudio/fetcher/pkg/constant"
+	"github.com/LerianStudio/fetcher/pkg/crypto"
+	"github.com/LerianStudio/fetcher/pkg/model"
+	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
+	"github.com/LerianStudio/fetcher/pkg/mongodb/job"
+
+	"github.com/LerianStudio/lib-commons/v2/commons"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
+
+	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/attribute"
+)
+
+type UpdateConnection struct {
+	connRepo connRepo.Repository
+	jobRepo  job.Repository
+	cryptor  crypto.Cryptor
+}
+
+func NewUpdateConnection(connectionRepo connRepo.Repository, jobRepo job.Repository, cryptor crypto.Cryptor) *UpdateConnection {
+	return &UpdateConnection{
+		connRepo: connectionRepo,
+		jobRepo:  jobRepo,
+		cryptor:  cryptor,
+	}
+}
+
+func (s *UpdateConnection) Execute(ctx context.Context, organizationID, connectionID uuid.UUID, connInput model.ConnectionInput) (*model.Connection, error) {
+	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+
+	ctx, span := tracer.Start(ctx, "service.update_connection")
+	defer span.End()
+
+	span.SetAttributes(
+		attribute.String("app.request.request_id", reqID),
+		attribute.String("app.request.organization_id", organizationID.String()),
+		attribute.String("app.request.connection_id", connectionID.String()),
+	)
+
+	err := libOpentelemetry.SetSpanAttributesFromStruct(&span, "app.request.payload", connInput)
+	if err != nil {
+		libOpentelemetry.HandleSpanError(&span, "Failed to convert fetcher input to JSON string", err)
+	}
+
+	active, err := s.jobRepo.ExistsRunningByConnection(ctx, organizationID, connectionID)
+	if err != nil {
+		return nil, err
+	}
+
+	if active {
+		return nil, pkg.ValidateBusinessError(constant.ErrJobInProgress, "connection", "cannot update connection with active jobs")
+	}
+
+	current, err := s.connRepo.FindByID(ctx, connectionID, organizationID)
+	if err != nil {
+		return nil, err
+	}
+
+	if current == nil {
+		return nil, pkg.EntityNotFoundError{
+			EntityType: "connection",
+			Code:       constant.ErrEntityNotFound.Error(),
+			Title:      "Entity Not Found",
+			Message:    "connection not found",
+		}
+	}
+
+	if errPatch := current.ApplyPatch(
+		ctx,
+		s.cryptor,
+		&connInput.ConfigName,
+		&connInput.Type,
+		&connInput.Host,
+		&connInput.Port,
+		&connInput.DatabaseName,
+		&connInput.Username,
+		&connInput.Password,
+		func() *string {
+			if connInput.SSL != nil {
+				return &connInput.SSL.Mode
+			}
+			return nil
+		}(),
+		func() *string {
+			if connInput.SSL != nil {
+				return &connInput.SSL.CA
+			}
+			return nil
+		}(),
+		func() *string {
+			if connInput.SSL != nil && connInput.SSL.Cert != nil {
+				return connInput.SSL.Cert
+			}
+			return nil
+		}(),
+		func() *string {
+			if connInput.SSL != nil && connInput.SSL.Key != nil {
+				return connInput.SSL.Key
+			}
+			return nil
+		}(),
+	); errPatch != nil {
+		return nil, errPatch
+	}
+
+	// TODO: Test the database connection with the new data before persisting. If it fails, return the failure to the user; only update when the connection test passes.
+
+	updated, err := s.connRepo.Update(ctx, current)
+	if err != nil {
+		return nil, err
+	}
+
+	if updated == nil {
+		return nil, pkg.EntityNotFoundError{
+			EntityType: "connection",
+			Code:       constant.ErrEntityNotFound.Error(),
+			Title:      "Entity Not Found",
+			Message:    "connection not found",
+		}
+	}
+
+	return updated, nil
+}

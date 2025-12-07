@@ -1,0 +1,408 @@
+basePath: /
+definitions:
+  Pagination:
+    description: Pagination is the struct designed to store the pagination data of
+      an entity list.
+    properties:
+      items: {}
+      limit:
+        example: 10
+        type: integer
+      page:
+        example: 1
+        type: integer
+      total:
+        example: 10
+        type: integer
+    type: object
+  github_com_LerianStudio_fetcher_pkg_model.ConnectionInput:
+    properties:
+      configName:
+        example: production-db
+        maxLength: 100
+        minLength: 3
+        type: string
+      databaseName:
+        example: mydatabase
+        type: string
+      host:
+        example: db.example.com
+        type: string
+      password:
+        example: secretpassword
+        type: string
+      port:
+        example: 5432
+        maximum: 65535
+        minimum: 1
+        type: integer
+      ssl:
+        $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.SSLInput'
+      type:
+        enum:
+        - ORACLE
+        - SQL_SERVER
+        - POSTGRESQL
+        - MONGODB
+        - MYSQL
+        example: POSTGRESQL
+        type: string
+      username:
+        example: dbuser
+        type: string
+    required:
+    - configName
+    - databaseName
+    - host
+    - password
+    - port
+    - type
+    - username
+    type: object
+  github_com_LerianStudio_fetcher_pkg_model.ConnectionResponse:
+    properties:
+      configName:
+        type: string
+      createdAt:
+        type: string
+      databaseName:
+        type: string
+      host:
+        type: string
+      id:
+        type: string
+      port:
+        type: integer
+      ssl:
+        $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.SSLResponse'
+      type:
+        type: string
+      updatedAt:
+        type: string
+      username:
+        type: string
+    type: object
+  github_com_LerianStudio_fetcher_pkg_model.SSLInput:
+    properties:
+      ca:
+        example: |-
+          -----BEGIN CERTIFICATE-----
+          ...
+        type: string
+      cert:
+        type: string
+      key:
+        type: string
+      mode:
+        example: require
+        type: string
+    required:
+    - mode
+    type: object
+  github_com_LerianStudio_fetcher_pkg_model.SSLResponse:
+    properties:
+      mode:
+        type: string
+    type: object
+  pkg.HTTPError:
+    properties:
+      code:
+        type: string
+      entityType:
+        type: string
+      err: {}
+      message:
+        type: string
+      title:
+        type: string
+    type: object
+host: localhost:4006
+info:
+  contact: {}
+  description: API documentation for the Fetcher Manager component
+  termsOfService: http://swagger.io/terms/
+  title: Fetcher Manager API
+  version: 1.0.0
+paths:
+  /v1/management/connections:
+    get:
+      description: List connections with pagination and filters.
+      parameters:
+      - description: The authorization token in the 'Bearer access_token' format.
+          Only required when auth plugin is enabled.
+        in: header
+        name: Authorization
+        type: string
+      - description: Organization ID
+        in: header
+        name: X-Organization-Id
+        required: true
+        type: string
+      - default: 0
+        description: Page number (default 0)
+        in: query
+        name: page
+        type: integer
+      - default: 50
+        description: Page size (default 50, max 1000)
+        in: query
+        name: limit
+        type: integer
+      - default: desc
+        description: Sort order
+        enum:
+        - asc
+        - desc
+        in: query
+        name: sortOrder
+        type: string
+      - description: Filter by database type
+        enum:
+        - ORACLE
+        - SQL_SERVER
+        - POSTGRESQL
+        - MONGODB
+        - MYSQL
+        in: query
+        name: type
+        type: string
+      - description: Filter by host
+        in: query
+        name: host
+        type: string
+      - description: Filter by database name
+        in: query
+        name: databaseName
+        type: string
+      - description: Filter by start date (YYYY-MM-DD)
+        in: query
+        name: startDate
+        type: string
+      - description: Filter by end date (YYYY-MM-DD)
+        in: query
+        name: endDate
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/Pagination'
+            - properties:
+                items:
+                  items:
+                    $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.ConnectionResponse'
+                  type: array
+                limit:
+                  type: integer
+                page:
+                  type: integer
+                total:
+                  type: integer
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+      summary: List connections
+      tags:
+      - Connections
+    post:
+      consumes:
+      - application/json
+      description: Create a new database connection for the organization. ConfigName
+        must be unique per organization; password is encrypted and a UUID is generated
+        on creation.
+      parameters:
+      - description: The authorization token in the 'Bearer access_token' format.
+          Only required when auth plugin is enabled.
+        in: header
+        name: Authorization
+        type: string
+      - description: Organization ID
+        in: header
+        name: X-Organization-Id
+        required: true
+        type: string
+      - description: Connection payload
+        in: body
+        name: connection
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.ConnectionInput'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created connection identifier
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+      summary: Create connection
+      tags:
+      - Connections
+  /v1/management/connections/{id}:
+    delete:
+      description: Soft delete a connection when no active jobs are running for it.
+        Returns 409 if there is any active job.
+      parameters:
+      - description: The authorization token in the 'Bearer access_token' format.
+          Only required when auth plugin is enabled.
+        in: header
+        name: Authorization
+        type: string
+      - description: Organization ID
+        in: header
+        name: X-Organization-Id
+        required: true
+        type: string
+      - description: Connection ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Deleted connection identifier
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+      summary: Delete connection
+      tags:
+      - Connections
+    get:
+      description: Get connection details by ID for the given organization.
+      parameters:
+      - description: The authorization token in the 'Bearer access_token' format.
+          Only required when auth plugin is enabled.
+        in: header
+        name: Authorization
+        type: string
+      - description: Organization ID
+        in: header
+        name: X-Organization-Id
+        required: true
+        type: string
+      - description: Connection ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.ConnectionResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+      summary: Get connection
+      tags:
+      - Connections
+    patch:
+      consumes:
+      - application/json
+      description: Apply a partial update to a connection. Returns 409 if there is
+        any active job.
+      parameters:
+      - description: The authorization token in the 'Bearer access_token' format.
+          Only required when auth plugin is enabled.
+        in: header
+        name: Authorization
+        type: string
+      - description: Organization ID
+        in: header
+        name: X-Organization-Id
+        required: true
+        type: string
+      - description: Connection ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Fields to update (partial payload)
+        in: body
+        name: connection
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.ConnectionInput'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.ConnectionResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+      summary: Update connection
+      tags:
+      - Connections
+swagger: "2.0"

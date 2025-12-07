@@ -1,58 +1,129 @@
-# Goilerplate Makefile
-
-# Component-specific variables
-SERVICE_NAME := golang-addons-boilerplate
-BIN_DIR := ./.bin
-ARTIFACTS_DIR := ./artifacts
-
-# Ensure artifacts directory exists
-$(shell mkdir -p $(ARTIFACTS_DIR))
+# Project Root Makefile.
+# Coordinates all component Makefiles and provides centralized commands.
 
 # Define the root directory of the project
 ROOT_DIR := $(shell pwd)
 
-# Include shared color definitions and utility functions
-include $(ROOT_DIR)/pkg/shell/makefile_colors.mk
-include $(ROOT_DIR)/pkg/shell/makefile_utils.mk
+# Define the root directory of the project
+SERVICE_NAME := fetcher
+BIN_DIR := ./.bin
+ARTIFACTS_DIR := ./artifacts
+
+# Color definitions for terminal output
+GREEN := \033[32m
+RED := \033[31m
+YELLOW := \033[33m
+CYAN := \033[36m
+BLUE := \033[34m
+BOLD := \033[1m
+NC := \033[0m
+
+# Docker command detection (supports both docker compose and docker-compose)
+DOCKER_VERSION := $(shell docker version --format '{{.Server.Version}}' 2>/dev/null || echo "0")
+DOCKER_MIN_VERSION := 20.10.13
+DOCKER_CMD := $(shell \
+	if [ "$(shell printf '%s\n' "$(DOCKER_MIN_VERSION)" "$(DOCKER_VERSION)" | sort -V | head -n1)" = "$(DOCKER_MIN_VERSION)" ]; then \
+		echo "docker compose"; \
+	else \
+		echo "docker-compose"; \
+	fi \
+)
+
+# Component directories
+INFRA_DIR := ./components/infra
+MANAGER_DIR := ./components/manager
+WORKER_DIR := ./components/worker
+
+# Define a list of all component directories for easier iteration
+BACKEND_COMPONENTS := $(WORKER_DIR) $(MANAGER_DIR)
+COMPONENTS := $(INFRA_DIR) $(WORKER_DIR) $(MANAGER_DIR)
+
+# Include shared utility functions
+# Define common utility functions
+define print_title
+	@echo ""
+	@echo "------------------------------------------"
+	@echo "   📝 $(1)  "
+	@echo "------------------------------------------"
+endef
+
+define title1
+	@echo ""
+	@echo "$(CYAN)------------------------------------------$(NC)"
+	@echo "$(CYAN)   📝 $(1)$(NC)"
+	@echo "$(CYAN)------------------------------------------$(NC)"
+endef
+
+# Check if a command is available
+define check_command
+	@which $(1) > /dev/null || (echo "Error: $(1) is required but not installed. $(2)" && exit 1)
+endef
+
+# Check if environment files exist
+define check_env_files
+	@missing=false; \
+	for dir in $(COMPONENTS); do \
+		if [ ! -f "$$dir/.env" ]; then \
+			missing=true; \
+			break; \
+		fi; \
+	done; \
+	if [ "$$missing" = "true" ]; then \
+		echo "Environment files are missing. Running set-env command first..."; \
+		$(MAKE) set-env; \
+	fi
+endef
 
 #-------------------------------------------------------
 # Core Commands
 #-------------------------------------------------------
 
-.PHONY: help
 help:
 	@echo ""
-	@echo "$(BOLD)Plugin Service Commands$(NC)"
 	@echo ""
-	@echo "$(BOLD)Core Commands:$(NC)"
+	@echo "fetcher Commands"
+	@echo ""
+	@echo ""
+	@echo "Core Commands:"
 	@echo "  make help                        - Display this help message"
-	@echo "  make build                       - Build the component"
-	@echo "  make test                        - Run tests"
-	@echo "  make clean                       - Clean build artifacts"
-	@echo "  make run                         - Run the application with .env config"
-	@echo "  make cover-html                  - Generate HTML test coverage report"
+	@echo "  make test                        - Run tests on all components"
+	@echo "  make build                       - Build all components"
+	@echo "  make clean                       - Clean all build artifacts"
+	@echo "  make cover                       - Run test coverage"
 	@echo ""
-	@echo "$(BOLD)Code Quality Commands:$(NC)"
-	@echo "  make lint                        - Run linting tools"
-	@echo "  make format                      - Format code"
-	@echo "  make tidy                        - Clean dependencies"
 	@echo ""
-	@echo "$(BOLD)Docker Commands:$(NC)"
-	@echo "  make up                          - Start services with Docker Compose"
-	@echo "  make down                        - Stop services with Docker Compose"
-	@echo "  make start                       - Start existing containers"
-	@echo "  make stop                        - Stop running containers"
-	@echo "  make restart                     - Restart all containers"
-	@echo "  make logs                        - Show logs for all services"
-	@echo "  make logs-api                    - Show logs for plugin service"
-	@echo "  make ps                          - List container status"
-	@echo "  make rebuild-up                  - Rebuild and restart services during development"
+	@echo "Code Quality Commands:"
+	@echo "  make lint                        - Run linting on all components"
+	@echo "  make format                      - Format code in all components"
+	@echo "  make tidy                        - Clean dependencies in root directory"
+	@echo "  make check-tests                 - Verify test coverage for components"
+	@echo "  make sec                         - Run security checks using gosec"
 	@echo ""
-	@echo "$(BOLD)Plugin-Specific Commands:$(NC)"
-	@echo "  make generate-docs               - Generate Swagger API documentation"
 	@echo ""
-	@echo "$(BOLD)Developer Helper Commands:$(NC)"
-	@echo "  make dev-setup                   - Set up development environment"
+	@echo "Git Hook Commands:"
+	@echo "  make setup-git-hooks             - Install and configure git hooks"
+	@echo "  make check-hooks                 - Verify git hooks installation status"
+	@echo "  make check-envs                  - Check if github hooks are installed and secret env files are not exposed"
+	@echo ""
+	@echo ""
+	@echo "Setup Commands:"
+	@echo "  make set-env                     - Copy .env.example to .env for all components"
+	@echo ""
+	@echo ""
+	@echo "Service Commands:"
+	@echo "  make up                           - Start all services with Docker Compose"
+	@echo "  make down                         - Stop all services with Docker Compose"
+	@echo "  make start                        - Start all containers"
+	@echo "  make stop                         - Stop all containers"
+	@echo "  make restart                      - Restart all containers"
+	@echo "  make rebuild-up                   - Rebuild and restart all services"
+	@echo "  make clean-docker                 - Clean all Docker resources (containers, networks, volumes)"
+	@echo "  make logs                         - Show logs for all services"
+	@echo ""
+	@echo ""
+	@echo "Documentation Commands:"
+	@echo "  make generate-docs               - Generate Swagger documentation for all services"
+	@echo ""
 	@echo ""
 
 #-------------------------------------------------------
@@ -98,18 +169,18 @@ check-envs:
 
 .PHONY: set-env
 set-env:
-	$(call title1,"Setting up environment files")
-
-	@if [ -f ".env.example" ] && [ ! -f ".env" ]; then \
-		echo "$(CYAN)Creating .env in plugin from .env.example$(NC)"; \
-		cp ".env.example" ".env"; \
-	elif [ ! -f ".env.example" ]; then \
-		echo "$(YELLOW)Warning: No .env.example found in plugin$(NC)"; \
-	else \
-		echo "$(GREEN).env already exists in plugin$(NC)"; \
-	fi
-
-	@echo "$(GREEN)$(BOLD)[ok]$(NC) Environment files set up successfully$(GREEN) ✔️$(NC)"
+	$(call print_title,"Setting up environment files")
+	@for dir in $(COMPONENTS); do \
+		if [ -f "$$dir/.env.example" ] && [ ! -f "$$dir/.env" ]; then \
+			echo "Creating .env in $$dir from .env.example"; \
+			cp "$$dir/.env.example" "$$dir/.env"; \
+		elif [ ! -f "$$dir/.env.example" ]; then \
+			echo "Warning: No .env.example found in $$dir"; \
+		else \
+			echo ".env already exists in $$dir"; \
+		fi; \
+	done
+	@echo "[ok] Environment files set up successfully"
 
 #-------------------------------------------------------
 # Build Commands
@@ -222,7 +293,22 @@ sec:
 .PHONY: clean
 clean:
 	$(call title1,"Cleaning build artifacts")
-	@rm -rf $(BIN_DIR)/* $(ARTIFACTS_DIR)/*
+	@if [ -z "$(BIN_DIR)" ] || [ -z "$(ARTIFACTS_DIR)" ]; then \
+		echo "$(RED)$(BOLD)[error]$(NC) BIN_DIR or ARTIFACTS_DIR is not set. Aborting to prevent accidental deletion.$(RED) ❌$(NC)"; \
+		exit 1; \
+	fi
+	@if [ "$(BIN_DIR)" = "/" ] || [ "$(ARTIFACTS_DIR)" = "/" ]; then \
+		echo "$(RED)$(BOLD)[error]$(NC) BIN_DIR or ARTIFACTS_DIR cannot be root directory. Aborting.$(RED) ❌$(NC)"; \
+		exit 1; \
+	fi
+	@if [ -d "$(BIN_DIR)" ]; then \
+		echo "$(CYAN)Cleaning $(BIN_DIR)...$(NC)"; \
+		rm -rf $(BIN_DIR)/*; \
+	fi
+	@if [ -d "$(ARTIFACTS_DIR)" ]; then \
+		echo "$(CYAN)Cleaning $(ARTIFACTS_DIR)...$(NC)"; \
+		rm -rf $(ARTIFACTS_DIR)/*; \
+	fi
 	@echo "$(GREEN)$(BOLD)[ok]$(NC) Artifacts cleaned successfully$(GREEN) ✔️$(NC)"
 
 #-------------------------------------------------------
@@ -243,9 +329,18 @@ build-docker:
 
 .PHONY: up
 up:
-	$(call title1,"Starting all services in detached mode")
-	@$(DOCKER_CMD) -f docker-compose.yml up $(c) -d
-	@echo "$(GREEN)$(BOLD)[ok]$(NC) Services started successfully$(GREEN) ✔️$(NC)"
+	$(call print_title,"Starting services")
+	$(call check_env_files)
+	@echo "Starting infrastructure services first..."
+	@cd $(INFRA_DIR) && $(MAKE) up
+	@echo "Starting backend components..."
+	@for dir in $(BACKEND_COMPONENTS); do \
+		if [ -f "$$dir/docker-compose.yml" ]; then \
+			echo "Starting services in $$dir..."; \
+			(cd $$dir && $(MAKE) up) || exit 1; \
+		fi \
+	done
+	@echo "[ok] Services started successfully ✔️"
 
 .PHONY: start
 start:
@@ -255,48 +350,64 @@ start:
 
 .PHONY: down
 down:
-	$(call title1,"Stopping and removing containers|networks|volumes")
-	@if [ -f "docker-compose.yml" ]; then \
-		$(DOCKER_CMD) -f docker-compose.yml down $(c); \
-	else \
-		echo "$(YELLOW)No docker-compose.yml file found. Skipping down command.$(NC)"; \
-	fi
-	@echo "$(GREEN)$(BOLD)[ok]$(NC) Services stopped successfully$(GREEN) ✔️$(NC)"
+	$(call print_title,"Stopping services")
+	@echo "Stopping components..."
+	@for dir in $(BACKEND_COMPONENTS); do \
+		if [ -f "$$dir/docker-compose.yml" ]; then \
+			echo "Stopping services in $$dir..."; \
+			(cd $$dir && $(MAKE) down) || exit 1; \
+		fi \
+	done
+	@echo "Stopping infrastructure services..."
+	@cd $(INFRA_DIR) && $(MAKE) down
+	@echo "[ok] Services stopped successfully ✔️"
 
 .PHONY: stop
 stop:
-	$(call title1,"Stopping running containers")
-	@$(DOCKER_CMD) -f docker-compose.yml stop $(c)
-	@echo "$(GREEN)$(BOLD)[ok]$(NC) Containers stopped successfully$(GREEN) ✔️$(NC)"
+	@for dir in $(COMPONENTS); do \
+		if [ -f "$$dir/docker-compose.yml" ]; then \
+			echo "Stopping containers in $$dir..."; \
+			(cd $$dir && $(MAKE) stop) || exit 1; \
+		fi; \
+	done
+	@echo "[ok] All containers stopped successfully"
 
 .PHONY: restart
 restart:
-	$(call title1,"Restarting all services")
-	@make stop && make up
-	@echo "$(GREEN)$(BOLD)[ok]$(NC) Services restarted successfully$(GREEN) ✔️$(NC)"
+	$(call print_title,"Restarting services")
+	@make down && make up
+	@echo "[ok] Backend services successfully ✔️"
 
 .PHONY: rebuild-up
 rebuild-up:
 	$(call title1,"Rebuilding and restarting services")
-	@$(DOCKER_CMD) -f docker-compose.yml down
-	@$(DOCKER_CMD) -f docker-compose.yml build
-	@$(DOCKER_CMD) -f docker-compose.yml up -d
+	@echo "Rebuilding infrastructure services..."
+	@cd $(INFRA_DIR) && ($(DOCKER_CMD) -f docker-compose.yml build --no-cache && $(DOCKER_CMD) -f docker-compose.yml up -d --force-recreate)
+	@echo "Rebuilding backend components..."
+	@for dir in $(BACKEND_COMPONENTS); do \
+		if [ -f "$$dir/docker-compose.yml" ]; then \
+			echo "Rebuilding services in $$dir..."; \
+			(cd $$dir && $(DOCKER_CMD) -f docker-compose.yml build --no-cache && $(DOCKER_CMD) -f docker-compose.yml up -d --force-recreate) || exit 1; \
+		fi; \
+	done
 	@echo "$(GREEN)$(BOLD)[ok]$(NC) Services rebuilt and restarted successfully$(GREEN) ✔️$(NC)"
 
 .PHONY: logs
 logs:
-	$(call title1,"Showing logs for all services")
-	@if [ -f "docker-compose.yml" ]; then \
-		echo "$(CYAN)Logs for component: $(BOLD)golang-plugin-boilerplate$(NC)"; \
-		docker compose -f docker-compose.yml logs --tail=100 -f $(c) 2>/dev/null || docker-compose -f docker-compose.yml logs --tail=100 -f $(c); \
-	else \
-		echo "$(YELLOW)No docker-compose.yml file found. Skipping logs command.$(NC)"; \
-	fi
+	$(call print_title,"Showing logs for all services")
+	@for dir in $(COMPONENTS); do \
+		component_name=$$(basename $$dir); \
+		if [ -f "$$dir/docker-compose.yml" ]; then \
+			echo "Logs for component: $$component_name"; \
+			(cd $$dir && ($(DOCKER_CMD) -f docker-compose.yml logs --tail=50 2>/dev/null || $(DOCKER_CMD) -f docker-compose.yml logs --tail=50)) || exit 1; \
+			echo ""; \
+		fi; \
+	done
 
 .PHONY: logs-api
 logs-api:
-	$(call title1,"Showing logs for golang-plugin-boilerplate service")
-	@$(DOCKER_CMD) -f docker-compose.yml logs --tail=100 -f golang-plugin-boilerplate
+	$(call title1,"Showing logs for fetcher service")
+	@$(DOCKER_CMD) -f docker-compose.yml logs --tail=100 -f fetcher
 
 .PHONY: ps
 ps:
@@ -316,16 +427,7 @@ generate-docs-all:
 	@echo "$(CYAN)Generating documentation for plugin component...$(NC)"
 	$(MAKE) generate-docs 2>&1 | grep -v "warning: "
 	@echo "$(GREEN)$(BOLD)[ok]$(NC) Swagger documentation generated successfully$(GREEN) ✔️$(NC)"
-	@echo "$(CYAN)Syncing Postman collection with the generated OpenAPI documentation...$(NC)"
-	@sh ./scripts/sync-postman.sh
-	@echo "$(GREEN)$(BOLD)[ok]$(NC) Postman collection synced successfully with OpenAPI documentation$(GREEN) ✔️$(NC)"
 
-.PHONY: sync-postman
-sync-postman:
-	$(call title1,"Syncing Postman collection with OpenAPI documentation")
-	$(call check_command,jq,"brew install jq")
-	@sh ./scripts/sync-postman.sh
-	@echo "$(GREEN)$(BOLD)[ok]$(NC) Postman collection synced successfully with OpenAPI documentation$(GREEN) ✔️$(NC)"
 
 .PHONY: verify-api-docs
 verify-api-docs:
@@ -337,8 +439,8 @@ verify-api-docs:
 	@sh ./scripts/verify-api-docs.sh
 	@echo "$(GREEN)$(BOLD)[ok]$(NC) API documentation verification completed$(GREEN) ✔️$(NC)"
 
-.PHONY: validate-api-docs
-validate-api-docs:
+.PHONY: validate-api-docs-legacy
+validate-api-docs-legacy:
 	$(call title1,"Validating API documentation structure and implementation")
 	@if [ -f "./scripts/package.json" ]; then \
 		echo "$(CYAN)Using npm to run validation...$(NC)"; \
@@ -359,7 +461,6 @@ validate-plugin:
 	make validate-api-docs
 	@echo "$(GREEN)$(BOLD)[ok]$(NC) plugin API validation completed$(GREEN) ✔️$(NC)"
 
-
 .PHONY: generate-docs
 generate-docs:
 	$(call title1,"Generating Swagger API documentation")
@@ -367,10 +468,10 @@ generate-docs:
 		echo "$(YELLOW)Installing swag...$(NC)"; \
 		go install github.com/swaggo/swag/cmd/swag@latest; \
 	fi
-	@cd $(ROOT_DIR) && swag init -g cmd/app/main.go -o api --parseDependency --parseInternal
-	@docker run --rm -v ./:/plugin --user $(shell id -u):$(shell id -g) openapitools/openapi-generator-cli:v5.1.1 generate -i ./plugin/api/swagger.json -g openapi-yaml -o ./plugin/api
-	@mv ./api/openapi/openapi.yaml ./api/openapi.yaml
-	@rm -rf ./api/README.md ./api/.openapi-generator* ./api/openapi
+	@swag init -g ./components/manager/cmd/app/main.go -d ./ -o ./components/manager/api --parseDependency --parseInternal
+	@docker run --rm -v $(ROOT_DIR):/local --user $(shell id -u):$(shell id -g) openapitools/openapi-generator-cli:v5.1.1 generate -i /local/components/manager/api/swagger.json -g openapi-yaml -o /local/components/manager/api
+	@mv ./components/manager/api/openapi/openapi.yaml ./components/manager/api/openapi.yaml
+	@rm -rf ./components/manager/api/README.md ./components/manager/api/.openapi-generator* ./components/manager/api/openapi
 	@if [ -f "$(ROOT_DIR)/scripts/package.json" ]; then \
 		echo "$(YELLOW)Installing npm dependencies for validation...$(NC)"; \
 		cd $(ROOT_DIR)/scripts && npm install > /dev/null; \
