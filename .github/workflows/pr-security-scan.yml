@@ -24,8 +24,12 @@ on:
 
 jobs:
   security-scan:
-    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/pr-security-scan.yml@main
+    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/pr-security-scan.yml@feature/go-workflows
     with:
       runner_type: "ubuntu-latest"
+      filter_paths: |-
+        components/manager
+        components/worker
+      path_level: "2"
       dockerhub_org: "lerianstudio"
     secrets: inherit

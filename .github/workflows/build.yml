@@ -16,6 +16,13 @@ jobs:
   build:
     uses: LerianStudio/github-actions-shared-workflows/.github/workflows/build.yml@feature/go-workflows
     with:
+      # Monorepo configuration
+      filter_paths: |-
+        components/manager
+        components/worker
+      path_level: 2
+      app_name_prefix: "fetcher"
+      # Registry configuration
       enable_dockerhub: true
       enable_ghcr: true
       dockerhub_org: lerianstudio

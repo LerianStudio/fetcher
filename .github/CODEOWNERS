@@ -1,18 +1,16 @@
 # Default owners for the entire repository
-*                       @LerianStudio/G_Github_Dev
+*                                   @LerianStudio/G_Github_Dev
 
 # CI/CD and DevOps configurations
-.github/*               @LerianStudio/G_Github_Devops
-.githooks/*             @LerianStudio/G_Github_Devops
-Dockerfile              @LerianStudio/G_Github_Devops @LerianStudio/G_Github_Dev
-docker-compose*.yml     @LerianStudio/G_Github_Devops @LerianStudio/G_Github_Dev
-.env.example            @LerianStudio/G_Github_Devops @LerianStudio/G_Github_Dev
+.github/*                           @LerianStudio/G_Github_Devops
+.githooks/*                         @LerianStudio/G_Github_Devops
 
-# Source code
-cmd/*                   @LerianStudio/G_Github_Dev
-internal/*              @LerianStudio/G_Github_Dev
-pkg/*                   @LerianStudio/G_Github_Dev
-api/*                   @LerianStudio/G_Github_Dev
+# Components (monorepo)
+components/*/Dockerfile             @LerianStudio/G_Github_Devops @LerianStudio/G_Github_Dev
+components/*/docker-compose*.yml    @LerianStudio/G_Github_Devops @LerianStudio/G_Github_Dev
+components/*/.env.example           @LerianStudio/G_Github_Devops @LerianStudio/G_Github_Dev
+components/*/migrations/*           @LerianStudio/G_Github_Dev @LerianStudio/G_Github_Devops
+components/*                        @LerianStudio/G_Github_Dev
 
-# Database
-migrations/*            @LerianStudio/G_Github_Dev @LerianStudio/G_Github_Devops
+# Shared packages
+pkg/*                               @LerianStudio/G_Github_Dev
