@@ -12,10 +12,6 @@ on:
     tags:
       - '**'
 
-env:
-  IS_BETA: ${{ contains(github.ref, '-beta') }}
-  IS_RC: ${{ contains(github.ref, '-rc') }}
-
 jobs:
   build:
     uses: LerianStudio/github-actions-shared-workflows/.github/workflows/build.yml@feature/go-workflows
