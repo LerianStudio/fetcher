@@ -25,10 +25,7 @@ jobs:
       dockerhub_org: lerianstudio
       # Enable when GitOps is configured for this service
       enable_gitops_artifacts: false
-    secrets:
-      docker_username: ${{ secrets.DOCKER_USERNAME }}
-      docker_password: ${{ secrets.DOCKER_PASSWORD }}
-      ghcr_token: ${{ secrets.MANAGE_TOKEN }}
+    secrets: inherit
 
   # =========================
   # GITOPS UPDATE

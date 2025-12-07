@@ -17,6 +17,4 @@ jobs:
     with:
       runner_type: "ubuntu-latest"
       dockerhub_org: "lerianstudio"
-    secrets:
-      docker_username: ${{ secrets.DOCKER_USERNAME }}
-      docker_password: ${{ secrets.DOCKER_PASSWORD }}
+    secrets: inherit
