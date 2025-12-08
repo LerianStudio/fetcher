@@ -29,7 +29,7 @@ jobs:
     with:
       # Single go.mod at root - run as single app
       app_name_prefix: "fetcher"
-      go_version: "1.23"
+      go_version: "1.25"
       golangci_lint_version: "v2.6.2"
       golangci_lint_args: "--timeout=5m"
       coverage_threshold: 85
