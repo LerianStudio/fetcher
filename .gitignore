@@ -46,3 +46,4 @@ scripts/node_modules
 # Reports packages
 # ----------------------------------------
 ./reports
+coverage.txt

@@ -171,3 +171,4 @@ func InitWorker() *Service {
 		licenseShutdown:    licenseClient.GetLicenseManagerShutdown(),
 	}
 }
+

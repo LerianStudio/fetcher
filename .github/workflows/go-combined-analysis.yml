@@ -27,7 +27,8 @@ jobs:
     name: Go Analysis
     uses: LerianStudio/github-actions-shared-workflows/.github/workflows/go-pr-analysis.yml@feature/go-workflows
     with:
-      # Single go.mod at root - run as single app
+      filter_paths: '["components/manager", "components/worker"]'
+      path_level: 2
       app_name_prefix: "fetcher"
       go_version: "1.25"
       golangci_lint_version: "v2.6.2"
