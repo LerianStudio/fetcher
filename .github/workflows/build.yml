@@ -16,6 +16,7 @@ jobs:
   build:
     uses: LerianStudio/github-actions-shared-workflows/.github/workflows/build.yml@feature/go-workflows
     with:
+      runner_type: "firmino-lxc-runners"
       # Monorepo configuration
       filter_paths: |-
         components/manager
