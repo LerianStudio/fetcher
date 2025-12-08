@@ -1,8 +1,8 @@
 version: 2
 updates:
-  # Go modules - manager component
+  # Go modules (single go.mod at root)
   - package-ecosystem: "gomod"
-    directory: "/components/manager"
+    directory: "/"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -10,21 +10,6 @@ updates:
     open-pull-requests-limit: 10
     labels:
       - "area: dependencies"
-      - "component: manager"
-    commit-message:
-      prefix: "chore(deps)"
-
-  # Go modules - worker component
-  - package-ecosystem: "gomod"
-    directory: "/components/worker"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-    target-branch: "develop"
-    open-pull-requests-limit: 10
-    labels:
-      - "area: dependencies"
-      - "component: worker"
     commit-message:
       prefix: "chore(deps)"
 
