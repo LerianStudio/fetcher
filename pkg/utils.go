@@ -40,3 +40,4 @@ func MaskSecret(value string) string {
 
 	return "[REDACTED]"
 }
+
