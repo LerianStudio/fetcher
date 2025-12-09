@@ -331,6 +331,64 @@ paths:
       tags:
       - Connections
       x-codegen-request-body-name: connection
+  /v1/management/connections/{id}/test:
+    post:
+      description: Test the configured connection by establishing and closing a connection.
+      parameters:
+      - description: The authorization token in the 'Bearer access_token' format.
+          Only required when auth plugin is enabled.
+        in: header
+        name: Authorization
+        schema:
+          type: string
+      - description: Organization ID
+        in: header
+        name: X-Organization-Id
+        required: true
+        schema:
+          type: string
+      - description: Connection ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: object
+                type: object
+          description: Connection test result
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Not Found
+        "429":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Too Many Requests
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Internal Server Error
+      summary: Test connection
+      tags:
+      - Connections
 components:
   schemas:
     Pagination:

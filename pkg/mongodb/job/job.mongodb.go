@@ -3,6 +3,7 @@ package job
 import (
 	"context"
 	"errors"
+	"regexp"
 	"strings"
 	"time"
 
@@ -47,7 +48,7 @@ type Repository interface {
 	UpdateStatus(ctx context.Context, id, organizationID uuid.UUID, status JobStatus, metadata map[string]any) error
 	FindByID(ctx context.Context, id, organizationID uuid.UUID) (*Job, error)
 	List(ctx context.Context, filters *ListFilter) ([]*Job, error)
-	ExistsRunningByConnection(ctx context.Context, organizationID, connectionID uuid.UUID) (bool, error)
+	ExistsRunningByMappedFieldKey(ctx context.Context, organizationID uuid.UUID, keyPattern string) (bool, error)
 }
 
 type mongoDatabaseProvider interface {
@@ -349,33 +350,48 @@ func (jr *JobMongoDBRepository) FindByID(ctx context.Context, id, organizationID
 	return record.ToEntity(), nil
 }
 
-// ExistsRunningByConnection reports whether there is any running job for a connection (pending or processing).
-func (jr *JobMongoDBRepository) ExistsRunningByConnection(ctx context.Context, organizationID, connectionID uuid.UUID) (bool, error) {
+// ExistsRunningByMappedFieldKey reports whether there is any running job (pending or processing)
+// that contains the specified key in its mapped_fields document for the given organization.
+func (jr *JobMongoDBRepository) ExistsRunningByMappedFieldKey(ctx context.Context, organizationID uuid.UUID, keyPattern string) (bool, error) {
 	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
-	ctx, span := tracer.Start(ctx, "mongodb.exists_running_job_by_connection")
+	ctx, span := tracer.Start(ctx, "mongodb.exists_running_job_by_mapped_field_key")
 	defer span.End()
 
 	attributes := []attribute.KeyValue{
 		attribute.String("app.request.request_id", reqID),
 		attribute.String("app.request.organization_id", organizationID.String()),
-		attribute.String("app.request.connection_id", connectionID.String()),
+		attribute.String("app.request.key_pattern", keyPattern),
 	}
 	span.SetAttributes(attributes...)
 
 	db, err := jr.connection.GetDB(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
-		return false, pkg.ValidateInternalError(err, "connection")
+		return false, pkg.ValidateInternalError(err, "job")
 	}
 
 	coll := db.Database(strings.ToLower(jr.Database)).Collection(strings.ToLower(constant.MongoCollectionJob))
 
+	// Validate keyPattern to prevent injection attacks
+	configNameRegex := regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+	if !configNameRegex.MatchString(keyPattern) {
+		errInvalidKey := errors.New("invalid key pattern format")
+		libOpentelemetry.HandleSpanError(&span, "Key pattern validation failed", errInvalidKey)
+		return false, pkg.ValidateInternalError(errInvalidKey, "job")
+	}
+
+	// Build a filter that checks if the key exists in mapped_fields
+	// MongoDB uses dot notation to check for key existence in nested documents
+	mappedFieldKey := "mapped_fields." + keyPattern
+
 	filter := bson.M{
 		"organization_id": organizationID,
-		"connection_id":   connectionID,
 		"status": bson.M{
 			"$in": bson.A{JobStatusPending, JobStatusProcessing},
+		},
+		mappedFieldKey: bson.M{
+			"$exists": true,
 		},
 	}
 
@@ -385,8 +401,8 @@ func (jr *JobMongoDBRepository) ExistsRunningByConnection(ctx context.Context, o
 
 	count, err := coll.CountDocuments(ctx, filter, options.Count().SetLimit(1))
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to count running jobs", err)
-		return false, pkg.ValidateInternalError(err, "connection")
+		libOpentelemetry.HandleSpanError(&span, "Failed to count running jobs by mapped field key", err)
+		return false, pkg.ValidateInternalError(err, "job")
 	}
 
 	return count > 0, nil
@@ -398,13 +414,13 @@ func (jr *JobMongoDBRepository) List(ctx context.Context, filters *ListFilter) (
 		filters = &ListFilter{}
 	}
 
-	_, tracer, reqId, _ := commons.NewTrackingFromContext(ctx)
+	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "mongodb.list_jobs")
 	defer span.End()
 
 	attributes := []attribute.KeyValue{
-		attribute.String("app.request.request_id", reqId),
+		attribute.String("app.request.request_id", reqID),
 		attribute.String("app.request.organization_id", filters.OrganizationID.String()),
 	}
 	span.SetAttributes(attributes...)

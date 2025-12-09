@@ -17,9 +17,10 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.7.6
 	github.com/joho/godotenv v1.5.1
-	github.com/microsoft/go-mssqldb v1.9.4
+	github.com/microsoft/go-mssqldb v1.9.5
 	github.com/pkg/errors v0.9.1
 	github.com/rabbitmq/amqp091-go v1.10.0
+	github.com/sethvargo/go-limiter v1.1.0
 	github.com/sijms/go-ora/v2 v2.9.0
 	github.com/swaggo/fiber-swagger v1.3.0
 	github.com/swaggo/swag v1.16.6
@@ -75,6 +76,7 @@ require (
 	github.com/montanaflynn/stats v0.7.1 // indirect
 	github.com/redis/go-redis/v9 v9.17.2 // indirect
 	github.com/shirou/gopsutil v3.21.11+incompatible // indirect
+	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/sony/gobreaker v1.0.0 // indirect
 	github.com/spf13/afero v1.6.0 // indirect
 	github.com/swaggo/files v1.0.1 // indirect

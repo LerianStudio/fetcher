@@ -405,4 +405,50 @@ paths:
       summary: Update connection
       tags:
       - Connections
+  /v1/management/connections/{id}/test:
+    post:
+      description: Test the configured connection by establishing and closing a connection.
+      parameters:
+      - description: The authorization token in the 'Bearer access_token' format.
+          Only required when auth plugin is enabled.
+        in: header
+        name: Authorization
+        type: string
+      - description: Organization ID
+        in: header
+        name: X-Organization-Id
+        required: true
+        type: string
+      - description: Connection ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Connection test result
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+      summary: Test connection
+      tags:
+      - Connections
 swagger: "2.0"

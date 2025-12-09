@@ -498,7 +498,7 @@ func (cr *ConnectionMongoDBRepository) FindByConfigNames(ctx context.Context, or
 
 		recordConvert, errDomain := record.ToDomain()
 		if errDomain != nil {
-			libOpentelemetry.HandleSpanError(&span, "Failed to convert connection model", err)
+			libOpentelemetry.HandleSpanError(&span, "Failed to convert connection model", errDomain)
 			return nil, errDomain
 		}
 
