@@ -8,6 +8,123 @@ info:
 servers:
 - url: //localhost:4006/
 paths:
+  /v1/fetcher:
+    post:
+      description: Create a new data extraction job. The request will be validated,
+        deduplicated within a 5-minute window, and all referenced connections will
+        be tested before job creation.
+      parameters:
+      - description: The authorization token in the 'Bearer access_token' format.
+          Only required when auth plugin is enabled.
+        in: header
+        name: Authorization
+        schema:
+          type: string
+      - description: Organization ID
+        in: header
+        name: X-Organization-Id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/github_com_LerianStudio_fetcher_pkg_model.FetcherRequest'
+        description: Fetcher request payload
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_LerianStudio_fetcher_pkg_model.FetcherResponse'
+          description: Duplicate request - returning existing job
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_LerianStudio_fetcher_pkg_model.FetcherResponse'
+          description: Job created and queued for processing
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Bad Request
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Conflict
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Request Entity Too Large
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Internal Server Error
+      summary: Create fetcher job
+      tags:
+      - Fetcher
+      x-codegen-request-body-name: request
+  /v1/fetcher/{id}:
+    get:
+      description: Retrieve detailed information about a specific data extraction
+        job.
+      parameters:
+      - description: The authorization token in the 'Bearer access_token' format.
+          Only required when auth plugin is enabled.
+        in: header
+        name: Authorization
+        schema:
+          type: string
+      - description: Organization ID
+        in: header
+        name: X-Organization-Id
+        required: true
+        schema:
+          type: string
+      - description: Job ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_LerianStudio_fetcher_pkg_model.JobResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Internal Server Error
+      summary: Get fetcher job
+      tags:
+      - Fetcher
   /v1/management/connections:
     get:
       description: List connections with pagination and filters.
@@ -489,6 +606,155 @@ components:
         updatedAt:
           type: string
         username:
+          type: string
+      type: object
+    github_com_LerianStudio_fetcher_pkg_model.DataRequest:
+      description: DataRequest encapsulates field mappings and optional filters for
+        data extraction.
+      properties:
+        filters:
+          items:
+            $ref: '#/components/schemas/github_com_LerianStudio_fetcher_pkg_model.FilterRequest'
+          type: array
+        mappedFields:
+          additionalProperties:
+            additionalProperties:
+              items:
+                type: string
+              type: array
+            type: object
+          type: object
+      required:
+      - mappedFields
+      type: object
+    github_com_LerianStudio_fetcher_pkg_model.FetcherRequest:
+      description: FetcherRequest represents the request body for creating a new data
+        extraction job.
+      properties:
+        dataRequest:
+          $ref: '#/components/schemas/github_com_LerianStudio_fetcher_pkg_model.DataRequest'
+        metadata:
+          additionalProperties:
+            type: object
+          type: object
+      required:
+      - dataRequest
+      type: object
+    github_com_LerianStudio_fetcher_pkg_model.FetcherResponse:
+      description: FetcherResponse represents the response after successfully creating
+        a data extraction job.
+      example:
+        createdAt: createdAt
+        jobId: jobId
+        message: message
+        status: status
+      properties:
+        createdAt:
+          type: string
+        jobId:
+          type: string
+        message:
+          type: string
+        status:
+          type: string
+      type: object
+    github_com_LerianStudio_fetcher_pkg_model.Filter:
+      example:
+        field: field
+        value:
+        - '{}'
+        - '{}'
+        operator: operator
+      properties:
+        field:
+          type: string
+        operator:
+          type: string
+        value:
+          items:
+            type: object
+          type: array
+      required:
+      - field
+      - operator
+      - value
+      type: object
+    github_com_LerianStudio_fetcher_pkg_model.FilterRequest:
+      description: FilterRequest defines a filter condition with field, operator,
+        and value(s).
+      properties:
+        field:
+          type: string
+        operator:
+          type: string
+        value:
+          items:
+            type: object
+          type: array
+      required:
+      - field
+      - operator
+      - value
+      type: object
+    github_com_LerianStudio_fetcher_pkg_model.JobResponse:
+      description: JobResponse represents the complete information about a data extraction
+        job.
+      example:
+        organizationId: organizationId
+        createdAt: createdAt
+        mappedFields:
+          key:
+            key:
+            - mappedFields
+            - mappedFields
+        completedAt: completedAt
+        metadata:
+          key: '{}'
+        requestHash: requestHash
+        resultPath: resultPath
+        filters:
+        - field: field
+          value:
+          - '{}'
+          - '{}'
+          operator: operator
+        - field: field
+          value:
+          - '{}'
+          - '{}'
+          operator: operator
+        id: id
+        status: status
+      properties:
+        completedAt:
+          type: string
+        createdAt:
+          type: string
+        filters:
+          items:
+            $ref: '#/components/schemas/github_com_LerianStudio_fetcher_pkg_model.Filter'
+          type: array
+        id:
+          type: string
+        mappedFields:
+          additionalProperties:
+            additionalProperties:
+              items:
+                type: string
+              type: array
+            type: object
+          type: object
+        metadata:
+          additionalProperties:
+            type: object
+          type: object
+        organizationId:
+          type: string
+        requestHash:
+          type: string
+        resultPath:
+          type: string
+        status:
           type: string
       type: object
     github_com_LerianStudio_fetcher_pkg_model.SSLInput:

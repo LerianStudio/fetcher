@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/LerianStudio/fetcher/pkg/constant"
+	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/lib-commons/v2/commons"
 	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
 	"go.mongodb.org/mongo-driver/bson"
@@ -52,7 +53,7 @@ func (jr *JobMongoDBRepository) EnsureIndexes(ctx context.Context) error {
 			},
 			Options: options.Index().
 				SetName("idx_job_status_created").
-				SetPartialFilterExpression(bson.D{{Key: "status", Value: bson.D{{Key: "$in", Value: bson.A{JobStatusProcessing, JobStatus("Processing")}}}}}),
+				SetPartialFilterExpression(bson.D{{Key: "status", Value: bson.D{{Key: "$in", Value: bson.A{model.JobStatusProcessing}}}}}),
 		},
 		{
 			Keys: bson.D{{Key: "created_at", Value: -1}},
@@ -71,7 +72,16 @@ func (jr *JobMongoDBRepository) EnsureIndexes(ctx context.Context) error {
 			},
 			Options: options.Index().
 				SetName("idx_job_status_completed").
-				SetPartialFilterExpression(bson.D{{Key: "status", Value: bson.D{{Key: "$in", Value: bson.A{JobStatusCompleted, JobStatus("completed"), JobStatus("finished"), JobStatus("Finished")}}}}}),
+				SetPartialFilterExpression(bson.D{{Key: "status", Value: bson.D{{Key: "$in", Value: bson.A{model.JobStatusCompleted}}}}}),
+		},
+		{
+			Keys: bson.D{
+				{Key: "organization_id", Value: 1},
+				{Key: "request_hash", Value: 1},
+				{Key: "created_at", Value: -1},
+			},
+			Options: options.Index().
+				SetName("idx_job_org_hash_created"),
 		},
 	}
 

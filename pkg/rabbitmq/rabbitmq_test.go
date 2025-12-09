@@ -21,7 +21,7 @@ func TestProducerDefaultPublishesMessage(t *testing.T) {
 	adapter := &RabbitMQAdapter{conn: conn}
 
 	body := []byte(`{"foo":"bar"}`)
-	if err := adapter.ProducerDefault(testContextWithHeader("req-123"), "exchange", "key", body); err != nil {
+	if err := adapter.ProducerDefault(testContextWithHeader("req-123"), "exchange", "key", body, nil); err != nil {
 		t.Fatalf("ProducerDefault returned error: %v", err)
 	}
 
@@ -69,7 +69,7 @@ func TestProducerDefaultRetriesWhenPublishFails(t *testing.T) {
 	}
 	adapter := &RabbitMQAdapter{conn: conn}
 
-	if err := adapter.ProducerDefault(testContextWithHeader("req-10"), "ex", "rk", []byte(`{"hello":"world"}`)); err != nil {
+	if err := adapter.ProducerDefault(testContextWithHeader("req-10"), "ex", "rk", []byte(`{"hello":"world"}`), nil); err != nil {
 		t.Fatalf("ProducerDefault returned error: %v", err)
 	}
 
@@ -96,7 +96,7 @@ func TestProducerDefaultReturnsErrorWhenEnsureChannelFails(t *testing.T) {
 	conn := &testRabbitConnection{err: errors.New("ensure failed")}
 	adapter := &RabbitMQAdapter{conn: conn}
 
-	if err := adapter.ProducerDefault(testContextWithHeader("req-err"), "ex", "key", []byte(`{}`)); err == nil {
+	if err := adapter.ProducerDefault(testContextWithHeader("req-err"), "ex", "key", []byte(`{}`), nil); err == nil {
 		t.Fatalf("expected error, got nil")
 	}
 }
@@ -108,7 +108,7 @@ func TestProducerDefaultReturnsErrorAfterShutdown(t *testing.T) {
 	adapter := &RabbitMQAdapter{conn: conn}
 	adapter.shutdown.Store(true)
 
-	if err := adapter.ProducerDefault(testContextWithHeader("req-shutdown"), "ex", "key", []byte(`{}`)); err == nil {
+	if err := adapter.ProducerDefault(testContextWithHeader("req-shutdown"), "ex", "key", []byte(`{}`), nil); err == nil {
 		t.Fatalf("expected error when adapter is shut down")
 	}
 }

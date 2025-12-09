@@ -212,7 +212,7 @@ func (prmq *RabbitMQAdapter) ensureChannel(span *trace.Span, logger libLog.Logge
 }
 
 // ProducerDefault sends a message to the specified exchange and routing key in RabbitMQ.
-func (prmq *RabbitMQAdapter) ProducerDefault(ctx context.Context, exchange, key string, queueMessage []byte) error {
+func (prmq *RabbitMQAdapter) ProducerDefault(ctx context.Context, exchange, key string, queueMessage []byte, header *map[string]interface{}) error {
 	logger, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
 
 	logger.Infof("Init sent message")
@@ -239,6 +239,17 @@ func (prmq *RabbitMQAdapter) ProducerDefault(ctx context.Context, exchange, key 
 	headers := amqp.Table{
 		libConstants.HeaderID: reqID,
 		"x-retry-count":       0,
+	}
+
+	if header != nil {
+		for k, v := range *header {
+			headers[k] = v
+		}
+
+		err := libOpentelemetry.SetSpanAttributesFromStruct(&spanProducer, "app.request.rabbitmq.headers", *header)
+		if err != nil {
+			libOpentelemetry.HandleSpanError(&spanProducer, "Failed to convert headers to JSON string", err)
+		}
 	}
 
 	libOpentelemetry.InjectTraceHeadersIntoQueue(ctx, (*map[string]any)(&headers))
