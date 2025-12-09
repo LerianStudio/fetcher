@@ -57,6 +57,7 @@ func (s *DeleteConnection) Execute(ctx context.Context, organizationID, connecti
 	if err != nil {
 		return err
 	}
+
 	if active {
 		return pkg.ValidateBusinessError(constant.ErrJobInProgress, "connection", "cannot delete connection with active jobs")
 	}

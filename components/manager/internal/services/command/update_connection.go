@@ -66,6 +66,7 @@ func (s *UpdateConnection) Execute(ctx context.Context, organizationID, connecti
 	if err != nil {
 		return nil, err
 	}
+
 	if active {
 		return nil, pkg.ValidateBusinessError(
 			constant.ErrJobInProgress,
