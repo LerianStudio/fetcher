@@ -1,5 +1,6 @@
 # Project Root Makefile.
 # Coordinates all component Makefiles and provides centralized commands.
+# Fetcher Project Management.
 
 # Define the root directory of the project
 ROOT_DIR := $(shell pwd)
@@ -8,26 +9,6 @@ ROOT_DIR := $(shell pwd)
 SERVICE_NAME := fetcher
 BIN_DIR := ./.bin
 ARTIFACTS_DIR := ./artifacts
-
-# Color definitions for terminal output
-GREEN := \033[32m
-RED := \033[31m
-YELLOW := \033[33m
-CYAN := \033[36m
-BLUE := \033[34m
-BOLD := \033[1m
-NC := \033[0m
-
-# Docker command detection (supports both docker compose and docker-compose)
-DOCKER_VERSION := $(shell docker version --format '{{.Server.Version}}' 2>/dev/null || echo "0")
-DOCKER_MIN_VERSION := 20.10.13
-DOCKER_CMD := $(shell \
-	if [ "$(shell printf '%s\n' "$(DOCKER_MIN_VERSION)" "$(DOCKER_VERSION)" | sort -V | head -n1)" = "$(DOCKER_MIN_VERSION)" ]; then \
-		echo "docker compose"; \
-	else \
-		echo "docker-compose"; \
-	fi \
-)
 
 # Component directories
 INFRA_DIR := ./components/infra
@@ -43,20 +24,17 @@ COMPONENTS := $(INFRA_DIR) $(WORKER_DIR) $(MANAGER_DIR)
 define print_title
 	@echo ""
 	@echo "------------------------------------------"
-	@echo "   📝 $(1)  "
+	@echo "   $(1)  "
 	@echo "------------------------------------------"
-endef
-
-define title1
-	@echo ""
-	@echo "$(CYAN)------------------------------------------$(NC)"
-	@echo "$(CYAN)   📝 $(1)$(NC)"
-	@echo "$(CYAN)------------------------------------------$(NC)"
 endef
 
 # Check if a command is available
 define check_command
-	@which $(1) > /dev/null || (echo "Error: $(1) is required but not installed. $(2)" && exit 1)
+	@if ! command -v $(1) >/dev/null 2>&1; then \
+		echo "Error: $(1) is not installed"; \
+		echo "To install: $(2)"; \
+		exit 1; \
+	fi
 endef
 
 # Check if environment files exist
@@ -74,14 +52,19 @@ define check_env_files
 	fi
 endef
 
+# Choose docker compose command depending on installed version
+DOCKER_CMD := $(shell if docker compose version >/dev/null 2>&1; then echo "docker compose"; else echo "docker-compose"; fi)
+export DOCKER_CMD
+
 #-------------------------------------------------------
-# Core Commands
+# Help Command
 #-------------------------------------------------------
 
+.PHONY: help
 help:
 	@echo ""
 	@echo ""
-	@echo "fetcher Commands"
+	@echo "Fetcher Project Management Commands"
 	@echo ""
 	@echo ""
 	@echo "Core Commands:"
@@ -108,9 +91,11 @@ help:
 	@echo ""
 	@echo "Setup Commands:"
 	@echo "  make set-env                     - Copy .env.example to .env for all components"
+	@echo "  make dev-setup                   - Set up development environment"
 	@echo ""
 	@echo ""
 	@echo "Service Commands:"
+	@echo "  make run                          - Run application locally with .env config"
 	@echo "  make up                           - Start all services with Docker Compose"
 	@echo "  make down                         - Stop all services with Docker Compose"
 	@echo "  make start                        - Start all containers"
@@ -119,10 +104,14 @@ help:
 	@echo "  make rebuild-up                   - Rebuild and restart all services"
 	@echo "  make clean-docker                 - Clean all Docker resources (containers, networks, volumes)"
 	@echo "  make logs                         - Show logs for all services"
+	@echo "  make logs-api                     - Show logs for fetcher service"
+	@echo "  make ps                           - List container status"
 	@echo ""
 	@echo ""
 	@echo "Documentation Commands:"
-	@echo "  make generate-docs               - Generate Swagger documentation for all services"
+	@echo "  make generate-docs               - Generate Swagger documentation"
+	@echo "  make generate-docs-all           - Generate Swagger documentation for all services"
+	@echo "  make validate-api-docs           - Validate API documentation"
 	@echo ""
 	@echo ""
 
@@ -132,36 +121,35 @@ help:
 
 .PHONY: setup-git-hooks
 setup-git-hooks:
-	$(call title1,"Installing and configuring git hooks")
+	$(call print_title,Installing and configuring git hooks)
 	@sh ./scripts/setup-git-hooks.sh
-	@echo "$(GREEN)$(BOLD)[ok]$(NC) Git hooks installed successfully$(GREEN) ✔️$(NC)"
-
+	@echo "[ok] Git hooks installed successfully"
 
 .PHONY: check-hooks
 check-hooks:
-	$(call title1,"Verifying git hooks installation status")
+	$(call print_title,Verifying git hooks installation status)
 	@err=0; \
 	for hook_dir in .githooks/*; do \
 		hook_name=$$(basename $$hook_dir); \
 		if [ ! -f ".git/hooks/$$hook_name" ]; then \
-			echo "$(RED)Git hook $$hook_name is not installed$(NC)"; \
+			echo "Git hook $$hook_name is not installed"; \
 			err=1; \
 		else \
-			echo "$(GREEN)Git hook $$hook_name is installed$(NC)"; \
+			echo "Git hook $$hook_name is installed"; \
 		fi; \
 	done; \
 	if [ $$err -eq 0 ]; then \
-		echo "$(GREEN)$(BOLD)[ok]$(NC) All git hooks are properly installed$(GREEN) ✔️$(NC)"; \
+		echo "[ok] All git hooks are properly installed"; \
 	else \
-		echo "$(RED)$(BOLD)[error]$(NC) Some git hooks are missing. Run 'make setup-git-hooks' to fix.$(RED) ❌$(NC)"; \
+		echo "[error] Some git hooks are missing. Run 'make setup-git-hooks' to fix."; \
 		exit 1; \
 	fi
 
 .PHONY: check-envs
 check-envs:
-	$(call title1,"Checking if github hooks are installed and secret env files are not exposed")
+	$(call print_title,Checking if github hooks are installed and secret env files are not exposed)
 	@sh ./scripts/check-envs.sh
-	@echo "$(GREEN)$(BOLD)[ok]$(NC) Environment check completed$(GREEN) ✔️$(NC)"
+	@echo "[ok] Environment check completed"
 
 #-------------------------------------------------------
 # Setup Commands
@@ -169,7 +157,7 @@ check-envs:
 
 .PHONY: set-env
 set-env:
-	$(call print_title,"Setting up environment files")
+	$(call print_title,Setting up environment files)
 	@for dir in $(COMPONENTS); do \
 		if [ -f "$$dir/.env.example" ] && [ ! -f "$$dir/.env" ]; then \
 			echo "Creating .env in $$dir from .env.example"; \
@@ -188,8 +176,8 @@ set-env:
 
 .PHONY: build
 build:
-	$(call title1,"Building component")
-	@echo "$(GREEN)$(BOLD)[ok]$(NC) Build completed successfully$(GREEN) ✔️$(NC)"
+	$(call print_title,Building component)
+	@echo "[ok] Build completed successfully"
 
 #-------------------------------------------------------
 # Test Commands
@@ -197,23 +185,25 @@ build:
 
 .PHONY: test
 test:
-	$(call title1,"Running tests")
+	$(call print_title,Running tests)
 	@go test -v ./...
-	@echo "$(GREEN)$(BOLD)[ok]$(NC) Tests completed successfully$(GREEN) ✔️$(NC)"
+	@echo "[ok] Tests completed successfully"
 
-.PHONY: cover-html
-cover-html:
-	$(call title1,"Generating HTML test coverage report")
-	@PACKAGES=$$(go list ./... | grep -v -f ./scripts/coverage_ignore.txt); \
+.PHONY: cover
+cover:
+	$(call print_title,Generating test coverage report)
+	$(call check_command,go,Install Go from https://golang.org/doc/install)
+	@PACKAGES=$$(go list ./... | grep -v -f ./scripts/coverage_ignore.txt 2>/dev/null || go list ./...); \
 	go test -coverprofile=$(ARTIFACTS_DIR)/coverage.out $$PACKAGES
 	@go tool cover -html=$(ARTIFACTS_DIR)/coverage.out -o $(ARTIFACTS_DIR)/coverage.html
-	@echo "$(GREEN)Coverage report generated at $(ARTIFACTS_DIR)/coverage.html$(NC)"
+	@echo "Coverage report generated at $(ARTIFACTS_DIR)/coverage.html"
 	@echo ""
-	@echo "$(CYAN)Coverage Summary:$(NC)"
-	@echo "$(CYAN)----------------------------------------$(NC)"
+	@echo "Coverage Summary:"
+	@echo "----------------------------------------"
 	@go tool cover -func=$(ARTIFACTS_DIR)/coverage.out | grep total | awk '{print "Total coverage: " $$3}'
-	@echo "$(CYAN)----------------------------------------$(NC)"
-	@echo "$(YELLOW)Open $(ARTIFACTS_DIR)/coverage.html in your browser to view detailed coverage report$(NC)"
+	@echo "----------------------------------------"
+	@echo "Open $(ARTIFACTS_DIR)/coverage.html in your browser to view detailed coverage report"
+	@echo "[ok] Coverage report generated successfully"
 
 #-------------------------------------------------------
 # Test Coverage Commands
@@ -221,19 +211,19 @@ cover-html:
 
 .PHONY: check-tests
 check-tests:
-	$(call title1,"Verifying test coverage")
+	$(call print_title,Verifying test coverage)
 	@if find . -name "*.go" -type f | grep -q .; then \
-		echo "$(CYAN)Running test coverage check...$(NC)"; \
+		echo "Running test coverage check..."; \
 		go test -coverprofile=coverage.tmp ./... > /dev/null 2>&1; \
 		if [ -f coverage.tmp ]; then \
 			coverage=$$(go tool cover -func=coverage.tmp | grep total | awk '{print $$3}'); \
-			echo "$(CYAN)Test coverage: $(GREEN)$$coverage$(NC)"; \
+			echo "Test coverage: $$coverage"; \
 			rm coverage.tmp; \
 		else \
-			echo "$(YELLOW)No coverage data generated$(NC)"; \
+			echo "No coverage data generated"; \
 		fi; \
 	else \
-		echo "$(YELLOW)No Go files found, skipping test coverage check$(NC)"; \
+		echo "No Go files found, skipping test coverage check"; \
 	fi
 
 #-------------------------------------------------------
@@ -242,30 +232,30 @@ check-tests:
 
 .PHONY: lint
 lint:
-	$(call title1,"Running linters")
+	$(call print_title,Running linters)
 	@if find . -name "*.go" -type f | grep -q .; then \
 		if ! command -v golangci-lint >/dev/null 2>&1; then \
-			echo "$(YELLOW)Installing golangci-lint...$(NC)"; \
+			echo "Installing golangci-lint..."; \
 			go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest; \
 		fi; \
 		golangci-lint run --fix ./... --verbose; \
-		echo "$(GREEN)$(BOLD)[ok]$(NC) Linting completed successfully$(GREEN) ✔️$(NC)"; \
+		echo "[ok] Linting completed successfully"; \
 	else \
-		echo "$(YELLOW)No Go files found, skipping linting$(NC)"; \
+		echo "No Go files found, skipping linting"; \
 	fi
 
 .PHONY: format
 format:
-	$(call title1,"Formatting code")
+	$(call print_title,Formatting code)
 	@go fmt ./...
-	@echo "$(GREEN)$(BOLD)[ok]$(NC) Formatting completed successfully$(GREEN) ✔️$(NC)"
+	@echo "[ok] Formatting completed successfully"
 
 .PHONY: tidy
 tidy:
-	$(call title1,"Update and Cleaning dependencies")
-	@go get -u ./...
+	$(call print_title,Cleaning dependencies in root directory)
+	@echo "Tidying root go.mod..."
 	@go mod tidy
-	@echo "$(GREEN)$(BOLD)[ok]$(NC) Dependencies updated and cleaned successfully$(GREEN) ✔️$(NC)"
+	@echo "[ok] Dependencies cleaned successfully"
 
 #-------------------------------------------------------
 # Security Commands
@@ -273,17 +263,17 @@ tidy:
 
 .PHONY: sec
 sec:
-	$(call title1,"Running security checks using gosec")
+	$(call print_title,Running security checks using gosec)
 	@if ! command -v gosec >/dev/null 2>&1; then \
-		echo "$(YELLOW)Installing gosec...$(NC)"; \
+		echo "Installing gosec..."; \
 		go install github.com/securego/gosec/v2/cmd/gosec@latest; \
 	fi
 	@if find . -name "*.go" -type f | grep -q .; then \
-		echo "$(CYAN)Running security checks...$(NC)"; \
+		echo "Running security checks..."; \
 		gosec -quiet ./...; \
-		echo "$(GREEN)$(BOLD)[ok]$(NC) Security checks completed$(GREEN) ✔️$(NC)"; \
+		echo "[ok] Security checks completed"; \
 	else \
-		echo "$(YELLOW)No Go files found, skipping security checks$(NC)"; \
+		echo "No Go files found, skipping security checks"; \
 	fi
 
 #-------------------------------------------------------
@@ -292,24 +282,24 @@ sec:
 
 .PHONY: clean
 clean:
-	$(call title1,"Cleaning build artifacts")
+	$(call print_title,Cleaning build artifacts)
 	@if [ -z "$(BIN_DIR)" ] || [ -z "$(ARTIFACTS_DIR)" ]; then \
-		echo "$(RED)$(BOLD)[error]$(NC) BIN_DIR or ARTIFACTS_DIR is not set. Aborting to prevent accidental deletion.$(RED) ❌$(NC)"; \
+		echo "[error] BIN_DIR or ARTIFACTS_DIR is not set. Aborting to prevent accidental deletion."; \
 		exit 1; \
 	fi
 	@if [ "$(BIN_DIR)" = "/" ] || [ "$(ARTIFACTS_DIR)" = "/" ]; then \
-		echo "$(RED)$(BOLD)[error]$(NC) BIN_DIR or ARTIFACTS_DIR cannot be root directory. Aborting.$(RED) ❌$(NC)"; \
+		echo "[error] BIN_DIR or ARTIFACTS_DIR cannot be root directory. Aborting."; \
 		exit 1; \
 	fi
 	@if [ -d "$(BIN_DIR)" ]; then \
-		echo "$(CYAN)Cleaning $(BIN_DIR)...$(NC)"; \
+		echo "Cleaning $(BIN_DIR)..."; \
 		rm -rf $(BIN_DIR)/*; \
 	fi
 	@if [ -d "$(ARTIFACTS_DIR)" ]; then \
-		echo "$(CYAN)Cleaning $(ARTIFACTS_DIR)...$(NC)"; \
+		echo "Cleaning $(ARTIFACTS_DIR)..."; \
 		rm -rf $(ARTIFACTS_DIR)/*; \
 	fi
-	@echo "$(GREEN)$(BOLD)[ok]$(NC) Artifacts cleaned successfully$(GREEN) ✔️$(NC)"
+	@echo "[ok] Artifacts cleaned successfully"
 
 #-------------------------------------------------------
 # Docker Commands
@@ -317,19 +307,20 @@ clean:
 
 .PHONY: run
 run:
-	$(call title1,"Running the application with .env config")
+	$(call print_title,Running the application with .env config)
 	@go run cmd/app/main.go .env
-	@echo "$(GREEN)$(BOLD)[ok]$(NC) Application started successfully$(GREEN) ✔️$(NC)"
+	@echo "[ok] Application started successfully"
 
 .PHONY: build-docker
 build-docker:
-	$(call title1,"Building Docker images")
+	$(call print_title,Building Docker images)
 	@$(DOCKER_CMD) -f docker-compose.yml build $(c)
-	@echo "$(GREEN)$(BOLD)[ok]$(NC) Docker images built successfully$(GREEN) ✔️$(NC)"
+	@echo "[ok] Docker images built successfully"
 
 .PHONY: up
 up:
-	$(call print_title,"Starting services")
+	$(call print_title,Starting all services with Docker Compose)
+	$(call check_command,docker,Install Docker from https://docs.docker.com/get-docker/)
 	$(call check_env_files)
 	@echo "Starting infrastructure services first..."
 	@cd $(INFRA_DIR) && $(MAKE) up
@@ -340,18 +331,12 @@ up:
 			(cd $$dir && $(MAKE) up) || exit 1; \
 		fi \
 	done
-	@echo "[ok] Services started successfully ✔️"
-
-.PHONY: start
-start:
-	$(call title1,"Starting existing containers")
-	@$(DOCKER_CMD) -f docker-compose.yml start $(c)
-	@echo "$(GREEN)$(BOLD)[ok]$(NC) Containers started successfully$(GREEN) ✔️$(NC)"
+	@echo "[ok] All services started successfully"
 
 .PHONY: down
 down:
-	$(call print_title,"Stopping services")
-	@echo "Stopping components..."
+	$(call print_title,Stopping all services with Docker Compose)
+	@echo "Stopping backend components..."
 	@for dir in $(BACKEND_COMPONENTS); do \
 		if [ -f "$$dir/docker-compose.yml" ]; then \
 			echo "Stopping services in $$dir..."; \
@@ -360,10 +345,22 @@ down:
 	done
 	@echo "Stopping infrastructure services..."
 	@cd $(INFRA_DIR) && $(MAKE) down
-	@echo "[ok] Services stopped successfully ✔️"
+	@echo "[ok] All services stopped successfully"
+
+.PHONY: start
+start:
+	$(call print_title,Starting all containers)
+	@for dir in $(COMPONENTS); do \
+		if [ -f "$$dir/docker-compose.yml" ]; then \
+			echo "Starting containers in $$dir..."; \
+			(cd $$dir && $(MAKE) start) || exit 1; \
+		fi; \
+	done
+	@echo "[ok] All containers started successfully"
 
 .PHONY: stop
 stop:
+	$(call print_title,Stopping all containers)
 	@for dir in $(COMPONENTS); do \
 		if [ -f "$$dir/docker-compose.yml" ]; then \
 			echo "Stopping containers in $$dir..."; \
@@ -374,13 +371,13 @@ stop:
 
 .PHONY: restart
 restart:
-	$(call print_title,"Restarting services")
+	$(call print_title,Restarting all containers)
 	@make down && make up
-	@echo "[ok] Backend services successfully ✔️"
+	@echo "[ok] All containers restarted successfully"
 
 .PHONY: rebuild-up
 rebuild-up:
-	$(call title1,"Rebuilding and restarting services")
+	$(call print_title,Rebuilding and restarting all services)
 	@echo "Rebuilding infrastructure services..."
 	@cd $(INFRA_DIR) && ($(DOCKER_CMD) -f docker-compose.yml build --no-cache && $(DOCKER_CMD) -f docker-compose.yml up -d --force-recreate)
 	@echo "Rebuilding backend components..."
@@ -390,11 +387,26 @@ rebuild-up:
 			(cd $$dir && $(DOCKER_CMD) -f docker-compose.yml build --no-cache && $(DOCKER_CMD) -f docker-compose.yml up -d --force-recreate) || exit 1; \
 		fi; \
 	done
-	@echo "$(GREEN)$(BOLD)[ok]$(NC) Services rebuilt and restarted successfully$(GREEN) ✔️$(NC)"
+	@echo "[ok] All services rebuilt and restarted successfully"
+
+.PHONY: clean-docker
+clean-docker:
+	$(call print_title,Cleaning all Docker resources)
+	@for dir in $(COMPONENTS); do \
+		if [ -f "$$dir/docker-compose.yml" ]; then \
+			echo "Cleaning Docker resources in $$dir..."; \
+			(cd $$dir && $(MAKE) clean-docker) || exit 1; \
+		fi; \
+	done
+	@echo "Pruning system-wide Docker resources..."
+	@docker system prune -f
+	@echo "Pruning system-wide Docker volumes..."
+	@docker volume prune -f
+	@echo "[ok] All Docker resources cleaned successfully"
 
 .PHONY: logs
 logs:
-	$(call print_title,"Showing logs for all services")
+	$(call print_title,Showing logs for all services)
 	@for dir in $(COMPONENTS); do \
 		component_name=$$(basename $$dir); \
 		if [ -f "$$dir/docker-compose.yml" ]; then \
@@ -406,66 +418,23 @@ logs:
 
 .PHONY: logs-api
 logs-api:
-	$(call title1,"Showing logs for fetcher service")
+	$(call print_title,Showing logs for fetcher service)
 	@$(DOCKER_CMD) -f docker-compose.yml logs --tail=100 -f fetcher
 
 .PHONY: ps
 ps:
-	$(call title1,"Listing container status")
+	$(call print_title,Listing container status)
 	@$(DOCKER_CMD) -f docker-compose.yml ps
 
 #-------------------------------------------------------
-# Docs Commands
+# Documentation Commands
 #-------------------------------------------------------
-
-.PHONY: generate-docs-all
-generate-docs-all:
-	$(call title1,"Generating Swagger documentation for all services")
-	$(call check_command,swag,"go install github.com/swaggo/swag/cmd/swag@latest")
-	@echo "$(CYAN)Verifying API documentation coverage...$(NC)"
-	@sh ./scripts/verify-api-docs.sh 2>/dev/null || echo "$(YELLOW)Warning: Some API endpoints may not be properly documented. Continuing with documentation generation...$(NC)"
-	@echo "$(CYAN)Generating documentation for plugin component...$(NC)"
-	$(MAKE) generate-docs 2>&1 | grep -v "warning: "
-	@echo "$(GREEN)$(BOLD)[ok]$(NC) Swagger documentation generated successfully$(GREEN) ✔️$(NC)"
-
-
-.PHONY: verify-api-docs
-verify-api-docs:
-	$(call title1,"Verifying API documentation coverage")
-	@if [ -f "./scripts/package.json" ]; then \
-		echo "$(CYAN)Installing npm dependencies...$(NC)"; \
-		cd ./scripts && npm install; \
-	fi
-	@sh ./scripts/verify-api-docs.sh
-	@echo "$(GREEN)$(BOLD)[ok]$(NC) API documentation verification completed$(GREEN) ✔️$(NC)"
-
-.PHONY: validate-api-docs-legacy
-validate-api-docs-legacy:
-	$(call title1,"Validating API documentation structure and implementation")
-	@if [ -f "./scripts/package.json" ]; then \
-		echo "$(CYAN)Using npm to run validation...$(NC)"; \
-		cd ./scripts && npm run validate-all; \
-	else \
-		echo "$(YELLOW)No package.json found in scripts directory. Running traditional validation...$(NC)"; \
-		$(MAKE) verify-api-docs; \
-	fi
-	@echo "$(GREEN)$(BOLD)[ok]$(NC) API documentation validation completed$(GREEN) ✔️$(NC)"
-
-.PHONY: validate-plugin
-validate-plugin:
-	$(call title1,"Validating pluginAPI documentation")
-	@if [ -f "./scripts/package.json" ]; then \
-		echo "$(CYAN)Installing npm dependencies...$(NC)"; \
-		cd ./scripts && npm install; \
-	fi
-	make validate-api-docs
-	@echo "$(GREEN)$(BOLD)[ok]$(NC) plugin API validation completed$(GREEN) ✔️$(NC)"
 
 .PHONY: generate-docs
 generate-docs:
-	$(call title1,"Generating Swagger API documentation")
+	$(call print_title,Generating Swagger API documentation)
 	@if ! command -v swag >/dev/null 2>&1; then \
-		echo "$(YELLOW)Installing swag...$(NC)"; \
+		echo "Installing swag..."; \
 		go install github.com/swaggo/swag/cmd/swag@latest; \
 	fi
 	@swag init -g ./components/manager/cmd/app/main.go -d ./ -o ./components/manager/api --parseDependency --parseInternal
@@ -473,22 +442,42 @@ generate-docs:
 	@mv ./components/manager/api/openapi/openapi.yaml ./components/manager/api/openapi.yaml
 	@rm -rf ./components/manager/api/README.md ./components/manager/api/.openapi-generator* ./components/manager/api/openapi
 	@if [ -f "$(ROOT_DIR)/scripts/package.json" ]; then \
-		echo "$(YELLOW)Installing npm dependencies for validation...$(NC)"; \
+		echo "Installing npm dependencies for validation..."; \
 		cd $(ROOT_DIR)/scripts && npm install > /dev/null; \
 	fi
-	@echo "$(GREEN)$(BOLD)[ok]$(NC) Swagger API documentation generated successfully$(GREEN) ✔️$(NC)"
+	@echo "[ok] Swagger API documentation generated successfully"
+
+.PHONY: generate-docs-all
+generate-docs-all:
+	$(call print_title,Generating Swagger documentation for all services)
+	$(call check_command,swag,go install github.com/swaggo/swag/cmd/swag@latest)
+	@echo "Verifying API documentation coverage..."
+	@sh ./scripts/verify-api-docs.sh 2>/dev/null || echo "Warning: Some API endpoints may not be properly documented. Continuing with documentation generation..."
+	@echo "Generating documentation for plugin component..."
+	$(MAKE) generate-docs 2>&1 | grep -v "warning: "
+	@echo "[ok] Swagger documentation generated successfully"
+
+.PHONY: verify-api-docs
+verify-api-docs:
+	$(call print_title,Verifying API documentation coverage)
+	@if [ -f "./scripts/package.json" ]; then \
+		echo "Installing npm dependencies..."; \
+		cd ./scripts && npm install; \
+	fi
+	@sh ./scripts/verify-api-docs.sh
+	@echo "[ok] API documentation verification completed"
 
 .PHONY: validate-api-docs
 validate-api-docs: generate-docs
-	$(call title1,"Validating API documentation")
+	$(call print_title,Validating API documentation)
 	@if [ -f "scripts/validate-api-docs.js" ] && [ -f "$(ROOT_DIR)/scripts/package.json" ]; then \
-		echo "$(YELLOW)Validating API documentation structure...$(NC)"; \
+		echo "Validating API documentation structure..."; \
 		cd $(ROOT_DIR)/scripts && node $(ROOT_DIR)/scripts/validate-api-docs.js; \
-		echo "$(YELLOW)Validating API implementations...$(NC)"; \
+		echo "Validating API implementations..."; \
 		cd $(ROOT_DIR)/scripts && node $(ROOT_DIR)/scripts/validate-api-implementations.js; \
-		echo "$(GREEN)$(BOLD)[ok]$(NC) API documentation validation completed$(GREEN) ✔️$(NC)"; \
+		echo "[ok] API documentation validation completed"; \
 	else \
-		echo "$(YELLOW)Validation scripts not found. Skipping validation.$(NC)"; \
+		echo "Validation scripts not found. Skipping validation."; \
 	fi
 
 #-------------------------------------------------------
@@ -497,34 +486,34 @@ validate-api-docs: generate-docs
 
 .PHONY: dev-setup
 dev-setup:
-	$(call title1,"Setting up development environment")
-	@echo "$(CYAN)Installing development tools...$(NC)"
+	$(call print_title,Setting up development environment)
+	@echo "Installing development tools..."
 	@if ! command -v golangci-lint >/dev/null 2>&1; then \
-		echo "$(YELLOW)Installing golangci-lint...$(NC)"; \
+		echo "Installing golangci-lint..."; \
 		go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest; \
 	fi
 	@if ! command -v swag >/dev/null 2>&1; then \
-		echo "$(YELLOW)Installing swag...$(NC)"; \
+		echo "Installing swag..."; \
 		go install github.com/swaggo/swag/cmd/swag@latest; \
 	fi
 	@if ! command -v mockgen >/dev/null 2>&1; then \
-		echo "$(YELLOW)Installing mockgen...$(NC)"; \
+		echo "Installing mockgen..."; \
 		go install github.com/golang/mock/mockgen@latest; \
 	fi
 	@if ! command -v gosec >/dev/null 2>&1; then \
-		echo "$(YELLOW)Installing gosec...$(NC)"; \
+		echo "Installing gosec..."; \
 		go install github.com/securego/gosec/v2/cmd/gosec@latest; \
 	fi
-	@echo "$(CYAN)Setting up environment...$(NC)"
+	@echo "Setting up environment..."
 	@if [ -f .env.example ] && [ ! -f .env ]; then \
 		cp .env.example .env; \
-		echo "$(GREEN)Created .env file from template$(NC)"; \
+		echo "Created .env file from template"; \
 	fi
 	@make tidy
 	@make check-tests
 	@make sec
-	@echo "$(GREEN)$(BOLD)[ok]$(NC) Development environment set up successfully$(GREEN) ✔️$(NC)"
-	@echo "$(CYAN)You're ready to start developing! Here are some useful commands:$(NC)"
+	@echo "[ok] Development environment set up successfully"
+	@echo "You're ready to start developing! Here are some useful commands:"
 	@echo "  make build         - Build the component"
 	@echo "  make test          - Run tests"
 	@echo "  make up            - Start services"

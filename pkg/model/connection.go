@@ -357,10 +357,20 @@ type ConnectionInput struct {
 }
 
 type SSLInput struct {
-	Mode string  `json:"mode" validate:"required" example:"require"`
+	Mode string  `json:"mode" validate:"omitempty" example:"require"`
 	CA   string  `json:"ca" validate:"omitempty" example:"-----BEGIN CERTIFICATE-----\n..."`
 	Cert *string `json:"cert"`
 	Key  *string `json:"key"`
+}
+
+// IsEmpty returns true if all SSL fields are empty/nil.
+// This is used to treat "ssl": {} as if SSL was not provided at all.
+func (s *SSLInput) IsEmpty() bool {
+	if s == nil {
+		return true
+	}
+
+	return s.Mode == "" && s.CA == "" && s.Cert == nil && s.Key == nil
 }
 
 type ConnectionResponse struct {
