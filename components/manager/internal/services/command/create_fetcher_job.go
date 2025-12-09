@@ -51,14 +51,14 @@ type CreateFetcherJob struct {
 
 // NewCreateFetcherJob creates a new CreateFetcherJob service.
 func NewCreateFetcherJob(
-	connRepo connRepo.Repository,
-	jobRepo jobRepo.Repository,
+	connectionRepo connRepo.Repository,
+	jobRepository jobRepo.Repository,
 	cryptor crypto.Cryptor,
 	rabbitMQ *rabbitmq.RabbitMQAdapter,
 ) *CreateFetcherJob {
 	return &CreateFetcherJob{
-		connRepo: connRepo,
-		jobRepo:  jobRepo,
+		connRepo: connectionRepo,
+		jobRepo:  jobRepository,
 		cryptor:  cryptor,
 		rabbitMQ: rabbitMQ,
 	}

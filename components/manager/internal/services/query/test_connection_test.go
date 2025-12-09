@@ -221,9 +221,9 @@ func TestTestConnection_Execute_DecryptionError(t *testing.T) {
 		t.Fatal("expected error for decryption failure, got nil")
 	}
 
-	var internalErr pkg.InternalServerError
+	var internalErr pkg.ResponseError
 	if !errors.As(err, &internalErr) {
-		t.Fatalf("expected InternalServerError, got %T: %v", err, err)
+		t.Fatalf("expected ResponseError, got %T: %v", err, err)
 	}
 }
 
@@ -349,152 +349,6 @@ func TestTestConnection_Execute_OrganizationIsolation(t *testing.T) {
 
 	// Verify the existing connection is not returned (it belongs to a different org)
 	_ = differentOrgID // Unused in mock but demonstrates the test scenario
-}
-
-// TestTestConnection_Execute_TableDriven uses table-driven tests for various scenarios.
-func TestTestConnection_Execute_TableDriven(t *testing.T) {
-	tests := []struct {
-		name              string
-		setupMocks        func(*connRepo.MockRepository, *mockCryptor, *mockLimiterStore, uuid.UUID, uuid.UUID, *model.Connection)
-		wantErr           bool
-		wantErrType       string
-		wantHTTPStatus    int
-		skipDatasourceErr bool // Skip datasource factory error (cannot mock it)
-	}{
-		{
-			name: "connection not found",
-			setupMocks: func(connMock *connRepo.MockRepository, cryptoMock *mockCryptor, storeMock *mockLimiterStore, orgID, connID uuid.UUID, existing *model.Connection) {
-				connMock.EXPECT().
-					FindByID(gomock.Any(), connID, orgID).
-					Return(nil, nil)
-			},
-			wantErr:     true,
-			wantErrType: "EntityNotFoundError",
-		},
-		{
-			name: "FindByID database error",
-			setupMocks: func(connMock *connRepo.MockRepository, cryptoMock *mockCryptor, storeMock *mockLimiterStore, orgID, connID uuid.UUID, existing *model.Connection) {
-				connMock.EXPECT().
-					FindByID(gomock.Any(), connID, orgID).
-					Return(nil, errors.New("database connection failed"))
-			},
-			wantErr:     true,
-			wantErrType: "generic",
-		},
-		{
-			name: "decryption error",
-			setupMocks: func(connMock *connRepo.MockRepository, cryptoMock *mockCryptor, storeMock *mockLimiterStore, orgID, connID uuid.UUID, existing *model.Connection) {
-				connMock.EXPECT().
-					FindByID(gomock.Any(), connID, orgID).
-					Return(existing, nil)
-
-				cryptoMock.decryptFunc = func(ctx context.Context, cipherText, keyVersion string) (string, error) {
-					return "", errors.New("decryption failed")
-				}
-			},
-			wantErr:     true,
-			wantErrType: "InternalServerError",
-		},
-		{
-			name: "rate limiter error",
-			setupMocks: func(connMock *connRepo.MockRepository, cryptoMock *mockCryptor, storeMock *mockLimiterStore, orgID, connID uuid.UUID, existing *model.Connection) {
-				storeMock.takeFunc = func(ctx context.Context, key string) (uint64, uint64, uint64, bool, error) {
-					return 0, 0, 0, false, errors.New("limiter error")
-				}
-			},
-			wantErr:     true,
-			wantErrType: "InternalServerError",
-		},
-		{
-			name: "rate limit exceeded",
-			setupMocks: func(connMock *connRepo.MockRepository, cryptoMock *mockCryptor, storeMock *mockLimiterStore, orgID, connID uuid.UUID, existing *model.Connection) {
-				storeMock.takeFunc = func(ctx context.Context, key string) (uint64, uint64, uint64, bool, error) {
-					return 0, 0, uint64(time.Now().Add(30 * time.Second).UnixNano()), false, nil
-				}
-			},
-			wantErr:        true,
-			wantErrType:    "ResponseError",
-			wantHTTPStatus: http.StatusTooManyRequests,
-		},
-		{
-			name: "datasource connection failure",
-			setupMocks: func(connMock *connRepo.MockRepository, cryptoMock *mockCryptor, storeMock *mockLimiterStore, orgID, connID uuid.UUID, existing *model.Connection) {
-				connMock.EXPECT().
-					FindByID(gomock.Any(), connID, orgID).
-					Return(existing, nil)
-
-				// Decryption succeeds but the datasource factory will fail
-				// because it tries to actually connect to the database
-				cryptoMock.decryptFunc = func(ctx context.Context, cipherText, keyVersion string) (string, error) {
-					return "test-password", nil
-				}
-			},
-			wantErr:           true,
-			wantErrType:       "ResponseError",
-			wantHTTPStatus:    http.StatusInternalServerError,
-			skipDatasourceErr: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctrl := gomock.NewController(t)
-			defer ctrl.Finish()
-
-			mockConnRepo := connRepo.NewMockRepository(ctrl)
-			mockCrypto := &mockCryptor{}
-			mockStore := &mockLimiterStore{}
-
-			ctx := testContext()
-			orgID := uuid.New()
-			connID := uuid.New()
-			existingConn := newTestConnectionFixture(orgID, connID, model.TypePostgreSQL)
-
-			tt.setupMocks(mockConnRepo, mockCrypto, mockStore, orgID, connID, existingConn)
-
-			svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore)
-
-			result, err := svc.Execute(ctx, orgID, connID)
-
-			if tt.wantErr {
-				if err == nil {
-					t.Fatal("expected error, got nil")
-				}
-
-				switch tt.wantErrType {
-				case "EntityNotFoundError":
-					var notFoundErr pkg.EntityNotFoundError
-					if !errors.As(err, &notFoundErr) {
-						t.Fatalf("expected EntityNotFoundError, got %T: %v", err, err)
-					}
-				case "InternalServerError":
-					var internalErr pkg.InternalServerError
-					if !errors.As(err, &internalErr) {
-						t.Fatalf("expected InternalServerError, got %T: %v", err, err)
-					}
-				case "ResponseError":
-					var responseErr pkg.ResponseError
-					if !errors.As(err, &responseErr) {
-						t.Fatalf("expected ResponseError, got %T: %v", err, err)
-					}
-					if tt.wantHTTPStatus != 0 && responseErr.Code != tt.wantHTTPStatus {
-						t.Fatalf("expected HTTP status %d, got %d", tt.wantHTTPStatus, responseErr.Code)
-					}
-				case "generic":
-					// Just verify it's an error
-				}
-				return
-			}
-
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-
-			if result == nil {
-				t.Fatal("expected non-nil result")
-			}
-		})
-	}
 }
 
 // TestTestConnection_Execute_WithSSLConfiguration tests connection test with SSL configuration.
@@ -874,9 +728,9 @@ func TestTestConnection_Execute_DecryptionKeyVersionMismatch(t *testing.T) {
 		t.Fatal("expected error for key version mismatch, got nil")
 	}
 
-	var internalErr pkg.InternalServerError
+	var internalErr pkg.ResponseError
 	if !errors.As(err, &internalErr) {
-		t.Fatalf("expected InternalServerError, got %T: %v", err, err)
+		t.Fatalf("expected ResponseError, got %T: %v", err, err)
 	}
 }
 

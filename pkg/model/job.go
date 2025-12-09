@@ -206,25 +206,6 @@ func (r *Job) ToMappedFieldsMap() map[string]any {
 	return result
 }
 
-// ToFiltersMap converts the filters to a generic map[string]any format
-// suitable for storage or serialization.
-// The structure follows: { "datasource.table.field": { "operator": values } }
-func (r *Job) ToFiltersMap() map[string]any {
-	if len(r.Filters) == 0 {
-		return nil
-	}
-
-	result := make(map[string]any, len(r.Filters))
-	for _, filter := range r.Filters {
-		filterCondition := map[string]any{
-			filter.Operator: filter.Value,
-		}
-		result[filter.Field] = filterCondition
-	}
-
-	return result
-}
-
 // SetFailedStatus updates the job status to FAILED, sets the CompletedAt timestamp,
 // and records the failure message in the Metadata.
 func (r *Job) SetFailedStatus(failedMsg string) {

@@ -451,6 +451,9 @@ func (jr *JobMongoDBRepository) ExistsRunningByMappedFieldKey(ctx context.Contex
 		mappedFieldKey: bson.M{
 			"$exists": true,
 		},
+		mappedFieldKey: bson.M{
+			"$exists": true,
+		},
 	}
 
 	if errSpan := setSpanAttributesFromStruct(&span, "app.request.repository_filter", filter); errSpan != nil {
