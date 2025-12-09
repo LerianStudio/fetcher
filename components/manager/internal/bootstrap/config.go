@@ -143,7 +143,7 @@ func InitServers() *Service {
 		Logger:                 logger,
 	}
 
-	_ = rabbitmq.NewRabbitMQAdapter(rabbitMQConnection)
+	rabbitMQAdapter := rabbitmq.NewRabbitMQAdapter(rabbitMQConnection)
 
 	// Init Auth middleware client
 	authClient := middleware.NewAuthClient(cfg.AuthAddress, cfg.AuthEnabled, &logger)
@@ -188,8 +188,13 @@ func InitServers() *Service {
 		testConnectionQuery,
 	)
 
+	// Init Fetcher services and handler
+	createFetcherJobCmd := connectionCommand.NewCreateFetcherJob(connectionRepository, jobRepository, cryptoService, rabbitMQAdapter)
+	getJobQuery := connectionQuery.NewGetJob(jobRepository)
+	fetcherHandler := in2.NewFetcherHandler(createFetcherJobCmd, getJobQuery)
+
 	// Init HTTP server
-	httpApp := in2.NewRoutes(logger, telemetry, authClient, licenseClient, connectionHandler)
+	httpApp := in2.NewRoutes(logger, telemetry, authClient, licenseClient, connectionHandler, fetcherHandler)
 	serverAPI := NewServer(cfg, httpApp, logger, telemetry, licenseClient)
 
 	return &Service{

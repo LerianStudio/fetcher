@@ -87,7 +87,12 @@ func NewConnection(
 
 	dbType, err := NewTypeFromString(typ)
 	if err != nil {
-		return nil, pkg.ValidateInternalError(err, "connection")
+		return nil, pkg.ValidateBadRequestFieldsError(
+			nil,
+			map[string]string{"type": "invalid connection type"},
+			"connection",
+			nil,
+		)
 	}
 
 	connection := Connection{
@@ -235,7 +240,12 @@ func (conn *Connection) ApplyPatch(
 	if typ != nil {
 		connType, errParse := NewTypeFromString(*typ)
 		if errParse != nil {
-			return pkg.ValidateInternalError(errParse, "connection")
+			return pkg.ValidateBadRequestFieldsError(
+				nil,
+				map[string]string{"type": "invalid connection type"},
+				"connection",
+				nil,
+			)
 		}
 
 		conn.Type = connType

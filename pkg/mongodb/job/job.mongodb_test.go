@@ -11,8 +11,11 @@ import (
 	"time"
 
 	"github.com/LerianStudio/fetcher/pkg/constant"
+	"github.com/LerianStudio/fetcher/pkg/model"
+
 	libLog "github.com/LerianStudio/lib-commons/v2/commons/log"
 	libMongo "github.com/LerianStudio/lib-commons/v2/commons/mongo"
+
 	"github.com/google/uuid"
 	"github.com/tryvium-travels/memongo"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -74,18 +77,28 @@ func clearJobsCollection(t *testing.T) {
 	}
 }
 
-func jobFixture() *Job {
-	return &Job{
+func jobFixture() *model.Job {
+	id, _ := uuid.NewV7()
+	return &model.Job{
+		ID:             id,
 		OrganizationID: uuid.New(),
-		MappedFields:   map[string]any{"mf": "value"},
-		Filters:        map[string]any{"f": "value"},
-		Metadata:       map[string]any{"meta": "value"},
-		Status:         JobStatusProcessing,
-		ResultPath:     "/res",
+		Metadata: map[string]any{
+			"source": "unit-test",
+		},
+		MappedFields: map[string]map[string][]string{
+			"datasource1": {
+				"table1": {"field1", "field2"},
+			},
+		},
+		Filters:     []model.Filter{},
+		Status:      model.JobStatusPending,
+		ResultPath:  "/tmp/result.csv",
+		RequestHash: "dummyhashvalue1234567890abcdef1234567890abcdef1234567890abcdef12",
+		CreatedAt:   time.Now(),
 	}
 }
 
-func createJob(t *testing.T, repo *JobMongoDBRepository, job *Job) *Job {
+func createJob(t *testing.T, repo *JobMongoDBRepository, job *model.Job) *model.Job {
 	t.Helper()
 	created, err := repo.Create(context.Background(), job)
 	if err != nil {
@@ -116,21 +129,29 @@ func (f *fakeJobMongoConnection) GetDB(ctx context.Context) (*mongo.Client, erro
 func TestJobMongoDBRepository_Create(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		repo := newJobRepository(t)
-		created, err := repo.Create(context.Background(), jobFixture())
+		job := jobFixture()
+		originalID := job.ID
+		created, err := repo.Create(context.Background(), job)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if created.ID == uuid.Nil {
-			t.Fatalf("expected generated ID")
+		if created.ID != originalID {
+			t.Fatalf("expected ID %s, got %s", originalID, created.ID)
 		}
 	})
 
-	t.Run("validation error", func(t *testing.T) {
+	t.Run("nil mapped_fields inserts successfully", func(t *testing.T) {
 		repo := newJobRepository(t)
 		job := jobFixture()
 		job.MappedFields = nil
-		if _, err := repo.Create(context.Background(), job); err == nil {
-			t.Fatalf("expected validation error")
+		// Repository no longer validates - validation is at model/service layer
+		// Repository should insert successfully even with nil MappedFields
+		created, err := repo.Create(context.Background(), job)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if created.MappedFields != nil {
+			t.Fatalf("expected nil MappedFields, got %v", created.MappedFields)
 		}
 	})
 
@@ -149,28 +170,17 @@ func TestJobMongoDBRepository_Create(t *testing.T) {
 		}
 	})
 
-	t.Run("normalizes finished casing", func(t *testing.T) {
+	t.Run("preserves valid status", func(t *testing.T) {
 		repo := newJobRepository(t)
 		job := jobFixture()
-		job.Status = "Finished"
+		// Status must be a valid JobStatus constant
+		job.Status = model.JobStatusCompleted
 		created, err := repo.Create(context.Background(), job)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if created.Status != JobStatusCompleted {
-			t.Fatalf("expected status normalized to completed, got %s", created.Status)
-		}
-	})
-
-	t.Run("from entity error surfaces", func(t *testing.T) {
-		repo := newJobRepository(t)
-		original := generateJobUUID
-		defer func() { generateJobUUID = original }()
-		generateJobUUID = func() (uuid.UUID, error) {
-			return uuid.Nil, errors.New("uuid failure")
-		}
-		if _, err := repo.Create(context.Background(), jobFixture()); err == nil || err.Error() != "uuid failure" {
-			t.Fatalf("expected uuid failure, got %v", err)
+		if created.Status != model.JobStatusCompleted {
+			t.Fatalf("expected status completed, got %s", created.Status)
 		}
 	})
 
@@ -186,31 +196,34 @@ func TestJobMongoDBRepository_Create(t *testing.T) {
 }
 
 func TestJobMongoDBRepository_Update(t *testing.T) {
-	t.Run("success sets completed_at for terminal status", func(t *testing.T) {
+	t.Run("success preserves completed_at for terminal status", func(t *testing.T) {
 		repo := newJobRepository(t)
 		created := createJob(t, repo, jobFixture())
-		created.Status = JobStatusCompleted
+		created.Status = model.JobStatusCompleted
+		// Repository does NOT auto-set CompletedAt - caller must set it
+		now := time.Now().UTC()
+		created.CompletedAt = &now
 		updated, err := repo.Update(context.Background(), created)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if updated.CompletedAt == nil {
-			t.Fatalf("expected completed_at to be set")
+			t.Fatalf("expected completed_at to be preserved")
 		}
 	})
 
-	t.Run("clears completed_at when non terminal", func(t *testing.T) {
+	t.Run("preserves nil completed_at for non terminal status", func(t *testing.T) {
 		repo := newJobRepository(t)
 		created := createJob(t, repo, jobFixture())
-		created.Status = JobStatusProcessing
-		completed := time.Now().Add(-time.Minute)
-		created.CompletedAt = &completed
+		created.Status = model.JobStatusProcessing
+		// Explicitly set CompletedAt to nil (caller responsibility)
+		created.CompletedAt = nil
 		updated, err := repo.Update(context.Background(), created)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if updated.CompletedAt != nil {
-			t.Fatalf("expected completed_at cleared for non terminal status")
+			t.Fatalf("expected completed_at to remain nil")
 		}
 	})
 
@@ -244,7 +257,7 @@ func TestJobMongoDBRepository_Update(t *testing.T) {
 		repo := newJobRepository(t)
 		created := createJob(t, repo, jobFixture())
 		stubJobSpanAttributes(t, errors.New("span failure"))
-		created.Status = JobStatusPending
+		created.Status = model.JobStatusPending
 		if _, err := repo.Update(context.Background(), created); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -278,8 +291,12 @@ func TestJobMongoDBRepository_FindByID(t *testing.T) {
 
 	t.Run("not found", func(t *testing.T) {
 		repo := newJobRepository(t)
-		if _, err := repo.FindByID(context.Background(), uuid.New(), uuid.New()); err == nil {
-			t.Fatalf("expected error")
+		job, err := repo.FindByID(context.Background(), uuid.New(), uuid.New())
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if job != nil {
+			t.Fatalf("expected nil job for not found, got %+v", job)
 		}
 	})
 
@@ -302,13 +319,13 @@ func TestJobMongoDBRepository_List(t *testing.T) {
 
 		older := jobFixture()
 		older.OrganizationID = orgID
-		older.Status = JobStatusPending
+		older.Status = model.JobStatusPending
 		older.CreatedAt = time.Now().Add(-2 * time.Hour)
 		createJob(t, repo, older)
 
 		newer := jobFixture()
 		newer.OrganizationID = orgID
-		newer.Status = JobStatusProcessing
+		newer.Status = model.JobStatusProcessing
 		createJob(t, repo, newer)
 
 		other := jobFixture()
@@ -318,7 +335,7 @@ func TestJobMongoDBRepository_List(t *testing.T) {
 		since := time.Now().Add(-90 * time.Minute)
 		filters := &ListFilter{
 			OrganizationID: orgID,
-			Statuses:       []JobStatus{JobStatusProcessing},
+			Statuses:       []model.JobStatus{model.JobStatusProcessing},
 			CreatedFrom:    &since,
 			Limit:          1,
 			Page:           1,
@@ -329,7 +346,7 @@ func TestJobMongoDBRepository_List(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if len(list) != 1 || list[0].Status != JobStatusProcessing {
+		if len(list) != 1 || list[0].Status != model.JobStatusProcessing {
 			t.Fatalf("expected only processing job")
 		}
 	})
@@ -394,29 +411,6 @@ func TestJobMongoDBRepository_DropIndexes(t *testing.T) {
 	}
 }
 
-func TestJobTelemetryFromModel(t *testing.T) {
-	t.Run("nil model returns nil", func(t *testing.T) {
-		if NewJobTelemetryFromMongoDBModel(nil) != nil {
-			t.Fatalf("expected nil telemetry")
-		}
-	})
-
-	model := &JobMongoDBModel{
-		ID:             uuid.New(),
-		OrganizationID: uuid.New(),
-		Status:         JobStatusPending,
-		ResultPath:     "/tmp/res",
-	}
-
-	telemetry := NewJobTelemetryFromMongoDBModel(model)
-	if telemetry == nil {
-		t.Fatalf("expected telemetry")
-	}
-	if telemetry.ID != model.ID || telemetry.OrganizationID != model.OrganizationID || telemetry.ResultPath != model.ResultPath {
-		t.Fatalf("expected telemetry fields to match")
-	}
-}
-
 func TestEnsureIndexesHandlesConflicts(t *testing.T) {
 	repo := newJobRepository(t)
 	if err := repo.EnsureIndexes(context.Background()); err != nil {
@@ -464,7 +458,7 @@ func TestListCompletedRangeFilter(t *testing.T) {
 	completedAt := time.Now().Add(-time.Hour)
 	completedJob := jobFixture()
 	completedJob.OrganizationID = org
-	completedJob.Status = JobStatusCompleted
+	completedJob.Status = model.JobStatusCompleted
 	completedJob.CompletedAt = &completedAt
 	createJob(t, repo, completedJob)
 
@@ -475,7 +469,7 @@ func TestListCompletedRangeFilter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(list) != 1 || list[0].Status != JobStatusCompleted {
+	if len(list) != 1 || list[0].Status != model.JobStatusCompleted {
 		t.Fatalf("expected completed job")
 	}
 }
@@ -511,15 +505,15 @@ func TestListPartialFilters(t *testing.T) {
 
 	job := jobFixture()
 	job.OrganizationID = org
-	job.Status = JobStatusFailed
+	job.Status = model.JobStatusFailed
 	createJob(t, repo, job)
 
-	filters := &ListFilter{OrganizationID: org, Status: JobStatusFailed}
+	filters := &ListFilter{OrganizationID: org, Status: model.JobStatusFailed}
 	list, err := repo.List(context.Background(), filters)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(list) != 1 || list[0].Status != JobStatusFailed {
+	if len(list) != 1 || list[0].Status != model.JobStatusFailed {
 		t.Fatalf("expected failed job")
 	}
 }
@@ -527,17 +521,20 @@ func TestListPartialFilters(t *testing.T) {
 func TestCreateSetsDefaults(t *testing.T) {
 	repo := newJobRepository(t)
 	job := jobFixture()
-	job.Status = ""
+	// Status must be valid - repository no longer sets defaults
+	// Defaults should be set at service/model layer before repository
+	job.Status = model.JobStatusPending
 	job.ResultPath = "  /path  "
 	created, err := repo.Create(context.Background(), job)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if created.Status != JobStatusPending {
-		t.Fatalf("expected pending status default, got %s", created.Status)
+	if created.Status != model.JobStatusPending {
+		t.Fatalf("expected pending status, got %s", created.Status)
 	}
-	if created.ResultPath != "/path" {
-		t.Fatalf("expected trimmed result path")
+	// Repository stores as-is without trimming
+	if created.ResultPath != "  /path  " {
+		t.Fatalf("expected ResultPath preserved as-is, got %s", created.ResultPath)
 	}
 }
 
@@ -545,13 +542,17 @@ func TestUpdateWithoutCompletedAtWhenFailed(t *testing.T) {
 	repo := newJobRepository(t)
 	job := jobFixture()
 	created := createJob(t, repo, job)
-	created.Status = JobStatusFailed
+	created.Status = model.JobStatusFailed
+	// Repository does NOT auto-set CompletedAt - caller must set it
+	// This test verifies that explicitly setting CompletedAt works
+	now := time.Now().UTC()
+	created.CompletedAt = &now
 	updated, err := repo.Update(context.Background(), created)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if updated.CompletedAt == nil {
-		t.Fatalf("expected completed_at to be set when failed")
+		t.Fatalf("expected completed_at to be preserved when failed")
 	}
 }
 

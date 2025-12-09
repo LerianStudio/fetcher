@@ -13,7 +13,6 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/model"
 	datasourceMongoConfig "github.com/LerianStudio/fetcher/pkg/model/datasource/mongodb"
 	modelJob "github.com/LerianStudio/fetcher/pkg/model/job"
-	"github.com/LerianStudio/fetcher/pkg/mongodb/job"
 	libCommons "github.com/LerianStudio/lib-commons/v2/commons"
 	libCrypto "github.com/LerianStudio/lib-commons/v2/commons/crypto"
 	"github.com/LerianStudio/lib-commons/v2/commons/log"
@@ -261,7 +260,7 @@ func (uc *UseCase) updateJobWithErrors(ctx context.Context, jobID, orgID uuid.UU
 	metadata := make(map[string]any)
 	metadata["error"] = errorMessage
 
-	errUpdate := uc.JobRepository.UpdateStatus(ctx, jobID, orgID, job.JobStatusFailed, metadata)
+	errUpdate := uc.JobRepository.UpdateStatus(ctx, jobID, orgID, model.JobStatusFailed, metadata)
 	if errUpdate != nil {
 		return errUpdate
 	}
@@ -457,7 +456,7 @@ func (uc *UseCase) encryptDataForSeaweedFS(data []byte, logger log.Logger) ([]by
 func (uc *UseCase) shouldSkipProcessing(ctx context.Context, jobID, organizationID uuid.UUID, logger log.Logger) bool {
 	jobStatus, err := uc.checkReportStatus(ctx, jobID, organizationID, logger)
 	if err == nil {
-		if jobStatus == job.JobStatusCompleted {
+		if jobStatus == model.JobStatusCompleted {
 			logger.Infof("Job %s is already completed, skipping reprocessing", jobID)
 			return true
 		}
@@ -467,11 +466,16 @@ func (uc *UseCase) shouldSkipProcessing(ctx context.Context, jobID, organization
 }
 
 // checkReportStatus checks the current status of a report to implement idempotency.
-func (uc *UseCase) checkReportStatus(ctx context.Context, jobID, organizationID uuid.UUID, logger log.Logger) (job.JobStatus, error) {
+func (uc *UseCase) checkReportStatus(ctx context.Context, jobID, organizationID uuid.UUID, logger log.Logger) (model.JobStatus, error) {
 	jobData, err := uc.JobRepository.FindByID(ctx, jobID, organizationID)
 	if err != nil {
 		logger.Debugf("Could not check job status for %s (may be first attempt): %v", jobID, err)
 		return "", err
+	}
+
+	if jobData == nil {
+		logger.Debugf("No job data found for %s", jobID)
+		return "", fmt.Errorf("no job data found for %s", jobID)
 	}
 
 	logger.Debugf("Report %s current status: %s", jobID, jobData.Status)

@@ -307,18 +307,6 @@ func ValidateBusinessError(err error, entityType string, args ...any) error {
 			Title:      "Invalid Final Date Error",
 			Message:    "The 'finalDate' cannot be earlier than the 'initialDate'. Please verify the dates and try again.",
 		},
-		constant.ErrDateRangeExceedsLimit: ValidationError{
-			EntityType: entityType,
-			Code:       constant.ErrDateRangeExceedsLimit.Error(),
-			Title:      "Date Range Exceeds Limit Error",
-			Message:    fmt.Sprintf("The range between 'initialDate' and 'finalDate' exceeds the permitted limit of %v months. Please adjust the dates and try again.", args...),
-		},
-		constant.ErrInvalidDateRange: ValidationError{
-			EntityType: entityType,
-			Code:       constant.ErrInvalidDateRange.Error(),
-			Title:      "Invalid Date Range Error",
-			Message:    "Both 'initialDate' and 'finalDate' fields are required and must be in the 'yyyy-mm-dd' format. Please provide valid dates and try again.",
-		},
 		constant.ErrPaginationLimitExceeded: ValidationError{
 			EntityType: entityType,
 			Code:       constant.ErrPaginationLimitExceeded.Error(),
@@ -355,54 +343,11 @@ func ValidateBusinessError(err error, entityType string, args ...any) error {
 			Title:      "Invalid Metadata Nesting",
 			Message:    fmt.Sprintf("The metadata object cannot contain nested values. Please ensure that the value %v is not nested and try again.", args...),
 		},
-
-		constant.ErrMissingRequiredFields: ValidationError{
-			EntityType: entityType,
-			Code:       constant.ErrMissingRequiredFields.Error(),
-			Title:      "Missing required fields",
-			Message:    "One or more required fields are missing. Please ensure all required fields are included.",
-		},
-		constant.ErrInvalidFileFormat: ValidationError{
-			EntityType: entityType,
-			Code:       constant.ErrInvalidFileFormat.Error(),
-			Title:      "Invalid file format",
-			Message:    "The uploaded file must be a .tpl file. Other formats are not supported.",
-		},
-		constant.ErrInvalidOutputFormat: ValidationError{
-			EntityType: entityType,
-			Code:       constant.ErrInvalidOutputFormat.Error(),
-			Title:      "Invalid output format",
-			Message:    "The outputFormat field must be one of: html, csv, or xml.",
-		},
 		constant.ErrInvalidHeaderParameter: ValidationError{
 			EntityType: entityType,
 			Code:       constant.ErrInvalidHeaderParameter.Error(),
 			Title:      "Invalid header",
 			Message:    fmt.Sprintf("One or more header values are missing or incorrectly formatted. Please verify required headers %v.", args),
-		},
-		constant.ErrInvalidFileUploaded: ValidationError{
-			EntityType: entityType,
-			Code:       constant.ErrInvalidFileUploaded.Error(),
-			Title:      "Invalid File Uploaded",
-			Message:    fmt.Sprintf("The file you submitted is invalid. Please check the uploaded file with error: %v", args),
-		},
-		constant.ErrEmptyFile: ValidationError{
-			EntityType: entityType,
-			Code:       constant.ErrEmptyFile.Error(),
-			Title:      "Error File Empty",
-			Message:    "The file you submitted is empty. Please check the uploaded file.",
-		},
-		constant.ErrFileContentInvalid: ValidationError{
-			EntityType: entityType,
-			Code:       constant.ErrFileContentInvalid.Error(),
-			Title:      "Error File Content Invalid",
-			Message:    fmt.Sprintf("The file content is invalid because is not %s. Please check the uploaded file.", args),
-		},
-		constant.ErrInvalidMapFields: ValidationError{
-			EntityType: entityType,
-			Code:       constant.ErrInvalidMapFields.Error(),
-			Title:      "Invalid Map Fields",
-			Message:    fmt.Sprintf("The field on template file is invalid. Invalid field %s on %s.", args...),
 		},
 		constant.ErrInvalidPathParameter: ValidationError{
 			EntityType: entityType,
@@ -410,41 +355,11 @@ func ValidateBusinessError(err error, entityType string, args ...any) error {
 			Title:      "Invalid Path Parameter",
 			Message:    fmt.Sprintf("Path parameters is in an incorrect format. Please check the following parameter %v and ensure they meet the required format before trying again.", args),
 		},
-		constant.ErrOutputFormatWithoutTemplateFile: ValidationError{
-			EntityType: entityType,
-			Code:       constant.ErrOutputFormatWithoutTemplateFile.Error(),
-			Title:      "Update Output format without template File",
-			Message:    "Can not update output format without passing template file. Please check information passed and try again.",
-		},
-		constant.ErrMissingTableFields: ValidationError{
-			EntityType: entityType,
-			Code:       constant.ErrMissingTableFields.Error(),
-			Title:      "Missing required fields",
-			Message:    fmt.Sprintf("The fields mapped on template file are missing in the table schema or may be empty. Please check the fields passed: '%v'.", args...),
-		},
-		constant.ErrMissingSchemaTable: ValidationError{
-			EntityType: entityType,
-			Code:       constant.ErrMissingSchemaTable.Error(),
-			Title:      "Missing Schema Table",
-			Message:    fmt.Sprintf("The schema table %v is missing for data source '%v'. Please check the information passed.", args...),
-		},
 		constant.ErrMissingDataSource: ValidationError{
 			EntityType: entityType,
 			Code:       constant.ErrMissingDataSource.Error(),
 			Title:      "Missing Data Source Table",
 			Message:    fmt.Sprintf("The data source %v is missing. Please check the value passed.", args),
-		},
-		constant.ErrScriptTagDetected: ValidationError{
-			EntityType: entityType,
-			Code:       constant.ErrScriptTagDetected.Error(),
-			Title:      "Script Tag Detected",
-			Message:    "The template file contains a script tag and is not allowed. Please check the template file and try again.",
-		},
-		constant.ErrDecryptionData: ValidationError{
-			EntityType: entityType,
-			Code:       constant.ErrDecryptionData.Error(),
-			Title:      "Encryption data error Tag Detected",
-			Message:    fmt.Sprintf("Error to make the encryption of CRM data. Err: %v", args...),
 		},
 		constant.ErrCommunicateSeaweedFS: ValidationError{
 			EntityType: entityType,
@@ -461,6 +376,28 @@ func ValidateBusinessError(err error, entityType string, args ...any) error {
 					return fmt.Sprint(args...)
 				}
 				return "The operation cannot be completed because there are active jobs for this connection."
+			}(),
+		},
+		constant.ErrConnectionDown: ValidationError{
+			EntityType: entityType,
+			Code:       constant.ErrConnectionDown.Error(),
+			Title:      "Connection Down",
+			Message: func() string {
+				if len(args) > 0 {
+					return fmt.Sprint(args...)
+				}
+				return "The database connection is not available. Please check the connection configuration and try again."
+			}(),
+		},
+		constant.ErrInvalidDataRequest: ValidationError{
+			EntityType: entityType,
+			Code:       constant.ErrInvalidDataRequest.Error(),
+			Title:      "Invalid Data Request",
+			Message: func() string {
+				if len(args) > 0 {
+					return fmt.Sprint(args...)
+				}
+				return "The request contains invalid data. Please check the request payload and try again."
 			}(),
 		},
 	}

@@ -42,7 +42,7 @@ func NewPublisherRoutes(conn *libRabbitmq.RabbitMQConnection, logger log.Logger,
 func (pr *PublisherRoutes) Publish(ctx context.Context, exchange, routingKey string, body []byte) error {
 	pr.Debugf("Publishing message to exchange=%s, routingKey=%s", exchange, routingKey)
 
-	if err := pr.adapter.ProducerDefault(ctx, exchange, routingKey, body); err != nil {
+	if err := pr.adapter.ProducerDefault(ctx, exchange, routingKey, body, nil); err != nil {
 		pr.Errorf("Error publishing message to exchange %s with routing key %s: %v", exchange, routingKey, err)
 		return err
 	}

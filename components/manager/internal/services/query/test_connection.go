@@ -30,9 +30,9 @@ type TestConnection struct {
 	cryptor  crypto.Cryptor
 }
 
-func NewTestConnection(connRepo connRepo.Repository, cryptor crypto.Cryptor, store limiter.Store) *TestConnection {
+func NewTestConnection(connectionRepo connRepo.Repository, cryptor crypto.Cryptor, store limiter.Store) *TestConnection {
 	return &TestConnection{
-		connRepo: connRepo,
+		connRepo: connectionRepo,
 		store:    store,
 		cryptor:  cryptor,
 	}
@@ -92,13 +92,6 @@ func (s *TestConnection) Execute(ctx context.Context, organizationID, connection
 			Title:      "Entity Not Found",
 			Message:    "connection not found",
 		}
-	}
-
-	err = conn.DecryptPassword(ctx, s.cryptor)
-	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "failed to decrypt connection password", err)
-		logger.Errorf("failed to decrypt connection password id=%s org=%s: %v", connectionID, organizationID, err)
-		return nil, pkg.ValidateInternalError(err, "connection")
 	}
 
 	testCtx, cancel := context.WithTimeout(ctx, ConnectionTestTimeout)

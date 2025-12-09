@@ -143,6 +143,21 @@ func (mr *MockRepositoryMockRecorder) Update(ctx, conn interface{}) *gomock.Call
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Update", reflect.TypeOf((*MockRepository)(nil).Update), ctx, conn)
 }
 
+// FindByConfigNames mocks base method.
+func (m *MockRepository) FindByConfigNames(ctx context.Context, organizationID uuid.UUID, configNames []string) ([]*model.Connection, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "FindByConfigNames", ctx, organizationID, configNames)
+	ret0, _ := ret[0].([]*model.Connection)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// FindByConfigNames indicates an expected call of FindByConfigNames.
+func (mr *MockRepositoryMockRecorder) FindByConfigNames(ctx, organizationID, configNames interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FindByConfigNames", reflect.TypeOf((*MockRepository)(nil).FindByConfigNames), ctx, organizationID, configNames)
+}
+
 // MockmongoDatabaseProvider is a mock of mongoDatabaseProvider interface.
 type MockmongoDatabaseProvider struct {
 	ctrl     *gomock.Controller
