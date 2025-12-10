@@ -40,3 +40,13 @@ func MaskSecret(value string) string {
 
 	return "[REDACTED]"
 }
+
+// MaskSecretPtr masks the given secret value by returning a pointer to "[REDACTED]" if the value is not nil or empty.
+func MaskSecretPtr(value *string) *string {
+	if value == nil || *value == "" {
+		return value
+	}
+
+	masked := "[REDACTED]"
+	return &masked
+}

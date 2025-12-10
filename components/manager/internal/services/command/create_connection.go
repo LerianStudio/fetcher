@@ -39,7 +39,7 @@ func (s *CreateConnection) Execute(ctx context.Context, organizationID uuid.UUID
 		attribute.String("app.request.organization_id", organizationID.String()),
 	)
 
-	err := libOpentelemetry.SetSpanAttributesFromStruct(&span, "app.request.payload", connInput)
+	err := libOpentelemetry.SetSpanAttributesFromStruct(&span, "app.request.payload", connInput.ToMapWithMask())
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to convert fetcher input to JSON string", err)
 	}

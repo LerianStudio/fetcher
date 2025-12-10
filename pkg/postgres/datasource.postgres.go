@@ -325,7 +325,11 @@ func (ds *ExternalDataSource) scanColumns(colRows *sql.Rows, tableName string, p
 
 // scanRows processes the query rows and creates the resulting slice of maps.
 func scanRows(rows *sql.Rows, logger log.Logger) ([]map[string]any, error) {
-	columns, _ := rows.Columns()
+	columns, err := rows.Columns()
+	if err != nil {
+		return nil, fmt.Errorf("error getting column names: %w", err)
+	}
+
 	values := make([]any, len(columns))
 	pointers := make([]any, len(columns))
 
@@ -511,10 +515,13 @@ func applyFilter(queryBuilder squirrel.SelectBuilder, fieldName string, values [
 		return queryBuilder
 	}
 
-	// No need for conversion since values is already []any
-	placeholder := squirrel.Placeholders(len(values))
+	// Use squirrel.Eq which respects PlaceholderFormat
+	// For single value, use direct equality; for multiple values, use IN
+	if len(values) == 1 {
+		return queryBuilder.Where(squirrel.Eq{fieldName: values[0]})
+	}
 
-	return queryBuilder.Where(fieldName+" IN ("+placeholder+")", values...)
+	return queryBuilder.Where(squirrel.Eq{fieldName: values})
 }
 
 // QueryWithAdvancedFilters executes a SELECT SQL query with advanced FilterCondition support

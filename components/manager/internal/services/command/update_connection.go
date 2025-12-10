@@ -43,20 +43,29 @@ func (s *UpdateConnection) Execute(ctx context.Context, organizationID, connecti
 		attribute.String("app.request.connection_id", connectionID.String()),
 	)
 
-	if err := libOpentelemetry.SetSpanAttributesFromStruct(&span, "app.request.payload", connInput); err != nil {
+	if err := libOpentelemetry.SetSpanAttributesFromStruct(&span, "app.request.payload", connInput.ToMapWithMask()); err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to convert fetcher input to JSON string", err)
 	}
 
+	current, err := s.connRepo.FindByID(ctx, connectionID, organizationID)
 	if err := s.validateNoActiveJobs(ctx, organizationID, connectionID); err != nil {
 		return nil, err
 	}
 
-	current, err := s.findConnection(ctx, connectionID, organizationID)
+	sslMode, sslCA, sslCert, sslKey := resolveSSLFields(connInput.SSL)
+
+	active, err := s.jobRepo.ExistsRunningByMappedFieldKey(ctx, organizationID, current.ConfigName)
 	if err != nil {
 		return nil, err
 	}
 
-	sslMode, sslCA, sslCert, sslKey := resolveSSLFields(connInput.SSL)
+	if active {
+		return nil, pkg.ValidateBusinessError(
+			constant.ErrJobInProgress,
+			"connection",
+			"cannot update connection with active jobs",
+		)
+	}
 
 	if errPatch := current.ApplyPatch(
 		ctx,
@@ -76,6 +85,7 @@ func (s *UpdateConnection) Execute(ctx context.Context, organizationID, connecti
 		return nil, errPatch
 	}
 
+	updated, err := s.connRepo.Update(ctx, current)
 	// TODO: Test the database connection with the new data before persisting. If it fails, return the failure to the user; only update when the connection test passes.
 
 	return s.persistConnection(ctx, current)

@@ -238,7 +238,7 @@ func runProducerStress(adapter *RabbitMQAdapter, exchange, routingKey string, to
 					return
 				}
 
-				if err := adapter.ProducerDefault(ctx, exchange, routingKey, body); err != nil {
+				if err := adapter.ProducerDefault(ctx, exchange, routingKey, body, nil); err != nil {
 					results <- result{err: err}
 					return
 				}

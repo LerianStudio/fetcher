@@ -3,6 +3,7 @@ package model
 import (
 	"context"
 	"errors"
+	"regexp"
 	"strings"
 	"time"
 
@@ -27,6 +28,7 @@ type Connection struct {
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
 	DeletedAt            *time.Time
+	password             string
 }
 
 type SSLConfig struct {
@@ -85,7 +87,12 @@ func NewConnection(
 
 	dbType, err := NewTypeFromString(typ)
 	if err != nil {
-		return nil, pkg.ValidateInternalError(err, "connection")
+		return nil, pkg.ValidateBadRequestFieldsError(
+			nil,
+			map[string]string{"type": "invalid connection type"},
+			"connection",
+			nil,
+		)
 	}
 
 	connection := Connection{
@@ -144,6 +151,11 @@ func (conn *Connection) validateRequiredFields() map[string]string {
 
 	if conn.ConfigName == "" {
 		requiredFields["config_name"] = "config name is required"
+	} else {
+		configNameRegex := regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+		if !configNameRegex.MatchString(conn.ConfigName) {
+			requiredFields["config_name"] = "config name can only contain alphanumeric characters, underscores, and hyphens"
+		}
 	}
 
 	if conn.Port <= 0 {
@@ -228,7 +240,12 @@ func (conn *Connection) ApplyPatch(
 	if typ != nil {
 		connType, errParse := NewTypeFromString(*typ)
 		if errParse != nil {
-			return pkg.ValidateInternalError(errParse, "connection")
+			return pkg.ValidateBadRequestFieldsError(
+				nil,
+				map[string]string{"type": "invalid connection type"},
+				"connection",
+				nil,
+			)
 		}
 
 		conn.Type = connType
@@ -309,7 +326,22 @@ func (conn *Connection) GetPasswordDecrypted(ctx context.Context, cryptor crypto
 		return "", pkg.ValidateInternalError(err, "connection")
 	}
 
+	conn.password = plain
 	return plain, nil
+}
+
+// DecryptPassword decrypts and stores the connection password internally.
+func (conn *Connection) DecryptPassword(ctx context.Context, cryptor crypto.Cryptor) error {
+	if cryptor == nil {
+		return errors.New("cryptor is required to decrypt password")
+	}
+	plain, err := cryptor.Decrypt(ctx, conn.PasswordEncrypted, conn.EncryptionKeyVersion)
+	if err != nil {
+		return pkg.ValidateInternalError(err, "connection")
+	}
+
+	conn.password = plain
+	return nil
 }
 
 // ToMapWithMask converts the Connection to a map with sensitive fields masked.
@@ -363,6 +395,29 @@ type SSLInput struct {
 	Key  *string `json:"key"`
 }
 
+func (conn *ConnectionInput) ToMapWithMask() map[string]any {
+	var ssl map[string]any
+	if conn.SSL != nil {
+		ssl = map[string]any{
+			"mode": conn.SSL.Mode,
+			"ca":   pkg.MaskSecret(conn.SSL.CA),
+			"cert": pkg.MaskSecretPtr(conn.SSL.Cert),
+			"key":  pkg.MaskSecretPtr(conn.SSL.Key),
+		}
+	}
+
+	return map[string]any{
+		"config_name":   conn.ConfigName,
+		"type":          conn.Type,
+		"host":          conn.Host,
+		"port":          conn.Port,
+		"database_name": conn.DatabaseName,
+		"username":      conn.Username,
+		"password":      pkg.MaskSecret(conn.Password),
+		"ssl":           ssl,
+	}
+}
+
 // IsEmpty returns true if all SSL fields are empty/nil.
 // This is used to treat "ssl": {} as if SSL was not provided at all.
 func (s *SSLInput) IsEmpty() bool {
@@ -384,6 +439,12 @@ type ConnectionResponse struct {
 	SSL          *SSLResponse `json:"ssl,omitempty"`
 	CreatedAt    time.Time    `json:"createdAt"`
 	UpdatedAt    time.Time    `json:"updatedAt"`
+}
+
+type ConnectionTestResponse struct {
+	Status    string `json:"status"`
+	Message   string `json:"message"`
+	LatencyMs int64  `json:"latencyMs"`
 }
 
 type SSLResponse struct {
