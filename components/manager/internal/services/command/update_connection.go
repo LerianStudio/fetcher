@@ -43,16 +43,24 @@ func (s *UpdateConnection) Execute(ctx context.Context, organizationID, connecti
 		attribute.String("app.request.connection_id", connectionID.String()),
 	)
 
-	if err := libOpentelemetry.SetSpanAttributesFromStruct(&span, "app.request.payload", connInput.ToMapWithMask()); err != nil {
+	err := libOpentelemetry.SetSpanAttributesFromStruct(&span, "app.request.payload", connInput.ToMapWithMask())
+	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to convert fetcher input to JSON string", err)
 	}
 
 	current, err := s.connRepo.FindByID(ctx, connectionID, organizationID)
-	if err := s.validateNoActiveJobs(ctx, organizationID, connectionID); err != nil {
+	if err != nil {
 		return nil, err
 	}
 
-	sslMode, sslCA, sslCert, sslKey := resolveSSLFields(connInput.SSL)
+	if current == nil {
+		return nil, pkg.EntityNotFoundError{
+			EntityType: "connection",
+			Code:       constant.ErrEntityNotFound.Error(),
+			Title:      "Entity Not Found",
+			Message:    "connection not found",
+		}
+	}
 
 	active, err := s.jobRepo.ExistsRunningByMappedFieldKey(ctx, organizationID, current.ConfigName)
 	if err != nil {
@@ -77,53 +85,35 @@ func (s *UpdateConnection) Execute(ctx context.Context, organizationID, connecti
 		&connInput.DatabaseName,
 		&connInput.Username,
 		&connInput.Password,
-		sslMode,
-		sslCA,
-		sslCert,
-		sslKey,
+		func() *string {
+			if connInput.SSL != nil {
+				return &connInput.SSL.Mode
+			}
+			return nil
+		}(),
+		func() *string {
+			if connInput.SSL != nil {
+				return &connInput.SSL.CA
+			}
+			return nil
+		}(),
+		func() *string {
+			if connInput.SSL != nil && connInput.SSL.Cert != nil {
+				return connInput.SSL.Cert
+			}
+			return nil
+		}(),
+		func() *string {
+			if connInput.SSL != nil && connInput.SSL.Key != nil {
+				return connInput.SSL.Key
+			}
+			return nil
+		}(),
 	); errPatch != nil {
 		return nil, errPatch
 	}
 
 	updated, err := s.connRepo.Update(ctx, current)
-	// TODO: Test the database connection with the new data before persisting. If it fails, return the failure to the user; only update when the connection test passes.
-
-	return s.persistConnection(ctx, current)
-}
-
-func (s *UpdateConnection) validateNoActiveJobs(ctx context.Context, organizationID, connectionID uuid.UUID) error {
-	active, err := s.jobRepo.ExistsRunningByConnection(ctx, organizationID, connectionID)
-	if err != nil {
-		return err
-	}
-
-	if active {
-		return pkg.ValidateBusinessError(constant.ErrJobInProgress, "connection", "cannot update connection with active jobs")
-	}
-
-	return nil
-}
-
-func (s *UpdateConnection) findConnection(ctx context.Context, connectionID, organizationID uuid.UUID) (*model.Connection, error) {
-	current, err := s.connRepo.FindByID(ctx, connectionID, organizationID)
-	if err != nil {
-		return nil, err
-	}
-
-	if current == nil {
-		return nil, pkg.EntityNotFoundError{
-			EntityType: "connection",
-			Code:       constant.ErrEntityNotFound.Error(),
-			Title:      "Entity Not Found",
-			Message:    "connection not found",
-		}
-	}
-
-	return current, nil
-}
-
-func (s *UpdateConnection) persistConnection(ctx context.Context, conn *model.Connection) (*model.Connection, error) {
-	updated, err := s.connRepo.Update(ctx, conn)
 	if err != nil {
 		return nil, err
 	}
@@ -138,12 +128,4 @@ func (s *UpdateConnection) persistConnection(ctx context.Context, conn *model.Co
 	}
 
 	return updated, nil
-}
-
-func resolveSSLFields(ssl *model.SSLInput) (mode, ca, cert, key *string) {
-	if ssl == nil || ssl.IsEmpty() {
-		return nil, nil, nil, nil
-	}
-
-	return &ssl.Mode, &ssl.CA, ssl.Cert, ssl.Key
 }
