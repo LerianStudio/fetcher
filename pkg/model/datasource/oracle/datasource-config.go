@@ -4,11 +4,15 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/model/datasource"
 	"github.com/LerianStudio/fetcher/pkg/model/job"
 	"github.com/LerianStudio/fetcher/pkg/oracle"
+	"github.com/LerianStudio/lib-commons/v2/commons"
 	libConstant "github.com/LerianStudio/lib-commons/v2/commons/constants"
 	"github.com/LerianStudio/lib-commons/v2/commons/log"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // DataSourceConfigOracle represents an Oracle-specific data source configuration.
@@ -100,4 +104,36 @@ func getTableFilters(databaseFilters map[string]map[string]job.FilterCondition, 
 	}
 
 	return databaseFilters[tableName]
+}
+
+// GetSchemaInfo returns the schema information for Oracle.
+func (ds *DataSourceConfigOracle) GetSchemaInfo(ctx context.Context) (*model.DataSourceSchema, error) {
+	_, tracer, _, _ := commons.NewTrackingFromContext(ctx)
+
+	ctx, span := tracer.Start(ctx, "datasource.oracle.get_schema_info")
+	defer span.End()
+
+	span.SetAttributes(
+		attribute.String("app.datasource.config_name", ds.ConfigName),
+		attribute.String("app.datasource.type", "oracle"),
+	)
+
+	schemaResult, err := ds.OracleRepository.GetDatabaseSchema(ctx)
+	if err != nil {
+		libOpentelemetry.HandleSpanError(&span, "failed to get database schema", err)
+		return nil, fmt.Errorf("failed to get Oracle schema: %w", err)
+	}
+
+	schema := model.NewDataSourceSchema(ds.ConfigName)
+	for _, table := range schemaResult {
+		columns := make([]string, len(table.Columns))
+		for i, col := range table.Columns {
+			columns[i] = col.Name
+		}
+		schema.AddTable(table.TableName, columns)
+	}
+
+	span.SetAttributes(attribute.Int("app.schema.tables_count", len(schema.Tables)))
+
+	return schema, nil
 }

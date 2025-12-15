@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -263,8 +264,8 @@ func TestConnectionHandler_CreateConnection_Conflict(t *testing.T) {
 		}
 
 		// Simulate conflict error
-		return httpUtils.WithError(c, pkg.EntityConflictError{
-			EntityType: "connection",
+		return httpUtils.WithError(c, pkg.ResponseErrorWithStatusCode{
+			StatusCode: http.StatusConflict,
 			Code:       constant.ErrEntityConflict.Error(),
 			Title:      "Conflict",
 			Message:    "connection with the same name already exists",
@@ -362,8 +363,8 @@ func TestConnectionHandler_GetConnection_Success(t *testing.T) {
 			return httpUtils.OK(c, resp)
 		}
 
-		return httpUtils.WithError(c, pkg.EntityNotFoundError{
-			EntityType: "connection",
+		return httpUtils.WithError(c, pkg.ResponseErrorWithStatusCode{
+			StatusCode: http.StatusNotFound,
 			Code:       constant.ErrEntityNotFound.Error(),
 			Title:      "Entity Not Found",
 			Message:    "connection not found",
@@ -410,8 +411,8 @@ func TestConnectionHandler_GetConnection_NotFound(t *testing.T) {
 			})
 		}
 
-		return httpUtils.WithError(c, pkg.EntityNotFoundError{
-			EntityType: "connection",
+		return httpUtils.WithError(c, pkg.ResponseErrorWithStatusCode{
+			StatusCode: http.StatusNotFound,
 			Code:       constant.ErrEntityNotFound.Error(),
 			Title:      "Entity Not Found",
 			Message:    "connection not found",
@@ -680,8 +681,8 @@ func TestConnectionHandler_UpdateConnection_Success(t *testing.T) {
 			return httpUtils.OK(c, model.NewConnectionResponseFrom(testConn))
 		}
 
-		return httpUtils.WithError(c, pkg.EntityNotFoundError{
-			EntityType: "connection",
+		return httpUtils.WithError(c, pkg.ResponseErrorWithStatusCode{
+			StatusCode: http.StatusNotFound,
 			Code:       constant.ErrEntityNotFound.Error(),
 			Title:      "Entity Not Found",
 			Message:    "connection not found",
@@ -741,8 +742,8 @@ func TestConnectionHandler_UpdateConnection_NotFound(t *testing.T) {
 			})
 		}
 
-		return httpUtils.WithError(c, pkg.EntityNotFoundError{
-			EntityType: "connection",
+		return httpUtils.WithError(c, pkg.ResponseErrorWithStatusCode{
+			StatusCode: http.StatusNotFound,
 			Code:       constant.ErrEntityNotFound.Error(),
 			Title:      "Entity Not Found",
 			Message:    "connection not found",
@@ -837,8 +838,8 @@ func TestConnectionHandler_UpdateConnection_Conflict_ActiveJobs(t *testing.T) {
 		}
 
 		// Simulate conflict due to active jobs
-		return httpUtils.WithError(c, pkg.EntityConflictError{
-			EntityType: "connection",
+		return httpUtils.WithError(c, pkg.ResponseErrorWithStatusCode{
+			StatusCode: http.StatusConflict,
 			Code:       constant.ErrJobInProgress.Error(),
 			Title:      "Job In Progress",
 			Message:    "cannot update connection with active jobs",
@@ -892,8 +893,8 @@ func TestConnectionHandler_DeleteConnection_Success(t *testing.T) {
 			return httpUtils.OK(c, fiber.Map{"id": id})
 		}
 
-		return httpUtils.WithError(c, pkg.EntityNotFoundError{
-			EntityType: "connection",
+		return httpUtils.WithError(c, pkg.ResponseErrorWithStatusCode{
+			StatusCode: http.StatusNotFound,
 			Code:       constant.ErrEntityNotFound.Error(),
 			Title:      "Entity Not Found",
 			Message:    "connection not found",
@@ -939,8 +940,8 @@ func TestConnectionHandler_DeleteConnection_NotFound(t *testing.T) {
 			})
 		}
 
-		return httpUtils.WithError(c, pkg.EntityNotFoundError{
-			EntityType: "connection",
+		return httpUtils.WithError(c, pkg.ResponseErrorWithStatusCode{
+			StatusCode: http.StatusNotFound,
 			Code:       constant.ErrEntityNotFound.Error(),
 			Title:      "Entity Not Found",
 			Message:    "connection not found",
@@ -983,8 +984,8 @@ func TestConnectionHandler_DeleteConnection_Conflict_ActiveJobs(t *testing.T) {
 		}
 
 		// Simulate conflict due to active jobs
-		return httpUtils.WithError(c, pkg.EntityConflictError{
-			EntityType: "connection",
+		return httpUtils.WithError(c, pkg.ResponseErrorWithStatusCode{
+			StatusCode: http.StatusConflict,
 			Code:       constant.ErrJobInProgress.Error(),
 			Title:      "Job In Progress",
 			Message:    "cannot delete connection with active jobs",
@@ -1055,8 +1056,8 @@ func TestConnectionHandler_TestConnection_Success(t *testing.T) {
 			})
 		}
 
-		return httpUtils.WithError(c, pkg.EntityNotFoundError{
-			EntityType: "connection",
+		return httpUtils.WithError(c, pkg.ResponseErrorWithStatusCode{
+			StatusCode: http.StatusNotFound,
 			Code:       constant.ErrEntityNotFound.Error(),
 			Title:      "Entity Not Found",
 			Message:    "connection not found",
@@ -1103,8 +1104,8 @@ func TestConnectionHandler_TestConnection_NotFound(t *testing.T) {
 			})
 		}
 
-		return httpUtils.WithError(c, pkg.EntityNotFoundError{
-			EntityType: "connection",
+		return httpUtils.WithError(c, pkg.ResponseErrorWithStatusCode{
+			StatusCode: http.StatusNotFound,
 			Code:       constant.ErrEntityNotFound.Error(),
 			Title:      "Entity Not Found",
 			Message:    "connection not found",

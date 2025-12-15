@@ -409,14 +409,14 @@ func TestNewConnection(t *testing.T) {
 			expectError: true,
 		},
 		{
-			name:        "encryption error",
-			configName:  "test-connection",
-			typ:         "POSTGRESQL",
-			host:        "localhost",
-			port:        5432,
-			dbName:      "testdb",
-			username:    "testuser",
-			password:    "testpassword",
+			name:       "encryption error",
+			configName: "test-connection",
+			typ:        "POSTGRESQL",
+			host:       "localhost",
+			port:       5432,
+			dbName:     "testdb",
+			username:   "testuser",
+			password:   "testpassword",
 			cryptor: &mockCryptor{
 				encryptFunc: func(ctx context.Context, plain string) (string, string, error) {
 					return "", "", errors.New("encryption failed")
@@ -814,8 +814,8 @@ func TestConnection_ApplyPatch(t *testing.T) {
 			Username:             "originaluser",
 			PasswordEncrypted:    "encrypted-original",
 			EncryptionKeyVersion: "v1",
-			CreatedAt:            time.Now().Add(-1 * time.Hour),
-			UpdatedAt:            time.Now().Add(-1 * time.Hour),
+			CreatedAt:            time.Now().UTC().Add(-1 * time.Hour),
+			UpdatedAt:            time.Now().UTC().Add(-1 * time.Hour),
 		}
 	}
 
@@ -1028,8 +1028,8 @@ func TestConnection_SoftDelete(t *testing.T) {
 			DatabaseName:      "testdb",
 			Username:          "testuser",
 			PasswordEncrypted: "encrypted-password",
-			CreatedAt:         time.Now().Add(-1 * time.Hour),
-			UpdatedAt:         time.Now().Add(-1 * time.Hour),
+			CreatedAt:         time.Now().UTC().Add(-1 * time.Hour),
+			UpdatedAt:         time.Now().UTC().Add(-1 * time.Hour),
 		}
 
 		deleteTime := time.Now().UTC()
@@ -1057,8 +1057,8 @@ func TestConnection_SoftDelete(t *testing.T) {
 			DatabaseName:      "testdb",
 			Username:          "testuser",
 			PasswordEncrypted: "encrypted-password",
-			CreatedAt:         time.Now().Add(-1 * time.Hour),
-			UpdatedAt:         time.Now().Add(-1 * time.Hour),
+			CreatedAt:         time.Now().UTC().Add(-1 * time.Hour),
+			UpdatedAt:         time.Now().UTC().Add(-1 * time.Hour),
 		}
 
 		beforeDelete := time.Now().UTC()

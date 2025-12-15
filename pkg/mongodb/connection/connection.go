@@ -35,8 +35,8 @@ type SSLConfigMongoDBModel struct {
 	Key  string `bson:"key,omitempty"`
 }
 
-// ToDomain converts a MongoDB model into the domain entity representation.
-func (cm *ConnectionMongoDBModel) ToDomain() (*model.Connection, error) {
+// ToEntity converts a MongoDB model into the domain entity representation.
+func (cm *ConnectionMongoDBModel) ToEntity() (*model.Connection, error) {
 	if cm == nil {
 		return nil, errors.New("cannot convert nil ConnectionMongoDBModel to domain")
 	}
@@ -74,8 +74,12 @@ func (cm *ConnectionMongoDBModel) ToDomain() (*model.Connection, error) {
 	}, nil
 }
 
-// NewConnectionMongoDBModelFromDomain creates a MongoDB model from the domain entity.
-func NewConnectionMongoDBModelFromDomain(conn *model.Connection) *ConnectionMongoDBModel {
+// FromEntity populates the MongoDB model from a domain entity.
+func (cm *ConnectionMongoDBModel) FromEntity(conn *model.Connection) error {
+	if conn == nil {
+		return errors.New("connection entity is required")
+	}
+
 	var ssl *SSLConfigMongoDBModel
 	if conn.SSL != nil {
 		ssl = &SSLConfigMongoDBModel{
@@ -85,8 +89,6 @@ func NewConnectionMongoDBModelFromDomain(conn *model.Connection) *ConnectionMong
 			Key:  conn.SSL.Key,
 		}
 	}
-
-	var cm ConnectionMongoDBModel
 
 	cm.ID = conn.ID
 	cm.OrganizationID = conn.OrganizationID
@@ -103,7 +105,15 @@ func NewConnectionMongoDBModelFromDomain(conn *model.Connection) *ConnectionMong
 	cm.UpdatedAt = conn.UpdatedAt
 	cm.DeletedAt = conn.DeletedAt
 
-	return &cm
+	return nil
+}
+
+// NewConnectionMongoDBModelFromDomain creates a MongoDB model from the domain entity.
+// Deprecated: Use FromEntity instead.
+func NewConnectionMongoDBModelFromDomain(conn *model.Connection) *ConnectionMongoDBModel {
+	cm := &ConnectionMongoDBModel{}
+	_ = cm.FromEntity(conn) // Ignore error for backward compatibility
+	return cm
 }
 
 // ToMapWithMask converts the MongoDB model to a map with sensitive fields masked.

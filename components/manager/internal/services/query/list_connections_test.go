@@ -27,8 +27,8 @@ func newListTestConnection(orgID, connID uuid.UUID, configName string, dbType mo
 		Username:             "testuser",
 		PasswordEncrypted:    "encrypted-password",
 		EncryptionKeyVersion: "v1",
-		CreatedAt:            time.Now().Add(-24 * time.Hour),
-		UpdatedAt:            time.Now().Add(-1 * time.Hour),
+		CreatedAt:            time.Now().UTC().Add(-24 * time.Hour),
+		UpdatedAt:            time.Now().UTC().Add(-1 * time.Hour),
 	}
 }
 
@@ -58,7 +58,6 @@ func TestListConnections_Execute_Success(t *testing.T) {
 		Return(expectedList, nil)
 
 	result, err := svc.Execute(ctx, orgID, filters)
-
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -102,7 +101,6 @@ func TestListConnections_Execute_EmptyList(t *testing.T) {
 		Return(nil, nil)
 
 	result, err := svc.Execute(ctx, orgID, filters)
-
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -348,7 +346,6 @@ func TestListConnections_Execute_OrganizationIsolation(t *testing.T) {
 		Return(org1Connections, nil)
 
 	result, err := svc.Execute(ctx, orgID, filters)
-
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -450,7 +447,6 @@ func TestListConnections_Execute_WithMetadataFilter(t *testing.T) {
 		Return(connections, nil)
 
 	result, err := svc.Execute(ctx, orgID, filters)
-
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -472,8 +468,8 @@ func TestListConnections_Execute_WithDateFilters(t *testing.T) {
 	ctx := testContext()
 	orgID := uuid.New()
 
-	startDate := time.Now().Add(-7 * 24 * time.Hour) // 7 days ago
-	endDate := time.Now()
+	startDate := time.Now().UTC().Add(-7 * 24 * time.Hour) // 7 days ago
+	endDate := time.Now().UTC()
 
 	filters := http.QueryHeader{
 		Limit:     10,
@@ -492,7 +488,6 @@ func TestListConnections_Execute_WithDateFilters(t *testing.T) {
 		Return(connections, nil)
 
 	result, err := svc.Execute(ctx, orgID, filters)
-
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -546,7 +541,6 @@ func TestListConnections_Execute_WithSortOrder(t *testing.T) {
 				Return(connections, nil)
 
 			result, err := svc.Execute(ctx, orgID, filters)
-
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -589,7 +583,6 @@ func TestListConnections_Execute_ConnectionTypes(t *testing.T) {
 		Return(connections, nil)
 
 	result, err := svc.Execute(ctx, orgID, filters)
-
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -645,7 +638,6 @@ func TestListConnections_Execute_WithCursor(t *testing.T) {
 		Return(connections, nil)
 
 	result, err := svc.Execute(ctx, orgID, filters)
-
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -678,7 +670,6 @@ func TestListConnections_Execute_EmptyFilters(t *testing.T) {
 		Return(connections, nil)
 
 	result, err := svc.Execute(ctx, orgID, filters)
-
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -753,7 +744,6 @@ func TestListConnections_Execute_Pagination(t *testing.T) {
 				Return(connections, nil)
 
 			result, err := svc.Execute(ctx, orgID, filters)
-
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -799,7 +789,6 @@ func TestListConnections_Execute_ConnectionWithSSL(t *testing.T) {
 		Return(connections, nil)
 
 	result, err := svc.Execute(ctx, orgID, filters)
-
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -923,7 +912,6 @@ func TestListConnections_Execute_EmptyOrganizationID(t *testing.T) {
 		Return([]*model.Connection{}, nil)
 
 	result, err := svc.Execute(ctx, emptyOrgID, filters)
-
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

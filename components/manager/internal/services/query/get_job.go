@@ -41,12 +41,10 @@ func (s *GetJob) Execute(ctx context.Context, organizationID, jobID uuid.UUID) (
 	}
 
 	if job == nil {
-		return nil, pkg.EntityNotFoundError{
-			EntityType: "job",
-			Code:       constant.ErrEntityNotFound.Error(),
-			Title:      "Entity Not Found",
-			Message:    "job not found",
-		}
+		return nil, pkg.ValidateBusinessError(
+			constant.ErrEntityNotFound,
+			"job",
+		)
 	}
 
 	return job, nil

@@ -352,6 +352,65 @@
                 }
             }
         },
+        "/v1/management/connections/validate-schema": {
+            "post": {
+                "description": "Validate that tables and fields referenced in the request exist in the configured datasources.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Connections"
+                ],
+                "summary": "Validate schema",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "The authorization token in the 'Bearer access_token' format. Only required when auth plugin is enabled.",
+                        "name": "Authorization",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Organization ID",
+                        "name": "X-Organization-Id",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "Schema validation request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.SchemaValidationRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.SchemaValidationResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/pkg.HTTPError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/pkg.HTTPError"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/management/connections/{id}": {
             "get": {
                 "description": "Get connection details by ID for the given organization.",
@@ -911,6 +970,63 @@
             "type": "object",
             "properties": {
                 "mode": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_LerianStudio_fetcher_pkg_model.SchemaValidationError": {
+            "type": "object",
+            "properties": {
+                "dataSourceId": {
+                    "type": "string"
+                },
+                "field": {
+                    "type": "string"
+                },
+                "table": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_LerianStudio_fetcher_pkg_model.SchemaValidationRequest": {
+            "description": "Request body for schema validation containing mapped fields per datasource.",
+            "type": "object",
+            "required": [
+                "mappedFields"
+            ],
+            "properties": {
+                "mappedFields": {
+                    "description": "MappedFields maps datasource config names to their tables and fields\nKey: configName (e.g., \"midaz_onboarding\")\nValue: map of table names to field names",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "github_com_LerianStudio_fetcher_pkg_model.SchemaValidationResponse": {
+            "type": "object",
+            "properties": {
+                "errors": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.SchemaValidationError"
+                    }
+                },
+                "message": {
+                    "type": "string"
+                },
+                "status": {
+                    "description": "\"success\" or \"failure\"",
                     "type": "string"
                 }
             }

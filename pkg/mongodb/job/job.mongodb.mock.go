@@ -8,7 +8,7 @@ import (
 	context "context"
 	reflect "reflect"
 
-	"github.com/LerianStudio/fetcher/pkg/model"
+	model "github.com/LerianStudio/fetcher/pkg/model"
 	gomock "github.com/golang/mock/gomock"
 	uuid "github.com/google/uuid"
 )

@@ -8,13 +8,13 @@ import (
 	"time"
 
 	"github.com/LerianStudio/fetcher/pkg"
-	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 
 	"github.com/golang/mock/gomock"
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
 )
 
 // mockCryptor is a test implementation of crypto.Cryptor for TestConnection tests.
@@ -58,7 +58,7 @@ func (m *mockLimiterStore) Take(ctx context.Context, key string) (uint64, uint64
 		return m.takeFunc(ctx, key)
 	}
 	// Default: allow the request
-	return 1, 10, uint64(time.Now().Add(time.Minute).UnixNano()), true, nil
+	return 1, 10, uint64(time.Now().UTC().Add(time.Minute).UnixNano()), true, nil
 }
 
 func (m *mockLimiterStore) Get(ctx context.Context, key string) (tokens, remaining uint64, err error) {
@@ -90,8 +90,8 @@ func newTestConnectionFixture(orgID, connID uuid.UUID, dbType model.DBType) *mod
 		Username:             "testuser",
 		PasswordEncrypted:    "encrypted-password",
 		EncryptionKeyVersion: "v1",
-		CreatedAt:            time.Now().Add(-24 * time.Hour),
-		UpdatedAt:            time.Now().Add(-1 * time.Hour),
+		CreatedAt:            time.Now().UTC().Add(-24 * time.Hour),
+		UpdatedAt:            time.Now().UTC().Add(-1 * time.Hour),
 	}
 }
 
@@ -125,26 +125,11 @@ func TestTestConnection_Execute_NotFoundError(t *testing.T) {
 		t.Fatal("expected error for non-existent connection, got nil")
 	}
 
-	var notFoundErr pkg.EntityNotFoundError
-	if !errors.As(err, &notFoundErr) {
-		t.Fatalf("expected EntityNotFoundError, got %T: %v", err, err)
+	var respErr pkg.ResponseErrorWithStatusCode
+	if !errors.As(err, &respErr) {
+		t.Fatalf("expected ResponseErrorWithStatusCode, got %T: %v", err, err)
 	}
-
-	if notFoundErr.Code != constant.ErrEntityNotFound.Error() {
-		t.Fatalf("expected error code %s, got %s", constant.ErrEntityNotFound.Error(), notFoundErr.Code)
-	}
-
-	if notFoundErr.EntityType != "connection" {
-		t.Fatalf("expected entity type 'connection', got %s", notFoundErr.EntityType)
-	}
-
-	if notFoundErr.Title != "Entity Not Found" {
-		t.Fatalf("expected title 'Entity Not Found', got %s", notFoundErr.Title)
-	}
-
-	if notFoundErr.Message != "connection not found" {
-		t.Fatalf("expected message 'connection not found', got %s", notFoundErr.Message)
-	}
+	assert.Equal(t, http.StatusNotFound, respErr.StatusCode)
 }
 
 // TestTestConnection_Execute_RepositoryError tests repository error during FindByID.
@@ -272,7 +257,7 @@ func TestTestConnection_Execute_RateLimited(t *testing.T) {
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockCrypto := &mockCryptor{}
 
-	resetTime := time.Now().Add(30 * time.Second)
+	resetTime := time.Now().UTC().Add(30 * time.Second)
 	mockStore := &mockLimiterStore{
 		takeFunc: func(ctx context.Context, key string) (uint64, uint64, uint64, bool, error) {
 			// Return ok=false to indicate rate limit exceeded
@@ -342,10 +327,11 @@ func TestTestConnection_Execute_OrganizationIsolation(t *testing.T) {
 		t.Fatal("expected error for connection in different organization, got nil")
 	}
 
-	var notFoundErr pkg.EntityNotFoundError
-	if !errors.As(err, &notFoundErr) {
-		t.Fatalf("expected EntityNotFoundError, got %T: %v", err, err)
+	var respErr pkg.ResponseErrorWithStatusCode
+	if !errors.As(err, &respErr) {
+		t.Fatalf("expected ResponseErrorWithStatusCode, got %T: %v", err, err)
 	}
+	assert.Equal(t, http.StatusNotFound, respErr.StatusCode)
 
 	// Verify the existing connection is not returned (it belongs to a different org)
 	_ = differentOrgID // Unused in mock but demonstrates the test scenario
@@ -588,10 +574,11 @@ func TestTestConnection_Execute_EmptyUUIDs(t *testing.T) {
 		t.Fatal("expected error with nil UUIDs, got nil")
 	}
 
-	var notFoundErr pkg.EntityNotFoundError
-	if !errors.As(err, &notFoundErr) {
-		t.Fatalf("expected EntityNotFoundError, got %T: %v", err, err)
+	var respErr pkg.ResponseErrorWithStatusCode
+	if !errors.As(err, &respErr) {
+		t.Fatalf("expected ResponseErrorWithStatusCode, got %T: %v", err, err)
 	}
+	assert.Equal(t, http.StatusNotFound, respErr.StatusCode)
 }
 
 // TestNewTestConnection verifies the constructor.
@@ -631,17 +618,17 @@ func TestTestConnection_Execute_RateLimitResetTime(t *testing.T) {
 	}{
 		{
 			name:       "reset in 1 second",
-			resetTime:  time.Now().Add(1 * time.Second),
+			resetTime:  time.Now().UTC().Add(1 * time.Second),
 			wantMinSec: 1,
 		},
 		{
 			name:       "reset in 30 seconds",
-			resetTime:  time.Now().Add(30 * time.Second),
+			resetTime:  time.Now().UTC().Add(30 * time.Second),
 			wantMinSec: 1,
 		},
 		{
 			name:       "reset in past (should be at least 1)",
-			resetTime:  time.Now().Add(-10 * time.Second),
+			resetTime:  time.Now().UTC().Add(-10 * time.Second),
 			wantMinSec: 1,
 		},
 	}
@@ -770,8 +757,8 @@ func TestTestConnection_Execute_ConnectionWithAllFields(t *testing.T) {
 			Cert: "-----BEGIN CERTIFICATE-----\nclient-cert\n-----END CERTIFICATE-----",
 			Key:  "-----BEGIN PRIVATE KEY-----\nclient-key\n-----END PRIVATE KEY-----",
 		},
-		CreatedAt: time.Now().Add(-48 * time.Hour),
-		UpdatedAt: time.Now().Add(-30 * time.Minute),
+		CreatedAt: time.Now().UTC().Add(-48 * time.Hour),
+		UpdatedAt: time.Now().UTC().Add(-30 * time.Minute),
 	}
 
 	// Mock: connection found
@@ -838,10 +825,11 @@ func TestTestConnection_Execute_DifferentOrganizations(t *testing.T) {
 		t.Fatal("expected error for connection in different organization, got nil")
 	}
 
-	var notFoundErr pkg.EntityNotFoundError
-	if !errors.As(err, &notFoundErr) {
-		t.Fatalf("expected EntityNotFoundError, got %T: %v", err, err)
+	var respErr pkg.ResponseErrorWithStatusCode
+	if !errors.As(err, &respErr) {
+		t.Fatalf("expected ResponseErrorWithStatusCode, got %T: %v", err, err)
 	}
+	assert.Equal(t, http.StatusNotFound, respErr.StatusCode)
 
 	// The connection exists in connectionOrgID but not accessible from requestingOrgID
 	_ = connectionOrgID // Demonstrates the scenario

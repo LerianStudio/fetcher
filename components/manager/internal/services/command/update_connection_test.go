@@ -3,17 +3,18 @@ package command
 import (
 	"context"
 	"errors"
+	"net/http"
 	"testing"
 	"time"
 
 	"github.com/LerianStudio/fetcher/pkg"
-	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 	jobRepo "github.com/LerianStudio/fetcher/pkg/mongodb/job"
 
 	"github.com/golang/mock/gomock"
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
 )
 
 // newExistingConnection creates a valid existing Connection for testing updates.
@@ -29,8 +30,8 @@ func newExistingConnection(orgID, connID uuid.UUID) *model.Connection {
 		Username:             "testuser",
 		PasswordEncrypted:    "encrypted-password",
 		EncryptionKeyVersion: "v1",
-		CreatedAt:            time.Now().Add(-24 * time.Hour),
-		UpdatedAt:            time.Now().Add(-1 * time.Hour),
+		CreatedAt:            time.Now().UTC().Add(-24 * time.Hour),
+		UpdatedAt:            time.Now().UTC().Add(-1 * time.Hour),
 	}
 }
 
@@ -82,7 +83,6 @@ func TestUpdateConnection_Execute_Success(t *testing.T) {
 		})
 
 	result, err := svc.Execute(ctx, orgID, connID, input)
-
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -135,18 +135,11 @@ func TestUpdateConnection_Execute_NotFoundError(t *testing.T) {
 		t.Fatal("expected error for non-existent connection, got nil")
 	}
 
-	var notFoundErr pkg.EntityNotFoundError
-	if !errors.As(err, &notFoundErr) {
-		t.Fatalf("expected EntityNotFoundError, got %T: %v", err, err)
+	var respErr pkg.ResponseErrorWithStatusCode
+	if !errors.As(err, &respErr) {
+		t.Fatalf("expected ResponseErrorWithStatusCode, got %T: %v", err, err)
 	}
-
-	if notFoundErr.Code != constant.ErrEntityNotFound.Error() {
-		t.Fatalf("expected error code %s, got %s", constant.ErrEntityNotFound.Error(), notFoundErr.Code)
-	}
-
-	if notFoundErr.EntityType != "connection" {
-		t.Fatalf("expected entity type 'connection', got %s", notFoundErr.EntityType)
-	}
+	assert.Equal(t, http.StatusNotFound, respErr.StatusCode)
 }
 
 // TestUpdateConnection_Execute_FindByIDError tests repository error during FindByID.
@@ -224,14 +217,11 @@ func TestUpdateConnection_Execute_ActiveJobError(t *testing.T) {
 		t.Fatal("expected error for active jobs, got nil")
 	}
 
-	var conflictErr pkg.EntityConflictError
-	if !errors.As(err, &conflictErr) {
-		t.Fatalf("expected EntityConflictError, got %T: %v", err, err)
+	var respErr pkg.ResponseErrorWithStatusCode
+	if !errors.As(err, &respErr) {
+		t.Fatalf("expected ResponseErrorWithStatusCode, got %T: %v", err, err)
 	}
-
-	if conflictErr.Code != constant.ErrJobInProgress.Error() {
-		t.Fatalf("expected error code %s, got %s", constant.ErrJobInProgress.Error(), conflictErr.Code)
-	}
+	assert.Equal(t, http.StatusConflict, respErr.StatusCode)
 }
 
 // TestUpdateConnection_Execute_ExistsRunningJobError tests repository error during job check.
@@ -369,10 +359,11 @@ func TestUpdateConnection_Execute_UpdateReturnsNil(t *testing.T) {
 		t.Fatal("expected error for nil update result, got nil")
 	}
 
-	var notFoundErr pkg.EntityNotFoundError
-	if !errors.As(err, &notFoundErr) {
-		t.Fatalf("expected EntityNotFoundError, got %T: %v", err, err)
+	var respErr pkg.ResponseErrorWithStatusCode
+	if !errors.As(err, &respErr) {
+		t.Fatalf("expected ResponseErrorWithStatusCode, got %T: %v", err, err)
 	}
+	assert.Equal(t, http.StatusNotFound, respErr.StatusCode)
 }
 
 // TestUpdateConnection_Execute_EncryptionError tests encryption failure during password update.
@@ -476,7 +467,6 @@ func TestUpdateConnection_Execute_PartialUpdate(t *testing.T) {
 		})
 
 	result, err := svc.Execute(ctx, orgID, connID, input)
-
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -551,7 +541,6 @@ func TestUpdateConnection_Execute_WithSSL(t *testing.T) {
 		})
 
 	result, err := svc.Execute(ctx, orgID, connID, input)
-
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -657,7 +646,7 @@ func TestUpdateConnection_Execute_TableDriven(t *testing.T) {
 		input          model.ConnectionInput
 		mockCrypto     *mockCryptor
 		wantErr        bool
-		wantErrType    string
+		wantStatusCode int // 0 means no status code check
 		validateResult func(*testing.T, *model.Connection)
 	}{
 		{
@@ -702,10 +691,10 @@ func TestUpdateConnection_Execute_TableDriven(t *testing.T) {
 					FindByID(gomock.Any(), connID, orgID).
 					Return(nil, nil)
 			},
-			input:       newUpdateConnectionInput(),
-			mockCrypto:  &mockCryptor{},
-			wantErr:     true,
-			wantErrType: "EntityNotFoundError",
+			input:          newUpdateConnectionInput(),
+			mockCrypto:     &mockCryptor{},
+			wantErr:        true,
+			wantStatusCode: http.StatusNotFound,
 		},
 		{
 			name: "active jobs prevent update",
@@ -717,10 +706,10 @@ func TestUpdateConnection_Execute_TableDriven(t *testing.T) {
 					ExistsRunningByMappedFieldKey(gomock.Any(), orgID, existing.ConfigName).
 					Return(true, nil)
 			},
-			input:       newUpdateConnectionInput(),
-			mockCrypto:  &mockCryptor{},
-			wantErr:     true,
-			wantErrType: "EntityConflictError",
+			input:          newUpdateConnectionInput(),
+			mockCrypto:     &mockCryptor{},
+			wantErr:        true,
+			wantStatusCode: http.StatusConflict,
 		},
 	}
 
@@ -748,27 +737,12 @@ func TestUpdateConnection_Execute_TableDriven(t *testing.T) {
 					t.Fatal("expected error, got nil")
 				}
 
-				switch tt.wantErrType {
-				case "EntityNotFoundError":
-					var notFoundErr pkg.EntityNotFoundError
-					if !errors.As(err, &notFoundErr) {
-						t.Fatalf("expected EntityNotFoundError, got %T: %v", err, err)
+				if tt.wantStatusCode != 0 {
+					var respErr pkg.ResponseErrorWithStatusCode
+					if !errors.As(err, &respErr) {
+						t.Fatalf("expected ResponseErrorWithStatusCode, got %T: %v", err, err)
 					}
-				case "ValidationError":
-					var validationErr pkg.ValidationError
-					if !errors.As(err, &validationErr) {
-						t.Fatalf("expected ValidationError, got %T: %v", err, err)
-					}
-				case "EntityConflictError":
-					var conflictErr pkg.EntityConflictError
-					if !errors.As(err, &conflictErr) {
-						t.Fatalf("expected EntityConflictError, got %T: %v", err, err)
-					}
-				case "InternalServerError":
-					var internalErr pkg.InternalServerError
-					if !errors.As(err, &internalErr) {
-						t.Fatalf("expected InternalServerError, got %T: %v", err, err)
-					}
+					assert.Equal(t, tt.wantStatusCode, respErr.StatusCode)
 				}
 				return
 			}
@@ -866,7 +840,6 @@ func TestUpdateConnection_Execute_DatabaseTypeChange(t *testing.T) {
 				})
 
 			result, err := svc.Execute(ctx, orgID, connID, input)
-
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}

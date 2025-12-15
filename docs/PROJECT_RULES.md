@@ -1,0 +1,942 @@
+# Architecture Documentation - Fetcher
+
+## Overview
+
+Fetcher is a **data extraction microservices system** built with Go following **Hexagonal Architecture** and **CQRS (Command Query Responsibility Segregation)** patterns. The system extracts data from multiple external databases, encrypts the results, and stores them in a distributed file system.
+
+### Technology Stack
+
+| Category | Technology | Version |
+|----------|------------|---------|
+| **Language** | Go | 1.25.3 |
+| **Web Framework** | Fiber | v2.52.10 |
+| **Message Queue** | RabbitMQ | v1.10.0 |
+| **Primary Database** | MongoDB | Latest |
+| **File Storage** | SeaweedFS | 3.97 |
+| **Observability** | OpenTelemetry | v1.39.0 |
+| **API Documentation** | Swagger/Swaggo | v1.16.6 |
+
+### Supported External Databases
+
+- MongoDB
+- PostgreSQL
+- MySQL
+- Oracle
+- SQL Server
+
+---
+
+## Project Structure
+
+```
+fetcher/
+├── components/                    # Independent service components
+│   ├── infra/                     # Infrastructure services (Docker Compose)
+│   ├── manager/                   # HTTP API server
+│   └── worker/                    # Async job processor
+├── pkg/                           # Shared packages
+│   ├── model/                     # Domain models (entities, DTOs)
+│   ├── mongodb/                   # MongoDB repositories
+│   ├── postgres/                  # PostgreSQL adapter
+│   ├── mysql/                     # MySQL adapter
+│   ├── oracle/                    # Oracle adapter
+│   ├── sqlserver/                 # SQL Server adapter
+│   ├── rabbitmq/                  # RabbitMQ adapter
+│   ├── seaweedfs/                 # SeaweedFS client
+│   ├── crypto/                    # Encryption service
+│   ├── datasource/                # DataSource factory
+│   ├── net/http/                  # HTTP utilities
+│   └── constant/                  # Application constants
+├── scripts/                       # Build and validation scripts
+├── .github/                       # CI/CD workflows
+└── .githooks/                     # Git hooks for code quality
+```
+
+---
+
+## Components
+
+### 1. Infra Component
+
+**Location:** `components/infra/`
+
+**Purpose:** Infrastructure provisioning via Docker Compose. Not a Go application - purely configuration.
+
+**Services Provided:**
+
+| Service | Image | Purpose | Ports |
+|---------|-------|---------|-------|
+| `fetcher-mongodb` | `mongo:latest` | Primary data store | Variable |
+| `fetcher-rabbitmq` | `rabbitmq:4.0-management-alpine` | Message broker | AMQP + Management UI |
+| `fetcher-seaweedfs-master` | `chrislusf/seaweedfs:3.97` | Distributed file storage (master) | 9335, 9336 |
+| `fetcher-seaweedfs-volume` | `chrislusf/seaweedfs:3.97` | Distributed file storage (volume) | 9081 |
+| `fetcher-seaweedfs-filer` | `chrislusf/seaweedfs:3.97` | Distributed file storage (filer) | 8889, 8334 |
+| `fetcher-keda` | `ghcr.io/kedacore/keda:2.16.0` | Kubernetes event-driven autoscaler | 8000 |
+
+**RabbitMQ Topology:**
+
+| Type | Name | Purpose |
+|------|------|---------|
+| **Queue** | `fetcher.extract-external-data.queue` | Main job processing (with DLQ support) |
+| **Queue** | `fetcher.dlq` | Dead letter queue (7-day TTL, max 10,000 messages) |
+| **Exchange** | `fetcher.extract-external-data.exchange` | Direct exchange for job routing |
+| **Exchange** | `fetcher.dlx` | Dead letter exchange |
+| **Exchange** | `fetcher.job.events` | Topic exchange for job notifications |
+
+---
+
+### 2. Manager Component
+
+**Location:** `components/manager/`
+
+**Purpose:** HTTP API server that handles connection management and job orchestration.
+
+**Responsibilities:**
+- Manage database connection configurations
+- Create and track data extraction jobs
+- Validate connections before job execution
+- Publish jobs to RabbitMQ for async processing
+
+**Entry Point:** `components/manager/cmd/app/main.go`
+
+#### Internal Structure (Hexagonal Architecture)
+
+```
+components/manager/
+├── cmd/app/
+│   └── main.go                     # Application entry point
+├── api/
+│   └── docs.go                     # Swagger documentation
+└── internal/
+    ├── adapters/
+    │   └── http/in/
+    │       ├── routes.go           # HTTP route definitions (Primary Adapter)
+    │       ├── middlewares.go      # HTTP middleware
+    │       ├── connection.go       # Connection HTTP handlers
+    │       ├── fetcher.go          # Fetcher job HTTP handlers
+    │       └── swagger.go          # Swagger configuration
+    ├── bootstrap/
+    │   ├── config.go               # Dependency injection
+    │   ├── server.go               # HTTP server wrapper
+    │   └── service.go              # Application service wrapper
+    └── services/
+        ├── command/                # CQRS Commands (Write operations)
+        │   ├── create_connection.go
+        │   ├── update_connection.go
+        │   ├── delete_connection.go
+        │   └── create_fetcher_job.go
+        └── query/                  # CQRS Queries (Read operations)
+            ├── get_connection.go
+            ├── list_connections.go
+            ├── test_connection.go
+            └── get_job.go
+```
+
+#### API Endpoints
+
+##### Connections (Tag: `Connections`)
+
+| Method | Endpoint | Handler | Description |
+|--------|----------|---------|-------------|
+| `POST` | `/v1/management/connections` | `CreateConnection` | Create new database connection (encrypted password) |
+| `GET` | `/v1/management/connections` | `ListConnections` | List connections with pagination/filters |
+| `GET` | `/v1/management/connections/{id}` | `GetConnection` | Get connection details by ID |
+| `POST` | `/v1/management/connections/{id}/test` | `TestConnection` | Test connection (rate-limited: 10/min) |
+| `PATCH` | `/v1/management/connections/{id}` | `UpdateConnection` | Partial update (409 if active jobs) |
+| `DELETE` | `/v1/management/connections/{id}` | `DeleteConnection` | Soft delete (409 if active jobs) |
+
+##### Fetcher Jobs (Tag: `Fetcher`)
+
+| Method | Endpoint | Handler | Description |
+|--------|----------|---------|-------------|
+| `POST` | `/v1/fetcher` | `CreateJob` | Create data extraction job (202 Accepted / 200 if duplicate) |
+| `GET` | `/v1/fetcher/{id}` | `GetJob` | Get job status and details |
+
+##### System
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/health` | Health check |
+| `GET` | `/version` | Version info |
+| `GET` | `/swagger/*` | Swagger UI |
+
+---
+
+### 3. Worker Component
+
+**Location:** `components/worker/`
+
+**Purpose:** Asynchronous job processor that extracts data from external databases.
+
+**Responsibilities:**
+- Consume jobs from RabbitMQ queue
+- Extract data from configured external databases
+- Encrypt and store results in SeaweedFS
+- Publish job completion/failure notifications
+
+**Important:** This component has **NO HTTP routes** - it operates purely as a message consumer.
+
+**Entry Point:** `components/worker/cmd/app/main.go`
+
+#### Internal Structure
+
+```
+components/worker/
+├── cmd/app/
+│   └── main.go                      # Application entry point
+└── internal/
+    ├── adapters/
+    │   └── rabbitmq/
+    │       ├── consumer.rabbitmq.go # RabbitMQ consumer adapter (Primary Adapter)
+    │       └── publisher.rabbitmq.go # RabbitMQ publisher adapter (Secondary Adapter)
+    ├── bootstrap/
+    │   ├── config.go                # Dependency injection
+    │   ├── service.go               # Application service wrapper
+    │   └── consumer.go              # Multi-queue consumer orchestration
+    └── services/
+        ├── service.go               # UseCase struct definition
+        ├── extract-data.go          # Main data extraction logic
+        ├── extract_crm_data.go      # Plugin CRM specific extraction
+        └── job_notification.go      # Job event notification publishing
+```
+
+---
+
+## Packages (pkg/)
+
+### Root Package (`pkg/`)
+
+| File | Purpose |
+|------|---------|
+| `context.go` | Context utilities and propagation |
+| `errors.go` | Custom error types and handling |
+| `os.go` | OS-level utilities |
+| `utils.go` | General utility functions |
+| `time_utils.go` | Time manipulation utilities |
+
+### constant (`pkg/constant/`)
+
+Application-wide constants.
+
+| File | Purpose |
+|------|---------|
+| `app.go` | Application constants |
+| `errors.go` | Error code constants |
+| `mongo.go` | MongoDB-specific constants |
+| `pagination.go` | Pagination defaults |
+| `datasource-config.go` | DataSource type constants |
+| `seaweedfs.go` | SeaweedFS configuration constants |
+
+### model (`pkg/model/`)
+
+Domain models including entities, DTOs, requests, and responses.
+
+| File | Purpose |
+|------|---------|
+| `connection.go` | Connection domain entity + DTOs (CreateConnectionInput, UpdateConnectionInput, ConnectionResponse) |
+| `job.go` | Job domain entity + DTOs (CreateJobInput, JobResponse, JobStatus enum) |
+| `pagination.go` | Pagination models and utilities |
+
+**Subpackages:**
+
+- `model/job/` - Job queue message types (`job_queue.go`)
+- `model/datasource/` - DataSource interface and configurations for each database type
+
+### mongodb (`pkg/mongodb/`)
+
+MongoDB connection and repository implementations.
+
+| File | Purpose |
+|------|---------|
+| `mongo.go` | MongoDB connection management |
+
+**Subpackages:**
+
+- `mongodb/connection/` - Connection repository
+  - `connection.go` - MongoDB model mapping
+  - `connection.mongodb.go` - Repository implementation (CRUD operations)
+  - `indexes.go` - Index definitions
+
+- `mongodb/job/` - Job repository
+  - `job.go` - MongoDB model mapping
+  - `job.mongodb.go` - Repository implementation (CRUD operations)
+  - `indexes.go` - Index definitions
+
+### Database Adapters
+
+Each database type has its own package implementing the DataSource interface:
+
+| Package | Files | Purpose |
+|---------|-------|---------|
+| `postgres/` | `postgres.go`, `datasource.postgres.go` | PostgreSQL connection and data extraction |
+| `mysql/` | `mysql.go`, `datasource.mysql.go` | MySQL connection and data extraction |
+| `oracle/` | `oracle.go`, `datasource.oracle.go` | Oracle connection and data extraction |
+| `sqlserver/` | `sqlserver.go`, `datasource.sqlserver.go` | SQL Server connection and data extraction |
+
+### datasource (`pkg/datasource/`)
+
+DataSource factory that creates the appropriate database adapter based on connection type.
+
+| File | Purpose |
+|------|---------|
+| `datasource-factory.go` | Factory pattern implementation |
+
+```go
+func NewDataSourceFromConnection(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor, logger log.Logger) (datasource.DataSource, error) {
+    switch conn.Type {
+    case model.TypeMongoDB:     return newDataSourceConfigMongoDB(...)
+    case model.TypePostgreSQL:  return newDataSourceConfigPostgres(...)
+    case model.TypeOracle:      return newDataSourceConfigOracle(...)
+    case model.TypeMySQL:       return newDataSourceConfigMySQL(...)
+    case model.TypeSQLServer:   return newDataSourceConfigSQLServer(...)
+    }
+}
+```
+
+### rabbitmq (`pkg/rabbitmq/`)
+
+Resilient RabbitMQ adapter with connection management and message publishing.
+
+| File | Purpose |
+|------|---------|
+| `rabbitmq.go` | RabbitMQ connection, channel management, publishing |
+
+### seaweedfs (`pkg/seaweedfs/`)
+
+SeaweedFS client for distributed file storage.
+
+| File | Purpose |
+|------|---------|
+| `seaweedfs.go` | SeaweedFS client operations |
+| `external/external-data.go` | External data repository for storing extracted data |
+
+### crypto (`pkg/crypto/`)
+
+Encryption service using AES-GCM.
+
+| File | Purpose |
+|------|---------|
+| `crypto.go` | AES-GCM encryption/decryption service |
+
+### net/http (`pkg/net/http/`)
+
+HTTP utilities for the Fiber framework.
+
+| File | Purpose |
+|------|---------|
+| `errors.go` | HTTP error handling and responses |
+| `response.go` | Standard response formatting |
+| `cursor.go` | Cursor-based pagination utilities |
+| `withBody.go` | Request body handling |
+| `http-utils.go` | General HTTP utilities |
+
+---
+
+## Architecture Layers
+
+### Hexagonal Architecture
+
+The project follows hexagonal architecture (ports and adapters):
+
+```
+                    ┌─────────────────────────────────────────┐
+                    │              PRIMARY ADAPTERS           │
+                    │         (Inbound - Driving Side)        │
+                    │                                         │
+                    │  ┌─────────────┐    ┌─────────────────┐ │
+                    │  │ HTTP/Fiber  │    │ RabbitMQ        │ │
+                    │  │ (Manager)   │    │ Consumer        │ │
+                    │  │             │    │ (Worker)        │ │
+                    │  └──────┬──────┘    └────────┬────────┘ │
+                    └─────────┼───────────────────┼───────────┘
+                              │                    │
+                              ▼                    ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         APPLICATION CORE                                │
+│                                                                         │
+│  ┌────────────────────────────────────────────────────────────────────┐ │
+│  │                    APPLICATION SERVICES                            │ │
+│  │                                                                    │ │
+│  │   ┌─────────────────────┐      ┌─────────────────────┐             │ │
+│  │   │      COMMANDS       │      │       QUERIES       │             │ │
+│  │   │  (Write Operations) │      │  (Read Operations)  │             │ │
+│  │   │                     │      │                     │             │ │
+│  │   │ - CreateConnection  │      │ - GetConnection     │             │ │
+│  │   │ - UpdateConnection  │      │ - ListConnections   │             │ │
+│  │   │ - DeleteConnection  │      │ - TestConnection    │             │ │
+│  │   │ - CreateFetcherJob  │      │ - GetJob            │             │ │
+│  │   │                     │      │                     │             │ │
+│  │   └─────────────────────┘      └─────────────────────┘             │ │
+│  └────────────────────────────────────────────────────────────────────┘ │
+│                                                                         │
+│  ┌────────────────────────────────────────────────────────────────────┐ │
+│  │                         DOMAIN                                     │ │
+│  │                                                                    │ │
+│  │   ┌─────────────┐    ┌─────────────┐    ┌─────────────┐            │ │
+│  │   │ Connection  │    │    Job      │    │ DataSource  │            │ │
+│  │   │   Entity    │    │   Entity    │    │  Interface  │            │ │
+│  │   └─────────────┘    └─────────────┘    └─────────────┘            │ │
+│  └────────────────────────────────────────────────────────────────────┘ │
+│                                                                         │
+│  ┌────────────────────────────────────────────────────────────────────┐ │
+│  │                     PORTS (Interfaces)                             │ │
+│  │                                                                    │ │
+│  │   - ConnectionRepository    - RabbitMQ Publisher                   │ │
+│  │   - JobRepository           - SeaweedFS Repository                 │ │
+│  │   - DataSource              - Cryptor                              │ │
+│  └────────────────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────────────┘
+                              │                    │
+                              ▼                    ▼
+                    ┌─────────────────────────────────────────┐
+                    │            SECONDARY ADAPTERS           │
+                    │        (Outbound - Driven Side)         │
+                    │                                         │
+                    │  ┌───────────┐  ┌───────────┐  ┌──────┐ │
+                    │  │  MongoDB  │  │ RabbitMQ  │  │ Etc. │ │
+                    │  │   Repo    │  │ Publisher │  │      │ │
+                    │  └───────────┘  └───────────┘  └──────┘ │
+                    │                                         │
+                    │  ┌───────────┐  ┌───────────┐           │
+                    │  │ SeaweedFS │  │ Database  │           │
+                    │  │   Repo    │  │ Adapters  │           │
+                    │  └───────────┘  └───────────┘           │
+                    └─────────────────────────────────────────┘
+```
+
+### CQRS Pattern
+
+Commands and Queries are separated:
+
+- **Commands** (Write operations): `CreateConnection`, `UpdateConnection`, `DeleteConnection`, `CreateFetcherJob`
+- **Queries** (Read operations): `GetConnection`, `ListConnections`, `TestConnection`, `GetJob`
+
+---
+
+## Sequence Diagrams
+
+### POST /v1/management/connections - Create Connection
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Manager as Manager Component
+    participant Handler as HTTP Handler
+    participant Command as CreateConnectionCommand
+    participant Cryptor as Crypto Service
+    participant Repo as ConnectionRepository
+    participant MongoDB
+
+    Client->>Manager: POST /v1/management/connections
+    Manager->>Handler: CreateConnection()
+    Handler->>Handler: Parse & Validate Request
+    Handler->>Command: Execute(input)
+    Command->>Cryptor: Encrypt(password)
+    Cryptor-->>Command: encryptedPassword
+    Command->>Command: Generate UUID, Set timestamps
+    Command->>Repo: Create(connection)
+    Repo->>MongoDB: InsertOne()
+    MongoDB-->>Repo: Result
+    Repo-->>Command: connection
+    Command-->>Handler: connection
+    Handler-->>Manager: 201 Created + ConnectionResponse
+    Manager-->>Client: HTTP 201
+```
+
+### GET /v1/management/connections - List Connections
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Manager as Manager Component
+    participant Handler as HTTP Handler
+    participant Query as ListConnectionsQuery
+    participant Repo as ConnectionRepository
+    participant MongoDB
+
+    Client->>Manager: GET /v1/management/connections
+    Manager->>Handler: ListConnections()
+    Handler->>Handler: Parse pagination params
+    Handler->>Query: Execute(orgId, params)
+    Query->>Repo: List(orgId, params)
+    Repo->>MongoDB: Find() with filters
+    MongoDB-->>Repo: []Connection
+    Repo-->>Query: []Connection
+    Query-->>Handler: []Connection
+    Handler->>Handler: Map to []ConnectionResponse
+    Handler-->>Manager: 200 OK + Response
+    Manager-->>Client: HTTP 200
+```
+
+### GET /v1/management/connections/{id} - Get Connection
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Manager as Manager Component
+    participant Handler as HTTP Handler
+    participant Query as GetConnectionQuery
+    participant Repo as ConnectionRepository
+    participant MongoDB
+
+    Client->>Manager: GET /v1/management/connections/{id}
+    Manager->>Handler: GetConnection()
+    Handler->>Handler: Extract ID from path
+    Handler->>Query: Execute(id, orgId)
+    Query->>Repo: FindByID(id, orgId)
+    Repo->>MongoDB: FindOne()
+    MongoDB-->>Repo: Connection
+    Repo-->>Query: Connection
+    Query-->>Handler: Connection
+    Handler->>Handler: Map to ConnectionResponse
+    Handler-->>Manager: 200 OK + Response
+    Manager-->>Client: HTTP 200
+```
+
+### POST /v1/management/connections/{id}/test - Test Connection
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Manager as Manager Component
+    participant Handler as HTTP Handler
+    participant RateLimiter as Rate Limiter
+    participant Query as TestConnectionQuery
+    participant Repo as ConnectionRepository
+    participant Cryptor as Crypto Service
+    participant Factory as DataSourceFactory
+    participant ExternalDB as External Database
+
+    Client->>Manager: POST /v1/management/connections/{id}/test
+    Manager->>Handler: TestConnection()
+    Handler->>RateLimiter: Check rate limit (10/min)
+    RateLimiter-->>Handler: OK
+    Handler->>Query: Execute(id, orgId)
+    Query->>Repo: FindByID(id, orgId)
+    Repo-->>Query: Connection
+    Query->>Cryptor: Decrypt(password)
+    Cryptor-->>Query: decryptedPassword
+    Query->>Factory: NewDataSourceFromConnection()
+    Factory-->>Query: DataSource
+    Query->>ExternalDB: Connect()
+    ExternalDB-->>Query: Success/Error
+    Query->>ExternalDB: Close()
+    Query-->>Handler: TestResult
+    Handler-->>Manager: 200 OK + TestResponse
+    Manager-->>Client: HTTP 200
+```
+
+### PATCH /v1/management/connections/{id} - Update Connection
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Manager as Manager Component
+    participant Handler as HTTP Handler
+    participant Command as UpdateConnectionCommand
+    participant Repo as ConnectionRepository
+    participant JobRepo as JobRepository
+    participant Cryptor as Crypto Service
+    participant MongoDB
+
+    Client->>Manager: PATCH /v1/management/connections/{id}
+    Manager->>Handler: UpdateConnection()
+    Handler->>Handler: Parse & Validate Request
+    Handler->>Command: Execute(id, orgId, input)
+    Command->>JobRepo: HasActiveJobs(connectionId)
+    JobRepo-->>Command: hasActive
+    alt Has Active Jobs
+        Command-->>Handler: 409 Conflict
+    else No Active Jobs
+        Command->>Repo: FindByID(id, orgId)
+        Repo-->>Command: connection
+        opt Password changed
+            Command->>Cryptor: Encrypt(newPassword)
+            Cryptor-->>Command: encryptedPassword
+        end
+        Command->>Command: Apply updates, set UpdatedAt
+        Command->>Repo: Update(connection)
+        Repo->>MongoDB: UpdateOne()
+        MongoDB-->>Repo: Result
+        Repo-->>Command: connection
+        Command-->>Handler: connection
+        Handler-->>Manager: 200 OK + ConnectionResponse
+    end
+    Manager-->>Client: HTTP Response
+```
+
+### DELETE /v1/management/connections/{id} - Delete Connection
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Manager as Manager Component
+    participant Handler as HTTP Handler
+    participant Command as DeleteConnectionCommand
+    participant JobRepo as JobRepository
+    participant Repo as ConnectionRepository
+    participant MongoDB
+
+    Client->>Manager: DELETE /v1/management/connections/{id}
+    Manager->>Handler: DeleteConnection()
+    Handler->>Command: Execute(id, orgId)
+    Command->>JobRepo: HasActiveJobs(connectionId)
+    JobRepo-->>Command: hasActive
+    alt Has Active Jobs
+        Command-->>Handler: 409 Conflict
+    else No Active Jobs
+        Command->>Repo: FindByID(id, orgId)
+        Repo-->>Command: connection
+        Command->>Repo: Delete(id, orgId)
+        Repo->>MongoDB: UpdateOne(deletedAt)
+        MongoDB-->>Repo: Result
+        Repo-->>Command: OK
+        Command-->>Handler: OK
+        Handler-->>Manager: 204 No Content
+    end
+    Manager-->>Client: HTTP Response
+```
+
+### POST /v1/fetcher - Create Job
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Manager as Manager Component
+    participant Handler as HTTP Handler
+    participant Command as CreateFetcherJobCommand
+    participant ConnRepo as ConnectionRepository
+    participant TestQuery as TestConnectionQuery
+    participant JobRepo as JobRepository
+    participant RabbitMQ
+    participant MongoDB
+
+    Client->>Manager: POST /v1/fetcher
+    Manager->>Handler: CreateJob()
+    Handler->>Handler: Parse & Validate Request
+    Handler->>Command: Execute(input)
+    Command->>Command: Compute request hash
+    Command->>JobRepo: FindByHash(hash, 5min window)
+    JobRepo-->>Command: existingJob?
+    alt Duplicate found
+        Command-->>Handler: 200 OK (existing job)
+    else New job
+        Command->>ConnRepo: FindByConfigNames(names)
+        ConnRepo-->>Command: []Connection
+        loop For each connection
+            Command->>TestQuery: TestConnection(conn)
+            TestQuery-->>Command: Success/Error
+        end
+        alt Any connection failed
+            Command-->>Handler: 400 Bad Request
+        else All connections OK
+            Command->>Command: Generate UUID, Set status=PENDING
+            Command->>JobRepo: Create(job)
+            JobRepo->>MongoDB: InsertOne()
+            MongoDB-->>JobRepo: Result
+            JobRepo-->>Command: job
+            Command->>RabbitMQ: Publish(job message)
+            RabbitMQ-->>Command: ACK
+            Command-->>Handler: job
+            Handler-->>Manager: 202 Accepted + JobResponse
+        end
+    end
+    Manager-->>Client: HTTP Response
+```
+
+### GET /v1/fetcher/{id} - Get Job
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Manager as Manager Component
+    participant Handler as HTTP Handler
+    participant Query as GetJobQuery
+    participant Repo as JobRepository
+    participant MongoDB
+
+    Client->>Manager: GET /v1/fetcher/{id}
+    Manager->>Handler: GetJob()
+    Handler->>Handler: Extract ID from path
+    Handler->>Query: Execute(id, orgId)
+    Query->>Repo: FindByID(id, orgId)
+    Repo->>MongoDB: FindOne()
+    MongoDB-->>Repo: Job
+    Repo-->>Query: Job
+    Query-->>Handler: Job
+    Handler->>Handler: Map to JobResponse
+    Handler-->>Manager: 200 OK + Response
+    Manager-->>Client: HTTP 200
+```
+
+### Worker Component - Extract Data Flow
+
+```mermaid
+sequenceDiagram
+    participant RabbitMQ as RabbitMQ Queue
+    participant Consumer as MultiQueueConsumer
+    participant Routes as ConsumerRoutes
+    participant Handler as handlerGenerateReport
+    participant UseCase as ExtractExternalData
+    participant JobRepo as JobRepository
+    participant ConnRepo as ConnectionRepository
+    participant Cryptor as Crypto Service
+    participant Factory as DataSourceFactory
+    participant ExternalDB as External Database
+    participant SeaweedFS
+    participant Publisher as RabbitMQ Publisher
+    participant MongoDB
+
+    RabbitMQ->>Consumer: Message (job payload)
+    Consumer->>Routes: Dispatch message
+    Routes->>Handler: Handle(message)
+    Handler->>Handler: Parse message body
+    Handler->>UseCase: ExtractExternalData(ctx, body)
+
+    UseCase->>UseCase: Extract jobId from message
+    UseCase->>JobRepo: FindByID(jobId)
+    JobRepo->>MongoDB: FindOne()
+    MongoDB-->>JobRepo: Job
+    JobRepo-->>UseCase: Job
+
+    alt Job already completed
+        UseCase-->>Handler: Skip (idempotent)
+    else Job pending/in_progress
+        UseCase->>JobRepo: UpdateStatus(IN_PROGRESS)
+        UseCase->>ConnRepo: FindByConfigNames(job.configNames)
+        ConnRepo-->>UseCase: []Connection
+
+        loop For each connection
+            UseCase->>Cryptor: Decrypt(password)
+            Cryptor-->>UseCase: decryptedPassword
+            UseCase->>Factory: NewDataSourceFromConnection()
+            Factory-->>UseCase: DataSource
+            UseCase->>ExternalDB: Connect()
+            ExternalDB-->>UseCase: OK
+            UseCase->>ExternalDB: Query(tables, fields, filters)
+            ExternalDB-->>UseCase: []map[string]any
+            UseCase->>ExternalDB: Close()
+        end
+
+        UseCase->>Cryptor: Encrypt(results)
+        Cryptor-->>UseCase: encryptedData
+        UseCase->>SeaweedFS: Store(encryptedData, TTL)
+        SeaweedFS-->>UseCase: fileId
+
+        UseCase->>JobRepo: UpdateStatus(COMPLETED, resultUrl)
+        JobRepo->>MongoDB: UpdateOne()
+        MongoDB-->>JobRepo: OK
+
+        UseCase->>Publisher: Publish(job.completed event)
+        Publisher->>RabbitMQ: Publish to topic exchange
+        RabbitMQ-->>Publisher: ACK
+
+        UseCase-->>Handler: Success
+    end
+
+    Handler-->>Routes: ACK message
+    Routes-->>Consumer: ACK
+    Consumer-->>RabbitMQ: ACK
+```
+
+---
+
+## Inter-Component Communication
+
+### Communication Flow
+
+```
+                                   Client
+                                     │
+                                     │ HTTP
+                                     ▼
+┌──────────────────────────────────────────────────────────────────────────┐
+│                           MANAGER COMPONENT                              │
+│                                                                          │
+│   POST /v1/fetcher                                                       │
+│      1. Validate request                                                 │
+│      2. Check idempotency (5-min window)                                 │
+│      3. Validate connections exist                                       │
+│      4. Test each connection                                             │
+│      5. Create job in MongoDB                                            │
+│      6. Publish to RabbitMQ                                              │
+│      7. Return 202 Accepted                                              │
+└──────────────────────────────────────────────────────────────────────────┘
+                                     │
+                                     │ RabbitMQ
+                                     │ fetcher.extract-external-data.queue
+                                     ▼
+┌──────────────────────────────────────────────────────────────────────────┐
+│                           WORKER COMPONENT                               │
+│                                                                          │
+│   Consumer Loop                                                          │
+│      1. Consume message                                                  │
+│      2. Parse job details                                                │
+│      3. Find connections by config name                                  │
+│      4. Query each external database                                     │
+│      5. Encrypt & store results in SeaweedFS                             │
+│      6. Update job status in MongoDB                                     │
+│      7. Publish notification to RabbitMQ topic                           │
+│      8. ACK message                                                      │
+└──────────────────────────────────────────────────────────────────────────┘
+                                     │
+                    ┌────────────────┼────────────────┐
+                    │                │                │
+                    ▼                ▼                ▼
+               MongoDB          SeaweedFS        RabbitMQ
+           (shared data)    (extracted data)  (notifications)
+```
+
+### Shared Resources
+
+| Resource | Used By | Purpose |
+|----------|---------|---------|
+| MongoDB `connections` collection | Manager, Worker | Store connection configs |
+| MongoDB `jobs` collection | Manager, Worker | Store job state |
+| RabbitMQ `fetcher.extract-external-data.queue` | Manager (publish), Worker (consume) | Job dispatch |
+| RabbitMQ `fetcher.job.events` exchange | Worker (publish) | Job status notifications |
+| SeaweedFS `external_data` bucket | Worker | Store encrypted extracted data |
+| Encryption keys (env vars) | Manager, Worker | Encrypt/decrypt passwords & data |
+
+---
+
+## Evolution Guidelines
+
+### Adding a New Database Type
+
+1. **Create adapter package** in `pkg/<dbtype>/`:
+   - `<dbtype>.go` - Connection management
+   - `datasource.<dbtype>.go` - DataSource interface implementation
+
+2. **Create model** in `pkg/model/datasource/<dbtype>/`:
+   - `datasource-config.go` - Configuration struct
+
+3. **Update factory** in `pkg/datasource/datasource-factory.go`:
+   - Add new case in switch statement
+   - Add helper function for creating the adapter
+
+4. **Add constant** in `pkg/constant/datasource-config.go`:
+   - Add new type constant
+
+5. **Update model** in `pkg/model/connection.go`:
+   - Add new type to ConnectionType enum if needed
+
+### Adding a New API Endpoint
+
+1. **Create handler** in `components/manager/internal/adapters/http/in/`:
+   - Add handler function with Swagger annotations
+
+2. **Add route** in `components/manager/internal/adapters/http/in/routes.go`:
+   - Register the new endpoint
+
+3. **Create service** in `components/manager/internal/services/`:
+   - If write operation: `command/<operation>.go`
+   - If read operation: `query/<operation>.go`
+
+4. **Update bootstrap** in `components/manager/internal/bootstrap/config.go`:
+   - Wire dependencies if needed
+
+5. **Generate docs**:
+   - Run `make generate-docs`
+
+### Adding a New Worker Queue
+
+1. **Create handler** in `components/worker/internal/services/`:
+   - Implement business logic
+
+2. **Create adapter** in `components/worker/internal/adapters/rabbitmq/`:
+   - Implement consumer if needed
+
+3. **Register queue** in `components/worker/internal/bootstrap/consumer.go`:
+   - Add queue configuration and handler mapping
+
+4. **Update RabbitMQ topology** in `components/infra/rabbitmq/etc/definitions.json`:
+   - Add queue, exchange, and binding definitions
+
+### Layer Responsibilities
+
+| Layer | Location | Responsibility | Dependencies |
+|-------|----------|----------------|--------------|
+| **Primary Adapters** | `internal/adapters/http/in/` or `internal/adapters/rabbitmq/` | Receive external input, transform to domain | Application Services |
+| **Application Services** | `internal/services/command/` or `internal/services/query/` | Orchestrate business logic, coordinate domain operations | Domain, Ports |
+| **Domain** | `pkg/model/` | Business entities, value objects, domain logic | None (pure) |
+| **Ports** | Interfaces in `pkg/` packages | Define contracts for external dependencies | None (interfaces) |
+| **Secondary Adapters** | `pkg/mongodb/`, `pkg/rabbitmq/`, `pkg/seaweedfs/` | Implement ports, integrate with external systems | External libraries |
+
+### Best Practices for Evolution
+
+1. **Always use interfaces (ports)** for external dependencies
+2. **Keep domain models pure** - no infrastructure concerns
+3. **Separate commands from queries** - follow CQRS strictly
+4. **Use the factory pattern** for creating adapters dynamically
+5. **Test at service level** - mock ports, not implementations
+6. **Keep handlers thin** - delegate to services immediately
+7. **Use dependency injection** - wire dependencies in bootstrap
+
+---
+
+## Build and Development
+
+### Quick Start
+
+```bash
+# Setup development environment
+make dev-setup
+
+# Copy environment files
+make set-env
+
+# Start all services
+make up
+
+# Run tests
+make test
+
+# Generate Swagger docs
+make generate-docs
+```
+
+### Available Make Commands
+
+| Command | Description |
+|---------|-------------|
+| `make help` | Display all available commands |
+| `make dev-setup` | Complete development environment setup |
+| `make set-env` | Copy .env.example to .env for all components |
+| `make up` | Start all services (infra first, then backends) |
+| `make down` | Stop all services |
+| `make rebuild-up` | Rebuild and restart all services |
+| `make test` | Run all tests |
+| `make lint` | Run golangci-lint with auto-fix |
+| `make sec` | Run gosec security analysis |
+| `make generate-docs` | Generate Swagger documentation |
+
+### CI/CD Workflows
+
+| Workflow | Trigger | Purpose |
+|----------|---------|---------|
+| `go-combined-analysis.yml` | PR to develop/main | Runs Go analysis pipeline |
+| `release.yml` | Push to develop/main/hotfix | Semantic release + AI changelog |
+| `build.yml` | Tag push | Build and publish Docker images |
+| `check-branch.yml` | PR to main | Enforce PR only from develop/hotfix |
+
+---
+
+## Key Files Reference
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| Manager | `components/manager/cmd/app/main.go` | Entry point |
+| Manager | `components/manager/internal/bootstrap/config.go` | DI container |
+| Manager | `components/manager/internal/adapters/http/in/routes.go` | Route definitions |
+| Manager | `components/manager/internal/services/command/create_fetcher_job.go` | Job creation logic |
+| Worker | `components/worker/cmd/app/main.go` | Entry point |
+| Worker | `components/worker/internal/bootstrap/config.go` | DI container |
+| Worker | `components/worker/internal/bootstrap/consumer.go` | Consumer orchestration |
+| Worker | `components/worker/internal/services/extract-data.go` | Data extraction logic |
+| Shared | `pkg/model/connection.go` | Connection domain |
+| Shared | `pkg/model/job.go` | Job domain |
+| Shared | `pkg/datasource/datasource-factory.go` | DataSource factory |
+| Shared | `pkg/rabbitmq/rabbitmq.go` | RabbitMQ adapter |
+| Infra | `components/infra/docker-compose.yml` | Infrastructure |
+| Infra | `components/infra/rabbitmq/etc/definitions.json` | RabbitMQ topology |

@@ -45,12 +45,10 @@ func (s *DeleteConnection) Execute(ctx context.Context, organizationID, connecti
 	}
 
 	if current == nil {
-		return pkg.EntityNotFoundError{
-			EntityType: "connection",
-			Code:       constant.ErrEntityNotFound.Error(),
-			Title:      "Entity Not Found",
-			Message:    "connection not found",
-		}
+		return pkg.ValidateBusinessError(
+			constant.ErrEntityNotFound,
+			"connection",
+		)
 	}
 
 	active, err := s.jobRepo.ExistsRunningByMappedFieldKey(ctx, organizationID, current.ConfigName)

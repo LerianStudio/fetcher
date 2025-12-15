@@ -18,19 +18,26 @@ import (
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
-
-	limiter "github.com/sethvargo/go-limiter"
 )
 
 const ConnectionTestTimeout = 10 * time.Second
 
+// RateLimiterStore defines the interface for rate limiting operations.
+// This interface maintains backward compatibility with tests.
+type RateLimiterStore interface {
+	Take(ctx context.Context, key string) (tokens, remaining, reset uint64, ok bool, err error)
+}
+
 type TestConnection struct {
 	connRepo connRepo.Repository
-	store    limiter.Store
+	store    RateLimiterStore
 	cryptor  crypto.Cryptor
 }
 
-func NewTestConnection(connectionRepo connRepo.Repository, cryptor crypto.Cryptor, store limiter.Store) *TestConnection {
+// NewTestConnection creates a new TestConnection service.
+// The store parameter accepts either *ratelimit.RateLimiter or any implementation
+// of the RateLimiterStore interface for backward compatibility.
+func NewTestConnection(connectionRepo connRepo.Repository, cryptor crypto.Cryptor, store RateLimiterStore) *TestConnection {
 	return &TestConnection{
 		connRepo: connectionRepo,
 		store:    store,
@@ -59,10 +66,7 @@ func (s *TestConnection) Execute(ctx context.Context, organizationID, connection
 		span.SetAttributes(attribute.Bool("app.connection_test.rate_limited", true))
 
 		resetTime := time.Unix(0, int64(reset))
-		retryAfter := time.Until(resetTime)
-		if retryAfter < 0 {
-			retryAfter = 0
-		}
+		retryAfter := max(time.Until(resetTime), 0)
 
 		waitSeconds := int(retryAfter / time.Second)
 		if retryAfter%time.Second != 0 {
@@ -86,12 +90,10 @@ func (s *TestConnection) Execute(ctx context.Context, organizationID, connection
 		return nil, err
 	}
 	if conn == nil {
-		return nil, pkg.EntityNotFoundError{
-			EntityType: "connection",
-			Code:       constant.ErrEntityNotFound.Error(),
-			Title:      "Entity Not Found",
-			Message:    "connection not found",
-		}
+		return nil, pkg.ValidateBusinessError(
+			constant.ErrEntityNotFound,
+			"connection",
+		)
 	}
 
 	testCtx, cancel := context.WithTimeout(ctx, ConnectionTestTimeout)

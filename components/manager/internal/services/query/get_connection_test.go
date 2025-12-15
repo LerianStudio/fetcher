@@ -3,11 +3,11 @@ package query
 import (
 	"context"
 	"errors"
+	"net/http"
 	"testing"
 	"time"
 
 	"github.com/LerianStudio/fetcher/pkg"
-	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 
@@ -15,6 +15,7 @@ import (
 	libLog "github.com/LerianStudio/lib-commons/v2/commons/log"
 	"github.com/golang/mock/gomock"
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
 	"go.opentelemetry.io/otel"
 )
 
@@ -43,8 +44,8 @@ func newExistingConnection(orgID, connID uuid.UUID) *model.Connection {
 		Username:             "testuser",
 		PasswordEncrypted:    "encrypted-password",
 		EncryptionKeyVersion: "v1",
-		CreatedAt:            time.Now().Add(-24 * time.Hour),
-		UpdatedAt:            time.Now().Add(-1 * time.Hour),
+		CreatedAt:            time.Now().UTC().Add(-24 * time.Hour),
+		UpdatedAt:            time.Now().UTC().Add(-1 * time.Hour),
 	}
 }
 
@@ -68,7 +69,6 @@ func TestGetConnection_Execute_Success(t *testing.T) {
 		Return(existingConn, nil)
 
 	result, err := svc.Execute(ctx, orgID, connID)
-
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -130,26 +130,11 @@ func TestGetConnection_Execute_NotFoundError(t *testing.T) {
 		t.Fatal("expected error for non-existent connection, got nil")
 	}
 
-	var notFoundErr pkg.EntityNotFoundError
-	if !errors.As(err, &notFoundErr) {
-		t.Fatalf("expected EntityNotFoundError, got %T: %v", err, err)
+	var respErr pkg.ResponseErrorWithStatusCode
+	if !errors.As(err, &respErr) {
+		t.Fatalf("expected ResponseErrorWithStatusCode, got %T: %v", err, err)
 	}
-
-	if notFoundErr.Code != constant.ErrEntityNotFound.Error() {
-		t.Fatalf("expected error code %s, got %s", constant.ErrEntityNotFound.Error(), notFoundErr.Code)
-	}
-
-	if notFoundErr.EntityType != "connection" {
-		t.Fatalf("expected entity type 'connection', got %s", notFoundErr.EntityType)
-	}
-
-	if notFoundErr.Title != "Entity Not Found" {
-		t.Fatalf("expected title 'Entity Not Found', got %s", notFoundErr.Title)
-	}
-
-	if notFoundErr.Message != "connection not found" {
-		t.Fatalf("expected message 'connection not found', got %s", notFoundErr.Message)
-	}
+	assert.Equal(t, http.StatusNotFound, respErr.StatusCode)
 }
 
 // TestGetConnection_Execute_RepositoryError tests repository error during FindByID.
@@ -217,10 +202,11 @@ func TestGetConnection_Execute_OrganizationIsolation(t *testing.T) {
 		t.Fatal("expected error for connection in different organization, got nil")
 	}
 
-	var notFoundErr pkg.EntityNotFoundError
-	if !errors.As(err, &notFoundErr) {
-		t.Fatalf("expected EntityNotFoundError, got %T: %v", err, err)
+	var respErr pkg.ResponseErrorWithStatusCode
+	if !errors.As(err, &respErr) {
+		t.Fatalf("expected ResponseErrorWithStatusCode, got %T: %v", err, err)
 	}
+	assert.Equal(t, http.StatusNotFound, respErr.StatusCode)
 
 	// Verify the existing connection is not returned (it belongs to a different org)
 	_ = differentOrgID // Unused in mock but demonstrates the test scenario
@@ -229,10 +215,10 @@ func TestGetConnection_Execute_OrganizationIsolation(t *testing.T) {
 // TestGetConnection_Execute_TableDriven uses table-driven tests for various scenarios.
 func TestGetConnection_Execute_TableDriven(t *testing.T) {
 	tests := []struct {
-		name        string
-		setupMocks  func(*connRepo.MockRepository, uuid.UUID, uuid.UUID, *model.Connection)
-		wantErr     bool
-		wantErrType string
+		name           string
+		setupMocks     func(*connRepo.MockRepository, uuid.UUID, uuid.UUID, *model.Connection)
+		wantErr        bool
+		wantStatusCode int // 0 means generic error (no status code check)
 	}{
 		{
 			name: "successful retrieval",
@@ -250,8 +236,8 @@ func TestGetConnection_Execute_TableDriven(t *testing.T) {
 					FindByID(gomock.Any(), connID, orgID).
 					Return(nil, nil)
 			},
-			wantErr:     true,
-			wantErrType: "EntityNotFoundError",
+			wantErr:        true,
+			wantStatusCode: http.StatusNotFound,
 		},
 		{
 			name: "FindByID database error",
@@ -260,8 +246,8 @@ func TestGetConnection_Execute_TableDriven(t *testing.T) {
 					FindByID(gomock.Any(), connID, orgID).
 					Return(nil, errors.New("database connection failed"))
 			},
-			wantErr:     true,
-			wantErrType: "generic",
+			wantErr:        true,
+			wantStatusCode: 0, // generic error
 		},
 	}
 
@@ -288,14 +274,12 @@ func TestGetConnection_Execute_TableDriven(t *testing.T) {
 					t.Fatal("expected error, got nil")
 				}
 
-				switch tt.wantErrType {
-				case "EntityNotFoundError":
-					var notFoundErr pkg.EntityNotFoundError
-					if !errors.As(err, &notFoundErr) {
-						t.Fatalf("expected EntityNotFoundError, got %T: %v", err, err)
+				if tt.wantStatusCode != 0 {
+					var respErr pkg.ResponseErrorWithStatusCode
+					if !errors.As(err, &respErr) {
+						t.Fatalf("expected ResponseErrorWithStatusCode, got %T: %v", err, err)
 					}
-				case "generic":
-					// Just verify it's an error
+					assert.Equal(t, tt.wantStatusCode, respErr.StatusCode)
 				}
 				return
 			}
@@ -338,7 +322,6 @@ func TestGetConnection_Execute_ConnectionWithSSL(t *testing.T) {
 		Return(existingConn, nil)
 
 	result, err := svc.Execute(ctx, orgID, connID)
-
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -406,7 +389,6 @@ func TestGetConnection_Execute_AllDatabaseTypes(t *testing.T) {
 				Return(existingConn, nil)
 
 			result, err := svc.Execute(ctx, orgID, connID)
-
 			if err != nil {
 				t.Fatalf("unexpected error for %s: %v", tt.name, err)
 			}
@@ -470,8 +452,8 @@ func TestGetConnection_Execute_ConnectionWithAllFields(t *testing.T) {
 			Cert: "-----BEGIN CERTIFICATE-----\nclient-cert\n-----END CERTIFICATE-----",
 			Key:  "-----BEGIN PRIVATE KEY-----\nclient-key\n-----END PRIVATE KEY-----",
 		},
-		CreatedAt: time.Now().Add(-48 * time.Hour),
-		UpdatedAt: time.Now().Add(-30 * time.Minute),
+		CreatedAt: time.Now().UTC().Add(-48 * time.Hour),
+		UpdatedAt: time.Now().UTC().Add(-30 * time.Minute),
 	}
 
 	// Mock: connection found
@@ -480,7 +462,6 @@ func TestGetConnection_Execute_ConnectionWithAllFields(t *testing.T) {
 		Return(existingConn, nil)
 
 	result, err := svc.Execute(ctx, orgID, connID)
-
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -619,8 +600,9 @@ func TestGetConnection_Execute_EmptyUUIDs(t *testing.T) {
 		t.Fatal("expected error with nil UUIDs, got nil")
 	}
 
-	var notFoundErr pkg.EntityNotFoundError
-	if !errors.As(err, &notFoundErr) {
-		t.Fatalf("expected EntityNotFoundError, got %T: %v", err, err)
+	var respErr pkg.ResponseErrorWithStatusCode
+	if !errors.As(err, &respErr) {
+		t.Fatalf("expected ResponseErrorWithStatusCode, got %T: %v", err, err)
 	}
+	assert.Equal(t, http.StatusNotFound, respErr.StatusCode)
 }

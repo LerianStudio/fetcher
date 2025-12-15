@@ -2,6 +2,7 @@ package query
 
 import (
 	"errors"
+	"net/http"
 	"testing"
 	"time"
 
@@ -81,7 +82,7 @@ func TestGetJob_Execute(t *testing.T) {
 			organizationID: orgID,
 			jobID:          jobID,
 			expectedJob:    nil,
-			expectedError:  pkg.EntityNotFoundError{},
+			expectedError:  pkg.ResponseErrorWithStatusCode{StatusCode: http.StatusNotFound},
 		},
 		{
 			name: "error - repository error",
@@ -110,9 +111,11 @@ func TestGetJob_Execute(t *testing.T) {
 
 			if tt.expectedError != nil {
 				require.Error(t, err)
-				if _, ok := tt.expectedError.(pkg.EntityNotFoundError); ok {
-					var notFoundErr pkg.EntityNotFoundError
-					assert.True(t, errors.As(err, &notFoundErr))
+				if respErr, ok := tt.expectedError.(pkg.ResponseErrorWithStatusCode); ok {
+					var actualRespErr pkg.ResponseErrorWithStatusCode
+					if assert.True(t, errors.As(err, &actualRespErr)) {
+						assert.Equal(t, respErr.StatusCode, actualRespErr.StatusCode)
+					}
 				} else if errors.Is(tt.expectedError, mongo.ErrNoDocuments) {
 					// For mongo.ErrNoDocuments, check direct match
 					assert.ErrorIs(t, err, tt.expectedError)
