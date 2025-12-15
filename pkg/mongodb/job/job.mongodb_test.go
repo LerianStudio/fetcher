@@ -558,27 +558,20 @@ func TestJobMongoDBRepository_FindByRequestHashWithinWindow(t *testing.T) {
 		org := uuid.New()
 		hash := "oldhashold123"
 
-		// We can't easily create a job with an old created_at since the repo uses the model's CreatedAt
-		// But we can test by using a very small window
 		job := jobFixture()
 		job.OrganizationID = org
 		job.RequestHash = hash
+		// Force created_at to be older than the lookup window
+		job.CreatedAt = time.Now().UTC().Add(-2 * time.Hour)
 		createJob(t, repo, job)
 
-		// Look for job with 0 minute window - should not find it since job was just created
-		// but we're looking for jobs created in the past 0 minutes
-		found, err := repo.FindByRequestHashWithinWindow(context.Background(), org, hash, 0)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		// With a 0 minute window, the job should still be found since it was just created
-		// Let's instead test with a different hash that doesn't exist
-		found, err = repo.FindByRequestHashWithinWindow(context.Background(), org, "nonexistent", 60)
+		// Look for job within a 60 minute window – should not find this older job
+		found, err := repo.FindByRequestHashWithinWindow(context.Background(), org, hash, 60)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if found != nil {
-			t.Fatalf("expected nil for non-matching hash")
+			t.Fatalf("expected nil for job outside time window")
 		}
 	})
 

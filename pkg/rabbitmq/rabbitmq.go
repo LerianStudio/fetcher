@@ -187,7 +187,6 @@ type circuitBreaker struct {
 	lastErrorTime     atomic.Int64
 	threshold         int
 	cooldown          time.Duration
-	mu                sync.RWMutex
 }
 
 // newCircuitBreaker creates a new circuit breaker with the specified threshold and cooldown.
@@ -328,11 +327,11 @@ func NewRabbitMQAdapterWithOptions(c *libRabbitmq.RabbitMQConnection, opts Adapt
 func (prmq *RabbitMQAdapter) initMetrics(provider metric.MeterProvider, Logger libLog.Logger) {
 	meter := provider.Meter("github.com/LerianStudio/fetcher/pkg/rabbitmq")
 
-	prmq.metrics = &metrics{}
+	m := &metrics{}
 
 	var err error
 
-	prmq.metrics.publishAttempts, err = meter.Int64Counter(
+	m.publishAttempts, err = meter.Int64Counter(
 		"rabbitmq.publish.attempts",
 		metric.WithDescription("Number of publish attempts"),
 		metric.WithUnit("{attempt}"),
@@ -342,7 +341,7 @@ func (prmq *RabbitMQAdapter) initMetrics(provider metric.MeterProvider, Logger l
 		return
 	}
 
-	prmq.metrics.publishSuccesses, err = meter.Int64Counter(
+	m.publishSuccesses, err = meter.Int64Counter(
 		"rabbitmq.publish.successes",
 		metric.WithDescription("Number of successful publishes"),
 		metric.WithUnit("{message}"),
@@ -352,7 +351,7 @@ func (prmq *RabbitMQAdapter) initMetrics(provider metric.MeterProvider, Logger l
 		return
 	}
 
-	prmq.metrics.publishFailures, err = meter.Int64Counter(
+	m.publishFailures, err = meter.Int64Counter(
 		"rabbitmq.publish.failures",
 		metric.WithDescription("Number of failed publishes"),
 		metric.WithUnit("{message}"),
@@ -362,7 +361,7 @@ func (prmq *RabbitMQAdapter) initMetrics(provider metric.MeterProvider, Logger l
 		return
 	}
 
-	prmq.metrics.publishLatency, err = meter.Float64Histogram(
+	m.publishLatency, err = meter.Float64Histogram(
 		"rabbitmq.publish.latency",
 		metric.WithDescription("Publish latency in milliseconds"),
 		metric.WithUnit("ms"),
@@ -372,7 +371,7 @@ func (prmq *RabbitMQAdapter) initMetrics(provider metric.MeterProvider, Logger l
 		return
 	}
 
-	prmq.metrics.consumeProcessed, err = meter.Int64Counter(
+	m.consumeProcessed, err = meter.Int64Counter(
 		"rabbitmq.consume.processed",
 		metric.WithDescription("Number of successfully processed messages"),
 		metric.WithUnit("{message}"),
@@ -382,7 +381,7 @@ func (prmq *RabbitMQAdapter) initMetrics(provider metric.MeterProvider, Logger l
 		return
 	}
 
-	prmq.metrics.consumeFailed, err = meter.Int64Counter(
+	m.consumeFailed, err = meter.Int64Counter(
 		"rabbitmq.consume.failed",
 		metric.WithDescription("Number of failed message processings"),
 		metric.WithUnit("{message}"),
@@ -393,7 +392,7 @@ func (prmq *RabbitMQAdapter) initMetrics(provider metric.MeterProvider, Logger l
 	}
 
 	// Register circuit breaker state as an observable gauge
-	prmq.metrics.circuitBreakerGauge, _ = meter.Int64ObservableGauge(
+	m.circuitBreakerGauge, _ = meter.Int64ObservableGauge(
 		"rabbitmq.circuit_breaker.state",
 		metric.WithDescription("Circuit breaker state (0=closed, 1=open, 2=half-open)"),
 		metric.WithInt64Callback(func(ctx context.Context, o metric.Int64Observer) error {
@@ -401,6 +400,8 @@ func (prmq *RabbitMQAdapter) initMetrics(provider metric.MeterProvider, Logger l
 			return nil
 		}),
 	)
+
+	prmq.metrics = m
 }
 
 // recordPublishAttempt safely records a publish attempt metric if metrics are initialized.

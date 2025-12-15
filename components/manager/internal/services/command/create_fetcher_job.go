@@ -149,7 +149,7 @@ func (s *CreateFetcherJob) Execute(ctx context.Context, organizationID uuid.UUID
 		libOpentelemetry.HandleSpanError(&span, "No connections found for the provided datasources", nil)
 		return nil, pkg.ValidationError{
 			EntityType: "fetcher",
-			Code:       constant.ErrSchemaValidationNotFound.Error(),
+			Code:       constant.ErrMissingDataSource.Error(),
 			Title:      "No Connections Found",
 			Message:    "No connections configured for the requested datasources",
 		}

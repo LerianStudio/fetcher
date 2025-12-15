@@ -581,7 +581,7 @@ func (rm *ConnectionMongoDBRepository) List(ctx context.Context, organizationID 
 	for cur.Next(ctx) {
 		var record ConnectionMongoDBModel
 		if err := cur.Decode(&record); err != nil {
-			libOpentelemetry.HandleSpanError(&span, "", err)
+			libOpentelemetry.HandleSpanError(&span, "Failed to decode connection record", err)
 			return nil, mongodb.MapMongoErrorToResponse(err, ctx)
 		}
 
