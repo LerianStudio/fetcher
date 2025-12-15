@@ -54,12 +54,10 @@ func (s *UpdateConnection) Execute(ctx context.Context, organizationID, connecti
 	}
 
 	if current == nil {
-		return nil, pkg.EntityNotFoundError{
-			EntityType: "connection",
-			Code:       constant.ErrEntityNotFound.Error(),
-			Title:      "Entity Not Found",
-			Message:    "connection not found",
-		}
+		return nil, pkg.ValidateBusinessError(
+			constant.ErrEntityNotFound,
+			"connection",
+		)
 	}
 
 	active, err := s.jobRepo.ExistsRunningByMappedFieldKey(ctx, organizationID, current.ConfigName)
@@ -119,12 +117,10 @@ func (s *UpdateConnection) Execute(ctx context.Context, organizationID, connecti
 	}
 
 	if updated == nil {
-		return nil, pkg.EntityNotFoundError{
-			EntityType: "connection",
-			Code:       constant.ErrEntityNotFound.Error(),
-			Title:      "Entity Not Found",
-			Message:    "connection not found",
-		}
+		return nil, pkg.ValidateBusinessError(
+			constant.ErrEntityNotFound,
+			"connection",
+		)
 	}
 
 	return updated, nil

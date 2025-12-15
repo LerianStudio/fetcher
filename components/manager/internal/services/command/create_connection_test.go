@@ -3,16 +3,17 @@ package command
 import (
 	"context"
 	"errors"
+	"net/http"
 	"testing"
 
 	"github.com/LerianStudio/fetcher/pkg"
-	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 
 	"github.com/golang/mock/gomock"
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
 )
 
 // mockCryptor is a test implementation of crypto.Cryptor.
@@ -86,7 +87,6 @@ func TestCreateConnection_Execute_Success(t *testing.T) {
 		})
 
 	result, err := svc.Execute(ctx, orgID, input)
-
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -151,18 +151,11 @@ func TestCreateConnection_Execute_ConflictError(t *testing.T) {
 		t.Fatal("expected error for duplicate connection, got nil")
 	}
 
-	var conflictErr pkg.EntityConflictError
-	if !errors.As(err, &conflictErr) {
-		t.Fatalf("expected EntityConflictError, got %T: %v", err, err)
+	var respErr pkg.ResponseErrorWithStatusCode
+	if !errors.As(err, &respErr) {
+		t.Fatalf("expected ResponseErrorWithStatusCode, got %T: %v", err, err)
 	}
-
-	if conflictErr.Code != constant.ErrEntityConflict.Error() {
-		t.Fatalf("expected error code %s, got %s", constant.ErrEntityConflict.Error(), conflictErr.Code)
-	}
-
-	if conflictErr.EntityType != "connection" {
-		t.Fatalf("expected entity type 'connection', got %s", conflictErr.EntityType)
-	}
+	assert.Equal(t, http.StatusConflict, respErr.StatusCode)
 }
 
 // TestCreateConnection_Execute_FindByOrganizationAndNameError tests repository error during lookup.
@@ -511,7 +504,6 @@ func TestCreateConnection_Execute_WithSSL(t *testing.T) {
 		})
 
 	result, err := svc.Execute(ctx, orgID, input)
-
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -604,7 +596,6 @@ func TestCreateConnection_Execute_AllDatabaseTypes(t *testing.T) {
 				})
 
 			result, err := svc.Execute(ctx, orgID, input)
-
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}

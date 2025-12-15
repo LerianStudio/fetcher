@@ -144,6 +144,17 @@ func (s *CreateFetcherJob) Execute(ctx context.Context, organizationID uuid.UUID
 		return nil, pkg.ValidateInternalError(err, "fetcher")
 	}
 
+	// No connections found
+	if len(connections) == 0 {
+		libOpentelemetry.HandleSpanError(&span, "No connections found for the provided datasources", nil)
+		return nil, pkg.ValidationError{
+			EntityType: "fetcher",
+			Code:       constant.ErrSchemaValidationNotFound.Error(),
+			Title:      "No Connections Found",
+			Message:    "No connections configured for the requested datasources",
+		}
+	}
+
 	// Check that all datasources have corresponding connections
 	connMap := make(map[string]*model.Connection, len(connections))
 	for _, conn := range connections {

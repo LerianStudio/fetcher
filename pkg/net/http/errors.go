@@ -9,10 +9,6 @@ import (
 // WithError returns an error with the given status code and message.
 func WithError(c *fiber.Ctx, err error) error {
 	switch e := err.(type) {
-	case pkg.EntityNotFoundError:
-		return NotFound(c, e.Code, e.Title, e.Message)
-	case pkg.EntityConflictError:
-		return Conflict(c, e.Code, e.Title, e.Message)
 	case pkg.ValidationError:
 		return BadRequest(c, pkg.ValidationKnownFieldsError{
 			Code:    e.Code,
@@ -34,6 +30,12 @@ func WithError(c *fiber.Ctx, err error) error {
 		_ = errors.As(err, &rErr)
 
 		return JSONResponseError(c, rErr)
+	case pkg.ResponseErrorWithStatusCode:
+		var rErr pkg.ResponseErrorWithStatusCode
+
+		_ = errors.As(err, &rErr)
+
+		return JSONResponseErrorWithStatusCode(c, rErr)
 	default:
 		var iErr pkg.InternalServerError
 

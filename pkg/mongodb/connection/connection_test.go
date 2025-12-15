@@ -201,7 +201,7 @@ func TestConnectionMongoDBModel_ToDomain(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			conn, err := tt.model.ToDomain()
+			conn, err := tt.model.ToEntity()
 
 			if tt.wantErr {
 				if err == nil {
@@ -233,7 +233,7 @@ func TestConnectionMongoDBModel_ToDomain_AllDatabaseTypes(t *testing.T) {
 	now := time.Now().UTC()
 
 	dbTypes := []struct {
-		mongoType string
+		mongoType  string
 		domainType model.DBType
 	}{
 		{"POSTGRESQL", model.TypePostgreSQL},
@@ -260,7 +260,7 @@ func TestConnectionMongoDBModel_ToDomain_AllDatabaseTypes(t *testing.T) {
 				UpdatedAt:            now,
 			}
 
-			conn, err := mongoModel.ToDomain()
+			conn, err := mongoModel.ToEntity()
 			if err != nil {
 				t.Fatalf("unexpected error for type %s: %v", tt.mongoType, err)
 			}
@@ -588,7 +588,7 @@ func TestConnectionMongoDBModel_RoundTrip(t *testing.T) {
 			mongoModel := NewConnectionMongoDBModelFromDomain(tt.connection)
 
 			// MongoDB -> Domain
-			result, err := mongoModel.ToDomain()
+			result, err := mongoModel.ToEntity()
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -898,7 +898,7 @@ func TestConnectionMongoDBModel_EdgeCases(t *testing.T) {
 			UpdatedAt:            now,
 		}
 
-		conn, err := mongoModel.ToDomain()
+		conn, err := mongoModel.ToEntity()
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -930,7 +930,7 @@ func TestConnectionMongoDBModel_EdgeCases(t *testing.T) {
 			UpdatedAt:            now,
 		}
 
-		conn, err := mongoModel.ToDomain()
+		conn, err := mongoModel.ToEntity()
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -959,7 +959,7 @@ func TestConnectionMongoDBModel_EdgeCases(t *testing.T) {
 			UpdatedAt:            now,
 		}
 
-		conn, err := mongoModel.ToDomain()
+		conn, err := mongoModel.ToEntity()
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -985,7 +985,7 @@ func TestConnectionMongoDBModel_EdgeCases(t *testing.T) {
 			UpdatedAt:            now,
 		}
 
-		conn, err := mongoModel.ToDomain()
+		conn, err := mongoModel.ToEntity()
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -1025,7 +1025,7 @@ func TestConnectionMongoDBModel_EdgeCases(t *testing.T) {
 			UpdatedAt:            now,
 		}
 
-		conn, err := mongoModel.ToDomain()
+		conn, err := mongoModel.ToEntity()
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -1054,7 +1054,7 @@ func TestConnectionMongoDBModel_EdgeCases(t *testing.T) {
 			UpdatedAt:            now,
 		}
 
-		conn, err := mongoModel.ToDomain()
+		conn, err := mongoModel.ToEntity()
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -1080,7 +1080,7 @@ func TestConnectionMongoDBModel_EdgeCases(t *testing.T) {
 			UpdatedAt:            now,
 		}
 
-		conn, err := mongoModel.ToDomain()
+		conn, err := mongoModel.ToEntity()
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -1107,7 +1107,7 @@ func TestConnectionMongoDBModel_EdgeCases(t *testing.T) {
 			UpdatedAt:            zeroTime,
 		}
 
-		conn, err := mongoModel.ToDomain()
+		conn, err := mongoModel.ToEntity()
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -1165,7 +1165,7 @@ func TestConnectionMongoDBModel_ToDomain_TypeCaseInsensitive(t *testing.T) {
 				UpdatedAt:            now,
 			}
 
-			conn, err := mongoModel.ToDomain()
+			conn, err := mongoModel.ToEntity()
 
 			if tt.expectValid {
 				if err != nil {

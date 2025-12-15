@@ -40,12 +40,10 @@ func (s *GetConnection) Execute(ctx context.Context, organizationID, connectionI
 	}
 
 	if current == nil {
-		return nil, pkg.EntityNotFoundError{
-			EntityType: "connection",
-			Code:       constant.ErrEntityNotFound.Error(),
-			Title:      "Entity Not Found",
-			Message:    "connection not found",
-		}
+		return nil, pkg.ValidateBusinessError(
+			constant.ErrEntityNotFound,
+			"connection",
+		)
 	}
 
 	return current, nil

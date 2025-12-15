@@ -3,42 +3,11 @@ package pkg
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/LerianStudio/fetcher/pkg/constant"
 )
-
-// EntityNotFoundError records an error indicating an entity was not found in any case that caused it.
-// You can use it to representing a Database not found, cache not found or any other repository.
-type EntityNotFoundError struct {
-	EntityType string `json:"entityType,omitempty"`
-	Title      string `json:"title,omitempty"`
-	Message    string `json:"message,omitempty"`
-	Code       string `json:"code,omitempty"`
-	Err        error  `json:"err,omitempty"`
-}
-
-// Error implements the error interface.
-func (e EntityNotFoundError) Error() string {
-	if strings.TrimSpace(e.Message) == "" {
-		if strings.TrimSpace(e.EntityType) != "" {
-			return fmt.Sprintf("Entity %s not found", e.EntityType)
-		}
-
-		if e.Err != nil && strings.TrimSpace(e.Message) == "" {
-			return e.Err.Error()
-		}
-
-		return "entity not found"
-	}
-
-	return e.Message
-}
-
-// Unwrap implements the error interface introduced in Go 1.13 to unwrap the internal error.
-func (e EntityNotFoundError) Unwrap() error {
-	return e.Err
-}
 
 // ValidationError records an error indicating an entity was not found in any case that caused it.
 // You can use it to representing a Database not found, cache not found or any other repository.
@@ -61,39 +30,6 @@ func (e ValidationError) Error() string {
 
 // Unwrap implements the error interface introduced in Go 1.13 to unwrap the internal error.
 func (e ValidationError) Unwrap() error {
-	return e.Err
-}
-
-// EntityConflictError records an error indicating an entity already exists in some repository
-// You can use it to representing a Database conflict, cache or any other repository.
-type EntityConflictError struct {
-	EntityType string `json:"entityType,omitempty"`
-	Title      string `json:"title,omitempty"`
-	Message    string `json:"message,omitempty"`
-	Code       string `json:"code,omitempty"`
-	Err        error  `json:"err,omitempty"`
-}
-
-// ValidationKnownFieldsError records an error that occurred during a validation of known fields.
-type ValidationKnownFieldsError struct {
-	EntityType string           `json:"entityType,omitempty"`
-	Title      string           `json:"title,omitempty"`
-	Code       string           `json:"code,omitempty"`
-	Message    string           `json:"message,omitempty"`
-	Fields     FieldValidations `json:"fields,omitempty"`
-}
-
-// Error implements the error interface.
-func (e EntityConflictError) Error() string {
-	if e.Err != nil && strings.TrimSpace(e.Message) == "" {
-		return e.Err.Error()
-	}
-
-	return e.Message
-}
-
-// Unwrap implements the error interface introduced in Go 1.13 to unwrap the internal error.
-func (e EntityConflictError) Unwrap() error {
 	return e.Err
 }
 
@@ -190,6 +126,34 @@ func (r ResponseError) Error() string {
 	return r.Message
 }
 
+// ResponseErrorWithStatusCode is a struct used to return errors to the client with status code.
+type ResponseErrorWithStatusCode struct {
+	StatusCode int
+	Code       string
+	Title      string
+	Message    string
+}
+
+// Error returns the message of the ResponseError.
+//
+// No parameters.
+// Returns a string.
+func (r ResponseErrorWithStatusCode) Error() string {
+	return r.Message
+}
+
+// ValidationKnownFieldsError records an error that occurred during a validation of known fields.
+type ValidationKnownFieldsError struct {
+	EntityType string           `json:"entityType,omitempty"`
+	Title      string           `json:"title,omitempty"`
+	Code       string           `json:"code,omitempty"`
+	Message    string           `json:"message,omitempty"`
+	Fields     FieldValidations `json:"fields,omitempty"`
+}
+
+// FieldValidations is a map of known fields and their validation errors.
+type FieldValidations map[string]string
+
 // Error returns the error message for a ValidationKnownFieldsError.
 //
 // No parameters.
@@ -197,9 +161,6 @@ func (r ResponseError) Error() string {
 func (r ValidationKnownFieldsError) Error() string {
 	return r.Message
 }
-
-// FieldValidations is a map of known fields and their validation errors.
-type FieldValidations map[string]string
 
 // ValidationUnknownFieldsError records an error that occurred during a validation of known fields.
 type ValidationUnknownFieldsError struct {
@@ -223,22 +184,57 @@ type UnknownFields map[string]any
 
 // Methods to create errors for different scenarios:
 
-// ValidateInternalError validates the error and returns an appropriate InternalServerError.
+// ValidateInternalError validates the error and returns an appropriate 4XX and 5XX.
 //
 // Parameters:
 // - err: The error to be validated.
 // - entityType: The type of the entity associated with the error.
 //
 // Returns:
-// - An InternalServerError with the appropriate code, title, message.
+// - An error indicating the appropriate 4XX or 5XX error.
 func ValidateInternalError(err error, entityType string) error {
-	return InternalServerError{
+	defaultErr := InternalServerError{
 		EntityType: entityType,
 		Code:       constant.ErrInternalServer.Error(),
 		Title:      "Internal Server Error",
 		Message:    "The server encountered an unexpected error. Please try again later or contact support.",
 		Err:        err,
 	}
+
+	errorMap := map[error]error{
+		// General errors
+		constant.ErrInternalServer: defaultErr,
+		constant.ErrBadRequest: ValidationError{
+			EntityType: entityType,
+			Code:       constant.ErrBadRequest.Error(),
+			Title:      "Bad Request",
+			Message:    "The server could not understand the request due to malformed syntax. Please check the request and try again.",
+		},
+		constant.ErrServiceUnavailable: ResponseErrorWithStatusCode{
+			StatusCode: http.StatusServiceUnavailable,
+			Code:       constant.ErrServiceUnavailable.Error(),
+			Title:      "Service Unavailable",
+			Message:    "The server is currently unable to handle the request due to temporary overloading or maintenance of the server. Please try again later.",
+		},
+		constant.ErrConflict: ResponseErrorWithStatusCode{
+			StatusCode: http.StatusConflict,
+			Code:       constant.ErrConflict.Error(),
+			Title:      "Conflict",
+			Message:    "The request could not be completed due to a conflict with the current state of the resource. Please resolve the conflict and try again.",
+		},
+		constant.ErrNotFound: ResponseErrorWithStatusCode{
+			StatusCode: http.StatusNotFound,
+			Code:       constant.ErrNotFound.Error(),
+			Title:      "Not Found",
+			Message:    "The requested resource could not be found. Please check the request and try again.",
+		},
+	}
+
+	if mappedError, found := errorMap[err]; found {
+		return mappedError
+	}
+
+	return defaultErr
 }
 
 // ValidateBadRequestFieldsError validates the error and returns the appropriate bad request error code, title, message, and the invalid fields.
@@ -289,6 +285,7 @@ func ValidateBadRequestFieldsError(requiredFields, knownInvalidFields map[string
 // error: The appropriate business error with code, title, and message.
 func ValidateBusinessError(err error, entityType string, args ...any) error {
 	errorMap := map[error]error{
+		// Common errors
 		constant.ErrInvalidQueryParameter: ValidationError{
 			EntityType: entityType,
 			Code:       constant.ErrInvalidQueryParameter.Error(),
@@ -318,12 +315,6 @@ func ValidateBusinessError(err error, entityType string, args ...any) error {
 			Code:       constant.ErrInvalidSortOrder.Error(),
 			Title:      "Invalid Sort Order",
 			Message:    "The 'sort_order' field must be 'asc' or 'desc'. Please provide a valid sort order and try again.",
-		},
-		constant.ErrEntityNotFound: ValidationError{
-			EntityType: entityType,
-			Code:       constant.ErrEntityNotFound.Error(),
-			Title:      "Entity Not Found",
-			Message:    fmt.Sprintf("No %v entity was found for the given ID. Please make sure to use the correct ID for the entity you are trying to manage.", args...),
 		},
 		constant.ErrMetadataKeyLengthExceeded: ValidationError{
 			EntityType: entityType,
@@ -355,20 +346,41 @@ func ValidateBusinessError(err error, entityType string, args ...any) error {
 			Title:      "Invalid Path Parameter",
 			Message:    fmt.Sprintf("Path parameters is in an incorrect format. Please check the following parameter %v and ensure they meet the required format before trying again.", args),
 		},
+		constant.ErrInvalidDataRequest: ValidationError{
+			EntityType: entityType,
+			Code:       constant.ErrInvalidDataRequest.Error(),
+			Title:      "Invalid Data Request",
+			Message: func() string {
+				if len(args) > 0 {
+					return fmt.Sprint(args...)
+				}
+				return "The request contains invalid data. Please check the request payload and try again."
+			}(),
+		},
+
+		// Entity related errors
+		constant.ErrEntityNotFound: ResponseErrorWithStatusCode{
+			StatusCode: http.StatusNotFound,
+			Code:       constant.ErrEntityNotFound.Error(),
+			Title:      "Entity Not Found",
+			Message:    fmt.Sprintf("It was not possible to find the %v entity during the requested flow. Please review the data provided in the request.", entityType),
+		},
+		constant.ErrEntityConflict: ResponseErrorWithStatusCode{
+			StatusCode: http.StatusConflict,
+			Code:       constant.ErrEntityConflict.Error(),
+			Title:      "Conflict",
+			Message:    fmt.Sprintf("An entity of type %v with the same unique attributes already exists. Please use different values to avoid conflicts and review the data provided in the request.", entityType),
+		},
+
+		// Job related errors
 		constant.ErrMissingDataSource: ValidationError{
 			EntityType: entityType,
 			Code:       constant.ErrMissingDataSource.Error(),
 			Title:      "Missing Data Source Table",
 			Message:    fmt.Sprintf("The data source %v is missing. Please check the value passed.", args),
 		},
-		constant.ErrCommunicateSeaweedFS: ValidationError{
-			EntityType: entityType,
-			Code:       constant.ErrCommunicateSeaweedFS.Error(),
-			Title:      "Communication Error with SeaweedFS",
-			Message:    "Error to communicate with SeaweedFS to download or upload file. Please try again.",
-		},
-		constant.ErrJobInProgress: EntityConflictError{
-			EntityType: entityType,
+		constant.ErrJobInProgress: ResponseErrorWithStatusCode{
+			StatusCode: http.StatusConflict,
 			Code:       constant.ErrJobInProgress.Error(),
 			Title:      "Job In Progress",
 			Message: func() string {
@@ -378,6 +390,8 @@ func ValidateBusinessError(err error, entityType string, args ...any) error {
 				return "The operation cannot be completed because there are active jobs for this connection."
 			}(),
 		},
+
+		// Connection related errors
 		constant.ErrConnectionDown: ValidationError{
 			EntityType: entityType,
 			Code:       constant.ErrConnectionDown.Error(),
@@ -389,15 +403,28 @@ func ValidateBusinessError(err error, entityType string, args ...any) error {
 				return "The database connection is not available. Please check the connection configuration and try again."
 			}(),
 		},
-		constant.ErrInvalidDataRequest: ValidationError{
+
+		// Schema validation errors
+		constant.ErrSchemaValidationFailed: ValidationError{
 			EntityType: entityType,
-			Code:       constant.ErrInvalidDataRequest.Error(),
-			Title:      "Invalid Data Request",
+			Code:       constant.ErrSchemaValidationFailed.Error(),
+			Title:      "Schema Validation Failed",
 			Message: func() string {
 				if len(args) > 0 {
 					return fmt.Sprint(args...)
 				}
-				return "The request contains invalid data. Please check the request payload and try again."
+				return "Schema validation found inconsistencies."
+			}(),
+		},
+		constant.ErrSchemaValidationLimit: ValidationError{
+			EntityType: entityType,
+			Code:       constant.ErrSchemaValidationLimit.Error(),
+			Title:      "Validation Limit Exceeded",
+			Message: func() string {
+				if len(args) > 0 {
+					return fmt.Sprint(args...)
+				}
+				return "Validation request exceeds allowed limits."
 			}(),
 		},
 	}

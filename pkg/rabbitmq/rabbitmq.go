@@ -1,11 +1,13 @@
 // Package rabbitmq provides a resilient RabbitMQ adapter for producing and consuming messages,
-// handling connection and channel lifecycle, retries, and graceful shutdown.
+// handling connection and channel lifecycle, retries, circuit breaker, and graceful shutdown.
 package rabbitmq
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -22,8 +24,106 @@ import (
 	errgroup "golang.org/x/sync/errgroup"
 
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 )
+
+// Named constants for operational parameters.
+const (
+	// DefaultMaxRetryAttempts is the default number of retry attempts for channel establishment.
+	DefaultMaxRetryAttempts = 3
+
+	// DefaultMaxPublishAttempts is the default number of retry attempts for publishing a message.
+	DefaultMaxPublishAttempts = 2
+
+	// DefaultBaseRetryDelay is the default base delay for exponential backoff.
+	DefaultBaseRetryDelay = 100 * time.Millisecond
+
+	// DefaultMaxRetryDelay is the default maximum delay for exponential backoff.
+	DefaultMaxRetryDelay = 2 * time.Second
+
+	// DefaultConsumerReconnectDelay is the default delay between consumer reconnection attempts.
+	DefaultConsumerReconnectDelay = 500 * time.Millisecond
+
+	// DefaultCircuitBreakerThreshold is the default number of consecutive failures before opening the circuit.
+	DefaultCircuitBreakerThreshold = 5
+
+	// DefaultCircuitBreakerCooldown is the default cooldown period before transitioning to half-open state.
+	DefaultCircuitBreakerCooldown = 30 * time.Second
+
+	// DefaultShutdownTimeout is the default timeout for graceful shutdown.
+	DefaultShutdownTimeout = 30 * time.Second
+)
+
+// CircuitState represents the state of the circuit breaker.
+type CircuitState int32
+
+const (
+	// CircuitClosed indicates the circuit is closed and requests flow normally.
+	CircuitClosed CircuitState = iota
+	// CircuitOpen indicates the circuit is open and requests are rejected.
+	CircuitOpen
+	// CircuitHalfOpen indicates the circuit is half-open and testing recovery.
+	CircuitHalfOpen
+)
+
+// String returns the string representation of the circuit state.
+func (s CircuitState) String() string {
+	switch s {
+	case CircuitClosed:
+		return "closed"
+	case CircuitOpen:
+		return "open"
+	case CircuitHalfOpen:
+		return "half-open"
+	default:
+		return "unknown"
+	}
+}
+
+// AdapterOptions contains configuration options for the RabbitMQ adapter.
+type AdapterOptions struct {
+	// MaxRetryAttempts is the maximum number of retry attempts for channel establishment.
+	MaxRetryAttempts int
+
+	// MaxPublishAttempts is the maximum number of retry attempts for publishing a message.
+	MaxPublishAttempts int
+
+	// BaseRetryDelay is the base delay for exponential backoff.
+	BaseRetryDelay time.Duration
+
+	// MaxRetryDelay is the maximum delay for exponential backoff.
+	MaxRetryDelay time.Duration
+
+	// ConsumerReconnectDelay is the delay between consumer reconnection attempts.
+	ConsumerReconnectDelay time.Duration
+
+	// CircuitBreakerThreshold is the number of consecutive failures before opening the circuit.
+	CircuitBreakerThreshold int
+
+	// CircuitBreakerCooldown is the cooldown period before transitioning to half-open state.
+	CircuitBreakerCooldown time.Duration
+
+	// ShutdownTimeout is the timeout for graceful shutdown.
+	ShutdownTimeout time.Duration
+
+	// MeterProvider is the OpenTelemetry meter provider for metrics.
+	MeterProvider metric.MeterProvider
+}
+
+// DefaultOptions returns the default adapter options.
+func DefaultOptions() AdapterOptions {
+	return AdapterOptions{
+		MaxRetryAttempts:        DefaultMaxRetryAttempts,
+		MaxPublishAttempts:      DefaultMaxPublishAttempts,
+		BaseRetryDelay:          DefaultBaseRetryDelay,
+		MaxRetryDelay:           DefaultMaxRetryDelay,
+		ConsumerReconnectDelay:  DefaultConsumerReconnectDelay,
+		CircuitBreakerThreshold: DefaultCircuitBreakerThreshold,
+		CircuitBreakerCooldown:  DefaultCircuitBreakerCooldown,
+		ShutdownTimeout:         DefaultShutdownTimeout,
+	}
+}
 
 type rabbitConnection interface {
 	EnsureChannel() (amqpChannel, error)
@@ -49,7 +149,7 @@ type rabbitmqConnectionAdapter struct {
 // EnsureChannel ensures that a RabbitMQ channel is available.
 func (a *rabbitmqConnectionAdapter) EnsureChannel() (amqpChannel, error) {
 	if err := a.conn.EnsureChannel(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("rabbitmq ensure channel: %w", err)
 	}
 
 	return a.conn.Channel, nil
@@ -63,7 +163,7 @@ func (a *rabbitmqConnectionAdapter) Close() error {
 
 	if a.conn.Channel != nil {
 		if err := a.conn.Channel.Close(); err != nil && !errors.Is(err, amqp.ErrClosed) {
-			return err
+			return fmt.Errorf("rabbitmq close channel: %w", err)
 		}
 
 		a.conn.Channel = nil
@@ -71,7 +171,7 @@ func (a *rabbitmqConnectionAdapter) Close() error {
 
 	if a.conn.Connection != nil {
 		if err := a.conn.Connection.Close(); err != nil && !errors.Is(err, amqp.ErrClosed) {
-			return err
+			return fmt.Errorf("rabbitmq close connection: %w", err)
 		}
 
 		a.conn.Connection = nil
@@ -80,10 +180,91 @@ func (a *rabbitmqConnectionAdapter) Close() error {
 	return nil
 }
 
+// circuitBreaker implements a circuit breaker pattern for RabbitMQ operations.
+type circuitBreaker struct {
+	state             atomic.Int32
+	consecutiveErrors atomic.Int32
+	lastErrorTime     atomic.Int64
+	threshold         int
+	cooldown          time.Duration
+	mu                sync.RWMutex
+}
+
+// newCircuitBreaker creates a new circuit breaker with the specified threshold and cooldown.
+func newCircuitBreaker(threshold int, cooldown time.Duration) *circuitBreaker {
+	cb := &circuitBreaker{
+		threshold: threshold,
+		cooldown:  cooldown,
+	}
+	cb.state.Store(int32(CircuitClosed))
+
+	return cb
+}
+
+// State returns the current state of the circuit breaker.
+func (cb *circuitBreaker) State() CircuitState {
+	return CircuitState(cb.state.Load())
+}
+
+// canExecute checks if the circuit breaker allows execution.
+func (cb *circuitBreaker) canExecute() bool {
+	state := CircuitState(cb.state.Load())
+
+	switch state {
+	case CircuitClosed:
+		return true
+	case CircuitOpen:
+		// Check if cooldown has passed
+		lastError := time.Unix(0, cb.lastErrorTime.Load())
+		if time.Since(lastError) > cb.cooldown {
+			// Transition to half-open
+			cb.state.CompareAndSwap(int32(CircuitOpen), int32(CircuitHalfOpen))
+
+			return true
+		}
+
+		return false
+	case CircuitHalfOpen:
+		return true
+	default:
+		return false
+	}
+}
+
+// recordSuccess records a successful operation and potentially closes the circuit.
+func (cb *circuitBreaker) recordSuccess() {
+	cb.consecutiveErrors.Store(0)
+	cb.state.Store(int32(CircuitClosed))
+}
+
+// recordFailure records a failed operation and potentially opens the circuit.
+func (cb *circuitBreaker) recordFailure() {
+	cb.lastErrorTime.Store(time.Now().UTC().UnixNano())
+	newCount := cb.consecutiveErrors.Add(1)
+
+	if int(newCount) >= cb.threshold {
+		cb.state.Store(int32(CircuitOpen))
+	}
+}
+
+// metrics holds operational metrics for the RabbitMQ adapter.
+type metrics struct {
+	publishAttempts     metric.Int64Counter
+	publishSuccesses    metric.Int64Counter
+	publishFailures     metric.Int64Counter
+	publishLatency      metric.Float64Histogram
+	consumeProcessed    metric.Int64Counter
+	consumeFailed       metric.Int64Counter
+	circuitBreakerGauge metric.Int64ObservableGauge
+}
+
 // RabbitMQAdapter provides resilient publish and consumer operations over RabbitMQ.
 type RabbitMQAdapter struct {
 	conn    rabbitConnection
 	channel amqpChannel
+
+	// options contains the adapter configuration.
+	options AdapterOptions
 
 	// mu protects access to the channel.
 	mu sync.Mutex
@@ -96,29 +277,186 @@ type RabbitMQAdapter struct {
 
 	// consumerWg tracks active consumer goroutines to ensure graceful shutdown.
 	consumerWg sync.WaitGroup
+
+	// circuitBreaker prevents cascading failures.
+	circuitBreaker *circuitBreaker
+
+	// metrics holds operational metrics.
+	metrics *metrics
 }
 
 var errDeliveriesClosed = errors.New("rabbitmq deliveries channel closed")
 
+// ErrCircuitOpen is returned when the circuit breaker is open.
+var ErrCircuitOpen = errors.New("circuit breaker is open")
+
 // NewRabbitMQAdapter initializes a new RabbitMQAdapter with the provided RabbitMQ connection.
+// It uses default options for configuration. Use NewRabbitMQAdapterWithOptions for custom configuration.
 func NewRabbitMQAdapter(c *libRabbitmq.RabbitMQConnection) *RabbitMQAdapter {
+	return NewRabbitMQAdapterWithOptions(c, DefaultOptions())
+}
+
+// NewRabbitMQAdapterWithOptions initializes a new RabbitMQAdapter with the provided RabbitMQ connection and options.
+func NewRabbitMQAdapterWithOptions(c *libRabbitmq.RabbitMQConnection, opts AdapterOptions) *RabbitMQAdapter {
 	adapter := &rabbitmqConnectionAdapter{conn: c}
 
 	prmq := &RabbitMQAdapter{
-		conn: adapter,
+		conn:           adapter,
+		options:        opts,
+		circuitBreaker: newCircuitBreaker(opts.CircuitBreakerThreshold, opts.CircuitBreakerCooldown),
+	}
+
+	// Initialize metrics if meter provider is available
+	if opts.MeterProvider != nil {
+		prmq.initMetrics(opts.MeterProvider, c.Logger)
 	}
 
 	ch, err := adapter.EnsureChannel()
 	if err != nil {
-		c.Logger.Errorf("⚠️  Failed to connect to RabbitMQ during initialization: %v", err)
+		c.Logger.Errorf("Failed to connect to RabbitMQ during initialization: %v", err)
 		c.Logger.Warn("RabbitMQ connection will be retried on first message publish")
 	} else {
 		prmq.channel = ch
 		prmq.startChannelWatcher(c.Logger, ch)
-		c.Logger.Info("✅ RabbitMQ producer connected successfully")
+		c.Logger.Info("RabbitMQ producer connected successfully")
 	}
 
 	return prmq
+}
+
+// initMetrics initializes OpenTelemetry metrics for the adapter.
+func (prmq *RabbitMQAdapter) initMetrics(provider metric.MeterProvider, Logger libLog.Logger) {
+	meter := provider.Meter("github.com/LerianStudio/fetcher/pkg/rabbitmq")
+
+	prmq.metrics = &metrics{}
+
+	var err error
+
+	prmq.metrics.publishAttempts, err = meter.Int64Counter(
+		"rabbitmq.publish.attempts",
+		metric.WithDescription("Number of publish attempts"),
+		metric.WithUnit("{attempt}"),
+	)
+	if err != nil {
+		Logger.Errorf("Failed to initialize RabbitMQ publish attempts metric: %v", err)
+		return
+	}
+
+	prmq.metrics.publishSuccesses, err = meter.Int64Counter(
+		"rabbitmq.publish.successes",
+		metric.WithDescription("Number of successful publishes"),
+		metric.WithUnit("{message}"),
+	)
+	if err != nil {
+		Logger.Errorf("Failed to initialize RabbitMQ publish successes metric: %v", err)
+		return
+	}
+
+	prmq.metrics.publishFailures, err = meter.Int64Counter(
+		"rabbitmq.publish.failures",
+		metric.WithDescription("Number of failed publishes"),
+		metric.WithUnit("{message}"),
+	)
+	if err != nil {
+		Logger.Errorf("Failed to initialize RabbitMQ publish failures metric: %v", err)
+		return
+	}
+
+	prmq.metrics.publishLatency, err = meter.Float64Histogram(
+		"rabbitmq.publish.latency",
+		metric.WithDescription("Publish latency in milliseconds"),
+		metric.WithUnit("ms"),
+	)
+	if err != nil {
+		Logger.Errorf("Failed to initialize RabbitMQ publish latency metric: %v", err)
+		return
+	}
+
+	prmq.metrics.consumeProcessed, err = meter.Int64Counter(
+		"rabbitmq.consume.processed",
+		metric.WithDescription("Number of successfully processed messages"),
+		metric.WithUnit("{message}"),
+	)
+	if err != nil {
+		Logger.Errorf("Failed to initialize RabbitMQ consume processed metric: %v", err)
+		return
+	}
+
+	prmq.metrics.consumeFailed, err = meter.Int64Counter(
+		"rabbitmq.consume.failed",
+		metric.WithDescription("Number of failed message processings"),
+		metric.WithUnit("{message}"),
+	)
+	if err != nil {
+		Logger.Errorf("Failed to initialize RabbitMQ consume failed metric: %v", err)
+		return
+	}
+
+	// Register circuit breaker state as an observable gauge
+	prmq.metrics.circuitBreakerGauge, _ = meter.Int64ObservableGauge(
+		"rabbitmq.circuit_breaker.state",
+		metric.WithDescription("Circuit breaker state (0=closed, 1=open, 2=half-open)"),
+		metric.WithInt64Callback(func(ctx context.Context, o metric.Int64Observer) error {
+			o.Observe(int64(prmq.circuitBreaker.State()))
+			return nil
+		}),
+	)
+}
+
+// recordPublishAttempt safely records a publish attempt metric if metrics are initialized.
+func (prmq *RabbitMQAdapter) recordPublishAttempt(ctx context.Context, attrs ...attribute.KeyValue) {
+	if prmq.metrics != nil && prmq.metrics.publishAttempts != nil {
+		prmq.metrics.publishAttempts.Add(ctx, 1, metric.WithAttributes(attrs...))
+	}
+}
+
+// recordPublishSuccess safely records a publish success metric if metrics are initialized.
+func (prmq *RabbitMQAdapter) recordPublishSuccess(ctx context.Context, attrs ...attribute.KeyValue) {
+	if prmq.metrics != nil && prmq.metrics.publishSuccesses != nil {
+		prmq.metrics.publishSuccesses.Add(ctx, 1, metric.WithAttributes(attrs...))
+	}
+}
+
+// recordPublishFailure safely records a publish failure metric if metrics are initialized.
+func (prmq *RabbitMQAdapter) recordPublishFailure(ctx context.Context, attrs ...attribute.KeyValue) {
+	if prmq.metrics != nil && prmq.metrics.publishFailures != nil {
+		prmq.metrics.publishFailures.Add(ctx, 1, metric.WithAttributes(attrs...))
+	}
+}
+
+// recordConsumeProcessed safely records a consume processed metric if metrics are initialized.
+func (prmq *RabbitMQAdapter) recordConsumeProcessed(ctx context.Context, attrs ...attribute.KeyValue) {
+	if prmq.metrics != nil && prmq.metrics.consumeProcessed != nil {
+		prmq.metrics.consumeProcessed.Add(ctx, 1, metric.WithAttributes(attrs...))
+	}
+}
+
+// recordConsumeFailed safely records a consume failed metric if metrics are initialized.
+func (prmq *RabbitMQAdapter) recordConsumeFailed(ctx context.Context, attrs ...attribute.KeyValue) {
+	if prmq.metrics != nil && prmq.metrics.consumeFailed != nil {
+		prmq.metrics.consumeFailed.Add(ctx, 1, metric.WithAttributes(attrs...))
+	}
+}
+
+// recordPublishLatency safely records a publish latency metric if metrics are initialized.
+func (prmq *RabbitMQAdapter) recordPublishLatency(ctx context.Context, latencyMs float64, attrs ...attribute.KeyValue) {
+	if prmq.metrics != nil && prmq.metrics.publishLatency != nil {
+		prmq.metrics.publishLatency.Record(ctx, latencyMs, metric.WithAttributes(attrs...))
+	}
+}
+
+// IsHealthy returns true if the RabbitMQ connection is healthy.
+// This method is designed for Kubernetes liveness/readiness probes.
+func (prmq *RabbitMQAdapter) IsHealthy() bool {
+	prmq.mu.Lock()
+	defer prmq.mu.Unlock()
+
+	return prmq.channel != nil && !prmq.channel.IsClosed() && !prmq.shutdown.Load()
+}
+
+// CircuitBreakerState returns the current state of the circuit breaker.
+func (prmq *RabbitMQAdapter) CircuitBreakerState() CircuitState {
+	return prmq.circuitBreaker.State()
 }
 
 // invalidateChannel safely closes and nullifies the current RabbitMQ channel.
@@ -157,6 +495,22 @@ func (prmq *RabbitMQAdapter) startChannelWatcher(logger libLog.Logger, channel a
 	}()
 }
 
+// calculateBackoff calculates exponential backoff with jitter.
+// It returns a delay based on the attempt number, bounded by maxDelay,
+// with random jitter (0-25%) added to prevent thundering herd.
+func (prmq *RabbitMQAdapter) calculateBackoff(attempt int) time.Duration {
+	baseDelay := prmq.options.BaseRetryDelay
+	maxDelay := prmq.options.MaxRetryDelay
+
+	// Calculate exponential backoff: baseDelay * 2^(attempt-1)
+	delay := min(baseDelay*time.Duration(1<<uint(attempt-1)), maxDelay)
+
+	// Add jitter (0-25%) to prevent thundering herd
+	jitter := time.Duration(rand.Int63n(int64(delay / 4)))
+
+	return delay + jitter
+}
+
 // ensureChannel checks and establishes a RabbitMQ channel if not already available.
 func (prmq *RabbitMQAdapter) ensureChannel(span *trace.Span, logger libLog.Logger) (amqpChannel, error) {
 	prmq.mu.Lock()
@@ -176,15 +530,14 @@ func (prmq *RabbitMQAdapter) ensureChannel(span *trace.Span, logger libLog.Logge
 
 	logger.Warn("RabbitMQ channel not initialized - attempting to connect...")
 
-	const maxAttempts = 3
-
 	var lastErr error
 
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
+	for attempt := 1; attempt <= prmq.options.MaxRetryAttempts; attempt++ {
 		ch, err := prmq.conn.EnsureChannel()
 		if err == nil {
 			prmq.channel = ch
 			prmq.startChannelWatcher(logger, ch)
+			prmq.circuitBreaker.recordSuccess()
 
 			lastErr = nil
 
@@ -192,8 +545,10 @@ func (prmq *RabbitMQAdapter) ensureChannel(span *trace.Span, logger libLog.Logge
 		}
 
 		lastErr = err
+		prmq.circuitBreaker.recordFailure()
 
-		time.Sleep(time.Duration(attempt) * 200 * time.Millisecond)
+		backoff := prmq.calculateBackoff(attempt)
+		time.Sleep(backoff)
 	}
 
 	if prmq.channel == nil {
@@ -203,16 +558,16 @@ func (prmq *RabbitMQAdapter) ensureChannel(span *trace.Span, logger libLog.Logge
 
 		logger.Errorf("Failed to establish RabbitMQ connection: %v", lastErr)
 
-		return nil, lastErr
+		return nil, fmt.Errorf("rabbitmq establish connection after %d attempts: %w", prmq.options.MaxRetryAttempts, lastErr)
 	}
 
-	logger.Info("✅ RabbitMQ connection established on-demand")
+	logger.Info("RabbitMQ connection established on-demand")
 
 	return prmq.channel, nil
 }
 
 // ProducerDefault sends a message to the specified exchange and routing key in RabbitMQ.
-func (prmq *RabbitMQAdapter) ProducerDefault(ctx context.Context, exchange, key string, queueMessage []byte, header *map[string]interface{}) error {
+func (prmq *RabbitMQAdapter) ProducerDefault(ctx context.Context, exchange, key string, queueMessage []byte, header *map[string]any) error {
 	logger, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
 
 	logger.Infof("Init sent message")
@@ -222,6 +577,18 @@ func (prmq *RabbitMQAdapter) ProducerDefault(ctx context.Context, exchange, key 
 		return errors.New("rabbitmq adapter is shut down")
 	}
 
+	// Check circuit breaker state
+	if !prmq.circuitBreaker.canExecute() {
+		logger.Warnf("Circuit breaker is open, rejecting publish request")
+		prmq.recordPublishFailure(ctx,
+			attribute.String("exchange", exchange),
+			attribute.String("routing_key", key),
+			attribute.String("reason", "circuit_breaker_open"),
+		)
+
+		return ErrCircuitOpen
+	}
+
 	_, spanProducer := tracer.Start(ctx, "rabbitmq.producer.publish_message")
 	defer spanProducer.End()
 
@@ -229,6 +596,10 @@ func (prmq *RabbitMQAdapter) ProducerDefault(ctx context.Context, exchange, key 
 		attribute.String("app.request.request_id", reqID),
 		attribute.String("app.request.exchange", exchange),
 		attribute.String("app.request.key", key),
+		attribute.String("messaging.system", "rabbitmq"),
+		attribute.String("messaging.destination.name", exchange),
+		attribute.String("messaging.operation", "publish"),
+		attribute.Int64("messaging.message.body.size", int64(len(queueMessage))),
 	)
 
 	err := libOpentelemetry.SetSpanAttributesFromStruct(&spanProducer, "app.request.rabbitmq.message", string(queueMessage))
@@ -242,9 +613,7 @@ func (prmq *RabbitMQAdapter) ProducerDefault(ctx context.Context, exchange, key 
 	}
 
 	if header != nil {
-		for k, v := range *header {
-			headers[k] = v
-		}
+		maps.Copy(headers, *header)
 
 		err := libOpentelemetry.SetSpanAttributesFromStruct(&spanProducer, "app.request.rabbitmq.headers", *header)
 		if err != nil {
@@ -268,37 +637,63 @@ func (prmq *RabbitMQAdapter) ProducerDefault(ctx context.Context, exchange, key 
 			})
 	}
 
-	const maxPublishAttempts = 2
-
 	var lastErr error
 
 	prmq.publishMu.Lock()
 	defer prmq.publishMu.Unlock()
 
-	for attempt := 1; attempt <= maxPublishAttempts; attempt++ {
+	startTime := time.Now().UTC()
+
+	for attempt := 1; attempt <= prmq.options.MaxPublishAttempts; attempt++ {
+		prmq.recordPublishAttempt(ctx,
+			attribute.String("exchange", exchange),
+			attribute.String("routing_key", key),
+			attribute.Int("attempt", attempt),
+		)
+
 		channel, err := prmq.ensureChannel(&spanProducer, logger)
 		if err != nil {
-			return err
+			prmq.circuitBreaker.recordFailure()
+
+			return fmt.Errorf("rabbitmq ensure channel for publish: %w", err)
 		}
 
 		if err = publish(channel); err == nil {
+			latencyMs := float64(time.Since(startTime).Milliseconds())
+			prmq.recordPublishLatency(ctx, latencyMs,
+				attribute.String("exchange", exchange),
+				attribute.String("routing_key", key),
+			)
+			prmq.recordPublishSuccess(ctx,
+				attribute.String("exchange", exchange),
+				attribute.String("routing_key", key),
+			)
+			prmq.circuitBreaker.recordSuccess()
 			logger.Infoln("Messages sent successfully")
+
 			return nil
 		}
 
 		lastErr = err
+		prmq.circuitBreaker.recordFailure()
 
 		prmq.invalidateChannel(logger)
 
-		if attempt < maxPublishAttempts {
-			logger.Warnf("Publish attempt %d/%d failed, retrying with new channel: %v", attempt, maxPublishAttempts, err)
+		if attempt < prmq.options.MaxPublishAttempts {
+			logger.Warnf("Publish attempt %d/%d failed, retrying with new channel: %v", attempt, prmq.options.MaxPublishAttempts, err)
 		}
 	}
+
+	prmq.recordPublishFailure(ctx,
+		attribute.String("exchange", exchange),
+		attribute.String("routing_key", key),
+		attribute.String("reason", "max_retries_exceeded"),
+	)
 
 	libOpentelemetry.HandleSpanError(&spanProducer, "Failed to publish message to queue", lastErr)
 	logger.Errorf("Failed to publish message: %s", lastErr)
 
-	return lastErr
+	return fmt.Errorf("rabbitmq publish message after %d attempts: %w", prmq.options.MaxPublishAttempts, lastErr)
 }
 
 // ConsumerLoop fetches messages from the queue, delegates processing to handler, and applies ACK/NACK.
@@ -337,7 +732,7 @@ func (prmq *RabbitMQAdapter) ConsumerLoop(ctx context.Context, queue string, con
 			logger.Warnf("Consumer cycle finished with error: %v", cycleErr)
 		}
 
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(prmq.options.ConsumerReconnectDelay)
 	}
 }
 
@@ -361,7 +756,8 @@ func (prmq *RabbitMQAdapter) runConsumerCycle(
 	channel, err := prmq.ensureChannel(&span, logger)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to ensure RabbitMQ channel", err)
-		return err
+
+		return fmt.Errorf("rabbitmq consumer ensure channel: %w", err)
 	}
 
 	// Set QoS for fair dispatch of messages among consumers based on concurrency
@@ -370,7 +766,7 @@ func (prmq *RabbitMQAdapter) runConsumerCycle(
 		logger.Errorf("Failed to set RabbitMQ QoS: %v", errCh)
 		prmq.invalidateChannel(logger)
 
-		return errCh
+		return fmt.Errorf("rabbitmq set qos: %w", errCh)
 	}
 
 	consumerTag := fmt.Sprintf("%s-%s", queue, reqID)
@@ -389,10 +785,10 @@ func (prmq *RabbitMQAdapter) runConsumerCycle(
 		logger.Errorf("Failed to start RabbitMQ consumer: %v", err)
 		prmq.invalidateChannel(logger)
 
-		return err
+		return fmt.Errorf("rabbitmq start consumer: %w", err)
 	}
 
-	sessionErr := prmq.dispatchDeliveries(ctxSpan, logger, consumerTag, channel, deliveries, concurrency, handler)
+	sessionErr := prmq.dispatchDeliveries(ctxSpan, logger, consumerTag, queue, channel, deliveries, concurrency, handler)
 	if sessionErr == nil {
 		return nil
 	}
@@ -415,6 +811,7 @@ func (prmq *RabbitMQAdapter) dispatchDeliveries(
 	ctx context.Context,
 	logger libLog.Logger,
 	consumerTag string,
+	queue string,
 	channel amqpChannel,
 	deliveries <-chan amqp.Delivery,
 	concurrency int,
@@ -464,7 +861,7 @@ func (prmq *RabbitMQAdapter) dispatchDeliveries(
 			group.Go(func() error {
 				defer prmq.consumerWg.Done()
 
-				prmq.processDelivery(logger, delivery, handler)
+				prmq.processDelivery(workerCtx, logger, queue, delivery, handler)
 
 				return nil
 			})
@@ -474,7 +871,9 @@ func (prmq *RabbitMQAdapter) dispatchDeliveries(
 
 // processDelivery handles a single RabbitMQ message delivery, always extracting headers and creating proper context.
 func (prmq *RabbitMQAdapter) processDelivery(
+	ctx context.Context,
 	logger libLog.Logger,
+	queue string,
 	d amqp.Delivery,
 	handler func(ctx context.Context, body []byte, headers map[string]any) error,
 ) {
@@ -482,9 +881,7 @@ func (prmq *RabbitMQAdapter) processDelivery(
 	headers := make(map[string]any)
 
 	if d.Headers != nil {
-		for k, v := range d.Headers {
-			headers[k] = v
-		}
+		maps.Copy(headers, d.Headers)
 	}
 
 	// Extract request ID from headers or generate new one
@@ -517,8 +914,13 @@ func (prmq *RabbitMQAdapter) processDelivery(
 	hctx, hspan := msgTracer.Start(msgCtx, "rabbitmq.consumer.handle_message")
 	defer hspan.End()
 
+	// Add messaging semantic conventions (M12)
 	hspan.SetAttributes(
 		attribute.String("app.request.rabbitmq.consumer.request_id", requestIDStr),
+		attribute.String("messaging.system", "rabbitmq"),
+		attribute.String("messaging.destination.name", queue),
+		attribute.String("messaging.operation", "process"),
+		attribute.Int64("messaging.message.body.size", int64(len(d.Body))),
 	)
 
 	err := libOpentelemetry.SetSpanAttributesFromStruct(&hspan, "app.request.rabbitmq.consumer.message", d)
@@ -530,18 +932,31 @@ func (prmq *RabbitMQAdapter) processDelivery(
 	// Recover from panics during message processing
 	defer func() {
 		if r := recover(); r != nil {
-			_ = d.Nack(false, false)
+			if nackErr := d.Nack(false, false); nackErr != nil {
+				logWithFields.Warnf("Failed to Nack message after panic: %v", nackErr)
+			}
+
 			err := fmt.Errorf("%v", r)
 			logWithFields.Errorf("Panic while processing message: %v", r)
 			libOpentelemetry.HandleSpanError(&hspan, "Panic while processing message", err)
+			prmq.recordConsumeFailed(ctx,
+				attribute.String("queue", queue),
+				attribute.String("reason", "panic"),
+			)
 		}
 	}()
 
 	if err := handler(hctx, d.Body, headers); err != nil {
-		_ = d.Nack(false, false)
+		if nackErr := d.Nack(false, false); nackErr != nil {
+			logWithFields.Warnf("Failed to Nack message after handler error: %v", nackErr)
+		}
 
 		libOpentelemetry.HandleSpanError(&hspan, "Handler failed to process consumed message", err)
 		logWithFields.Errorf("Handler failed to process consumed message: %v", err)
+		prmq.recordConsumeFailed(ctx,
+			attribute.String("queue", queue),
+			attribute.String("reason", "handler_error"),
+		)
 
 		return
 	}
@@ -550,17 +965,46 @@ func (prmq *RabbitMQAdapter) processDelivery(
 		libOpentelemetry.HandleSpanError(&hspan, "Failed to ACK consumed message", err)
 		logWithFields.Errorf("Failed to ACK consumed message: %v", err)
 	}
+
+	prmq.recordConsumeProcessed(ctx,
+		attribute.String("queue", queue),
+	)
 }
 
 // Shutdown gracefully closes open channels and the underlying connection.
+// It respects the context deadline or uses the configured shutdown timeout.
 func (prmq *RabbitMQAdapter) Shutdown(ctx context.Context) error {
 	logger := libCommons.NewLoggerFromContext(ctx)
 
 	// Indicate shutdown in progress
 	prmq.shutdown.Store(true)
 
-	// Wait for all consumers to finish processing
-	prmq.consumerWg.Wait()
+	// Determine timeout: use context deadline if available, otherwise use configured timeout
+	timeout := prmq.options.ShutdownTimeout
+	if deadline, ok := ctx.Deadline(); ok {
+		timeout = time.Until(deadline)
+	}
+
+	// Use a done channel to implement timeout on WaitGroup
+	done := make(chan struct{})
+	go func() {
+		prmq.consumerWg.Wait()
+		close(done)
+	}()
+
+	// Create a timeout context for the wait operation
+	timeoutCtx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	select {
+	case <-done:
+		// All consumers finished
+		logger.Info("All consumers finished processing")
+	case <-timeoutCtx.Done():
+		logger.Warn("Shutdown timeout reached, some consumers may not have finished")
+	case <-ctx.Done():
+		logger.Warn("Shutdown context canceled, some consumers may not have finished")
+	}
 
 	// Invalidate and close the channel
 	prmq.invalidateChannel(logger)
@@ -568,7 +1012,7 @@ func (prmq *RabbitMQAdapter) Shutdown(ctx context.Context) error {
 	if err := prmq.conn.Close(); err != nil {
 		logger.Errorf("Failed to close RabbitMQ connection: %v", err)
 
-		return err
+		return fmt.Errorf("rabbitmq shutdown close connection: %w", err)
 	}
 
 	logger.Info("RabbitMQ repository shut down gracefully")

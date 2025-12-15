@@ -140,7 +140,7 @@ func TestCreateFetcherJob_Execute_DuplicateWithinWindow(t *testing.T) {
 		ID:             existingJobID,
 		OrganizationID: orgID,
 		Status:         model.JobStatusPending,
-		CreatedAt:      time.Now().Add(-2 * time.Minute),
+		CreatedAt:      time.Now().UTC().Add(-2 * time.Minute),
 	}
 
 	// Mock: find existing job within window
@@ -149,7 +149,6 @@ func TestCreateFetcherJob_Execute_DuplicateWithinWindow(t *testing.T) {
 		Return(existingJob, nil)
 
 	result, err := svc.Execute(ctx, orgID, request)
-
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -171,8 +170,9 @@ func TestCreateFetcherJob_Execute_DuplicateWithinWindow(t *testing.T) {
 	}
 }
 
-// TestCreateFetcherJob_Execute_MissingDatasource tests that missing datasource returns error.
-func TestCreateFetcherJob_Execute_MissingDatasource(t *testing.T) {
+// TestCreateFetcherJob_Execute_NoConnectionsFound tests that when no connections are found
+// for any of the requested datasources, a validation error is returned.
+func TestCreateFetcherJob_Execute_NoConnectionsFound(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
@@ -190,7 +190,7 @@ func TestCreateFetcherJob_Execute_MissingDatasource(t *testing.T) {
 		FindByRequestHashWithinWindow(gomock.Any(), orgID, gomock.Any(), DeduplicationWindowMinutes).
 		Return(nil, nil)
 
-	// Mock: connection not found for datasource
+	// Mock: no connections found at all
 	mockConnRepo.EXPECT().
 		FindByConfigNames(gomock.Any(), orgID, []string{"datasource1"}).
 		Return([]*model.Connection{}, nil)
@@ -202,7 +202,7 @@ func TestCreateFetcherJob_Execute_MissingDatasource(t *testing.T) {
 	}
 
 	if err == nil {
-		t.Fatal("expected error for missing datasource, got nil")
+		t.Fatal("expected error for no connections found, got nil")
 	}
 
 	var validationErr pkg.ValidationError
@@ -210,8 +210,9 @@ func TestCreateFetcherJob_Execute_MissingDatasource(t *testing.T) {
 		t.Fatalf("expected ValidationError, got %T: %v", err, err)
 	}
 
-	if validationErr.Code != constant.ErrMissingDataSource.Error() {
-		t.Fatalf("expected error code %s, got %s", constant.ErrMissingDataSource.Error(), validationErr.Code)
+	// When NO connections are found at all, production returns ErrSchemaValidationNotFound
+	if validationErr.Code != constant.ErrSchemaValidationNotFound.Error() {
+		t.Fatalf("expected error code %s, got %s", constant.ErrSchemaValidationNotFound.Error(), validationErr.Code)
 	}
 }
 

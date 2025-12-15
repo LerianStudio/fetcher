@@ -38,6 +38,7 @@ func NewRoutes(
 	f.Use(tlMid.WithTelemetry(tl))
 	f.Use(cors.New())
 	f.Use(commonsHttp.WithHTTPLogging(commonsHttp.WithCustomLogger(lg)))
+	// TODO: Enable license middleware when ready
 	// f.Use(licenseClient.Middleware())
 
 	// Doc Swagger
@@ -52,6 +53,8 @@ func NewRoutes(
 	// Connections
 	f.Post("/v1/management/connections", auth.Authorize(applicationName, connectionsResource, "post"), connectionHandler.CreateConnection)
 	f.Get("/v1/management/connections", auth.Authorize(applicationName, connectionsResource, "get"), connectionHandler.ListConnections)
+	// Schema Validation - must be before :id routes to avoid conflict
+	f.Post("/v1/management/connections/validate-schema", auth.Authorize(applicationName, connectionsResource, "post"), connectionHandler.ValidateSchema)
 	f.Get("/v1/management/connections/:id", auth.Authorize(applicationName, connectionsResource, "get"), connectionHandler.GetConnection)
 	f.Post("/v1/management/connections/:id/test", auth.Authorize(applicationName, connectionsResource, "post"), connectionHandler.TestConnection)
 	f.Patch("/v1/management/connections/:id", auth.Authorize(applicationName, connectionsResource, "patch"), connectionHandler.UpdateConnection)

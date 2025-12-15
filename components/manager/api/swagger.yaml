@@ -212,6 +212,47 @@ definitions:
       mode:
         type: string
     type: object
+  github_com_LerianStudio_fetcher_pkg_model.SchemaValidationError:
+    properties:
+      dataSourceId:
+        type: string
+      field:
+        type: string
+      table:
+        type: string
+      type:
+        type: string
+    type: object
+  github_com_LerianStudio_fetcher_pkg_model.SchemaValidationRequest:
+    description: Request body for schema validation containing mapped fields per datasource.
+    properties:
+      mappedFields:
+        additionalProperties:
+          additionalProperties:
+            items:
+              type: string
+            type: array
+          type: object
+        description: |-
+          MappedFields maps datasource config names to their tables and fields
+          Key: configName (e.g., "midaz_onboarding")
+          Value: map of table names to field names
+        type: object
+    required:
+    - mappedFields
+    type: object
+  github_com_LerianStudio_fetcher_pkg_model.SchemaValidationResponse:
+    properties:
+      errors:
+        items:
+          $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.SchemaValidationError'
+        type: array
+      message:
+        type: string
+      status:
+        description: '"success" or "failure"'
+        type: string
+    type: object
   pkg.HTTPError:
     properties:
       code:
@@ -653,6 +694,47 @@ paths:
           schema:
             $ref: '#/definitions/pkg.HTTPError'
       summary: Test connection
+      tags:
+      - Connections
+  /v1/management/connections/validate-schema:
+    post:
+      consumes:
+      - application/json
+      description: Validate that tables and fields referenced in the request exist
+        in the configured datasources.
+      parameters:
+      - description: The authorization token in the 'Bearer access_token' format.
+          Only required when auth plugin is enabled.
+        in: header
+        name: Authorization
+        type: string
+      - description: Organization ID
+        in: header
+        name: X-Organization-Id
+        required: true
+        type: string
+      - description: Schema validation request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.SchemaValidationRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.SchemaValidationResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+      summary: Validate schema
       tags:
       - Connections
 swagger: "2.0"

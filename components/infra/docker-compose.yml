@@ -100,11 +100,29 @@ services:
     networks:
       - fetcher-infra-network
 
+  fetcher-valkey:
+    container_name: fetcher-valkey
+    image: valkey/valkey:latest
+    restart: always
+    env_file:
+      - .env
+    environment:
+      - REDIS_USER=${REDIS_USER}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+    command: [ "redis-server", "--requirepass", "${REDIS_PASSWORD}", "--port", "${REDIS_PORT}" ]
+    ports:
+      - ${REDIS_PORT}:${REDIS_PORT}
+    volumes:
+      - fetcher-redis-data:/data
+    networks:
+      - fetcher-infra-network
+
 volumes:
   fetcher-mongodb-data:
   fetcher-seaweedfs-master-data:
   fetcher-seaweedfs-volume-data:
   fetcher-seaweedfs-filer-data:
+  fetcher-redis-data:
 
 
 networks:

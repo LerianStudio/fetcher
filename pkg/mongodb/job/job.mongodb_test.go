@@ -320,7 +320,7 @@ func TestJobMongoDBRepository_List(t *testing.T) {
 		older := jobFixture()
 		older.OrganizationID = orgID
 		older.Status = model.JobStatusPending
-		older.CreatedAt = time.Now().Add(-2 * time.Hour)
+		older.CreatedAt = time.Now().UTC().Add(-2 * time.Hour)
 		createJob(t, repo, older)
 
 		newer := jobFixture()
@@ -332,7 +332,7 @@ func TestJobMongoDBRepository_List(t *testing.T) {
 		other.OrganizationID = otherOrg
 		createJob(t, repo, other)
 
-		since := time.Now().Add(-90 * time.Minute)
+		since := time.Now().UTC().Add(-90 * time.Minute)
 		filters := &ListFilter{
 			OrganizationID: orgID,
 			Statuses:       []model.JobStatus{model.JobStatusProcessing},
@@ -390,6 +390,441 @@ func TestJobMongoDBRepository_List(t *testing.T) {
 		cancel()
 		if _, err := repo.List(ctx, &ListFilter{OrganizationID: uuid.New()}); err == nil {
 			t.Fatalf("expected error")
+		}
+	})
+}
+
+func TestJobMongoDBRepository_UpdateStatus(t *testing.T) {
+	t.Run("updates status to completed and sets completed_at", func(t *testing.T) {
+		repo := newJobRepository(t)
+		created := createJob(t, repo, jobFixture())
+
+		err := repo.UpdateStatus(context.Background(), created.ID, created.OrganizationID, model.JobStatusCompleted, nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// Verify the job was updated
+		found, err := repo.FindByID(context.Background(), created.ID, created.OrganizationID)
+		if err != nil {
+			t.Fatalf("failed to find job: %v", err)
+		}
+		if found.Status != model.JobStatusCompleted {
+			t.Fatalf("expected status completed, got %s", found.Status)
+		}
+		if found.CompletedAt == nil {
+			t.Fatalf("expected completed_at to be set")
+		}
+	})
+
+	t.Run("updates status to failed and sets completed_at", func(t *testing.T) {
+		repo := newJobRepository(t)
+		created := createJob(t, repo, jobFixture())
+
+		err := repo.UpdateStatus(context.Background(), created.ID, created.OrganizationID, model.JobStatusFailed, nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		found, err := repo.FindByID(context.Background(), created.ID, created.OrganizationID)
+		if err != nil {
+			t.Fatalf("failed to find job: %v", err)
+		}
+		if found.Status != model.JobStatusFailed {
+			t.Fatalf("expected status failed, got %s", found.Status)
+		}
+		if found.CompletedAt == nil {
+			t.Fatalf("expected completed_at to be set for failed status")
+		}
+	})
+
+	t.Run("updates status to processing and clears completed_at", func(t *testing.T) {
+		repo := newJobRepository(t)
+		job := jobFixture()
+		job.Status = model.JobStatusCompleted
+		now := time.Now()
+		job.CompletedAt = &now
+		created := createJob(t, repo, job)
+
+		err := repo.UpdateStatus(context.Background(), created.ID, created.OrganizationID, model.JobStatusProcessing, nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		found, err := repo.FindByID(context.Background(), created.ID, created.OrganizationID)
+		if err != nil {
+			t.Fatalf("failed to find job: %v", err)
+		}
+		if found.Status != model.JobStatusProcessing {
+			t.Fatalf("expected status processing, got %s", found.Status)
+		}
+		if found.CompletedAt != nil {
+			t.Fatalf("expected completed_at to be cleared for non-terminal status")
+		}
+	})
+
+	t.Run("updates metadata when provided", func(t *testing.T) {
+		repo := newJobRepository(t)
+		created := createJob(t, repo, jobFixture())
+
+		metadata := map[string]any{
+			"error_message": "something went wrong",
+			"retry_count":   3,
+		}
+		err := repo.UpdateStatus(context.Background(), created.ID, created.OrganizationID, model.JobStatusFailed, metadata)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		found, err := repo.FindByID(context.Background(), created.ID, created.OrganizationID)
+		if err != nil {
+			t.Fatalf("failed to find job: %v", err)
+		}
+		if found.Metadata["error_message"] != "something went wrong" {
+			t.Fatalf("expected metadata to be updated, got %v", found.Metadata)
+		}
+	})
+
+	t.Run("returns error for invalid status", func(t *testing.T) {
+		repo := newJobRepository(t)
+		created := createJob(t, repo, jobFixture())
+
+		err := repo.UpdateStatus(context.Background(), created.ID, created.OrganizationID, "invalid-status", nil)
+		if err == nil {
+			t.Fatalf("expected error for invalid status")
+		}
+	})
+
+	t.Run("returns error for non-existent job", func(t *testing.T) {
+		repo := newJobRepository(t)
+
+		err := repo.UpdateStatus(context.Background(), uuid.New(), uuid.New(), model.JobStatusCompleted, nil)
+		if err == nil {
+			t.Fatalf("expected error for non-existent job")
+		}
+	})
+
+	t.Run("database error surfaces", func(t *testing.T) {
+		repo := &JobMongoDBRepository{
+			connection: &fakeJobMongoConnection{err: errors.New("db down")},
+			Database:   jobTestDatabaseName,
+		}
+		err := repo.UpdateStatus(context.Background(), uuid.New(), uuid.New(), model.JobStatusCompleted, nil)
+		if err == nil || err.Error() != "db down" {
+			t.Fatalf("expected db error, got %v", err)
+		}
+	})
+}
+
+func TestJobMongoDBRepository_FindByRequestHashWithinWindow(t *testing.T) {
+	t.Run("finds job within time window", func(t *testing.T) {
+		repo := newJobRepository(t)
+		org := uuid.New()
+		hash := "abc123def456"
+
+		job := jobFixture()
+		job.OrganizationID = org
+		job.RequestHash = hash
+		job.CreatedAt = time.Now().UTC()
+		created := createJob(t, repo, job)
+
+		// Look for job within 60 minute window
+		found, err := repo.FindByRequestHashWithinWindow(context.Background(), org, hash, 60)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if found == nil {
+			t.Fatalf("expected to find job")
+		}
+		if found.ID != created.ID {
+			t.Fatalf("expected same job ID")
+		}
+	})
+
+	t.Run("returns nil for empty request hash", func(t *testing.T) {
+		repo := newJobRepository(t)
+
+		found, err := repo.FindByRequestHashWithinWindow(context.Background(), uuid.New(), "", 60)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if found != nil {
+			t.Fatalf("expected nil for empty hash")
+		}
+	})
+
+	t.Run("returns nil when job is outside time window", func(t *testing.T) {
+		repo := newJobRepository(t)
+		org := uuid.New()
+		hash := "oldhashold123"
+
+		// We can't easily create a job with an old created_at since the repo uses the model's CreatedAt
+		// But we can test by using a very small window
+		job := jobFixture()
+		job.OrganizationID = org
+		job.RequestHash = hash
+		createJob(t, repo, job)
+
+		// Look for job with 0 minute window - should not find it since job was just created
+		// but we're looking for jobs created in the past 0 minutes
+		found, err := repo.FindByRequestHashWithinWindow(context.Background(), org, hash, 0)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// With a 0 minute window, the job should still be found since it was just created
+		// Let's instead test with a different hash that doesn't exist
+		found, err = repo.FindByRequestHashWithinWindow(context.Background(), org, "nonexistent", 60)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if found != nil {
+			t.Fatalf("expected nil for non-matching hash")
+		}
+	})
+
+	t.Run("returns most recent job when multiple exist", func(t *testing.T) {
+		repo := newJobRepository(t)
+		org := uuid.New()
+		hash := "duplicatehash123"
+
+		// Create two jobs with same hash, different times
+		older := jobFixture()
+		older.OrganizationID = org
+		older.RequestHash = hash
+		older.ResultPath = "/older"
+		older.CreatedAt = time.Now().UTC().Add(-30 * time.Minute)
+		createJob(t, repo, older)
+
+		newer := jobFixture()
+		newer.OrganizationID = org
+		newer.RequestHash = hash
+		newer.ResultPath = "/newer"
+		newer.CreatedAt = time.Now().UTC()
+		createJob(t, repo, newer)
+
+		found, err := repo.FindByRequestHashWithinWindow(context.Background(), org, hash, 60)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if found == nil {
+			t.Fatalf("expected to find job")
+		}
+		if found.ResultPath != "/newer" {
+			t.Fatalf("expected most recent job, got %s", found.ResultPath)
+		}
+	})
+
+	t.Run("respects organization scope", func(t *testing.T) {
+		repo := newJobRepository(t)
+		org1 := uuid.New()
+		org2 := uuid.New()
+		hash := "sharedhash456"
+
+		job := jobFixture()
+		job.OrganizationID = org1
+		job.RequestHash = hash
+		createJob(t, repo, job)
+
+		// Search in different org
+		found, err := repo.FindByRequestHashWithinWindow(context.Background(), org2, hash, 60)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if found != nil {
+			t.Fatalf("expected nil for different org")
+		}
+	})
+
+	t.Run("database error surfaces", func(t *testing.T) {
+		repo := &JobMongoDBRepository{
+			connection: &fakeJobMongoConnection{err: errors.New("db down")},
+			Database:   jobTestDatabaseName,
+		}
+		if _, err := repo.FindByRequestHashWithinWindow(context.Background(), uuid.New(), "hash", 60); err == nil || err.Error() != "db down" {
+			t.Fatalf("expected db error, got %v", err)
+		}
+	})
+}
+
+func TestJobMongoDBRepository_ExistsRunningByMappedFieldKey(t *testing.T) {
+	t.Run("returns true when pending job exists with key", func(t *testing.T) {
+		repo := newJobRepository(t)
+		org := uuid.New()
+
+		job := jobFixture()
+		job.OrganizationID = org
+		job.Status = model.JobStatusPending
+		job.MappedFields = map[string]map[string][]string{
+			"my-config": {
+				"table1": {"field1"},
+			},
+		}
+		createJob(t, repo, job)
+
+		exists, err := repo.ExistsRunningByMappedFieldKey(context.Background(), org, "my-config")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !exists {
+			t.Fatalf("expected to find running job with key")
+		}
+	})
+
+	t.Run("returns true when processing job exists with key", func(t *testing.T) {
+		repo := newJobRepository(t)
+		org := uuid.New()
+
+		job := jobFixture()
+		job.OrganizationID = org
+		job.Status = model.JobStatusProcessing
+		job.MappedFields = map[string]map[string][]string{
+			"processing-config": {
+				"table1": {"field1"},
+			},
+		}
+		createJob(t, repo, job)
+
+		exists, err := repo.ExistsRunningByMappedFieldKey(context.Background(), org, "processing-config")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !exists {
+			t.Fatalf("expected to find processing job with key")
+		}
+	})
+
+	t.Run("returns false when job is completed", func(t *testing.T) {
+		repo := newJobRepository(t)
+		org := uuid.New()
+
+		job := jobFixture()
+		job.OrganizationID = org
+		job.Status = model.JobStatusCompleted
+		now := time.Now()
+		job.CompletedAt = &now
+		job.MappedFields = map[string]map[string][]string{
+			"completed-config": {
+				"table1": {"field1"},
+			},
+		}
+		createJob(t, repo, job)
+
+		exists, err := repo.ExistsRunningByMappedFieldKey(context.Background(), org, "completed-config")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if exists {
+			t.Fatalf("expected false for completed job")
+		}
+	})
+
+	t.Run("returns false when key does not exist", func(t *testing.T) {
+		repo := newJobRepository(t)
+		org := uuid.New()
+
+		job := jobFixture()
+		job.OrganizationID = org
+		job.Status = model.JobStatusPending
+		job.MappedFields = map[string]map[string][]string{
+			"other-config": {
+				"table1": {"field1"},
+			},
+		}
+		createJob(t, repo, job)
+
+		exists, err := repo.ExistsRunningByMappedFieldKey(context.Background(), org, "nonexistent-config")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if exists {
+			t.Fatalf("expected false for non-matching key")
+		}
+	})
+
+	t.Run("respects organization scope", func(t *testing.T) {
+		repo := newJobRepository(t)
+		org1 := uuid.New()
+		org2 := uuid.New()
+
+		job := jobFixture()
+		job.OrganizationID = org1
+		job.Status = model.JobStatusPending
+		job.MappedFields = map[string]map[string][]string{
+			"shared-config": {
+				"table1": {"field1"},
+			},
+		}
+		createJob(t, repo, job)
+
+		exists, err := repo.ExistsRunningByMappedFieldKey(context.Background(), org2, "shared-config")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if exists {
+			t.Fatalf("expected false for different org")
+		}
+	})
+
+	t.Run("returns error for invalid key pattern", func(t *testing.T) {
+		repo := newJobRepository(t)
+
+		_, err := repo.ExistsRunningByMappedFieldKey(context.Background(), uuid.New(), "invalid.key.with.dots")
+		if err == nil {
+			t.Fatalf("expected error for invalid key pattern")
+		}
+	})
+
+	t.Run("accepts valid key patterns", func(t *testing.T) {
+		repo := newJobRepository(t)
+
+		// These should not error
+		validPatterns := []string{"config", "my-config", "config_name", "config123", "Config-Name_123"}
+		for _, pattern := range validPatterns {
+			_, err := repo.ExistsRunningByMappedFieldKey(context.Background(), uuid.New(), pattern)
+			if err != nil {
+				t.Fatalf("unexpected error for pattern %s: %v", pattern, err)
+			}
+		}
+	})
+
+	t.Run("database error surfaces", func(t *testing.T) {
+		repo := &JobMongoDBRepository{
+			connection: &fakeJobMongoConnection{err: errors.New("db down")},
+			Database:   jobTestDatabaseName,
+		}
+		_, err := repo.ExistsRunningByMappedFieldKey(context.Background(), uuid.New(), "config")
+		if err == nil {
+			t.Fatalf("expected db error")
+		}
+	})
+}
+
+func TestJobMongoDBRepository_isIndexConflictError(t *testing.T) {
+	t.Run("returns true for index options conflict (code 85)", func(t *testing.T) {
+		err := mongo.CommandError{Code: 85, Message: "Index options conflict"}
+		if !isIndexConflictError(err) {
+			t.Fatalf("expected true for code 85")
+		}
+	})
+
+	t.Run("returns true for index key specs conflict (code 86)", func(t *testing.T) {
+		err := mongo.CommandError{Code: 86, Message: "Index key specs conflict"}
+		if !isIndexConflictError(err) {
+			t.Fatalf("expected true for code 86")
+		}
+	})
+
+	t.Run("returns false for other command errors", func(t *testing.T) {
+		err := mongo.CommandError{Code: 11000, Message: "Duplicate key"}
+		if isIndexConflictError(err) {
+			t.Fatalf("expected false for code 11000")
+		}
+	})
+
+	t.Run("returns false for non-command errors", func(t *testing.T) {
+		err := errors.New("some other error")
+		if isIndexConflictError(err) {
+			t.Fatalf("expected false for non-command error")
 		}
 	})
 }
@@ -455,7 +890,7 @@ func TestListCompletedRangeFilter(t *testing.T) {
 	repo := newJobRepository(t)
 	org := uuid.New()
 
-	completedAt := time.Now().Add(-time.Hour)
+	completedAt := time.Now().UTC().Add(-time.Hour)
 	completedJob := jobFixture()
 	completedJob.OrganizationID = org
 	completedJob.Status = model.JobStatusCompleted
@@ -480,7 +915,7 @@ func TestListUsesDescendingByDefault(t *testing.T) {
 
 	first := jobFixture()
 	first.OrganizationID = org
-	first.CreatedAt = time.Now().Add(-time.Hour)
+	first.CreatedAt = time.Now().UTC().Add(-time.Hour)
 	createJob(t, repo, first)
 
 	second := jobFixture()

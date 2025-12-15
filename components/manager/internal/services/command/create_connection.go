@@ -93,12 +93,10 @@ func (s *CreateConnection) Execute(ctx context.Context, organizationID uuid.UUID
 	}
 
 	if existing != nil {
-		return nil, pkg.EntityConflictError{
-			EntityType: "connection",
-			Code:       constant.ErrEntityConflict.Error(),
-			Title:      "Conflict",
-			Message:    "connection with the same name already exists",
-		}
+		return nil, pkg.ValidateBusinessError(
+			constant.ErrEntityConflict,
+			"connection",
+		)
 	}
 
 	created, err := s.connRepo.Create(ctx, connection)

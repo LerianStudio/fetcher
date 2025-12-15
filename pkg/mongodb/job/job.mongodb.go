@@ -26,6 +26,9 @@ import (
 const (
 	defaultJobPageLimit = 10
 	maxJobPageLimit     = 50
+
+	// DefaultInitTimeout is the default timeout for repository initialization
+	DefaultInitTimeout = 10 * time.Second
 )
 
 // Repository defines the MongoDB contract for the jobs collection.
@@ -47,20 +50,40 @@ type mongoDatabaseProvider interface {
 
 var setSpanAttributesFromStruct = libOpentelemetry.SetSpanAttributesFromStruct
 
+// RepositoryConfig holds configuration options for the repository.
+type RepositoryConfig struct {
+	// InitTimeout is the timeout for repository initialization.
+	// Default: DefaultInitTimeout (10s)
+	InitTimeout time.Duration
+}
+
 // JobMongoDBRepository implements Repository backed by MongoDB.
 type JobMongoDBRepository struct {
 	connection mongoDatabaseProvider
 	Database   string
+	config     RepositoryConfig
 }
 
 // NewJobMongoDBRepository provisions a repository using the given client.
-func NewJobMongoDBRepository(mc *libMongo.MongoConnection) (*JobMongoDBRepository, error) {
+// Accepts an optional RepositoryConfig; if nil, defaults are used.
+func NewJobMongoDBRepository(mc *libMongo.MongoConnection, cfg ...RepositoryConfig) (*JobMongoDBRepository, error) {
+	config := RepositoryConfig{
+		InitTimeout: DefaultInitTimeout,
+	}
+	if len(cfg) > 0 {
+		config = cfg[0]
+		if config.InitTimeout <= 0 {
+			config.InitTimeout = DefaultInitTimeout
+		}
+	}
+
 	repo := &JobMongoDBRepository{
 		connection: mc,
 		Database:   mc.Database,
+		config:     config,
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), config.InitTimeout)
 	defer cancel()
 
 	if _, err := repo.connection.GetDB(ctx); err != nil {
@@ -72,7 +95,7 @@ func NewJobMongoDBRepository(mc *libMongo.MongoConnection) (*JobMongoDBRepositor
 
 // Create inserts a new job document.
 func (jr *JobMongoDBRepository) Create(ctx context.Context, job *model.Job) (*model.Job, error) {
-	_, tracer, reqId, _ := commons.NewTrackingFromContext(ctx)
+	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "mongodb.create_job")
 	defer span.End()
@@ -85,7 +108,7 @@ func (jr *JobMongoDBRepository) Create(ctx context.Context, job *model.Job) (*mo
 	}
 
 	attributes := []attribute.KeyValue{
-		attribute.String("app.request.request_id", reqId),
+		attribute.String("app.request.request_id", reqID),
 	}
 
 	if job.OrganizationID != uuid.Nil {
@@ -142,7 +165,7 @@ func (jr *JobMongoDBRepository) Create(ctx context.Context, job *model.Job) (*mo
 
 // Update overwrites mutable fields of an existing job and returns the saved entity.
 func (jr *JobMongoDBRepository) Update(ctx context.Context, job *model.Job) (*model.Job, error) {
-	_, tracer, reqId, _ := commons.NewTrackingFromContext(ctx)
+	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "mongodb.update_job")
 	defer span.End()
@@ -155,7 +178,7 @@ func (jr *JobMongoDBRepository) Update(ctx context.Context, job *model.Job) (*mo
 	}
 
 	attributes := []attribute.KeyValue{
-		attribute.String("app.request.request_id", reqId),
+		attribute.String("app.request.request_id", reqID),
 		attribute.String("app.request.job_id", job.ID.String()),
 		attribute.String("app.request.organization_id", job.OrganizationID.String()),
 	}
@@ -216,13 +239,13 @@ func (jr *JobMongoDBRepository) Update(ctx context.Context, job *model.Job) (*mo
 
 // UpdateStatus updates only the status and metadata of a job, automatically managing CompletedAt.
 func (jr *JobMongoDBRepository) UpdateStatus(ctx context.Context, id, organizationID uuid.UUID, status model.JobStatus, metadata map[string]any) error {
-	_, tracer, reqId, _ := commons.NewTrackingFromContext(ctx)
+	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "mongodb.update_job_status")
 	defer span.End()
 
 	attributes := []attribute.KeyValue{
-		attribute.String("app.request.request_id", reqId),
+		attribute.String("app.request.request_id", reqID),
 		attribute.String("app.request.job_id", id.String()),
 		attribute.String("app.request.organization_id", organizationID.String()),
 		attribute.String("app.request.status", string(status)),
@@ -298,13 +321,13 @@ func (jr *JobMongoDBRepository) UpdateStatus(ctx context.Context, id, organizati
 
 // FindByID fetches a job by its ID scoped to an organization.
 func (jr *JobMongoDBRepository) FindByID(ctx context.Context, id, organizationID uuid.UUID) (*model.Job, error) {
-	_, tracer, reqId, _ := commons.NewTrackingFromContext(ctx)
+	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "mongodb.find_job_by_id")
 	defer span.End()
 
 	attributes := []attribute.KeyValue{
-		attribute.String("app.request.request_id", reqId),
+		attribute.String("app.request.request_id", reqID),
 		attribute.String("app.request.job_id", id.String()),
 		attribute.String("app.request.organization_id", organizationID.String()),
 	}
@@ -447,9 +470,6 @@ func (jr *JobMongoDBRepository) ExistsRunningByMappedFieldKey(ctx context.Contex
 		"organization_id": organizationID,
 		"status": bson.M{
 			"$in": bson.A{model.JobStatusPending, model.JobStatusProcessing},
-		},
-		mappedFieldKey: bson.M{
-			"$exists": true,
 		},
 		mappedFieldKey: bson.M{
 			"$exists": true,
