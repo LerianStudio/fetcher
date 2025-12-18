@@ -14,7 +14,7 @@ on:
 
 jobs:
   build:
-    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/build.yml@feature/go-workflows
+    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/build.yml@v1.3.3
     with:
       runner_type: "firmino-lxc-runners"
       # Monorepo configuration
