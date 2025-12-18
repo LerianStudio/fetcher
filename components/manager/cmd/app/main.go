@@ -15,5 +15,3 @@ func main() {
 	pkg.InitLocalEnvConfig()
 	bootstrap.InitServers().Run()
 }
-// trigger
-// test trigger 1765151089
