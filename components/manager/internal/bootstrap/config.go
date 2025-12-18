@@ -200,6 +200,7 @@ func InitServers() *Service {
 		// This should never happen as NewCacheWithFallback handles Redis failures gracefully
 		logger.Fatalf("Failed to initialize cache: %v", errCache)
 	}
+
 	schemaCache = cacheRepo.NewSchemaCache(genericCache, schemaCacheTTL)
 
 	// Init services and handlers

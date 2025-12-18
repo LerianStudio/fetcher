@@ -354,6 +354,7 @@ func (ds *ExternalDataSource) discoverAllFieldsWithAggregation(ctx context.Conte
 				if count > 1000 {
 					return 1000
 				}
+
 				return count
 			}(),
 		},

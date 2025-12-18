@@ -734,6 +734,10 @@ const docTemplate = `{
                     "type": "string",
                     "example": "db.example.com"
                 },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
                 "password": {
                     "type": "string",
                     "example": "secretpassword"
@@ -781,6 +785,10 @@ const docTemplate = `{
                 },
                 "id": {
                     "type": "string"
+                },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": {}
                 },
                 "port": {
                     "type": "integer"

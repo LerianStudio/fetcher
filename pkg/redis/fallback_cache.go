@@ -71,6 +71,7 @@ func (c *FallbackCache[T]) Get(ctx context.Context, key string) (T, bool, error)
 
 	if useRedis {
 		span.SetAttributes(attribute.String("app.cache.backend", "redis"))
+
 		value, found, err := c.redis.Get(ctx, key)
 		if err != nil {
 			logger.Warnf("redis cache error for key %s, falling back to in-memory: %v", key, err)
@@ -107,6 +108,7 @@ func (c *FallbackCache[T]) Set(ctx context.Context, key string, value T, ttl tim
 
 	if useRedis {
 		span.SetAttributes(attribute.String("app.cache.backend", "redis+memory"))
+
 		if err := c.redis.Set(ctx, key, value, ttl); err != nil {
 			logger.Warnf("failed to set in redis, using in-memory only: %v", err)
 		}
@@ -137,6 +139,7 @@ func (c *FallbackCache[T]) Delete(ctx context.Context, key string) error {
 
 	if useRedis {
 		span.SetAttributes(attribute.String("app.cache.backend", "redis+memory"))
+
 		if err := c.redis.Delete(ctx, key); err != nil {
 			logger.Warnf("failed to delete from redis: %v", err)
 		}
@@ -164,6 +167,7 @@ func (c *FallbackCache[T]) Clear(ctx context.Context) error {
 
 	if useRedis {
 		span.SetAttributes(attribute.String("app.cache.backend", "redis+memory"))
+
 		if err := c.redis.Clear(ctx); err != nil {
 			logger.Warnf("failed to clear redis cache: %v", err)
 		}
@@ -191,16 +195,28 @@ func (c *FallbackCache[T]) IsHealthy(ctx context.Context) bool {
 // Close is idempotent and safe to call multiple times.
 func (c *FallbackCache[T]) Close() error {
 	c.mu.Lock()
+
 	if c.closed {
 		c.mu.Unlock()
 		return nil
 	}
+
 	c.closed = true
 	c.mu.Unlock()
 
 	close(c.stopCh)
 
-	return c.inMemory.Close()
+	err := c.inMemory.Close()
+	if err != nil {
+		c.logger.Warnf("failed to close in-memory cache: %v", err)
+	}
+
+	err = c.redis.Close()
+	if err != nil {
+		c.logger.Warnf("failed to close redis cache: %v", err)
+	}
+
+	return err
 }
 
 // monitorRedisHealth periodically checks Redis health and updates useRedis flag.
@@ -213,17 +229,21 @@ func (c *FallbackCache[T]) monitorRedisHealth() {
 		case <-ticker.C:
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			healthy := c.redis.IsHealthy(ctx)
+
 			cancel()
 
 			c.mu.Lock()
+
 			if healthy != c.useRedis {
 				if healthy {
 					c.logger.Info("redis connection restored, switching to redis cache")
 				} else {
 					c.logger.Warn("redis connection lost, falling back to in-memory cache")
 				}
+
 				c.useRedis = healthy
 			}
+
 			c.mu.Unlock()
 		case <-c.stopCh:
 			c.logger.Debug("stopping redis health monitor goroutine")

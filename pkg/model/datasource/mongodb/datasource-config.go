@@ -96,8 +96,8 @@ func getCollectionFilters(databaseFilters map[string]map[string]job.FilterCondit
 }
 
 // GetSchemaInfo returns the schema information for MongoDB.
-func (ds *DataSourceConfigMongoDB) GetSchemaInfo(ctx context.Context) (*model.DataSourceSchema, error) {
-	_, tracer, _, _ := commons.NewTrackingFromContext(ctx)
+func (ds *DataSourceConfigMongoDB) GetSchemaInfo(ctx context.Context, schemas []string) (*model.DataSourceSchema, error) {
+	_, tracer, _, _ := commons.NewTrackingFromContext(ctx) //nolint:dogsled // Only tracer needed for span creation
 
 	ctx, span := tracer.Start(ctx, "datasource.mongodb.get_schema_info")
 	defer span.End()
@@ -114,11 +114,13 @@ func (ds *DataSourceConfigMongoDB) GetSchemaInfo(ctx context.Context) (*model.Da
 	}
 
 	schema := model.NewDataSourceSchema(ds.ConfigName)
+
 	for _, collection := range schemaResult {
 		columns := make([]string, len(collection.Fields))
 		for i, field := range collection.Fields {
 			columns[i] = field.Name
 		}
+
 		schema.AddTable(collection.CollectionName, columns)
 	}
 

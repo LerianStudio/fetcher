@@ -60,7 +60,10 @@ func (ds *DataSourceConfigOracle) Close(ctx context.Context) error {
 func (ds *DataSourceConfigOracle) Query(ctx context.Context, tables map[string][]string, filters map[string]map[string]job.FilterCondition, logger log.Logger) (map[string][]map[string]any, error) {
 	result := make(map[string][]map[string]any)
 
-	schemaResult, err := ds.OracleRepository.GetDatabaseSchema(ctx)
+	// Extract unique schemas from table names
+	schemas := datasource.GetUniqueSchemas(tables)
+
+	schemaResult, err := ds.OracleRepository.GetDatabaseSchema(ctx, schemas)
 	if err != nil {
 		logger.Errorf("Error getting database schema: %s", err.Error())
 		return nil, err
@@ -107,8 +110,8 @@ func getTableFilters(databaseFilters map[string]map[string]job.FilterCondition, 
 }
 
 // GetSchemaInfo returns the schema information for Oracle.
-func (ds *DataSourceConfigOracle) GetSchemaInfo(ctx context.Context) (*model.DataSourceSchema, error) {
-	_, tracer, _, _ := commons.NewTrackingFromContext(ctx)
+func (ds *DataSourceConfigOracle) GetSchemaInfo(ctx context.Context, schemas []string) (*model.DataSourceSchema, error) {
+	_, tracer, _, _ := commons.NewTrackingFromContext(ctx) //nolint:dogsled // Only tracer needed for span creation
 
 	ctx, span := tracer.Start(ctx, "datasource.oracle.get_schema_info")
 	defer span.End()
@@ -118,18 +121,20 @@ func (ds *DataSourceConfigOracle) GetSchemaInfo(ctx context.Context) (*model.Dat
 		attribute.String("app.datasource.type", "oracle"),
 	)
 
-	schemaResult, err := ds.OracleRepository.GetDatabaseSchema(ctx)
+	schemaResult, err := ds.OracleRepository.GetDatabaseSchema(ctx, schemas)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "failed to get database schema", err)
 		return nil, fmt.Errorf("failed to get Oracle schema: %w", err)
 	}
 
 	schema := model.NewDataSourceSchema(ds.ConfigName)
+
 	for _, table := range schemaResult {
 		columns := make([]string, len(table.Columns))
 		for i, col := range table.Columns {
 			columns[i] = col.Name
 		}
+
 		schema.AddTable(table.TableName, columns)
 	}
 

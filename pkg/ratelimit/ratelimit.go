@@ -42,6 +42,7 @@ func (r *RateLimiter) getLimiter(key string) *rate.Limiter {
 	if entry, ok := r.limiters.Load(key); ok {
 		e := entry.(*limiterEntry)
 		e.lastAccess.Store(now)
+
 		return e.limiter
 	}
 
@@ -63,6 +64,7 @@ func (r *RateLimiter) getLimiter(key string) *rate.Limiter {
 
 	// Store or get existing (handles race condition)
 	actual, _ := r.limiters.LoadOrStore(key, entry)
+
 	return actual.(*limiterEntry).limiter
 }
 
@@ -94,7 +96,8 @@ func (r *RateLimiter) Allow(key string) (allowed bool, retryAfter time.Duration)
 func (r *RateLimiter) Take(_ context.Context, key string) (tokens, remaining, reset uint64, ok bool, err error) {
 	limiter := r.getLimiter(key)
 
-	tokens = uint64(r.tokens)
+	// r.tokens is validated to be positive during RateLimiter construction
+	tokens = uint64(r.tokens) // #nosec G115 -- tokens is always positive from constructor
 
 	if limiter.Allow() {
 		// Request allowed
@@ -102,15 +105,18 @@ func (r *RateLimiter) Take(_ context.Context, key string) (tokens, remaining, re
 		if currentTokens < 0 {
 			currentTokens = 0
 		}
+
 		remaining = uint64(currentTokens)
 		if remaining > tokens {
 			remaining = tokens
 		}
 		// Calculate reset time (when bucket will be full)
 		resetTime := time.Now().UTC().Add(r.interval)
-		reset = uint64(resetTime.UnixNano())
+		// UnixNano() returns positive values for current/future timestamps (post-1970)
+		reset = uint64(resetTime.UnixNano()) // #nosec G115 -- resetTime is always in the future (post-1970)
 		ok = true
-		return
+
+		return tokens, remaining, reset, ok, err
 	}
 
 	// Request denied - calculate when to retry
@@ -120,9 +126,11 @@ func (r *RateLimiter) Take(_ context.Context, key string) (tokens, remaining, re
 
 	remaining = 0
 	resetTime := time.Now().UTC().Add(delay)
-	reset = uint64(resetTime.UnixNano())
+	// UnixNano() returns positive values for current/future timestamps (post-1970)
+	reset = uint64(resetTime.UnixNano()) // #nosec G115 -- resetTime is always in the future (post-1970)
 	ok = false
-	return
+
+	return tokens, remaining, reset, ok, err
 }
 
 // Tokens returns the configured token capacity.
@@ -137,7 +145,7 @@ func (r *RateLimiter) Interval() time.Duration {
 
 // Cleanup removes all rate limiters from the cache.
 func (r *RateLimiter) Cleanup() {
-	r.limiters.Range(func(key, value interface{}) bool {
+	r.limiters.Range(func(key, value any) bool {
 		r.limiters.Delete(key)
 		return true
 	})
@@ -152,12 +160,14 @@ func (r *RateLimiter) CleanupInactive(maxAge time.Duration) int {
 	cutoff := time.Now().UTC().Add(-maxAge).UnixNano()
 	cleaned := 0
 
-	r.limiters.Range(func(key, value interface{}) bool {
+	r.limiters.Range(func(key, value any) bool {
 		entry := value.(*limiterEntry)
 		if entry.lastAccess.Load() < cutoff {
 			r.limiters.Delete(key)
+
 			cleaned++
 		}
+
 		return true
 	})
 

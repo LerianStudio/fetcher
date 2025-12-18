@@ -106,3 +106,17 @@ func (mr *MockSchemaCacheRepositoryMockRecorder) Set(arg0, arg1, arg2, arg3 inte
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Set", reflect.TypeOf((*MockSchemaCacheRepository)(nil).Set), arg0, arg1, arg2, arg3)
 }
+
+// Close mocks base method.
+func (m *MockSchemaCacheRepository) Close() error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Close")
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// Close indicates an expected call of Close.
+func (mr *MockSchemaCacheRepositoryMockRecorder) Close() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Close", reflect.TypeOf((*MockSchemaCacheRepository)(nil).Close))
+}

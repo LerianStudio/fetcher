@@ -47,6 +47,7 @@ func NewJobStatusFromString(status string) (JobStatus, error) {
 	if !normalized.IsValid() {
 		return "", errors.New("invalid job status")
 	}
+
 	return normalized, nil
 }
 
@@ -84,6 +85,7 @@ func NewJob(
 	if err != nil {
 		return nil, err
 	}
+
 	return &Job{
 		ID:             id,
 		OrganizationID: organizationID,
@@ -130,12 +132,14 @@ func (r *Job) IsValid() error {
 	// Validate each datasource has at least one table with fields
 	for _, tables := range r.MappedFields {
 		hasFields := false
+
 		for _, fields := range tables {
 			if len(fields) > 0 {
 				hasFields = true
 				break
 			}
 		}
+
 		if !hasFields {
 			return pkg.ValidationError{
 				EntityType: "fetcher",
@@ -184,6 +188,7 @@ func (r *Job) GetDatasourceNames() []string {
 	}
 
 	sort.Strings(names)
+
 	return names
 }
 
@@ -200,6 +205,7 @@ func (r *Job) ToMappedFieldsMap() map[string]any {
 		for table, fields := range tables {
 			tablesMap[table] = fields
 		}
+
 		result[datasource] = tablesMap
 	}
 
@@ -219,6 +225,7 @@ func (r *Job) SetFailedStatus(failedMsg string) {
 	if r.Metadata == nil {
 		r.Metadata = make(map[string]any)
 	}
+
 	r.Metadata["error"] = failedMsg
 }
 
@@ -262,6 +269,7 @@ func (r *FetcherRequest) ComputeRequestHash() (string, error) {
 	}
 
 	hash := sha256.Sum256(data)
+
 	return hex.EncodeToString(hash[:]), nil
 }
 

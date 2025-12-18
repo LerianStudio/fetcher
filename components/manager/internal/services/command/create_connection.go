@@ -54,6 +54,7 @@ func (s *CreateConnection) Execute(ctx context.Context, organizationID uuid.UUID
 		connInput.DatabaseName,
 		connInput.Username,
 		connInput.Password,
+		connInput.Metadata,
 		func() *string {
 			if connInput.SSL != nil && !connInput.SSL.IsEmpty() {
 				return &connInput.SSL.Mode

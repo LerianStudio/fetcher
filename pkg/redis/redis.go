@@ -40,18 +40,23 @@ func (c RedisConfig) WithDefaults() RedisConfig {
 	if cfg.PoolSize <= 0 {
 		cfg.PoolSize = DefaultPoolSize
 	}
+
 	if cfg.MinIdleConns <= 0 {
 		cfg.MinIdleConns = DefaultMinIdleConns
 	}
+
 	if cfg.DialTimeout <= 0 {
 		cfg.DialTimeout = DefaultDialTimeout
 	}
+
 	if cfg.ReadTimeout <= 0 {
 		cfg.ReadTimeout = DefaultReadTimeout
 	}
+
 	if cfg.WriteTimeout <= 0 {
 		cfg.WriteTimeout = DefaultWriteTimeout
 	}
+
 	return cfg
 }
 
@@ -102,14 +107,17 @@ func NewRedisConnection(cfg RedisConfig, logger log.Logger) (*RedisConnection, e
 func (r *RedisConnection) Close() error {
 	if r.Client != nil {
 		r.Logger.Info("Closing Redis connection...")
+
 		err := r.Client.Close()
 		if err != nil {
 			r.Logger.Errorf("Error closing Redis connection: %v", err)
 			return err
 		}
+
 		r.Connected = false
 		r.Logger.Info("Redis connection closed successfully.")
 	}
+
 	return nil
 }
 
@@ -118,7 +126,9 @@ func (r *RedisConnection) IsConnected() bool {
 	if r.Client == nil {
 		return false
 	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
+
 	return r.Client.Ping(ctx).Err() == nil
 }

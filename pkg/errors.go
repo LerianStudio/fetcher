@@ -354,6 +354,7 @@ func ValidateBusinessError(err error, entityType string, args ...any) error {
 				if len(args) > 0 {
 					return fmt.Sprint(args...)
 				}
+
 				return "The request contains invalid data. Please check the request payload and try again."
 			}(),
 		},
@@ -387,6 +388,7 @@ func ValidateBusinessError(err error, entityType string, args ...any) error {
 				if len(args) > 0 {
 					return fmt.Sprint(args...)
 				}
+
 				return "The operation cannot be completed because there are active jobs for this connection."
 			}(),
 		},
@@ -400,6 +402,7 @@ func ValidateBusinessError(err error, entityType string, args ...any) error {
 				if len(args) > 0 {
 					return fmt.Sprint(args...)
 				}
+
 				return "The database connection is not available. Please check the connection configuration and try again."
 			}(),
 		},
@@ -413,6 +416,7 @@ func ValidateBusinessError(err error, entityType string, args ...any) error {
 				if len(args) > 0 {
 					return fmt.Sprint(args...)
 				}
+
 				return "Schema validation found inconsistencies."
 			}(),
 		},
@@ -424,6 +428,7 @@ func ValidateBusinessError(err error, entityType string, args ...any) error {
 				if len(args) > 0 {
 					return fmt.Sprint(args...)
 				}
+
 				return "Validation request exceeds allowed limits."
 			}(),
 		},

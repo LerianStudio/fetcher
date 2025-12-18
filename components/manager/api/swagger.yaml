@@ -28,6 +28,9 @@ definitions:
       host:
         example: db.example.com
         type: string
+      metadata:
+        additionalProperties: {}
+        type: object
       password:
         example: secretpassword
         type: string
@@ -71,6 +74,9 @@ definitions:
         type: string
       id:
         type: string
+      metadata:
+        additionalProperties: {}
+        type: object
       port:
         type: integer
       ssl:

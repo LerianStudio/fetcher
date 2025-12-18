@@ -210,7 +210,7 @@ func TestCreateFetcherJob_Execute_NoConnectionsFound(t *testing.T) {
 		t.Fatalf("expected ValidationError, got %T: %v", err, err)
 	}
 
-	// When NO connections are found at all, production returns ErrSchemaValidationNotFound
+	// When NO connections are found at all, production returns ErrMissingDataSource
 	if validationErr.Code != constant.ErrMissingDataSource.Error() {
 		t.Fatalf("expected error code %s, got %s", constant.ErrMissingDataSource.Error(), validationErr.Code)
 	}
