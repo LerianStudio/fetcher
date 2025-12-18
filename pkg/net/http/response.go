@@ -111,6 +111,15 @@ func JSONResponseError(c *fiber.Ctx, err pkg.ResponseError) error {
 	return c.Status(err.Code).JSON(err)
 }
 
+// JSONResponseErrorWithStatusCode sends a JSON formatted error response with a custom status code and error struct.
+func JSONResponseErrorWithStatusCode(c *fiber.Ctx, err pkg.ResponseErrorWithStatusCode) error {
+	return c.Status(err.StatusCode).JSON(fiber.Map{
+		"title":   err.Title,
+		"message": err.Message,
+		"code":    err.Code,
+	})
+}
+
 // JSONResponse sends a custom status code and body as a JSON response.
 func JSONResponse(c *fiber.Ctx, status int, s any) error {
 	return c.Status(status).JSON(s)

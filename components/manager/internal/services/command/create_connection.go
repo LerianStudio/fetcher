@@ -39,7 +39,7 @@ func (s *CreateConnection) Execute(ctx context.Context, organizationID uuid.UUID
 		attribute.String("app.request.organization_id", organizationID.String()),
 	)
 
-	err := libOpentelemetry.SetSpanAttributesFromStruct(&span, "app.request.payload", connInput)
+	err := libOpentelemetry.SetSpanAttributesFromStruct(&span, "app.request.payload", connInput.ToMapWithMask())
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to convert fetcher input to JSON string", err)
 	}
@@ -55,28 +55,28 @@ func (s *CreateConnection) Execute(ctx context.Context, organizationID uuid.UUID
 		connInput.Username,
 		connInput.Password,
 		func() *string {
-			if connInput.SSL != nil {
+			if connInput.SSL != nil && !connInput.SSL.IsEmpty() {
 				return &connInput.SSL.Mode
 			}
 
 			return nil
 		}(),
 		func() *string {
-			if connInput.SSL != nil {
+			if connInput.SSL != nil && !connInput.SSL.IsEmpty() {
 				return &connInput.SSL.CA
 			}
 
 			return nil
 		}(),
 		func() *string {
-			if connInput.SSL != nil && connInput.SSL.Cert != nil {
+			if connInput.SSL != nil && !connInput.SSL.IsEmpty() && connInput.SSL.Cert != nil {
 				return connInput.SSL.Cert
 			}
 
 			return nil
 		}(),
 		func() *string {
-			if connInput.SSL != nil && connInput.SSL.Key != nil {
+			if connInput.SSL != nil && !connInput.SSL.IsEmpty() && connInput.SSL.Key != nil {
 				return connInput.SSL.Key
 			}
 
@@ -93,12 +93,10 @@ func (s *CreateConnection) Execute(ctx context.Context, organizationID uuid.UUID
 	}
 
 	if existing != nil {
-		return nil, pkg.EntityConflictError{
-			EntityType: "connection",
-			Code:       constant.ErrEntityConflict.Error(),
-			Title:      "Conflict",
-			Message:    "connection with the same name already exists",
-		}
+		return nil, pkg.ValidateBusinessError(
+			constant.ErrEntityConflict,
+			"connection",
+		)
 	}
 
 	created, err := s.connRepo.Create(ctx, connection)

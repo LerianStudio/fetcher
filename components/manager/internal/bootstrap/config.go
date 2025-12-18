@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"strconv"
+	"time"
 
 	in2 "github.com/LerianStudio/fetcher/components/manager/internal/adapters/http/in"
 	connectionCommand "github.com/LerianStudio/fetcher/components/manager/internal/services/command"
@@ -12,9 +14,13 @@ import (
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
+	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 	"github.com/LerianStudio/fetcher/pkg/mongodb/job"
 	"github.com/LerianStudio/fetcher/pkg/rabbitmq"
+	"github.com/LerianStudio/fetcher/pkg/ratelimit"
+	redisCache "github.com/LerianStudio/fetcher/pkg/redis"
+	cacheRepo "github.com/LerianStudio/fetcher/pkg/repository/cache"
 
 	"github.com/LerianStudio/lib-auth/v2/auth/middleware"
 	mongoDB "github.com/LerianStudio/lib-commons/v2/commons/mongo"
@@ -65,6 +71,13 @@ type Config struct {
 	// Encryption
 	AppEncryptionKey        string `env:"APP_ENC_KEY"`
 	AppEncryptionKeyVersion string `env:"APP_ENC_KEY_VERSION"`
+	// Redis configuration envs
+	RedisHost     string `env:"REDIS_HOST"`
+	RedisPort     string `env:"REDIS_PORT"`
+	RedisPassword string `env:"REDIS_PASSWORD"`
+	RedisDB       string `env:"REDIS_DB"`
+	// Schema cache TTL
+	SchemaCacheTTLSeconds string `env:"SCHEMA_CACHE_TTL_SECONDS"`
 }
 
 // InitServers initiate http and grpc servers.
@@ -141,7 +154,7 @@ func InitServers() *Service {
 		Logger:                 logger,
 	}
 
-	_ = rabbitmq.NewRabbitMQAdapter(rabbitMQConnection)
+	rabbitMQAdapter := rabbitmq.NewRabbitMQAdapter(rabbitMQConnection)
 
 	// Init Auth middleware client
 	authClient := middleware.NewAuthClient(cfg.AuthAddress, cfg.AuthEnabled, &logger)
@@ -160,12 +173,43 @@ func InitServers() *Service {
 		logger.Fatalf("Failed to initialize crypto service: %v", err)
 	}
 
+	// Init rate limiter for connection tests
+	// 10 tokens per minute per connection
+	connectionTestStore := ratelimit.New(10, time.Minute)
+
+	// Init Redis and schema cache
+	schemaCacheTTL := getSchemaCacheTTL(cfg.SchemaCacheTTLSeconds)
+
+	var schemaCache cacheRepo.SchemaCacheRepository
+
+	redisConfig := redisCache.RedisConfig{
+		Host:     cfg.RedisHost,
+		Port:     cfg.RedisPort,
+		Password: cfg.RedisPassword,
+		DB:       getRedisDB(cfg.RedisDB),
+	}
+
+	// Use graceful degradation - if Redis fails, use memory-only cache
+	genericCache, errCache := redisCache.NewCacheWithFallback[model.DataSourceSchema](
+		redisConfig,
+		logger,
+		schemaCacheTTL,
+		"fetcher:schema:",
+	)
+	if errCache != nil {
+		// This should never happen as NewCacheWithFallback handles Redis failures gracefully
+		logger.Fatalf("Failed to initialize cache: %v", errCache)
+	}
+	schemaCache = cacheRepo.NewSchemaCache(genericCache, schemaCacheTTL)
+
 	// Init services and handlers
 	createConnectionCmd := connectionCommand.NewCreateConnection(connectionRepository, cryptoService)
 	updateConnectionCmd := connectionCommand.NewUpdateConnection(connectionRepository, jobRepository, cryptoService)
 	deleteConnectionCmd := connectionCommand.NewDeleteConnection(connectionRepository, jobRepository)
 	getConnectionQuery := connectionQuery.NewGetConnection(connectionRepository)
 	listConnectionsQuery := connectionQuery.NewListConnections(connectionRepository)
+	testConnectionQuery := connectionQuery.NewTestConnection(connectionRepository, cryptoService, connectionTestStore)
+	validateSchemaQuery := connectionQuery.NewValidateSchema(connectionRepository, cryptoService, schemaCache)
 
 	connectionHandler := in2.NewConnectionHandler(
 		createConnectionCmd,
@@ -173,10 +217,17 @@ func InitServers() *Service {
 		deleteConnectionCmd,
 		getConnectionQuery,
 		listConnectionsQuery,
+		testConnectionQuery,
+		validateSchemaQuery,
 	)
 
+	// Init Fetcher services and handler
+	createFetcherJobCmd := connectionCommand.NewCreateFetcherJob(connectionRepository, jobRepository, cryptoService, rabbitMQAdapter)
+	getJobQuery := connectionQuery.NewGetJob(jobRepository)
+	fetcherHandler := in2.NewFetcherHandler(createFetcherJobCmd, getJobQuery)
+
 	// Init HTTP server
-	httpApp := in2.NewRoutes(logger, telemetry, authClient, licenseClient, connectionHandler)
+	httpApp := in2.NewRoutes(logger, telemetry, authClient, licenseClient, connectionHandler, fetcherHandler)
 	serverAPI := NewServer(cfg, httpApp, logger, telemetry, licenseClient)
 
 	return &Service{
@@ -185,4 +236,32 @@ func InitServers() *Service {
 	}
 }
 
-// trigger pipeline
+// getSchemaCacheTTL parses the TTL from string and returns a time.Duration.
+// Returns DefaultSchemaCacheTTL if the string is empty or invalid.
+func getSchemaCacheTTL(ttlStr string) time.Duration {
+	if ttlStr == "" {
+		return cacheRepo.DefaultSchemaCacheTTL
+	}
+
+	ttlSeconds, err := strconv.Atoi(ttlStr)
+	if err != nil {
+		return cacheRepo.DefaultSchemaCacheTTL
+	}
+
+	return time.Duration(ttlSeconds) * time.Second
+}
+
+// getRedisDB parses the Redis database number from string.
+// Returns 0 if the string is empty or invalid.
+func getRedisDB(dbStr string) int {
+	if dbStr == "" {
+		return 0
+	}
+
+	db, err := strconv.Atoi(dbStr)
+	if err != nil {
+		return 0
+	}
+
+	return db
+}

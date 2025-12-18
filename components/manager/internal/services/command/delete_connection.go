@@ -39,27 +39,25 @@ func (s *DeleteConnection) Execute(ctx context.Context, organizationID, connecti
 		attribute.String("app.request.connection_id", connectionID.String()),
 	)
 
-	active, err := s.jobRepo.ExistsRunningByConnection(ctx, organizationID, connectionID)
-	if err != nil {
-		return err
-	}
-
-	if active {
-		return pkg.ValidateBusinessError(constant.ErrJobInProgress, "connection", "cannot delete connection with active jobs")
-	}
-
 	current, err := s.connRepo.FindByID(ctx, connectionID, organizationID)
 	if err != nil {
 		return err
 	}
 
 	if current == nil {
-		return pkg.EntityNotFoundError{
-			EntityType: "connection",
-			Code:       constant.ErrEntityNotFound.Error(),
-			Title:      "Entity Not Found",
-			Message:    "connection not found",
-		}
+		return pkg.ValidateBusinessError(
+			constant.ErrEntityNotFound,
+			"connection",
+		)
+	}
+
+	active, err := s.jobRepo.ExistsRunningByMappedFieldKey(ctx, organizationID, current.ConfigName)
+	if err != nil {
+		return err
+	}
+
+	if active {
+		return pkg.ValidateBusinessError(constant.ErrJobInProgress, "connection", "cannot delete connection with active jobs")
 	}
 
 	if err := s.connRepo.Delete(ctx, connectionID, organizationID, time.Now().UTC()); err != nil {

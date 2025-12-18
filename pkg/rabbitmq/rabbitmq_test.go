@@ -10,149 +10,639 @@ import (
 	libConstants "github.com/LerianStudio/lib-commons/v2/commons/constants"
 	libLog "github.com/LerianStudio/lib-commons/v2/commons/log"
 	amqp "github.com/rabbitmq/amqp091-go"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
 )
 
-func TestProducerDefaultPublishesMessage(t *testing.T) {
+// -----------------------------------------------------------------------------
+// Unit Tests: NewRabbitMQAdapter
+// -----------------------------------------------------------------------------
+
+func TestNewRabbitMQAdapter_DefaultOptions_CreatesAdapter(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		setupAdapter   func() (*RabbitMQAdapter, *testRabbitConnection)
+		wantChannel    bool
+		wantShutdown   bool
+		wantCircuitBrk bool
+	}{
+		{
+			name: "creates adapter with channel",
+			setupAdapter: func() (*RabbitMQAdapter, *testRabbitConnection) {
+				channel := newTestAMQPChannel()
+				conn := &testRabbitConnection{channel: channel}
+				adapter := newTestAdapterWithChannel(conn, channel)
+				return adapter, conn
+			},
+			wantChannel:    true,
+			wantShutdown:   false,
+			wantCircuitBrk: true,
+		},
+		{
+			name: "creates adapter without channel",
+			setupAdapter: func() (*RabbitMQAdapter, *testRabbitConnection) {
+				conn := &testRabbitConnection{err: errors.New("connection failed")}
+				adapter := newTestAdapter(conn)
+				return adapter, conn
+			},
+			wantChannel:    false,
+			wantShutdown:   false,
+			wantCircuitBrk: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			adapter, _ := tt.setupAdapter()
+
+			require.NotNil(t, adapter, "adapter should not be nil")
+			assert.Equal(t, tt.wantShutdown, adapter.shutdown.Load(), "shutdown flag mismatch")
+			assert.NotNil(t, adapter.circuitBreaker, "circuit breaker should be initialized")
+
+			if tt.wantChannel {
+				assert.NotNil(t, adapter.channel, "channel should be set")
+			} else {
+				assert.Nil(t, adapter.channel, "channel should not be set")
+			}
+		})
+	}
+}
+
+// -----------------------------------------------------------------------------
+// Unit Tests: IsHealthy
+// -----------------------------------------------------------------------------
+
+func TestRabbitMQAdapter_IsHealthy_ReturnsTrue_WhenChannelOpen(t *testing.T) {
 	t.Parallel()
 
 	channel := newTestAMQPChannel()
+	channel.closed = false
 	conn := &testRabbitConnection{channel: channel}
-	adapter := &RabbitMQAdapter{conn: conn}
+	adapter := newTestAdapterWithChannel(conn, channel)
 
-	body := []byte(`{"foo":"bar"}`)
-	if err := adapter.ProducerDefault(testContextWithHeader("req-123"), "exchange", "key", body); err != nil {
-		t.Fatalf("ProducerDefault returned error: %v", err)
-	}
+	t.Cleanup(func() {
+		adapter.shutdown.Store(true)
+	})
 
-	if channel.publishAttempts != 1 {
-		t.Fatalf("expected one publish attempt, got %d", channel.publishAttempts)
-	}
-
-	if len(channel.published) != 1 {
-		t.Fatalf("expected one published message, got %d", len(channel.published))
-	}
-
-	record := channel.published[0]
-	if record.exchange != "exchange" || record.key != "key" {
-		t.Fatalf("unexpected routing: exchange=%s key=%s", record.exchange, record.key)
-	}
-
-	if got := string(record.message.Body); got != string(body) {
-		t.Fatalf("unexpected message body: %s", got)
-	}
-
-	if record.message.ContentType != "application/json" {
-		t.Fatalf("unexpected content type: %s", record.message.ContentType)
-	}
-
-	headerID, _ := record.message.Headers[libConstants.HeaderID].(string)
-	if headerID != "req-123" {
-		t.Fatalf("expected header id req-123, got %s", headerID)
-	}
-
-	if retry, _ := record.message.Headers["x-retry-count"].(int); retry != 0 {
-		t.Fatalf("expected retry count 0, got %d", retry)
-	}
+	require.True(t, adapter.IsHealthy(), "should return true when channel is open")
 }
 
-func TestProducerDefaultRetriesWhenPublishFails(t *testing.T) {
+func TestRabbitMQAdapter_IsHealthy_ReturnsFalse_WhenChannelClosed(t *testing.T) {
 	t.Parallel()
 
-	first := newTestAMQPChannel()
-	first.publishErr = errors.New("publish failed")
+	channel := newTestAMQPChannel()
+	channel.closed = true
+	conn := &testRabbitConnection{channel: channel}
+	adapter := newTestAdapterWithChannel(conn, channel)
 
-	second := newTestAMQPChannel()
+	t.Cleanup(func() {
+		adapter.shutdown.Store(true)
+	})
 
-	conn := &testRabbitConnection{
-		channels: []amqpChannel{first, second},
-	}
-	adapter := &RabbitMQAdapter{conn: conn}
-
-	if err := adapter.ProducerDefault(testContextWithHeader("req-10"), "ex", "rk", []byte(`{"hello":"world"}`)); err != nil {
-		t.Fatalf("ProducerDefault returned error: %v", err)
-	}
-
-	if conn.calls != 2 {
-		t.Fatalf("expected two EnsureChannel calls, got %d", conn.calls)
-	}
-
-	if first.publishAttempts != 1 {
-		t.Fatalf("expected first channel publish attempt once, got %d", first.publishAttempts)
-	}
-
-	if second.publishAttempts != 1 || len(second.published) != 1 {
-		t.Fatalf("expected second channel to publish message once; attempts=%d published=%d", second.publishAttempts, len(second.published))
-	}
-
-	if first.closeCalls != 1 {
-		t.Fatalf("expected first channel to be closed, got %d close calls", first.closeCalls)
-	}
+	require.False(t, adapter.IsHealthy(), "should return false when channel is closed")
 }
 
-func TestProducerDefaultReturnsErrorWhenEnsureChannelFails(t *testing.T) {
+func TestRabbitMQAdapter_IsHealthy_ReturnsFalse_WhenShutdown(t *testing.T) {
 	t.Parallel()
 
-	conn := &testRabbitConnection{err: errors.New("ensure failed")}
-	adapter := &RabbitMQAdapter{conn: conn}
+	channel := newTestAMQPChannel()
+	channel.closed = false
+	conn := &testRabbitConnection{channel: channel}
+	adapter := newTestAdapterWithChannel(conn, channel)
+	adapter.shutdown.Store(true)
 
-	if err := adapter.ProducerDefault(testContextWithHeader("req-err"), "ex", "key", []byte(`{}`)); err == nil {
-		t.Fatalf("expected error, got nil")
-	}
+	require.False(t, adapter.IsHealthy(), "should return false when shutdown is true")
 }
 
-func TestProducerDefaultReturnsErrorAfterShutdown(t *testing.T) {
+func TestRabbitMQAdapter_IsHealthy_ReturnsFalse_WhenChannelNil(t *testing.T) {
 	t.Parallel()
 
 	conn := &testRabbitConnection{}
-	adapter := &RabbitMQAdapter{conn: conn}
-	adapter.shutdown.Store(true)
+	adapter := newTestAdapter(conn)
+	adapter.channel = nil
 
-	if err := adapter.ProducerDefault(testContextWithHeader("req-shutdown"), "ex", "key", []byte(`{}`)); err == nil {
-		t.Fatalf("expected error when adapter is shut down")
-	}
+	require.False(t, adapter.IsHealthy(), "should return false when channel is nil")
 }
 
-func TestConsumerLoopAckOnSuccess(t *testing.T) {
+// -----------------------------------------------------------------------------
+// Unit Tests: CircuitBreaker
+// -----------------------------------------------------------------------------
+
+func TestCircuitBreaker_OpensAfterThresholdFailures(t *testing.T) {
 	t.Parallel()
 
-	ctx, cancel := context.WithCancel(testContextWithHeader("req-ack"))
-	defer cancel()
-
-	channel := newTestAMQPChannel()
-	ack := &testAcknowledger{}
-	channel.deliveries <- amqp.Delivery{
-		Body:         []byte(`{"payload":"ok"}`),
-		Acknowledger: ack,
+	tests := []struct {
+		name          string
+		threshold     int
+		failures      int
+		expectedState CircuitState
+		canExecute    bool
+	}{
+		{
+			name:          "stays closed below threshold",
+			threshold:     5,
+			failures:      4,
+			expectedState: CircuitClosed,
+			canExecute:    true,
+		},
+		{
+			name:          "opens at threshold",
+			threshold:     5,
+			failures:      5,
+			expectedState: CircuitOpen,
+			canExecute:    false,
+		},
+		{
+			name:          "opens above threshold",
+			threshold:     3,
+			failures:      5,
+			expectedState: CircuitOpen,
+			canExecute:    false,
+		},
 	}
 
-	conn := &testRabbitConnection{channel: channel}
-	adapter := &RabbitMQAdapter{conn: conn}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	handled := make(chan []byte, 1)
-	handler := func(ctx context.Context, body []byte, headers map[string]any) error {
-		handled <- body
-		cancel()
-		return nil
+			cb := newCircuitBreaker(tt.threshold, time.Minute)
+
+			for i := 0; i < tt.failures; i++ {
+				cb.recordFailure()
+			}
+
+			assert.Equal(t, tt.expectedState, cb.State(), "circuit state mismatch")
+			assert.Equal(t, tt.canExecute, cb.canExecute(), "canExecute mismatch")
+		})
 	}
-
-	if err := adapter.ConsumerLoop(ctx, "queue-ack", 1, handler); err != nil {
-		t.Fatalf("expected nil error, got %v", err)
-	}
-
-	select {
-	case body := <-handled:
-		if string(body) != `{"payload":"ok"}` {
-			t.Fatalf("unexpected body, got %s", string(body))
-		}
-	case <-time.After(time.Second):
-		t.Fatal("handler was not invoked")
-	}
-
-	waitUntil(t, func() bool { return ack.acks == 1 && ack.nacks == 0 }, time.Second)
 }
 
-func TestConsumerLoopNackOnHandlerError(t *testing.T) {
+func TestCircuitBreaker_HalfOpensAfterCooldown(t *testing.T) {
+	t.Parallel()
+
+	cooldown := 10 * time.Millisecond
+	cb := newCircuitBreaker(1, cooldown)
+
+	// Record failure to open the circuit
+	cb.recordFailure()
+	require.Equal(t, CircuitOpen, cb.State(), "circuit should be open after failure")
+
+	// Wait for cooldown
+	time.Sleep(cooldown + 5*time.Millisecond)
+
+	// canExecute should transition to half-open
+	canExec := cb.canExecute()
+	require.True(t, canExec, "should allow execution after cooldown")
+	assert.Equal(t, CircuitHalfOpen, cb.State(), "circuit should be half-open")
+}
+
+func TestCircuitBreaker_ClosesOnSuccess(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		initialState  func(cb *circuitBreaker)
+		expectedState CircuitState
+	}{
+		{
+			name: "closes from half-open on success",
+			initialState: func(cb *circuitBreaker) {
+				cb.state.Store(int32(CircuitHalfOpen))
+			},
+			expectedState: CircuitClosed,
+		},
+		{
+			name: "stays closed on success",
+			initialState: func(cb *circuitBreaker) {
+				cb.state.Store(int32(CircuitClosed))
+			},
+			expectedState: CircuitClosed,
+		},
+		{
+			name: "closes from open state on success",
+			initialState: func(cb *circuitBreaker) {
+				cb.state.Store(int32(CircuitOpen))
+			},
+			expectedState: CircuitClosed,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			cb := newCircuitBreaker(5, time.Minute)
+			tt.initialState(cb)
+
+			cb.recordSuccess()
+
+			assert.Equal(t, tt.expectedState, cb.State(), "circuit state mismatch after success")
+			assert.Equal(t, int32(0), cb.consecutiveErrors.Load(), "consecutive errors should be reset")
+		})
+	}
+}
+
+func TestCircuitState_String_ReturnsCorrectValue(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		state    CircuitState
+		expected string
+	}{
+		{name: "closed state", state: CircuitClosed, expected: "closed"},
+		{name: "open state", state: CircuitOpen, expected: "open"},
+		{name: "half-open state", state: CircuitHalfOpen, expected: "half-open"},
+		{name: "unknown state", state: CircuitState(99), expected: "unknown"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tt.expected, tt.state.String())
+		})
+	}
+}
+
+// -----------------------------------------------------------------------------
+// Unit Tests: CalculateBackoff
+// -----------------------------------------------------------------------------
+
+func TestRabbitMQAdapter_CalculateBackoff_ExponentialGrowth(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		attempt     int
+		baseDelay   time.Duration
+		maxDelay    time.Duration
+		minExpected time.Duration
+		maxExpected time.Duration
+	}{
+		{
+			name:        "first attempt returns base delay with jitter",
+			attempt:     1,
+			baseDelay:   100 * time.Millisecond,
+			maxDelay:    2 * time.Second,
+			minExpected: 100 * time.Millisecond,
+			maxExpected: 125 * time.Millisecond, // base + 25% jitter
+		},
+		{
+			name:        "second attempt doubles delay",
+			attempt:     2,
+			baseDelay:   100 * time.Millisecond,
+			maxDelay:    2 * time.Second,
+			minExpected: 200 * time.Millisecond,
+			maxExpected: 250 * time.Millisecond,
+		},
+		{
+			name:        "third attempt quadruples delay",
+			attempt:     3,
+			baseDelay:   100 * time.Millisecond,
+			maxDelay:    2 * time.Second,
+			minExpected: 400 * time.Millisecond,
+			maxExpected: 500 * time.Millisecond,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			opts := DefaultOptions()
+			opts.BaseRetryDelay = tt.baseDelay
+			opts.MaxRetryDelay = tt.maxDelay
+
+			adapter := &RabbitMQAdapter{options: opts}
+
+			backoff := adapter.calculateBackoff(tt.attempt)
+
+			assert.GreaterOrEqual(t, backoff, tt.minExpected, "backoff should be at least base delay")
+			assert.LessOrEqual(t, backoff, tt.maxExpected, "backoff should not exceed expected max with jitter")
+		})
+	}
+}
+
+func TestRabbitMQAdapter_CalculateBackoff_CapsAtMaxDelay(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		attempt   int
+		baseDelay time.Duration
+		maxDelay  time.Duration
+	}{
+		{
+			name:      "high attempt capped at max delay",
+			attempt:   10,
+			baseDelay: 100 * time.Millisecond,
+			maxDelay:  500 * time.Millisecond,
+		},
+		{
+			name:      "very high attempt still capped",
+			attempt:   20,
+			baseDelay: 100 * time.Millisecond,
+			maxDelay:  1 * time.Second,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			opts := DefaultOptions()
+			opts.BaseRetryDelay = tt.baseDelay
+			opts.MaxRetryDelay = tt.maxDelay
+
+			adapter := &RabbitMQAdapter{options: opts}
+
+			backoff := adapter.calculateBackoff(tt.attempt)
+
+			// Max expected is maxDelay + 25% jitter
+			maxExpected := tt.maxDelay + tt.maxDelay/4
+			assert.LessOrEqual(t, backoff, maxExpected, "backoff should be capped at max delay plus jitter")
+		})
+	}
+}
+
+// -----------------------------------------------------------------------------
+// Unit Tests: ProducerDefault
+// -----------------------------------------------------------------------------
+
+func TestRabbitMQAdapter_ProducerDefault_Success(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		exchange string
+		key      string
+		body     []byte
+		headers  *map[string]any
+		wantErr  bool
+	}{
+		{
+			name:     "publishes message with no headers",
+			exchange: "test-exchange",
+			key:      "test-key",
+			body:     []byte(`{"foo":"bar"}`),
+			headers:  nil,
+			wantErr:  false,
+		},
+		{
+			name:     "publishes message with custom headers",
+			exchange: "test-exchange",
+			key:      "test-key",
+			body:     []byte(`{"data":"value"}`),
+			headers:  &map[string]any{"custom": "header"},
+			wantErr:  false,
+		},
+		{
+			name:     "publishes empty body",
+			exchange: "another-exchange",
+			key:      "another-key",
+			body:     []byte(`{}`),
+			headers:  nil,
+			wantErr:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			channel := newTestAMQPChannel()
+			conn := &testRabbitConnection{channel: channel}
+			adapter := newTestAdapter(conn)
+
+			t.Cleanup(func() {
+				_ = adapter.Shutdown(testContextWithHeader("cleanup"))
+			})
+
+			ctx := testContextWithHeader("req-123")
+			err := adapter.ProducerDefault(ctx, tt.exchange, tt.key, tt.body, tt.headers)
+
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+
+			require.NoError(t, err)
+			require.Len(t, channel.published, 1, "expected one published message")
+
+			record := channel.published[0]
+			assert.Equal(t, tt.exchange, record.exchange)
+			assert.Equal(t, tt.key, record.key)
+			assert.Equal(t, string(tt.body), string(record.message.Body))
+			assert.Equal(t, "application/json", record.message.ContentType)
+
+			headerID, _ := record.message.Headers[libConstants.HeaderID].(string)
+			assert.Equal(t, "req-123", headerID)
+		})
+	}
+}
+
+func TestRabbitMQAdapter_ProducerDefault_RetriesOnFailure(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name              string
+		setupChannels     func() ([]amqpChannel, *testRabbitConnection)
+		expectedConnCalls int
+		expectedPublished int
+		wantErr           bool
+	}{
+		{
+			name: "retries with new channel on publish failure",
+			setupChannels: func() ([]amqpChannel, *testRabbitConnection) {
+				first := newTestAMQPChannel()
+				first.publishErr = errors.New("publish failed")
+
+				second := newTestAMQPChannel()
+
+				conn := &testRabbitConnection{
+					channels: []amqpChannel{first, second},
+				}
+				return []amqpChannel{first, second}, conn
+			},
+			expectedConnCalls: 2,
+			expectedPublished: 1,
+			wantErr:           false,
+		},
+		{
+			name: "succeeds on first attempt",
+			setupChannels: func() ([]amqpChannel, *testRabbitConnection) {
+				channel := newTestAMQPChannel()
+				conn := &testRabbitConnection{channel: channel}
+				return []amqpChannel{channel}, conn
+			},
+			expectedConnCalls: 1,
+			expectedPublished: 1,
+			wantErr:           false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			channels, conn := tt.setupChannels()
+			adapter := newTestAdapter(conn)
+
+			t.Cleanup(func() {
+				_ = adapter.Shutdown(testContextWithHeader("cleanup"))
+			})
+
+			ctx := testContextWithHeader("req-retry")
+			err := adapter.ProducerDefault(ctx, "ex", "rk", []byte(`{"hello":"world"}`), nil)
+
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.expectedConnCalls, conn.calls, "connection calls mismatch")
+
+			// Count total published across all channels
+			totalPublished := 0
+			for _, ch := range channels {
+				if tch, ok := ch.(*testAMQPChannel); ok {
+					totalPublished += len(tch.published)
+				}
+			}
+			assert.Equal(t, tt.expectedPublished, totalPublished, "published count mismatch")
+		})
+	}
+}
+
+func TestRabbitMQAdapter_ProducerDefault_ReturnsError_WhenEnsureChannelFails(t *testing.T) {
+	t.Parallel()
+
+	conn := &testRabbitConnection{err: errors.New("ensure failed")}
+	adapter := newTestAdapter(conn)
+
+	t.Cleanup(func() {
+		adapter.shutdown.Store(true)
+	})
+
+	ctx := testContextWithHeader("req-err")
+	err := adapter.ProducerDefault(ctx, "ex", "key", []byte(`{}`), nil)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ensure channel")
+}
+
+func TestRabbitMQAdapter_ProducerDefault_ReturnsError_WhenShutdown(t *testing.T) {
+	t.Parallel()
+
+	conn := &testRabbitConnection{}
+	adapter := newTestAdapter(conn)
+	adapter.shutdown.Store(true)
+
+	ctx := testContextWithHeader("req-shutdown")
+	err := adapter.ProducerDefault(ctx, "ex", "key", []byte(`{}`), nil)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "shut down")
+}
+
+func TestRabbitMQAdapter_ProducerDefault_ReturnsError_WhenCircuitOpen(t *testing.T) {
+	t.Parallel()
+
+	conn := &testRabbitConnection{channel: newTestAMQPChannel()}
+	adapter := newTestAdapter(conn)
+
+	// Open the circuit breaker by recording failures
+	for i := 0; i < adapter.options.CircuitBreakerThreshold; i++ {
+		adapter.circuitBreaker.recordFailure()
+	}
+
+	t.Cleanup(func() {
+		adapter.shutdown.Store(true)
+	})
+
+	ctx := testContextWithHeader("req-circuit")
+	err := adapter.ProducerDefault(ctx, "ex", "key", []byte(`{}`), nil)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrCircuitOpen)
+}
+
+// -----------------------------------------------------------------------------
+// Unit Tests: ConsumerLoop
+// -----------------------------------------------------------------------------
+
+func TestRabbitMQAdapter_ConsumerLoop_AcksOnSuccess(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		messageBody string
+		handlerErr  error
+		expectAcks  int
+		expectNacks int
+	}{
+		{
+			name:        "acks message on handler success",
+			messageBody: `{"payload":"ok"}`,
+			handlerErr:  nil,
+			expectAcks:  1,
+			expectNacks: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctx, cancel := context.WithCancel(testContextWithHeader("req-ack"))
+			defer cancel()
+
+			channel := newTestAMQPChannel()
+			ack := &testAcknowledger{}
+			channel.deliveries <- amqp.Delivery{
+				Body:         []byte(tt.messageBody),
+				Acknowledger: ack,
+			}
+
+			conn := &testRabbitConnection{channel: channel}
+			adapter := newTestAdapter(conn)
+
+			t.Cleanup(func() {
+				_ = adapter.Shutdown(testContextWithHeader("cleanup"))
+			})
+
+			handled := make(chan []byte, 1)
+			handler := func(ctx context.Context, body []byte, headers map[string]any) error {
+				handled <- body
+				cancel()
+				return tt.handlerErr
+			}
+
+			err := adapter.ConsumerLoop(ctx, "queue-ack", 1, handler)
+			require.NoError(t, err)
+
+			select {
+			case body := <-handled:
+				assert.Equal(t, tt.messageBody, string(body))
+			case <-time.After(time.Second):
+				t.Fatal("handler was not invoked")
+			}
+
+			require.Eventually(t, func() bool {
+				return ack.acks == tt.expectAcks && ack.nacks == tt.expectNacks
+			}, time.Second, 10*time.Millisecond)
+		})
+	}
+}
+
+func TestRabbitMQAdapter_ConsumerLoop_NacksOnHandlerError(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithCancel(testContextWithHeader("req-nack"))
@@ -166,7 +656,11 @@ func TestConsumerLoopNackOnHandlerError(t *testing.T) {
 	}
 
 	conn := &testRabbitConnection{channel: channel}
-	adapter := &RabbitMQAdapter{conn: conn}
+	adapter := newTestAdapter(conn)
+
+	t.Cleanup(func() {
+		_ = adapter.Shutdown(testContextWithHeader("cleanup"))
+	})
 
 	processed := make(chan struct{})
 	handler := func(context.Context, []byte, map[string]any) error {
@@ -179,45 +673,119 @@ func TestConsumerLoopNackOnHandlerError(t *testing.T) {
 		cancel()
 	}()
 
-	if err := adapter.ConsumerLoop(ctx, "queue-nack", 1, handler); err != nil {
-		t.Fatalf("expected nil error, got %v", err)
-	}
+	err := adapter.ConsumerLoop(ctx, "queue-nack", 1, handler)
+	require.NoError(t, err)
 
-	waitUntil(t, func() bool { return ack.nacks == 1 && ack.acks == 0 }, time.Second)
+	require.Eventually(t, func() bool {
+		return ack.nacks == 1 && ack.acks == 0
+	}, time.Second, 10*time.Millisecond)
 }
 
-func TestShutdownClosesResources(t *testing.T) {
+func TestRabbitMQAdapter_ConsumerLoop_ReturnsError_WhenShutdown(t *testing.T) {
+	t.Parallel()
+
+	conn := &testRabbitConnection{channel: newTestAMQPChannel()}
+	adapter := newTestAdapter(conn)
+	adapter.shutdown.Store(true)
+
+	ctx := testContextWithHeader("req-shutdown")
+	handler := func(context.Context, []byte, map[string]any) error {
+		return nil
+	}
+
+	err := adapter.ConsumerLoop(ctx, "queue", 1, handler)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "shut down")
+}
+
+// -----------------------------------------------------------------------------
+// Unit Tests: Shutdown
+// -----------------------------------------------------------------------------
+
+func TestRabbitMQAdapter_Shutdown_ClosesResources(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name              string
+		setupAdapter      func() (*RabbitMQAdapter, *testAMQPChannel, *testRabbitConnection)
+		expectedShutdown  bool
+		expectedConnClose int
+		expectedChClose   int
+	}{
+		{
+			name: "closes channel and connection",
+			setupAdapter: func() (*RabbitMQAdapter, *testAMQPChannel, *testRabbitConnection) {
+				channel := newTestAMQPChannel()
+				conn := &testRabbitConnection{channel: channel}
+				adapter := newTestAdapterWithChannel(conn, channel)
+				return adapter, channel, conn
+			},
+			expectedShutdown:  true,
+			expectedConnClose: 1,
+			expectedChClose:   1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			adapter, channel, conn := tt.setupAdapter()
+
+			ctx := testContextWithHeader("req-shutdown")
+			err := adapter.Shutdown(ctx)
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.expectedShutdown, adapter.shutdown.Load(), "shutdown flag mismatch")
+			assert.Nil(t, adapter.channel, "channel should be cleared")
+			assert.Equal(t, tt.expectedConnClose, conn.closeCalls, "connection close calls mismatch")
+			assert.Equal(t, tt.expectedChClose, channel.closeCalls, "channel close calls mismatch")
+		})
+	}
+}
+
+func TestRabbitMQAdapter_Shutdown_HandlesAlreadyShutdown(t *testing.T) {
 	t.Parallel()
 
 	channel := newTestAMQPChannel()
 	conn := &testRabbitConnection{channel: channel}
-	adapter := &RabbitMQAdapter{
-		conn:    conn,
-		channel: channel,
-	}
+	adapter := newTestAdapterWithChannel(conn, channel)
 
-	if err := adapter.Shutdown(testContextWithHeader("req-shutdown")); err != nil {
-		t.Fatalf("Shutdown returned error: %v", err)
-	}
+	// First shutdown
+	ctx := testContextWithHeader("req-shutdown-1")
+	err := adapter.Shutdown(ctx)
+	require.NoError(t, err)
 
-	if !adapter.shutdown.Load() {
-		t.Fatalf("expected shutdown flag to be set")
-	}
-
-	if adapter.channel != nil {
-		t.Fatalf("expected channel to be cleared after shutdown")
-	}
-
-	if conn.closeCalls != 1 {
-		t.Fatalf("expected connection close once, got %d", conn.closeCalls)
-	}
-
-	if channel.closeCalls != 1 || !channel.closed {
-		t.Fatalf("expected channel closed once, got %d", channel.closeCalls)
-	}
+	// Second shutdown should also succeed (idempotent)
+	ctx2 := testContextWithHeader("req-shutdown-2")
+	err = adapter.Shutdown(ctx2)
+	require.NoError(t, err)
 }
 
-// Helpers/Mocks --------------------------------------------------------------------
+// -----------------------------------------------------------------------------
+// Unit Tests: DefaultOptions
+// -----------------------------------------------------------------------------
+
+func TestDefaultOptions_ReturnsExpectedValues(t *testing.T) {
+	t.Parallel()
+
+	opts := DefaultOptions()
+
+	assert.Equal(t, DefaultMaxRetryAttempts, opts.MaxRetryAttempts)
+	assert.Equal(t, DefaultMaxPublishAttempts, opts.MaxPublishAttempts)
+	assert.Equal(t, DefaultBaseRetryDelay, opts.BaseRetryDelay)
+	assert.Equal(t, DefaultMaxRetryDelay, opts.MaxRetryDelay)
+	assert.Equal(t, DefaultConsumerReconnectDelay, opts.ConsumerReconnectDelay)
+	assert.Equal(t, DefaultCircuitBreakerThreshold, opts.CircuitBreakerThreshold)
+	assert.Equal(t, DefaultCircuitBreakerCooldown, opts.CircuitBreakerCooldown)
+	assert.Equal(t, DefaultShutdownTimeout, opts.ShutdownTimeout)
+	assert.Nil(t, opts.MeterProvider)
+}
+
+// -----------------------------------------------------------------------------
+// Helpers/Mocks
+// -----------------------------------------------------------------------------
 
 type testRabbitConnection struct {
 	channel    amqpChannel
@@ -381,6 +949,27 @@ type testAcknowledger struct {
 	nacks int
 }
 
+// newTestAdapter creates a properly initialized RabbitMQAdapter for testing.
+func newTestAdapter(conn rabbitConnection) *RabbitMQAdapter {
+	opts := DefaultOptions()
+	return &RabbitMQAdapter{
+		conn:           conn,
+		options:        opts,
+		circuitBreaker: newCircuitBreaker(opts.CircuitBreakerThreshold, opts.CircuitBreakerCooldown),
+	}
+}
+
+// newTestAdapterWithChannel creates a properly initialized RabbitMQAdapter with a channel for testing.
+func newTestAdapterWithChannel(conn rabbitConnection, channel amqpChannel) *RabbitMQAdapter {
+	opts := DefaultOptions()
+	return &RabbitMQAdapter{
+		conn:           conn,
+		channel:        channel,
+		options:        opts,
+		circuitBreaker: newCircuitBreaker(opts.CircuitBreakerThreshold, opts.CircuitBreakerCooldown),
+	}
+}
+
 func (t *testAcknowledger) Ack(uint64, bool) error {
 	t.acks++
 	return nil
@@ -394,22 +983,6 @@ func (t *testAcknowledger) Nack(uint64, bool, bool) error {
 func (t *testAcknowledger) Reject(uint64, bool) error {
 	t.nacks++
 	return nil
-}
-
-func waitUntil(t *testing.T, condition func() bool, timeout time.Duration) {
-	t.Helper()
-
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if condition() {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-
-	if !condition() {
-		t.Fatalf("condition not met within %s", timeout)
-	}
 }
 
 func testContextWithHeader(header string) context.Context {

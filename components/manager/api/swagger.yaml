@@ -82,6 +82,114 @@ definitions:
       username:
         type: string
     type: object
+  github_com_LerianStudio_fetcher_pkg_model.DataRequest:
+    description: DataRequest encapsulates field mappings and optional filters for
+      data extraction.
+    properties:
+      filters:
+        items:
+          $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.FilterRequest'
+        type: array
+      mappedFields:
+        additionalProperties:
+          additionalProperties:
+            items:
+              type: string
+            type: array
+          type: object
+        type: object
+    required:
+    - mappedFields
+    type: object
+  github_com_LerianStudio_fetcher_pkg_model.FetcherRequest:
+    description: FetcherRequest represents the request body for creating a new data
+      extraction job.
+    properties:
+      dataRequest:
+        $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.DataRequest'
+      metadata:
+        additionalProperties: {}
+        type: object
+    required:
+    - dataRequest
+    type: object
+  github_com_LerianStudio_fetcher_pkg_model.FetcherResponse:
+    description: FetcherResponse represents the response after successfully creating
+      a data extraction job.
+    properties:
+      createdAt:
+        type: string
+      jobId:
+        type: string
+      message:
+        type: string
+      status:
+        type: string
+    type: object
+  github_com_LerianStudio_fetcher_pkg_model.Filter:
+    properties:
+      field:
+        type: string
+      operator:
+        type: string
+      value:
+        items: {}
+        type: array
+    required:
+    - field
+    - operator
+    - value
+    type: object
+  github_com_LerianStudio_fetcher_pkg_model.FilterRequest:
+    description: FilterRequest defines a filter condition with field, operator, and
+      value(s).
+    properties:
+      field:
+        type: string
+      operator:
+        type: string
+      value:
+        items: {}
+        type: array
+    required:
+    - field
+    - operator
+    - value
+    type: object
+  github_com_LerianStudio_fetcher_pkg_model.JobResponse:
+    description: JobResponse represents the complete information about a data extraction
+      job.
+    properties:
+      completedAt:
+        type: string
+      createdAt:
+        type: string
+      filters:
+        items:
+          $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.Filter'
+        type: array
+      id:
+        type: string
+      mappedFields:
+        additionalProperties:
+          additionalProperties:
+            items:
+              type: string
+            type: array
+          type: object
+        type: object
+      metadata:
+        additionalProperties: {}
+        type: object
+      organizationId:
+        type: string
+      requestHash:
+        type: string
+      resultPath:
+        type: string
+      status:
+        type: string
+    type: object
   github_com_LerianStudio_fetcher_pkg_model.SSLInput:
     properties:
       ca:
@@ -104,6 +212,47 @@ definitions:
       mode:
         type: string
     type: object
+  github_com_LerianStudio_fetcher_pkg_model.SchemaValidationError:
+    properties:
+      dataSourceId:
+        type: string
+      field:
+        type: string
+      table:
+        type: string
+      type:
+        type: string
+    type: object
+  github_com_LerianStudio_fetcher_pkg_model.SchemaValidationRequest:
+    description: Request body for schema validation containing mapped fields per datasource.
+    properties:
+      mappedFields:
+        additionalProperties:
+          additionalProperties:
+            items:
+              type: string
+            type: array
+          type: object
+        description: |-
+          MappedFields maps datasource config names to their tables and fields
+          Key: configName (e.g., "midaz_onboarding")
+          Value: map of table names to field names
+        type: object
+    required:
+    - mappedFields
+    type: object
+  github_com_LerianStudio_fetcher_pkg_model.SchemaValidationResponse:
+    properties:
+      errors:
+        items:
+          $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.SchemaValidationError'
+        type: array
+      message:
+        type: string
+      status:
+        description: '"success" or "failure"'
+        type: string
+    type: object
   pkg.HTTPError:
     properties:
       code:
@@ -124,6 +273,102 @@ info:
   title: Fetcher Manager API
   version: 1.0.0
 paths:
+  /v1/fetcher:
+    post:
+      consumes:
+      - application/json
+      description: Create a new data extraction job. The request will be validated,
+        deduplicated within a 5-minute window, and all referenced connections will
+        be tested before job creation.
+      parameters:
+      - description: The authorization token in the 'Bearer access_token' format.
+          Only required when auth plugin is enabled.
+        in: header
+        name: Authorization
+        type: string
+      - description: Organization ID
+        in: header
+        name: X-Organization-Id
+        required: true
+        type: string
+      - description: Fetcher request payload
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.FetcherRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Duplicate request - returning existing job
+          schema:
+            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.FetcherResponse'
+        "202":
+          description: Job created and queued for processing
+          schema:
+            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.FetcherResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+        "413":
+          description: Request Entity Too Large
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+      summary: Create fetcher job
+      tags:
+      - Fetcher
+  /v1/fetcher/{id}:
+    get:
+      description: Retrieve detailed information about a specific data extraction
+        job.
+      parameters:
+      - description: The authorization token in the 'Bearer access_token' format.
+          Only required when auth plugin is enabled.
+        in: header
+        name: Authorization
+        type: string
+      - description: Organization ID
+        in: header
+        name: X-Organization-Id
+        required: true
+        type: string
+      - description: Job ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.JobResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+      summary: Get fetcher job
+      tags:
+      - Fetcher
   /v1/management/connections:
     get:
       description: List connections with pagination and filters.
@@ -403,6 +648,93 @@ paths:
           schema:
             $ref: '#/definitions/pkg.HTTPError'
       summary: Update connection
+      tags:
+      - Connections
+  /v1/management/connections/{id}/test:
+    post:
+      description: Test the configured connection by establishing and closing a connection.
+      parameters:
+      - description: The authorization token in the 'Bearer access_token' format.
+          Only required when auth plugin is enabled.
+        in: header
+        name: Authorization
+        type: string
+      - description: Organization ID
+        in: header
+        name: X-Organization-Id
+        required: true
+        type: string
+      - description: Connection ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Connection test result
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+      summary: Test connection
+      tags:
+      - Connections
+  /v1/management/connections/validate-schema:
+    post:
+      consumes:
+      - application/json
+      description: Validate that tables and fields referenced in the request exist
+        in the configured datasources.
+      parameters:
+      - description: The authorization token in the 'Bearer access_token' format.
+          Only required when auth plugin is enabled.
+        in: header
+        name: Authorization
+        type: string
+      - description: Organization ID
+        in: header
+        name: X-Organization-Id
+        required: true
+        type: string
+      - description: Schema validation request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.SchemaValidationRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.SchemaValidationResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+      summary: Validate schema
       tags:
       - Connections
 swagger: "2.0"

@@ -15,6 +15,7 @@ import (
 const (
 	applicationName     = "fetcher"
 	connectionsResource = "connections"
+	fetcherResource     = "fetcher"
 )
 
 // NewRoutes creates a new fiber router with the specified handlers and middleware.
@@ -24,6 +25,7 @@ func NewRoutes(
 	auth *middlewareAuth.AuthClient,
 	licenseClient *libLicense.LicenseClient,
 	connectionHandler *ConnectionHandler,
+	fetcherHandler *FetcherHandler,
 ) *fiber.App {
 	f := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
@@ -36,6 +38,7 @@ func NewRoutes(
 	f.Use(tlMid.WithTelemetry(tl))
 	f.Use(cors.New())
 	f.Use(commonsHttp.WithHTTPLogging(commonsHttp.WithCustomLogger(lg)))
+	// TODO: Enable license middleware when ready
 	// f.Use(licenseClient.Middleware())
 
 	// Doc Swagger
@@ -50,9 +53,16 @@ func NewRoutes(
 	// Connections
 	f.Post("/v1/management/connections", auth.Authorize(applicationName, connectionsResource, "post"), connectionHandler.CreateConnection)
 	f.Get("/v1/management/connections", auth.Authorize(applicationName, connectionsResource, "get"), connectionHandler.ListConnections)
+	// Schema Validation - must be before :id routes to avoid conflict
+	f.Post("/v1/management/connections/validate-schema", auth.Authorize(applicationName, connectionsResource, "post"), connectionHandler.ValidateSchema)
 	f.Get("/v1/management/connections/:id", auth.Authorize(applicationName, connectionsResource, "get"), connectionHandler.GetConnection)
+	f.Post("/v1/management/connections/:id/test", auth.Authorize(applicationName, connectionsResource, "post"), connectionHandler.TestConnection)
 	f.Patch("/v1/management/connections/:id", auth.Authorize(applicationName, connectionsResource, "patch"), connectionHandler.UpdateConnection)
 	f.Delete("/v1/management/connections/:id", auth.Authorize(applicationName, connectionsResource, "delete"), connectionHandler.DeleteConnection)
+
+	// Fetcher
+	f.Post("/v1/fetcher", auth.Authorize(applicationName, fetcherResource, "post"), fetcherHandler.CreateJob)
+	f.Get("/v1/fetcher/:id", auth.Authorize(applicationName, fetcherResource, "get"), fetcherHandler.GetJob)
 
 	f.Use(tlMid.EndTracingSpans)
 

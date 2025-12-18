@@ -11,7 +11,7 @@ import (
 
 // Repository provides an interface for SeaweedFS storage operations
 //
-//go:generate mockgen --destination=template.mock.go --package=template . Repository
+//go:generate mockgen --destination=repository.mock.go --package=external . Repository
 type Repository interface {
 	Get(ctx context.Context, objectName string) ([]byte, error)
 	Put(ctx context.Context, objectName string, data []byte) error
@@ -31,14 +31,15 @@ func NewSimpleRepository(client *seaweedfs.SeaweedFSClient, bucket string) *Simp
 	}
 }
 
-// Get the content of a .tpl file from the SeaweedFS storage.
+// Get the content of an external JSON file from the SeaweedFS storage.
+// A .json extension is appended to the objectName for retrieval.
 func (repo *SimpleRepository) Get(ctx context.Context, objectName string) ([]byte, error) {
-	// Add .tpl extension for templates
+	// Add .json extension for external data
 	path := fmt.Sprintf("/%s/%s.json", repo.bucket, objectName)
 
 	data, err := repo.client.DownloadFile(ctx, path)
 	if err != nil {
-		return nil, pkg.ValidateBusinessError(constant.ErrCommunicateSeaweedFS, "")
+		return nil, pkg.ValidateInternalError(constant.ErrServiceUnavailable, "")
 	}
 
 	return data, nil
@@ -53,7 +54,7 @@ func (repo *SimpleRepository) Put(ctx context.Context, objectName string, data [
 	err := repo.client.UploadFile(ctx, path, data)
 	if err != nil {
 		logger.Errorf("Error communicating with SeaweedFS: %v", err)
-		return pkg.ValidateBusinessError(constant.ErrCommunicateSeaweedFS, "")
+		return pkg.ValidateInternalError(constant.ErrServiceUnavailable, "")
 	}
 
 	return nil

@@ -4,11 +4,15 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/model/datasource"
 	"github.com/LerianStudio/fetcher/pkg/model/job"
 	"github.com/LerianStudio/fetcher/pkg/mongodb"
+	"github.com/LerianStudio/lib-commons/v2/commons"
 	libConstant "github.com/LerianStudio/lib-commons/v2/commons/constants"
 	"github.com/LerianStudio/lib-commons/v2/commons/log"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // DataSourceConfigMongoDB represents a MongoDB-specific data source configuration.
@@ -89,4 +93,36 @@ func getCollectionFilters(databaseFilters map[string]map[string]job.FilterCondit
 	}
 
 	return databaseFilters[collectionName]
+}
+
+// GetSchemaInfo returns the schema information for MongoDB.
+func (ds *DataSourceConfigMongoDB) GetSchemaInfo(ctx context.Context) (*model.DataSourceSchema, error) {
+	_, tracer, _, _ := commons.NewTrackingFromContext(ctx)
+
+	ctx, span := tracer.Start(ctx, "datasource.mongodb.get_schema_info")
+	defer span.End()
+
+	span.SetAttributes(
+		attribute.String("app.datasource.config_name", ds.ConfigName),
+		attribute.String("app.datasource.type", "mongodb"),
+	)
+
+	schemaResult, err := ds.MongoDBRepository.GetDatabaseSchema(ctx)
+	if err != nil {
+		libOpentelemetry.HandleSpanError(&span, "failed to get database schema", err)
+		return nil, fmt.Errorf("failed to get MongoDB schema: %w", err)
+	}
+
+	schema := model.NewDataSourceSchema(ds.ConfigName)
+	for _, collection := range schemaResult {
+		columns := make([]string, len(collection.Fields))
+		for i, field := range collection.Fields {
+			columns[i] = field.Name
+		}
+		schema.AddTable(collection.CollectionName, columns)
+	}
+
+	span.SetAttributes(attribute.Int("app.schema.collections_count", len(schema.Tables)))
+
+	return schema, nil
 }

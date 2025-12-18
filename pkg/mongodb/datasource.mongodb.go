@@ -92,7 +92,7 @@ func (ds *ExternalDataSource) CloseConnection(ctx context.Context) error {
 
 // Query executes a query on the specified collection with the given fields and filter criteria.
 func (ds *ExternalDataSource) Query(ctx context.Context, collection string, fields []string, filter map[string][]any) ([]map[string]any, error) {
-	logger, tracer, reqId, _ := libCommons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
 
 	logger.Infof("Querying %s collection with fields %v", collection, fields)
 
@@ -100,7 +100,7 @@ func (ds *ExternalDataSource) Query(ctx context.Context, collection string, fiel
 	defer span.End()
 
 	span.SetAttributes(
-		attribute.String("app.request.request_id", reqId),
+		attribute.String("app.request.request_id", reqID),
 	)
 
 	err := libOpentelemetry.SetSpanAttributesFromStruct(&span, "app.request.repository_filter", map[string]any{
@@ -251,13 +251,13 @@ func convertBsonValue(value any) any {
 
 // GetDatabaseSchema retrieves all collections and infers their schema from sample documents
 func (ds *ExternalDataSource) GetDatabaseSchema(ctx context.Context) ([]CollectionSchema, error) {
-	logger, tracer, reqId, _ := libCommons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
 
 	_, span := tracer.Start(ctx, "mongodb.data_source.get_database_schema")
 	defer span.End()
 
 	span.SetAttributes(
-		attribute.String("app.request.request_id", reqId),
+		attribute.String("app.request.request_id", reqID),
 	)
 
 	logger.Info("Retrieving MongoDB schema information using hybrid approach")
@@ -573,7 +573,7 @@ func (ds *ExternalDataSource) isMoreSpecificType(newType, currentType string) bo
 
 // QueryWithAdvancedFilters executes a query with advanced FilterCondition support
 func (ds *ExternalDataSource) QueryWithAdvancedFilters(ctx context.Context, collection string, fields []string, filter map[string]job.FilterCondition) ([]map[string]any, error) {
-	logger, tracer, reqId, _ := libCommons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
 
 	logger.Infof("Querying %s collection with advanced filters on fields %v", collection, fields)
 
@@ -581,7 +581,7 @@ func (ds *ExternalDataSource) QueryWithAdvancedFilters(ctx context.Context, coll
 	defer span.End()
 
 	span.SetAttributes(
-		attribute.String("app.request.request_id", reqId),
+		attribute.String("app.request.request_id", reqID),
 	)
 
 	err := libOpentelemetry.SetSpanAttributesFromStruct(&span, "app.request.repository_filter", map[string]any{

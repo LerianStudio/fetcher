@@ -2,6 +2,7 @@ package connection
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -14,6 +15,22 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.opentelemetry.io/otel/attribute"
 )
+
+const (
+	indexCreateTimeout = 60 * time.Second
+	indexDropTimeout   = 30 * time.Second
+)
+
+// isIndexConflictError checks if the error is a MongoDB index conflict error.
+// IndexOptionsConflict is code 85, IndexKeySpecsConflict is code 86.
+func isIndexConflictError(err error) bool {
+	var cmdErr mongo.CommandError
+	if errors.As(err, &cmdErr) {
+		return cmdErr.Code == 85 || cmdErr.Code == 86
+	}
+
+	return false
+}
 
 // EnsureIndexes creates MongoDB indexes tailored for the connections collection workload.
 func (cr *ConnectionMongoDBRepository) EnsureIndexes(ctx context.Context) error {
@@ -57,16 +74,29 @@ func (cr *ConnectionMongoDBRepository) EnsureIndexes(ctx context.Context) error 
 				SetName("idx_connection_org_created").
 				SetPartialFilterExpression(bson.D{{Key: "deleted_at", Value: nil}}),
 		},
+		{
+			Keys: bson.D{
+				{Key: "organization_id", Value: 1},
+				{Key: "database_name", Value: 1},
+			},
+			Options: options.Index().
+				SetName("idx_connection_org_database_name").
+				SetPartialFilterExpression(bson.D{{Key: "deleted_at", Value: nil}}),
+		},
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	span.SetAttributes(
+		attribute.Int("app.request.index_count", len(indexes)),
+	)
+
+	ctx, cancel := context.WithTimeout(ctx, indexCreateTimeout)
 	defer cancel()
 
 	logger.Infof("Attempting to create %d indexes for %s collection", len(indexes), constant.MongoCollectionConnection)
 
 	indexNames, err := coll.Indexes().CreateMany(ctx, indexes)
 	if err != nil {
-		if strings.Contains(err.Error(), "IndexOptionsConflict") || strings.Contains(err.Error(), "already exists") {
+		if isIndexConflictError(err) {
 			logger.Infof("Indexes for %s already exist", constant.MongoCollectionConnection)
 			return nil
 		}
@@ -104,16 +134,18 @@ func (cr *ConnectionMongoDBRepository) DropIndexes(ctx context.Context) error {
 
 	coll := db.Database(strings.ToLower(cr.Database)).Collection(strings.ToLower(constant.MongoCollectionConnection))
 
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, indexDropTimeout)
 	defer cancel()
 
-	if _, err := coll.Indexes().DropAll(ctx); err != nil {
+	droppedIndexes, err := coll.Indexes().DropAll(ctx)
+	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to drop connection indexes", err)
 		logger.Errorf("Failed to drop indexes for %s: %v", constant.MongoCollectionConnection, err)
 
 		return err
 	}
 
+	logger.Infof("Dropped indexes: %v", droppedIndexes)
 	logger.Infof("Successfully dropped all custom indexes for %s collection", constant.MongoCollectionConnection)
 
 	return nil

@@ -43,18 +43,9 @@ func (s *UpdateConnection) Execute(ctx context.Context, organizationID, connecti
 		attribute.String("app.request.connection_id", connectionID.String()),
 	)
 
-	err := libOpentelemetry.SetSpanAttributesFromStruct(&span, "app.request.payload", connInput)
+	err := libOpentelemetry.SetSpanAttributesFromStruct(&span, "app.request.payload", connInput.ToMapWithMask())
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to convert fetcher input to JSON string", err)
-	}
-
-	active, err := s.jobRepo.ExistsRunningByConnection(ctx, organizationID, connectionID)
-	if err != nil {
-		return nil, err
-	}
-
-	if active {
-		return nil, pkg.ValidateBusinessError(constant.ErrJobInProgress, "connection", "cannot update connection with active jobs")
 	}
 
 	current, err := s.connRepo.FindByID(ctx, connectionID, organizationID)
@@ -63,12 +54,23 @@ func (s *UpdateConnection) Execute(ctx context.Context, organizationID, connecti
 	}
 
 	if current == nil {
-		return nil, pkg.EntityNotFoundError{
-			EntityType: "connection",
-			Code:       constant.ErrEntityNotFound.Error(),
-			Title:      "Entity Not Found",
-			Message:    "connection not found",
-		}
+		return nil, pkg.ValidateBusinessError(
+			constant.ErrEntityNotFound,
+			"connection",
+		)
+	}
+
+	active, err := s.jobRepo.ExistsRunningByMappedFieldKey(ctx, organizationID, current.ConfigName)
+	if err != nil {
+		return nil, err
+	}
+
+	if active {
+		return nil, pkg.ValidateBusinessError(
+			constant.ErrJobInProgress,
+			"connection",
+			"cannot update connection with active jobs",
+		)
 	}
 
 	if errPatch := current.ApplyPatch(
@@ -109,20 +111,16 @@ func (s *UpdateConnection) Execute(ctx context.Context, organizationID, connecti
 		return nil, errPatch
 	}
 
-	// TODO: Test the database connection with the new data before persisting. If it fails, return the failure to the user; only update when the connection test passes.
-
 	updated, err := s.connRepo.Update(ctx, current)
 	if err != nil {
 		return nil, err
 	}
 
 	if updated == nil {
-		return nil, pkg.EntityNotFoundError{
-			EntityType: "connection",
-			Code:       constant.ErrEntityNotFound.Error(),
-			Title:      "Entity Not Found",
-			Message:    "connection not found",
-		}
+		return nil, pkg.ValidateBusinessError(
+			constant.ErrEntityNotFound,
+			"connection",
+		)
 	}
 
 	return updated, nil

@@ -16,6 +16,143 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
+        "/v1/fetcher": {
+            "post": {
+                "description": "Create a new data extraction job. The request will be validated, deduplicated within a 5-minute window, and all referenced connections will be tested before job creation.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Fetcher"
+                ],
+                "summary": "Create fetcher job",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "The authorization token in the 'Bearer access_token' format. Only required when auth plugin is enabled.",
+                        "name": "Authorization",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Organization ID",
+                        "name": "X-Organization-Id",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "Fetcher request payload",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.FetcherRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Duplicate request - returning existing job",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.FetcherResponse"
+                        }
+                    },
+                    "202": {
+                        "description": "Job created and queued for processing",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.FetcherResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/pkg.HTTPError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/pkg.HTTPError"
+                        }
+                    },
+                    "413": {
+                        "description": "Request Entity Too Large",
+                        "schema": {
+                            "$ref": "#/definitions/pkg.HTTPError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/pkg.HTTPError"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/fetcher/{id}": {
+            "get": {
+                "description": "Retrieve detailed information about a specific data extraction job.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Fetcher"
+                ],
+                "summary": "Get fetcher job",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "The authorization token in the 'Bearer access_token' format. Only required when auth plugin is enabled.",
+                        "name": "Authorization",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Organization ID",
+                        "name": "X-Organization-Id",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Job ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.JobResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/pkg.HTTPError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/pkg.HTTPError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/pkg.HTTPError"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/management/connections": {
             "get": {
                 "description": "List connections with pagination and filters.",
@@ -208,6 +345,65 @@ const docTemplate = `{
                     },
                     "409": {
                         "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/pkg.HTTPError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/pkg.HTTPError"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/management/connections/validate-schema": {
+            "post": {
+                "description": "Validate that tables and fields referenced in the request exist in the configured datasources.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Connections"
+                ],
+                "summary": "Validate schema",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "The authorization token in the 'Bearer access_token' format. Only required when auth plugin is enabled.",
+                        "name": "Authorization",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Organization ID",
+                        "name": "X-Organization-Id",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "Schema validation request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.SchemaValidationRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.SchemaValidationResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
                         "schema": {
                             "$ref": "#/definitions/pkg.HTTPError"
                         }
@@ -423,6 +619,73 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/v1/management/connections/{id}/test": {
+            "post": {
+                "description": "Test the configured connection by establishing and closing a connection.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Connections"
+                ],
+                "summary": "Test connection",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "The authorization token in the 'Bearer access_token' format. Only required when auth plugin is enabled.",
+                        "name": "Authorization",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Organization ID",
+                        "name": "X-Organization-Id",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Connection ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Connection test result",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/pkg.HTTPError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/pkg.HTTPError"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/pkg.HTTPError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/pkg.HTTPError"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
@@ -536,6 +799,157 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_LerianStudio_fetcher_pkg_model.DataRequest": {
+            "description": "DataRequest encapsulates field mappings and optional filters for data extraction.",
+            "type": "object",
+            "required": [
+                "mappedFields"
+            ],
+            "properties": {
+                "filters": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.FilterRequest"
+                    }
+                },
+                "mappedFields": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "github_com_LerianStudio_fetcher_pkg_model.FetcherRequest": {
+            "description": "FetcherRequest represents the request body for creating a new data extraction job.",
+            "type": "object",
+            "required": [
+                "dataRequest"
+            ],
+            "properties": {
+                "dataRequest": {
+                    "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.DataRequest"
+                },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": {}
+                }
+            }
+        },
+        "github_com_LerianStudio_fetcher_pkg_model.FetcherResponse": {
+            "description": "FetcherResponse represents the response after successfully creating a data extraction job.",
+            "type": "object",
+            "properties": {
+                "createdAt": {
+                    "type": "string"
+                },
+                "jobId": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_LerianStudio_fetcher_pkg_model.Filter": {
+            "type": "object",
+            "required": [
+                "field",
+                "operator",
+                "value"
+            ],
+            "properties": {
+                "field": {
+                    "type": "string"
+                },
+                "operator": {
+                    "type": "string"
+                },
+                "value": {
+                    "type": "array",
+                    "items": {}
+                }
+            }
+        },
+        "github_com_LerianStudio_fetcher_pkg_model.FilterRequest": {
+            "description": "FilterRequest defines a filter condition with field, operator, and value(s).",
+            "type": "object",
+            "required": [
+                "field",
+                "operator",
+                "value"
+            ],
+            "properties": {
+                "field": {
+                    "type": "string"
+                },
+                "operator": {
+                    "type": "string"
+                },
+                "value": {
+                    "type": "array",
+                    "items": {}
+                }
+            }
+        },
+        "github_com_LerianStudio_fetcher_pkg_model.JobResponse": {
+            "description": "JobResponse represents the complete information about a data extraction job.",
+            "type": "object",
+            "properties": {
+                "completedAt": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "filters": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.Filter"
+                    }
+                },
+                "id": {
+                    "type": "string"
+                },
+                "mappedFields": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "organizationId": {
+                    "type": "string"
+                },
+                "requestHash": {
+                    "type": "string"
+                },
+                "resultPath": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_LerianStudio_fetcher_pkg_model.SSLInput": {
             "type": "object",
             "required": [
@@ -562,6 +976,63 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "mode": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_LerianStudio_fetcher_pkg_model.SchemaValidationError": {
+            "type": "object",
+            "properties": {
+                "dataSourceId": {
+                    "type": "string"
+                },
+                "field": {
+                    "type": "string"
+                },
+                "table": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_LerianStudio_fetcher_pkg_model.SchemaValidationRequest": {
+            "description": "Request body for schema validation containing mapped fields per datasource.",
+            "type": "object",
+            "required": [
+                "mappedFields"
+            ],
+            "properties": {
+                "mappedFields": {
+                    "description": "MappedFields maps datasource config names to their tables and fields\nKey: configName (e.g., \"midaz_onboarding\")\nValue: map of table names to field names",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "github_com_LerianStudio_fetcher_pkg_model.SchemaValidationResponse": {
+            "type": "object",
+            "properties": {
+                "errors": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.SchemaValidationError"
+                    }
+                },
+                "message": {
+                    "type": "string"
+                },
+                "status": {
+                    "description": "\"success\" or \"failure\"",
                     "type": "string"
                 }
             }

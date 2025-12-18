@@ -8,6 +8,8 @@ import (
 	"github.com/LerianStudio/lib-commons/v2/commons/log"
 )
 
+//go:generate mockgen --destination=datasource-config.mock.go --package=datasource . DataSource
+
 // DataSourceConfig represents the base configuration for all data sources.
 type DataSourceConfig struct {
 	ID                string
@@ -41,4 +43,8 @@ type DataSource interface {
 
 	// Query executes a query on the specified table/collection with the given fields and filters.
 	Query(ctx context.Context, tables map[string][]string, filters map[string]map[string]job.FilterCondition, logger log.Logger) (map[string][]map[string]any, error)
+
+	// GetSchemaInfo returns the schema information for the datasource.
+	// Returns tables and their columns for schema validation.
+	GetSchemaInfo(ctx context.Context) (*model.DataSourceSchema, error)
 }

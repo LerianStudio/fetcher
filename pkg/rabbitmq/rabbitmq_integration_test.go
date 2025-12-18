@@ -95,7 +95,7 @@ func TestRabbitMQStressProducerAndConsumer(t *testing.T) {
 	}
 
 	ch := conn.Channel
-	queueName := fmt.Sprintf("%s.integration-%d", cfg.Queue, time.Now().UnixNano())
+	queueName := fmt.Sprintf("%s.integration-%d", cfg.Queue, time.Now().UTC().UnixNano())
 
 	// Declare a temporary queue for the test messages
 	if _, err := ch.QueueDeclare(queueName, false, true, false, false, nil); err != nil {
@@ -217,7 +217,7 @@ func runProducerStress(adapter *RabbitMQAdapter, exchange, routingKey string, to
 	defer cancel()
 
 	const workers = 5
-	runID := time.Now().UnixNano()
+	runID := time.Now().UTC().UnixNano()
 
 	type result struct {
 		err error
@@ -238,7 +238,7 @@ func runProducerStress(adapter *RabbitMQAdapter, exchange, routingKey string, to
 					return
 				}
 
-				if err := adapter.ProducerDefault(ctx, exchange, routingKey, body); err != nil {
+				if err := adapter.ProducerDefault(ctx, exchange, routingKey, body, nil); err != nil {
 					results <- result{err: err}
 					return
 				}
