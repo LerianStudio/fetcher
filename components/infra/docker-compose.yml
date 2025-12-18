@@ -39,6 +39,7 @@ services:
       - ~/.docker-conf/rabbitmq/log/:/var/log/rabbitmq
     networks:
       - fetcher-infra-network
+      - plugin-shared-network
 
   fetcher-seaweedfs-master:
     image: chrislusf/seaweedfs:3.97
@@ -128,4 +129,7 @@ volumes:
 networks:
   fetcher-infra-network:
     name: fetcher-infra-network
+    driver: bridge
+  plugin-shared-network:
+    name: plugin-shared-network
     driver: bridge

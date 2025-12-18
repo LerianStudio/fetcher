@@ -56,28 +56,28 @@ func (s *CreateConnection) Execute(ctx context.Context, organizationID uuid.UUID
 		connInput.Password,
 		connInput.Metadata,
 		func() *string {
-			if connInput.SSL != nil {
+			if connInput.SSL != nil && !connInput.SSL.IsEmpty() {
 				return &connInput.SSL.Mode
 			}
 
 			return nil
 		}(),
 		func() *string {
-			if connInput.SSL != nil {
+			if connInput.SSL != nil && !connInput.SSL.IsEmpty() {
 				return &connInput.SSL.CA
 			}
 
 			return nil
 		}(),
 		func() *string {
-			if connInput.SSL != nil && connInput.SSL.Cert != nil {
+			if connInput.SSL != nil && !connInput.SSL.IsEmpty() && connInput.SSL.Cert != nil {
 				return connInput.SSL.Cert
 			}
 
 			return nil
 		}(),
 		func() *string {
-			if connInput.SSL != nil && connInput.SSL.Key != nil {
+			if connInput.SSL != nil && !connInput.SSL.IsEmpty() && connInput.SSL.Key != nil {
 				return connInput.SSL.Key
 			}
 
