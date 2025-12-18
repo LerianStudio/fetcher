@@ -53,7 +53,7 @@ func NewInMemoryCache[T any](ttl time.Duration, logger log.Logger) *InMemoryCach
 func (c *InMemoryCache[T]) Get(ctx context.Context, key string) (T, bool, error) {
 	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
-	ctx, span := tracer.Start(ctx, "cache.in_memory.get")
+	_, span := tracer.Start(ctx, "cache.in_memory.get")
 	defer span.End()
 
 	span.SetAttributes(

@@ -200,7 +200,17 @@ func (c *FallbackCache[T]) Close() error {
 
 	close(c.stopCh)
 
-	return c.inMemory.Close()
+	err := c.inMemory.Close()
+	if err != nil {
+		c.logger.Warnf("failed to close in-memory cache: %v", err)
+	}
+
+	err = c.redis.Close()
+	if err != nil {
+		c.logger.Warnf("failed to close redis cache: %v", err)
+	}
+
+	return err
 }
 
 // monitorRedisHealth periodically checks Redis health and updates useRedis flag.

@@ -341,9 +341,6 @@ func (ds *ExternalDataSource) queryPrimaryKeys(ctx context.Context, schemas []st
 		}
 
 		key := tableName
-		if len(schemas) > 0 {
-			key = schemaName + "." + tableName
-		}
 
 		if primaryKeys[key] == nil {
 			primaryKeys[key] = make(map[string]bool)

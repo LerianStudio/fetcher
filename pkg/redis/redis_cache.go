@@ -184,3 +184,8 @@ func (c *RedisCache[T]) Clear(ctx context.Context) error {
 func (c *RedisCache[T]) IsHealthy(ctx context.Context) bool {
 	return c.client.Ping(ctx).Err() == nil
 }
+
+// Close closes the Redis connection.
+func (c *RedisCache[T]) Close() error {
+	return c.client.Close()
+}
