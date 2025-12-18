@@ -8,7 +8,9 @@ import (
 	"strings"
 
 	"github.com/LerianStudio/fetcher/pkg/constant"
+	"github.com/LerianStudio/fetcher/pkg/model/datasource"
 	"github.com/LerianStudio/fetcher/pkg/model/job"
+	"github.com/lib/pq"
 
 	libCommons "github.com/LerianStudio/lib-commons/v2/commons"
 	"github.com/LerianStudio/lib-commons/v2/commons/log"
@@ -18,13 +20,16 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 )
 
+// DefaultSchema is the default PostgreSQL schema name
+const DefaultSchema = "public"
+
 // Repository defines an interface for querying data from a specified table and fields.
 //
 //go:generate mockgen --destination=datasource.postgres.mock.go --package=postgres . Repository
 type Repository interface {
 	Query(ctx context.Context, schema []TableSchema, table string, fields []string, filter map[string][]any) ([]map[string]any, error)
 	QueryWithAdvancedFilters(ctx context.Context, schema []TableSchema, table string, fields []string, filter map[string]job.FilterCondition) ([]map[string]any, error)
-	GetDatabaseSchema(ctx context.Context) ([]TableSchema, error)
+	GetDatabaseSchema(ctx context.Context, schemas []string) ([]TableSchema, error)
 	CloseConnection() error
 }
 
@@ -143,7 +148,7 @@ func (ds *ExternalDataSource) Query(ctx context.Context, schema []TableSchema, t
 
 // GetDatabaseSchema retrieves all tables and their column details from the database
 // It returns a slice of TableSchema objects or an error if the operation fails
-func (ds *ExternalDataSource) GetDatabaseSchema(ctx context.Context) ([]TableSchema, error) {
+func (ds *ExternalDataSource) GetDatabaseSchema(ctx context.Context, schemas []string) ([]TableSchema, error) {
 	logger, tracer, reqId, _ := libCommons.NewTrackingFromContext(ctx)
 
 	_, span := tracer.Start(ctx, "postgres.data_source.get_database_schema")
@@ -158,17 +163,17 @@ func (ds *ExternalDataSource) GetDatabaseSchema(ctx context.Context) ([]TableSch
 	schemaCtx, cancel := context.WithTimeout(ctx, constant.SchemaDiscoveryTimeout)
 	defer cancel()
 
-	tables, err := ds.queryTables(schemaCtx)
+	tables, err := ds.queryTables(schemaCtx, schemas)
 	if err != nil {
 		return nil, err
 	}
 
-	primaryKeys, err := ds.queryPrimaryKeys(schemaCtx)
+	primaryKeys, err := ds.queryPrimaryKeys(schemaCtx, schemas)
 	if err != nil {
 		return nil, err
 	}
 
-	schema, err := ds.buildSchema(schemaCtx, tables, primaryKeys, logger)
+	schema, err := ds.buildSchema(schemaCtx, tables, primaryKeys, logger, schemas)
 	if err != nil {
 		return nil, err
 	}
@@ -179,16 +184,20 @@ func (ds *ExternalDataSource) GetDatabaseSchema(ctx context.Context) ([]TableSch
 }
 
 // queryTables retrieves all table names from the database
-func (ds *ExternalDataSource) queryTables(ctx context.Context) ([]string, error) {
+func (ds *ExternalDataSource) queryTables(ctx context.Context, schemas []string) ([]string, error) {
+	if len(schemas) == 0 {
+		schemas = []string{DefaultSchema}
+	}
+
 	tableQuery := `
-		SELECT table_name 
-		FROM information_schema.tables 
-		WHERE table_schema = 'public'
-		AND table_type = 'BASE TABLE'
+		SELECT table_name
+		FROM information_schema.tables
+		WHERE table_schema = ANY($1)
+		  AND table_type = 'BASE TABLE'
 		ORDER BY table_name
 	`
 
-	rows, err := ds.connection.ConnectionDB.QueryContext(ctx, tableQuery)
+	rows, err := ds.connection.ConnectionDB.QueryContext(ctx, tableQuery, pq.Array(schemas))
 	if err != nil {
 		return nil, fmt.Errorf("error querying tables: %w", err)
 	}
@@ -200,15 +209,22 @@ func (ds *ExternalDataSource) queryTables(ctx context.Context) ([]string, error)
 		if err := rows.Scan(&tableName); err != nil {
 			return nil, fmt.Errorf("error scanning table name: %w", err)
 		}
-
 		tables = append(tables, tableName)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows error: %w", err)
 	}
 
 	return tables, nil
 }
 
 // queryPrimaryKeys retrieves primary key information for all tables
-func (ds *ExternalDataSource) queryPrimaryKeys(ctx context.Context) (map[string]map[string]bool, error) {
+func (ds *ExternalDataSource) queryPrimaryKeys(ctx context.Context, schemas []string) (map[string]map[string]bool, error) {
+	if len(schemas) == 0 {
+		schemas = []string{DefaultSchema}
+	}
+
 	pkQuery := `
 		SELECT tc.table_name, kc.column_name
 		FROM information_schema.table_constraints tc
@@ -217,15 +233,17 @@ func (ds *ExternalDataSource) queryPrimaryKeys(ctx context.Context) (map[string]
 			AND kc.table_schema = tc.table_schema
 			AND kc.constraint_name = tc.constraint_name
 		WHERE tc.constraint_type = 'PRIMARY KEY'
-		AND tc.table_schema = 'public'
+		  AND tc.table_schema = ANY($1)
 	`
 
-	pkRows, err := ds.connection.ConnectionDB.QueryContext(ctx, pkQuery)
+	pkRows, err := ds.connection.ConnectionDB.QueryContext(ctx, pkQuery, pq.Array(schemas))
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
-			return nil, fmt.Errorf("schema discovery timeout after %v while querying primary keys: %w", constant.SchemaDiscoveryTimeout, err)
+			return nil, fmt.Errorf(
+				"schema discovery timeout after %v while querying primary keys: %w",
+				constant.SchemaDiscoveryTimeout, err,
+			)
 		}
-
 		return nil, fmt.Errorf("error querying primary keys: %w", err)
 	}
 	defer pkRows.Close()
@@ -240,19 +258,22 @@ func (ds *ExternalDataSource) queryPrimaryKeys(ctx context.Context) (map[string]
 		if primaryKeys[tableName] == nil {
 			primaryKeys[tableName] = make(map[string]bool)
 		}
-
 		primaryKeys[tableName][columnName] = true
+	}
+
+	if err := pkRows.Err(); err != nil {
+		return nil, fmt.Errorf("rows error: %w", err)
 	}
 
 	return primaryKeys, nil
 }
 
 // buildSchema builds the complete schema information for all tables
-func (ds *ExternalDataSource) buildSchema(ctx context.Context, tables []string, primaryKeys map[string]map[string]bool, logger log.Logger) ([]TableSchema, error) {
+func (ds *ExternalDataSource) buildSchema(ctx context.Context, tables []string, primaryKeys map[string]map[string]bool, logger log.Logger, schemas []string) ([]TableSchema, error) {
 	schema := make([]TableSchema, 0, len(tables))
 
 	for _, tableName := range tables {
-		tableSchema, err := ds.buildTableSchema(ctx, tableName, primaryKeys, logger)
+		tableSchema, err := ds.buildTableSchema(ctx, tableName, primaryKeys, logger, schemas)
 		if err != nil {
 			return nil, err
 		}
@@ -264,17 +285,21 @@ func (ds *ExternalDataSource) buildSchema(ctx context.Context, tables []string, 
 }
 
 // buildTableSchema builds schema information for a single table
-func (ds *ExternalDataSource) buildTableSchema(ctx context.Context, tableName string, primaryKeys map[string]map[string]bool, logger log.Logger) (TableSchema, error) {
+func (ds *ExternalDataSource) buildTableSchema(ctx context.Context, tableName string, primaryKeys map[string]map[string]bool, logger log.Logger, schemas []string) (TableSchema, error) {
+	if len(schemas) == 0 {
+		schemas = []string{DefaultSchema}
+	}
+
 	columnQuery := `
 		SELECT column_name, data_type, 
 		       CASE WHEN is_nullable = 'YES' THEN true ELSE false END as is_nullable
 		FROM information_schema.columns
-		WHERE table_schema = 'public'
-		AND table_name = $1
+		WHERE table_schema = ANY($1)
+		AND table_name = $2
 		ORDER BY ordinal_position
 	`
 
-	colRows, err := ds.connection.ConnectionDB.QueryContext(ctx, columnQuery, tableName)
+	colRows, err := ds.connection.ConnectionDB.QueryContext(ctx, columnQuery, pq.Array(schemas), tableName)
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
 			return TableSchema{}, fmt.Errorf("schema discovery timeout after %v while querying columns for table %s: %w", constant.SchemaDiscoveryTimeout, tableName, err)
@@ -410,6 +435,8 @@ func (ds *ExternalDataSource) ValidateTableAndFields(ctx context.Context, tableN
 		attribute.String("app.request.request_id", reqId),
 	)
 
+	_, tableName = datasource.SplitSchemaTable(tableName)
+
 	err := libOpentelemetry.SetSpanAttributesFromStruct(&span, "app.request.repository_filter", map[string]any{
 		"table":  tableName,
 		"fields": requestedFields,
@@ -485,6 +512,8 @@ func (ds *ExternalDataSource) ValidateTableAndFields(ctx context.Context, tableN
 func buildDynamicFilters(queryBuilder squirrel.SelectBuilder, schema []TableSchema, table string, filter map[string][]any) squirrel.SelectBuilder {
 	// Find the table's column information
 	var tableColumns []ColumnInformation
+
+	_, table = datasource.SplitSchemaTable(table)
 
 	for _, t := range schema {
 		if t.TableName == table {
@@ -588,6 +617,8 @@ func (ds *ExternalDataSource) QueryWithAdvancedFilters(ctx context.Context, sche
 // buildAdvancedFilters applies FilterCondition criteria to the query builder
 func (ds *ExternalDataSource) buildAdvancedFilters(queryBuilder squirrel.SelectBuilder, schema []TableSchema, table string, filter map[string]job.FilterCondition) (squirrel.SelectBuilder, error) {
 	var tableColumns []ColumnInformation
+
+	_, table = datasource.SplitSchemaTable(table)
 
 	for _, t := range schema {
 		if t.TableName == table {

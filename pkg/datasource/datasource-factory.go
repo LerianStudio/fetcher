@@ -214,8 +214,18 @@ func newDataSourceConfigOracle(ctx context.Context, base datasource.DataSourceCo
 		return nil, fmt.Errorf("failed to decrypt password for Oracle connection: %w", err)
 	}
 
-	// TODO: Implementar um metadata talvez para o tipo oracle pra passar o service
-	serviceName := "XEPDB1"
+	serviceName := ""
+	if conn.Metadata != nil {
+		// Try to get serviceName from metadata map if exists
+		if service, ok := (*conn.Metadata)["serviceName"].(string); ok && service != "" {
+			serviceName = service
+		}
+	}
+
+	if serviceName == "" {
+		return nil, fmt.Errorf("serviceName is required in metadata for Oracle connection")
+	}
+
 	connectionString := fmt.Sprintf("oracle://%s:%s@%s:%d/%s",
 		conn.Username,
 		url.QueryEscape(password),

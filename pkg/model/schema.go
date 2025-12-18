@@ -239,6 +239,17 @@ func (s *SchemaValidationSpec) GetConfigNames() []string {
 	return names
 }
 
+// GetTables returns all tables names.
+func (s *SchemaValidationSpec) GetTablesByConfigName(configName string) map[string][]string {
+	tables := make(map[string][]string, len(s.MappedFields[configName]))
+
+	for tableName, value := range s.MappedFields[configName] {
+		tables[tableName] = value
+	}
+
+	return tables
+}
+
 // ValidateAgainstSchema validates the spec against a DataSourceSchema.
 func (s *SchemaValidationSpec) ValidateAgainstSchema(
 	configName string,
@@ -252,7 +263,10 @@ func (s *SchemaValidationSpec) ValidateAgainstSchema(
 	}
 
 	// Validate each table and its fields against the schema
-	for tableName, fields := range tables {
+	for tableOrSchemaWithTable, fields := range tables {
+		// Ensure that only the table name is returned
+		_, tableName := splitSchemaTable(tableOrSchemaWithTable)
+
 		// Check if table exists in schema
 		if !schema.HasTable(tableName) {
 			errors = append(errors, SchemaValidationError{
@@ -310,4 +324,25 @@ func NewDataSourceDownError(configName string) SchemaValidationError {
 		Type:         ErrTypeDataSourceDown,
 		DataSourceID: configName,
 	}
+}
+
+func splitSchemaTable(qualified string) (schema string, table string) {
+	qualified = strings.TrimSpace(qualified)
+	if qualified == "" {
+		return "", ""
+	}
+
+	schema, table, hasDot := strings.Cut(qualified, ".")
+	if !hasDot {
+		return "", qualified
+	}
+
+	schema = strings.TrimSpace(schema)
+	table = strings.TrimSpace(table)
+
+	if schema == "" || table == "" {
+		return "", ""
+	}
+
+	return schema, table
 }

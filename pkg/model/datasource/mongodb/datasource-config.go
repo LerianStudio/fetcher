@@ -96,7 +96,7 @@ func getCollectionFilters(databaseFilters map[string]map[string]job.FilterCondit
 }
 
 // GetSchemaInfo returns the schema information for MongoDB.
-func (ds *DataSourceConfigMongoDB) GetSchemaInfo(ctx context.Context) (*model.DataSourceSchema, error) {
+func (ds *DataSourceConfigMongoDB) GetSchemaInfo(ctx context.Context, schemas []string) (*model.DataSourceSchema, error) {
 	_, tracer, _, _ := commons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "datasource.mongodb.get_schema_info")

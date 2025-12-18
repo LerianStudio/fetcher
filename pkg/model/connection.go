@@ -25,6 +25,7 @@ type Connection struct {
 	PasswordEncrypted    string
 	EncryptionKeyVersion string
 	SSL                  *SSLConfig
+	Metadata             *map[string]any
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
 	DeletedAt            *time.Time
@@ -49,6 +50,7 @@ func NewConnection(
 	databaseName string,
 	username string,
 	password string,
+	metadata *map[string]any,
 	sslMode *string,
 	sslCA *string,
 	sslCert *string,
@@ -106,6 +108,7 @@ func NewConnection(
 		Username:             username,
 		PasswordEncrypted:    passwordEncrypted,
 		EncryptionKeyVersion: encryptionKeyVersion,
+		Metadata:             metadata,
 		SSL:                  ssl,
 		CreatedAt:            time.Now().UTC(),
 		UpdatedAt:            time.Now().UTC(),
@@ -228,6 +231,7 @@ func (conn *Connection) ApplyPatch(
 	dbName *string,
 	username *string,
 	password *string,
+	metadata *map[string]any,
 	sslMode *string,
 	sslCA *string,
 	sslCert *string,
@@ -279,6 +283,10 @@ func (conn *Connection) ApplyPatch(
 
 		conn.PasswordEncrypted = passwordEncrypted
 		conn.EncryptionKeyVersion = encryptionKeyVersion
+	}
+
+	if metadata != nil {
+		conn.Metadata = metadata
 	}
 
 	if sslMode != nil {
@@ -365,6 +373,7 @@ func (conn *Connection) ToMapWithMask() map[string]any {
 		"port":                   conn.Port,
 		"database_name":          conn.DatabaseName,
 		"username":               conn.Username,
+		"metadata":               conn.Metadata,
 		"password_encrypted":     pkg.MaskSecret(conn.PasswordEncrypted),
 		"encryption_key_version": pkg.MaskSecret(conn.EncryptionKeyVersion),
 		"ssl":                    ssl,
@@ -378,14 +387,15 @@ func (conn *Connection) ToMapWithMask() map[string]any {
 // Request, Response DTOs And Value Objects
 
 type ConnectionInput struct {
-	ConfigName   string    `json:"configName" validate:"required" example:"production-db" minLength:"3" maxLength:"100"`
-	Type         string    `json:"type" validate:"required,oneof=ORACLE SQL_SERVER POSTGRESQL MONGODB MYSQL" example:"POSTGRESQL"`
-	Host         string    `json:"host" validate:"required,hostname|ip" example:"db.example.com"`
-	Port         int       `json:"port" validate:"required,min=1,max=65535" example:"5432"`
-	DatabaseName string    `json:"databaseName" validate:"required" example:"mydatabase"`
-	Username     string    `json:"username" validate:"required" example:"dbuser"`
-	Password     string    `json:"password" validate:"required" example:"secretpassword"`
-	SSL          *SSLInput `json:"ssl,omitempty"`
+	ConfigName   string          `json:"configName" validate:"required" example:"production-db" minLength:"3" maxLength:"100"`
+	Type         string          `json:"type" validate:"required,oneof=ORACLE SQL_SERVER POSTGRESQL MONGODB MYSQL" example:"POSTGRESQL"`
+	Host         string          `json:"host" validate:"required,hostname|ip" example:"db.example.com"`
+	Port         int             `json:"port" validate:"required,min=1,max=65535" example:"5432"`
+	DatabaseName string          `json:"databaseName" validate:"required" example:"mydatabase"`
+	Username     string          `json:"username" validate:"required" example:"dbuser"`
+	Password     string          `json:"password" validate:"required" example:"secretpassword"`
+	SSL          *SSLInput       `json:"ssl,omitempty"`
+	Metadata     *map[string]any `json:"metadata,omitempty"`
 }
 
 type SSLInput struct {
@@ -414,21 +424,23 @@ func (conn *ConnectionInput) ToMapWithMask() map[string]any {
 		"database_name": conn.DatabaseName,
 		"username":      conn.Username,
 		"password":      pkg.MaskSecret(conn.Password),
+		"metadata":      conn.Metadata,
 		"ssl":           ssl,
 	}
 }
 
 type ConnectionResponse struct {
-	ID           uuid.UUID    `json:"id"`
-	ConfigName   string       `json:"configName"`
-	Type         string       `json:"type"`
-	Host         string       `json:"host"`
-	Port         int          `json:"port"`
-	DatabaseName string       `json:"databaseName"`
-	Username     string       `json:"username"`
-	SSL          *SSLResponse `json:"ssl,omitempty"`
-	CreatedAt    time.Time    `json:"createdAt"`
-	UpdatedAt    time.Time    `json:"updatedAt"`
+	ID           uuid.UUID       `json:"id"`
+	ConfigName   string          `json:"configName"`
+	Type         string          `json:"type"`
+	Host         string          `json:"host"`
+	Port         int             `json:"port"`
+	DatabaseName string          `json:"databaseName"`
+	Username     string          `json:"username"`
+	SSL          *SSLResponse    `json:"ssl,omitempty"`
+	Metadata     *map[string]any `json:"metadata,omitempty"`
+	CreatedAt    time.Time       `json:"createdAt"`
+	UpdatedAt    time.Time       `json:"updatedAt"`
 }
 
 type ConnectionTestResponse struct {
@@ -455,6 +467,7 @@ func NewConnectionResponseFrom(conn *Connection) *ConnectionResponse {
 		Port:         conn.Port,
 		DatabaseName: conn.DatabaseName,
 		Username:     conn.Username,
+		Metadata:     conn.Metadata,
 		CreatedAt:    conn.CreatedAt,
 		UpdatedAt:    conn.UpdatedAt,
 	}

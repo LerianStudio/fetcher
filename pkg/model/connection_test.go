@@ -439,6 +439,7 @@ func TestNewConnection(t *testing.T) {
 				tt.dbName,
 				tt.username,
 				tt.password,
+				&map[string]any{},
 				tt.sslMode,
 				tt.sslCA,
 				tt.sslCert,
@@ -991,6 +992,7 @@ func TestConnection_ApplyPatch(t *testing.T) {
 				tt.dbName,
 				tt.username,
 				tt.password,
+				&map[string]any{},
 				tt.sslMode,
 				tt.sslCA,
 				tt.sslCert,
@@ -1013,6 +1015,108 @@ func TestConnection_ApplyPatch(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestConnection_ApplyPatch_Metadata tests metadata patching specifically.
+func TestConnection_ApplyPatch_Metadata(t *testing.T) {
+	ctx := context.Background()
+	mockCrypto := &mockCryptor{}
+
+	t.Run("patch metadata updates connection metadata", func(t *testing.T) {
+		conn := &Connection{
+			ID:                   uuid.New(),
+			OrganizationID:       uuid.New(),
+			ConfigName:           "oracle-connection",
+			Type:                 TypeOracle,
+			Host:                 "localhost",
+			Port:                 1521,
+			DatabaseName:         "ORCL",
+			Username:             "testuser",
+			PasswordEncrypted:    "encrypted-password",
+			EncryptionKeyVersion: "v1",
+			CreatedAt:            time.Now().UTC().Add(-1 * time.Hour),
+			UpdatedAt:            time.Now().UTC().Add(-1 * time.Hour),
+			Metadata:             nil,
+		}
+
+		newMetadata := &map[string]any{
+			"service_name": "ORCL_SERVICE",
+			"sid":          "ORCL",
+		}
+
+		err := conn.ApplyPatch(
+			ctx,
+			mockCrypto,
+			nil, // configName
+			nil, // typ
+			nil, // host
+			nil, // port
+			nil, // dbName
+			nil, // username
+			nil, // password
+			newMetadata,
+			nil, // sslMode
+			nil, // sslCA
+			nil, // sslCert
+			nil, // sslKey
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if conn.Metadata == nil {
+			t.Fatal("expected Metadata to be set")
+		}
+
+		if (*conn.Metadata)["service_name"] != "ORCL_SERVICE" {
+			t.Fatalf("expected service_name 'ORCL_SERVICE', got %v", (*conn.Metadata)["service_name"])
+		}
+
+		if (*conn.Metadata)["sid"] != "ORCL" {
+			t.Fatalf("expected sid 'ORCL', got %v", (*conn.Metadata)["sid"])
+		}
+	})
+
+	t.Run("patch nil metadata does not clear existing metadata", func(t *testing.T) {
+		existingMetadata := &map[string]any{
+			"service_name": "EXISTING_SERVICE",
+		}
+
+		conn := &Connection{
+			ID:                   uuid.New(),
+			OrganizationID:       uuid.New(),
+			ConfigName:           "oracle-connection",
+			Type:                 TypeOracle,
+			Host:                 "localhost",
+			Port:                 1521,
+			DatabaseName:         "ORCL",
+			Username:             "testuser",
+			PasswordEncrypted:    "encrypted-password",
+			EncryptionKeyVersion: "v1",
+			Metadata:             existingMetadata,
+			CreatedAt:            time.Now().UTC().Add(-1 * time.Hour),
+			UpdatedAt:            time.Now().UTC().Add(-1 * time.Hour),
+		}
+
+		err := conn.ApplyPatch(
+			ctx,
+			mockCrypto,
+			nil, nil, nil, nil, nil, nil, nil,
+			nil, // nil metadata should NOT clear existing
+			nil, nil, nil, nil,
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if conn.Metadata == nil {
+			t.Fatal("expected Metadata to remain set")
+		}
+
+		if (*conn.Metadata)["service_name"] != "EXISTING_SERVICE" {
+			t.Fatalf("expected service_name 'EXISTING_SERVICE', got %v", (*conn.Metadata)["service_name"])
+		}
+	})
 }
 
 // TestConnection_SoftDelete tests the Connection.SoftDelete method.

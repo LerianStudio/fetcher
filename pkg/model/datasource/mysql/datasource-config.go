@@ -103,7 +103,7 @@ func getTableFilters(databaseFilters map[string]map[string]job.FilterCondition, 
 }
 
 // GetSchemaInfo returns the schema information for MySQL.
-func (ds *DataSourceConfigMySQL) GetSchemaInfo(ctx context.Context) (*model.DataSourceSchema, error) {
+func (ds *DataSourceConfigMySQL) GetSchemaInfo(ctx context.Context, schemas []string) (*model.DataSourceSchema, error) {
 	_, tracer, _, _ := commons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "datasource.mysql.get_schema_info")
