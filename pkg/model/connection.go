@@ -335,6 +335,7 @@ func (conn *Connection) GetPasswordDecrypted(ctx context.Context, cryptor crypto
 	}
 
 	conn.password = plain
+
 	return plain, nil
 }
 
@@ -343,12 +344,14 @@ func (conn *Connection) DecryptPassword(ctx context.Context, cryptor crypto.Cryp
 	if cryptor == nil {
 		return errors.New("cryptor is required to decrypt password")
 	}
+
 	plain, err := cryptor.Decrypt(ctx, conn.PasswordEncrypted, conn.EncryptionKeyVersion)
 	if err != nil {
 		return pkg.ValidateInternalError(err, "connection")
 	}
 
 	conn.password = plain
+
 	return nil
 }
 

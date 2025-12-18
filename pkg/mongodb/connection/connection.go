@@ -116,6 +116,7 @@ func (cm *ConnectionMongoDBModel) FromEntity(conn *model.Connection) error {
 func NewConnectionMongoDBModelFromDomain(conn *model.Connection) *ConnectionMongoDBModel {
 	cm := &ConnectionMongoDBModel{}
 	_ = cm.FromEntity(conn) // Ignore error for backward compatibility
+
 	return cm
 }
 

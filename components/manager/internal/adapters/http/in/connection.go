@@ -264,8 +264,10 @@ func (h *ConnectionHandler) GetConnection(c *fiber.Ctx) error {
 func (h *ConnectionHandler) TestConnection(c *fiber.Ctx) error {
 	ctx := c.UserContext()
 	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+
 	ctx, span := tracer.Start(ctx, "handler.test_connection")
 	defer span.End()
+
 	c.SetUserContext(ctx)
 
 	orgID, err := httpUtils.GetOrganizationID(c)
@@ -282,6 +284,7 @@ func (h *ConnectionHandler) TestConnection(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "invalid connection id parameter", err)
+
 		return httpUtils.WithError(c, pkg.ValidationError{
 			EntityType: "connection",
 			Code:       constant.ErrInvalidPathParameter.Error(),
@@ -290,16 +293,19 @@ func (h *ConnectionHandler) TestConnection(c *fiber.Ctx) error {
 			Err:        err,
 		})
 	}
+
 	span.SetAttributes(attribute.String("app.request.connection_id", id.String()))
 
 	resp, err := h.TestQuery.Execute(ctx, orgID, id)
 	if err != nil {
 		logger.Errorf("Failed to execute test connection query, Error: %s", err.Error())
 		libOpentelemetry.HandleSpanError(&span, "failed to test connection", err)
+
 		return httpUtils.WithError(c, err)
 	}
 
 	logger.Infof("connection test successful id=%s org=%s latency_ms=%d", id, orgID, resp.LatencyMs)
+
 	return httpUtils.OK(c, resp)
 }
 

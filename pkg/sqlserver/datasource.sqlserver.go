@@ -234,6 +234,7 @@ func (ds *ExternalDataSource) queryTables(ctx context.Context, schemas []string)
 			if s == "" {
 				continue
 			}
+
 			cleaned = append(cleaned, s)
 		}
 
@@ -245,6 +246,7 @@ func (ds *ExternalDataSource) queryTables(ctx context.Context, schemas []string)
 			args = []any{DefaultSchema}
 		} else {
 			placeholders := make([]string, len(cleaned))
+
 			args = make([]any, len(cleaned))
 			for i, s := range cleaned {
 				placeholders[i] = fmt.Sprintf("@p%d", i+1)
@@ -265,11 +267,13 @@ func (ds *ExternalDataSource) queryTables(ctx context.Context, schemas []string)
 	defer rows.Close()
 
 	var tables []string
+
 	for rows.Next() {
 		var tableName string
 		if err := rows.Scan(&tableName); err != nil {
 			return nil, fmt.Errorf("error scanning table name: %w", err)
 		}
+
 		tables = append(tables, tableName)
 	}
 
@@ -307,6 +311,7 @@ func (ds *ExternalDataSource) queryPrimaryKeys(ctx context.Context, schemas []st
 			if s == "" {
 				continue
 			}
+
 			cleaned = append(cleaned, s)
 		}
 
@@ -315,11 +320,13 @@ func (ds *ExternalDataSource) queryPrimaryKeys(ctx context.Context, schemas []st
 			args = []any{DefaultSchema}
 		} else {
 			placeholders := make([]string, len(cleaned))
+
 			args = make([]any, len(cleaned))
 			for i, s := range cleaned {
 				placeholders[i] = fmt.Sprintf("@p%d", i+1)
 				args[i] = s
 			}
+
 			pkQuery = fmt.Sprintf(base+` AND tc.table_schema IN (%s)`, strings.Join(placeholders, ", "))
 		}
 	}
@@ -329,11 +336,13 @@ func (ds *ExternalDataSource) queryPrimaryKeys(ctx context.Context, schemas []st
 		if ctx.Err() == context.DeadlineExceeded {
 			return nil, fmt.Errorf("schema discovery timeout after %v while querying primary keys: %w", constant.SchemaDiscoveryTimeout, err)
 		}
+
 		return nil, fmt.Errorf("error querying primary keys: %w", err)
 	}
 	defer pkRows.Close()
 
 	primaryKeys := make(map[string]map[string]bool)
+
 	for pkRows.Next() {
 		var schemaName, tableName, columnName string
 		if err := pkRows.Scan(&schemaName, &tableName, &columnName); err != nil {
@@ -345,6 +354,7 @@ func (ds *ExternalDataSource) queryPrimaryKeys(ctx context.Context, schemas []st
 		if primaryKeys[key] == nil {
 			primaryKeys[key] = make(map[string]bool)
 		}
+
 		primaryKeys[key][columnName] = true
 	}
 
@@ -404,6 +414,7 @@ func (ds *ExternalDataSource) buildTableSchema(
 			if s == "" {
 				continue
 			}
+
 			cleaned = append(cleaned, s)
 		}
 
@@ -420,6 +431,7 @@ func (ds *ExternalDataSource) buildTableSchema(
 
 			for i, s := range cleaned {
 				placeholders[i] = fmt.Sprintf("@p%d", i+2)
+
 				args = append(args, s)
 			}
 
@@ -438,6 +450,7 @@ func (ds *ExternalDataSource) buildTableSchema(
 				constant.SchemaDiscoveryTimeout, tableName, err,
 			)
 		}
+
 		return TableSchema{}, fmt.Errorf("error querying columns for table %s: %w", tableName, err)
 	}
 	defer colRows.Close()

@@ -215,6 +215,7 @@ func newDataSourceConfigOracle(ctx context.Context, base datasource.DataSourceCo
 	}
 
 	serviceName := ""
+
 	if conn.Metadata != nil {
 		// Try to get serviceName from metadata map if exists
 		if service, ok := (*conn.Metadata)["serviceName"].(string); ok && service != "" {

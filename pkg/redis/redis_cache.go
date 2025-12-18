@@ -62,6 +62,7 @@ func (c *RedisCache[T]) Get(ctx context.Context, key string) (T, bool, error) {
 	)
 
 	var zero T
+
 	fullKey := c.cacheKey(key)
 
 	data, err := c.client.Get(ctx, fullKey).Bytes()
@@ -69,11 +70,14 @@ func (c *RedisCache[T]) Get(ctx context.Context, key string) (T, bool, error) {
 		if err == redis.Nil {
 			span.SetAttributes(attribute.Bool("app.cache.hit", false))
 			logger.Debugf("cache miss for key %s", key)
+
 			return zero, false, nil // Cache miss - not an error
 		}
+
 		span.SetAttributes(attribute.Bool("app.cache.hit", false))
 		libOpentelemetry.HandleSpanError(&span, "failed to get from cache", err)
 		logger.Warnf("error retrieving from cache key %s: %v", key, err)
+
 		return zero, false, fmt.Errorf("failed to get from cache: %w", err)
 	}
 
@@ -82,11 +86,13 @@ func (c *RedisCache[T]) Get(ctx context.Context, key string) (T, bool, error) {
 		span.SetAttributes(attribute.Bool("app.cache.hit", false))
 		libOpentelemetry.HandleSpanError(&span, "failed to unmarshal cached value", err)
 		logger.Warnf("error unmarshaling cache value for key %s: %v", key, err)
+
 		return zero, false, fmt.Errorf("failed to unmarshal cached value: %w", err)
 	}
 
 	span.SetAttributes(attribute.Bool("app.cache.hit", true))
 	logger.Debugf("cache hit for key %s", key)
+
 	return value, true, nil
 }
 
@@ -111,6 +117,7 @@ func (c *RedisCache[T]) Set(ctx context.Context, key string, value T, ttl time.D
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "failed to marshal value", err)
 		logger.Errorf("error marshaling value for cache key %s: %v", key, err)
+
 		return fmt.Errorf("failed to marshal value: %w", err)
 	}
 
@@ -118,10 +125,12 @@ func (c *RedisCache[T]) Set(ctx context.Context, key string, value T, ttl time.D
 	if err := c.client.Set(ctx, fullKey, data, ttl).Err(); err != nil {
 		libOpentelemetry.HandleSpanError(&span, "failed to set cache value", err)
 		logger.Errorf("error storing in cache key %s: %v", key, err)
+
 		return fmt.Errorf("failed to store in cache: %w", err)
 	}
 
 	logger.Debugf("cached key %s with TTL %v", key, ttl)
+
 	return nil
 }
 
@@ -141,10 +150,12 @@ func (c *RedisCache[T]) Delete(ctx context.Context, key string) error {
 	if err := c.client.Del(ctx, fullKey).Err(); err != nil {
 		libOpentelemetry.HandleSpanError(&span, "failed to delete cache key", err)
 		logger.Errorf("error deleting cache key %s: %v", key, err)
+
 		return fmt.Errorf("failed to delete from cache: %w", err)
 	}
 
 	logger.Debugf("deleted cache key %s", key)
+
 	return nil
 }
 
@@ -173,10 +184,12 @@ func (c *RedisCache[T]) Clear(ctx context.Context) error {
 	if err := iter.Err(); err != nil {
 		libOpentelemetry.HandleSpanError(&span, "failed to clear cache keys", err)
 		logger.Errorf("error scanning keys for clear: %v", err)
+
 		return fmt.Errorf("failed to clear cache: %w", err)
 	}
 
 	logger.Info("cache cleared")
+
 	return nil
 }
 

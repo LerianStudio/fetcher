@@ -44,6 +44,7 @@ func (s *SchemaCache) Get(ctx context.Context, configName string) (*model.DataSo
 	if err != nil {
 		return nil, err
 	}
+
 	if !found {
 		return nil, nil
 	}
@@ -88,5 +89,6 @@ func (s *SchemaCache) Close() error {
 	if closeable, ok := s.cache.(redis.Closeable); ok {
 		return closeable.Close()
 	}
+
 	return nil
 }

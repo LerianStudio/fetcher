@@ -111,7 +111,7 @@ func getTableFilters(databaseFilters map[string]map[string]job.FilterCondition, 
 
 // GetSchemaInfo returns the schema information for Oracle.
 func (ds *DataSourceConfigOracle) GetSchemaInfo(ctx context.Context, schemas []string) (*model.DataSourceSchema, error) {
-	_, tracer, _, _ := commons.NewTrackingFromContext(ctx)
+	_, tracer, _, _ := commons.NewTrackingFromContext(ctx) //nolint:dogsled // Only tracer needed for span creation
 
 	ctx, span := tracer.Start(ctx, "datasource.oracle.get_schema_info")
 	defer span.End()
@@ -128,11 +128,13 @@ func (ds *DataSourceConfigOracle) GetSchemaInfo(ctx context.Context, schemas []s
 	}
 
 	schema := model.NewDataSourceSchema(ds.ConfigName)
+
 	for _, table := range schemaResult {
 		columns := make([]string, len(table.Columns))
 		for i, col := range table.Columns {
 			columns[i] = col.Name
 		}
+
 		schema.AddTable(table.TableName, columns)
 	}
 

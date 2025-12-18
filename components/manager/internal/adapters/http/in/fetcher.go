@@ -98,12 +98,14 @@ func (h *FetcherHandler) CreateJob(c *fiber.Ctx) error {
 	// Return 200 OK for duplicates, 202 Accepted for new jobs
 	if result.IsDuplicate {
 		response.Message = "Duplicate request detected - returning existing job"
+
 		logger.Infof("Duplicate fetcher job returned id=%s org=%s", result.Job.ID, orgID)
 
 		return httpUtils.OK(c, response)
 	}
 
 	response.Message = "Job created and queued for processing"
+
 	logger.Infof("Fetcher job created id=%s org=%s", result.Job.ID, orgID)
 
 	return httpUtils.Accepted(c, response)
@@ -146,6 +148,7 @@ func (h *FetcherHandler) GetJob(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "invalid job id parameter", err)
+
 		return httpUtils.WithError(c, pkg.ValidationError{
 			EntityType: "job",
 			Code:       constant.ErrInvalidPathParameter.Error(),

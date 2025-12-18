@@ -204,11 +204,13 @@ func (ds *ExternalDataSource) queryTables(ctx context.Context, schemas []string)
 	defer rows.Close()
 
 	var tables []string
+
 	for rows.Next() {
 		var tableName string
 		if err := rows.Scan(&tableName); err != nil {
 			return nil, fmt.Errorf("error scanning table name: %w", err)
 		}
+
 		tables = append(tables, tableName)
 	}
 
@@ -244,11 +246,13 @@ func (ds *ExternalDataSource) queryPrimaryKeys(ctx context.Context, schemas []st
 				constant.SchemaDiscoveryTimeout, err,
 			)
 		}
+
 		return nil, fmt.Errorf("error querying primary keys: %w", err)
 	}
 	defer pkRows.Close()
 
 	primaryKeys := make(map[string]map[string]bool)
+
 	for pkRows.Next() {
 		var tableName, columnName string
 		if err := pkRows.Scan(&tableName, &columnName); err != nil {
@@ -258,6 +262,7 @@ func (ds *ExternalDataSource) queryPrimaryKeys(ctx context.Context, schemas []st
 		if primaryKeys[tableName] == nil {
 			primaryKeys[tableName] = make(map[string]bool)
 		}
+
 		primaryKeys[tableName][columnName] = true
 	}
 

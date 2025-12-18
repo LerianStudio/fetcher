@@ -65,6 +65,8 @@ func NewCreateFetcherJob(
 }
 
 // Execute creates a new fetcher job or returns an existing duplicate.
+//
+//nolint:gocyclo // High complexity is inherent to job creation orchestration with multiple validation steps
 func (s *CreateFetcherJob) Execute(ctx context.Context, organizationID uuid.UUID, request model.FetcherRequest) (*CreateFetcherJobResult, error) {
 	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
@@ -87,6 +89,7 @@ func (s *CreateFetcherJob) Execute(ctx context.Context, organizationID uuid.UUID
 		libOpentelemetry.HandleSpanError(&span, "Failed to compute request hash", err)
 		return nil, pkg.ValidateInternalError(err, "fetcher")
 	}
+
 	span.SetAttributes(attribute.String("app.request.request_hash", requestHash))
 
 	job, err := model.NewJob(
@@ -98,6 +101,7 @@ func (s *CreateFetcherJob) Execute(ctx context.Context, organizationID uuid.UUID
 			for _, f := range request.DataRequest.Filters {
 				filters = append(filters, model.Filter(f))
 			}
+
 			return filters
 		}(),
 		model.JobStatusPending, // Initial status is PENDING
@@ -123,6 +127,7 @@ func (s *CreateFetcherJob) Execute(ctx context.Context, organizationID uuid.UUID
 		libOpentelemetry.HandleSpanError(&span, "Failed to check for duplicate job", err)
 		return nil, pkg.ValidateInternalError(err, "fetcher")
 	}
+
 	if existingJob != nil {
 		logger.Infof("Duplicate request detected, returning existing job id=%s", existingJob.ID)
 		span.SetAttributes(
@@ -147,6 +152,7 @@ func (s *CreateFetcherJob) Execute(ctx context.Context, organizationID uuid.UUID
 	// No connections found
 	if len(connections) == 0 {
 		libOpentelemetry.HandleSpanError(&span, "No connections found for the provided datasources", nil)
+
 		return nil, pkg.ValidationError{
 			EntityType: "fetcher",
 			Code:       constant.ErrMissingDataSource.Error(),
@@ -203,6 +209,7 @@ func (s *CreateFetcherJob) Execute(ctx context.Context, organizationID uuid.UUID
 		logger.Errorf("Failed to publish job to queue id=%s: %v", createdJob.ID, err)
 
 		createdJob.SetFailedStatus("process failed: unable to publish")
+
 		_, updateErr := s.jobRepo.Update(ctx, createdJob)
 		if updateErr != nil {
 			libOpentelemetry.HandleSpanError(&span, "Failed to update job status to FAILED", updateErr)

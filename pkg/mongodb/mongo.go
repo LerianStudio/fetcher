@@ -39,8 +39,9 @@ func ValidateFieldsInSchemaMongo(expectedFields []string, schema CollectionSchem
 	return
 }
 
+//nolint:gocyclo // High complexity is inherent to comprehensive MongoDB error handling across multiple error types
 func MapMongoErrorToResponse(err error, ctx context.Context) error {
-	logger, _, _, _ := commons.NewTrackingFromContext(ctx)
+	logger := commons.NewLoggerFromContext(ctx)
 
 	// Client-side cancellation / deadlines (HTTP layer)
 	// If the client closed the connection, you often can't write a response anyway.
@@ -60,11 +61,13 @@ func MapMongoErrorToResponse(err error, ctx context.Context) error {
 		logger.Errorf("MongoDB server selection timeout: %v", err)
 		return pkg.ValidateInternalError(constant.ErrServiceUnavailable, "")
 	}
+
 	var sse topology.ServerSelectionError
 	if errors.As(err, &sse) {
 		logger.Errorf("MongoDB server selection error: %v", err)
 		return pkg.ValidateInternalError(constant.ErrServiceUnavailable, "")
 	}
+
 	if mongo.IsNetworkError(err) {
 		logger.Errorf("MongoDB network error: %v", err)
 		return pkg.ValidateInternalError(constant.ErrServiceUnavailable, "")
@@ -115,6 +118,7 @@ func MapMongoErrorToResponse(err error, ctx context.Context) error {
 		}
 
 		logger.Errorf("MongoDB write exception error: %v", err)
+
 		return pkg.ValidateInternalError(constant.ErrInternalServer, "")
 	}
 
@@ -126,6 +130,7 @@ func MapMongoErrorToResponse(err error, ctx context.Context) error {
 	}
 
 	logger.Errorf("MongoDB unknown error: %v", err)
+
 	return pkg.ValidateInternalError(constant.ErrInternalServer, "")
 }
 

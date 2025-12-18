@@ -88,6 +88,7 @@ func NewTableSchema(tableName string, columns []string) *TableSchema {
 	for _, col := range columns {
 		ts.Columns[col] = true
 	}
+
 	return ts
 }
 
@@ -108,6 +109,7 @@ func (s *DataSourceSchema) HasField(tableName, fieldName string) bool {
 	if !exists {
 		return false
 	}
+
 	return table.Columns[fieldName]
 }
 
@@ -129,6 +131,7 @@ func (t *TableSchema) GetColumnsList() []string {
 	for col := range t.Columns {
 		columns = append(columns, col)
 	}
+
 	return columns
 }
 
@@ -236,6 +239,7 @@ func (s *SchemaValidationSpec) GetConfigNames() []string {
 	for name := range s.MappedFields {
 		names = append(names, name)
 	}
+
 	return names
 }
 
@@ -274,6 +278,7 @@ func (s *SchemaValidationSpec) ValidateAgainstSchema(
 				DataSourceID: configName,
 				Table:        tableName,
 			})
+
 			continue
 		}
 

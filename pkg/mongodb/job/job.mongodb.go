@@ -354,6 +354,7 @@ func (jr *JobMongoDBRepository) FindByID(ctx context.Context, id, organizationID
 		}
 
 		libOpentelemetry.HandleSpanError(&span, "Failed to find job", err)
+
 		return nil, err
 	}
 
@@ -459,6 +460,7 @@ func (jr *JobMongoDBRepository) ExistsRunningByMappedFieldKey(ctx context.Contex
 	if !configNameRegex.MatchString(keyPattern) {
 		errInvalidKey := errors.New("invalid key pattern format")
 		libOpentelemetry.HandleSpanError(&span, "Key pattern validation failed", errInvalidKey)
+
 		return false, pkg.ValidateInternalError(errInvalidKey, "job")
 	}
 
