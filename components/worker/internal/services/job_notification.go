@@ -41,7 +41,10 @@ func (uc *UseCase) publishJobNotification(
 ) error {
 	// Skip if publisher is not configured
 	if uc.RabbitMQPublisher == nil || uc.JobEventsExchange == "" {
-		logger.Debug("RabbitMQ publisher not configured, skipping job notification")
+		if logger != nil {
+			logger.Debug("RabbitMQ publisher not configured, skipping job notification")
+		}
+
 		return nil
 	}
 
@@ -69,10 +72,6 @@ func (uc *UseCase) publishJobNotification(
 	}
 
 	if status == "failed" && errorMetadata != nil {
-		if notification.Metadata == nil {
-			notification.Metadata = make(map[string]any)
-		}
-
 		notification.Metadata["error"] = errorMetadata
 	}
 
