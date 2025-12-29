@@ -1,7 +1,6 @@
 package query
 
 import (
-	"context"
 	"errors"
 	"net/http"
 	"testing"
@@ -16,66 +15,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 )
-
-// mockCryptor is a test implementation of crypto.Cryptor for TestConnection tests.
-type mockCryptor struct {
-	encryptFunc    func(ctx context.Context, plain string) (string, string, error)
-	decryptFunc    func(ctx context.Context, cipherText, keyVersion string) (string, error)
-	keyVersionFunc func() string
-}
-
-func (m *mockCryptor) Encrypt(ctx context.Context, plain string) (string, string, error) {
-	if m.encryptFunc != nil {
-		return m.encryptFunc(ctx, plain)
-	}
-	return "encrypted-" + plain, "v1", nil
-}
-
-func (m *mockCryptor) Decrypt(ctx context.Context, cipherText, keyVersion string) (string, error) {
-	if m.decryptFunc != nil {
-		return m.decryptFunc(ctx, cipherText, keyVersion)
-	}
-	return "decrypted-password", nil
-}
-
-func (m *mockCryptor) KeyVersion() string {
-	if m.keyVersionFunc != nil {
-		return m.keyVersionFunc()
-	}
-	return "v1"
-}
-
-// Ensure mockCryptor implements crypto.Cryptor.
-var _ crypto.Cryptor = (*mockCryptor)(nil)
-
-// mockLimiterStore is a test implementation of limiter.Store.
-type mockLimiterStore struct {
-	takeFunc func(ctx context.Context, key string) (tokens, remaining, reset uint64, ok bool, err error)
-}
-
-func (m *mockLimiterStore) Take(ctx context.Context, key string) (uint64, uint64, uint64, bool, error) {
-	if m.takeFunc != nil {
-		return m.takeFunc(ctx, key)
-	}
-	// Default: allow the request
-	return 1, 10, uint64(time.Now().UTC().Add(time.Minute).UnixNano()), true, nil
-}
-
-func (m *mockLimiterStore) Get(ctx context.Context, key string) (tokens, remaining uint64, err error) {
-	return 1, 10, nil
-}
-
-func (m *mockLimiterStore) Set(ctx context.Context, key string, tokens uint64, interval time.Duration) error {
-	return nil
-}
-
-func (m *mockLimiterStore) Burst(ctx context.Context, key string, tokens uint64) error {
-	return nil
-}
-
-func (m *mockLimiterStore) Close(ctx context.Context) error {
-	return nil
-}
 
 // newTestConnectionFixture creates a valid Connection for testing TestConnection service.
 func newTestConnectionFixture(orgID, connID uuid.UUID, dbType model.DBType) *model.Connection {
@@ -101,8 +40,11 @@ func TestTestConnection_Execute_NotFoundError(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := &mockCryptor{}
-	mockStore := &mockLimiterStore{}
+	mockCrypto := crypto.NewMockCryptor(ctrl)
+	mockStore := NewMockRateLimiterStore(ctrl)
+	mockStore.EXPECT().
+		Take(gomock.Any(), gomock.Any()).
+		Return(uint64(1), uint64(10), uint64(time.Now().UTC().Add(time.Minute).UnixNano()), true, nil)
 
 	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore)
 
@@ -138,8 +80,11 @@ func TestTestConnection_Execute_RepositoryError(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := &mockCryptor{}
-	mockStore := &mockLimiterStore{}
+	mockCrypto := crypto.NewMockCryptor(ctrl)
+	mockStore := NewMockRateLimiterStore(ctrl)
+	mockStore.EXPECT().
+		Take(gomock.Any(), gomock.Any()).
+		Return(uint64(1), uint64(10), uint64(time.Now().UTC().Add(time.Minute).UnixNano()), true, nil)
 
 	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore)
 
@@ -177,12 +122,15 @@ func TestTestConnection_Execute_DecryptionError(t *testing.T) {
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
 	decryptionError := errors.New("decryption key invalid")
-	mockCrypto := &mockCryptor{
-		decryptFunc: func(ctx context.Context, cipherText, keyVersion string) (string, error) {
-			return "", decryptionError
-		},
-	}
-	mockStore := &mockLimiterStore{}
+	mockCrypto := crypto.NewMockCryptor(ctrl)
+	mockCrypto.EXPECT().
+		Decrypt(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return("", decryptionError)
+
+	mockStore := NewMockRateLimiterStore(ctrl)
+	mockStore.EXPECT().
+		Take(gomock.Any(), gomock.Any()).
+		Return(uint64(1), uint64(10), uint64(time.Now().UTC().Add(time.Minute).UnixNano()), true, nil)
 
 	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore)
 
@@ -218,14 +166,13 @@ func TestTestConnection_Execute_RateLimitError(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := &mockCryptor{}
+	mockCrypto := crypto.NewMockCryptor(ctrl)
 
 	limiterError := errors.New("rate limiter storage error")
-	mockStore := &mockLimiterStore{
-		takeFunc: func(ctx context.Context, key string) (uint64, uint64, uint64, bool, error) {
-			return 0, 0, 0, false, limiterError
-		},
-	}
+	mockStore := NewMockRateLimiterStore(ctrl)
+	mockStore.EXPECT().
+		Take(gomock.Any(), gomock.Any()).
+		Return(uint64(0), uint64(0), uint64(0), false, limiterError)
 
 	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore)
 
@@ -255,15 +202,13 @@ func TestTestConnection_Execute_RateLimited(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := &mockCryptor{}
+	mockCrypto := crypto.NewMockCryptor(ctrl)
 
 	resetTime := time.Now().UTC().Add(30 * time.Second)
-	mockStore := &mockLimiterStore{
-		takeFunc: func(ctx context.Context, key string) (uint64, uint64, uint64, bool, error) {
-			// Return ok=false to indicate rate limit exceeded
-			return 0, 0, uint64(resetTime.UnixNano()), false, nil
-		},
-	}
+	mockStore := NewMockRateLimiterStore(ctrl)
+	mockStore.EXPECT().
+		Take(gomock.Any(), gomock.Any()).
+		Return(uint64(0), uint64(0), uint64(resetTime.UnixNano()), false, nil)
 
 	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore)
 
@@ -301,8 +246,9 @@ func TestTestConnection_Execute_OrganizationIsolation(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := &mockCryptor{}
-	mockStore := &mockLimiterStore{}
+	mockCrypto := crypto.NewMockCryptor(ctrl)
+	mockStore := NewMockRateLimiterStore(ctrl)
+	mockStore.EXPECT().Take(gomock.Any(), gomock.Any()).Return(uint64(1), uint64(10), uint64(time.Now().UTC().Add(time.Minute).UnixNano()), true, nil)
 
 	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore)
 
@@ -343,12 +289,10 @@ func TestTestConnection_Execute_WithSSLConfiguration(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := &mockCryptor{
-		decryptFunc: func(ctx context.Context, cipherText, keyVersion string) (string, error) {
-			return "test-password", nil
-		},
-	}
-	mockStore := &mockLimiterStore{}
+	mockCrypto := crypto.NewMockCryptor(ctrl)
+	mockCrypto.EXPECT().Decrypt(gomock.Any(), gomock.Any(), gomock.Any()).Return("test-password", nil)
+	mockStore := NewMockRateLimiterStore(ctrl)
+	mockStore.EXPECT().Take(gomock.Any(), gomock.Any()).Return(uint64(1), uint64(10), uint64(time.Now().UTC().Add(time.Minute).UnixNano()), true, nil)
 
 	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore)
 
@@ -428,12 +372,10 @@ func TestTestConnection_Execute_AllDatabaseTypes(t *testing.T) {
 			defer ctrl.Finish()
 
 			mockConnRepo := connRepo.NewMockRepository(ctrl)
-			mockCrypto := &mockCryptor{
-				decryptFunc: func(ctx context.Context, cipherText, keyVersion string) (string, error) {
-					return "test-password", nil
-				},
-			}
-			mockStore := &mockLimiterStore{}
+			mockCrypto := crypto.NewMockCryptor(ctrl)
+			mockCrypto.EXPECT().Decrypt(gomock.Any(), gomock.Any(), gomock.Any()).Return("test-password", nil)
+			mockStore := NewMockRateLimiterStore(ctrl)
+			mockStore.EXPECT().Take(gomock.Any(), gomock.Any()).Return(uint64(1), uint64(10), uint64(time.Now().UTC().Add(time.Minute).UnixNano()), true, nil)
 
 			svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore)
 
@@ -513,8 +455,11 @@ func TestTestConnection_Execute_MultipleRepositoryErrors(t *testing.T) {
 			defer ctrl.Finish()
 
 			mockConnRepo := connRepo.NewMockRepository(ctrl)
-			mockCrypto := &mockCryptor{}
-			mockStore := &mockLimiterStore{}
+			mockCrypto := crypto.NewMockCryptor(ctrl)
+			mockStore := NewMockRateLimiterStore(ctrl)
+			mockStore.EXPECT().
+				Take(gomock.Any(), gomock.Any()).
+				Return(uint64(1), uint64(10), uint64(time.Now().UTC().Add(time.Minute).UnixNano()), true, nil)
 
 			svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore)
 
@@ -550,8 +495,9 @@ func TestTestConnection_Execute_EmptyUUIDs(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := &mockCryptor{}
-	mockStore := &mockLimiterStore{}
+	mockCrypto := crypto.NewMockCryptor(ctrl)
+	mockStore := NewMockRateLimiterStore(ctrl)
+	mockStore.EXPECT().Take(gomock.Any(), gomock.Any()).Return(uint64(1), uint64(10), uint64(time.Now().UTC().Add(time.Minute).UnixNano()), true, nil)
 
 	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore)
 
@@ -587,8 +533,8 @@ func TestNewTestConnection(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := &mockCryptor{}
-	mockStore := &mockLimiterStore{}
+	mockCrypto := crypto.NewMockCryptor(ctrl)
+	mockStore := NewMockRateLimiterStore(ctrl)
 
 	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore)
 
@@ -639,12 +585,9 @@ func TestTestConnection_Execute_RateLimitResetTime(t *testing.T) {
 			defer ctrl.Finish()
 
 			mockConnRepo := connRepo.NewMockRepository(ctrl)
-			mockCrypto := &mockCryptor{}
-			mockStore := &mockLimiterStore{
-				takeFunc: func(ctx context.Context, key string) (uint64, uint64, uint64, bool, error) {
-					return 0, 0, uint64(tt.resetTime.UnixNano()), false, nil
-				},
-			}
+			mockCrypto := crypto.NewMockCryptor(ctrl)
+			mockStore := NewMockRateLimiterStore(ctrl)
+			mockStore.EXPECT().Take(gomock.Any(), gomock.Any()).Return(uint64(0), uint64(0), uint64(tt.resetTime.UnixNano()), false, nil)
 
 			svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore)
 
@@ -681,15 +624,10 @@ func TestTestConnection_Execute_DecryptionKeyVersionMismatch(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	mockCrypto := &mockCryptor{
-		decryptFunc: func(ctx context.Context, cipherText, keyVersion string) (string, error) {
-			if keyVersion != "v1" {
-				return "", errors.New("unsupported key version: " + keyVersion)
-			}
-			return "decrypted-password", nil
-		},
-	}
-	mockStore := &mockLimiterStore{}
+	mockCrypto := crypto.NewMockCryptor(ctrl)
+	mockCrypto.EXPECT().Decrypt(gomock.Any(), gomock.Any(), gomock.Eq("v2")).Return("", errors.New("unsupported key version: v2"))
+	mockStore := NewMockRateLimiterStore(ctrl)
+	mockStore.EXPECT().Take(gomock.Any(), gomock.Any()).Return(uint64(1), uint64(10), uint64(time.Now().UTC().Add(time.Minute).UnixNano()), true, nil)
 
 	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore)
 
@@ -727,12 +665,10 @@ func TestTestConnection_Execute_ConnectionWithAllFields(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := &mockCryptor{
-		decryptFunc: func(ctx context.Context, cipherText, keyVersion string) (string, error) {
-			return "super-secret-password", nil
-		},
-	}
-	mockStore := &mockLimiterStore{}
+	mockCrypto := crypto.NewMockCryptor(ctrl)
+	mockCrypto.EXPECT().Decrypt(gomock.Any(), gomock.Any(), gomock.Any()).Return("super-secret-password", nil)
+	mockStore := NewMockRateLimiterStore(ctrl)
+	mockStore.EXPECT().Take(gomock.Any(), gomock.Any()).Return(uint64(1), uint64(10), uint64(time.Now().UTC().Add(time.Minute).UnixNano()), true, nil)
 
 	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore)
 
@@ -799,8 +735,9 @@ func TestTestConnection_Execute_DifferentOrganizations(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := &mockCryptor{}
-	mockStore := &mockLimiterStore{}
+	mockCrypto := crypto.NewMockCryptor(ctrl)
+	mockStore := NewMockRateLimiterStore(ctrl)
+	mockStore.EXPECT().Take(gomock.Any(), gomock.Any()).Return(uint64(1), uint64(10), uint64(time.Now().UTC().Add(time.Minute).UnixNano()), true, nil)
 
 	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore)
 

@@ -12,10 +12,12 @@ import (
 
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/model"
+	"github.com/LerianStudio/fetcher/pkg/mongodb"
 
 	libLog "github.com/LerianStudio/lib-commons/v2/commons/log"
 	libMongo "github.com/LerianStudio/lib-commons/v2/commons/mongo"
 
+	"github.com/golang/mock/gomock"
 	"github.com/google/uuid"
 	"github.com/tryvium-travels/memongo"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -118,14 +120,6 @@ func stubJobSpanAttributes(t *testing.T, retErr error) {
 	})
 }
 
-type fakeJobMongoConnection struct {
-	err error
-}
-
-func (f *fakeJobMongoConnection) GetDB(ctx context.Context) (*mongo.Client, error) {
-	return nil, f.err
-}
-
 func TestJobMongoDBRepository_Create(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		repo := newJobRepository(t)
@@ -185,8 +179,16 @@ func TestJobMongoDBRepository_Create(t *testing.T) {
 	})
 
 	t.Run("database error", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		mockConn := mongodb.NewMockMongoClientProvider(ctrl)
+		mockConn.EXPECT().
+			GetDB(gomock.Any()).
+			Return(nil, errors.New("db down"))
+
 		repo := &JobMongoDBRepository{
-			connection: &fakeJobMongoConnection{err: errors.New("db down")},
+			connection: mockConn,
 			Database:   jobTestDatabaseName,
 		}
 		if _, err := repo.Create(context.Background(), jobFixture()); err == nil || err.Error() != "db down" {
@@ -264,8 +266,16 @@ func TestJobMongoDBRepository_Update(t *testing.T) {
 	})
 
 	t.Run("database error", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		mockConn := mongodb.NewMockMongoClientProvider(ctrl)
+		mockConn.EXPECT().
+			GetDB(gomock.Any()).
+			Return(nil, errors.New("db down"))
+
 		repo := &JobMongoDBRepository{
-			connection: &fakeJobMongoConnection{err: errors.New("db down")},
+			connection: mockConn,
 			Database:   jobTestDatabaseName,
 		}
 		job := jobFixture()
@@ -301,8 +311,16 @@ func TestJobMongoDBRepository_FindByID(t *testing.T) {
 	})
 
 	t.Run("database error", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		mockConn := mongodb.NewMockMongoClientProvider(ctrl)
+		mockConn.EXPECT().
+			GetDB(gomock.Any()).
+			Return(nil, errors.New("db down"))
+
 		repo := &JobMongoDBRepository{
-			connection: &fakeJobMongoConnection{err: errors.New("db down")},
+			connection: mockConn,
 			Database:   jobTestDatabaseName,
 		}
 		if _, err := repo.FindByID(context.Background(), uuid.New(), uuid.New()); err == nil || err.Error() != "db down" {
@@ -375,8 +393,16 @@ func TestJobMongoDBRepository_List(t *testing.T) {
 	})
 
 	t.Run("database error", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		mockConn := mongodb.NewMockMongoClientProvider(ctrl)
+		mockConn.EXPECT().
+			GetDB(gomock.Any()).
+			Return(nil, errors.New("db down"))
+
 		repo := &JobMongoDBRepository{
-			connection: &fakeJobMongoConnection{err: errors.New("db down")},
+			connection: mockConn,
 			Database:   jobTestDatabaseName,
 		}
 		if _, err := repo.List(context.Background(), &ListFilter{OrganizationID: uuid.New()}); err == nil || err.Error() != "db down" {
@@ -399,7 +425,7 @@ func TestJobMongoDBRepository_UpdateStatus(t *testing.T) {
 		repo := newJobRepository(t)
 		created := createJob(t, repo, jobFixture())
 
-		err := repo.UpdateStatus(context.Background(), created.ID, created.OrganizationID, model.JobStatusCompleted, nil)
+		err := repo.UpdateStatus(context.Background(), created.ID, created.OrganizationID, model.JobStatusCompleted, "/external-data/test.json", nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -415,13 +441,16 @@ func TestJobMongoDBRepository_UpdateStatus(t *testing.T) {
 		if found.CompletedAt == nil {
 			t.Fatalf("expected completed_at to be set")
 		}
+		if found.ResultPath != "/external-data/test.json" {
+			t.Fatalf("expected result_path to be set, got %s", found.ResultPath)
+		}
 	})
 
 	t.Run("updates status to failed and sets completed_at", func(t *testing.T) {
 		repo := newJobRepository(t)
 		created := createJob(t, repo, jobFixture())
 
-		err := repo.UpdateStatus(context.Background(), created.ID, created.OrganizationID, model.JobStatusFailed, nil)
+		err := repo.UpdateStatus(context.Background(), created.ID, created.OrganizationID, model.JobStatusFailed, "", nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -446,7 +475,7 @@ func TestJobMongoDBRepository_UpdateStatus(t *testing.T) {
 		job.CompletedAt = &now
 		created := createJob(t, repo, job)
 
-		err := repo.UpdateStatus(context.Background(), created.ID, created.OrganizationID, model.JobStatusProcessing, nil)
+		err := repo.UpdateStatus(context.Background(), created.ID, created.OrganizationID, model.JobStatusProcessing, "", nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -471,7 +500,7 @@ func TestJobMongoDBRepository_UpdateStatus(t *testing.T) {
 			"error_message": "something went wrong",
 			"retry_count":   3,
 		}
-		err := repo.UpdateStatus(context.Background(), created.ID, created.OrganizationID, model.JobStatusFailed, metadata)
+		err := repo.UpdateStatus(context.Background(), created.ID, created.OrganizationID, model.JobStatusFailed, "", metadata)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -489,7 +518,7 @@ func TestJobMongoDBRepository_UpdateStatus(t *testing.T) {
 		repo := newJobRepository(t)
 		created := createJob(t, repo, jobFixture())
 
-		err := repo.UpdateStatus(context.Background(), created.ID, created.OrganizationID, "invalid-status", nil)
+		err := repo.UpdateStatus(context.Background(), created.ID, created.OrganizationID, "invalid-status", "", nil)
 		if err == nil {
 			t.Fatalf("expected error for invalid status")
 		}
@@ -498,18 +527,26 @@ func TestJobMongoDBRepository_UpdateStatus(t *testing.T) {
 	t.Run("returns error for non-existent job", func(t *testing.T) {
 		repo := newJobRepository(t)
 
-		err := repo.UpdateStatus(context.Background(), uuid.New(), uuid.New(), model.JobStatusCompleted, nil)
+		err := repo.UpdateStatus(context.Background(), uuid.New(), uuid.New(), model.JobStatusCompleted, "", nil)
 		if err == nil {
 			t.Fatalf("expected error for non-existent job")
 		}
 	})
 
 	t.Run("database error surfaces", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		mockConn := mongodb.NewMockMongoClientProvider(ctrl)
+		mockConn.EXPECT().
+			GetDB(gomock.Any()).
+			Return(nil, errors.New("db down"))
+
 		repo := &JobMongoDBRepository{
-			connection: &fakeJobMongoConnection{err: errors.New("db down")},
+			connection: mockConn,
 			Database:   jobTestDatabaseName,
 		}
-		err := repo.UpdateStatus(context.Background(), uuid.New(), uuid.New(), model.JobStatusCompleted, nil)
+		err := repo.UpdateStatus(context.Background(), uuid.New(), uuid.New(), model.JobStatusCompleted, "", nil)
 		if err == nil || err.Error() != "db down" {
 			t.Fatalf("expected db error, got %v", err)
 		}
@@ -629,8 +666,16 @@ func TestJobMongoDBRepository_FindByRequestHashWithinWindow(t *testing.T) {
 	})
 
 	t.Run("database error surfaces", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		mockConn := mongodb.NewMockMongoClientProvider(ctrl)
+		mockConn.EXPECT().
+			GetDB(gomock.Any()).
+			Return(nil, errors.New("db down"))
+
 		repo := &JobMongoDBRepository{
-			connection: &fakeJobMongoConnection{err: errors.New("db down")},
+			connection: mockConn,
 			Database:   jobTestDatabaseName,
 		}
 		if _, err := repo.FindByRequestHashWithinWindow(context.Background(), uuid.New(), "hash", 60); err == nil || err.Error() != "db down" {
@@ -781,8 +826,16 @@ func TestJobMongoDBRepository_ExistsRunningByMappedFieldKey(t *testing.T) {
 	})
 
 	t.Run("database error surfaces", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		mockConn := mongodb.NewMockMongoClientProvider(ctrl)
+		mockConn.EXPECT().
+			GetDB(gomock.Any()).
+			Return(nil, errors.New("db down"))
+
 		repo := &JobMongoDBRepository{
-			connection: &fakeJobMongoConnection{err: errors.New("db down")},
+			connection: mockConn,
 			Database:   jobTestDatabaseName,
 		}
 		_, err := repo.ExistsRunningByMappedFieldKey(context.Background(), uuid.New(), "config")
@@ -850,8 +903,16 @@ func TestEnsureIndexesHandlesConflicts(t *testing.T) {
 }
 
 func TestEnsureIndexesDatabaseError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConn := mongodb.NewMockMongoClientProvider(ctrl)
+	mockConn.EXPECT().
+		GetDB(gomock.Any()).
+		Return(nil, errors.New("db down"))
+
 	repo := &JobMongoDBRepository{
-		connection: &fakeJobMongoConnection{err: errors.New("db down")},
+		connection: mockConn,
 		Database:   jobTestDatabaseName,
 	}
 	if err := repo.EnsureIndexes(context.Background()); err == nil || !strings.Contains(err.Error(), "db down") {
@@ -860,8 +921,16 @@ func TestEnsureIndexesDatabaseError(t *testing.T) {
 }
 
 func TestDropIndexesDatabaseError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConn := mongodb.NewMockMongoClientProvider(ctrl)
+	mockConn.EXPECT().
+		GetDB(gomock.Any()).
+		Return(nil, errors.New("db down"))
+
 	repo := &JobMongoDBRepository{
-		connection: &fakeJobMongoConnection{err: errors.New("db down")},
+		connection: mockConn,
 		Database:   jobTestDatabaseName,
 	}
 	if err := repo.DropIndexes(context.Background()); err == nil || !strings.Contains(err.Error(), "db down") {

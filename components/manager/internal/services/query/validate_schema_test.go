@@ -1,16 +1,15 @@
 package query
 
 import (
-	"context"
 	"errors"
 	"testing"
 
+	cacheRepo "github.com/LerianStudio/fetcher/components/manager/internal/adapters/cache"
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
-	cacheRepo "github.com/LerianStudio/fetcher/pkg/repository/cache"
 
 	"github.com/golang/mock/gomock"
 	"github.com/google/uuid"
@@ -18,35 +17,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// mockCryptor is a test implementation of crypto.Cryptor for ValidateSchema tests.
-type mockCryptorValidate struct {
-	decryptFunc func(ctx context.Context, cipherText, keyVersion string) (string, error)
-}
-
-func (m *mockCryptorValidate) Encrypt(ctx context.Context, plain string) (string, string, error) {
-	return "encrypted-" + plain, "v1", nil
-}
-
-func (m *mockCryptorValidate) Decrypt(ctx context.Context, cipherText, keyVersion string) (string, error) {
-	if m.decryptFunc != nil {
-		return m.decryptFunc(ctx, cipherText, keyVersion)
-	}
-	return "decrypted-password", nil
-}
-
-func (m *mockCryptorValidate) KeyVersion() string {
-	return "v1"
-}
-
-// Ensure mockCryptorValidate implements crypto.Cryptor.
-var _ crypto.Cryptor = (*mockCryptorValidate)(nil)
-
 func TestValidateSchema_Success(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := &mockCryptorValidate{}
+	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
 	orgID := uuid.New()
@@ -94,7 +70,7 @@ func TestValidateSchema_DataSourceNotFound(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := &mockCryptorValidate{}
+	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
 	orgID := uuid.New()
@@ -130,7 +106,7 @@ func TestValidateSchema_TableNotFound(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := &mockCryptorValidate{}
+	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
 	orgID := uuid.New()
@@ -173,7 +149,7 @@ func TestValidateSchema_FieldNotFound(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := &mockCryptorValidate{}
+	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
 	orgID := uuid.New()
@@ -220,7 +196,7 @@ func TestValidateSchema_MultipleErrors(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := &mockCryptorValidate{}
+	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
 	orgID := uuid.New()
@@ -269,7 +245,7 @@ func TestValidateSchema_InvalidRequest_NilMappedFields(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := &mockCryptorValidate{}
+	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
 	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache)
@@ -292,7 +268,7 @@ func TestValidateSchema_InvalidRequest_EmptyMappedFields(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := &mockCryptorValidate{}
+	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
 	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache)
@@ -315,7 +291,7 @@ func TestValidateSchema_RepositoryError(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := &mockCryptorValidate{}
+	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
 	orgID := uuid.New()
@@ -345,7 +321,7 @@ func TestValidateSchema_CacheError_ContinuesToFetch(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := &mockCryptorValidate{}
+	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
 	orgID := uuid.New()
@@ -362,6 +338,12 @@ func TestValidateSchema_CacheError_ContinuesToFetch(t *testing.T) {
 	mockSchemaCache.EXPECT().
 		Get(gomock.Any(), "db1").
 		Return(nil, cacheError)
+
+	// Mock Decrypt for when it tries to connect to actual datasource
+	mockCrypto.EXPECT().
+		Decrypt(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return("decrypted-password", nil).
+		AnyTimes()
 
 	// Note: The service will try to fetch from the actual datasource which will fail
 	// since we don't have a real database. This test verifies the cache error is handled gracefully.
@@ -392,7 +374,7 @@ func TestValidateSchema_PartialConnectionsFound(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := &mockCryptorValidate{}
+	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
 	orgID := uuid.New()
@@ -445,7 +427,7 @@ func TestValidateSchema_CacheMiss_DataSourceDown(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := &mockCryptorValidate{}
+	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
 	orgID := uuid.New()
@@ -461,6 +443,12 @@ func TestValidateSchema_CacheMiss_DataSourceDown(t *testing.T) {
 	mockSchemaCache.EXPECT().
 		Get(gomock.Any(), "db1").
 		Return(nil, nil)
+
+	// Mock Decrypt for when it tries to connect to actual datasource
+	mockCrypto.EXPECT().
+		Decrypt(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return("decrypted-password", nil).
+		AnyTimes()
 
 	// The service will try to connect to the datasource and fail
 
@@ -487,7 +475,7 @@ func TestNewValidateSchema(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := &mockCryptorValidate{}
+	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
 	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache)
@@ -503,7 +491,7 @@ func TestValidateSchema_NoConnections_ReturnsSchemaEntityType(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := &mockCryptorValidate{}
+	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
 	orgID := uuid.New()
@@ -535,7 +523,7 @@ func TestValidateSchema_MultipleDatasources_AllValid(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := &mockCryptorValidate{}
+	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
 	orgID := uuid.New()

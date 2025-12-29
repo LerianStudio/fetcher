@@ -19,7 +19,14 @@ type testStruct struct {
 	Value int    `json:"value"`
 }
 
-// mockLogger implements log.Logger for testing
+// mockLogger implements log.Logger for testing.
+//
+// NOTE: This manual mock is intentionally retained because log.Logger is an external
+// interface from github.com/LerianStudio/lib-commons/v2/commons/log. Generating mockgen
+// mocks for external interfaces requires either:
+// 1. A local wrapper interface (adds unnecessary indirection)
+// 2. Reflect mode with full package path (fragile to library changes)
+// For simple logging interfaces used only in tests, a manual mock is more maintainable.
 type mockLogger struct{}
 
 func (m *mockLogger) Info(args ...any)                                     {}

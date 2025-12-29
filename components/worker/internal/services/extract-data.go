@@ -7,6 +7,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/datasource"
@@ -46,6 +47,8 @@ type ExtractExternalDataMessage struct {
 
 // ExtractExternalData handles the extraction of data from external sources.
 func (uc *UseCase) ExtractExternalData(ctx context.Context, body []byte, headers map[string]any) error {
+	startTime := time.Now() // Track execution start time
+
 	logger, tracer, _, _ := libCommons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "service.extract_external_data")
@@ -64,7 +67,7 @@ func (uc *UseCase) ExtractExternalData(ctx context.Context, body []byte, headers
 			errorMetadata := map[string]any{
 				"message": err.Error(),
 			}
-			if errNotify := uc.publishJobNotification(ctx, tracer, notificationMessage, "failed", errorMetadata, logger); errNotify != nil {
+			if errNotify := uc.publishJobNotification(ctx, tracer, notificationMessage, "failed", errorMetadata, nil, logger); errNotify != nil {
 				logger.Warnf("Failed to publish job failure notification after parse error: %v", errNotify)
 			}
 		}
@@ -76,9 +79,14 @@ func (uc *UseCase) ExtractExternalData(ctx context.Context, body []byte, headers
 		return nil
 	}
 
-	_, errJob := uc.JobRepository.FindByID(ctx, message.JobID, message.OrganizationID)
+	job, errJob := uc.JobRepository.FindByID(ctx, message.JobID, message.OrganizationID)
 	if errJob != nil {
-		return uc.handleErrorWithUpdate(ctx, message.JobID, message.OrganizationID, *message, &span, "Error finding job by ID", errJob, logger)
+		return uc.handleErrorWithUpdate(ctx, message.JobID, message.OrganizationID, *message, &span, "Error finding job by ID in database", errJob, logger)
+	}
+
+	// Check if job exists, if not, update job status to failed
+	if job == nil {
+		return uc.handleErrorWithUpdate(ctx, message.JobID, message.OrganizationID, *message, &span, "Job not found in database", nil, logger)
 	}
 
 	// Extract config names from mappedFields
@@ -90,17 +98,39 @@ func (uc *UseCase) ExtractExternalData(ctx context.Context, body []byte, headers
 		return uc.handleErrorWithUpdate(ctx, message.JobID, message.OrganizationID, *message, &span, "Error finding connections by config names", err, logger)
 	}
 
+	// Check if connections exist, if not, update job status to failed
+	if len(connections) == 0 {
+		return uc.handleErrorWithUpdate(ctx, message.JobID, message.OrganizationID, *message, &span, "No connections found for config names", nil, logger)
+	}
+
 	result := make(map[string]map[string][]map[string]any)
 	if err := uc.queryExternalData(ctx, *message, connections, result); err != nil {
 		return uc.handleErrorWithUpdate(ctx, message.JobID, message.OrganizationID, *message, &span, "Error querying external data", err, logger)
 	}
 
-	if err := uc.saveExternalDataToSeaweedFS(ctx, tracer, *message, result, &span, logger); err != nil {
+	resultData, err := uc.saveExternalDataToSeaweedFS(ctx, tracer, *message, result, &span, logger)
+	if err != nil {
 		return uc.handleErrorWithUpdate(ctx, message.JobID, message.OrganizationID, *message, &span, "Error saving external data to SeaweedFS", err, logger)
 	}
 
-	// Publish job completion notification to RabbitMQ topic exchange
-	if err := uc.publishJobNotification(ctx, tracer, *message, "completed", nil, logger); err != nil {
+	// Update job status to completed in MongoDB with the resultPath
+	if err := uc.JobRepository.UpdateStatus(ctx, message.JobID, message.OrganizationID, model.JobStatusCompleted, resultData.Path, nil); err != nil {
+		libOtel.HandleSpanError(&span, "Error updating job status to completed", err)
+		logger.Errorf("Failed to update job status to completed: %v", err)
+	}
+
+	// Calculate execution metrics
+	completedAt := time.Now()
+	executionTimeMs := completedAt.Sub(startTime).Milliseconds()
+
+	// Publish job completion notification with result data and metrics
+	notificationOpts := &JobNotificationOptions{
+		Result:          resultData,
+		ExecutionTimeMs: executionTimeMs,
+		CompletedAt:     &completedAt,
+	}
+
+	if err := uc.publishJobNotification(ctx, tracer, *message, "completed", nil, notificationOpts, logger); err != nil {
 		libOtel.HandleSpanError(&span, "Error publishing job completion notification", err)
 		logger.Warnf("Failed to publish job completion notification: %v", err)
 	}
@@ -248,7 +278,7 @@ func (uc *UseCase) handleErrorWithUpdate(
 	message.JobID = jobID
 	message.OrganizationID = orgID
 
-	if errNotify := uc.publishJobNotification(ctx, nil, message, "failed", errorMetadata, logger); errNotify != nil {
+	if errNotify := uc.publishJobNotification(ctx, nil, message, "failed", errorMetadata, nil, logger); errNotify != nil {
 		logger.Warnf("Failed to publish job failure notification: %v", errNotify)
 	}
 
@@ -260,7 +290,7 @@ func (uc *UseCase) updateJobWithErrors(ctx context.Context, jobID, orgID uuid.UU
 	metadata := make(map[string]any)
 	metadata["error"] = errorMessage
 
-	errUpdate := uc.JobRepository.UpdateStatus(ctx, jobID, orgID, model.JobStatusFailed, metadata)
+	errUpdate := uc.JobRepository.UpdateStatus(ctx, jobID, orgID, model.JobStatusFailed, "", metadata)
 	if errUpdate != nil {
 		return errUpdate
 	}
@@ -380,6 +410,7 @@ func getTableFilters(databaseFilters map[string]map[string]modelJob.FilterCondit
 }
 
 // saveExternalDataToSeaweedFS converts the result map to JSON, encrypts it, and saves it to SeaweedFS storage.
+// Returns result data (path, sizeBytes, rowCount, format) for use in notifications and job status updates.
 func (uc *UseCase) saveExternalDataToSeaweedFS(
 	ctx context.Context,
 	tracer trace.Tracer,
@@ -387,7 +418,7 @@ func (uc *UseCase) saveExternalDataToSeaweedFS(
 	result map[string]map[string][]map[string]any,
 	span *trace.Span,
 	logger log.Logger,
-) error {
+) (*JobResultData, error) {
 	ctx, spanSave := tracer.Start(ctx, "service.extract_external_data.save_external_data")
 	defer spanSave.End()
 
@@ -396,15 +427,19 @@ func (uc *UseCase) saveExternalDataToSeaweedFS(
 		libOtel.HandleSpanError(span, "Error marshalling result to JSON", err)
 		logger.Errorf("Error marshalling result to JSON: %s", err.Error())
 
-		return fmt.Errorf("marshalling result to JSON: %w", err)
+		return nil, fmt.Errorf("marshalling result to JSON: %w", err)
 	}
+
+	// Calculate metrics before encryption (original data size)
+	sizeBytes := int64(len(jsonData))
+	rowCount := countTotalRows(result)
 
 	encryptedData, err := uc.encryptDataForSeaweedFS(jsonData, logger)
 	if err != nil {
 		libOtel.HandleSpanError(span, "Error encrypting data for SeaweedFS", err)
 		logger.Errorf("Error encrypting data for SeaweedFS: %s", err.Error())
 
-		return fmt.Errorf("encrypting data for SeaweedFS: %w", err)
+		return nil, fmt.Errorf("encrypting data for SeaweedFS: %w", err)
 	}
 
 	objectName := fmt.Sprintf("%s.json", message.JobID.String())
@@ -412,12 +447,20 @@ func (uc *UseCase) saveExternalDataToSeaweedFS(
 		libOtel.HandleSpanError(span, "Error saving external data to SeaweedFS", err)
 		logger.Errorf("Error saving external data to SeaweedFS: %s", err.Error())
 
-		return fmt.Errorf("saving external data to SeaweedFS: %w", err)
+		return nil, fmt.Errorf("saving external data to SeaweedFS: %w", err)
 	}
 
-	logger.Infof("Successfully saved encrypted external data to SeaweedFS: %s", objectName)
+	// Construct the full result path for job status updates
+	resultPath := fmt.Sprintf("/%s/%s", constant.ExternalDataBucketName, objectName)
+	logger.Infof("Successfully saved encrypted external data to SeaweedFS: %s (size=%d bytes, rows=%d)",
+		resultPath, sizeBytes, rowCount)
 
-	return nil
+	return &JobResultData{
+		Path:      resultPath,
+		SizeBytes: sizeBytes,
+		RowCount:  rowCount,
+		Format:    "json",
+	}, nil
 }
 
 // encryptDataForSeaweedFS encrypts the data using the crypto library before saving to SeaweedFS.
@@ -497,4 +540,18 @@ func extractConfigNamesFromMappedFields(mappedFields map[string]map[string][]str
 	}
 
 	return configNames
+}
+
+// countTotalRows counts the total number of records in the result map.
+// This is performant as it only iterates through the top-level structure.
+func countTotalRows(result map[string]map[string][]map[string]any) int64 {
+	var count int64
+
+	for _, tables := range result {
+		for _, rows := range tables {
+			count += int64(len(rows))
+		}
+	}
+
+	return count
 }

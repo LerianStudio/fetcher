@@ -31,7 +31,7 @@ func TestExtractExternalData_ParseError_UpdatesJobAndPublishesNotification(t *te
 
 	// Expect job status to be updated to failed
 	mocks.jobRepo.EXPECT().
-		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any()).
+		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any(), gomock.Any()).
 		Return(nil)
 
 	// Expect failure notification to be published
@@ -147,7 +147,7 @@ func TestExtractExternalData_ConnectionNotFound(t *testing.T) {
 
 	// Expect job status to be updated to failed
 	mocks.jobRepo.EXPECT().
-		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any()).
+		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any(), gomock.Any()).
 		Return(nil)
 
 	// Expect failure notification to be published
@@ -199,7 +199,7 @@ func TestExtractExternalData_JobNotFound(t *testing.T) {
 
 	// Expect job status update to failed
 	mocks.jobRepo.EXPECT().
-		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any()).
+		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any(), gomock.Any()).
 		Return(nil)
 
 	// Expect failure notification

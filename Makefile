@@ -68,11 +68,18 @@ help:
 	@echo ""
 	@echo ""
 	@echo "Core Commands:"
-	@echo "  make help                        - Display this help message"
-	@echo "  make test                        - Run tests on all components"
-	@echo "  make build                       - Build all components"
-	@echo "  make clean                       - Clean all build artifacts"
-	@echo "  make cover                       - Run test coverage"
+	@echo "  make help                        	   - Display this help message"
+	@echo "  make test                        	   - Run unit tests on all components"
+	@echo "  make test-integration-container  	   - Run E2E integration tests with all containers"
+	@echo "  make test-integration-infra      	   - Start infrastructure for debugging (fixed ports)"
+	@echo "  make test-integration-debug-manager   - Debug Manager in VS Code, Worker in container"
+	@echo "  make test-integration-debug-worker    - Debug Worker in VS Code, Manager in container"
+	@echo "  make test-integration-debug-full      - Debug both Manager and Worker in VS Code"
+	@echo "  make test-integration-clean      	   - Clean up testcontainers and networks"
+	@echo "  make test-integration-check      	   - Check for port conflicts before starting"
+	@echo "  make build                       	   - Build all components"
+	@echo "  make clean                       	   - Clean all build artifacts"
+	@echo "  make cover                       	   - Run test coverage"
 	@echo ""
 	@echo ""
 	@echo "Code Quality Commands:"
@@ -188,6 +195,151 @@ test:
 	$(call print_title,Running tests)
 	@go test -v ./...
 	@echo "[ok] Tests completed successfully"
+
+# =============================================================================
+# test-integration-container: Full E2E Integration Tests
+# =============================================================================
+.PHONY: test-integration-container
+test-integration-container:
+	$(call print_title,Running E2E integration tests with Testcontainers)
+	$(call check_command,docker,Install Docker from https://docs.docker.com/get-docker/)
+	@echo "Note: Integration tests require either:"
+	@echo "  - GITHUB_TOKEN set (to build from Dockerfile)"
+	@echo "  - MANAGER_IMAGE and WORKER_IMAGE set (to use pre-built images)"
+	@echo ""
+	@DOCKER_BUILDKIT=1 go test -tags=integration -v -timeout 30m ./tests/integration/containers/...
+	@echo "[ok] Integration tests completed successfully"
+
+# =============================================================================
+# test-integration-infra: Start Infrastructure for Debug Sessions
+# =============================================================================
+.PHONY: test-integration-infra
+test-integration-infra: test-integration-check
+	$(call print_title,Starting integration test infrastructure with fixed ports)
+	$(call check_command,docker,Install Docker from https://docs.docker.com/get-docker/)
+	@echo "Starting infrastructure containers..."
+	@echo "This will use fixed ports for VS Code debugging."
+	@echo ""
+	@go run -tags=integration ./tests/integration/containers/cmd/start-infra/...
+
+# Helper function to determine test run pattern
+define get_test_run
+$(if $(TEST),-run "TestWorkerIntegrationSuite/$(TEST)",)
+endef
+
+# =============================================================================
+# test-integration-debug-manager: Debug Manager API in VS Code
+# =============================================================================
+.PHONY: test-integration-debug-manager
+test-integration-debug-manager:
+	$(call print_title,Running integration tests with Manager running locally)
+	$(call check_command,docker,Install Docker from https://docs.docker.com/get-docker/)
+	@echo "Mode: Manager Debug (Manager local, Worker container)"
+	@echo "Prerequisite: Manager must be running on localhost:4006"
+ifdef TEST
+	@echo "Running test: $(TEST)"
+else
+	@echo "Running: ALL tests"
+endif
+	@echo ""
+	@DOCKER_BUILDKIT=1 EXTERNAL_MANAGER_URL=http://localhost:4006 REUSE_INFRA=true \
+		go test -tags=integration -v -timeout 30m -count=1 $(call get_test_run) ./tests/integration/containers/...
+	@echo "[ok] Integration tests completed successfully"
+
+# =============================================================================
+# test-integration-debug-worker: Debug Worker in VS Code
+# =============================================================================
+.PHONY: test-integration-debug-worker
+test-integration-debug-worker:
+	$(call print_title,Running integration tests with Worker running locally)
+	$(call check_command,docker,Install Docker from https://docs.docker.com/get-docker/)
+	@echo "Mode: Worker Debug (Manager container, Worker local)"
+	@echo "Prerequisite: Worker must be running locally"
+ifdef TEST
+	@echo "Running test: $(TEST)"
+else
+	@echo "Running: ALL tests"
+endif
+	@echo ""
+	@DOCKER_BUILDKIT=1 SKIP_WORKER=true REUSE_INFRA=true \
+		go test -tags=integration -v -timeout 30m -count=1 $(call get_test_run) ./tests/integration/containers/...
+	@echo "[ok] Integration tests completed successfully"
+
+# =============================================================================
+# test-integration-debug-full: Debug Both Manager and Worker in VS Code
+# =============================================================================
+.PHONY: test-integration-debug-full
+test-integration-debug-full:
+	$(call print_title,Running integration tests with both Manager and Worker running locally)
+	$(call check_command,docker,Install Docker from https://docs.docker.com/get-docker/)
+	@echo "Mode: Full Debug (both Manager and Worker local)"
+	@echo "Prerequisites:"
+	@echo "  - Manager must be running on localhost:4006"
+	@echo "  - Worker must be running locally"
+ifdef TEST
+	@echo "Running test: $(TEST)"
+else
+	@echo "Running: ALL tests"
+endif
+	@echo ""
+	@DOCKER_BUILDKIT=1 EXTERNAL_MANAGER_URL=http://localhost:4006 SKIP_WORKER=true REUSE_INFRA=true \
+		go test -tags=integration -v -timeout 30m -count=1 $(call get_test_run) ./tests/integration/containers/...
+	@echo "[ok] Integration tests completed successfully"
+
+# =============================================================================
+# test-integration-clean: Clean Up Integration Test Resources
+# =============================================================================
+# Integration test fixed ports
+INTEGRATION_PORTS := 27017 27018 5672 8888 6379 5432 3306 1433 1521 4006
+
+.PHONY: test-integration-clean
+test-integration-clean:
+	$(call print_title,Cleaning up integration test resources)
+	@echo "Stopping testcontainers..."
+	@docker ps -q --filter "label=org.testcontainers=true" | xargs -r docker stop 2>/dev/null || true
+	@echo "Removing testcontainers..."
+	@docker ps -aq --filter "label=org.testcontainers=true" | xargs -r docker rm -f 2>/dev/null || true
+	@echo "Removing integration test network..."
+	@docker network rm fetcher-test-network 2>/dev/null || true
+	@echo "Removing config file..."
+	@rm -f /tmp/fetcher-test-infra.json
+	@echo "Pruning unused containers..."
+	@docker container prune -f 2>/dev/null || true
+	@echo "[ok] Integration test resources cleaned successfully"
+
+# =============================================================================
+# test-integration-check: Check for Port Conflicts Before Starting
+# =============================================================================
+.PHONY: test-integration-check
+test-integration-check:
+	$(call print_title,Checking for port conflicts)
+	@conflicts=0; \
+	for port in $(INTEGRATION_PORTS); do \
+		if command -v ss >/dev/null 2>&1; then \
+			if ss -tlnp 2>/dev/null | grep -q ":$$port "; then \
+				echo "[CONFLICT] Port $$port is in use"; \
+				conflicts=1; \
+			fi; \
+		elif command -v netstat >/dev/null 2>&1; then \
+			if netstat -tlnp 2>/dev/null | grep -q ":$$port "; then \
+				echo "[CONFLICT] Port $$port is in use"; \
+				conflicts=1; \
+			fi; \
+		elif command -v lsof >/dev/null 2>&1; then \
+			if lsof -i :$$port >/dev/null 2>&1; then \
+				echo "[CONFLICT] Port $$port is in use"; \
+				conflicts=1; \
+			fi; \
+		fi; \
+	done; \
+	if [ $$conflicts -eq 1 ]; then \
+		echo ""; \
+		echo "[warning] Some ports are in use. Run 'make test-integration-clean' to clean up."; \
+		echo "Or check what's using them: lsof -i :<port>"; \
+		exit 1; \
+	else \
+		echo "[ok] All integration test ports are available"; \
+	fi
 
 .PHONY: cover
 cover:

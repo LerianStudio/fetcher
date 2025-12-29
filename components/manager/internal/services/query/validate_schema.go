@@ -3,7 +3,9 @@ package query
 import (
 	"context"
 	"fmt"
+	"strings"
 
+	cacheRepo "github.com/LerianStudio/fetcher/components/manager/internal/adapters/cache"
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
@@ -11,7 +13,7 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/model"
 	datasourceModel "github.com/LerianStudio/fetcher/pkg/model/datasource"
 	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
-	cacheRepo "github.com/LerianStudio/fetcher/pkg/repository/cache"
+	"github.com/LerianStudio/fetcher/pkg/postgres"
 
 	"github.com/LerianStudio/lib-commons/v2/commons"
 	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
@@ -121,6 +123,12 @@ func (s *ValidateSchema) Execute(
 		// Returns schemas only if they exist
 		schemas := datasourceModel.GetUniqueSchemas(tables)
 
+		// For PostgreSQL, ensure the default "public" schema is included
+		// when there are unqualified table names (tables without a dot)
+		if conn.Type == model.TypePostgreSQL {
+			schemas = ensureDefaultSchemaForPostgreSQL(tables, schemas)
+		}
+
 		// Get or fetch schema for the connection
 		schema, err := s.getOrFetchSchema(ctx, conn, schemas)
 		if err != nil {
@@ -210,4 +218,37 @@ func (s *ValidateSchema) getOrFetchSchema(
 	logger.Debugf("schema fetched and cached config_name=%s tables=%d", conn.ConfigName, len(schema.Tables))
 
 	return schema, nil
+}
+
+// ensureDefaultSchemaForPostgreSQL adds the default "public" schema to the schemas list
+// if any table name is unqualified (has no schema prefix with a dot).
+// This ensures tables in the public schema are discoverable when mixed with schema-qualified tables.
+func ensureDefaultSchemaForPostgreSQL(tables map[string][]string, schemas []string) []string {
+	// Check if any table has no dot (unqualified name)
+	hasUnqualifiedTable := false
+
+	for tableName := range tables {
+		if !strings.Contains(tableName, ".") {
+			hasUnqualifiedTable = true
+			break
+		}
+	}
+
+	// If there are unqualified tables, ensure public schema is included
+	if hasUnqualifiedTable {
+		publicIncluded := false
+
+		for _, s := range schemas {
+			if s == postgres.DefaultSchema {
+				publicIncluded = true
+				break
+			}
+		}
+
+		if !publicIncluded {
+			schemas = append(schemas, postgres.DefaultSchema)
+		}
+	}
+
+	return schemas
 }

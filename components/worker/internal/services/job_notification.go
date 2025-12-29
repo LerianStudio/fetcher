@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	libCommons "github.com/LerianStudio/lib-commons/v2/commons"
 	"github.com/LerianStudio/lib-commons/v2/commons/log"
@@ -12,6 +13,34 @@ import (
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/trace"
 )
+
+// JobResultData contains information about the extraction result.
+// All fields use omitempty to only include data when provided.
+type JobResultData struct {
+	// Path is the SeaweedFS path where result data is stored.
+	Path string `json:"path,omitempty"`
+
+	// SizeBytes is the size of the result data in bytes (before encryption).
+	SizeBytes int64 `json:"sizeBytes,omitempty"`
+
+	// RowCount is the total number of records extracted across all tables.
+	RowCount int64 `json:"rowCount,omitempty"`
+
+	// Format is the output format (e.g., "json").
+	Format string `json:"format,omitempty"`
+}
+
+// JobNotificationOptions contains optional data for job notifications.
+type JobNotificationOptions struct {
+	// Result contains extraction result data (path, size, rowCount, format).
+	Result *JobResultData
+
+	// ExecutionTimeMs is the total execution time in milliseconds.
+	ExecutionTimeMs int64
+
+	// CompletedAt is the timestamp when the job completed.
+	CompletedAt *time.Time
+}
 
 // JobNotificationMessage represents the structure of a job event notification published to RabbitMQ.
 type JobNotificationMessage struct {
@@ -28,6 +57,15 @@ type JobNotificationMessage struct {
 
 	// Status indicates the job status: "completed" or "failed".
 	Status string `json:"status"`
+
+	// Result contains information about the extraction result (optional, only on success).
+	Result *JobResultData `json:"result,omitempty"`
+
+	// ExecutionTimeMs is the total execution time in milliseconds (optional).
+	ExecutionTimeMs int64 `json:"executionTimeMs,omitempty"`
+
+	// CompletedAt is the timestamp when the job completed (optional).
+	CompletedAt *time.Time `json:"completedAt,omitempty"`
 }
 
 // publishJobNotification publishes a job event notification to RabbitMQ topic exchange.
@@ -37,6 +75,7 @@ func (uc *UseCase) publishJobNotification(
 	message ExtractExternalDataMessage,
 	status string,
 	errorMetadata map[string]any,
+	opts *JobNotificationOptions,
 	logger log.Logger,
 ) error {
 	// Skip if publisher is not configured
@@ -63,6 +102,13 @@ func (uc *UseCase) publishJobNotification(
 		OrganizationID: message.OrganizationID,
 		Status:         status,
 		Metadata:       make(map[string]any),
+	}
+
+	// Add optional result and execution data
+	if opts != nil {
+		notification.Result = opts.Result
+		notification.ExecutionTimeMs = opts.ExecutionTimeMs
+		notification.CompletedAt = opts.CompletedAt
 	}
 
 	if message.Metadata != nil {

@@ -22,6 +22,8 @@ import (
 
 const ConnectionTestTimeout = 10 * time.Second
 
+//go:generate mockgen --destination=rate_limiter_store.mock.go --package=query . RateLimiterStore
+
 // RateLimiterStore defines the interface for rate limiting operations.
 // This interface maintains backward compatibility with tests.
 type RateLimiterStore interface {

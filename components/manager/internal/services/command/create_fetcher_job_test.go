@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/model"
+	"github.com/LerianStudio/fetcher/pkg/model/job"
 	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 	jobRepo "github.com/LerianStudio/fetcher/pkg/mongodb/job"
 
@@ -357,5 +359,262 @@ func TestCreateFetcherJob_Constants(t *testing.T) {
 
 	if ExtractExternalDataQueue != "extract-external-data-queue" {
 		t.Fatalf("expected ExtractExternalDataQueue to be 'extract-external-data-queue', got %s", ExtractExternalDataQueue)
+	}
+}
+
+// TestTransformFiltersForWorker tests the filter transformation logic.
+func TestTransformFiltersForWorker(t *testing.T) {
+	svc := &CreateFetcherJob{}
+
+	tests := []struct {
+		name         string
+		filters      []model.Filter
+		mappedFields map[string]map[string][]string
+		wantNil      bool
+		checkFunc    func(t *testing.T, result map[string]map[string]map[string]job.FilterCondition)
+	}{
+		{
+			name:         "empty filters",
+			filters:      []model.Filter{},
+			mappedFields: map[string]map[string][]string{"ds": {"table": {"field"}}},
+			wantNil:      true,
+		},
+		{
+			name:         "empty mappedFields",
+			filters:      []model.Filter{{Field: "ds.table.field", Operator: "eq", Value: []any{"val"}}},
+			mappedFields: map[string]map[string][]string{},
+			wantNil:      true,
+		},
+		{
+			name: "single filter applied to specific table",
+			filters: []model.Filter{
+				{Field: "postgres_db.transactions.status", Operator: "eq", Value: []any{"completed"}},
+			},
+			mappedFields: map[string]map[string][]string{
+				"postgres_db": {
+					"transactions": {"id", "status"},
+					"accounts":     {"id", "name"},
+				},
+			},
+			checkFunc: func(t *testing.T, result map[string]map[string]map[string]job.FilterCondition) {
+				// Filter should be on transactions table
+				if _, ok := result["postgres_db"]["transactions"]["status"]; !ok {
+					t.Fatal("expected filter on postgres_db.transactions.status")
+				}
+				if len(result["postgres_db"]["transactions"]["status"].Equals) != 1 {
+					t.Fatalf("expected 1 Equals value, got %d", len(result["postgres_db"]["transactions"]["status"].Equals))
+				}
+				// accounts table should NOT have this filter
+				if _, ok := result["postgres_db"]["accounts"]; ok {
+					t.Fatal("accounts table should not have any filters")
+				}
+			},
+		},
+		{
+			name: "filter with schema-qualified table",
+			filters: []model.Filter{
+				{Field: "postgres_db.public.transactions.status", Operator: "in", Value: []any{"completed", "pending"}},
+			},
+			mappedFields: map[string]map[string][]string{
+				"postgres_db": {
+					"public.transactions": {"id", "status"},
+				},
+			},
+			checkFunc: func(t *testing.T, result map[string]map[string]map[string]job.FilterCondition) {
+				if _, ok := result["postgres_db"]["public.transactions"]["status"]; !ok {
+					t.Fatal("expected filter on postgres_db.public.transactions.status")
+				}
+				if len(result["postgres_db"]["public.transactions"]["status"].In) != 2 {
+					t.Fatalf("expected 2 In values, got %d", len(result["postgres_db"]["public.transactions"]["status"].In))
+				}
+			},
+		},
+		{
+			name: "multiple filters on different datasources",
+			filters: []model.Filter{
+				{Field: "postgres_db.transactions.status", Operator: "eq", Value: []any{"completed"}},
+				{Field: "mysql_db.orders.total", Operator: "gt", Value: []any{100}},
+			},
+			mappedFields: map[string]map[string][]string{
+				"postgres_db": {"transactions": {"id", "status"}},
+				"mysql_db":    {"orders": {"id", "total"}},
+			},
+			checkFunc: func(t *testing.T, result map[string]map[string]map[string]job.FilterCondition) {
+				// Check postgres filter
+				if _, ok := result["postgres_db"]["transactions"]["status"]; !ok {
+					t.Fatal("expected filter on postgres_db.transactions.status")
+				}
+				// Check mysql filter
+				if _, ok := result["mysql_db"]["orders"]["total"]; !ok {
+					t.Fatal("expected filter on mysql_db.orders.total")
+				}
+				if len(result["mysql_db"]["orders"]["total"].GreaterThan) != 1 {
+					t.Fatal("expected GreaterThan filter on mysql_db.orders.total")
+				}
+			},
+		},
+		{
+			name: "all operators",
+			filters: []model.Filter{
+				{Field: "ds.tbl.f1", Operator: "eq", Value: []any{"a"}},
+				{Field: "ds.tbl.f2", Operator: "gt", Value: []any{1}},
+				{Field: "ds.tbl.f3", Operator: "gte", Value: []any{2}},
+				{Field: "ds.tbl.f4", Operator: "lt", Value: []any{3}},
+				{Field: "ds.tbl.f5", Operator: "lte", Value: []any{4}},
+				{Field: "ds.tbl.f6", Operator: "ne", Value: []any{"b"}},
+				{Field: "ds.tbl.f7", Operator: "in", Value: []any{"x", "y"}},
+				{Field: "ds.tbl.f8", Operator: "nin", Value: []any{"z"}},
+				{Field: "ds.tbl.f9", Operator: "like", Value: []any{"%test%"}},
+			},
+			mappedFields: map[string]map[string][]string{
+				"ds": {"tbl": {"f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9"}},
+			},
+			checkFunc: func(t *testing.T, result map[string]map[string]map[string]job.FilterCondition) {
+				tbl := result["ds"]["tbl"]
+				if len(tbl["f1"].Equals) != 1 {
+					t.Error("f1 should have Equals")
+				}
+				if len(tbl["f2"].GreaterThan) != 1 {
+					t.Error("f2 should have GreaterThan")
+				}
+				if len(tbl["f3"].GreaterOrEqual) != 1 {
+					t.Error("f3 should have GreaterOrEqual")
+				}
+				if len(tbl["f4"].LessThan) != 1 {
+					t.Error("f4 should have LessThan")
+				}
+				if len(tbl["f5"].LessOrEqual) != 1 {
+					t.Error("f5 should have LessOrEqual")
+				}
+				if len(tbl["f6"].NotEquals) != 1 {
+					t.Error("f6 should have NotEquals")
+				}
+				if len(tbl["f7"].In) != 2 {
+					t.Error("f7 should have 2 In values")
+				}
+				if len(tbl["f8"].NotIn) != 1 {
+					t.Error("f8 should have NotIn")
+				}
+				if len(tbl["f9"].Like) != 1 {
+					t.Error("f9 should have Like")
+				}
+			},
+		},
+		{
+			name: "filter with unknown datasource is skipped",
+			filters: []model.Filter{
+				{Field: "unknown_db.table.field", Operator: "eq", Value: []any{"val"}},
+			},
+			mappedFields: map[string]map[string][]string{
+				"postgres_db": {"transactions": {"id"}},
+			},
+			wantNil: true, // No valid filters, result should be nil
+		},
+		{
+			name: "filter with unknown table is skipped",
+			filters: []model.Filter{
+				{Field: "postgres_db.unknown_table.field", Operator: "eq", Value: []any{"val"}},
+			},
+			mappedFields: map[string]map[string][]string{
+				"postgres_db": {"transactions": {"id"}},
+			},
+			wantNil: true, // No valid filters, result should be nil
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := svc.transformFiltersForWorker(tt.filters, tt.mappedFields)
+
+			if tt.wantNil {
+				if result != nil {
+					t.Fatalf("expected nil result, got %+v", result)
+				}
+				return
+			}
+
+			if result == nil {
+				t.Fatal("expected non-nil result")
+			}
+
+			if tt.checkFunc != nil {
+				tt.checkFunc(t, result)
+			}
+		})
+	}
+}
+
+// TestCreateFetcherJob_Execute_InvalidFilterReferences tests that invalid filter references return validation error.
+// NOTE: Table name validation is intentionally NOT done at this stage - the DataSource adapter handles
+// schema resolution with fallback logic (e.g., trying "public.table" if "table" not found).
+// Therefore, only datasource names and filter format are validated here.
+func TestCreateFetcherJob_Execute_InvalidFilterReferences(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockJobRepo := jobRepo.NewMockRepository(ctrl)
+
+	svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, nil)
+
+	tests := []struct {
+		name    string
+		request model.FetcherRequest
+		wantErr string
+	}{
+		{
+			name: "filter references unknown datasource",
+			request: model.FetcherRequest{
+				DataRequest: model.DataRequest{
+					MappedFields: map[string]map[string][]string{
+						"postgres_db": {"transactions": {"id", "status"}},
+					},
+					Filters: []model.FilterRequest{
+						{Field: "unknown_db.transactions.status", Operator: "eq", Value: []any{"completed"}},
+					},
+				},
+			},
+			wantErr: "datasource 'unknown_db' not found",
+		},
+		{
+			name: "filter with invalid format",
+			request: model.FetcherRequest{
+				DataRequest: model.DataRequest{
+					MappedFields: map[string]map[string][]string{
+						"postgres_db": {"transactions": {"id", "status"}},
+					},
+					Filters: []model.FilterRequest{
+						{Field: "status", Operator: "eq", Value: []any{"completed"}},
+					},
+				},
+			},
+			wantErr: "invalid filter field format",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := testContext()
+			orgID := uuid.New()
+
+			result, err := svc.Execute(ctx, orgID, tt.request)
+
+			if result != nil {
+				t.Fatalf("expected nil result for invalid filter, got %+v", result)
+			}
+
+			if err == nil {
+				t.Fatal("expected error for invalid filter, got nil")
+			}
+
+			var validationErr pkg.ValidationError
+			if !errors.As(err, &validationErr) {
+				t.Fatalf("expected ValidationError, got %T: %v", err, err)
+			}
+
+			if !strings.Contains(validationErr.Message, tt.wantErr) {
+				t.Fatalf("expected error containing %q, got %q", tt.wantErr, validationErr.Message)
+			}
+		})
 	}
 }

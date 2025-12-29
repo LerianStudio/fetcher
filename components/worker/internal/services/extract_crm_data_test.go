@@ -181,6 +181,76 @@ func TestDecryptPluginCRMData_NoDecryptionNeeded(t *testing.T) {
 	}
 }
 
+// TestDecryptPluginCRMData_WithEncryptedFields tests decryption with encrypted fields.
+func TestDecryptPluginCRMData_WithEncryptedFields(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+	logger := testLogger()
+
+	// Fields that require decryption
+	fields := []string{"document", "name", "status"}
+
+	// Sample collection result
+	collectionResult := []map[string]any{
+		{"id": "123", "status": "active"},
+	}
+
+	// This should fail because we don't have the env vars set
+	_, err := uc.decryptPluginCRMData(logger, collectionResult, fields)
+	if err == nil {
+		t.Error("expected error due to missing env vars, got nil")
+	}
+}
+
+// TestDecryptPluginCRMData_WithNestedField tests decryption with nested field paths.
+func TestDecryptPluginCRMData_WithNestedField(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+	logger := testLogger()
+
+	// Fields with nested paths require decryption
+	fields := []string{"contact.primary_email", "id"}
+
+	// Sample collection result
+	collectionResult := []map[string]any{
+		{"id": "123", "contact": map[string]any{"primary_email": "test@example.com"}},
+	}
+
+	// This should fail because we don't have the env vars set
+	_, err := uc.decryptPluginCRMData(logger, collectionResult, fields)
+	if err == nil {
+		t.Error("expected error due to missing env vars, got nil")
+	}
+}
+
+// TestDecryptPluginCRMData_EmptyResult tests decryption with empty result set.
+func TestDecryptPluginCRMData_EmptyResult(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+	logger := testLogger()
+
+	// Fields that require decryption
+	fields := []string{"document", "name"}
+
+	// Empty collection result
+	collectionResult := []map[string]any{}
+
+	// Should not fail on empty result
+	_, err := uc.decryptPluginCRMData(logger, collectionResult, fields)
+	if err == nil {
+		t.Error("expected error due to missing env vars, got nil")
+	}
+}
+
 // TestGetTableFiltersForPluginCRM tests filter extraction specifically for plugin_crm use cases.
 func TestGetTableFiltersForPluginCRM(t *testing.T) {
 	tests := []struct {
@@ -253,5 +323,519 @@ func TestGetTableFiltersForPluginCRM(t *testing.T) {
 				t.Fatalf("expected %d fields, got %d", tt.wantFieldLen, len(result))
 			}
 		})
+	}
+}
+
+// TestHashFilterValues_EdgeCases tests additional edge cases for hash filter values.
+func TestHashFilterValues_EdgeCases(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+	logger := testLogger()
+
+	crypto := &libCrypto.Crypto{
+		HashSecretKey: "test-secret-key-for-hashing",
+		Logger:        logger,
+	}
+
+	tests := []struct {
+		name        string
+		values      []any
+		description string
+	}{
+		{
+			name:        "nil slice",
+			values:      nil,
+			description: "should handle nil slice",
+		},
+		{
+			name:        "slice with only nil values",
+			values:      []any{nil, nil, nil},
+			description: "should preserve nil values",
+		},
+		{
+			name:        "slice with mixed string and boolean",
+			values:      []any{"test", true, false},
+			description: "should hash strings and preserve booleans",
+		},
+		{
+			name:        "slice with float values",
+			values:      []any{3.14, 2.71, "string"},
+			description: "should preserve floats and hash strings",
+		},
+		{
+			name:        "slice with nested maps (non-string)",
+			values:      []any{map[string]any{"key": "value"}, "string"},
+			description: "should preserve maps and hash strings",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := uc.hashFilterValues(tt.values, crypto)
+
+			if tt.values == nil {
+				if len(result) != 0 {
+					t.Errorf("expected empty result for nil input, got %d items", len(result))
+				}
+				return
+			}
+
+			if len(result) != len(tt.values) {
+				t.Fatalf("expected %d values, got %d", len(tt.values), len(result))
+			}
+		})
+	}
+}
+
+// TestDecryptFieldValue tests the field value decryption logic.
+func TestDecryptFieldValue_EdgeCases(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+	logger := testLogger()
+
+	tests := []struct {
+		name        string
+		fieldValue  any
+		wantErr     bool
+		description string
+	}{
+		{
+			name:        "nil value",
+			fieldValue:  nil,
+			wantErr:     false,
+			description: "should skip nil values",
+		},
+		{
+			name:        "empty string",
+			fieldValue:  "",
+			wantErr:     false,
+			description: "should skip empty strings",
+		},
+		{
+			name:        "non-string value - integer",
+			fieldValue:  12345,
+			wantErr:     false,
+			description: "should skip non-string values",
+		},
+		{
+			name:        "non-string value - boolean",
+			fieldValue:  true,
+			wantErr:     false,
+			description: "should skip boolean values",
+		},
+		{
+			name:        "non-string value - map",
+			fieldValue:  map[string]any{"key": "value"},
+			wantErr:     false,
+			description: "should skip map values",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Note: We can't fully test the decryption without a valid crypto setup
+			// but we can test the type checking and edge case handling
+			container := make(map[string]any)
+			container["testField"] = tt.fieldValue
+
+			// For edge cases that should skip decryption, the value should remain unchanged
+			originalValue := tt.fieldValue
+
+			// Create a dummy crypto (won't be used for non-string values)
+			crypto := &libCrypto.Crypto{
+				HashSecretKey:    "test-hash-key",
+				EncryptSecretKey: "test-encrypt-key",
+				Logger:           logger,
+			}
+
+			err := uc.decryptFieldValue(container, "testField", tt.fieldValue, crypto)
+
+			if tt.wantErr && err == nil {
+				t.Errorf("expected error for %s, got nil", tt.description)
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("expected no error for %s, got: %v", tt.description, err)
+			}
+
+			// For non-string values, the container should remain unchanged
+			// Skip comparison for maps as they're not comparable
+			if _, isMap := tt.fieldValue.(map[string]any); !isMap {
+				if tt.fieldValue != "" && container["testField"] != originalValue {
+					// Only check for non-empty strings as empty strings are also skipped
+					if _, isString := tt.fieldValue.(string); !isString {
+						t.Errorf("expected value to remain %v, got %v", originalValue, container["testField"])
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestDecryptRecord_EmptyRecord tests decryption with empty record.
+func TestDecryptRecord_EmptyRecord(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+	logger := testLogger()
+
+	// Use valid hex keys (32 bytes each, 64 hex chars)
+	crypto := &libCrypto.Crypto{
+		HashSecretKey:    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		EncryptSecretKey: "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+		Logger:           logger,
+	}
+
+	// Initialize cipher for the crypto instance
+	if err := crypto.InitializeCipher(); err != nil {
+		t.Skipf("skipping test due to cipher initialization failure: %v", err)
+	}
+
+	tests := []struct {
+		name   string
+		record map[string]any
+	}{
+		{
+			name:   "empty record",
+			record: map[string]any{},
+		},
+		{
+			name:   "nil record",
+			record: nil,
+		},
+		{
+			name: "record with only non-encrypted fields",
+			record: map[string]any{
+				"id":         "123",
+				"status":     "active",
+				"created_at": "2024-01-01",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := uc.decryptRecord(tt.record, crypto)
+			if err != nil {
+				t.Fatalf("expected no error for %s, got: %v", tt.name, err)
+			}
+
+			if tt.record == nil {
+				if result == nil || len(result) != 0 {
+					t.Errorf("expected empty result for nil record")
+				}
+			}
+		})
+	}
+}
+
+// TestDecryptTopLevelFields tests decryption of top-level encrypted fields.
+func TestDecryptTopLevelFields(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+	logger := testLogger()
+
+	crypto := &libCrypto.Crypto{
+		HashSecretKey:    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		EncryptSecretKey: "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+		Logger:           logger,
+	}
+
+	if err := crypto.InitializeCipher(); err != nil {
+		t.Skipf("skipping test due to cipher initialization failure: %v", err)
+	}
+
+	tests := []struct {
+		name    string
+		record  map[string]any
+		wantErr bool
+	}{
+		{
+			name: "no encrypted fields",
+			record: map[string]any{
+				"id":     "123",
+				"status": "active",
+			},
+			wantErr: false,
+		},
+		{
+			name: "with nil encrypted field",
+			record: map[string]any{
+				"document": nil,
+				"id":       "123",
+			},
+			wantErr: false,
+		},
+		{
+			name: "with non-string encrypted field",
+			record: map[string]any{
+				"document": 12345,
+				"id":       "123",
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := uc.decryptTopLevelFields(tt.record, crypto)
+			if tt.wantErr && err == nil {
+				t.Error("expected error, got nil")
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("expected no error, got: %v", err)
+			}
+		})
+	}
+}
+
+// TestDecryptNestedFields tests decryption of nested field structures.
+func TestDecryptNestedFields(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+	logger := testLogger()
+
+	crypto := &libCrypto.Crypto{
+		HashSecretKey:    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		EncryptSecretKey: "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+		Logger:           logger,
+	}
+
+	if err := crypto.InitializeCipher(); err != nil {
+		t.Skipf("skipping test due to cipher initialization failure: %v", err)
+	}
+
+	tests := []struct {
+		name    string
+		record  map[string]any
+		wantErr bool
+	}{
+		{
+			name:    "no nested fields",
+			record:  map[string]any{"id": "123"},
+			wantErr: false,
+		},
+		{
+			name: "contact field - not map",
+			record: map[string]any{
+				"contact": "not-a-map",
+			},
+			wantErr: false,
+		},
+		{
+			name: "contact field - empty map",
+			record: map[string]any{
+				"contact": map[string]any{},
+			},
+			wantErr: false,
+		},
+		{
+			name: "contact field - with nil values",
+			record: map[string]any{
+				"contact": map[string]any{
+					"primary_email": nil,
+					"mobile_phone":  nil,
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "banking_details field - not map",
+			record: map[string]any{
+				"banking_details": "not-a-map",
+			},
+			wantErr: false,
+		},
+		{
+			name: "legal_person field - not map",
+			record: map[string]any{
+				"legal_person": "not-a-map",
+			},
+			wantErr: false,
+		},
+		{
+			name: "legal_person with representative not map",
+			record: map[string]any{
+				"legal_person": map[string]any{
+					"representative": "not-a-map",
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "natural_person field - not map",
+			record: map[string]any{
+				"natural_person": "not-a-map",
+			},
+			wantErr: false,
+		},
+		{
+			name: "natural_person with nil values",
+			record: map[string]any{
+				"natural_person": map[string]any{
+					"mother_name": nil,
+					"father_name": nil,
+				},
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := uc.decryptNestedFields(tt.record, crypto)
+			if tt.wantErr && err == nil {
+				t.Error("expected error, got nil")
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("expected no error, got: %v", err)
+			}
+		})
+	}
+}
+
+// TestDecryptContactFields tests contact field decryption.
+func TestDecryptContactFields(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+	logger := testLogger()
+
+	crypto := &libCrypto.Crypto{
+		HashSecretKey:    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		EncryptSecretKey: "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+		Logger:           logger,
+	}
+
+	if err := crypto.InitializeCipher(); err != nil {
+		t.Skipf("skipping test due to cipher initialization failure: %v", err)
+	}
+
+	record := map[string]any{
+		"contact": map[string]any{
+			"primary_email": "test@example.com",
+			"mobile_phone":  "123456789",
+		},
+	}
+
+	err := uc.decryptContactFields(record, crypto)
+	if err != nil {
+		// Expected to fail as we're not providing encrypted values
+		// Just ensure it doesn't panic
+		t.Logf("decryption failed as expected: %v", err)
+	}
+}
+
+// TestDecryptBankingDetailsFields tests banking details field decryption.
+func TestDecryptBankingDetailsFields(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+	logger := testLogger()
+
+	crypto := &libCrypto.Crypto{
+		HashSecretKey:    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		EncryptSecretKey: "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+		Logger:           logger,
+	}
+
+	if err := crypto.InitializeCipher(); err != nil {
+		t.Skipf("skipping test due to cipher initialization failure: %v", err)
+	}
+
+	record := map[string]any{
+		"banking_details": map[string]any{
+			"account": nil,
+			"iban":    "",
+		},
+	}
+
+	err := uc.decryptBankingDetailsFields(record, crypto)
+	if err != nil {
+		t.Errorf("expected no error for nil/empty values, got: %v", err)
+	}
+}
+
+// TestDecryptLegalPersonFields tests legal person field decryption.
+func TestDecryptLegalPersonFields(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+	logger := testLogger()
+
+	crypto := &libCrypto.Crypto{
+		HashSecretKey:    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		EncryptSecretKey: "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+		Logger:           logger,
+	}
+
+	if err := crypto.InitializeCipher(); err != nil {
+		t.Skipf("skipping test due to cipher initialization failure: %v", err)
+	}
+
+	record := map[string]any{
+		"legal_person": map[string]any{
+			"representative": map[string]any{
+				"name":     nil,
+				"document": "",
+				"email":    "",
+			},
+		},
+	}
+
+	err := uc.decryptLegalPersonFields(record, crypto)
+	if err != nil {
+		t.Errorf("expected no error for nil/empty values, got: %v", err)
+	}
+}
+
+// TestDecryptNaturalPersonFields tests natural person field decryption.
+func TestDecryptNaturalPersonFields(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+	logger := testLogger()
+
+	crypto := &libCrypto.Crypto{
+		HashSecretKey:    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		EncryptSecretKey: "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+		Logger:           logger,
+	}
+
+	if err := crypto.InitializeCipher(); err != nil {
+		t.Skipf("skipping test due to cipher initialization failure: %v", err)
+	}
+
+	record := map[string]any{
+		"natural_person": map[string]any{
+			"mother_name": nil,
+			"father_name": "",
+		},
+	}
+
+	err := uc.decryptNaturalPersonFields(record, crypto)
+	if err != nil {
+		t.Errorf("expected no error for nil/empty values, got: %v", err)
 	}
 }

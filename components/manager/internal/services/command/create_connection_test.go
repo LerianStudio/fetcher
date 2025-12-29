@@ -16,37 +16,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// mockCryptor is a test implementation of crypto.Cryptor.
-type mockCryptor struct {
-	encryptFunc    func(ctx context.Context, plain string) (string, string, error)
-	decryptFunc    func(ctx context.Context, cipherText, keyVersion string) (string, error)
-	keyVersionFunc func() string
-}
-
-func (m *mockCryptor) Encrypt(ctx context.Context, plain string) (string, string, error) {
-	if m.encryptFunc != nil {
-		return m.encryptFunc(ctx, plain)
-	}
-	return "encrypted-" + plain, "v1", nil
-}
-
-func (m *mockCryptor) Decrypt(ctx context.Context, cipherText, keyVersion string) (string, error) {
-	if m.decryptFunc != nil {
-		return m.decryptFunc(ctx, cipherText, keyVersion)
-	}
-	return "decrypted", nil
-}
-
-func (m *mockCryptor) KeyVersion() string {
-	if m.keyVersionFunc != nil {
-		return m.keyVersionFunc()
-	}
-	return "v1"
-}
-
-// Ensure mockCryptor implements crypto.Cryptor.
-var _ crypto.Cryptor = (*mockCryptor)(nil)
-
 // newValidConnectionInput creates a valid ConnectionInput for testing.
 func newValidConnectionInput() model.ConnectionInput {
 	return model.ConnectionInput{
@@ -66,7 +35,10 @@ func TestCreateConnection_Execute_Success(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := &mockCryptor{}
+	mockCrypto := crypto.NewMockCryptor(ctrl)
+	mockCrypto.EXPECT().
+		Encrypt(gomock.Any(), gomock.Any()).
+		Return("encrypted-password", "v1", nil)
 
 	svc := NewCreateConnection(mockConnRepo, mockCrypto)
 
@@ -122,7 +94,10 @@ func TestCreateConnection_Execute_ConflictError(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := &mockCryptor{}
+	mockCrypto := crypto.NewMockCryptor(ctrl)
+	mockCrypto.EXPECT().
+		Encrypt(gomock.Any(), gomock.Any()).
+		Return("encrypted-password", "v1", nil)
 
 	svc := NewCreateConnection(mockConnRepo, mockCrypto)
 
@@ -164,7 +139,10 @@ func TestCreateConnection_Execute_FindByOrganizationAndNameError(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := &mockCryptor{}
+	mockCrypto := crypto.NewMockCryptor(ctrl)
+	mockCrypto.EXPECT().
+		Encrypt(gomock.Any(), gomock.Any()).
+		Return("encrypted-password", "v1", nil)
 
 	svc := NewCreateConnection(mockConnRepo, mockCrypto)
 
@@ -200,7 +178,10 @@ func TestCreateConnection_Execute_CreateError(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := &mockCryptor{}
+	mockCrypto := crypto.NewMockCryptor(ctrl)
+	mockCrypto.EXPECT().
+		Encrypt(gomock.Any(), gomock.Any()).
+		Return("encrypted-password", "v1", nil)
 
 	svc := NewCreateConnection(mockConnRepo, mockCrypto)
 
@@ -243,11 +224,10 @@ func TestCreateConnection_Execute_EncryptionError(t *testing.T) {
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
 	encryptionError := errors.New("encryption key invalid")
-	mockCrypto := &mockCryptor{
-		encryptFunc: func(ctx context.Context, plain string) (string, string, error) {
-			return "", "", encryptionError
-		},
-	}
+	mockCrypto := crypto.NewMockCryptor(ctrl)
+	mockCrypto.EXPECT().
+		Encrypt(gomock.Any(), gomock.Any()).
+		Return("", "", encryptionError)
 
 	svc := NewCreateConnection(mockConnRepo, mockCrypto)
 
@@ -416,7 +396,11 @@ func TestCreateConnection_Execute_ValidationErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mockConnRepo := connRepo.NewMockRepository(ctrl)
-			mockCrypto := &mockCryptor{}
+			mockCrypto := crypto.NewMockCryptor(ctrl)
+			mockCrypto.EXPECT().
+				Encrypt(gomock.Any(), gomock.Any()).
+				Return("encrypted-password", "v1", nil).
+				AnyTimes()
 
 			svc := NewCreateConnection(mockConnRepo, mockCrypto)
 
@@ -458,7 +442,10 @@ func TestCreateConnection_Execute_WithSSL(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := &mockCryptor{}
+	mockCrypto := crypto.NewMockCryptor(ctrl)
+	mockCrypto.EXPECT().
+		Encrypt(gomock.Any(), gomock.Any()).
+		Return("encrypted-password", "v1", nil)
 
 	svc := NewCreateConnection(mockConnRepo, mockCrypto)
 
@@ -566,7 +553,10 @@ func TestCreateConnection_Execute_AllDatabaseTypes(t *testing.T) {
 			defer ctrl.Finish()
 
 			mockConnRepo := connRepo.NewMockRepository(ctrl)
-			mockCrypto := &mockCryptor{}
+			mockCrypto := crypto.NewMockCryptor(ctrl)
+			mockCrypto.EXPECT().
+				Encrypt(gomock.Any(), gomock.Any()).
+				Return("encrypted-password", "v1", nil)
 
 			svc := NewCreateConnection(mockConnRepo, mockCrypto)
 
@@ -617,7 +607,7 @@ func TestNewCreateConnection(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := &mockCryptor{}
+	mockCrypto := crypto.NewMockCryptor(ctrl)
 
 	svc := NewCreateConnection(mockConnRepo, mockCrypto)
 
@@ -689,7 +679,13 @@ func TestCreateConnection_Execute_ConfigNameEdgeCases(t *testing.T) {
 			defer ctrl.Finish()
 
 			mockConnRepo := connRepo.NewMockRepository(ctrl)
-			mockCrypto := &mockCryptor{}
+			mockCrypto := crypto.NewMockCryptor(ctrl)
+
+			// Setup Encrypt expectation - encryption is always called before validation
+			mockCrypto.EXPECT().
+				Encrypt(gomock.Any(), gomock.Any()).
+				Return("encrypted-password", "v1", nil).
+				AnyTimes()
 
 			svc := NewCreateConnection(mockConnRepo, mockCrypto)
 
