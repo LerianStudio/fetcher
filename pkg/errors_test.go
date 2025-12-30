@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/LerianStudio/fetcher/pkg/constant"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestValidationError_Error(t *testing.T) {
@@ -348,4 +350,469 @@ func TestValidateBusinessError(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestValidateBusinessError_AllErrorTypes(t *testing.T) {
+	tests := []struct {
+		name           string
+		err            error
+		entityType     string
+		args           []any
+		wantType       string
+		wantCode       string
+		wantStatusCode int
+	}{
+		// Date validation errors
+		{
+			name:       "invalid date format",
+			err:        constant.ErrInvalidDateFormat,
+			entityType: "job",
+			args:       nil,
+			wantType:   "ValidationError",
+			wantCode:   constant.ErrInvalidDateFormat.Error(),
+		},
+		{
+			name:       "invalid final date",
+			err:        constant.ErrInvalidFinalDate,
+			entityType: "job",
+			args:       nil,
+			wantType:   "ValidationError",
+			wantCode:   constant.ErrInvalidFinalDate.Error(),
+		},
+		// Pagination errors
+		{
+			name:       "pagination limit exceeded",
+			err:        constant.ErrPaginationLimitExceeded,
+			entityType: "list",
+			args:       []any{100},
+			wantType:   "ValidationError",
+			wantCode:   constant.ErrPaginationLimitExceeded.Error(),
+		},
+		{
+			name:       "invalid sort order",
+			err:        constant.ErrInvalidSortOrder,
+			entityType: "list",
+			args:       nil,
+			wantType:   "ValidationError",
+			wantCode:   constant.ErrInvalidSortOrder.Error(),
+		},
+		// Metadata errors
+		{
+			name:       "metadata key length exceeded",
+			err:        constant.ErrMetadataKeyLengthExceeded,
+			entityType: "connection",
+			args:       []any{"very_long_key", 50},
+			wantType:   "ValidationError",
+			wantCode:   constant.ErrMetadataKeyLengthExceeded.Error(),
+		},
+		{
+			name:       "metadata value length exceeded",
+			err:        constant.ErrMetadataValueLengthExceeded,
+			entityType: "connection",
+			args:       []any{"value", 100},
+			wantType:   "ValidationError",
+			wantCode:   constant.ErrMetadataValueLengthExceeded.Error(),
+		},
+		{
+			name:       "invalid metadata nesting",
+			err:        constant.ErrInvalidMetadataNesting,
+			entityType: "connection",
+			args:       []any{"nested.key"},
+			wantType:   "ValidationError",
+			wantCode:   constant.ErrInvalidMetadataNesting.Error(),
+		},
+		// Header and path errors
+		{
+			name:       "invalid header parameter",
+			err:        constant.ErrInvalidHeaderParameter,
+			entityType: "request",
+			args:       []any{"Authorization"},
+			wantType:   "ValidationError",
+			wantCode:   constant.ErrInvalidHeaderParameter.Error(),
+		},
+		{
+			name:       "invalid path parameter",
+			err:        constant.ErrInvalidPathParameter,
+			entityType: "request",
+			args:       []any{"id"},
+			wantType:   "ValidationError",
+			wantCode:   constant.ErrInvalidPathParameter.Error(),
+		},
+		// Data request errors
+		{
+			name:       "invalid data request with custom message",
+			err:        constant.ErrInvalidDataRequest,
+			entityType: "job",
+			args:       []any{"Custom error message"},
+			wantType:   "ValidationError",
+			wantCode:   constant.ErrInvalidDataRequest.Error(),
+		},
+		{
+			name:       "invalid data request without args",
+			err:        constant.ErrInvalidDataRequest,
+			entityType: "job",
+			args:       nil,
+			wantType:   "ValidationError",
+			wantCode:   constant.ErrInvalidDataRequest.Error(),
+		},
+		// Job related errors
+		{
+			name:       "missing data source",
+			err:        constant.ErrMissingDataSource,
+			entityType: "job",
+			args:       []any{"transactions"},
+			wantType:   "ValidationError",
+			wantCode:   constant.ErrMissingDataSource.Error(),
+		},
+		{
+			name:           "job in progress with message",
+			err:            constant.ErrJobInProgress,
+			entityType:     "job",
+			args:           []any{"Job is already running for connection abc-123"},
+			wantType:       "ResponseErrorWithStatusCode",
+			wantCode:       constant.ErrJobInProgress.Error(),
+			wantStatusCode: http.StatusConflict,
+		},
+		{
+			name:           "job in progress without args",
+			err:            constant.ErrJobInProgress,
+			entityType:     "job",
+			args:           nil,
+			wantType:       "ResponseErrorWithStatusCode",
+			wantCode:       constant.ErrJobInProgress.Error(),
+			wantStatusCode: http.StatusConflict,
+		},
+		// Connection errors
+		{
+			name:       "connection down with message",
+			err:        constant.ErrConnectionDown,
+			entityType: "connection",
+			args:       []any{"Database connection refused"},
+			wantType:   "ValidationError",
+			wantCode:   constant.ErrConnectionDown.Error(),
+		},
+		{
+			name:       "connection down without args",
+			err:        constant.ErrConnectionDown,
+			entityType: "connection",
+			args:       nil,
+			wantType:   "ValidationError",
+			wantCode:   constant.ErrConnectionDown.Error(),
+		},
+		// Schema validation errors
+		{
+			name:       "schema validation failed with message",
+			err:        constant.ErrSchemaValidationFailed,
+			entityType: "schema",
+			args:       []any{"Missing required column: id"},
+			wantType:   "ValidationError",
+			wantCode:   constant.ErrSchemaValidationFailed.Error(),
+		},
+		{
+			name:       "schema validation failed without args",
+			err:        constant.ErrSchemaValidationFailed,
+			entityType: "schema",
+			args:       nil,
+			wantType:   "ValidationError",
+			wantCode:   constant.ErrSchemaValidationFailed.Error(),
+		},
+		{
+			name:       "schema validation limit with message",
+			err:        constant.ErrSchemaValidationLimit,
+			entityType: "schema",
+			args:       []any{"Too many tables to validate"},
+			wantType:   "ValidationError",
+			wantCode:   constant.ErrSchemaValidationLimit.Error(),
+		},
+		{
+			name:       "schema validation limit without args",
+			err:        constant.ErrSchemaValidationLimit,
+			entityType: "schema",
+			args:       nil,
+			wantType:   "ValidationError",
+			wantCode:   constant.ErrSchemaValidationLimit.Error(),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ValidateBusinessError(tt.err, tt.entityType, tt.args...)
+			require.NotNil(t, got, "ValidateBusinessError() should not return nil")
+
+			switch tt.wantType {
+			case "ValidationError":
+				e, ok := got.(ValidationError)
+				require.True(t, ok, "expected ValidationError, got %T", got)
+				assert.Equal(t, tt.wantCode, e.Code)
+				assert.Equal(t, tt.entityType, e.EntityType)
+				assert.NotEmpty(t, e.Title)
+				assert.NotEmpty(t, e.Message)
+
+			case "ResponseErrorWithStatusCode":
+				e, ok := got.(ResponseErrorWithStatusCode)
+				require.True(t, ok, "expected ResponseErrorWithStatusCode, got %T", got)
+				assert.Equal(t, tt.wantCode, e.Code)
+				assert.Equal(t, tt.wantStatusCode, e.StatusCode)
+				assert.NotEmpty(t, e.Title)
+				assert.NotEmpty(t, e.Message)
+			}
+		})
+	}
+}
+
+func TestValidateInternalError_StatusCodes(t *testing.T) {
+	tests := []struct {
+		name           string
+		err            error
+		entityType     string
+		wantStatusCode int
+	}{
+		{
+			name:           "service unavailable returns 503",
+			err:            constant.ErrServiceUnavailable,
+			entityType:     "service",
+			wantStatusCode: http.StatusServiceUnavailable,
+		},
+		{
+			name:           "conflict returns 409",
+			err:            constant.ErrConflict,
+			entityType:     "resource",
+			wantStatusCode: http.StatusConflict,
+		},
+		{
+			name:           "not found returns 404",
+			err:            constant.ErrNotFound,
+			entityType:     "resource",
+			wantStatusCode: http.StatusNotFound,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ValidateInternalError(tt.err, tt.entityType)
+			require.NotNil(t, got)
+
+			e, ok := got.(ResponseErrorWithStatusCode)
+			require.True(t, ok, "expected ResponseErrorWithStatusCode, got %T", got)
+			assert.Equal(t, tt.wantStatusCode, e.StatusCode)
+		})
+	}
+}
+
+func TestValidateBadRequestFieldsError_Priority(t *testing.T) {
+	t.Run("unknown fields take priority over required fields", func(t *testing.T) {
+		requiredFields := map[string]string{"name": "name is required"}
+		unknownFields := map[string]any{"extra": "value"}
+
+		got := ValidateBadRequestFieldsError(requiredFields, nil, "test", unknownFields)
+		require.NotNil(t, got)
+
+		e, ok := got.(ValidationUnknownFieldsError)
+		require.True(t, ok, "expected ValidationUnknownFieldsError when unknown fields present")
+		assert.Equal(t, constant.ErrUnexpectedFieldsInTheRequest.Error(), e.Code)
+	})
+
+	t.Run("required fields take priority over invalid fields", func(t *testing.T) {
+		requiredFields := map[string]string{"name": "name is required"}
+		knownInvalidFields := map[string]string{"email": "invalid format"}
+
+		got := ValidateBadRequestFieldsError(requiredFields, knownInvalidFields, "test", nil)
+		require.NotNil(t, got)
+
+		e, ok := got.(ValidationKnownFieldsError)
+		require.True(t, ok, "expected ValidationKnownFieldsError")
+		assert.Equal(t, constant.ErrMissingFieldsInRequest.Error(), e.Code)
+	})
+
+	t.Run("empty maps return generic error", func(t *testing.T) {
+		got := ValidateBadRequestFieldsError(map[string]string{}, map[string]string{}, "test", map[string]any{})
+		require.NotNil(t, got)
+		assert.Contains(t, got.Error(), "expected")
+	})
+}
+
+func TestValidationError_WithAllFields(t *testing.T) {
+	innerErr := errors.New("inner error")
+	err := ValidationError{
+		EntityType: "connection",
+		Title:      "Validation Failed",
+		Message:    "Field validation error",
+		Code:       "VAL-001",
+		Err:        innerErr,
+	}
+
+	assert.Equal(t, "VAL-001 - Field validation error", err.Error())
+	assert.Equal(t, innerErr, err.Unwrap())
+	assert.Equal(t, "connection", err.EntityType)
+	assert.Equal(t, "Validation Failed", err.Title)
+}
+
+func TestValidationError_Unwrap_NilError(t *testing.T) {
+	err := ValidationError{
+		Message: "validation error",
+		Err:     nil,
+	}
+
+	assert.Nil(t, err.Unwrap())
+}
+
+func TestErrorTypes_AllFields(t *testing.T) {
+	t.Run("UnauthorizedError with all fields", func(t *testing.T) {
+		err := UnauthorizedError{
+			EntityType: "user",
+			Title:      "Unauthorized",
+			Message:    "Access denied",
+			Code:       "AUTH-001",
+			Err:        errors.New("token expired"),
+		}
+		assert.Equal(t, "Access denied", err.Error())
+		assert.Equal(t, "user", err.EntityType)
+	})
+
+	t.Run("ForbiddenError with all fields", func(t *testing.T) {
+		err := ForbiddenError{
+			EntityType: "resource",
+			Title:      "Forbidden",
+			Message:    "Access forbidden",
+			Code:       "FORBID-001",
+			Err:        errors.New("insufficient permissions"),
+		}
+		assert.Equal(t, "Access forbidden", err.Error())
+		assert.Equal(t, "resource", err.EntityType)
+	})
+
+	t.Run("UnprocessableOperationError with all fields", func(t *testing.T) {
+		err := UnprocessableOperationError{
+			EntityType: "job",
+			Title:      "Unprocessable",
+			Message:    "Cannot process job",
+			Code:       "PROC-001",
+			Err:        errors.New("invalid state"),
+		}
+		assert.Equal(t, "Cannot process job", err.Error())
+		assert.Equal(t, "job", err.EntityType)
+	})
+
+	t.Run("HTTPError with all fields", func(t *testing.T) {
+		err := HTTPError{
+			EntityType: "api",
+			Title:      "HTTP Error",
+			Message:    "Request failed",
+			Code:       "HTTP-001",
+			Err:        errors.New("connection timeout"),
+		}
+		assert.Equal(t, "Request failed", err.Error())
+		assert.Equal(t, "api", err.EntityType)
+	})
+
+	t.Run("FailedPreconditionError with all fields", func(t *testing.T) {
+		err := FailedPreconditionError{
+			EntityType: "operation",
+			Title:      "Failed Precondition",
+			Message:    "Precondition not met",
+			Code:       "PREC-001",
+			Err:        errors.New("resource not ready"),
+		}
+		assert.Equal(t, "Precondition not met", err.Error())
+		assert.Equal(t, "operation", err.EntityType)
+	})
+
+	t.Run("InternalServerError with all fields", func(t *testing.T) {
+		err := InternalServerError{
+			EntityType: "server",
+			Title:      "Internal Error",
+			Message:    "Server error occurred",
+			Code:       "INT-001",
+			Err:        errors.New("database connection failed"),
+		}
+		assert.Equal(t, "Server error occurred", err.Error())
+		assert.Equal(t, "server", err.EntityType)
+	})
+}
+
+func TestResponseError_AllFields(t *testing.T) {
+	err := ResponseError{
+		Code:    500,
+		Title:   "Internal Server Error",
+		Message: "An unexpected error occurred",
+	}
+
+	assert.Equal(t, "An unexpected error occurred", err.Error())
+	assert.Equal(t, 500, err.Code)
+	assert.Equal(t, "Internal Server Error", err.Title)
+}
+
+func TestResponseErrorWithStatusCode_AllFields(t *testing.T) {
+	err := ResponseErrorWithStatusCode{
+		StatusCode: http.StatusNotFound,
+		Code:       "NOT-FOUND",
+		Title:      "Not Found",
+		Message:    "Resource not found",
+	}
+
+	assert.Equal(t, "Resource not found", err.Error())
+	assert.Equal(t, http.StatusNotFound, err.StatusCode)
+	assert.Equal(t, "NOT-FOUND", err.Code)
+	assert.Equal(t, "Not Found", err.Title)
+}
+
+func TestValidationKnownFieldsError_AllFields(t *testing.T) {
+	err := ValidationKnownFieldsError{
+		EntityType: "user",
+		Title:      "Validation Error",
+		Code:       "VAL-001",
+		Message:    "Field validation failed",
+		Fields: FieldValidations{
+			"email": "invalid email format",
+			"age":   "must be positive",
+		},
+	}
+
+	assert.Equal(t, "Field validation failed", err.Error())
+	assert.Equal(t, "user", err.EntityType)
+	assert.Equal(t, 2, len(err.Fields))
+	assert.Equal(t, "invalid email format", err.Fields["email"])
+}
+
+func TestValidationUnknownFieldsError_AllFields(t *testing.T) {
+	err := ValidationUnknownFieldsError{
+		EntityType: "request",
+		Title:      "Unknown Fields",
+		Code:       "UNK-001",
+		Message:    "Unexpected fields in request",
+		Fields: UnknownFields{
+			"extra_field":   "value1",
+			"another_field": 123,
+		},
+	}
+
+	assert.Equal(t, "Unexpected fields in request", err.Error())
+	assert.Equal(t, "request", err.EntityType)
+	assert.Equal(t, 2, len(err.Fields))
+	assert.Equal(t, "value1", err.Fields["extra_field"])
+}
+
+func TestFieldValidations_Type(t *testing.T) {
+	fields := FieldValidations{
+		"field1": "error1",
+		"field2": "error2",
+	}
+
+	assert.Equal(t, "error1", fields["field1"])
+	assert.Equal(t, "error2", fields["field2"])
+	assert.Equal(t, "", fields["nonexistent"])
+}
+
+func TestUnknownFields_Type(t *testing.T) {
+	fields := UnknownFields{
+		"string_field": "value",
+		"int_field":    42,
+		"bool_field":   true,
+		"nested":       map[string]any{"key": "value"},
+	}
+
+	assert.Equal(t, "value", fields["string_field"])
+	assert.Equal(t, 42, fields["int_field"])
+	assert.Equal(t, true, fields["bool_field"])
+	assert.Nil(t, fields["nonexistent"])
 }

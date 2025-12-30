@@ -634,6 +634,56 @@ func TestValidateMetadataValueMaxLength(t *testing.T) {
 	}
 }
 
+func TestValidateMetadataValueMaxLengthNumericTypes(t *testing.T) {
+	type IntValueTest struct {
+		Value int `json:"value" validate:"valuemax=5"`
+	}
+
+	type FloatValueTest struct {
+		Value float64 `json:"value" validate:"valuemax=10"`
+	}
+
+	type BoolValueTest struct {
+		Value bool `json:"value" validate:"valuemax=10"`
+	}
+
+	t.Run("int value within limit", func(t *testing.T) {
+		input := &IntValueTest{Value: 123}
+		err := ValidateStruct(input)
+		assert.NoError(t, err)
+	})
+
+	t.Run("int value exceeds limit", func(t *testing.T) {
+		input := &IntValueTest{Value: 123456}
+		err := ValidateStruct(input)
+		assert.Error(t, err)
+	})
+
+	t.Run("float value within limit", func(t *testing.T) {
+		input := &FloatValueTest{Value: 1.5}
+		err := ValidateStruct(input)
+		assert.NoError(t, err)
+	})
+
+	t.Run("float value exceeds limit", func(t *testing.T) {
+		input := &FloatValueTest{Value: 12345678901.5}
+		err := ValidateStruct(input)
+		assert.Error(t, err)
+	})
+
+	t.Run("bool value within limit", func(t *testing.T) {
+		input := &BoolValueTest{Value: true}
+		err := ValidateStruct(input)
+		assert.NoError(t, err)
+	})
+
+	t.Run("bool false value within limit", func(t *testing.T) {
+		input := &BoolValueTest{Value: false}
+		err := ValidateStruct(input)
+		assert.NoError(t, err)
+	})
+}
+
 func TestWithBodyDecodeHandlerFunc(t *testing.T) {
 	t.Run("handler receives decoded struct", func(t *testing.T) {
 		app := fiber.New()
@@ -813,4 +863,141 @@ func TestNestedStructValidation(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestFindUnknownFieldsTypeMismatch(t *testing.T) {
+	tests := []struct {
+		name      string
+		original  map[string]any
+		marshaled map[string]any
+		wantLen   int
+	}{
+		{
+			name: "map vs non-map type mismatch",
+			original: map[string]any{
+				"field": map[string]any{"nested": "value"},
+			},
+			marshaled: map[string]any{
+				"field": "string value",
+			},
+			wantLen: 1,
+		},
+		{
+			name: "slice vs non-slice type mismatch",
+			original: map[string]any{
+				"items": []any{"a", "b"},
+			},
+			marshaled: map[string]any{
+				"items": "not an array",
+			},
+			wantLen: 1,
+		},
+		{
+			name: "nested map with matching types",
+			original: map[string]any{
+				"user": map[string]any{
+					"name": "John",
+					"age":  30,
+				},
+			},
+			marshaled: map[string]any{
+				"user": map[string]any{
+					"name": "John",
+					"age":  30,
+				},
+			},
+			wantLen: 0,
+		},
+		{
+			name: "array with nested map differences",
+			original: map[string]any{
+				"users": []any{
+					map[string]any{"name": "John", "extra": "field"},
+					map[string]any{"name": "Jane"},
+				},
+			},
+			marshaled: map[string]any{
+				"users": []any{
+					map[string]any{"name": "John"},
+					map[string]any{"name": "Jane"},
+				},
+			},
+			wantLen: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := findUnknownFields(tt.original, tt.marshaled)
+			assert.Equal(t, tt.wantLen, len(result))
+		})
+	}
+}
+
+func TestWithBodyWithConstructor(t *testing.T) {
+	t.Run("decoderHandler with constructor function", func(t *testing.T) {
+		app := fiber.New()
+
+		constructorCalled := false
+		constructor := func() any {
+			constructorCalled = true
+			return &TestStruct{}
+		}
+
+		d := &decoderHandler{
+			handler: func(p any, c *fiber.Ctx) error {
+				return c.SendStatus(http.StatusOK)
+			},
+			constructor:  constructor,
+			structSource: &TestStruct{},
+		}
+
+		app.Post("/test", d.FiberHandlerFunc)
+
+		body := `{"name":"Test","email":"test@example.com","age":25}`
+		req := httptest.NewRequest(http.MethodPost, "/test", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := app.Test(req)
+		assert.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.True(t, constructorCalled, "Constructor should have been called")
+	})
+}
+
+func TestFieldsFunctionExtended(t *testing.T) {
+	// Extended test via ValidateStruct
+	t.Run("empty struct pointer", func(t *testing.T) {
+		type EmptyStruct struct{}
+		input := &EmptyStruct{}
+		err := ValidateStruct(input)
+		assert.NoError(t, err)
+	})
+}
+
+func TestValidateMetadataKeyMaxLengthDefaultLimit(t *testing.T) {
+	// Test with no param (uses default limit of 100)
+	type KeyDefaultLimitTest struct {
+		Key string `json:"key" validate:"keymax"`
+	}
+
+	t.Run("key within default limit", func(t *testing.T) {
+		input := &KeyDefaultLimitTest{Key: "shortkey"}
+		err := ValidateStruct(input)
+		assert.NoError(t, err)
+	})
+}
+
+func TestValidateMetadataValueMaxLengthDefaultLimit(t *testing.T) {
+	// Test with no param (uses default limit of 2000)
+	type ValueDefaultLimitTest struct {
+		Value string `json:"value" validate:"valuemax"`
+	}
+
+	t.Run("value within default limit", func(t *testing.T) {
+		input := &ValueDefaultLimitTest{Value: "shortvalue"}
+		err := ValidateStruct(input)
+		assert.NoError(t, err)
+	})
 }

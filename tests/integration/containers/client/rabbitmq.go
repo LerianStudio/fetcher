@@ -78,7 +78,8 @@ func (c *RabbitMQEventConsumer) WaitForJobEvent(ctx context.Context, jobID strin
 		return nil, fmt.Errorf("failed to consume messages: %w", err)
 	}
 
-	deadline := time.Now().Add(timeout)
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
 
 	for {
 		select {
@@ -99,7 +100,7 @@ func (c *RabbitMQEventConsumer) WaitForJobEvent(ctx context.Context, jobID strin
 			if notification.JobID == jobID {
 				return &notification, nil
 			}
-		case <-time.After(time.Until(deadline)):
+		case <-timer.C:
 			return nil, fmt.Errorf("timeout waiting for job event %s", jobID)
 		}
 	}

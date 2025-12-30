@@ -70,13 +70,6 @@ help:
 	@echo "Core Commands:"
 	@echo "  make help                        	   - Display this help message"
 	@echo "  make test                        	   - Run unit tests on all components"
-	@echo "  make test-integration-container  	   - Run E2E integration tests with all containers"
-	@echo "  make test-integration-infra      	   - Start infrastructure for debugging (fixed ports)"
-	@echo "  make test-integration-debug-manager   - Debug Manager in VS Code, Worker in container"
-	@echo "  make test-integration-debug-worker    - Debug Worker in VS Code, Manager in container"
-	@echo "  make test-integration-debug-full      - Debug both Manager and Worker in VS Code"
-	@echo "  make test-integration-clean      	   - Clean up testcontainers and networks"
-	@echo "  make test-integration-check      	   - Check for port conflicts before starting"
 	@echo "  make build                       	   - Build all components"
 	@echo "  make clean                       	   - Clean all build artifacts"
 	@echo "  make cover                       	   - Run test coverage"
@@ -121,6 +114,17 @@ help:
 	@echo "  make validate-api-docs           - Validate API documentation"
 	@echo ""
 	@echo ""
+	@echo "Test Suite Aliases:"
+	@echo "  make test-integration-container  	   - Run integration tests with all containers"
+	@echo "  make test-integration-infra      	   - Start infrastructure for debugging (fixed ports)"
+	@echo "  make test-integration-debug-manager   - Debug Manager in IDE, Worker in container"
+	@echo "  make test-integration-debug-worker    - Debug Worker in IDE, Manager in container"
+	@echo "  make test-integration-debug-full      - Debug both Manager and Worker in IDE"
+	@echo "  make test-integration-clean      	   - Clean up testcontainers and networks"
+	@echo "  make test-integration-check      	   - Check for port conflicts before starting"
+	@echo "  make test-fuzzy					   - Run fuzz tests on all components"
+	@echo ""
+
 
 #-------------------------------------------------------
 # Git Hook Commands
@@ -197,11 +201,11 @@ test:
 	@echo "[ok] Tests completed successfully"
 
 # =============================================================================
-# test-integration-container: Full E2E Integration Tests
+# test-integration-container: Full Integration Tests
 # =============================================================================
 .PHONY: test-integration-container
 test-integration-container:
-	$(call print_title,Running E2E integration tests with Testcontainers)
+	$(call print_title,Running integration tests with Testcontainers)
 	$(call check_command,docker,Install Docker from https://docs.docker.com/get-docker/)
 	@echo "Note: Integration tests require either:"
 	@echo "  - GITHUB_TOKEN set (to build from Dockerfile)"
@@ -345,6 +349,7 @@ test-integration-check:
 cover:
 	$(call print_title,Generating test coverage report)
 	$(call check_command,go,Install Go from https://golang.org/doc/install)
+	@mkdir -p $(ARTIFACTS_DIR)
 	@PACKAGES=$$(go list ./... | grep -v -f ./scripts/coverage_ignore.txt 2>/dev/null || go list ./...); \
 	go test -coverprofile=$(ARTIFACTS_DIR)/coverage.out $$PACKAGES
 	@go tool cover -html=$(ARTIFACTS_DIR)/coverage.out -o $(ARTIFACTS_DIR)/coverage.html
@@ -677,9 +682,9 @@ dev-setup:
 
 FUZZ_TIME ?= 30s
 
-.PHONY: fuzz-all fuzz-manager fuzz-worker fuzz-connection fuzz-fetcher fuzz-schema fuzz-message
+.PHONY: test-fuzzy fuzz-manager fuzz-worker fuzz-connection fuzz-fetcher fuzz-schema fuzz-message
 
-fuzz-all: fuzz-manager fuzz-worker
+test-fuzzy: fuzz-manager fuzz-worker
 	@echo "[ok] All fuzz tests completed successfully"
 
 fuzz-manager: fuzz-connection fuzz-fetcher fuzz-schema
@@ -720,4 +725,4 @@ fuzz-message:
 
 fuzz-ci:
 	$(call print_title,Running fuzz tests for CI)
-	@FUZZ_TIME=60s $(MAKE) fuzz-all
+	@FUZZ_TIME=60s $(MAKE) test-fuzzy

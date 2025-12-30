@@ -3,6 +3,7 @@ module github.com/LerianStudio/fetcher
 go 1.25.3
 
 require (
+	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/LerianStudio/lib-auth/v2 v2.3.0
 	github.com/LerianStudio/lib-commons v1.18.0
 	github.com/LerianStudio/lib-commons/v2 v2.6.0

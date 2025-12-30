@@ -304,3 +304,227 @@ func TestRedisCache_Set_UsesDefaultTTL(t *testing.T) {
 	assert.Greater(t, ttl, 9*time.Minute)
 	assert.LessOrEqual(t, ttl, 10*time.Minute)
 }
+
+func TestRedisCache_NewRedisCache_NilConnection_Panics(t *testing.T) {
+	t.Run("nil connection panics", func(t *testing.T) {
+		assert.Panics(t, func() {
+			NewRedisCache[testStruct](nil, time.Minute, "test:")
+		})
+	})
+
+	t.Run("connection with nil client panics", func(t *testing.T) {
+		conn := &RedisConnection{
+			Client:    nil,
+			Logger:    &mockLogger{},
+			Connected: false,
+		}
+		assert.Panics(t, func() {
+			NewRedisCache[testStruct](conn, time.Minute, "test:")
+		})
+	})
+}
+
+func TestRedisCache_Close(t *testing.T) {
+	_, conn := setupMiniredis(t)
+	cache := NewRedisCache[testStruct](conn, time.Minute, "test:")
+
+	err := cache.Close()
+	assert.NoError(t, err)
+
+	// After close, operations should fail
+	ctx := context.Background()
+	_, _, err = cache.Get(ctx, "key")
+	assert.Error(t, err)
+}
+
+func TestRedisCache_Set_NegativeTTL_UsesDefault(t *testing.T) {
+	mr, conn := setupMiniredis(t)
+	cache := NewRedisCache[testStruct](conn, 10*time.Minute, "test:")
+
+	ctx := context.Background()
+	key := "item1"
+	value := testStruct{ID: "1"}
+
+	// Set with negative TTL should use cache's default
+	err := cache.Set(ctx, key, value, -5*time.Minute)
+	require.NoError(t, err)
+
+	// Verify the TTL is around 10 minutes (cache default)
+	ttl := mr.TTL("test:item1")
+	assert.Greater(t, ttl, 9*time.Minute)
+	assert.LessOrEqual(t, ttl, 10*time.Minute)
+}
+
+// unmarshalableStruct is a type that cannot be marshaled to JSON
+type unmarshalableStruct struct {
+	Data chan int `json:"data"`
+}
+
+func TestRedisCache_Set_MarshalError(t *testing.T) {
+	_, conn := setupMiniredis(t)
+	cache := NewRedisCache[unmarshalableStruct](conn, time.Minute, "test:")
+
+	ctx := context.Background()
+	key := "item1"
+	value := unmarshalableStruct{Data: make(chan int)}
+
+	// Set should fail due to marshal error (channels cannot be marshaled)
+	err := cache.Set(ctx, key, value, 0)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to marshal value")
+}
+
+func TestRedisCache_Clear_ScanError(t *testing.T) {
+	mr, conn := setupMiniredis(t)
+	cache := NewRedisCache[testStruct](conn, time.Minute, "test:")
+
+	ctx := context.Background()
+
+	// Set some values
+	for i := 0; i < 3; i++ {
+		key := "item" + string(rune('0'+i))
+		err := cache.Set(ctx, key, testStruct{ID: key}, 0)
+		require.NoError(t, err)
+	}
+
+	// Close miniredis to cause scan error
+	mr.Close()
+
+	// Clear should return error due to scan failure
+	err := cache.Clear(ctx)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to clear cache")
+}
+
+func TestRedisCache_Clear_DeleteErrorDuringIteration(t *testing.T) {
+	mr, conn := setupMiniredis(t)
+	cache := NewRedisCache[testStruct](conn, time.Minute, "test:")
+
+	ctx := context.Background()
+
+	// Set some values
+	for i := 0; i < 3; i++ {
+		key := "item" + string(rune('0'+i))
+		err := cache.Set(ctx, key, testStruct{ID: key}, 0)
+		require.NoError(t, err)
+	}
+
+	// Verify keys exist
+	keys := mr.Keys()
+	assert.Len(t, keys, 3)
+
+	// Clear should succeed (individual delete errors are logged but don't fail the operation)
+	err := cache.Clear(ctx)
+	assert.NoError(t, err)
+}
+
+func TestRedisCache_EmptyKeyPrefix(t *testing.T) {
+	mr, conn := setupMiniredis(t)
+	cache := NewRedisCache[testStruct](conn, time.Minute, "")
+
+	ctx := context.Background()
+	key := "mykey"
+	value := testStruct{ID: "1"}
+
+	err := cache.Set(ctx, key, value, 0)
+	require.NoError(t, err)
+
+	// With empty prefix, key should be stored as-is
+	keys := mr.Keys()
+	assert.Contains(t, keys, "mykey")
+}
+
+func TestRedisCache_CacheKey(t *testing.T) {
+	_, conn := setupMiniredis(t)
+
+	tests := []struct {
+		name     string
+		prefix   string
+		key      string
+		expected string
+	}{
+		{
+			name:     "standard prefix",
+			prefix:   "test:",
+			key:      "mykey",
+			expected: "test:mykey",
+		},
+		{
+			name:     "empty prefix",
+			prefix:   "",
+			key:      "mykey",
+			expected: "mykey",
+		},
+		{
+			name:     "complex prefix",
+			prefix:   "app:cache:v1:",
+			key:      "user:123",
+			expected: "app:cache:v1:user:123",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cache := NewRedisCache[testStruct](conn, time.Minute, tt.prefix)
+			assert.Equal(t, tt.expected, cache.cacheKey(tt.key))
+		})
+	}
+}
+
+func TestRedisCache_GetSet_MultipleTypes(t *testing.T) {
+	_, conn := setupMiniredis(t)
+
+	t.Run("string type", func(t *testing.T) {
+		cache := NewRedisCache[string](conn, time.Minute, "string:")
+		ctx := context.Background()
+
+		err := cache.Set(ctx, "key1", "hello world", 0)
+		require.NoError(t, err)
+
+		result, found, err := cache.Get(ctx, "key1")
+		assert.NoError(t, err)
+		assert.True(t, found)
+		assert.Equal(t, "hello world", result)
+	})
+
+	t.Run("int type", func(t *testing.T) {
+		cache := NewRedisCache[int](conn, time.Minute, "int:")
+		ctx := context.Background()
+
+		err := cache.Set(ctx, "key1", 42, 0)
+		require.NoError(t, err)
+
+		result, found, err := cache.Get(ctx, "key1")
+		assert.NoError(t, err)
+		assert.True(t, found)
+		assert.Equal(t, 42, result)
+	})
+
+	t.Run("slice type", func(t *testing.T) {
+		cache := NewRedisCache[[]string](conn, time.Minute, "slice:")
+		ctx := context.Background()
+
+		expected := []string{"a", "b", "c"}
+		err := cache.Set(ctx, "key1", expected, 0)
+		require.NoError(t, err)
+
+		result, found, err := cache.Get(ctx, "key1")
+		assert.NoError(t, err)
+		assert.True(t, found)
+		assert.Equal(t, expected, result)
+	})
+
+	t.Run("map type", func(t *testing.T) {
+		cache := NewRedisCache[map[string]int](conn, time.Minute, "map:")
+		ctx := context.Background()
+
+		expected := map[string]int{"a": 1, "b": 2}
+		err := cache.Set(ctx, "key1", expected, 0)
+		require.NoError(t, err)
+
+		result, found, err := cache.Get(ctx, "key1")
+		assert.NoError(t, err)
+		assert.True(t, found)
+		assert.Equal(t, expected, result)
+	})
+}

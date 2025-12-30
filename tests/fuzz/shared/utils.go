@@ -51,6 +51,8 @@ func ShouldPanic(f func()) (panicked bool) {
 			panicked = true
 		}
 	}()
+
 	f()
+
 	return false
 }

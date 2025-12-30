@@ -17,7 +17,6 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/rabbitmq"
 
 	"github.com/LerianStudio/lib-commons/v2/commons"
-	"github.com/LerianStudio/lib-commons/v2/commons/log"
 	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
 
 	"github.com/google/uuid"
@@ -42,12 +41,21 @@ type CreateFetcherJobResult struct {
 	IsNewCreated bool
 }
 
+// ConnectionTester defines the interface for testing database connections.
+// This interface allows mocking connection tests in unit tests.
+//
+//go:generate mockgen --destination=connection_tester.mock.go --package=command . ConnectionTester
+type ConnectionTester interface {
+	TestConnection(ctx context.Context, conn *model.Connection) error
+}
+
 // CreateFetcherJob is the command service for creating fetcher jobs.
 type CreateFetcherJob struct {
-	connRepo connRepo.Repository
-	jobRepo  jobRepo.Repository
-	cryptor  crypto.Cryptor
-	rabbitMQ *rabbitmq.RabbitMQAdapter
+	connRepo         connRepo.Repository
+	jobRepo          jobRepo.Repository
+	cryptor          crypto.Cryptor
+	rabbitMQ         *rabbitmq.RabbitMQAdapter
+	connectionTester ConnectionTester
 }
 
 // NewCreateFetcherJob creates a new CreateFetcherJob service.
@@ -57,12 +65,39 @@ func NewCreateFetcherJob(
 	cryptor crypto.Cryptor,
 	rabbitMQ *rabbitmq.RabbitMQAdapter,
 ) *CreateFetcherJob {
-	return &CreateFetcherJob{
+	svc := &CreateFetcherJob{
 		connRepo: connectionRepo,
 		jobRepo:  jobRepository,
 		cryptor:  cryptor,
 		rabbitMQ: rabbitMQ,
 	}
+	// Use default connection tester that tests real connections
+	svc.connectionTester = svc
+
+	return svc
+}
+
+// NewCreateFetcherJobWithTester creates a new CreateFetcherJob service with a custom connection tester.
+// This is useful for testing where you want to mock connection testing.
+func NewCreateFetcherJobWithTester(
+	connectionRepo connRepo.Repository,
+	jobRepository jobRepo.Repository,
+	cryptor crypto.Cryptor,
+	rabbitMQ *rabbitmq.RabbitMQAdapter,
+	tester ConnectionTester,
+) *CreateFetcherJob {
+	svc := &CreateFetcherJob{
+		connRepo:         connectionRepo,
+		jobRepo:          jobRepository,
+		cryptor:          cryptor,
+		rabbitMQ:         rabbitMQ,
+		connectionTester: tester,
+	}
+	if tester == nil {
+		svc.connectionTester = svc
+	}
+
+	return svc
 }
 
 // Execute creates a new fetcher job or returns an existing duplicate.
@@ -199,7 +234,7 @@ func (s *CreateFetcherJob) Execute(ctx context.Context, organizationID uuid.UUID
 
 	// Test each connection to verify they are UP
 	for _, conn := range connections {
-		if err := s.testConnection(ctx, conn, logger); err != nil {
+		if err := s.connectionTester.TestConnection(ctx, conn); err != nil {
 			libOpentelemetry.HandleSpanError(&span, fmt.Sprintf("Connection test failed for %s", conn.ConfigName), err)
 
 			return nil, pkg.ValidationError{
@@ -242,8 +277,11 @@ func (s *CreateFetcherJob) Execute(ctx context.Context, organizationID uuid.UUID
 	}, nil
 }
 
-// testConnection tests if a connection is available.
-func (s *CreateFetcherJob) testConnection(ctx context.Context, conn *model.Connection, logger log.Logger) error {
+// TestConnection tests if a connection is available.
+// This method implements the ConnectionTester interface.
+func (s *CreateFetcherJob) TestConnection(ctx context.Context, conn *model.Connection) error {
+	logger, _, _, _ := commons.NewTrackingFromContext(ctx)
+
 	testCtx, cancel := context.WithTimeout(ctx, ConnectionTestTimeout)
 	defer cancel()
 
@@ -261,7 +299,12 @@ func (s *CreateFetcherJob) testConnection(ctx context.Context, conn *model.Conne
 }
 
 // publishToQueue publishes a job to the RabbitMQ queue.
+// If RabbitMQ is not configured (nil), this method does nothing and returns nil.
 func (s *CreateFetcherJob) publishToQueue(ctx context.Context, j *model.Job) error {
+	if s.rabbitMQ == nil {
+		return nil
+	}
+
 	message := map[string]any{
 		"jobId":          j.ID.String(),
 		"organizationId": j.OrganizationID.String(),
@@ -362,6 +405,8 @@ func (s *CreateFetcherJob) transformFiltersForWorker(
 			condition.NotIn = append(condition.NotIn, f.Value...)
 		case "like":
 			condition.Like = append(condition.Like, f.Value...)
+		case "between":
+			condition.Between = append(condition.Between, f.Value...)
 		}
 
 		result[parsed.ConfigName][parsed.TableName][parsed.FieldName] = condition

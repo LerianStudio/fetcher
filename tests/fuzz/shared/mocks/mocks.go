@@ -22,6 +22,7 @@ func (m *MockCryptor) Encrypt(ctx context.Context, plaintext string) (string, st
 	if m.EncryptFunc != nil {
 		return m.EncryptFunc(ctx, plaintext)
 	}
+
 	return "encrypted-" + plaintext, "v1", nil
 }
 
@@ -29,6 +30,7 @@ func (m *MockCryptor) Decrypt(ctx context.Context, ciphertext, keyVersion string
 	if m.DecryptFunc != nil {
 		return m.DecryptFunc(ctx, ciphertext, keyVersion)
 	}
+
 	return "decrypted", nil
 }
 
@@ -36,6 +38,7 @@ func (m *MockCryptor) KeyVersion() string {
 	if m.KeyVersionFunc != nil {
 		return m.KeyVersionFunc()
 	}
+
 	return "v1"
 }
 
@@ -53,6 +56,7 @@ func (m *MockConnectionRepository) FindByID(ctx context.Context, id, orgID uuid.
 	if m.FindByIDFunc != nil {
 		return m.FindByIDFunc(ctx, id, orgID)
 	}
+
 	return nil, nil
 }
 
@@ -60,6 +64,7 @@ func (m *MockConnectionRepository) FindByConfigNames(ctx context.Context, orgID 
 	if m.FindByConfigNamesFunc != nil {
 		return m.FindByConfigNamesFunc(ctx, orgID, names)
 	}
+
 	return nil, nil
 }
 
@@ -67,6 +72,7 @@ func (m *MockConnectionRepository) Create(ctx context.Context, conn *model.Conne
 	if m.CreateFunc != nil {
 		return m.CreateFunc(ctx, conn)
 	}
+
 	return nil
 }
 
@@ -74,6 +80,7 @@ func (m *MockConnectionRepository) Update(ctx context.Context, conn *model.Conne
 	if m.UpdateFunc != nil {
 		return m.UpdateFunc(ctx, conn)
 	}
+
 	return nil
 }
 
@@ -81,6 +88,7 @@ func (m *MockConnectionRepository) Delete(ctx context.Context, id, orgID uuid.UU
 	if m.DeleteFunc != nil {
 		return m.DeleteFunc(ctx, id, orgID)
 	}
+
 	return nil
 }
 
@@ -88,6 +96,7 @@ func (m *MockConnectionRepository) List(ctx context.Context, orgID uuid.UUID, pa
 	if m.ListFunc != nil {
 		return m.ListFunc(ctx, orgID, params)
 	}
+
 	return nil, nil
 }
 
@@ -102,6 +111,7 @@ func (m *MockJobRepository) FindByID(ctx context.Context, id, orgID uuid.UUID) (
 	if m.FindByIDFunc != nil {
 		return m.FindByIDFunc(ctx, id, orgID)
 	}
+
 	return nil, nil
 }
 
@@ -109,6 +119,7 @@ func (m *MockJobRepository) Create(ctx context.Context, job *model.Job) error {
 	if m.CreateFunc != nil {
 		return m.CreateFunc(ctx, job)
 	}
+
 	return nil
 }
 
@@ -116,5 +127,6 @@ func (m *MockJobRepository) UpdateStatus(ctx context.Context, id, orgID uuid.UUI
 	if m.UpdateStatusFunc != nil {
 		return m.UpdateStatusFunc(ctx, id, orgID, status, resultPath, metadata)
 	}
+
 	return nil
 }

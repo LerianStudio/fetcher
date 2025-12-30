@@ -839,3 +839,428 @@ func TestDecryptNaturalPersonFields(t *testing.T) {
 		t.Errorf("expected no error for nil/empty values, got: %v", err)
 	}
 }
+
+// TestTransformPluginCRMAdvancedFilters tests the filter transformation logic.
+func TestTransformPluginCRMAdvancedFilters(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+	logger := testLogger()
+
+	tests := []struct {
+		name       string
+		filter     map[string]modelJob.FilterCondition
+		envHashKey string
+		wantNil    bool
+		wantErr    bool
+		errMsg     string
+	}{
+		{
+			name:       "nil filter returns nil",
+			filter:     nil,
+			envHashKey: "test-hash-key",
+			wantNil:    true,
+			wantErr:    false,
+		},
+		{
+			name:       "empty filter returns empty",
+			filter:     map[string]modelJob.FilterCondition{},
+			envHashKey: "test-hash-key",
+			wantNil:    false,
+			wantErr:    false,
+		},
+		{
+			name:       "missing env var returns error",
+			filter:     map[string]modelJob.FilterCondition{"document": {Equals: []any{"123"}}},
+			envHashKey: "",
+			wantNil:    false,
+			wantErr:    true,
+			errMsg:     "CRYPTO_HASH_SECRET_KEY_PLUGIN_CRM environment variable not set",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Set env var if provided
+			if tt.envHashKey != "" {
+				t.Setenv("CRYPTO_HASH_SECRET_KEY_PLUGIN_CRM", tt.envHashKey)
+			}
+
+			result, err := uc.transformPluginCRMAdvancedFilters(tt.filter, logger)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+				if tt.errMsg != "" && err.Error() != tt.errMsg {
+					t.Errorf("expected error %q, got %q", tt.errMsg, err.Error())
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("expected no error, got: %v", err)
+			}
+
+			if tt.wantNil && result != nil {
+				t.Errorf("expected nil result, got %v", result)
+			}
+		})
+	}
+}
+
+// TestTransformPluginCRMAdvancedFilters_FieldMappings tests that field mappings are applied correctly.
+func TestTransformPluginCRMAdvancedFilters_FieldMappings(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+	logger := testLogger()
+
+	// Set required env var
+	t.Setenv("CRYPTO_HASH_SECRET_KEY_PLUGIN_CRM", "test-hash-key-for-plugin-crm")
+
+	tests := []struct {
+		name            string
+		inputField      string
+		expectedOutput  string
+		shouldTransform bool
+	}{
+		{
+			name:            "document field transforms to search.document",
+			inputField:      "document",
+			expectedOutput:  "search.document",
+			shouldTransform: true,
+		},
+		{
+			name:            "name field transforms to search.name",
+			inputField:      "name",
+			expectedOutput:  "search.name",
+			shouldTransform: true,
+		},
+		{
+			name:            "banking_details.account transforms",
+			inputField:      "banking_details.account",
+			expectedOutput:  "search.banking_details_account",
+			shouldTransform: true,
+		},
+		{
+			name:            "banking_details.iban transforms",
+			inputField:      "banking_details.iban",
+			expectedOutput:  "search.banking_details_iban",
+			shouldTransform: true,
+		},
+		{
+			name:            "contact.primary_email transforms",
+			inputField:      "contact.primary_email",
+			expectedOutput:  "search.contact_primary_email",
+			shouldTransform: true,
+		},
+		{
+			name:            "contact.secondary_email transforms",
+			inputField:      "contact.secondary_email",
+			expectedOutput:  "search.contact_secondary_email",
+			shouldTransform: true,
+		},
+		{
+			name:            "contact.mobile_phone transforms",
+			inputField:      "contact.mobile_phone",
+			expectedOutput:  "search.contact_mobile_phone",
+			shouldTransform: true,
+		},
+		{
+			name:            "contact.other_phone transforms",
+			inputField:      "contact.other_phone",
+			expectedOutput:  "search.contact_other_phone",
+			shouldTransform: true,
+		},
+		{
+			name:            "unmapped field stays unchanged",
+			inputField:      "status",
+			expectedOutput:  "status",
+			shouldTransform: false,
+		},
+		{
+			name:            "unknown nested field stays unchanged",
+			inputField:      "custom.field",
+			expectedOutput:  "custom.field",
+			shouldTransform: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			filter := map[string]modelJob.FilterCondition{
+				tt.inputField: {Equals: []any{"test-value"}},
+			}
+
+			result, err := uc.transformPluginCRMAdvancedFilters(filter, logger)
+			if err != nil {
+				t.Fatalf("expected no error, got: %v", err)
+			}
+
+			// Check if the output field exists
+			if _, exists := result[tt.expectedOutput]; !exists {
+				t.Errorf("expected field %q not found in result", tt.expectedOutput)
+				t.Logf("result keys: %v", result)
+			}
+		})
+	}
+}
+
+// TestTransformPluginCRMAdvancedFilters_AllConditionTypes tests all filter condition types.
+func TestTransformPluginCRMAdvancedFilters_AllConditionTypes(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+	logger := testLogger()
+
+	// Set required env var
+	t.Setenv("CRYPTO_HASH_SECRET_KEY_PLUGIN_CRM", "test-hash-key-for-plugin-crm")
+
+	// Create a filter with all condition types for document field
+	filter := map[string]modelJob.FilterCondition{
+		"document": {
+			Equals:         []any{"value1"},
+			GreaterThan:    []any{"value2"},
+			GreaterOrEqual: []any{"value3"},
+			LessThan:       []any{"value4"},
+			LessOrEqual:    []any{"value5"},
+			Between:        []any{"start", "end"},
+			In:             []any{"val1", "val2", "val3"},
+			NotIn:          []any{"val4", "val5"},
+		},
+	}
+
+	result, err := uc.transformPluginCRMAdvancedFilters(filter, logger)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	// Verify the transformed field exists
+	transformedCondition, exists := result["search.document"]
+	if !exists {
+		t.Fatal("expected search.document field not found")
+	}
+
+	// Verify all condition types are present
+	if len(transformedCondition.Equals) != 1 {
+		t.Errorf("expected Equals to have 1 value, got %d", len(transformedCondition.Equals))
+	}
+	if len(transformedCondition.GreaterThan) != 1 {
+		t.Errorf("expected GreaterThan to have 1 value, got %d", len(transformedCondition.GreaterThan))
+	}
+	if len(transformedCondition.GreaterOrEqual) != 1 {
+		t.Errorf("expected GreaterOrEqual to have 1 value, got %d", len(transformedCondition.GreaterOrEqual))
+	}
+	if len(transformedCondition.LessThan) != 1 {
+		t.Errorf("expected LessThan to have 1 value, got %d", len(transformedCondition.LessThan))
+	}
+	if len(transformedCondition.LessOrEqual) != 1 {
+		t.Errorf("expected LessOrEqual to have 1 value, got %d", len(transformedCondition.LessOrEqual))
+	}
+	if len(transformedCondition.Between) != 2 {
+		t.Errorf("expected Between to have 2 values, got %d", len(transformedCondition.Between))
+	}
+	if len(transformedCondition.In) != 3 {
+		t.Errorf("expected In to have 3 values, got %d", len(transformedCondition.In))
+	}
+	if len(transformedCondition.NotIn) != 2 {
+		t.Errorf("expected NotIn to have 2 values, got %d", len(transformedCondition.NotIn))
+	}
+}
+
+// TestProcessPluginCRMCollection_MissingOrganization tests error when organization field is missing.
+func TestProcessPluginCRMCollection_MissingOrganization(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+
+	ctx := testContext()
+	logger := testLogger()
+
+	// All collections WITHOUT organization
+	allCollections := map[string][]string{
+		"counterparty": {"id", "name", "document"},
+	}
+
+	result := make(map[string]map[string][]map[string]any)
+
+	err := uc.processPluginCRMCollection(
+		ctx,
+		nil, // dataSource not needed since we expect early error
+		"counterparty",
+		[]string{"id", "name"},
+		nil,
+		allCollections,
+		result,
+		logger,
+	)
+
+	if err == nil {
+		t.Fatal("expected error when organization field is missing")
+	}
+
+	if err.Error() != "organization field not found for plugin_crm collection counterparty" {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+// TestProcessPluginCRMCollection_EmptyOrganization tests error when organization field is empty.
+func TestProcessPluginCRMCollection_EmptyOrganization(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+
+	ctx := testContext()
+	logger := testLogger()
+
+	// Organization field exists but is empty
+	allCollections := map[string][]string{
+		"counterparty": {"id", "name"},
+		"organization": {}, // empty
+	}
+
+	result := make(map[string]map[string][]map[string]any)
+
+	err := uc.processPluginCRMCollection(
+		ctx,
+		nil,
+		"counterparty",
+		[]string{"id", "name"},
+		nil,
+		allCollections,
+		result,
+		logger,
+	)
+
+	if err == nil {
+		t.Fatal("expected error when organization field is empty")
+	}
+}
+
+// TestQueryPluginCRMCollectionWithFilters_NoFilters tests querying without filters.
+func TestQueryPluginCRMCollectionWithFilters_NoFilters(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+
+	// This test validates the function signature and basic behavior
+	// A full test would require a mock MongoDB data source
+
+	ctx := testContext()
+	logger := testLogger()
+
+	// With nil data source, we expect a nil pointer error
+	// This is intentional to verify error handling
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("expected panic with nil data source")
+		}
+	}()
+
+	_, _ = uc.queryPluginCRMCollectionWithFilters(
+		ctx,
+		nil, // nil data source should cause panic
+		"collection_test",
+		[]string{"id", "name"},
+		nil,
+		logger,
+	)
+}
+
+// TestDecryptPluginCRMData_MissingHashSecretKey tests error when hash secret key is missing.
+func TestDecryptPluginCRMData_MissingHashSecretKey(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+	logger := testLogger()
+
+	// Set only the encrypt key, not the hash key
+	t.Setenv("CRYPTO_ENCRYPT_SECRET_KEY_PLUGIN_CRM", "test-encrypt-key")
+	// Explicitly unset hash key (if previously set)
+
+	fields := []string{"document", "name"}
+	collectionResult := []map[string]any{
+		{"id": "123", "document": "encrypted-doc"},
+	}
+
+	_, err := uc.decryptPluginCRMData(logger, collectionResult, fields)
+	if err == nil {
+		t.Error("expected error when hash secret key is missing")
+	}
+
+	if err.Error() != "CRYPTO_HASH_SECRET_KEY_PLUGIN_CRM environment variable not set" {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+// TestDecryptPluginCRMData_MissingEncryptSecretKey tests error when encrypt secret key is missing.
+func TestDecryptPluginCRMData_MissingEncryptSecretKey(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+	logger := testLogger()
+
+	// Set only the hash key, not the encrypt key
+	t.Setenv("CRYPTO_HASH_SECRET_KEY_PLUGIN_CRM", "test-hash-key")
+	// Ensure encrypt key is not set
+
+	fields := []string{"document", "name"}
+	collectionResult := []map[string]any{
+		{"id": "123", "document": "encrypted-doc"},
+	}
+
+	_, err := uc.decryptPluginCRMData(logger, collectionResult, fields)
+	if err == nil {
+		t.Error("expected error when encrypt secret key is missing")
+	}
+
+	if err.Error() != "CRYPTO_ENCRYPT_SECRET_KEY_PLUGIN_CRM environment variable not set" {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+// TestQueryPluginCRM_EmptyCollections tests QueryPluginCRM with empty collections.
+func TestQueryPluginCRM_EmptyCollections(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+
+	ctx := testContext()
+	logger := testLogger()
+
+	result := make(map[string]map[string][]map[string]any)
+
+	// Empty collections should not cause errors - just no processing
+	err := uc.QueryPluginCRM(
+		ctx,
+		nil, // dataSource - won't be used with empty collections
+		"plugin_crm",
+		map[string][]string{}, // empty collections
+		nil,
+		result,
+		logger,
+	)
+
+	if err != nil {
+		t.Fatalf("expected no error for empty collections, got: %v", err)
+	}
+}

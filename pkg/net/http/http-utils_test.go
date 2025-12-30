@@ -657,3 +657,122 @@ func TestGetOrganizationIDIntegration(t *testing.T) {
 		assert.Equal(t, 200, resp.StatusCode)
 	})
 }
+
+func TestValidateParametersWithCursor(t *testing.T) {
+	// Set environment variable for tests
+	os.Setenv("MAX_PAGINATION_LIMIT", "100")
+	os.Setenv("MAX_PAGINATION_MONTH_DATE_RANGE", "3")
+	defer func() {
+		os.Unsetenv("MAX_PAGINATION_LIMIT")
+		os.Unsetenv("MAX_PAGINATION_MONTH_DATE_RANGE")
+	}()
+
+	// Create a valid cursor for testing
+	validCursor := encodeCursor(Cursor{ID: "test123", PointsNext: true})
+
+	tests := []struct {
+		name    string
+		params  map[string]string
+		wantErr bool
+		check   func(*testing.T, *QueryHeader)
+	}{
+		{
+			name: "with valid cursor",
+			params: map[string]string{
+				"cursor": validCursor,
+			},
+			wantErr: false,
+			check: func(t *testing.T, qh *QueryHeader) {
+				assert.Equal(t, validCursor, qh.Cursor)
+			},
+		},
+		{
+			name: "with invalid cursor",
+			params: map[string]string{
+				"cursor": "invalid-cursor-string",
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ValidateParameters(tt.params)
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+			if tt.check != nil {
+				tt.check(t, got)
+			}
+		})
+	}
+}
+
+func TestValidateDatesEdgeCases(t *testing.T) {
+	os.Setenv("MAX_PAGINATION_MONTH_DATE_RANGE", "3")
+	defer os.Unsetenv("MAX_PAGINATION_MONTH_DATE_RANGE")
+
+	t.Run("date range exceeds max months - adjusts start date", func(t *testing.T) {
+		startDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+		endDate := time.Date(2024, 12, 31, 0, 0, 0, 0, time.UTC)
+
+		err := validateDates(&startDate, &endDate)
+		assert.NoError(t, err)
+		// Start date should be adjusted to be within range
+	})
+
+	t.Run("both dates provided and valid", func(t *testing.T) {
+		startDate := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
+		endDate := time.Date(2024, 7, 1, 0, 0, 0, 0, time.UTC)
+
+		err := validateDates(&startDate, &endDate)
+		assert.NoError(t, err)
+		assert.Equal(t, 2024, startDate.Year())
+		assert.Equal(t, time.June, startDate.Month())
+	})
+}
+
+func TestQueryHeaderToOffsetPaginationFields(t *testing.T) {
+	t.Run("cursor is not included in offset pagination", func(t *testing.T) {
+		qh := QueryHeader{
+			Limit:     25,
+			Page:      2,
+			Cursor:    "some-cursor",
+			SortOrder: "asc",
+			StartDate: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
+			EndDate:   time.Date(2024, 12, 31, 0, 0, 0, 0, time.UTC),
+		}
+
+		p := qh.ToOffsetPagination()
+
+		assert.Equal(t, 25, p.Limit)
+		assert.Equal(t, 2, p.Page)
+		assert.Empty(t, p.Cursor) // Cursor should not be copied
+		assert.Equal(t, "asc", p.SortOrder)
+	})
+}
+
+func TestValidateParametersNonMetadataKeys(t *testing.T) {
+	os.Setenv("MAX_PAGINATION_LIMIT", "100")
+	os.Setenv("MAX_PAGINATION_MONTH_DATE_RANGE", "3")
+	defer func() {
+		os.Unsetenv("MAX_PAGINATION_LIMIT")
+		os.Unsetenv("MAX_PAGINATION_MONTH_DATE_RANGE")
+	}()
+
+	t.Run("keys without metadata prefix are captured as metadata", func(t *testing.T) {
+		params := map[string]string{
+			"status":   "active",
+			"category": "finance",
+		}
+
+		qh, err := ValidateParameters(params)
+		assert.NoError(t, err)
+		assert.True(t, qh.UseMetadata)
+		assert.NotNil(t, qh.Metadata)
+		assert.Contains(t, *qh.Metadata, "status")
+		assert.Contains(t, *qh.Metadata, "category")
+	})
+}

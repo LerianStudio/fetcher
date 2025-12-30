@@ -1,8 +1,11 @@
+// Package generators provides random data generation utilities for fuzz testing.
+// Note: This package intentionally uses math/rand instead of crypto/rand because
+// cryptographic randomness is not required for fuzz test data generation.
 package generators
 
 import (
 	"encoding/json"
-	"math/rand"
+	"math/rand" // #nosec G404 - Weak RNG is acceptable for fuzz test generation
 	"strings"
 
 	"github.com/google/uuid"
@@ -11,44 +14,48 @@ import (
 // RandomString generates a random string of given length
 func RandomString(length int) string {
 	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+
 	b := make([]byte, length)
 	for i := range b {
-		b[i] = charset[rand.Intn(len(charset))]
+		b[i] = charset[rand.Intn(len(charset))] // #nosec G404
 	}
+
 	return string(b)
 }
 
 // RandomConfigName generates a valid config name (alphanumeric, underscore, hyphen)
 func RandomConfigName(length int) string {
 	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+
 	b := make([]byte, length)
 	for i := range b {
-		b[i] = charset[rand.Intn(len(charset))]
+		b[i] = charset[rand.Intn(len(charset))] // #nosec G404
 	}
+
 	return string(b)
 }
 
 // RandomDBType returns a random valid DB type
 func RandomDBType() string {
 	types := []string{"ORACLE", "SQL_SERVER", "POSTGRESQL", "MONGODB", "MYSQL"}
-	return types[rand.Intn(len(types))]
+	return types[rand.Intn(len(types))] // #nosec G404
 }
 
 // RandomInvalidDBType returns an invalid DB type
 func RandomInvalidDBType() string {
 	invalid := []string{"SQLITE", "REDIS", "CASSANDRA", "", "postgresql", "invalid"}
-	return invalid[rand.Intn(len(invalid))]
+	return invalid[rand.Intn(len(invalid))] // #nosec G404
 }
 
 // RandomPort generates a random port number
 func RandomPort() int {
-	return rand.Intn(65535) + 1
+	return rand.Intn(65535) + 1 // #nosec G404
 }
 
 // RandomInvalidPort generates an invalid port
 func RandomInvalidPort() int {
 	invalid := []int{0, -1, -100, 65536, 100000}
-	return invalid[rand.Intn(len(invalid))]
+	return invalid[rand.Intn(len(invalid))] // #nosec G404
 }
 
 // RandomUUID generates a random UUID string
@@ -61,62 +68,115 @@ func RandomInvalidUUID() string {
 	invalid := []string{
 		"",
 		"not-a-uuid",
-		"12345678-1234-1234-1234-1234567890",    // too short
+		"12345678-1234-1234-1234-1234567890",     // too short
 		"12345678-1234-1234-1234-1234567890abcd", // too long
-		"gggggggg-gggg-gggg-gggg-gggggggggggg",  // invalid characters
+		"gggggggg-gggg-gggg-gggg-gggggggggggg",   // invalid characters
 		"12345678123412341234123456789012",       // no hyphens
 	}
-	return invalid[rand.Intn(len(invalid))]
+
+	return invalid[rand.Intn(len(invalid))] // #nosec G404
+}
+
+// mutator is a function type for JSON mutation operations
+type mutator func([]byte) []byte
+
+// mutators defines the available mutation strategies for fuzz testing
+var mutators = []mutator{
+	mutateRemoveBytes,
+	mutateInsertBytes,
+	mutateInvalidUTF8,
+	mutateTruncate,
+	mutateAddGarbage,
+	mutateSwapQuotes,
+	mutateRemoveClosingBrace,
+	mutateDoubleOpeningBrace,
+	mutateChangeType,
+	mutateAddUnknownField,
 }
 
 // MutateJSON mutates a JSON byte slice for fuzzing
 func MutateJSON(data []byte, mutationType int) []byte {
-	switch mutationType % 10 {
-	case 0: // Remove random bytes
-		if len(data) > 5 {
-			pos := rand.Intn(len(data) - 1)
-			return append(data[:pos], data[pos+1:]...)
-		}
-	case 1: // Insert random bytes
-		if len(data) > 0 {
-			pos := rand.Intn(len(data))
-			return append(data[:pos], append([]byte{byte(rand.Intn(256))}, data[pos:]...)...)
-		}
-	case 2: // Replace with invalid UTF-8
-		if len(data) > 0 {
-			pos := rand.Intn(len(data))
-			result := make([]byte, len(data))
-			copy(result, data)
-			result[pos] = 0xFF
+	idx := mutationType % len(mutators)
+	return mutators[idx](data)
+}
+
+func mutateRemoveBytes(data []byte) []byte {
+	if len(data) > 5 {
+		pos := rand.Intn(len(data) - 1) // #nosec G404
+		return append(data[:pos], data[pos+1:]...)
+	}
+
+	return data
+}
+
+func mutateInsertBytes(data []byte) []byte {
+	if len(data) > 0 {
+		pos := rand.Intn(len(data))      // #nosec G404
+		randByte := byte(rand.Intn(256)) // #nosec G404
+
+		return append(data[:pos], append([]byte{randByte}, data[pos:]...)...)
+	}
+
+	return data
+}
+
+func mutateInvalidUTF8(data []byte) []byte {
+	if len(data) > 0 {
+		pos := rand.Intn(len(data)) // #nosec G404
+		result := make([]byte, len(data))
+		copy(result, data)
+		result[pos] = 0xFF
+
+		return result
+	}
+
+	return data
+}
+
+func mutateTruncate(data []byte) []byte {
+	if len(data) > 10 {
+		return data[:len(data)/2]
+	}
+
+	return data
+}
+
+func mutateAddGarbage(data []byte) []byte {
+	return append(data, []byte("}{]garbage")...)
+}
+
+func mutateSwapQuotes(data []byte) []byte {
+	return []byte(strings.ReplaceAll(string(data), `"`, `'`))
+}
+
+func mutateRemoveClosingBrace(data []byte) []byte {
+	if len(data) > 0 && data[len(data)-1] == '}' {
+		return data[:len(data)-1]
+	}
+
+	return data
+}
+
+func mutateDoubleOpeningBrace(data []byte) []byte {
+	return append([]byte("{"), data...)
+}
+
+func mutateChangeType(data []byte) []byte {
+	str := string(data)
+	str = strings.ReplaceAll(str, `"test"`, `12345`)
+
+	return []byte(str)
+}
+
+func mutateAddUnknownField(data []byte) []byte {
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err == nil {
+		m["unknownField"] = "fuzz"
+		if result, err := json.Marshal(m); err == nil {
 			return result
 		}
-	case 3: // Truncate
-		if len(data) > 10 {
-			return data[:len(data)/2]
-		}
-	case 4: // Add trailing garbage
-		return append(data, []byte("}{]garbage")...)
-	case 5: // Swap quotes
-		return []byte(strings.ReplaceAll(string(data), `"`, `'`))
-	case 6: // Remove closing brace
-		if len(data) > 0 && data[len(data)-1] == '}' {
-			return data[:len(data)-1]
-		}
-	case 7: // Double opening brace
-		return append([]byte("{"), data...)
-	case 8: // Change type (string to number)
-		str := string(data)
-		str = strings.ReplaceAll(str, `"test"`, `12345`)
-		return []byte(str)
-	case 9: // Add unknown field
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err == nil {
-			m["unknownField"] = "fuzz"
-			if result, err := json.Marshal(m); err == nil {
-				return result
-			}
-		}
 	}
+
 	return data
 }
 
@@ -131,7 +191,12 @@ func GenerateConnectionInputSeed() []byte {
 		"username":     "user",
 		"password":     "pass",
 	}
-	data, _ := json.Marshal(input)
+
+	data, err := json.Marshal(input)
+	if err != nil {
+		return []byte(`{"configName":"test-db","type":"POSTGRESQL"}`)
+	}
+
 	return data
 }
 
@@ -146,7 +211,12 @@ func GenerateFetcherRequestSeed() []byte {
 			},
 		},
 	}
-	data, _ := json.Marshal(input)
+
+	data, err := json.Marshal(input)
+	if err != nil {
+		return []byte(`{"dataRequest":{"mappedFields":{}}}`)
+	}
+
 	return data
 }
 
@@ -159,7 +229,12 @@ func GenerateSchemaValidationSeed() []byte {
 			},
 		},
 	}
-	data, _ := json.Marshal(input)
+
+	data, err := json.Marshal(input)
+	if err != nil {
+		return []byte(`{"mappedFields":{}}`)
+	}
+
 	return data
 }
 
@@ -175,7 +250,12 @@ func GenerateExtractExternalDataSeed() []byte {
 		},
 		"filters": map[string]any{},
 	}
-	data, _ := json.Marshal(input)
+
+	data, err := json.Marshal(input)
+	if err != nil {
+		return []byte(`{"jobId":"","organizationId":"","mappedFields":{}}`)
+	}
+
 	return data
 }
 

@@ -77,7 +77,8 @@ func (c *SeaweedFSClient) FileExists(ctx context.Context, path string) (bool, er
 
 // WaitForFile waits for a file to appear in SeaweedFS.
 func (c *SeaweedFSClient) WaitForFile(ctx context.Context, path string, timeout time.Duration) ([]byte, error) {
-	deadline := time.Now().Add(timeout)
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
 
 	ticker := time.NewTicker(setup.PollingInterval)
 	defer ticker.Stop()
@@ -86,11 +87,9 @@ func (c *SeaweedFSClient) WaitForFile(ctx context.Context, path string, timeout 
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
+		case <-timer.C:
+			return nil, fmt.Errorf("timeout waiting for file %s", path)
 		case <-ticker.C:
-			if time.Now().After(deadline) {
-				return nil, fmt.Errorf("timeout waiting for file %s", path)
-			}
-
 			data, err := c.GetFile(ctx, path)
 			if err == nil {
 				return data, nil
