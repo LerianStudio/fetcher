@@ -247,6 +247,17 @@ func (cb *circuitBreaker) recordFailure() {
 }
 
 // metrics holds operational metrics for the RabbitMQ adapter.
+// Adapter defines the interface for RabbitMQ operations.
+//
+//go:generate mockgen --destination=rabbitmq.mock.go --package=rabbitmq . Adapter
+type Adapter interface {
+	ProducerDefault(ctx context.Context, exchange, key string, queueMessage []byte, header *map[string]any) error
+	ConsumerLoop(ctx context.Context, queue string, concurrency int, handler func(ctx context.Context, body []byte, headers map[string]any) error) error
+	Shutdown(ctx context.Context) error
+	IsHealthy() bool
+	CircuitBreakerState() CircuitState
+}
+
 type metrics struct {
 	publishAttempts     metric.Int64Counter
 	publishSuccesses    metric.Int64Counter

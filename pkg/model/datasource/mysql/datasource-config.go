@@ -21,7 +21,7 @@ type DataSourceConfigMySQL struct {
 	datasource.DataSourceConfig
 
 	MySQLConnection *mysql.Connection
-	MySQLRepository *mysql.ExternalDataSource
+	MySQLRepository mysql.Repository
 }
 
 // GetConfig returns the base DataSourceConfig.

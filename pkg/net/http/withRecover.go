@@ -40,8 +40,9 @@ func buildRecoverOpts(opts ...RecoverMiddlewareOption) *recoverMiddleware {
 }
 
 func WithRecover(opts ...RecoverMiddlewareOption) fiber.Handler {
+	mid := buildRecoverOpts(opts...)
+
 	return func(c *fiber.Ctx) error {
-		mid := buildRecoverOpts(opts...)
 
 		defer func() {
 			if r := recover(); r != nil {
