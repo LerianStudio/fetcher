@@ -225,7 +225,8 @@ func (uc *UseCase) extractJobIDFromPartialJSON(body []byte, logger log.Logger) (
 		}
 	}
 
-	jobIDRegex := regexp.MustCompile(`"jobId"\s*:\s*"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"`)
+	// Limit whitespace to prevent ReDoS (use {0,10} instead of * to cap backtracking)
+	jobIDRegex := regexp.MustCompile(`"jobId"\s{0,10}:\s{0,10}"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"`)
 
 	matches := jobIDRegex.FindStringSubmatch(bodyStr)
 	if len(matches) > 1 {
@@ -233,7 +234,7 @@ func (uc *UseCase) extractJobIDFromPartialJSON(body []byte, logger log.Logger) (
 		if err == nil {
 			logger.Infof("Extracted jobID from regex: %s", jobID)
 
-			orgIDRegex := regexp.MustCompile(`"organizationId"\s*:\s*"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"`)
+			orgIDRegex := regexp.MustCompile(`"organizationId"\s{0,10}:\s{0,10}"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"`)
 			orgMatches := orgIDRegex.FindStringSubmatch(bodyStr)
 
 			var orgID uuid.UUID

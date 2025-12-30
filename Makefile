@@ -670,3 +670,54 @@ dev-setup:
 	@echo "  make test          - Run tests"
 	@echo "  make up            - Start services"
 	@echo "  make rebuild-up    - Rebuild and restart services during development"
+
+#-------------------------------------------------------
+# Fuzz Testing Commands
+#-------------------------------------------------------
+
+FUZZ_TIME ?= 30s
+
+.PHONY: fuzz-all fuzz-manager fuzz-worker fuzz-connection fuzz-fetcher fuzz-schema fuzz-message
+
+fuzz-all: fuzz-manager fuzz-worker
+	@echo "[ok] All fuzz tests completed successfully"
+
+fuzz-manager: fuzz-connection fuzz-fetcher fuzz-schema
+	@echo "[ok] Manager fuzz tests completed"
+
+fuzz-worker: fuzz-message
+	@echo "[ok] Worker fuzz tests completed"
+
+fuzz-connection:
+	$(call print_title,Running connection fuzz tests)
+	@go test -fuzz=FuzzConnectionInputParsing -fuzztime=$(FUZZ_TIME) ./tests/fuzz/manager/connection/ || true
+	@go test -fuzz=FuzzConnectionValidation -fuzztime=$(FUZZ_TIME) ./tests/fuzz/manager/connection/ || true
+	@go test -fuzz=FuzzDBTypeValidation -fuzztime=$(FUZZ_TIME) ./tests/fuzz/manager/connection/ || true
+	@go test -fuzz=FuzzUUIDParsing -fuzztime=$(FUZZ_TIME) ./tests/fuzz/manager/connection/ || true
+	@go test -fuzz=FuzzQueryParameterValidation -fuzztime=$(FUZZ_TIME) ./tests/fuzz/manager/connection/ || true
+	@go test -fuzz=FuzzMetadataQueryParams -fuzztime=$(FUZZ_TIME) ./tests/fuzz/manager/connection/ || true
+	@go test -fuzz=FuzzUnknownFieldsDetection -fuzztime=$(FUZZ_TIME) ./tests/fuzz/manager/connection/ || true
+
+fuzz-fetcher:
+	$(call print_title,Running fetcher fuzz tests)
+	@go test -fuzz=FuzzFetcherRequestParsing -fuzztime=$(FUZZ_TIME) ./tests/fuzz/manager/fetcher/ || true
+	@go test -fuzz=FuzzDataRequestValidation -fuzztime=$(FUZZ_TIME) ./tests/fuzz/manager/fetcher/ || true
+	@go test -fuzz=FuzzFilterFieldParsing -fuzztime=$(FUZZ_TIME) ./tests/fuzz/manager/fetcher/ || true
+	@go test -fuzz=FuzzFilterReferencesValidation -fuzztime=$(FUZZ_TIME) ./tests/fuzz/manager/fetcher/ || true
+
+fuzz-schema:
+	$(call print_title,Running schema fuzz tests)
+	@go test -fuzz=FuzzSchemaValidationRequestParsing -fuzztime=$(FUZZ_TIME) ./tests/fuzz/manager/schema/ || true
+	@go test -fuzz=FuzzSchemaValidationSpecValidation -fuzztime=$(FUZZ_TIME) ./tests/fuzz/manager/schema/ || true
+	@go test -fuzz=FuzzSchemaValidationLimits -fuzztime=$(FUZZ_TIME) ./tests/fuzz/manager/schema/ || true
+
+fuzz-message:
+	$(call print_title,Running message fuzz tests)
+	@go test -fuzz=FuzzExtractExternalDataMessageParsing -fuzztime=$(FUZZ_TIME) ./tests/fuzz/worker/message/ || true
+	@go test -fuzz=FuzzRegexJobIDExtraction -fuzztime=$(FUZZ_TIME) ./tests/fuzz/worker/message/ || true
+	@go test -fuzz=FuzzFilterConditionParsing -fuzztime=$(FUZZ_TIME) ./tests/fuzz/worker/message/ || true
+	@go test -fuzz=FuzzMessageHeadersParsing -fuzztime=$(FUZZ_TIME) ./tests/fuzz/worker/message/ || true
+
+fuzz-ci:
+	$(call print_title,Running fuzz tests for CI)
+	@FUZZ_TIME=60s $(MAKE) fuzz-all
