@@ -3,6 +3,7 @@ package sqlserver
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/model/datasource"
@@ -14,6 +15,9 @@ import (
 	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
 	"go.opentelemetry.io/otel/attribute"
 )
+
+// DefaultSchema is the default SQL Server schema name
+const DefaultSchema = "dbo"
 
 // DataSourceConfigSQLServer represents a SQL Server-specific data source configuration.
 // It embeds DataSourceConfig and adds SQL Server-specific fields and repository.
@@ -97,12 +101,34 @@ func (ds *DataSourceConfigSQLServer) Query(ctx context.Context, tables map[strin
 }
 
 // getTableFilters extracts filters for a specific table.
+// Supports matching with or without schema prefix for flexibility.
 func getTableFilters(databaseFilters map[string]map[string]job.FilterCondition, tableName string) map[string]job.FilterCondition {
 	if databaseFilters == nil {
 		return nil
 	}
 
-	return databaseFilters[tableName]
+	// 1. Try exact match first
+	if filters, exists := databaseFilters[tableName]; exists {
+		return filters
+	}
+
+	// 2. If tableName has schema prefix, try without schema
+	if strings.Contains(tableName, ".") {
+		_, unqualifiedName := datasource.SplitSchemaTable(tableName)
+		if filters, exists := databaseFilters[unqualifiedName]; exists {
+			return filters
+		}
+	}
+
+	// 3. If tableName has no schema prefix, try with default schema (dbo)
+	if !strings.Contains(tableName, ".") {
+		qualifiedName := DefaultSchema + "." + tableName
+		if filters, exists := databaseFilters[qualifiedName]; exists {
+			return filters
+		}
+	}
+
+	return nil
 }
 
 // GetSchemaInfo returns the schema information for SQL Server.

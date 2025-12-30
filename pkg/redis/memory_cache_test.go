@@ -178,3 +178,150 @@ func TestInMemoryCache_NegativeTTL(t *testing.T) {
 
 	assert.Equal(t, DefaultCacheTTL, cache.ttl)
 }
+
+func TestInMemoryCache_Set_UsesDefaultTTL(t *testing.T) {
+	cache := NewInMemoryCache[testStruct](10*time.Minute, &mockLogger{})
+	defer cache.Close()
+
+	ctx := context.Background()
+
+	// Set with 0 TTL should use cache's default
+	err := cache.Set(ctx, "key1", testStruct{ID: "1"}, 0)
+	require.NoError(t, err)
+
+	// Get should succeed
+	result, found, err := cache.Get(ctx, "key1")
+	assert.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, "1", result.ID)
+}
+
+func TestInMemoryCache_Set_NegativeTTL_UsesDefault(t *testing.T) {
+	cache := NewInMemoryCache[testStruct](10*time.Minute, &mockLogger{})
+	defer cache.Close()
+
+	ctx := context.Background()
+
+	// Set with negative TTL should use cache's default
+	err := cache.Set(ctx, "key1", testStruct{ID: "1"}, -5*time.Minute)
+	require.NoError(t, err)
+
+	// Get should succeed
+	result, found, err := cache.Get(ctx, "key1")
+	assert.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, "1", result.ID)
+}
+
+func TestInMemoryCache_Get_Expired(t *testing.T) {
+	cache := NewInMemoryCache[testStruct](time.Minute, &mockLogger{})
+	defer cache.Close()
+
+	ctx := context.Background()
+
+	// Manually insert an expired entry
+	cache.mu.Lock()
+	cache.entries["expired_key"] = &cacheEntry[testStruct]{
+		value:     testStruct{ID: "expired"},
+		expiresAt: time.Now().UTC().Add(-1 * time.Hour), // Already expired
+	}
+	cache.mu.Unlock()
+
+	// Get should report not found for expired entry
+	result, found, err := cache.Get(ctx, "expired_key")
+	assert.NoError(t, err)
+	assert.False(t, found)
+	assert.Equal(t, testStruct{}, result)
+}
+
+func TestInMemoryCache_MultipleTypes(t *testing.T) {
+	t.Run("string type", func(t *testing.T) {
+		cache := NewInMemoryCache[string](time.Minute, &mockLogger{})
+		defer cache.Close()
+
+		ctx := context.Background()
+
+		err := cache.Set(ctx, "key1", "hello world", 0)
+		require.NoError(t, err)
+
+		result, found, err := cache.Get(ctx, "key1")
+		assert.NoError(t, err)
+		assert.True(t, found)
+		assert.Equal(t, "hello world", result)
+	})
+
+	t.Run("int type", func(t *testing.T) {
+		cache := NewInMemoryCache[int](time.Minute, &mockLogger{})
+		defer cache.Close()
+
+		ctx := context.Background()
+
+		err := cache.Set(ctx, "key1", 42, 0)
+		require.NoError(t, err)
+
+		result, found, err := cache.Get(ctx, "key1")
+		assert.NoError(t, err)
+		assert.True(t, found)
+		assert.Equal(t, 42, result)
+	})
+
+	t.Run("slice type", func(t *testing.T) {
+		cache := NewInMemoryCache[[]string](time.Minute, &mockLogger{})
+		defer cache.Close()
+
+		ctx := context.Background()
+
+		expected := []string{"a", "b", "c"}
+		err := cache.Set(ctx, "key1", expected, 0)
+		require.NoError(t, err)
+
+		result, found, err := cache.Get(ctx, "key1")
+		assert.NoError(t, err)
+		assert.True(t, found)
+		assert.Equal(t, expected, result)
+	})
+}
+
+func TestInMemoryCache_DeleteNonExistentKey(t *testing.T) {
+	cache := NewInMemoryCache[testStruct](time.Minute, &mockLogger{})
+	defer cache.Close()
+
+	ctx := context.Background()
+
+	// Delete non-existent key should not error
+	err := cache.Delete(ctx, "nonexistent")
+	assert.NoError(t, err)
+}
+
+func TestInMemoryCache_ClearEmpty(t *testing.T) {
+	cache := NewInMemoryCache[testStruct](time.Minute, &mockLogger{})
+	defer cache.Close()
+
+	ctx := context.Background()
+
+	// Clear empty cache should not error
+	err := cache.Clear(ctx)
+	assert.NoError(t, err)
+}
+
+func TestInMemoryCache_UpdateExistingKey(t *testing.T) {
+	cache := NewInMemoryCache[testStruct](time.Minute, &mockLogger{})
+	defer cache.Close()
+
+	ctx := context.Background()
+	key := "item1"
+
+	// Set initial value
+	err := cache.Set(ctx, key, testStruct{ID: "1", Name: "Original"}, 0)
+	require.NoError(t, err)
+
+	// Update with new value
+	err = cache.Set(ctx, key, testStruct{ID: "1", Name: "Updated"}, 0)
+	require.NoError(t, err)
+
+	// Get should return updated value
+	result, found, err := cache.Get(ctx, key)
+	assert.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, "Updated", result.Name)
+}

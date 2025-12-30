@@ -13,9 +13,11 @@ import (
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/model"
+	"github.com/LerianStudio/fetcher/pkg/mongodb"
 	http "github.com/LerianStudio/fetcher/pkg/net/http"
 	libLog "github.com/LerianStudio/lib-commons/v2/commons/log"
 	libMongo "github.com/LerianStudio/lib-commons/v2/commons/mongo"
+	"github.com/golang/mock/gomock"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/tryvium-travels/memongo"
@@ -131,14 +133,6 @@ func stubConnectionSpanAttributes(t *testing.T, retErr error) {
 	})
 }
 
-type fakeConnectionMongoConnection struct {
-	err error
-}
-
-func (f *fakeConnectionMongoConnection) GetDB(ctx context.Context) (*mongo.Client, error) {
-	return nil, f.err
-}
-
 func TestConnectionMongoDBRepository_Create(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		repo := newConnectionRepository(t)
@@ -192,8 +186,16 @@ func TestConnectionMongoDBRepository_Create(t *testing.T) {
 	})
 
 	t.Run("database error surfaces", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		mockConn := mongodb.NewMockMongoClientProvider(ctrl)
+		mockConn.EXPECT().
+			GetDB(gomock.Any()).
+			Return(nil, errors.New("db down"))
+
 		repo := &ConnectionMongoDBRepository{
-			connection: &fakeConnectionMongoConnection{err: errors.New("db down")},
+			connection: mockConn,
 			Database:   connectionTestDatabaseName,
 		}
 		if _, err := repo.Create(context.Background(), connectionFixture()); err == nil {
@@ -304,8 +306,16 @@ func TestConnectionMongoDBRepository_Update(t *testing.T) {
 	})
 
 	t.Run("database error surfaces", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		mockConn := mongodb.NewMockMongoClientProvider(ctrl)
+		mockConn.EXPECT().
+			GetDB(gomock.Any()).
+			Return(nil, errors.New("db down"))
+
 		repo := &ConnectionMongoDBRepository{
-			connection: &fakeConnectionMongoConnection{err: errors.New("db down")},
+			connection: mockConn,
 			Database:   connectionTestDatabaseName,
 		}
 		conn := connectionFixture()
@@ -362,8 +372,16 @@ func TestConnectionMongoDBRepository_Delete(t *testing.T) {
 	})
 
 	t.Run("database error surfaces", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		mockConn := mongodb.NewMockMongoClientProvider(ctrl)
+		mockConn.EXPECT().
+			GetDB(gomock.Any()).
+			Return(nil, errors.New("db down"))
+
 		repo := &ConnectionMongoDBRepository{
-			connection: &fakeConnectionMongoConnection{err: errors.New("db down")},
+			connection: mockConn,
 			Database:   connectionTestDatabaseName,
 		}
 		if err := repo.Delete(context.Background(), uuid.New(), uuid.New(), time.Now()); err == nil {
@@ -405,8 +423,16 @@ func TestConnectionMongoDBRepository_FindByID(t *testing.T) {
 	})
 
 	t.Run("database error surfaces", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		mockConn := mongodb.NewMockMongoClientProvider(ctrl)
+		mockConn.EXPECT().
+			GetDB(gomock.Any()).
+			Return(nil, errors.New("db down"))
+
 		repo := &ConnectionMongoDBRepository{
-			connection: &fakeConnectionMongoConnection{err: errors.New("db down")},
+			connection: mockConn,
 			Database:   connectionTestDatabaseName,
 		}
 		if _, err := repo.FindByID(context.Background(), uuid.New(), uuid.New()); err == nil {
@@ -448,8 +474,16 @@ func TestConnectionMongoDBRepository_FindByOrganizationAndName(t *testing.T) {
 	})
 
 	t.Run("database error surfaces", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		mockConn := mongodb.NewMockMongoClientProvider(ctrl)
+		mockConn.EXPECT().
+			GetDB(gomock.Any()).
+			Return(nil, errors.New("db down"))
+
 		repo := &ConnectionMongoDBRepository{
-			connection: &fakeConnectionMongoConnection{err: errors.New("db down")},
+			connection: mockConn,
 			Database:   connectionTestDatabaseName,
 		}
 		if _, err := repo.FindByOrganizationAndName(context.Background(), uuid.New(), "name"); err == nil {
@@ -503,8 +537,16 @@ func TestConnectionMongoDBRepository_FindByOrganizationAndDatabaseName(t *testin
 	})
 
 	t.Run("database error surfaces", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		mockConn := mongodb.NewMockMongoClientProvider(ctrl)
+		mockConn.EXPECT().
+			GetDB(gomock.Any()).
+			Return(nil, errors.New("db down"))
+
 		repo := &ConnectionMongoDBRepository{
-			connection: &fakeConnectionMongoConnection{err: errors.New("db down")},
+			connection: mockConn,
 			Database:   connectionTestDatabaseName,
 		}
 		if _, err := repo.FindByOrganizationAndDatabaseName(context.Background(), uuid.New(), "db"); err == nil {
@@ -640,8 +682,16 @@ func TestConnectionMongoDBRepository_FindByConfigNames(t *testing.T) {
 	})
 
 	t.Run("database error surfaces", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		mockConn := mongodb.NewMockMongoClientProvider(ctrl)
+		mockConn.EXPECT().
+			GetDB(gomock.Any()).
+			Return(nil, errors.New("db down"))
+
 		repo := &ConnectionMongoDBRepository{
-			connection: &fakeConnectionMongoConnection{err: errors.New("db down")},
+			connection: mockConn,
 			Database:   connectionTestDatabaseName,
 		}
 		if _, err := repo.FindByConfigNames(context.Background(), uuid.New(), []string{"name"}); err == nil {
@@ -670,8 +720,16 @@ func TestConnectionMongoDBRepository_EnsureIndexes(t *testing.T) {
 	})
 
 	t.Run("database error surfaces", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		mockConn := mongodb.NewMockMongoClientProvider(ctrl)
+		mockConn.EXPECT().
+			GetDB(gomock.Any()).
+			Return(nil, errors.New("db down"))
+
 		repo := &ConnectionMongoDBRepository{
-			connection: &fakeConnectionMongoConnection{err: errors.New("db down")},
+			connection: mockConn,
 			Database:   connectionTestDatabaseName,
 		}
 		if err := repo.EnsureIndexes(context.Background()); err == nil {
@@ -694,8 +752,16 @@ func TestConnectionMongoDBRepository_DropIndexes(t *testing.T) {
 	})
 
 	t.Run("database error surfaces", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		mockConn := mongodb.NewMockMongoClientProvider(ctrl)
+		mockConn.EXPECT().
+			GetDB(gomock.Any()).
+			Return(nil, errors.New("db down"))
+
 		repo := &ConnectionMongoDBRepository{
-			connection: &fakeConnectionMongoConnection{err: errors.New("db down")},
+			connection: mockConn,
 			Database:   connectionTestDatabaseName,
 		}
 		if err := repo.DropIndexes(context.Background()); err == nil {
@@ -805,8 +871,16 @@ func TestConnectionMongoDBRepository_List(t *testing.T) {
 	})
 
 	t.Run("database error surfaces", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		mockConn := mongodb.NewMockMongoClientProvider(ctrl)
+		mockConn.EXPECT().
+			GetDB(gomock.Any()).
+			Return(nil, errors.New("db down"))
+
 		repo := &ConnectionMongoDBRepository{
-			connection: &fakeConnectionMongoConnection{err: errors.New("db down")},
+			connection: mockConn,
 			Database:   connectionTestDatabaseName,
 		}
 		if _, err := repo.List(context.Background(), uuid.New(), http.QueryHeader{}); err == nil {

@@ -1285,3 +1285,505 @@ func TestConnectionHandler_ListConnections_HandlerDirectly_MissingOrgHeader(t *t
 
 	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
 }
+
+// ============================================================================
+// ValidateSchema Handler Tests
+// ============================================================================
+
+// validSchemaValidationRequest returns a valid SchemaValidationRequest payload.
+func validSchemaValidationRequest() string {
+	return `{
+		"mappedFields": {
+			"ds1": {
+				"table1": ["field1", "field2"],
+				"table2": ["field3"]
+			}
+		}
+	}`
+}
+
+func TestConnectionHandler_ValidateSchema_Success(t *testing.T) {
+	app := setupConnectionTestApp()
+	orgID := uuid.New()
+
+	app.Post("/v1/management/connections/validate-schema", func(c *fiber.Ctx) error {
+		ctx := c.UserContext()
+		libCommons.NewTrackingFromContext(ctx)
+
+		_, err := httpUtils.GetOrganizationID(c)
+		if err != nil {
+			return httpUtils.WithError(c, err)
+		}
+
+		var request model.SchemaValidationRequest
+		if errParser := c.BodyParser(&request); errParser != nil {
+			return httpUtils.WithError(c, pkg.ValidationError{
+				EntityType: "schema",
+				Code:       constant.ErrBadRequest.Error(),
+				Title:      "Invalid payload",
+				Message:    "unable to parse request body",
+				Err:        errParser,
+			})
+		}
+
+		// Simulate successful validation
+		return httpUtils.OK(c, model.NewSuccessResponse())
+	})
+
+	req := httptest.NewRequest("POST", "/v1/management/connections/validate-schema", strings.NewReader(validSchemaValidationRequest()))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Organization-Id", orgID.String())
+
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var body model.SchemaValidationResponse
+	err = json.NewDecoder(resp.Body).Decode(&body)
+	require.NoError(t, err)
+	assert.Equal(t, "success", body.Status)
+}
+
+func TestConnectionHandler_ValidateSchema_Failure_TableNotFound(t *testing.T) {
+	app := setupConnectionTestApp()
+	orgID := uuid.New()
+
+	app.Post("/v1/management/connections/validate-schema", func(c *fiber.Ctx) error {
+		ctx := c.UserContext()
+		libCommons.NewTrackingFromContext(ctx)
+
+		_, err := httpUtils.GetOrganizationID(c)
+		if err != nil {
+			return httpUtils.WithError(c, err)
+		}
+
+		var request model.SchemaValidationRequest
+		if errParser := c.BodyParser(&request); errParser != nil {
+			return httpUtils.WithError(c, pkg.ValidationError{
+				EntityType: "schema",
+				Code:       constant.ErrBadRequest.Error(),
+				Title:      "Invalid payload",
+				Message:    "unable to parse request body",
+				Err:        errParser,
+			})
+		}
+
+		// Simulate validation failure - table not found
+		errors := []model.SchemaValidationError{
+			{
+				Type:         model.ErrTypeTableNotFound,
+				DataSourceID: "ds1",
+				Table:        "unknown_table",
+			},
+		}
+		return httpUtils.OK(c, model.NewFailureResponse(errors))
+	})
+
+	payload := `{
+		"mappedFields": {
+			"ds1": {
+				"unknown_table": ["field1"]
+			}
+		}
+	}`
+
+	req := httptest.NewRequest("POST", "/v1/management/connections/validate-schema", strings.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Organization-Id", orgID.String())
+
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var body model.SchemaValidationResponse
+	err = json.NewDecoder(resp.Body).Decode(&body)
+	require.NoError(t, err)
+	assert.Equal(t, "failure", body.Status)
+	assert.Len(t, body.Errors, 1)
+	assert.Equal(t, model.ErrTypeTableNotFound, body.Errors[0].Type)
+}
+
+func TestConnectionHandler_ValidateSchema_Failure_FieldNotFound(t *testing.T) {
+	app := setupConnectionTestApp()
+	orgID := uuid.New()
+
+	app.Post("/v1/management/connections/validate-schema", func(c *fiber.Ctx) error {
+		ctx := c.UserContext()
+		libCommons.NewTrackingFromContext(ctx)
+
+		_, err := httpUtils.GetOrganizationID(c)
+		if err != nil {
+			return httpUtils.WithError(c, err)
+		}
+
+		var request model.SchemaValidationRequest
+		if errParser := c.BodyParser(&request); errParser != nil {
+			return httpUtils.WithError(c, pkg.ValidationError{
+				EntityType: "schema",
+				Code:       constant.ErrBadRequest.Error(),
+				Title:      "Invalid payload",
+				Message:    "unable to parse request body",
+				Err:        errParser,
+			})
+		}
+
+		// Simulate validation failure - field not found
+		errors := []model.SchemaValidationError{
+			{
+				Type:         model.ErrTypeFieldNotFound,
+				DataSourceID: "ds1",
+				Table:        "table1",
+				Field:        "unknown_field",
+			},
+		}
+		return httpUtils.OK(c, model.NewFailureResponse(errors))
+	})
+
+	payload := `{
+		"mappedFields": {
+			"ds1": {
+				"table1": ["unknown_field"]
+			}
+		}
+	}`
+
+	req := httptest.NewRequest("POST", "/v1/management/connections/validate-schema", strings.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Organization-Id", orgID.String())
+
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var body model.SchemaValidationResponse
+	err = json.NewDecoder(resp.Body).Decode(&body)
+	require.NoError(t, err)
+	assert.Equal(t, "failure", body.Status)
+	assert.Len(t, body.Errors, 1)
+	assert.Equal(t, model.ErrTypeFieldNotFound, body.Errors[0].Type)
+}
+
+func TestConnectionHandler_ValidateSchema_Failure_DataSourceNotFound(t *testing.T) {
+	app := setupConnectionTestApp()
+	orgID := uuid.New()
+
+	app.Post("/v1/management/connections/validate-schema", func(c *fiber.Ctx) error {
+		ctx := c.UserContext()
+		libCommons.NewTrackingFromContext(ctx)
+
+		_, err := httpUtils.GetOrganizationID(c)
+		if err != nil {
+			return httpUtils.WithError(c, err)
+		}
+
+		var request model.SchemaValidationRequest
+		if errParser := c.BodyParser(&request); errParser != nil {
+			return httpUtils.WithError(c, pkg.ValidationError{
+				EntityType: "schema",
+				Code:       constant.ErrBadRequest.Error(),
+				Title:      "Invalid payload",
+				Message:    "unable to parse request body",
+				Err:        errParser,
+			})
+		}
+
+		// Simulate validation failure - datasource not found
+		errors := []model.SchemaValidationError{
+			model.NewDataSourceNotFoundError("unknown_ds"),
+		}
+		return httpUtils.OK(c, model.NewFailureResponse(errors))
+	})
+
+	payload := `{
+		"mappedFields": {
+			"unknown_ds": {
+				"table1": ["field1"]
+			}
+		}
+	}`
+
+	req := httptest.NewRequest("POST", "/v1/management/connections/validate-schema", strings.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Organization-Id", orgID.String())
+
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var body model.SchemaValidationResponse
+	err = json.NewDecoder(resp.Body).Decode(&body)
+	require.NoError(t, err)
+	assert.Equal(t, "failure", body.Status)
+	assert.Len(t, body.Errors, 1)
+	assert.Equal(t, model.ErrTypeDataSourceNotFound, body.Errors[0].Type)
+}
+
+func TestConnectionHandler_ValidateSchema_Failure_DataSourceDown(t *testing.T) {
+	app := setupConnectionTestApp()
+	orgID := uuid.New()
+
+	app.Post("/v1/management/connections/validate-schema", func(c *fiber.Ctx) error {
+		ctx := c.UserContext()
+		libCommons.NewTrackingFromContext(ctx)
+
+		_, err := httpUtils.GetOrganizationID(c)
+		if err != nil {
+			return httpUtils.WithError(c, err)
+		}
+
+		var request model.SchemaValidationRequest
+		if errParser := c.BodyParser(&request); errParser != nil {
+			return httpUtils.WithError(c, pkg.ValidationError{
+				EntityType: "schema",
+				Code:       constant.ErrBadRequest.Error(),
+				Title:      "Invalid payload",
+				Message:    "unable to parse request body",
+				Err:        errParser,
+			})
+		}
+
+		// Simulate validation failure - datasource down
+		errors := []model.SchemaValidationError{
+			model.NewDataSourceDownError("ds1"),
+		}
+		return httpUtils.OK(c, model.NewFailureResponse(errors))
+	})
+
+	req := httptest.NewRequest("POST", "/v1/management/connections/validate-schema", strings.NewReader(validSchemaValidationRequest()))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Organization-Id", orgID.String())
+
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var body model.SchemaValidationResponse
+	err = json.NewDecoder(resp.Body).Decode(&body)
+	require.NoError(t, err)
+	assert.Equal(t, "failure", body.Status)
+	assert.Len(t, body.Errors, 1)
+	assert.Equal(t, model.ErrTypeDataSourceDown, body.Errors[0].Type)
+}
+
+func TestConnectionHandler_ValidateSchema_InvalidJSON(t *testing.T) {
+	app := setupConnectionTestApp()
+
+	handler := &ConnectionHandler{ValidateSchemaQuery: nil}
+	app.Post("/v1/management/connections/validate-schema", handler.ValidateSchema)
+
+	tests := []struct {
+		name     string
+		body     string
+		wantCode int
+	}{
+		{
+			name:     "invalid JSON - missing closing brace",
+			body:     `{"mappedFields": {"ds1": {"t1": ["f1"]}`,
+			wantCode: fiber.StatusBadRequest,
+		},
+		{
+			name:     "invalid JSON - syntax error",
+			body:     `{invalid}`,
+			wantCode: fiber.StatusBadRequest,
+		},
+		{
+			name:     "invalid JSON - empty string",
+			body:     ``,
+			wantCode: fiber.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("POST", "/v1/management/connections/validate-schema", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("X-Organization-Id", uuid.New().String())
+
+			resp, err := app.Test(req)
+			require.NoError(t, err)
+			defer resp.Body.Close()
+
+			assert.Equal(t, tt.wantCode, resp.StatusCode)
+		})
+	}
+}
+
+func TestConnectionHandler_ValidateSchema_MissingOrgHeader(t *testing.T) {
+	app := setupConnectionTestApp()
+
+	handler := &ConnectionHandler{ValidateSchemaQuery: nil}
+	app.Post("/v1/management/connections/validate-schema", handler.ValidateSchema)
+
+	tests := []struct {
+		name      string
+		orgHeader string
+		setHeader bool
+		wantCode  int
+	}{
+		{
+			name:      "missing X-Organization-Id header",
+			orgHeader: "",
+			setHeader: false,
+			wantCode:  fiber.StatusBadRequest,
+		},
+		{
+			name:      "invalid UUID format",
+			orgHeader: "not-a-uuid",
+			setHeader: true,
+			wantCode:  fiber.StatusBadRequest,
+		},
+		{
+			name:      "whitespace only header",
+			orgHeader: "   ",
+			setHeader: true,
+			wantCode:  fiber.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("POST", "/v1/management/connections/validate-schema", strings.NewReader(validSchemaValidationRequest()))
+			req.Header.Set("Content-Type", "application/json")
+
+			if tt.setHeader {
+				req.Header.Set("X-Organization-Id", tt.orgHeader)
+			}
+
+			resp, err := app.Test(req)
+			require.NoError(t, err)
+			defer resp.Body.Close()
+
+			assert.Equal(t, tt.wantCode, resp.StatusCode)
+		})
+	}
+}
+
+func TestConnectionHandler_ValidateSchema_InternalError(t *testing.T) {
+	app := setupConnectionTestApp()
+	orgID := uuid.New()
+
+	app.Post("/v1/management/connections/validate-schema", func(c *fiber.Ctx) error {
+		ctx := c.UserContext()
+		libCommons.NewTrackingFromContext(ctx)
+
+		_, err := httpUtils.GetOrganizationID(c)
+		if err != nil {
+			return httpUtils.WithError(c, err)
+		}
+
+		var request model.SchemaValidationRequest
+		if errParser := c.BodyParser(&request); errParser != nil {
+			return httpUtils.WithError(c, pkg.ValidationError{
+				EntityType: "schema",
+				Code:       constant.ErrBadRequest.Error(),
+				Title:      "Invalid payload",
+				Message:    "unable to parse request body",
+				Err:        errParser,
+			})
+		}
+
+		// Simulate internal error
+		return httpUtils.WithError(c, pkg.InternalServerError{
+			EntityType: "schema",
+			Code:       constant.ErrInternalServer.Error(),
+			Title:      "Internal Server Error",
+			Message:    "database connection failed",
+		})
+	})
+
+	req := httptest.NewRequest("POST", "/v1/management/connections/validate-schema", strings.NewReader(validSchemaValidationRequest()))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Organization-Id", orgID.String())
+
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, fiber.StatusInternalServerError, resp.StatusCode)
+}
+
+func TestConnectionHandler_ValidateSchema_MultipleDataSources(t *testing.T) {
+	app := setupConnectionTestApp()
+	orgID := uuid.New()
+
+	app.Post("/v1/management/connections/validate-schema", func(c *fiber.Ctx) error {
+		ctx := c.UserContext()
+		libCommons.NewTrackingFromContext(ctx)
+
+		_, err := httpUtils.GetOrganizationID(c)
+		if err != nil {
+			return httpUtils.WithError(c, err)
+		}
+
+		var request model.SchemaValidationRequest
+		if errParser := c.BodyParser(&request); errParser != nil {
+			return httpUtils.WithError(c, pkg.ValidationError{
+				EntityType: "schema",
+				Code:       constant.ErrBadRequest.Error(),
+				Title:      "Invalid payload",
+				Message:    "unable to parse request body",
+				Err:        errParser,
+			})
+		}
+
+		// Verify multiple datasources were parsed
+		if len(request.MappedFields) != 3 {
+			return httpUtils.WithError(c, pkg.ValidationError{
+				EntityType: "schema",
+				Code:       constant.ErrBadRequest.Error(),
+				Title:      "Invalid payload",
+				Message:    "expected 3 datasources",
+			})
+		}
+
+		return httpUtils.OK(c, model.NewSuccessResponse())
+	})
+
+	payload := `{
+		"mappedFields": {
+			"ds1": {"table1": ["field1"]},
+			"ds2": {"table2": ["field2"]},
+			"ds3": {"table3": ["field3"]}
+		}
+	}`
+
+	req := httptest.NewRequest("POST", "/v1/management/connections/validate-schema", strings.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Organization-Id", orgID.String())
+
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+}
+
+func TestConnectionHandler_ValidateSchema_HandlerDirectly_InvalidJSON(t *testing.T) {
+	app := setupConnectionTestApp()
+
+	handler := &ConnectionHandler{ValidateSchemaQuery: nil}
+	app.Post("/v1/management/connections/validate-schema", handler.ValidateSchema)
+
+	req := httptest.NewRequest("POST", "/v1/management/connections/validate-schema", strings.NewReader(`{broken`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Organization-Id", uuid.New().String())
+
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+
+	body, _ := io.ReadAll(resp.Body)
+	assert.Contains(t, string(body), "code")
+}

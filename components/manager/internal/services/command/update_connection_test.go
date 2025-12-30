@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/LerianStudio/fetcher/pkg"
+	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 	jobRepo "github.com/LerianStudio/fetcher/pkg/mongodb/job"
@@ -55,7 +56,11 @@ func TestUpdateConnection_Execute_Success(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
-	mockCrypto := &mockCryptor{}
+	mockCrypto := crypto.NewMockCryptor(ctrl)
+	mockCrypto.EXPECT().
+		Encrypt(gomock.Any(), gomock.Any()).
+		Return("encrypted-newpassword", "v1", nil).
+		AnyTimes()
 
 	svc := NewUpdateConnection(mockConnRepo, mockJobRepo, mockCrypto)
 
@@ -111,7 +116,11 @@ func TestUpdateConnection_Execute_NotFoundError(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
-	mockCrypto := &mockCryptor{}
+	mockCrypto := crypto.NewMockCryptor(ctrl)
+	mockCrypto.EXPECT().
+		Encrypt(gomock.Any(), gomock.Any()).
+		Return("encrypted-newpassword", "v1", nil).
+		AnyTimes()
 
 	svc := NewUpdateConnection(mockConnRepo, mockJobRepo, mockCrypto)
 
@@ -149,7 +158,11 @@ func TestUpdateConnection_Execute_FindByIDError(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
-	mockCrypto := &mockCryptor{}
+	mockCrypto := crypto.NewMockCryptor(ctrl)
+	mockCrypto.EXPECT().
+		Encrypt(gomock.Any(), gomock.Any()).
+		Return("encrypted-newpassword", "v1", nil).
+		AnyTimes()
 
 	svc := NewUpdateConnection(mockConnRepo, mockJobRepo, mockCrypto)
 
@@ -187,7 +200,11 @@ func TestUpdateConnection_Execute_ActiveJobError(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
-	mockCrypto := &mockCryptor{}
+	mockCrypto := crypto.NewMockCryptor(ctrl)
+	mockCrypto.EXPECT().
+		Encrypt(gomock.Any(), gomock.Any()).
+		Return("encrypted-newpassword", "v1", nil).
+		AnyTimes()
 
 	svc := NewUpdateConnection(mockConnRepo, mockJobRepo, mockCrypto)
 
@@ -231,7 +248,11 @@ func TestUpdateConnection_Execute_ExistsRunningJobError(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
-	mockCrypto := &mockCryptor{}
+	mockCrypto := crypto.NewMockCryptor(ctrl)
+	mockCrypto.EXPECT().
+		Encrypt(gomock.Any(), gomock.Any()).
+		Return("encrypted-newpassword", "v1", nil).
+		AnyTimes()
 
 	svc := NewUpdateConnection(mockConnRepo, mockJobRepo, mockCrypto)
 
@@ -275,7 +296,11 @@ func TestUpdateConnection_Execute_UpdateError(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
-	mockCrypto := &mockCryptor{}
+	mockCrypto := crypto.NewMockCryptor(ctrl)
+	mockCrypto.EXPECT().
+		Encrypt(gomock.Any(), gomock.Any()).
+		Return("encrypted-newpassword", "v1", nil).
+		AnyTimes()
 
 	svc := NewUpdateConnection(mockConnRepo, mockJobRepo, mockCrypto)
 
@@ -324,7 +349,11 @@ func TestUpdateConnection_Execute_UpdateReturnsNil(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
-	mockCrypto := &mockCryptor{}
+	mockCrypto := crypto.NewMockCryptor(ctrl)
+	mockCrypto.EXPECT().
+		Encrypt(gomock.Any(), gomock.Any()).
+		Return("encrypted-newpassword", "v1", nil).
+		AnyTimes()
 
 	svc := NewUpdateConnection(mockConnRepo, mockJobRepo, mockCrypto)
 
@@ -375,11 +404,10 @@ func TestUpdateConnection_Execute_EncryptionError(t *testing.T) {
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 
 	encryptionError := errors.New("encryption key invalid")
-	mockCrypto := &mockCryptor{
-		encryptFunc: func(ctx context.Context, plain string) (string, string, error) {
-			return "", "", encryptionError
-		},
-	}
+	mockCrypto := crypto.NewMockCryptor(ctrl)
+	mockCrypto.EXPECT().
+		Encrypt(gomock.Any(), gomock.Any()).
+		Return("", "", encryptionError)
 
 	svc := NewUpdateConnection(mockConnRepo, mockJobRepo, mockCrypto)
 
@@ -422,7 +450,11 @@ func TestUpdateConnection_Execute_PartialUpdate(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
-	mockCrypto := &mockCryptor{}
+	mockCrypto := crypto.NewMockCryptor(ctrl)
+	mockCrypto.EXPECT().
+		Encrypt(gomock.Any(), gomock.Any()).
+		Return("encrypted-newpassword", "v1", nil).
+		AnyTimes()
 
 	svc := NewUpdateConnection(mockConnRepo, mockJobRepo, mockCrypto)
 
@@ -487,7 +519,11 @@ func TestUpdateConnection_Execute_WithSSL(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
-	mockCrypto := &mockCryptor{}
+	mockCrypto := crypto.NewMockCryptor(ctrl)
+	mockCrypto.EXPECT().
+		Encrypt(gomock.Any(), gomock.Any()).
+		Return("encrypted-securepassword", "v1", nil).
+		AnyTimes()
 
 	svc := NewUpdateConnection(mockConnRepo, mockJobRepo, mockCrypto)
 
@@ -565,7 +601,11 @@ func TestUpdateConnection_Execute_InvalidTypeError(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
-	mockCrypto := &mockCryptor{}
+	mockCrypto := crypto.NewMockCryptor(ctrl)
+	mockCrypto.EXPECT().
+		Encrypt(gomock.Any(), gomock.Any()).
+		Return("encrypted-testpassword", "v1", nil).
+		AnyTimes()
 
 	svc := NewUpdateConnection(mockConnRepo, mockJobRepo, mockCrypto)
 
@@ -617,7 +657,7 @@ func TestNewUpdateConnection(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
-	mockCrypto := &mockCryptor{}
+	mockCrypto := crypto.NewMockCryptor(ctrl)
 
 	svc := NewUpdateConnection(mockConnRepo, mockJobRepo, mockCrypto)
 
@@ -642,16 +682,19 @@ func TestNewUpdateConnection(t *testing.T) {
 func TestUpdateConnection_Execute_TableDriven(t *testing.T) {
 	tests := []struct {
 		name           string
-		setupMocks     func(*connRepo.MockRepository, *jobRepo.MockRepository, uuid.UUID, uuid.UUID, *model.Connection)
+		setupMocks     func(*connRepo.MockRepository, *jobRepo.MockRepository, *crypto.MockCryptor, uuid.UUID, uuid.UUID, *model.Connection)
 		input          model.ConnectionInput
-		mockCrypto     *mockCryptor
 		wantErr        bool
 		wantStatusCode int // 0 means no status code check
 		validateResult func(*testing.T, *model.Connection)
 	}{
 		{
 			name: "successful update with all fields",
-			setupMocks: func(connMock *connRepo.MockRepository, jobMock *jobRepo.MockRepository, orgID, connID uuid.UUID, existing *model.Connection) {
+			setupMocks: func(connMock *connRepo.MockRepository, jobMock *jobRepo.MockRepository, cryptoMock *crypto.MockCryptor, orgID, connID uuid.UUID, existing *model.Connection) {
+				cryptoMock.EXPECT().
+					Encrypt(gomock.Any(), gomock.Any()).
+					Return("encrypted-newpassword", "v1", nil).
+					AnyTimes()
 				connMock.EXPECT().
 					FindByID(gomock.Any(), connID, orgID).
 					Return(existing, nil)
@@ -673,8 +716,7 @@ func TestUpdateConnection_Execute_TableDriven(t *testing.T) {
 				Username:     "newuser",
 				Password:     "newpassword",
 			},
-			mockCrypto: &mockCryptor{},
-			wantErr:    false,
+			wantErr: false,
 			validateResult: func(t *testing.T, result *model.Connection) {
 				if result.ConfigName != "new-name" {
 					t.Errorf("expected ConfigName 'new-name', got %s", result.ConfigName)
@@ -686,19 +728,26 @@ func TestUpdateConnection_Execute_TableDriven(t *testing.T) {
 		},
 		{
 			name: "connection not found",
-			setupMocks: func(connMock *connRepo.MockRepository, jobMock *jobRepo.MockRepository, orgID, connID uuid.UUID, existing *model.Connection) {
+			setupMocks: func(connMock *connRepo.MockRepository, jobMock *jobRepo.MockRepository, cryptoMock *crypto.MockCryptor, orgID, connID uuid.UUID, existing *model.Connection) {
+				cryptoMock.EXPECT().
+					Encrypt(gomock.Any(), gomock.Any()).
+					Return("encrypted-newpassword", "v1", nil).
+					AnyTimes()
 				connMock.EXPECT().
 					FindByID(gomock.Any(), connID, orgID).
 					Return(nil, nil)
 			},
 			input:          newUpdateConnectionInput(),
-			mockCrypto:     &mockCryptor{},
 			wantErr:        true,
 			wantStatusCode: http.StatusNotFound,
 		},
 		{
 			name: "active jobs prevent update",
-			setupMocks: func(connMock *connRepo.MockRepository, jobMock *jobRepo.MockRepository, orgID, connID uuid.UUID, existing *model.Connection) {
+			setupMocks: func(connMock *connRepo.MockRepository, jobMock *jobRepo.MockRepository, cryptoMock *crypto.MockCryptor, orgID, connID uuid.UUID, existing *model.Connection) {
+				cryptoMock.EXPECT().
+					Encrypt(gomock.Any(), gomock.Any()).
+					Return("encrypted-newpassword", "v1", nil).
+					AnyTimes()
 				connMock.EXPECT().
 					FindByID(gomock.Any(), connID, orgID).
 					Return(existing, nil)
@@ -707,7 +756,6 @@ func TestUpdateConnection_Execute_TableDriven(t *testing.T) {
 					Return(true, nil)
 			},
 			input:          newUpdateConnectionInput(),
-			mockCrypto:     &mockCryptor{},
 			wantErr:        true,
 			wantStatusCode: http.StatusConflict,
 		},
@@ -720,15 +768,16 @@ func TestUpdateConnection_Execute_TableDriven(t *testing.T) {
 
 			mockConnRepo := connRepo.NewMockRepository(ctrl)
 			mockJobRepo := jobRepo.NewMockRepository(ctrl)
+			mockCrypto := crypto.NewMockCryptor(ctrl)
 
 			ctx := testContext()
 			orgID := uuid.New()
 			connID := uuid.New()
 			existingConn := newExistingConnection(orgID, connID)
 
-			tt.setupMocks(mockConnRepo, mockJobRepo, orgID, connID, existingConn)
+			tt.setupMocks(mockConnRepo, mockJobRepo, mockCrypto, orgID, connID, existingConn)
 
-			svc := NewUpdateConnection(mockConnRepo, mockJobRepo, tt.mockCrypto)
+			svc := NewUpdateConnection(mockConnRepo, mockJobRepo, mockCrypto)
 
 			result, err := svc.Execute(ctx, orgID, connID, tt.input)
 
@@ -803,7 +852,11 @@ func TestUpdateConnection_Execute_DatabaseTypeChange(t *testing.T) {
 
 			mockConnRepo := connRepo.NewMockRepository(ctrl)
 			mockJobRepo := jobRepo.NewMockRepository(ctrl)
-			mockCrypto := &mockCryptor{}
+			mockCrypto := crypto.NewMockCryptor(ctrl)
+			mockCrypto.EXPECT().
+				Encrypt(gomock.Any(), gomock.Any()).
+				Return("encrypted-newpassword", "v1", nil).
+				AnyTimes()
 
 			svc := NewUpdateConnection(mockConnRepo, mockJobRepo, mockCrypto)
 

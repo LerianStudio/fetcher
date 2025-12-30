@@ -134,6 +134,8 @@ func MapMongoErrorToResponse(err error, ctx context.Context) error {
 	return pkg.ValidateInternalError(constant.ErrInternalServer, "")
 }
 
+//go:generate mockgen --destination=mongo_client_provider.mock.go --package=mongodb . MongoClientProvider
+
 // MongoClientProvider is an interface for obtaining a MongoDB client.
 // This allows for easy testing and dependency injection.
 type MongoClientProvider interface {

@@ -1,4 +1,7 @@
-golang-plugin-boilerplate/api
-golang-plugin-boilerplate/cmd/app
-golang-plugin-boilerplate/pkg/constant
-golang-plugin-boilerplate/internal/bootstrap
+github.com/LerianStudio/fetcher/components/manager/api
+github.com/LerianStudio/fetcher/components/manager/cmd/app
+github.com/LerianStudio/fetcher/components/manager/internal/bootstrap
+github.com/LerianStudio/fetcher/components/worker/cmd/app
+github.com/LerianStudio/fetcher/components/worker/internal/bootstrap
+github.com/LerianStudio/fetcher/components/worker/internal/adapters/rabbitmq
+github.com/LerianStudio/fetcher/tests

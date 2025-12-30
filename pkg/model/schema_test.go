@@ -305,45 +305,101 @@ func TestDataSourceSchema_IsExpired(t *testing.T) {
 }
 
 func TestNewDataSourceSchema(t *testing.T) {
-	schema := model.NewDataSourceSchema("test-db")
+	tests := []struct {
+		name       string
+		configName string
+	}{
+		{name: "simple name", configName: "my-datasource"},
+		{name: "empty name", configName: ""},
+		{name: "special chars", configName: "ds_test-123"},
+		{name: "standard test db", configName: "test-db"},
+	}
 
-	require.NotNil(t, schema)
-	assert.Equal(t, "test-db", schema.ConfigName)
-	assert.NotNil(t, schema.Tables)
-	assert.Empty(t, schema.Tables)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			schema := model.NewDataSourceSchema(tt.configName)
+			require.NotNil(t, schema)
+			assert.Equal(t, tt.configName, schema.ConfigName)
+			assert.NotNil(t, schema.Tables)
+			assert.Empty(t, schema.Tables)
+		})
+	}
 }
 
 func TestDataSourceSchema_AddTable(t *testing.T) {
-	schema := model.NewDataSourceSchema("test-db")
+	t.Run("adds multiple tables", func(t *testing.T) {
+		schema := model.NewDataSourceSchema("test-db")
 
-	schema.AddTable("users", []string{"id", "name", "email"})
-	schema.AddTable("accounts", []string{"id", "balance"})
+		schema.AddTable("users", []string{"id", "name", "email"})
+		schema.AddTable("accounts", []string{"id", "balance"})
 
-	require.Len(t, schema.Tables, 2)
+		require.Len(t, schema.Tables, 2)
 
-	usersTable := schema.Tables["users"]
-	require.NotNil(t, usersTable)
-	assert.Equal(t, "users", usersTable.TableName)
-	assert.True(t, usersTable.Columns["id"])
-	assert.True(t, usersTable.Columns["name"])
-	assert.True(t, usersTable.Columns["email"])
+		usersTable := schema.Tables["users"]
+		require.NotNil(t, usersTable)
+		assert.Equal(t, "users", usersTable.TableName)
+		assert.True(t, usersTable.Columns["id"])
+		assert.True(t, usersTable.Columns["name"])
+		assert.True(t, usersTable.Columns["email"])
 
-	accountsTable := schema.Tables["accounts"]
-	require.NotNil(t, accountsTable)
-	assert.Equal(t, "accounts", accountsTable.TableName)
-	assert.True(t, accountsTable.Columns["id"])
-	assert.True(t, accountsTable.Columns["balance"])
+		accountsTable := schema.Tables["accounts"]
+		require.NotNil(t, accountsTable)
+		assert.Equal(t, "accounts", accountsTable.TableName)
+		assert.True(t, accountsTable.Columns["id"])
+		assert.True(t, accountsTable.Columns["balance"])
+	})
+
+	t.Run("adds single table", func(t *testing.T) {
+		schema := model.NewDataSourceSchema("test-ds")
+		schema.AddTable("users", []string{"id", "name"})
+		assert.Len(t, schema.Tables, 1)
+	})
+
+	t.Run("adds tables incrementally", func(t *testing.T) {
+		schema := model.NewDataSourceSchema("test-ds")
+
+		schema.AddTable("users", []string{"id", "name"})
+		assert.Len(t, schema.Tables, 1)
+
+		schema.AddTable("orders", []string{"id", "user_id", "total"})
+		assert.Len(t, schema.Tables, 2)
+	})
+
+	t.Run("overwrites existing table with same name", func(t *testing.T) {
+		schema := model.NewDataSourceSchema("test-ds")
+		schema.AddTable("users", []string{"id", "name"})
+		schema.AddTable("users", []string{"id", "email", "phone"})
+
+		assert.Len(t, schema.Tables, 1)
+		assert.Len(t, schema.Tables["users"].Columns, 3)
+		assert.True(t, schema.Tables["users"].Columns["email"])
+		assert.False(t, schema.Tables["users"].Columns["name"])
+	})
 }
 
 func TestNewTableSchema(t *testing.T) {
-	tableSchema := model.NewTableSchema("users", []string{"id", "name", "email"})
+	tests := []struct {
+		name      string
+		tableName string
+		columns   []string
+	}{
+		{name: "with columns", tableName: "users", columns: []string{"id", "name", "email"}},
+		{name: "empty columns", tableName: "empty_table", columns: []string{}},
+		{name: "nil columns", tableName: "nil_table", columns: nil},
+		{name: "single column", tableName: "simple", columns: []string{"id"}},
+	}
 
-	require.NotNil(t, tableSchema)
-	assert.Equal(t, "users", tableSchema.TableName)
-	assert.Len(t, tableSchema.Columns, 3)
-	assert.True(t, tableSchema.Columns["id"])
-	assert.True(t, tableSchema.Columns["name"])
-	assert.True(t, tableSchema.Columns["email"])
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			schema := model.NewTableSchema(tt.tableName, tt.columns)
+			require.NotNil(t, schema)
+			assert.Equal(t, tt.tableName, schema.TableName)
+			assert.Len(t, schema.Columns, len(tt.columns))
+			for _, col := range tt.columns {
+				assert.True(t, schema.Columns[col], "column %s should exist", col)
+			}
+		})
+	}
 }
 
 func TestTableSchema_GetColumnsList(t *testing.T) {
@@ -472,10 +528,19 @@ func TestSchemaValidationSpec_ValidateAgainstSchema(t *testing.T) {
 			assert.Len(t, errors, tt.wantErrCount)
 
 			if tt.wantErrTypes != nil {
-				for i, errType := range tt.wantErrTypes {
-					if i < len(errors) {
-						assert.Equal(t, errType, errors[i].Type)
-					}
+				// Check that all expected error types are present (order doesn't matter)
+				errorTypes := make(map[string]int)
+				for _, err := range errors {
+					errorTypes[err.Type]++
+				}
+
+				expectedTypes := make(map[string]int)
+				for _, errType := range tt.wantErrTypes {
+					expectedTypes[errType]++
+				}
+
+				for errType, count := range expectedTypes {
+					assert.Equal(t, count, errorTypes[errType], "Expected %d errors of type %s, got %d", count, errType, errorTypes[errType])
 				}
 			}
 		})
@@ -526,18 +591,259 @@ func TestNewDataSourceDownError(t *testing.T) {
 }
 
 func TestSchemaValidationRequest_ToMapWithMask(t *testing.T) {
-	request := &model.SchemaValidationRequest{
-		MappedFields: map[string]map[string][]string{
-			"db1": {"table1": {"field1", "field2"}},
-			"db2": {"table2": {"field3"}},
+	tests := []struct {
+		name     string
+		request  model.SchemaValidationRequest
+		expected int
+	}{
+		{
+			name: "empty mapped fields",
+			request: model.SchemaValidationRequest{
+				MappedFields: map[string]map[string][]string{},
+			},
+			expected: 0,
+		},
+		{
+			name: "single datasource",
+			request: model.SchemaValidationRequest{
+				MappedFields: map[string]map[string][]string{
+					"ds1": {"table1": {"field1", "field2"}},
+				},
+			},
+			expected: 1,
+		},
+		{
+			name: "two datasources",
+			request: model.SchemaValidationRequest{
+				MappedFields: map[string]map[string][]string{
+					"db1": {"table1": {"field1", "field2"}},
+					"db2": {"table2": {"field3"}},
+				},
+			},
+			expected: 2,
+		},
+		{
+			name: "multiple datasources",
+			request: model.SchemaValidationRequest{
+				MappedFields: map[string]map[string][]string{
+					"ds1": {"table1": {"field1"}},
+					"ds2": {"table2": {"field2"}},
+					"ds3": {"table3": {"field3"}},
+				},
+			},
+			expected: 3,
 		},
 	}
 
-	masked := request.ToMapWithMask()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.request.ToMapWithMask()
+			assert.NotNil(t, result)
+			assert.Equal(t, tt.expected, result["datasourceCount"])
+			assert.Equal(t, tt.request.MappedFields, result["mappedFields"])
+		})
+	}
+}
 
-	assert.NotNil(t, masked)
-	assert.Equal(t, request.MappedFields, masked["mappedFields"])
-	assert.Equal(t, 2, masked["datasourceCount"])
+func TestSchemaValidationSpec_GetTablesByConfigName(t *testing.T) {
+	spec := model.NewSchemaValidationSpec(model.SchemaValidationRequest{
+		MappedFields: map[string]map[string][]string{
+			"db1": {
+				"table1": {"field1", "field2"},
+				"table2": {"field3"},
+			},
+			"db2": {
+				"users": {"id", "name"},
+			},
+		},
+	})
+
+	tests := []struct {
+		name       string
+		configName string
+		wantTables map[string][]string
+	}{
+		{
+			name:       "get tables for db1",
+			configName: "db1",
+			wantTables: map[string][]string{
+				"table1": {"field1", "field2"},
+				"table2": {"field3"},
+			},
+		},
+		{
+			name:       "get tables for db2",
+			configName: "db2",
+			wantTables: map[string][]string{
+				"users": {"id", "name"},
+			},
+		},
+		{
+			name:       "non-existent config returns empty",
+			configName: "db3",
+			wantTables: map[string][]string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tables := spec.GetTablesByConfigName(tt.configName)
+
+			assert.Equal(t, len(tt.wantTables), len(tables))
+			for tableName, fields := range tt.wantTables {
+				assert.Equal(t, fields, tables[tableName])
+			}
+		})
+	}
+}
+
+// TestSplitSchemaTable tests the splitSchemaTable function via ValidateAgainstSchema.
+// Since splitSchemaTable is an unexported function, we test it indirectly.
+func TestSplitSchemaTable_ViaValidation(t *testing.T) {
+	// Test various table name formats
+	tests := []struct {
+		name         string
+		schema       *model.DataSourceSchema
+		spec         *model.SchemaValidationSpec
+		wantErrCount int
+	}{
+		{
+			name: "unqualified table name - table exists",
+			schema: &model.DataSourceSchema{
+				ConfigName: "test-db",
+				Tables: map[string]*model.TableSchema{
+					"users": {TableName: "users", Columns: map[string]bool{"id": true}},
+				},
+			},
+			spec: model.NewSchemaValidationSpec(model.SchemaValidationRequest{
+				MappedFields: map[string]map[string][]string{
+					"test-db": {"users": {"id"}},
+				},
+			}),
+			wantErrCount: 0,
+		},
+		{
+			name: "qualified table name with schema - table exists",
+			schema: &model.DataSourceSchema{
+				ConfigName: "test-db",
+				Tables: map[string]*model.TableSchema{
+					"transactions": {TableName: "transactions", Columns: map[string]bool{"id": true}},
+				},
+			},
+			spec: model.NewSchemaValidationSpec(model.SchemaValidationRequest{
+				MappedFields: map[string]map[string][]string{
+					"test-db": {"public.transactions": {"id"}},
+				},
+			}),
+			wantErrCount: 0,
+		},
+		{
+			name: "qualified table name - table not found",
+			schema: &model.DataSourceSchema{
+				ConfigName: "test-db",
+				Tables: map[string]*model.TableSchema{
+					"users": {TableName: "users", Columns: map[string]bool{"id": true}},
+				},
+			},
+			spec: model.NewSchemaValidationSpec(model.SchemaValidationRequest{
+				MappedFields: map[string]map[string][]string{
+					"test-db": {"public.nonexistent": {"id"}},
+				},
+			}),
+			wantErrCount: 1,
+		},
+		{
+			name: "empty string table name",
+			schema: &model.DataSourceSchema{
+				ConfigName: "test-db",
+				Tables: map[string]*model.TableSchema{
+					"users": {TableName: "users", Columns: map[string]bool{"id": true}},
+				},
+			},
+			spec: model.NewSchemaValidationSpec(model.SchemaValidationRequest{
+				MappedFields: map[string]map[string][]string{
+					"test-db": {"": {"id"}},
+				},
+			}),
+			wantErrCount: 1, // Table not found
+		},
+		{
+			name: "whitespace only in qualified name",
+			schema: &model.DataSourceSchema{
+				ConfigName: "test-db",
+				Tables: map[string]*model.TableSchema{
+					"users": {TableName: "users", Columns: map[string]bool{"id": true}},
+				},
+			},
+			spec: model.NewSchemaValidationSpec(model.SchemaValidationRequest{
+				MappedFields: map[string]map[string][]string{
+					"test-db": {"   .   ": {"id"}},
+				},
+			}),
+			wantErrCount: 1, // Table not found (splitSchemaTable returns "" for invalid input)
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			errors := tt.spec.ValidateAgainstSchema("test-db", tt.schema)
+			assert.Len(t, errors, tt.wantErrCount)
+		})
+	}
+}
+
+func TestSSLInput_IsEmpty(t *testing.T) {
+	tests := []struct {
+		name     string
+		sslInput *model.SSLInput
+		want     bool
+	}{
+		{
+			name:     "nil SSL input is empty",
+			sslInput: nil,
+			want:     true,
+		},
+		{
+			name:     "empty SSL input with all nil/empty fields",
+			sslInput: &model.SSLInput{},
+			want:     true,
+		},
+		{
+			name: "SSL input with mode is not empty",
+			sslInput: &model.SSLInput{
+				Mode: "require",
+			},
+			want: false,
+		},
+		{
+			name: "SSL input with CA is not empty",
+			sslInput: &model.SSLInput{
+				CA: "ca-cert",
+			},
+			want: false,
+		},
+		{
+			name: "SSL input with Cert is not empty",
+			sslInput: &model.SSLInput{
+				Cert: strPtr("cert"),
+			},
+			want: false,
+		},
+		{
+			name: "SSL input with Key is not empty",
+			sslInput: &model.SSLInput{
+				Key: strPtr("key"),
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.sslInput.IsEmpty()
+			assert.Equal(t, tt.want, result)
+		})
+	}
 }
 
 // generateMappedFields is a helper function to generate test data.
@@ -555,4 +861,8 @@ func generateMappedFields(dsCount, tableCount, fieldCount int) map[string]map[st
 		result[fmt.Sprintf("ds%d", i)] = tables
 	}
 	return result
+}
+
+func strPtr(s string) *string {
+	return &s
 }

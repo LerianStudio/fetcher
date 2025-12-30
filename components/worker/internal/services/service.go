@@ -14,10 +14,10 @@ type UseCase struct {
 	ExternalDataSeaweedFS externalData.Repository
 
 	// JobRepository is a repository used to retrieve job data from MongoDB storage.
-	JobRepository *job.JobMongoDBRepository
+	JobRepository job.Repository
 
 	// ConnectionRepository is a repository used to retrieve connection data from MongoDB storage.
-	ConnectionRepository *connection.ConnectionMongoDBRepository
+	ConnectionRepository connection.Repository
 
 	// Cryptor is used to decrypt connection passwords when creating data sources.
 	Cryptor crypto.Cryptor
@@ -26,7 +26,7 @@ type UseCase struct {
 	FileTTL string
 
 	// RabbitMQPublisher is used to publish job event notifications to RabbitMQ topic exchange.
-	RabbitMQPublisher *rabbitmq.PublisherRoutes
+	RabbitMQPublisher rabbitmq.PublisherRepository
 
 	// JobEventsExchange is the name of the RabbitMQ topic exchange for job events.
 	JobEventsExchange string
