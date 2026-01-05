@@ -1787,3 +1787,170 @@ func TestConnectionHandler_ValidateSchema_HandlerDirectly_InvalidJSON(t *testing
 	body, _ := io.ReadAll(resp.Body)
 	assert.Contains(t, string(body), "code")
 }
+
+// ============================================================================
+// Constructor Tests
+// ============================================================================
+
+func TestNewConnectionHandler(t *testing.T) {
+	handler := NewConnectionHandler(nil, nil, nil, nil, nil, nil, nil)
+
+	assert.NotNil(t, handler)
+	assert.Nil(t, handler.CreateCmd)
+	assert.Nil(t, handler.UpdateCmd)
+	assert.Nil(t, handler.DeleteCmd)
+	assert.Nil(t, handler.GetQuery)
+	assert.Nil(t, handler.ListQuery)
+	assert.Nil(t, handler.TestQuery)
+	assert.Nil(t, handler.ValidateSchemaQuery)
+}
+
+// ============================================================================
+// Additional Handler Direct Tests for Better Coverage
+// ============================================================================
+
+func TestConnectionHandler_CreateConnection_HandlerDirectly_MissingOrgHeader(t *testing.T) {
+	app := setupConnectionTestApp()
+
+	handler := &ConnectionHandler{CreateCmd: nil}
+	app.Post("/v1/management/connections", handler.CreateConnection)
+
+	tests := []struct {
+		name      string
+		orgHeader string
+		setHeader bool
+		wantCode  int
+	}{
+		{
+			name:      "no org header",
+			setHeader: false,
+			wantCode:  fiber.StatusBadRequest,
+		},
+		{
+			name:      "empty org header",
+			orgHeader: "",
+			setHeader: true,
+			wantCode:  fiber.StatusBadRequest,
+		},
+		{
+			name:      "invalid uuid org header",
+			orgHeader: "invalid-uuid",
+			setHeader: true,
+			wantCode:  fiber.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("POST", "/v1/management/connections", strings.NewReader(validConnectionInput()))
+			req.Header.Set("Content-Type", "application/json")
+			if tt.setHeader {
+				req.Header.Set("X-Organization-Id", tt.orgHeader)
+			}
+
+			resp, err := app.Test(req)
+			require.NoError(t, err)
+			defer resp.Body.Close()
+
+			assert.Equal(t, tt.wantCode, resp.StatusCode)
+		})
+	}
+}
+
+func TestConnectionHandler_ListConnections_HandlerDirectly_InvalidSortOrder(t *testing.T) {
+	app := setupConnectionTestApp()
+
+	handler := &ConnectionHandler{ListQuery: nil}
+	app.Get("/v1/management/connections", handler.ListConnections)
+
+	req := httptest.NewRequest("GET", "/v1/management/connections?sortOrder=invalid", nil)
+	req.Header.Set("X-Organization-Id", uuid.New().String())
+
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+}
+
+func TestConnectionHandler_GetConnection_HandlerDirectly_MissingOrgHeader(t *testing.T) {
+	app := setupConnectionTestApp()
+
+	handler := &ConnectionHandler{GetQuery: nil}
+	app.Get("/v1/management/connections/:id", handler.GetConnection)
+
+	req := httptest.NewRequest("GET", "/v1/management/connections/"+uuid.New().String(), nil)
+	// No org header set
+
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+}
+
+func TestConnectionHandler_UpdateConnection_HandlerDirectly_MissingOrgHeader(t *testing.T) {
+	app := setupConnectionTestApp()
+
+	handler := &ConnectionHandler{UpdateCmd: nil}
+	app.Patch("/v1/management/connections/:id", handler.UpdateConnection)
+
+	req := httptest.NewRequest("PATCH", "/v1/management/connections/"+uuid.New().String(), strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	// No org header set
+
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+}
+
+func TestConnectionHandler_DeleteConnection_HandlerDirectly_MissingOrgHeader(t *testing.T) {
+	app := setupConnectionTestApp()
+
+	handler := &ConnectionHandler{DeleteCmd: nil}
+	app.Delete("/v1/management/connections/:id", handler.DeleteConnection)
+
+	req := httptest.NewRequest("DELETE", "/v1/management/connections/"+uuid.New().String(), nil)
+	// No org header set
+
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+}
+
+func TestConnectionHandler_TestConnection_HandlerDirectly_MissingOrgHeader(t *testing.T) {
+	app := setupConnectionTestApp()
+
+	handler := &ConnectionHandler{TestQuery: nil}
+	app.Post("/v1/management/connections/:id/test", handler.TestConnection)
+
+	req := httptest.NewRequest("POST", "/v1/management/connections/"+uuid.New().String()+"/test", nil)
+	// No org header set
+
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+}
+
+func TestConnectionHandler_ValidateSchema_HandlerDirectly_MissingOrgHeader(t *testing.T) {
+	app := setupConnectionTestApp()
+
+	handler := &ConnectionHandler{ValidateSchemaQuery: nil}
+	app.Post("/v1/management/connections/validate-schema", handler.ValidateSchema)
+
+	req := httptest.NewRequest("POST", "/v1/management/connections/validate-schema", strings.NewReader(validSchemaValidationRequest()))
+	req.Header.Set("Content-Type", "application/json")
+	// No org header set
+
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+}

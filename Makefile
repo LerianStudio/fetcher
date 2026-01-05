@@ -351,7 +351,9 @@ cover:
 	$(call check_command,go,Install Go from https://golang.org/doc/install)
 	@mkdir -p $(ARTIFACTS_DIR)
 	@PACKAGES=$$(go list ./... | grep -v -f ./scripts/coverage_ignore.txt 2>/dev/null || go list ./...); \
-	go test -coverprofile=$(ARTIFACTS_DIR)/coverage.out $$PACKAGES
+	go test -coverprofile=$(ARTIFACTS_DIR)/coverage.raw.out $$PACKAGES
+	@# Filter out mock files from coverage (they are generated and should not be tested)
+	@grep -v '\.mock\.go' $(ARTIFACTS_DIR)/coverage.raw.out > $(ARTIFACTS_DIR)/coverage.out || cp $(ARTIFACTS_DIR)/coverage.raw.out $(ARTIFACTS_DIR)/coverage.out
 	@go tool cover -html=$(ARTIFACTS_DIR)/coverage.out -o $(ARTIFACTS_DIR)/coverage.html
 	@echo "Coverage report generated at $(ARTIFACTS_DIR)/coverage.html"
 	@echo ""

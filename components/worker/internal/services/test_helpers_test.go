@@ -6,6 +6,7 @@ import (
 	libCommons "github.com/LerianStudio/lib-commons/v2/commons"
 	libLog "github.com/LerianStudio/lib-commons/v2/commons/log"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/LerianStudio/fetcher/components/worker/internal/adapters/rabbitmq"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
@@ -77,4 +78,9 @@ func newTestJobID() uuid.UUID {
 // newTestOrgID returns a new UUID for testing.
 func newTestOrgID() uuid.UUID {
 	return uuid.New()
+}
+
+// testTracer returns a tracer for testing.
+func testTracer() trace.Tracer {
+	return otel.Tracer("test")
 }
