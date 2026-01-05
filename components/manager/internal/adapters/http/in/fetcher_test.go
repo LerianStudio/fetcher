@@ -976,3 +976,52 @@ func TestFetcherHandler_GetJob_FailedJob(t *testing.T) {
 	assert.NotNil(t, body.Metadata)
 	assert.Equal(t, "connection timeout", body.Metadata["error"])
 }
+
+// ============================================================================
+// Constructor Tests
+// ============================================================================
+
+func TestNewFetcherHandler(t *testing.T) {
+	// Test with nil dependencies (basic constructor test)
+	handler := NewFetcherHandler(nil, nil)
+	assert.NotNil(t, handler)
+	assert.Nil(t, handler.CreateJobCmd)
+	assert.Nil(t, handler.GetJobQuery)
+}
+
+// ============================================================================
+// Handler Direct Tests - Missing Org Header
+// ============================================================================
+
+func TestFetcherHandler_CreateJob_HandlerDirectly_MissingOrgHeader(t *testing.T) {
+	app := setupTestApp()
+
+	handler := NewFetcherHandler(nil, nil)
+	app.Post("/v1/fetcher", handler.CreateJob)
+
+	req := httptest.NewRequest("POST", "/v1/fetcher", strings.NewReader(validFetcherRequestPayload()))
+	req.Header.Set("Content-Type", "application/json")
+	// Not setting X-Organization-Id header
+
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+}
+
+func TestFetcherHandler_GetJob_HandlerDirectly_MissingOrgHeader(t *testing.T) {
+	app := setupTestApp()
+
+	handler := NewFetcherHandler(nil, nil)
+	app.Get("/v1/fetcher/:id", handler.GetJob)
+
+	req := httptest.NewRequest("GET", "/v1/fetcher/"+uuid.New().String(), nil)
+	// Not setting X-Organization-Id header
+
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+}
