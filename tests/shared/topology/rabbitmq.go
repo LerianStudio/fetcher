@@ -1,4 +1,4 @@
-package setup
+package topology
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-// SetupRabbitMQTopology creates the required exchanges and queues.
+// SetupRabbitMQTopology creates the required exchanges and queues for Fetcher.
 func SetupRabbitMQTopology(ctx context.Context, amqpURL string) error {
 	conn, err := amqp.Dial(amqpURL)
 	if err != nil {
@@ -130,7 +130,6 @@ func PurgeTestQueue(ctx context.Context, amqpURL string) (int, error) {
 	}
 	defer ch.Close()
 
-	// Purge the test queue
 	count, err := ch.QueuePurge("test.job.events", false)
 	if err != nil {
 		return 0, fmt.Errorf("failed to purge test.job.events queue: %w", err)

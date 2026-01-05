@@ -47,6 +47,16 @@ fetcher/
 │   ├── datasource/                # DataSource factory
 │   ├── net/http/                  # HTTP utilities
 │   └── constant/                  # Application constants
+├── tests/                         # Test infrastructure and integration tests
+│   ├── shared/                    # Shared test infrastructure library
+│   │   ├── config/                # Configuration, ports, timeouts
+│   │   ├── client/                # API clients (Manager, RabbitMQ, SeaweedFS)
+│   │   ├── containers/            # Docker container orchestration
+│   │   ├── network/               # Docker network management
+│   │   ├── fixtures/              # Database init scripts (embedded SQL)
+│   │   └── topology/              # RabbitMQ exchange/queue setup
+│   └── integration/               # Integration tests
+│       └── containers/            # End-to-end container tests
 ├── scripts/                       # Build and validation scripts
 ├── .github/                       # CI/CD workflows
 └── .githooks/                     # Git hooks for code quality
@@ -875,6 +885,116 @@ sequenceDiagram
 
 ---
 
+## Test Infrastructure
+
+### Overview
+
+The `tests/shared/` package provides a centralized test infrastructure library for integration and chaos tests. It uses testcontainers-go for Docker container orchestration.
+
+### Design Patterns
+
+| Pattern | Implementation |
+|---------|----------------|
+| **Factory Pattern** | `Default*Options()` functions + `Start*()` functions |
+| **Wrapper Pattern** | Container structs encapsulate testcontainers with connection info |
+| **Options Pattern** | Flexible configuration with sensible defaults |
+| **Embedded Resources** | SQL fixtures embedded in binary via `//go:embed` |
+
+### Package Reference
+
+| Package | Purpose |
+|---------|---------|
+| `tests/shared/config` | Configuration constants, ports, timeouts, infrastructure state |
+| `tests/shared/client` | HTTP clients for Manager API, RabbitMQ events, SeaweedFS |
+| `tests/shared/containers` | Docker container orchestration (PostgreSQL, MySQL, SQL Server, Oracle, MongoDB, RabbitMQ, Redis, SeaweedFS) |
+| `tests/shared/network` | Docker network creation for container communication |
+| `tests/shared/fixtures` | Test data and SQL initialization scripts |
+| `tests/shared/topology` | RabbitMQ exchange and queue configuration |
+
+### Container Usage Pattern
+
+All containers follow the same pattern:
+
+```go
+// 1. Create network
+net, _ := network.CreateNetwork(ctx)
+
+// 2. Configure with defaults
+opts := containers.DefaultPostgresOptions(config.NetworkName)
+opts.InitScript, _ = fixtures.GetPostgresInitSQL()
+
+// 3. Start container
+pg, _ := containers.StartPostgres(ctx, opts)
+defer pg.Stop(ctx)
+
+// 4. Access connection info
+fmt.Println(pg.URL)           // Full connection string
+fmt.Println(pg.Internal.Host) // Docker network hostname
+fmt.Println(pg.Internal.Port) // Internal port (int)
+```
+
+### Available Containers
+
+| Service | Image | Default Network Alias |
+|---------|-------|----------------------|
+| PostgreSQL | `postgres:16` | `postgres-external` |
+| MySQL | `mysql:8` | `mysql-external` |
+| SQL Server | `mcr.microsoft.com/mssql/server:2022-latest` | `mssql-external` |
+| Oracle | `gvenzl/oracle-xe:21-slim-faststart` | `oracle-external` |
+| MongoDB | `mongo:7` | `fetcher-mongodb` / `fetcher-mongodb-external` |
+| RabbitMQ | `rabbitmq:3-management` | `fetcher-rabbitmq` |
+| Redis/Valkey | `valkey/valkey:8` | `fetcher-valkey` |
+| SeaweedFS | `chrislusf/seaweedfs:*` | `fetcher-seaweedfs-*` |
+
+### Key Types
+
+```go
+// Database connection info for Docker network
+type InternalDBConnection struct {
+    Host     string // Docker network hostname
+    Port     int    // Internal port (int, not string)
+    Username string // Database username
+    Password string // Database password
+    Database string // Database name
+}
+
+// Manager API client request
+type ConnectionInput struct {
+    ConfigName   string         `json:"configName"`
+    Type         string         `json:"type"`         // POSTGRESQL, MYSQL, SQL_SERVER, ORACLE, MONGODB
+    Host         string         `json:"host"`
+    Port         int            `json:"port"`         // int type
+    DatabaseName string         `json:"databaseName"`
+    Username     string         `json:"username"`
+    Password     string         `json:"password"`
+    Metadata     map[string]any `json:"metadata,omitempty"`
+}
+```
+
+### Running Integration Tests
+
+```bash
+# Run all integration tests with pre-built images
+MANAGER_IMAGE=fetcher-manager:local \
+WORKER_IMAGE=fetcher-worker:local \
+  make test-integration-container
+
+# Run specific test
+MANAGER_IMAGE=fetcher-manager:local \
+WORKER_IMAGE=fetcher-worker:local \
+  make test-integration-container TEST=TestSingleDatasourcePostgreSQL
+
+# Start infrastructure for debugging
+make test-integration-infra
+
+# Clean up test infrastructure
+make test-integration-clean
+```
+
+> **See [`tests/shared/README.md`](../tests/shared/README.md)** for comprehensive API documentation and [`tests/integration/containers/README.md`](../tests/integration/containers/README.md) for integration test execution modes.
+
+---
+
 ## Build and Development
 
 ### Quick Start
@@ -940,3 +1060,9 @@ make generate-docs
 | Shared | `pkg/rabbitmq/rabbitmq.go` | RabbitMQ adapter |
 | Infra | `components/infra/docker-compose.yml` | Infrastructure |
 | Infra | `components/infra/rabbitmq/etc/definitions.json` | RabbitMQ topology |
+| Tests | `tests/shared/config/ports.go` | Test infrastructure ports |
+| Tests | `tests/shared/config/timeouts.go` | Test timeouts configuration |
+| Tests | `tests/shared/containers/*.go` | Container orchestration (all DBs) |
+| Tests | `tests/shared/client/manager.go` | Manager API test client |
+| Tests | `tests/shared/fixtures/loader.go` | SQL fixtures and test data |
+| Tests | `tests/integration/containers/integration_test.go` | E2E integration tests |

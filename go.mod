@@ -9,6 +9,7 @@ require (
 	github.com/LerianStudio/lib-commons/v2 v2.6.0
 	github.com/LerianStudio/lib-license-go/v2 v2.1.0
 	github.com/Masterminds/squirrel v1.5.4
+	github.com/Shopify/toxiproxy/v2 v2.12.0
 	github.com/alicebob/miniredis/v2 v2.35.0
 	github.com/docker/docker v28.5.1+incompatible
 	github.com/docker/go-connections v0.6.0

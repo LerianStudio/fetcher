@@ -1,13 +1,12 @@
-package setup
+package config
 
 import "time"
 
 // =============================================================================
 // TIMEOUT CONSTANTS
 // =============================================================================
-// All timeout values used across integration tests are centralized here for
-// easy tuning and consistency. Values are grouped by category and documented
-// with their purpose.
+// All timeout values used across integration and chaos tests are centralized
+// here for easy tuning and consistency.
 // =============================================================================
 
 // -----------------------------------------------------------------------------
@@ -68,18 +67,28 @@ const (
 	SQLServerStartupTimeout = 180 * time.Second
 
 	// SQLServerInitDelay is the additional delay after SQL Server reports ready
-	// before executing init scripts.
-	SQLServerInitDelay = 2 * time.Second
+	// before executing init scripts. SQL Server needs time to fully configure
+	// the sa user even after reporting "ready for client connections".
+	SQLServerInitDelay = 5 * time.Second
 
 	// OracleStartupTimeout is the time to wait for Oracle XE to become ready.
 	// Oracle takes significantly longer to initialize.
 	OracleStartupTimeout = 300 * time.Second
+
+	// MongoDBStartupTimeout is the time to wait for MongoDB to become ready.
+	MongoDBStartupTimeout = 60 * time.Second
+
+	// RedisStartupTimeout is the time to wait for Redis/Valkey to become ready.
+	RedisStartupTimeout = 30 * time.Second
 
 	// ManagerStartupTimeout is the time to wait for the Manager container to become ready.
 	ManagerStartupTimeout = 120 * time.Second
 
 	// WorkerStartupTimeout is the time to wait for the Worker container to start consuming.
 	WorkerStartupTimeout = 120 * time.Second
+
+	// ToxiproxyStartupTimeout is the time to wait for Toxiproxy to become ready.
+	ToxiproxyStartupTimeout = 30 * time.Second
 )
 
 // -----------------------------------------------------------------------------

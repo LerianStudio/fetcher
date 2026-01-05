@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/LerianStudio/fetcher/tests/integration/containers/setup"
+	"github.com/LerianStudio/fetcher/tests/shared/config"
 )
 
 // SeaweedFSClient provides HTTP access to SeaweedFS for result validation.
@@ -21,7 +21,7 @@ func NewSeaweedFSClient(baseURL string) *SeaweedFSClient {
 	return &SeaweedFSClient{
 		baseURL: baseURL,
 		httpClient: &http.Client{
-			Timeout: setup.HTTPClientTimeout,
+			Timeout: config.HTTPClientTimeout,
 		},
 	}
 }
@@ -80,7 +80,7 @@ func (c *SeaweedFSClient) WaitForFile(ctx context.Context, path string, timeout 
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 
-	ticker := time.NewTicker(setup.PollingInterval)
+	ticker := time.NewTicker(config.PollingInterval)
 	defer ticker.Stop()
 
 	for {

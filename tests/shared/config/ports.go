@@ -1,4 +1,4 @@
-package setup
+package config
 
 // PortsConfig holds fixed port numbers for all infrastructure services.
 // Using fixed ports enables:
@@ -46,3 +46,6 @@ var FixedPorts = PortsConfig{
 // InfraConfigPath is the path where infrastructure configuration is saved.
 // Tests check this file to detect already-running infrastructure.
 const InfraConfigPath = "/tmp/fetcher-test-infra.json"
+
+// NetworkName is the Docker network name for test containers.
+const NetworkName = "fetcher-test-network"

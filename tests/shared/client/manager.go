@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/LerianStudio/fetcher/tests/integration/containers/setup"
+	"github.com/LerianStudio/fetcher/tests/shared/config"
 )
 
 // ManagerClient provides HTTP access to the Manager API.
@@ -26,7 +26,7 @@ func NewManagerClient(baseURL, organizationID string) *ManagerClient {
 		baseURL:        baseURL,
 		organizationID: organizationID,
 		httpClient: &http.Client{
-			Timeout: setup.HTTPClientTimeout,
+			Timeout: config.HTTPClientTimeout,
 		},
 	}
 }
@@ -219,7 +219,7 @@ func (c *ManagerClient) GetJob(ctx context.Context, jobID string) (*JobResponse,
 func (c *ManagerClient) WaitForJobCompletion(ctx context.Context, jobID string, timeout time.Duration) (*JobResponse, error) {
 	deadline := time.Now().Add(timeout)
 
-	ticker := time.NewTicker(setup.PollingInterval)
+	ticker := time.NewTicker(config.PollingInterval)
 	defer ticker.Stop()
 
 	for {

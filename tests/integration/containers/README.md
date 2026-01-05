@@ -750,10 +750,20 @@ EXTERNAL_MANAGER_URL=http://localhost:4006 \
 
 ```
 tests/integration/containers/
-├── client/              # API clients (Manager, RabbitMQ, SeaweedFS)
-├── setup/               # Container setup (infrastructure, applications)
-├── fixtures/            # Database init scripts
+├── cmd/                 # start-infra command for persistent infrastructure
+├── setup/               # Application containers (Manager, Worker)
 ├── testdata/            # Test data files
 ├── integration_test.go  # Test suite
 └── README.md            # This file
+
+tests/shared/            # Shared test infrastructure library
+├── config/              # Configuration, ports, timeouts
+├── client/              # API clients (Manager, RabbitMQ, SeaweedFS)
+├── containers/          # Docker container orchestration
+├── network/             # Docker network management
+├── fixtures/            # Database init scripts (embedded SQL)
+├── topology/            # RabbitMQ exchange/queue setup
+└── README.md            # Detailed API documentation
 ```
+
+> **See [`tests/shared/README.md`](../../shared/README.md)** for comprehensive API documentation of the shared infrastructure library.

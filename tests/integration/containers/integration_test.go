@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/LerianStudio/fetcher/tests/integration/containers/client"
-	"github.com/LerianStudio/fetcher/tests/integration/containers/fixtures"
 	"github.com/LerianStudio/fetcher/tests/integration/containers/setup"
+	"github.com/LerianStudio/fetcher/tests/shared/client"
+	"github.com/LerianStudio/fetcher/tests/shared/fixtures"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
@@ -113,21 +113,21 @@ func (s *WorkerIntegrationTestSuite) SetupSuite() {
 
 	if infraOpts.ReuseExisting {
 		s.T().Log("Attempting to reuse existing infrastructure...")
-		infra, err = setup.StartInfrastructureWithOptions(s.ctx, infraOpts)
 	} else {
 		s.T().Log("Starting new infrastructure containers...")
-		infra, err = setup.StartInfrastructureWithOptions(s.ctx, infraOpts)
 	}
+
+	infra, err = setup.StartInfrastructureWithOptions(s.ctx, infraOpts)
 	require.NoError(s.T(), err, "Failed to start infrastructure")
 	s.infra = infra
 
 	// Setup RabbitMQ topology (idempotent - safe to call even if already set up)
-	err = setup.SetupRabbitMQTopology(s.ctx, s.infra.RabbitMQURI)
+	err = setup.SetupRabbitMQTopology(s.ctx, s.infra.RabbitMQURI())
 	require.NoError(s.T(), err, "Failed to setup RabbitMQ topology")
 
 	// Purge test queue when reusing infrastructure to remove stale events
 	if infraOpts.ReuseExisting {
-		purged, err := setup.PurgeTestQueue(s.ctx, s.infra.RabbitMQURI)
+		purged, err := setup.PurgeTestQueue(s.ctx, s.infra.RabbitMQURI())
 		if err != nil {
 			s.T().Logf("Warning: Could not purge test queue: %v", err)
 		} else if purged > 0 {
@@ -165,10 +165,10 @@ func (s *WorkerIntegrationTestSuite) SetupSuite() {
 
 	// Initialize clients
 	s.managerClient = client.NewManagerClient(apps.ManagerURL, fixtures.TestOrganizationID)
-	s.seaweedClient = client.NewSeaweedFSClient(s.infra.SeaweedFSURL)
+	s.seaweedClient = client.NewSeaweedFSClient(s.infra.SeaweedFSURL())
 
 	// Initialize RabbitMQ event consumer
-	eventConsumer, err := client.NewRabbitMQEventConsumer(s.infra.RabbitMQURI)
+	eventConsumer, err := client.NewRabbitMQEventConsumer(s.infra.RabbitMQURI())
 	require.NoError(s.T(), err, "Failed to create event consumer")
 	s.eventConsumer = eventConsumer
 
@@ -259,7 +259,7 @@ func (s *WorkerIntegrationTestSuite) uniqueConfigName(prefix string) string {
 // Only MongoDB needs programmatic seeding here due to ObjectID generation.
 func (s *WorkerIntegrationTestSuite) seedExternalDatabases() error {
 	// Seed MongoDB External (requires programmatic seeding for ObjectIDs)
-	err := fixtures.InitMongoDBExternal(s.ctx, s.infra.MongoExternalURI, "external_transactions")
+	err := fixtures.InitMongoDBExternal(s.ctx, s.infra.MongoExternalURI(), "external_transactions")
 	if err != nil {
 		return err
 	}
@@ -302,7 +302,7 @@ func (s *WorkerIntegrationTestSuite) TestSingleDatasourcePostgreSQL() {
 
 	// Step 1: Create PostgreSQL connection via API
 	// Uses Docker network hostname - works for containers (Docker DNS) and host (via /etc/hosts)
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 
 	connResp, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
 		ConfigName:   configName,
@@ -378,7 +378,7 @@ func (s *WorkerIntegrationTestSuite) TestSingleDatasourceMySQL() {
 
 	// Step 1: Create MySQL connection via API
 	// Uses Docker network hostname - works for containers (Docker DNS) and host (via /etc/hosts)
-	mysql := s.infra.MySQLInternal
+	mysql := s.infra.MySQLInternal()
 
 	connResp, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
 		ConfigName:   "mysql_test",
@@ -434,7 +434,7 @@ func (s *WorkerIntegrationTestSuite) TestSingleDatasourceMongoDB() {
 
 	// Step 1: Create MongoDB connection via API
 	// Uses Docker network hostname - works for containers (Docker DNS) and host (via /etc/hosts)
-	mongo := s.infra.MongoExternalInternal
+	mongo := s.infra.MongoExternalInternal()
 
 	connResp, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
 		ConfigName:   "mongodb_test",
@@ -490,7 +490,7 @@ func (s *WorkerIntegrationTestSuite) TestSingleDatasourceSQLServer() {
 
 	// Step 1: Create SQL Server connection via API
 	// Uses Docker network hostname - works for containers (Docker DNS) and host (via /etc/hosts)
-	mssql := s.infra.SQLServerInternal
+	mssql := s.infra.SQLServerInternal()
 
 	connResp, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
 		ConfigName:   "sqlserver_test",
@@ -555,7 +555,7 @@ func (s *WorkerIntegrationTestSuite) TestSingleDatasourceOracle() {
 
 	// Step 1: Create Oracle connection via API
 	// Uses Docker network hostname - works for containers (Docker DNS) and host (via /etc/hosts)
-	oracle := s.infra.OracleInternal
+	oracle := s.infra.OracleInternal()
 
 	connResp, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
 		ConfigName:   "oracle_test",
@@ -630,7 +630,7 @@ func (s *WorkerIntegrationTestSuite) TestPostgreSQLMultiSchemaExtraction() {
 	configName := s.uniqueConfigName("postgres_multi_schema")
 
 	// Step 1: Create PostgreSQL connection
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 	connResp, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
 		ConfigName:   configName,
 		Type:         "POSTGRESQL",
@@ -698,7 +698,7 @@ func (s *WorkerIntegrationTestSuite) TestPostgreSQLMultiSchemaWithFilters() {
 	configName := s.uniqueConfigName("postgres_multi_schema_filtered")
 
 	// Create PostgreSQL connection
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 	_, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
 		ConfigName:   configName,
 		Type:         "POSTGRESQL",
@@ -762,7 +762,7 @@ func (s *WorkerIntegrationTestSuite) TestMultiDatasourceMultiSchemaExtraction() 
 	oracleConfigName := s.uniqueConfigName("oracle_multi_ds")
 
 	// Step 1: Create PostgreSQL connection
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 	_, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
 		ConfigName:   pgConfigName,
 		Type:         "POSTGRESQL",
@@ -775,7 +775,7 @@ func (s *WorkerIntegrationTestSuite) TestMultiDatasourceMultiSchemaExtraction() 
 	require.NoError(t, err, "Failed to create PostgreSQL connection")
 
 	// Step 2: Create SQL Server connection
-	mssql := s.infra.SQLServerInternal
+	mssql := s.infra.SQLServerInternal()
 	_, err = s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
 		ConfigName:   mssqlConfigName,
 		Type:         "SQL_SERVER",
@@ -788,7 +788,7 @@ func (s *WorkerIntegrationTestSuite) TestMultiDatasourceMultiSchemaExtraction() 
 	require.NoError(t, err, "Failed to create SQL Server connection")
 
 	// Step 3: Create Oracle connection
-	oracle := s.infra.OracleInternal
+	oracle := s.infra.OracleInternal()
 	_, err = s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
 		ConfigName:   oracleConfigName,
 		Type:         "ORACLE",
@@ -890,7 +890,7 @@ func (s *WorkerIntegrationTestSuite) TestValidateSchema_MultiSchema() {
 	configName := s.uniqueConfigName("postgres_validate_multi")
 
 	// Create PostgreSQL connection
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 	_, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
 		ConfigName:   configName,
 		Type:         "POSTGRESQL",
@@ -954,7 +954,7 @@ func (s *WorkerIntegrationTestSuite) TestMultiDatasourceExtraction() {
 
 	// Ensure connections exist (created in previous tests or create new ones)
 	// Uses Docker network hostname - works for containers (Docker DNS) and host (via /etc/hosts)
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 
 	_, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
 		ConfigName:   "postgres_multi",
@@ -967,7 +967,7 @@ func (s *WorkerIntegrationTestSuite) TestMultiDatasourceExtraction() {
 	})
 	require.NoError(t, err)
 
-	mysql := s.infra.MySQLInternal
+	mysql := s.infra.MySQLInternal()
 
 	_, err = s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
 		ConfigName:   "mysql_multi",
@@ -1019,7 +1019,7 @@ func (s *WorkerIntegrationTestSuite) TestJobWithFilters() {
 
 	// Create connection for filtered query
 	// Uses Docker network hostname - works for containers (Docker DNS) and host (via /etc/hosts)
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 
 	_, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
 		ConfigName:   "postgres_filtered",
@@ -1076,7 +1076,7 @@ func (s *WorkerIntegrationTestSuite) TestJobWithSelectiveFilters() {
 	t := s.T()
 
 	// Create connection
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 
 	_, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
 		ConfigName:   "postgres_selective_filter",
@@ -1133,7 +1133,7 @@ func (s *WorkerIntegrationTestSuite) TestJobIdempotency() {
 
 	// Create connection
 	// Uses Docker network hostname - works for containers (Docker DNS) and host (via /etc/hosts)
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 
 	_, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
 		ConfigName:   "postgres_idempotency",
@@ -1176,7 +1176,7 @@ func (s *WorkerIntegrationTestSuite) TestSeaweedFSFileValidation() {
 
 	// Create connection
 	// Uses Docker network hostname - works for containers (Docker DNS) and host (via /etc/hosts)
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 
 	_, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
 		ConfigName:   "postgres_seaweed",
@@ -1230,7 +1230,7 @@ func (s *WorkerIntegrationTestSuite) TestMetadataPassthrough() {
 
 	// Create connection
 	// Uses Docker network hostname - works for containers (Docker DNS) and host (via /etc/hosts)
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 
 	_, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
 		ConfigName:   "postgres_metadata",
@@ -1337,7 +1337,7 @@ func (s *WorkerIntegrationTestSuite) TestErrorScenario_InvalidCredentials() {
 
 	// Get the real PostgreSQL host but use wrong password
 	// Uses Docker network hostname - works for containers (Docker DNS) and host (via /etc/hosts)
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 
 	_, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
 		ConfigName:   "postgres_bad_creds",
@@ -1374,7 +1374,7 @@ func (s *WorkerIntegrationTestSuite) TestErrorScenario_NonExistentTable() {
 
 	// Create valid connection
 	// Uses Docker network hostname - works for containers (Docker DNS) and host (via /etc/hosts)
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 
 	_, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
 		ConfigName:   "postgres_for_missing_table",
@@ -1447,7 +1447,7 @@ func (s *WorkerIntegrationTestSuite) TestConnection_GetByID() {
 	t := s.T()
 
 	// Create a connection first
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 	configName := s.uniqueConfigName("postgres_get_test")
 
 	connResp, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
@@ -1492,7 +1492,7 @@ func (s *WorkerIntegrationTestSuite) TestConnection_Update() {
 	t := s.T()
 
 	// Create a connection first
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 	configName := s.uniqueConfigName("postgres_update_test")
 
 	connResp, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
@@ -1531,7 +1531,7 @@ func (s *WorkerIntegrationTestSuite) TestConnection_Update() {
 func (s *WorkerIntegrationTestSuite) TestConnection_Update_NotFound() {
 	t := s.T()
 
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 	_, err := s.managerClient.UpdateConnection(s.ctx, "00000000-0000-0000-0000-000000000000", client.ConnectionInput{
 		ConfigName:   "test",
 		Type:         "POSTGRESQL",
@@ -1550,7 +1550,7 @@ func (s *WorkerIntegrationTestSuite) TestConnection_Delete() {
 	t := s.T()
 
 	// Create a connection first
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 	configName := s.uniqueConfigName("postgres_delete_test")
 
 	connResp, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
@@ -1588,7 +1588,7 @@ func (s *WorkerIntegrationTestSuite) TestConnection_ListWithPagination() {
 	t := s.T()
 
 	// Create multiple connections
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 	createdIDs := make([]string, 0, 3)
 
 	for i := 0; i < 3; i++ {
@@ -1626,7 +1626,7 @@ func (s *WorkerIntegrationTestSuite) TestConnection_ListWithTypeFilter() {
 	t := s.T()
 
 	// Create PostgreSQL connection
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 	pgConfigName := s.uniqueConfigName("postgres_filter_test")
 	pgConn, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
 		ConfigName:   pgConfigName,
@@ -1640,7 +1640,7 @@ func (s *WorkerIntegrationTestSuite) TestConnection_ListWithTypeFilter() {
 	require.NoError(t, err)
 
 	// Create MySQL connection
-	mysql := s.infra.MySQLInternal
+	mysql := s.infra.MySQLInternal()
 	mysqlConfigName := s.uniqueConfigName("mysql_filter_test")
 	mysqlConn, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
 		ConfigName:   mysqlConfigName,
@@ -1678,7 +1678,7 @@ func (s *WorkerIntegrationTestSuite) TestConnection_TestEndpoint() {
 	t := s.T()
 
 	// Create a valid connection
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 	configName := s.uniqueConfigName("postgres_test_endpoint")
 
 	connResp, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
@@ -1714,7 +1714,7 @@ func (s *WorkerIntegrationTestSuite) TestConnection_TestEndpoint_NotFound() {
 func (s *WorkerIntegrationTestSuite) TestConnection_TestEndpoint_InvalidCredentials() {
 	t := s.T()
 
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 	configName := s.uniqueConfigName("postgres_test_bad_creds")
 
 	connResp, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
@@ -1739,7 +1739,7 @@ func (s *WorkerIntegrationTestSuite) TestValidateSchema_Success() {
 	t := s.T()
 
 	// Create a valid connection
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 	configName := s.uniqueConfigName("postgres_schema_valid")
 
 	_, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
@@ -1771,7 +1771,7 @@ func (s *WorkerIntegrationTestSuite) TestValidateSchema_Success() {
 func (s *WorkerIntegrationTestSuite) TestValidateSchema_TableNotFound() {
 	t := s.T()
 
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 	configName := s.uniqueConfigName("postgres_schema_missing_table")
 
 	_, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
@@ -1813,7 +1813,7 @@ func (s *WorkerIntegrationTestSuite) TestValidateSchema_TableNotFound() {
 func (s *WorkerIntegrationTestSuite) TestValidateSchema_FieldNotFound() {
 	t := s.T()
 
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 	configName := s.uniqueConfigName("postgres_schema_missing_field")
 
 	_, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
@@ -1868,7 +1868,7 @@ func (s *WorkerIntegrationTestSuite) TestConnection_DeleteWithActiveJob() {
 	t := s.T()
 
 	// Create connection
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 	configName := s.uniqueConfigName("postgres_delete_active")
 
 	connResp, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
@@ -1917,7 +1917,7 @@ func (s *WorkerIntegrationTestSuite) TestConnection_UpdateWithActiveJob() {
 	t := s.T()
 
 	// Create connection
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 	configName := s.uniqueConfigName("postgres_update_active")
 
 	connResp, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
@@ -1973,7 +1973,7 @@ func (s *WorkerIntegrationTestSuite) TestConnection_UpdateWithActiveJob() {
 func (s *WorkerIntegrationTestSuite) TestConnection_DuplicateConfigName() {
 	t := s.T()
 
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 	configName := s.uniqueConfigName("postgres_duplicate")
 
 	// Create first connection
@@ -2025,7 +2025,7 @@ func (s *WorkerIntegrationTestSuite) TestJob_InvalidInput() {
 func (s *WorkerIntegrationTestSuite) TestJob_AllFilterOperators() {
 	t := s.T()
 
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 	configName := s.uniqueConfigName("postgres_all_filters")
 
 	_, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
@@ -2088,7 +2088,7 @@ func (s *WorkerIntegrationTestSuite) TestJob_AllFilterOperators() {
 func (s *WorkerIntegrationTestSuite) TestConnection_Metadata() {
 	t := s.T()
 
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 	configName := s.uniqueConfigName("postgres_metadata_test")
 
 	customMetadata := map[string]any{
@@ -2128,7 +2128,7 @@ func (s *WorkerIntegrationTestSuite) TestValidateSchema_MultiDatasource() {
 	t := s.T()
 
 	// Create PostgreSQL connection
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 	pgConfigName := s.uniqueConfigName("postgres_schema_multi")
 	_, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
 		ConfigName:   pgConfigName,
@@ -2142,7 +2142,7 @@ func (s *WorkerIntegrationTestSuite) TestValidateSchema_MultiDatasource() {
 	require.NoError(t, err)
 
 	// Create MySQL connection
-	mysql := s.infra.MySQLInternal
+	mysql := s.infra.MySQLInternal()
 	mysqlConfigName := s.uniqueConfigName("mysql_schema_multi")
 	_, err = s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
 		ConfigName:   mysqlConfigName,
@@ -2175,7 +2175,7 @@ func (s *WorkerIntegrationTestSuite) TestValidateSchema_MultiDatasource() {
 func (s *WorkerIntegrationTestSuite) TestValidateSchema_PartialFailure() {
 	t := s.T()
 
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 	pgConfigName := s.uniqueConfigName("postgres_schema_partial")
 	_, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
 		ConfigName:   pgConfigName,
