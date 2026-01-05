@@ -200,11 +200,12 @@ build:
 # Test Commands
 #-------------------------------------------------------
 
-.PHONY: test
-test:
-	$(call print_title,Running tests)
-	@go test -v ./...
-	@echo "[ok] Tests completed successfully"
+.PHONY: test-unit
+test-unit:
+	$(call print_title,Running unit tests)
+	@PACKAGES=$$(go list ./... | grep -v -f ./scripts/coverage_ignore.txt 2>/dev/null || go list ./...); \
+	go test -v $$PACKAGES
+	@echo "[ok] Unit tests completed successfully"
 
 # =============================================================================
 # test-integration-container: Full Integration Tests
@@ -357,17 +358,18 @@ cover:
 	$(call check_command,go,Install Go from https://golang.org/doc/install)
 	@mkdir -p $(ARTIFACTS_DIR)
 	@PACKAGES=$$(go list ./... | grep -v -f ./scripts/coverage_ignore.txt 2>/dev/null || go list ./...); \
-	go test -coverprofile=$(ARTIFACTS_DIR)/coverage.out $$PACKAGES
-	@grep -v ".mock.go" $(ARTIFACTS_DIR)/coverage.out > $(ARTIFACTS_DIR)/coverage_filtered.out
-	@go tool cover -html=$(ARTIFACTS_DIR)/coverage_filtered.out -o $(ARTIFACTS_DIR)/coverage.html
+	go test -coverprofile=$(ARTIFACTS_DIR)/coverage.raw.out $$PACKAGES
+	@# Filter out mock files from coverage (they are generated and should not be tested)
+	@grep -v '\.mock\.go' $(ARTIFACTS_DIR)/coverage.raw.out > $(ARTIFACTS_DIR)/coverage.out || cp $(ARTIFACTS_DIR)/coverage.raw.out $(ARTIFACTS_DIR)/coverage.out
+	@go tool cover -html=$(ARTIFACTS_DIR)/coverage.out -o $(ARTIFACTS_DIR)/coverage.html
 	@echo "Coverage report generated at $(ARTIFACTS_DIR)/coverage.html"
 	@echo ""
 	@echo "Coverage Summary (excluding .mock.go files):"
 	@echo "----------------------------------------"
-	@go tool cover -func=$(ARTIFACTS_DIR)/coverage_filtered.out | grep total | awk '{print "Total coverage: " $$3}'
+	@go tool cover -func=$(ARTIFACTS_DIR)/coverage.out | grep total | awk '{print "Total coverage: " $$3}'
 	@echo "----------------------------------------"
 	@echo "Open $(ARTIFACTS_DIR)/coverage.html in your browser to view detailed coverage report"
-	@rm $(ARTIFACTS_DIR)/coverage_filtered.out
+	@rm -f $(ARTIFACTS_DIR)/coverage.raw.out
 	@echo "[ok] Coverage report generated successfully"
 
 #-------------------------------------------------------

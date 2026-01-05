@@ -280,7 +280,7 @@ func (s *CreateFetcherJob) Execute(ctx context.Context, organizationID uuid.UUID
 // TestConnection tests if a connection is available.
 // This method implements the ConnectionTester interface.
 func (s *CreateFetcherJob) TestConnection(ctx context.Context, conn *model.Connection) error {
-	logger, _, _, _ := commons.NewTrackingFromContext(ctx)
+	logger := commons.NewLoggerFromContext(ctx)
 
 	testCtx, cancel := context.WithTimeout(ctx, ConnectionTestTimeout)
 	defer cancel()

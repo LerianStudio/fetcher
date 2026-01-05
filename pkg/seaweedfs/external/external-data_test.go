@@ -2,115 +2,307 @@ package external
 
 import (
 	"context"
-	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/LerianStudio/fetcher/pkg/seaweedfs"
-	gomock "github.com/golang/mock/gomock"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNewSimpleRepository(t *testing.T) {
-	client := &seaweedfs.SeaweedFSClient{}
+	client := seaweedfs.NewSeaweedFSClient("http://localhost:8080")
 	bucket := "test-bucket"
 
 	repo := NewSimpleRepository(client, bucket)
 
-	if repo == nil {
-		t.Fatal("NewSimpleRepository() returned nil")
-	}
-	if repo.bucket != bucket {
-		t.Errorf("bucket = %q, want %q", repo.bucket, bucket)
-	}
-	if repo.client != client {
-		t.Error("client not set correctly")
-	}
+	assert.NotNil(t, repo)
+	assert.Equal(t, bucket, repo.bucket)
+	assert.Equal(t, client, repo.client)
 }
 
 func TestSimpleRepository_Get(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
+	tests := []struct {
+		name           string
+		objectName     string
+		serverResponse string
+		serverStatus   int
+		wantErr        bool
+		wantData       []byte
+	}{
+		{
+			name:           "success - get json file",
+			objectName:     "test-object",
+			serverResponse: `{"key": "value"}`,
+			serverStatus:   http.StatusOK,
+			wantErr:        false,
+			wantData:       []byte(`{"key": "value"}`),
+		},
+		{
+			name:           "success - get empty json",
+			objectName:     "empty-object",
+			serverResponse: `{}`,
+			serverStatus:   http.StatusOK,
+			wantErr:        false,
+			wantData:       []byte(`{}`),
+		},
+		{
+			name:           "success - get json array",
+			objectName:     "array-object",
+			serverResponse: `[{"id": 1}, {"id": 2}]`,
+			serverStatus:   http.StatusOK,
+			wantErr:        false,
+			wantData:       []byte(`[{"id": 1}, {"id": 2}]`),
+		},
+		{
+			name:           "error - file not found",
+			objectName:     "not-found",
+			serverResponse: "not found",
+			serverStatus:   http.StatusNotFound,
+			wantErr:        true,
+			wantData:       nil,
+		},
+		{
+			name:           "error - server error",
+			objectName:     "server-error",
+			serverResponse: "internal server error",
+			serverStatus:   http.StatusInternalServerError,
+			wantErr:        true,
+			wantData:       nil,
+		},
+	}
 
-	mockClient := seaweedfs.NewMockSeaweedFSClient(ctrl)
-	ctx := context.Background()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				expectedPath := "/test-bucket/" + tt.objectName + ".json"
+				assert.Equal(t, expectedPath, r.URL.Path)
+				assert.Equal(t, http.MethodGet, r.Method)
 
-	t.Run("successful get", func(t *testing.T) {
-		expectedData := []byte(`{"key":"value"}`)
-		mockClient.EXPECT().
-			DownloadFile(gomock.Any(), "/test-bucket/object-name.json").
-			Return(expectedData, nil)
+				w.WriteHeader(tt.serverStatus)
+				_, _ = w.Write([]byte(tt.serverResponse))
+			}))
+			defer server.Close()
 
-		repo := &SimpleRepository{
-			client: mockClient,
-			bucket: "test-bucket",
-		}
+			client := seaweedfs.NewSeaweedFSClient(server.URL)
+			repo := NewSimpleRepository(client, "test-bucket")
 
-		data, err := repo.Get(ctx, "object-name")
-		if err != nil {
-			t.Fatalf("Get() error = %v", err)
-		}
-		if string(data) != string(expectedData) {
-			t.Errorf("Get() = %q, want %q", data, expectedData)
-		}
-	})
+			data, err := repo.Get(context.Background(), tt.objectName)
 
-	t.Run("get with error", func(t *testing.T) {
-		mockClient.EXPECT().
-			DownloadFile(gomock.Any(), "/test-bucket/missing.json").
-			Return(nil, errors.New("not found"))
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Nil(t, data)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tt.wantData, data)
+			}
+		})
+	}
+}
 
-		repo := &SimpleRepository{
-			client: mockClient,
-			bucket: "test-bucket",
-		}
+func TestSimpleRepository_Get_WithSpecialCharacters(t *testing.T) {
+	tests := []struct {
+		name       string
+		objectName string
+		wantPath   string
+	}{
+		{
+			name:       "object with uuid",
+			objectName: "550e8400-e29b-41d4-a716-446655440000",
+			wantPath:   "/bucket/550e8400-e29b-41d4-a716-446655440000.json",
+		},
+		{
+			name:       "object with underscores",
+			objectName: "my_test_object",
+			wantPath:   "/bucket/my_test_object.json",
+		},
+		{
+			name:       "object with nested path",
+			objectName: "folder/subfolder/file",
+			wantPath:   "/bucket/folder/subfolder/file.json",
+		},
+	}
 
-		_, err := repo.Get(ctx, "missing")
-		if err == nil {
-			t.Error("Get() expected error, got nil")
-		}
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, tt.wantPath, r.URL.Path)
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{}`))
+			}))
+			defer server.Close()
+
+			client := seaweedfs.NewSeaweedFSClient(server.URL)
+			repo := NewSimpleRepository(client, "bucket")
+
+			_, err := repo.Get(context.Background(), tt.objectName)
+			require.NoError(t, err)
+		})
+	}
 }
 
 func TestSimpleRepository_Put(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
+	tests := []struct {
+		name         string
+		objectName   string
+		data         []byte
+		serverStatus int
+		wantErr      bool
+	}{
+		{
+			name:         "success - put json data",
+			objectName:   "test-object.json",
+			data:         []byte(`{"key": "value"}`),
+			serverStatus: http.StatusOK,
+			wantErr:      false,
+		},
+		{
+			name:         "success - put with status created",
+			objectName:   "new-object.json",
+			data:         []byte(`{"new": true}`),
+			serverStatus: http.StatusCreated,
+			wantErr:      false,
+		},
+		{
+			name:         "success - put empty data",
+			objectName:   "empty.json",
+			data:         []byte{},
+			serverStatus: http.StatusOK,
+			wantErr:      false,
+		},
+		{
+			name:         "success - put large data",
+			objectName:   "large.json",
+			data:         make([]byte, 10000),
+			serverStatus: http.StatusOK,
+			wantErr:      false,
+		},
+		{
+			name:         "error - server error",
+			objectName:   "error.json",
+			data:         []byte(`{"key": "value"}`),
+			serverStatus: http.StatusInternalServerError,
+			wantErr:      true,
+		},
+		{
+			name:         "error - forbidden",
+			objectName:   "forbidden.json",
+			data:         []byte(`{"key": "value"}`),
+			serverStatus: http.StatusForbidden,
+			wantErr:      true,
+		},
+		{
+			name:         "error - bad request",
+			objectName:   "bad.json",
+			data:         []byte(`{"key": "value"}`),
+			serverStatus: http.StatusBadRequest,
+			wantErr:      true,
+		},
+	}
 
-	mockClient := seaweedfs.NewMockSeaweedFSClient(ctrl)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				expectedPath := "/test-bucket/" + tt.objectName
+				assert.Equal(t, expectedPath, r.URL.Path)
+				assert.Equal(t, http.MethodPut, r.Method)
 
-	t.Run("successful put", func(t *testing.T) {
-		data := []byte(`{"key":"value"}`)
-		mockClient.EXPECT().
-			UploadFile(gomock.Any(), "/test-bucket/new-object", data).
-			Return(nil)
+				w.WriteHeader(tt.serverStatus)
+			}))
+			defer server.Close()
 
-		repo := &SimpleRepository{
-			client: mockClient,
-			bucket: "test-bucket",
+			client := seaweedfs.NewSeaweedFSClient(server.URL)
+			repo := NewSimpleRepository(client, "test-bucket")
+
+			err := repo.Put(context.Background(), tt.objectName, tt.data)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestSimpleRepository_Put_VerifiesDataSent(t *testing.T) {
+	expectedData := []byte(`{"important": "data", "count": 42}`)
+	var receivedData []byte
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var err error
+		receivedData, err = readAll(r.Body)
+		require.NoError(t, err)
+		defer r.Body.Close()
+
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client := seaweedfs.NewSeaweedFSClient(server.URL)
+	repo := NewSimpleRepository(client, "bucket")
+
+	err := repo.Put(context.Background(), "verify.json", expectedData)
+
+	require.NoError(t, err)
+	assert.Equal(t, expectedData, receivedData)
+}
+
+func TestSimpleRepository_Put_WithContext(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client := seaweedfs.NewSeaweedFSClient(server.URL)
+	repo := NewSimpleRepository(client, "bucket")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	err := repo.Put(ctx, "test.json", []byte("data"))
+
+	assert.Error(t, err)
+}
+
+func TestSimpleRepository_Get_WithContext(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+
+	client := seaweedfs.NewSeaweedFSClient(server.URL)
+	repo := NewSimpleRepository(client, "bucket")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	_, err := repo.Get(ctx, "test")
+
+	assert.Error(t, err)
+}
+
+// readAll is a helper to read all data from a reader
+func readAll(r interface{ Read([]byte) (int, error) }) ([]byte, error) {
+	var result []byte
+	buf := make([]byte, 1024)
+
+	for {
+		n, err := r.Read(buf)
+		if n > 0 {
+			result = append(result, buf[:n]...)
 		}
 
-		// Create context with logger
-		ctx := context.Background()
-
-		err := repo.Put(ctx, "new-object", data)
 		if err != nil {
-			t.Errorf("Put() error = %v", err)
-		}
-	})
+			if err.Error() == "EOF" {
+				break
+			}
 
-	t.Run("put with error", func(t *testing.T) {
-		data := []byte(`{"key":"value"}`)
-		mockClient.EXPECT().
-			UploadFile(gomock.Any(), "/test-bucket/failed-object", data).
-			Return(errors.New("upload failed"))
-
-		repo := &SimpleRepository{
-			client: mockClient,
-			bucket: "test-bucket",
+			return nil, err
 		}
+	}
 
-		ctx := context.Background()
-		err := repo.Put(ctx, "failed-object", data)
-		if err == nil {
-			t.Error("Put() expected error, got nil")
-		}
-	})
+	return result, nil
 }
