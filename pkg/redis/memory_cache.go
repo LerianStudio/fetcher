@@ -53,7 +53,7 @@ func NewInMemoryCache[T any](ttl time.Duration, logger log.Logger) *InMemoryCach
 func (c *InMemoryCache[T]) Get(ctx context.Context, key string) (T, bool, error) {
 	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
-	ctx, span := tracer.Start(ctx, "cache.in_memory.get")
+	_, span := tracer.Start(ctx, "cache.in_memory.get")
 	defer span.End()
 
 	span.SetAttributes(
@@ -70,17 +70,20 @@ func (c *InMemoryCache[T]) Get(ctx context.Context, key string) (T, bool, error)
 	if !exists {
 		span.SetAttributes(attribute.Bool("app.cache.hit", false))
 		logger.Debugf("in-memory cache miss for key %s", key)
+
 		return zero, false, nil
 	}
 
 	if time.Now().UTC().After(entry.expiresAt) {
 		span.SetAttributes(attribute.Bool("app.cache.hit", false))
 		logger.Debugf("in-memory cache expired for key %s", key)
+
 		return zero, false, nil
 	}
 
 	span.SetAttributes(attribute.Bool("app.cache.hit", true))
 	logger.Debugf("in-memory cache hit for key %s", key)
+
 	return entry.value, true, nil
 }
 
@@ -110,6 +113,7 @@ func (c *InMemoryCache[T]) Set(ctx context.Context, key string, value T, ttl tim
 	}
 
 	logger.Debugf("in-memory cached key %s with TTL %v", key, ttl)
+
 	return nil
 }
 
@@ -117,7 +121,7 @@ func (c *InMemoryCache[T]) Set(ctx context.Context, key string, value T, ttl tim
 func (c *InMemoryCache[T]) Delete(ctx context.Context, key string) error {
 	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
-	ctx, span := tracer.Start(ctx, "cache.in_memory.delete")
+	_, span := tracer.Start(ctx, "cache.in_memory.delete")
 	defer span.End()
 
 	span.SetAttributes(
@@ -129,6 +133,7 @@ func (c *InMemoryCache[T]) Delete(ctx context.Context, key string) error {
 	defer c.mu.Unlock()
 
 	delete(c.entries, key)
+
 	return nil
 }
 
@@ -138,6 +143,7 @@ func (c *InMemoryCache[T]) Clear(ctx context.Context) error {
 	defer c.mu.Unlock()
 
 	c.entries = make(map[string]*cacheEntry[T])
+
 	return nil
 }
 
@@ -171,6 +177,7 @@ func (c *InMemoryCache[T]) cleanupExpired() {
 		select {
 		case <-ticker.C:
 			c.mu.Lock()
+
 			now := time.Now().UTC()
 			for key, entry := range c.entries {
 				if now.After(entry.expiresAt) {
@@ -178,6 +185,7 @@ func (c *InMemoryCache[T]) cleanupExpired() {
 					c.logger.Debugf("in-memory cache cleanup removed expired key %s", key)
 				}
 			}
+
 			c.mu.Unlock()
 		case <-c.stopCh:
 			return

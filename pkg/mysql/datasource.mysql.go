@@ -195,6 +195,7 @@ func (ds *ExternalDataSource) queryTables(ctx context.Context) ([]string, error)
 	defer rows.Close()
 
 	var tables []string
+
 	for rows.Next() {
 		var tableName string
 		if err := rows.Scan(&tableName); err != nil {
@@ -231,6 +232,7 @@ func (ds *ExternalDataSource) queryPrimaryKeys(ctx context.Context) (map[string]
 	defer pkRows.Close()
 
 	primaryKeys := make(map[string]map[string]bool)
+
 	for pkRows.Next() {
 		var tableName, columnName string
 		if err := pkRows.Scan(&tableName, &columnName); err != nil {

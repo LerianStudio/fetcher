@@ -503,11 +503,14 @@ func (prmq *RabbitMQAdapter) calculateBackoff(attempt int) time.Duration {
 	baseDelay := prmq.options.BaseRetryDelay
 	maxDelay := prmq.options.MaxRetryDelay
 
+	// Ensure non-negative shift amount (attempt starts at 1 in practice)
+	shiftAmount := max(attempt-1, 0)
 	// Calculate exponential backoff: baseDelay * 2^(attempt-1)
-	delay := min(baseDelay*time.Duration(1<<uint(attempt-1)), maxDelay)
+	delay := min(baseDelay*time.Duration(1<<uint(shiftAmount)), maxDelay) // #nosec G115 -- shiftAmount is clamped to >= 0
 
 	// Add jitter (0-25%) to prevent thundering herd
-	jitter := time.Duration(rand.Int63n(int64(delay / 4)))
+	// Using math/rand is acceptable here as jitter is not security-sensitive
+	jitter := time.Duration(rand.Int63n(int64(delay / 4))) // #nosec G404 -- jitter for backoff timing is not security-sensitive
 
 	return delay + jitter
 }
@@ -546,6 +549,7 @@ func (prmq *RabbitMQAdapter) ensureChannel(span *trace.Span, logger libLog.Logge
 		}
 
 		lastErr = err
+
 		prmq.circuitBreaker.recordFailure()
 
 		backoff := prmq.calculateBackoff(attempt)
@@ -676,6 +680,7 @@ func (prmq *RabbitMQAdapter) ProducerDefault(ctx context.Context, exchange, key 
 		}
 
 		lastErr = err
+
 		prmq.circuitBreaker.recordFailure()
 
 		prmq.invalidateChannel(logger)
@@ -988,6 +993,7 @@ func (prmq *RabbitMQAdapter) Shutdown(ctx context.Context) error {
 
 	// Use a done channel to implement timeout on WaitGroup
 	done := make(chan struct{})
+
 	go func() {
 		prmq.consumerWg.Wait()
 		close(done)

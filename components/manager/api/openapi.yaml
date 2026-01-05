@@ -589,6 +589,10 @@ components:
         host:
           example: db.example.com
           type: string
+        metadata:
+          additionalProperties:
+            type: object
+          type: object
         password:
           example: secretpassword
           type: string
@@ -624,6 +628,8 @@ components:
       example:
         configName: configName
         createdAt: createdAt
+        metadata:
+          key: '{}'
         databaseName: databaseName
         port: 0
         host: host
@@ -644,6 +650,10 @@ components:
           type: string
         id:
           type: string
+        metadata:
+          additionalProperties:
+            type: object
+          type: object
         port:
           type: integer
         ssl:
@@ -913,6 +923,8 @@ components:
         items:
         - configName: configName
           createdAt: createdAt
+          metadata:
+            key: '{}'
           databaseName: databaseName
           port: 0
           host: host
@@ -924,6 +936,8 @@ components:
           username: username
         - configName: configName
           createdAt: createdAt
+          metadata:
+            key: '{}'
           databaseName: databaseName
           port: 0
           host: host

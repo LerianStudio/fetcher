@@ -3,29 +3,19 @@ package mongodb
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
+	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
 	"go.mongodb.org/mongo-driver/bson/bsoncodec"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/x/mongo/driver"
 	"go.mongodb.org/mongo-driver/x/mongo/driver/topology"
 )
-
-// mockMongoClientProvider is a mock implementation of MongoClientProvider for testing
-type mockMongoClientProvider struct {
-	client *mongo.Client
-	err    error
-}
-
-func (m *mockMongoClientProvider) GetDB(ctx context.Context) (*mongo.Client, error) {
-	if m.err != nil {
-		return nil, m.err
-	}
-	return m.client, nil
-}
 
 func TestValidateFieldsInSchemaMongo(t *testing.T) {
 	tests := []struct {
@@ -146,6 +136,12 @@ func TestMapMongoErrorToResponse(t *testing.T) {
 			wantNotNil: true,
 		},
 		{
+			name:       "server selection error",
+			err:        topology.ServerSelectionError{Wrapped: errors.New("server selection failed")},
+			wantCode:   constant.ErrServiceUnavailable.Error(),
+			wantNotNil: true,
+		},
+		{
 			name:       "no documents",
 			err:        mongo.ErrNoDocuments,
 			wantCode:   constant.ErrNotFound.Error(),
@@ -200,6 +196,12 @@ func TestMapMongoErrorToResponse(t *testing.T) {
 			wantNotNil: true,
 		},
 		{
+			name:       "command error shutdown",
+			err:        mongo.CommandError{Code: 89},
+			wantCode:   constant.ErrServiceUnavailable.Error(),
+			wantNotNil: true,
+		},
+		{
 			name:       "command error shutdown in progress",
 			err:        mongo.CommandError{Code: 91},
 			wantCode:   constant.ErrServiceUnavailable.Error(),
@@ -215,6 +217,24 @@ func TestMapMongoErrorToResponse(t *testing.T) {
 			name:       "command error namespace not found",
 			err:        mongo.CommandError{Code: 26},
 			wantCode:   constant.ErrInternalServer.Error(),
+			wantNotNil: true,
+		},
+		{
+			name:       "command error unhandled code",
+			err:        mongo.CommandError{Code: 999},
+			wantCode:   constant.ErrInternalServer.Error(),
+			wantNotNil: true,
+		},
+		{
+			name:       "connection error (treated as internal)",
+			err:        topology.ConnectionError{Wrapped: errors.New("connection error")},
+			wantCode:   constant.ErrInternalServer.Error(),
+			wantNotNil: true,
+		},
+		{
+			name:       "timeout error wrapped",
+			err:        fmt.Errorf("timeout: %w", driver.ErrDeadlineWouldBeExceeded),
+			wantCode:   constant.ErrServiceUnavailable.Error(),
 			wantNotNil: true,
 		},
 		{
@@ -264,9 +284,14 @@ func TestPingMongo(t *testing.T) {
 	})
 
 	t.Run("returns error when GetDB fails", func(t *testing.T) {
-		provider := &mockMongoClientProvider{
-			err: errors.New("connection failed"),
-		}
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		provider := NewMockMongoClientProvider(ctrl)
+		provider.EXPECT().
+			GetDB(gomock.Any()).
+			Return(nil, errors.New("connection failed"))
+
 		err := PingMongo(context.Background(), provider, time.Second)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to get database connection")
@@ -275,17 +300,27 @@ func TestPingMongo(t *testing.T) {
 	t.Run("uses default timeout when timeout is zero", func(t *testing.T) {
 		// We can't easily test this without a real connection, but we can verify
 		// the code path by checking it doesn't panic with zero timeout
-		provider := &mockMongoClientProvider{
-			err: errors.New("connection failed"),
-		}
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		provider := NewMockMongoClientProvider(ctrl)
+		provider.EXPECT().
+			GetDB(gomock.Any()).
+			Return(nil, errors.New("connection failed"))
+
 		err := PingMongo(context.Background(), provider, 0)
 		assert.Error(t, err) // Will fail at GetDB, but timeout code path is exercised
 	})
 
 	t.Run("uses default timeout when timeout is negative", func(t *testing.T) {
-		provider := &mockMongoClientProvider{
-			err: errors.New("connection failed"),
-		}
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		provider := NewMockMongoClientProvider(ctrl)
+		provider.EXPECT().
+			GetDB(gomock.Any()).
+			Return(nil, errors.New("connection failed"))
+
 		err := PingMongo(context.Background(), provider, -1*time.Second)
 		assert.Error(t, err)
 	})
@@ -293,4 +328,145 @@ func TestPingMongo(t *testing.T) {
 
 func TestDefaultPingTimeout(t *testing.T) {
 	assert.Equal(t, 5*time.Second, DefaultPingTimeout)
+}
+
+func TestValidateFieldsInSchemaMongo_EdgeCases(t *testing.T) {
+	t.Run("handles mixed case field names correctly", func(t *testing.T) {
+		var count int32
+		expectedFields := []string{"UserID", "userName", "EMAIL"}
+		schema := CollectionSchema{
+			Fields: []FieldInformation{
+				{Name: "userid"},
+				{Name: "USERNAME"},
+				{Name: "email"},
+			},
+		}
+
+		missing := ValidateFieldsInSchemaMongo(expectedFields, schema, &count)
+
+		assert.Empty(t, missing, "all fields should match case-insensitively")
+		assert.Equal(t, int32(3), count)
+	})
+
+	t.Run("handles special characters in field names", func(t *testing.T) {
+		var count int32
+		expectedFields := []string{"field_with_underscore", "field-with-dash", "field.with.dot"}
+		schema := CollectionSchema{
+			Fields: []FieldInformation{
+				{Name: "field_with_underscore"},
+				{Name: "field-with-dash"},
+				{Name: "field.with.dot"},
+			},
+		}
+
+		missing := ValidateFieldsInSchemaMongo(expectedFields, schema, &count)
+
+		assert.Empty(t, missing)
+		assert.Equal(t, int32(3), count)
+	})
+
+	t.Run("handles duplicate field names in expected fields", func(t *testing.T) {
+		var count int32
+		expectedFields := []string{"id", "id", "name", "name"}
+		schema := CollectionSchema{
+			Fields: []FieldInformation{
+				{Name: "id"},
+				{Name: "name"},
+			},
+		}
+
+		missing := ValidateFieldsInSchemaMongo(expectedFields, schema, &count)
+
+		assert.Empty(t, missing)
+		assert.Equal(t, int32(4), count, "should count each occurrence")
+	})
+
+	t.Run("handles empty strings in field names", func(t *testing.T) {
+		var count int32
+		expectedFields := []string{"", "id"}
+		schema := CollectionSchema{
+			Fields: []FieldInformation{
+				{Name: ""},
+				{Name: "id"},
+			},
+		}
+
+		missing := ValidateFieldsInSchemaMongo(expectedFields, schema, &count)
+
+		assert.Empty(t, missing)
+		assert.Equal(t, int32(2), count)
+	})
+
+	t.Run("partial match scenario", func(t *testing.T) {
+		var count int32
+		expectedFields := []string{"id", "name", "email", "phone", "address"}
+		schema := CollectionSchema{
+			Fields: []FieldInformation{
+				{Name: "id"},
+				{Name: "email"},
+			},
+		}
+
+		missing := ValidateFieldsInSchemaMongo(expectedFields, schema, &count)
+
+		assert.Equal(t, []string{"name", "phone", "address"}, missing)
+		assert.Equal(t, int32(2), count)
+	})
+}
+
+func TestCollectionSchema_Structure(t *testing.T) {
+	t.Run("creates valid collection schema", func(t *testing.T) {
+		schema := CollectionSchema{
+			CollectionName: "users",
+			Fields: []FieldInformation{
+				{Name: "id", DataType: "objectId"},
+				{Name: "name", DataType: "string"},
+				{Name: "age", DataType: "number"},
+				{Name: "created_at", DataType: "date"},
+			},
+		}
+
+		assert.Equal(t, "users", schema.CollectionName)
+		assert.Len(t, schema.Fields, 4)
+		assert.Equal(t, "objectId", schema.Fields[0].DataType)
+		assert.Equal(t, "string", schema.Fields[1].DataType)
+		assert.Equal(t, "number", schema.Fields[2].DataType)
+		assert.Equal(t, "date", schema.Fields[3].DataType)
+	})
+
+	t.Run("handles empty collection schema", func(t *testing.T) {
+		schema := CollectionSchema{}
+
+		assert.Empty(t, schema.CollectionName)
+		assert.Nil(t, schema.Fields)
+	})
+
+	t.Run("handles schema with no fields", func(t *testing.T) {
+		schema := CollectionSchema{
+			CollectionName: "empty_collection",
+			Fields:         []FieldInformation{},
+		}
+
+		assert.Equal(t, "empty_collection", schema.CollectionName)
+		assert.Empty(t, schema.Fields)
+	})
+}
+
+func TestFieldInformation_Structure(t *testing.T) {
+	t.Run("creates valid field information", func(t *testing.T) {
+		field := FieldInformation{
+			Name:     "user_id",
+			DataType: "objectId",
+		}
+
+		assert.Equal(t, "user_id", field.Name)
+		assert.Equal(t, "objectId", field.DataType)
+	})
+
+	t.Run("handles empty field information", func(t *testing.T) {
+		field := FieldInformation{}
+
+		assert.Empty(t, field.Name)
+		assert.Empty(t, field.DataType)
+	})
 }

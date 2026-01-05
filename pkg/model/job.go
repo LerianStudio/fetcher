@@ -47,6 +47,7 @@ func NewJobStatusFromString(status string) (JobStatus, error) {
 	if !normalized.IsValid() {
 		return "", errors.New("invalid job status")
 	}
+
 	return normalized, nil
 }
 
@@ -84,6 +85,7 @@ func NewJob(
 	if err != nil {
 		return nil, err
 	}
+
 	return &Job{
 		ID:             id,
 		OrganizationID: organizationID,
@@ -102,6 +104,88 @@ type Filter struct {
 	Field    string `json:"field" validate:"required"`
 	Operator string `json:"operator" validate:"required"`
 	Value    []any  `json:"value" validate:"required"`
+}
+
+// ParsedFilterField represents the components of a qualified filter field.
+// Supports formats:
+// - configName.tableName.fieldName (3 parts)
+// - configName.schema.tableName.fieldName (4 parts)
+type ParsedFilterField struct {
+	ConfigName string
+	TableName  string
+	FieldName  string
+}
+
+// ParseFilterField parses a qualified filter field string into its components.
+// Valid formats:
+// - "configName.tableName.fieldName" → ConfigName="configName", TableName="tableName", FieldName="fieldName"
+// - "configName.schema.tableName.fieldName" → ConfigName="configName", TableName="schema.tableName", FieldName="fieldName"
+func ParseFilterField(field string) (*ParsedFilterField, error) {
+	if field == "" {
+		return nil, errors.New("filter field cannot be empty")
+	}
+
+	parts := strings.Split(field, ".")
+
+	switch len(parts) {
+	case 3:
+		// configName.tableName.fieldName
+		if parts[0] == "" || parts[1] == "" || parts[2] == "" {
+			return nil, fmt.Errorf("invalid filter field format: empty component in '%s'", field)
+		}
+
+		return &ParsedFilterField{
+			ConfigName: parts[0],
+			TableName:  parts[1],
+			FieldName:  parts[2],
+		}, nil
+	case 4:
+		// configName.schema.tableName.fieldName
+		if parts[0] == "" || parts[1] == "" || parts[2] == "" || parts[3] == "" {
+			return nil, fmt.Errorf("invalid filter field format: empty component in '%s'", field)
+		}
+
+		return &ParsedFilterField{
+			ConfigName: parts[0],
+			TableName:  parts[1] + "." + parts[2], // Reconstruct schema.tableName
+			FieldName:  parts[3],
+		}, nil
+	default:
+		return nil, fmt.Errorf("invalid filter field format: expected 'configName.tableName.fieldName' or 'configName.schema.tableName.fieldName', got '%s' with %d parts", field, len(parts))
+	}
+}
+
+// ValidateFilterReferences validates that all filter field references exist in mappedFields.
+// Only validates that configName exists - tableName resolution is handled by DataSource adapters
+// which can apply default schema fallback logic (e.g., "transactions" → "public.transactions").
+func ValidateFilterReferences(filters []Filter, mappedFields map[string]map[string][]string) error {
+	if len(filters) == 0 {
+		return nil
+	}
+
+	var validationErrors []string
+
+	for i, f := range filters {
+		parsed, err := ParseFilterField(f.Field)
+		if err != nil {
+			validationErrors = append(validationErrors, fmt.Sprintf("filter[%d]: %v", i, err))
+			continue
+		}
+
+		// Check if configName exists in mappedFields
+		// NOTE: We do NOT validate tableName here - the DataSource adapter will handle
+		// schema resolution with fallback logic (e.g., trying "public.table" if "table" not found)
+		if _, exists := mappedFields[parsed.ConfigName]; !exists {
+			validationErrors = append(validationErrors,
+				fmt.Sprintf("filter[%d]: datasource '%s' not found in mappedFields", i, parsed.ConfigName))
+		}
+	}
+
+	if len(validationErrors) > 0 {
+		return errors.New(strings.Join(validationErrors, "; "))
+	}
+
+	return nil
 }
 
 // IsValid validates the FetcherRequest structure.
@@ -130,12 +214,14 @@ func (r *Job) IsValid() error {
 	// Validate each datasource has at least one table with fields
 	for _, tables := range r.MappedFields {
 		hasFields := false
+
 		for _, fields := range tables {
 			if len(fields) > 0 {
 				hasFields = true
 				break
 			}
 		}
+
 		if !hasFields {
 			return pkg.ValidationError{
 				EntityType: "fetcher",
@@ -184,6 +270,7 @@ func (r *Job) GetDatasourceNames() []string {
 	}
 
 	sort.Strings(names)
+
 	return names
 }
 
@@ -200,6 +287,7 @@ func (r *Job) ToMappedFieldsMap() map[string]any {
 		for table, fields := range tables {
 			tablesMap[table] = fields
 		}
+
 		result[datasource] = tablesMap
 	}
 
@@ -219,6 +307,7 @@ func (r *Job) SetFailedStatus(failedMsg string) {
 	if r.Metadata == nil {
 		r.Metadata = make(map[string]any)
 	}
+
 	r.Metadata["error"] = failedMsg
 }
 
@@ -254,14 +343,26 @@ type FilterRequest struct {
 }
 
 // ComputeRequestHash generates a SHA-256 hash of the request for idempotency checks.
-// The hash is computed from a deterministic JSON representation of the DataRequest.
+// The hash is computed from a deterministic JSON representation of both DataRequest and Metadata.
+// Including metadata ensures that requests with the same data but different metadata
+// (e.g., different correlation IDs or timestamps) are treated as distinct requests.
 func (r *FetcherRequest) ComputeRequestHash() (string, error) {
-	data, err := json.Marshal(r.DataRequest)
+	// Create a composite structure for hashing that includes both DataRequest and Metadata
+	hashInput := struct {
+		DataRequest DataRequest    `json:"dataRequest"`
+		Metadata    map[string]any `json:"metadata,omitempty"`
+	}{
+		DataRequest: r.DataRequest,
+		Metadata:    r.Metadata,
+	}
+
+	data, err := json.Marshal(hashInput)
 	if err != nil {
 		return "", err
 	}
 
 	hash := sha256.Sum256(data)
+
 	return hex.EncodeToString(hash[:]), nil
 }
 

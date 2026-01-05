@@ -85,3 +85,69 @@ func TestNewCacheWithFallback_RedisAvailable_ReturnsFallbackCache(t *testing.T) 
 		closeable.Close()
 	}
 }
+
+func TestMustNewCacheWithFallback_RedisUnavailable_ReturnsMemoryOnlyCache(t *testing.T) {
+	logger := zap.InitializeLogger()
+
+	cfg := RedisConfig{
+		Host:     "invalid-host-that-does-not-exist",
+		Port:     "6379",
+		Password: "",
+		DB:       0,
+	}
+
+	ttl := 5 * time.Minute
+
+	// Should NOT panic - graceful degradation to memory cache
+	cache := MustNewCacheWithFallback[string](cfg, logger, ttl, "test:")
+	require.NotNil(t, cache)
+
+	// Should be healthy (in-memory is always healthy)
+	assert.True(t, cache.IsHealthy(nil))
+
+	// Cleanup
+	if closeable, ok := cache.(Closeable); ok {
+		closeable.Close()
+	}
+}
+
+func TestMustNewCacheWithFallback_ZeroTTL_UsesDefault(t *testing.T) {
+	logger := zap.InitializeLogger()
+
+	cfg := RedisConfig{
+		Host:     "invalid-host-that-does-not-exist",
+		Port:     "6379",
+		Password: "",
+		DB:       0,
+	}
+
+	// Zero TTL should use default
+	cache := MustNewCacheWithFallback[string](cfg, logger, 0, "test:")
+	require.NotNil(t, cache)
+
+	// Cleanup
+	if closeable, ok := cache.(Closeable); ok {
+		closeable.Close()
+	}
+}
+
+func TestNewCacheWithFallback_NegativeTTL_UsesDefault(t *testing.T) {
+	logger := zap.InitializeLogger()
+
+	cfg := RedisConfig{
+		Host:     "invalid-host-that-does-not-exist",
+		Port:     "6379",
+		Password: "",
+		DB:       0,
+	}
+
+	// Negative TTL should use default
+	cache, err := NewCacheWithFallback[string](cfg, logger, -5*time.Minute, "test:")
+	assert.NoError(t, err)
+	require.NotNil(t, cache)
+
+	// Cleanup
+	if closeable, ok := cache.(Closeable); ok {
+		closeable.Close()
+	}
+}

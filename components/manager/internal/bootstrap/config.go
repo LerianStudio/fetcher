@@ -11,6 +11,7 @@ import (
 	connectionCommand "github.com/LerianStudio/fetcher/components/manager/internal/services/command"
 	connectionQuery "github.com/LerianStudio/fetcher/components/manager/internal/services/query"
 
+	cacheRepo "github.com/LerianStudio/fetcher/components/manager/internal/adapters/cache"
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
@@ -20,7 +21,6 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/rabbitmq"
 	"github.com/LerianStudio/fetcher/pkg/ratelimit"
 	redisCache "github.com/LerianStudio/fetcher/pkg/redis"
-	cacheRepo "github.com/LerianStudio/fetcher/pkg/repository/cache"
 
 	"github.com/LerianStudio/lib-auth/v2/auth/middleware"
 	mongoDB "github.com/LerianStudio/lib-commons/v2/commons/mongo"
@@ -200,6 +200,7 @@ func InitServers() *Service {
 		// This should never happen as NewCacheWithFallback handles Redis failures gracefully
 		logger.Fatalf("Failed to initialize cache: %v", errCache)
 	}
+
 	schemaCache = cacheRepo.NewSchemaCache(genericCache, schemaCacheTTL)
 
 	// Init services and handlers

@@ -1,0 +1,29 @@
+name: Fuzz Tests
+
+on:
+  schedule:
+    - cron: '0 0 * * 0'  # Weekly on Sunday at midnight
+  workflow_dispatch:      # Manual trigger
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Run Fuzz Tests
+        run: make fuzz-all FUZZ_TIME=60s
+
+      - name: Upload Fuzz Artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-failures
+          path: |
+            tests/fuzz/**/testdata/fuzz/
+          retention-days: 7

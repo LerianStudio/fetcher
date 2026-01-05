@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/model/datasource"
@@ -60,7 +61,13 @@ func (ds *DataSourceConfigPostgres) Close(ctx context.Context) error {
 func (ds *DataSourceConfigPostgres) Query(ctx context.Context, tables map[string][]string, filters map[string]map[string]job.FilterCondition, logger log.Logger) (map[string][]map[string]any, error) {
 	result := make(map[string][]map[string]any)
 
-	schemaResult, err := ds.PostgresRepository.GetDatabaseSchema(ctx)
+	// Extract unique schemas from table names
+	schemas := datasource.GetUniqueSchemas(tables)
+
+	// Check if any table is unqualified (no schema prefix) - these belong to the default "public" schema
+	schemas = ensureDefaultSchemaIncluded(tables, schemas)
+
+	schemaResult, err := ds.PostgresRepository.GetDatabaseSchema(ctx, schemas)
 	if err != nil {
 		logger.Errorf("Error getting database schema: %s", err.Error())
 		return nil, err
@@ -98,17 +105,89 @@ func (ds *DataSourceConfigPostgres) Query(ctx context.Context, tables map[string
 }
 
 // getTableFilters extracts filters for a specific table.
+// Supports matching with or without schema prefix for flexibility:
+// - Exact match: filters["public.transactions"] for table "public.transactions"
+// - Without schema: filters["transactions"] for table "public.transactions"
+// - With default schema: filters["public.transactions"] for table "transactions"
 func getTableFilters(databaseFilters map[string]map[string]job.FilterCondition, tableName string) map[string]job.FilterCondition {
 	if databaseFilters == nil {
 		return nil
 	}
 
-	return databaseFilters[tableName]
+	// 1. Try exact match first
+	if filters, exists := databaseFilters[tableName]; exists {
+		return filters
+	}
+
+	// 2. If tableName has schema prefix (e.g., "public.transactions"),
+	//    try without schema (e.g., "transactions")
+	if strings.Contains(tableName, ".") {
+		_, unqualifiedName := datasource.SplitSchemaTable(tableName)
+		if filters, exists := databaseFilters[unqualifiedName]; exists {
+			return filters
+		}
+	}
+
+	// 3. If tableName has no schema prefix, try with default schema
+	if !strings.Contains(tableName, ".") {
+		qualifiedName := postgres.DefaultSchema + "." + tableName
+		if filters, exists := databaseFilters[qualifiedName]; exists {
+			return filters
+		}
+	}
+
+	return nil
+}
+
+// ensureDefaultSchemaIncluded adds the default "public" schema to the schemas list
+// if any table name is unqualified (has no schema prefix with a dot).
+// This ensures tables in the public schema are discoverable when mixed with schema-qualified tables.
+func ensureDefaultSchemaIncluded(tables map[string][]string, schemas []string) []string {
+	// Check if any table has no dot (unqualified name)
+	hasUnqualifiedTable := false
+
+	for tableName := range tables {
+		if !containsDot(tableName) {
+			hasUnqualifiedTable = true
+			break
+		}
+	}
+
+	// If there are unqualified tables, ensure public schema is included
+	if hasUnqualifiedTable {
+		if !containsSchema(schemas, postgres.DefaultSchema) {
+			schemas = append(schemas, postgres.DefaultSchema)
+		}
+	}
+
+	return schemas
+}
+
+// containsDot checks if a string contains a dot character.
+func containsDot(s string) bool {
+	for _, c := range s {
+		if c == '.' {
+			return true
+		}
+	}
+
+	return false
+}
+
+// containsSchema checks if a schema name is already in the list.
+func containsSchema(schemas []string, target string) bool {
+	for _, s := range schemas {
+		if s == target {
+			return true
+		}
+	}
+
+	return false
 }
 
 // GetSchemaInfo returns the schema information for PostgreSQL.
-func (ds *DataSourceConfigPostgres) GetSchemaInfo(ctx context.Context) (*model.DataSourceSchema, error) {
-	_, tracer, _, _ := commons.NewTrackingFromContext(ctx)
+func (ds *DataSourceConfigPostgres) GetSchemaInfo(ctx context.Context, schemas []string) (*model.DataSourceSchema, error) {
+	_, tracer, _, _ := commons.NewTrackingFromContext(ctx) //nolint:dogsled // Only tracer needed for span creation
 
 	ctx, span := tracer.Start(ctx, "datasource.postgres.get_schema_info")
 	defer span.End()
@@ -118,7 +197,7 @@ func (ds *DataSourceConfigPostgres) GetSchemaInfo(ctx context.Context) (*model.D
 		attribute.String("app.datasource.type", "postgres"),
 	)
 
-	schemaResult, err := ds.PostgresRepository.GetDatabaseSchema(ctx)
+	schemaResult, err := ds.PostgresRepository.GetDatabaseSchema(ctx, schemas)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "failed to get database schema", err)
 		return nil, fmt.Errorf("failed to get PostgreSQL schema: %w", err)
@@ -126,11 +205,13 @@ func (ds *DataSourceConfigPostgres) GetSchemaInfo(ctx context.Context) (*model.D
 
 	// Use factory function from domain entity
 	schema := model.NewDataSourceSchema(ds.ConfigName)
+
 	for _, table := range schemaResult {
 		columns := make([]string, len(table.Columns))
 		for i, col := range table.Columns {
 			columns[i] = col.Name
 		}
+
 		schema.AddTable(table.TableName, columns)
 	}
 

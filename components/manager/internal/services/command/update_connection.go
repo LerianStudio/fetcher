@@ -83,6 +83,7 @@ func (s *UpdateConnection) Execute(ctx context.Context, organizationID, connecti
 		&connInput.DatabaseName,
 		&connInput.Username,
 		&connInput.Password,
+		connInput.Metadata,
 		func() *string {
 			if connInput.SSL != nil {
 				return &connInput.SSL.Mode

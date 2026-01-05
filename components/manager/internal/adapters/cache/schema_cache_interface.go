@@ -29,4 +29,7 @@ type SchemaCacheRepository interface {
 
 	// IsHealthy checks if the cache is operational.
 	IsHealthy(ctx context.Context) bool
+
+	// Close closes the cache.
+	Close() error
 }

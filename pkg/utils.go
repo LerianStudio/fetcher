@@ -48,5 +48,6 @@ func MaskSecretPtr(value *string) *string {
 	}
 
 	masked := "[REDACTED]"
+
 	return &masked
 }

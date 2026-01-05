@@ -3,14 +3,17 @@ package query
 import (
 	"context"
 	"fmt"
+	"strings"
 
+	cacheRepo "github.com/LerianStudio/fetcher/components/manager/internal/adapters/cache"
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/datasource"
 	"github.com/LerianStudio/fetcher/pkg/model"
+	datasourceModel "github.com/LerianStudio/fetcher/pkg/model/datasource"
 	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
-	cacheRepo "github.com/LerianStudio/fetcher/pkg/repository/cache"
+	"github.com/LerianStudio/fetcher/pkg/postgres"
 
 	"github.com/LerianStudio/lib-commons/v2/commons"
 	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
@@ -67,6 +70,7 @@ func (s *ValidateSchema) Execute(
 	if errValidation := spec.Validate(); errValidation != nil {
 		libOpentelemetry.HandleSpanError(&span, "Invalid request payload", errValidation)
 		logger.Warnf("schema validation request invalid org=%s: %v", organizationID, errValidation)
+
 		return nil, errValidation
 	}
 
@@ -79,11 +83,13 @@ func (s *ValidateSchema) Execute(
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to find connections", err)
 		logger.Errorf("failed to find connections org=%s: %v", organizationID, err)
+
 		return nil, pkg.ValidateInternalError(err, "schema")
 	}
 
 	if len(connections) == 0 {
 		libOpentelemetry.HandleSpanError(&span, "No connections found for the provided datasources", nil)
+
 		return nil, pkg.ValidationError{
 			EntityType: "schema",
 			Code:       constant.ErrSchemaValidationNotFound.Error(),
@@ -108,14 +114,27 @@ func (s *ValidateSchema) Execute(
 		if !found {
 			validationErrors = append(validationErrors, model.NewDataSourceNotFoundError(configName))
 			logger.Warnf("datasource not found config_name=%s org=%s", configName, organizationID)
+
 			continue
 		}
 
+		tables := spec.GetTablesByConfigName(configName)
+
+		// Returns schemas only if they exist
+		schemas := datasourceModel.GetUniqueSchemas(tables)
+
+		// For PostgreSQL, ensure the default "public" schema is included
+		// when there are unqualified table names (tables without a dot)
+		if conn.Type == model.TypePostgreSQL {
+			schemas = ensureDefaultSchemaForPostgreSQL(tables, schemas)
+		}
+
 		// Get or fetch schema for the connection
-		schema, err := s.getOrFetchSchema(ctx, conn)
+		schema, err := s.getOrFetchSchema(ctx, conn, schemas)
 		if err != nil {
 			validationErrors = append(validationErrors, model.NewDataSourceDownError(configName))
 			logger.Warnf("failed to get schema config_name=%s org=%s: %v", configName, organizationID, err)
+
 			continue
 		}
 
@@ -128,6 +147,7 @@ func (s *ValidateSchema) Execute(
 	var response *model.SchemaValidationResponse
 	if len(validationErrors) == 0 {
 		response = model.NewSuccessResponse()
+
 		logger.Infof("schema validation successful org=%s datasources=%d", organizationID, len(configNames))
 	} else {
 		response = model.NewFailureResponse(validationErrors)
@@ -146,6 +166,7 @@ func (s *ValidateSchema) Execute(
 func (s *ValidateSchema) getOrFetchSchema(
 	ctx context.Context,
 	conn *model.Connection,
+	schemas []string,
 ) (*model.DataSourceSchema, error) {
 	logger, tracer, _, _ := commons.NewTrackingFromContext(ctx)
 
@@ -166,6 +187,7 @@ func (s *ValidateSchema) getOrFetchSchema(
 	if cachedSchema != nil {
 		span.SetAttributes(attribute.Bool("app.schema.cache_hit", true))
 		logger.Debugf("schema cache hit config_name=%s", conn.ConfigName)
+
 		return cachedSchema, nil
 	}
 
@@ -181,7 +203,7 @@ func (s *ValidateSchema) getOrFetchSchema(
 	defer ds.Close(ctx)
 
 	// Get schema info from datasource
-	schema, err := ds.GetSchemaInfo(ctx)
+	schema, err := ds.GetSchemaInfo(ctx, schemas)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "failed to get schema info", err)
 		return nil, fmt.Errorf("failed to get schema info: %w", err)
@@ -196,4 +218,37 @@ func (s *ValidateSchema) getOrFetchSchema(
 	logger.Debugf("schema fetched and cached config_name=%s tables=%d", conn.ConfigName, len(schema.Tables))
 
 	return schema, nil
+}
+
+// ensureDefaultSchemaForPostgreSQL adds the default "public" schema to the schemas list
+// if any table name is unqualified (has no schema prefix with a dot).
+// This ensures tables in the public schema are discoverable when mixed with schema-qualified tables.
+func ensureDefaultSchemaForPostgreSQL(tables map[string][]string, schemas []string) []string {
+	// Check if any table has no dot (unqualified name)
+	hasUnqualifiedTable := false
+
+	for tableName := range tables {
+		if !strings.Contains(tableName, ".") {
+			hasUnqualifiedTable = true
+			break
+		}
+	}
+
+	// If there are unqualified tables, ensure public schema is included
+	if hasUnqualifiedTable {
+		publicIncluded := false
+
+		for _, s := range schemas {
+			if s == postgres.DefaultSchema {
+				publicIncluded = true
+				break
+			}
+		}
+
+		if !publicIncluded {
+			schemas = append(schemas, postgres.DefaultSchema)
+		}
+	}
+
+	return schemas
 }

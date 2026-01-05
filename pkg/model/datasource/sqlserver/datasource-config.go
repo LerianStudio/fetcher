@@ -3,6 +3,7 @@ package sqlserver
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/model/datasource"
@@ -14,6 +15,9 @@ import (
 	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
 	"go.opentelemetry.io/otel/attribute"
 )
+
+// DefaultSchema is the default SQL Server schema name
+const DefaultSchema = "dbo"
 
 // DataSourceConfigSQLServer represents a SQL Server-specific data source configuration.
 // It embeds DataSourceConfig and adds SQL Server-specific fields and repository.
@@ -60,7 +64,10 @@ func (ds *DataSourceConfigSQLServer) Close(ctx context.Context) error {
 func (ds *DataSourceConfigSQLServer) Query(ctx context.Context, tables map[string][]string, filters map[string]map[string]job.FilterCondition, logger log.Logger) (map[string][]map[string]any, error) {
 	result := make(map[string][]map[string]any)
 
-	schemaResult, err := ds.SQLServerRepository.GetDatabaseSchema(ctx)
+	// Extract unique schemas from table names
+	schemas := datasource.GetUniqueSchemas(tables)
+
+	schemaResult, err := ds.SQLServerRepository.GetDatabaseSchema(ctx, schemas)
 	if err != nil {
 		logger.Errorf("Error getting database schema: %s", err.Error())
 		return nil, err
@@ -94,17 +101,39 @@ func (ds *DataSourceConfigSQLServer) Query(ctx context.Context, tables map[strin
 }
 
 // getTableFilters extracts filters for a specific table.
+// Supports matching with or without schema prefix for flexibility.
 func getTableFilters(databaseFilters map[string]map[string]job.FilterCondition, tableName string) map[string]job.FilterCondition {
 	if databaseFilters == nil {
 		return nil
 	}
 
-	return databaseFilters[tableName]
+	// 1. Try exact match first
+	if filters, exists := databaseFilters[tableName]; exists {
+		return filters
+	}
+
+	// 2. If tableName has schema prefix, try without schema
+	if strings.Contains(tableName, ".") {
+		_, unqualifiedName := datasource.SplitSchemaTable(tableName)
+		if filters, exists := databaseFilters[unqualifiedName]; exists {
+			return filters
+		}
+	}
+
+	// 3. If tableName has no schema prefix, try with default schema (dbo)
+	if !strings.Contains(tableName, ".") {
+		qualifiedName := DefaultSchema + "." + tableName
+		if filters, exists := databaseFilters[qualifiedName]; exists {
+			return filters
+		}
+	}
+
+	return nil
 }
 
 // GetSchemaInfo returns the schema information for SQL Server.
-func (ds *DataSourceConfigSQLServer) GetSchemaInfo(ctx context.Context) (*model.DataSourceSchema, error) {
-	_, tracer, _, _ := commons.NewTrackingFromContext(ctx)
+func (ds *DataSourceConfigSQLServer) GetSchemaInfo(ctx context.Context, schemas []string) (*model.DataSourceSchema, error) {
+	_, tracer, _, _ := commons.NewTrackingFromContext(ctx) //nolint:dogsled // Only tracer needed for span creation
 
 	ctx, span := tracer.Start(ctx, "datasource.sqlserver.get_schema_info")
 	defer span.End()
@@ -114,18 +143,20 @@ func (ds *DataSourceConfigSQLServer) GetSchemaInfo(ctx context.Context) (*model.
 		attribute.String("app.datasource.type", "sqlserver"),
 	)
 
-	schemaResult, err := ds.SQLServerRepository.GetDatabaseSchema(ctx)
+	schemaResult, err := ds.SQLServerRepository.GetDatabaseSchema(ctx, schemas)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "failed to get database schema", err)
 		return nil, fmt.Errorf("failed to get SQL Server schema: %w", err)
 	}
 
 	schema := model.NewDataSourceSchema(ds.ConfigName)
+
 	for _, table := range schemaResult {
 		columns := make([]string, len(table.Columns))
 		for i, col := range table.Columns {
 			columns[i] = col.Name
 		}
+
 		schema.AddTable(table.TableName, columns)
 	}
 

@@ -44,6 +44,7 @@ func (s *SchemaCache) Get(ctx context.Context, configName string) (*model.DataSo
 	if err != nil {
 		return nil, err
 	}
+
 	if !found {
 		return nil, nil
 	}
@@ -55,6 +56,10 @@ func (s *SchemaCache) Get(ctx context.Context, configName string) (*model.DataSo
 // Set stores a schema in the cache with the specified TTL.
 // Business logic: Sets CachedAt and ExpiresAt timestamps before caching.
 func (s *SchemaCache) Set(ctx context.Context, configName string, schema *model.DataSourceSchema, ttl time.Duration) error {
+	if schema == nil {
+		return nil
+	}
+
 	if ttl <= 0 {
 		ttl = s.ttl
 	}
@@ -84,5 +89,6 @@ func (s *SchemaCache) Close() error {
 	if closeable, ok := s.cache.(redis.Closeable); ok {
 		return closeable.Close()
 	}
+
 	return nil
 }

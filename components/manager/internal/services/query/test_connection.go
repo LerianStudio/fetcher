@@ -22,6 +22,8 @@ import (
 
 const ConnectionTestTimeout = 10 * time.Second
 
+//go:generate mockgen --destination=rate_limiter_store.mock.go --package=query . RateLimiterStore
+
 // RateLimiterStore defines the interface for rate limiting operations.
 // This interface maintains backward compatibility with tests.
 type RateLimiterStore interface {
@@ -47,6 +49,7 @@ func NewTestConnection(connectionRepo connRepo.Repository, cryptor crypto.Crypto
 
 func (s *TestConnection) Execute(ctx context.Context, organizationID, connectionID uuid.UUID) (*model.ConnectionTestResponse, error) {
 	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+
 	ctx, span := tracer.Start(ctx, "service.test_connection")
 	defer span.End()
 
@@ -57,26 +60,31 @@ func (s *TestConnection) Execute(ctx context.Context, organizationID, connection
 	)
 
 	key := connectionID.String()
+
 	_, _, reset, ok, err := s.store.Take(ctx, key)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "connection test rate limiter error", err)
 		logger.Errorf("connection test rate limiter error id=%s org=%s: %v", connectionID, organizationID, err)
+
 		return nil, pkg.ValidateInternalError(err, "connection")
 	} else if !ok {
 		span.SetAttributes(attribute.Bool("app.connection_test.rate_limited", true))
 
-		resetTime := time.Unix(0, int64(reset))
+		// reset is a Unix nanosecond timestamp from rate limiter, always positive and recent
+		resetTime := time.Unix(0, int64(reset)) // #nosec G115 -- reset is always a valid positive timestamp from rate limiter
 		retryAfter := max(time.Until(resetTime), 0)
 
 		waitSeconds := int(retryAfter / time.Second)
 		if retryAfter%time.Second != 0 {
 			waitSeconds++
 		}
+
 		if waitSeconds <= 0 {
 			waitSeconds = 1
 		}
 
 		logger.Warnf("connection test rate limited id=%s org=%s", connectionID, organizationID)
+
 		return nil, pkg.ResponseError{
 			Code:    http.StatusTooManyRequests,
 			Title:   "Rate Limit Exceeded",
@@ -89,6 +97,7 @@ func (s *TestConnection) Execute(ctx context.Context, organizationID, connection
 		libOpentelemetry.HandleSpanError(&span, "failed to find connection", err)
 		return nil, err
 	}
+
 	if conn == nil {
 		return nil, pkg.ValidateBusinessError(
 			constant.ErrEntityNotFound,
@@ -100,10 +109,12 @@ func (s *TestConnection) Execute(ctx context.Context, organizationID, connection
 	defer cancel()
 
 	start := time.Now()
+
 	ds, err := datasource.NewDataSourceFromConnection(testCtx, conn, s.cryptor, logger)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "failed to establish datasource connection", err)
 		logger.Errorf("connection test failed id=%s org=%s", connectionID, organizationID)
+
 		return nil, pkg.ResponseError{
 			Code:    http.StatusInternalServerError,
 			Title:   "Database Connection Error",

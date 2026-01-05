@@ -11,6 +11,8 @@ import (
 	"io"
 )
 
+//go:generate mockgen --destination=crypto.mock.go --package=crypto . Cryptor
+
 // Cryptor exposes encryption and decryption helpers backed by AES-GCM.
 // It keeps track of the key version to support rotations.
 type Cryptor interface {

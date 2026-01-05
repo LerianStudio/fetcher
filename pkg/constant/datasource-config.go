@@ -34,6 +34,7 @@ const (
 	SQLServerMaxIdleConns    = 10
 )
 
+// Query Timeout Configuration
 const (
 	QueryTimeoutMedium     = 10 * time.Second
 	QueryTimeoutSlow       = 15 * time.Second

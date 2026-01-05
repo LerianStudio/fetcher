@@ -1,6 +1,7 @@
 package in
 
 import (
+	"github.com/LerianStudio/fetcher/pkg/net/http"
 	middlewareAuth "github.com/LerianStudio/lib-auth/v2/auth/middleware"
 	"github.com/LerianStudio/lib-commons/v2/commons/log"
 	commonsHttp "github.com/LerianStudio/lib-commons/v2/commons/net/http"
@@ -38,6 +39,7 @@ func NewRoutes(
 	f.Use(tlMid.WithTelemetry(tl))
 	f.Use(cors.New())
 	f.Use(commonsHttp.WithHTTPLogging(commonsHttp.WithCustomLogger(lg)))
+	f.Use(http.WithRecover(http.WithRecoverLogger(lg)))
 	// TODO: Enable license middleware when ready
 	// f.Use(licenseClient.Middleware())
 

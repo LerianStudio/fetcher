@@ -9,39 +9,9 @@ import (
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 
+	"github.com/golang/mock/gomock"
 	"github.com/google/uuid"
 )
-
-// mockCryptor is a test implementation of crypto.Cryptor.
-type mockCryptor struct {
-	encryptFunc    func(ctx context.Context, plain string) (string, string, error)
-	decryptFunc    func(ctx context.Context, cipherText, keyVersion string) (string, error)
-	keyVersionFunc func() string
-}
-
-func (m *mockCryptor) Encrypt(ctx context.Context, plain string) (string, string, error) {
-	if m.encryptFunc != nil {
-		return m.encryptFunc(ctx, plain)
-	}
-	return "encrypted-" + plain, "v1", nil
-}
-
-func (m *mockCryptor) Decrypt(ctx context.Context, cipherText, keyVersion string) (string, error) {
-	if m.decryptFunc != nil {
-		return m.decryptFunc(ctx, cipherText, keyVersion)
-	}
-	return "decrypted", nil
-}
-
-func (m *mockCryptor) KeyVersion() string {
-	if m.keyVersionFunc != nil {
-		return m.keyVersionFunc()
-	}
-	return "v1"
-}
-
-// Ensure mockCryptor implements crypto.Cryptor.
-var _ crypto.Cryptor = (*mockCryptor)(nil)
 
 // TestDBType_IsValid tests the DBType.IsValid method.
 func TestDBType_IsValid(t *testing.T) {
@@ -214,7 +184,15 @@ func TestNewTypeFromString(t *testing.T) {
 // TestNewConnection tests the NewConnection constructor function.
 func TestNewConnection(t *testing.T) {
 	ctx := context.Background()
-	mockCrypto := &mockCryptor{}
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockCrypto := crypto.NewMockCryptor(ctrl)
+	mockCrypto.EXPECT().
+		Encrypt(gomock.Any(), gomock.Any()).
+		Return("encrypted-password", "v1", nil).
+		AnyTimes()
+
 	orgID := uuid.New()
 
 	tests := []struct {
@@ -408,29 +386,27 @@ func TestNewConnection(t *testing.T) {
 			cryptor:     mockCrypto,
 			expectError: true,
 		},
-		{
-			name:       "encryption error",
-			configName: "test-connection",
-			typ:        "POSTGRESQL",
-			host:       "localhost",
-			port:       5432,
-			dbName:     "testdb",
-			username:   "testuser",
-			password:   "testpassword",
-			cryptor: &mockCryptor{
-				encryptFunc: func(ctx context.Context, plain string) (string, string, error) {
-					return "", "", errors.New("encryption failed")
-				},
-			},
-			expectError: true,
-		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Setup cryptor for encryption error test
+			var testCryptor crypto.Cryptor
+			if tt.name == "encryption error" {
+				ctrl := gomock.NewController(t)
+				defer ctrl.Finish()
+				mockCrypto := crypto.NewMockCryptor(ctrl)
+				mockCrypto.EXPECT().
+					Encrypt(gomock.Any(), gomock.Any()).
+					Return("", "", errors.New("encryption failed"))
+				testCryptor = mockCrypto
+			} else {
+				testCryptor = tt.cryptor
+			}
+
 			conn, err := NewConnection(
 				ctx,
-				tt.cryptor,
+				testCryptor,
 				orgID,
 				tt.configName,
 				tt.typ,
@@ -439,6 +415,7 @@ func TestNewConnection(t *testing.T) {
 				tt.dbName,
 				tt.username,
 				tt.password,
+				&map[string]any{},
 				tt.sslMode,
 				tt.sslCA,
 				tt.sslCert,
@@ -800,7 +777,14 @@ func TestConnection_IsValid(t *testing.T) {
 // TestConnection_ApplyPatch tests the Connection.ApplyPatch method.
 func TestConnection_ApplyPatch(t *testing.T) {
 	ctx := context.Background()
-	mockCrypto := &mockCryptor{}
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockCrypto := crypto.NewMockCryptor(ctrl)
+	mockCrypto.EXPECT().
+		Encrypt(gomock.Any(), gomock.Any()).
+		Return("encrypted-newpassword", "v1", nil).
+		AnyTimes()
 
 	baseConnection := func() *Connection {
 		return &Connection{
@@ -949,17 +933,6 @@ func TestConnection_ApplyPatch(t *testing.T) {
 			expectError: true,
 		},
 		{
-			name:     "patch password with encryption error",
-			conn:     baseConnection(),
-			password: strPtr("newpassword"),
-			cryptor: &mockCryptor{
-				encryptFunc: func(ctx context.Context, plain string) (string, string, error) {
-					return "", "", errors.New("encryption failed")
-				},
-			},
-			expectError: true,
-		},
-		{
 			name:        "patch config name to invalid short value",
 			conn:        baseConnection(),
 			configName:  strPtr("ab"),
@@ -981,9 +954,21 @@ func TestConnection_ApplyPatch(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Setup cryptor for encryption error test
+			testCryptor := tt.cryptor
+			if tt.name == "patch password with encryption error" {
+				ctrl := gomock.NewController(t)
+				defer ctrl.Finish()
+				mockCrypto := crypto.NewMockCryptor(ctrl)
+				mockCrypto.EXPECT().
+					Encrypt(gomock.Any(), gomock.Any()).
+					Return("", "", errors.New("encryption failed"))
+				testCryptor = mockCrypto
+			}
+
 			err := tt.conn.ApplyPatch(
 				ctx,
-				tt.cryptor,
+				testCryptor,
 				tt.configName,
 				tt.typ,
 				tt.host,
@@ -991,6 +976,7 @@ func TestConnection_ApplyPatch(t *testing.T) {
 				tt.dbName,
 				tt.username,
 				tt.password,
+				&map[string]any{},
 				tt.sslMode,
 				tt.sslCA,
 				tt.sslCert,
@@ -1013,6 +999,111 @@ func TestConnection_ApplyPatch(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestConnection_ApplyPatch_Metadata tests metadata patching specifically.
+func TestConnection_ApplyPatch_Metadata(t *testing.T) {
+	ctx := context.Background()
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockCrypto := crypto.NewMockCryptor(ctrl)
+
+	t.Run("patch metadata updates connection metadata", func(t *testing.T) {
+		conn := &Connection{
+			ID:                   uuid.New(),
+			OrganizationID:       uuid.New(),
+			ConfigName:           "oracle-connection",
+			Type:                 TypeOracle,
+			Host:                 "localhost",
+			Port:                 1521,
+			DatabaseName:         "ORCL",
+			Username:             "testuser",
+			PasswordEncrypted:    "encrypted-password",
+			EncryptionKeyVersion: "v1",
+			CreatedAt:            time.Now().UTC().Add(-1 * time.Hour),
+			UpdatedAt:            time.Now().UTC().Add(-1 * time.Hour),
+			Metadata:             nil,
+		}
+
+		newMetadata := &map[string]any{
+			"service_name": "ORCL_SERVICE",
+			"sid":          "ORCL",
+		}
+
+		err := conn.ApplyPatch(
+			ctx,
+			mockCrypto,
+			nil, // configName
+			nil, // typ
+			nil, // host
+			nil, // port
+			nil, // dbName
+			nil, // username
+			nil, // password
+			newMetadata,
+			nil, // sslMode
+			nil, // sslCA
+			nil, // sslCert
+			nil, // sslKey
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if conn.Metadata == nil {
+			t.Fatal("expected Metadata to be set")
+		}
+
+		if (*conn.Metadata)["service_name"] != "ORCL_SERVICE" {
+			t.Fatalf("expected service_name 'ORCL_SERVICE', got %v", (*conn.Metadata)["service_name"])
+		}
+
+		if (*conn.Metadata)["sid"] != "ORCL" {
+			t.Fatalf("expected sid 'ORCL', got %v", (*conn.Metadata)["sid"])
+		}
+	})
+
+	t.Run("patch nil metadata does not clear existing metadata", func(t *testing.T) {
+		existingMetadata := &map[string]any{
+			"service_name": "EXISTING_SERVICE",
+		}
+
+		conn := &Connection{
+			ID:                   uuid.New(),
+			OrganizationID:       uuid.New(),
+			ConfigName:           "oracle-connection",
+			Type:                 TypeOracle,
+			Host:                 "localhost",
+			Port:                 1521,
+			DatabaseName:         "ORCL",
+			Username:             "testuser",
+			PasswordEncrypted:    "encrypted-password",
+			EncryptionKeyVersion: "v1",
+			Metadata:             existingMetadata,
+			CreatedAt:            time.Now().UTC().Add(-1 * time.Hour),
+			UpdatedAt:            time.Now().UTC().Add(-1 * time.Hour),
+		}
+
+		err := conn.ApplyPatch(
+			ctx,
+			mockCrypto,
+			nil, nil, nil, nil, nil, nil, nil,
+			nil, // nil metadata should NOT clear existing
+			nil, nil, nil, nil,
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if conn.Metadata == nil {
+			t.Fatal("expected Metadata to remain set")
+		}
+
+		if (*conn.Metadata)["service_name"] != "EXISTING_SERVICE" {
+			t.Fatalf("expected service_name 'EXISTING_SERVICE', got %v", (*conn.Metadata)["service_name"])
+		}
+	})
 }
 
 // TestConnection_SoftDelete tests the Connection.SoftDelete method.
@@ -1080,44 +1171,52 @@ func TestConnection_GetPasswordDecrypted(t *testing.T) {
 
 	tests := []struct {
 		name        string
-		cryptor     crypto.Cryptor
 		expectError bool
 		expected    string
+		setupMock   func(ctrl *gomock.Controller) crypto.Cryptor
 	}{
 		{
-			name: "successful decryption",
-			cryptor: &mockCryptor{
-				decryptFunc: func(ctx context.Context, cipherText, keyVersion string) (string, error) {
-					return "decrypted-password", nil
-				},
-			},
+			name:        "successful decryption",
 			expectError: false,
 			expected:    "decrypted-password",
+			setupMock: func(ctrl *gomock.Controller) crypto.Cryptor {
+				mockCrypto := crypto.NewMockCryptor(ctrl)
+				mockCrypto.EXPECT().
+					Decrypt(gomock.Any(), gomock.Any(), gomock.Any()).
+					Return("decrypted-password", nil)
+				return mockCrypto
+			},
 		},
 		{
 			name:        "nil cryptor",
-			cryptor:     nil,
 			expectError: true,
+			setupMock:   func(ctrl *gomock.Controller) crypto.Cryptor { return nil },
 		},
 		{
-			name: "decryption error",
-			cryptor: &mockCryptor{
-				decryptFunc: func(ctx context.Context, cipherText, keyVersion string) (string, error) {
-					return "", errors.New("decryption failed")
-				},
-			},
+			name:        "decryption error",
 			expectError: true,
+			setupMock: func(ctrl *gomock.Controller) crypto.Cryptor {
+				mockCrypto := crypto.NewMockCryptor(ctrl)
+				mockCrypto.EXPECT().
+					Decrypt(gomock.Any(), gomock.Any(), gomock.Any()).
+					Return("", errors.New("decryption failed"))
+				return mockCrypto
+			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			cryptor := tt.setupMock(ctrl)
 			conn := &Connection{
 				PasswordEncrypted:    "encrypted-password",
 				EncryptionKeyVersion: "v1",
 			}
 
-			result, err := conn.GetPasswordDecrypted(ctx, tt.cryptor)
+			result, err := conn.GetPasswordDecrypted(ctx, cryptor)
 
 			if tt.expectError {
 				if err == nil {
@@ -1143,42 +1242,50 @@ func TestConnection_DecryptPassword(t *testing.T) {
 
 	tests := []struct {
 		name        string
-		cryptor     crypto.Cryptor
 		expectError bool
+		setupMock   func(ctrl *gomock.Controller) crypto.Cryptor
 	}{
 		{
-			name: "successful decryption",
-			cryptor: &mockCryptor{
-				decryptFunc: func(ctx context.Context, cipherText, keyVersion string) (string, error) {
-					return "decrypted-password", nil
-				},
-			},
+			name:        "successful decryption",
 			expectError: false,
+			setupMock: func(ctrl *gomock.Controller) crypto.Cryptor {
+				mockCrypto := crypto.NewMockCryptor(ctrl)
+				mockCrypto.EXPECT().
+					Decrypt(gomock.Any(), gomock.Any(), gomock.Any()).
+					Return("decrypted-password", nil)
+				return mockCrypto
+			},
 		},
 		{
 			name:        "nil cryptor",
-			cryptor:     nil,
 			expectError: true,
+			setupMock:   func(ctrl *gomock.Controller) crypto.Cryptor { return nil },
 		},
 		{
-			name: "decryption error",
-			cryptor: &mockCryptor{
-				decryptFunc: func(ctx context.Context, cipherText, keyVersion string) (string, error) {
-					return "", errors.New("decryption failed")
-				},
-			},
+			name:        "decryption error",
 			expectError: true,
+			setupMock: func(ctrl *gomock.Controller) crypto.Cryptor {
+				mockCrypto := crypto.NewMockCryptor(ctrl)
+				mockCrypto.EXPECT().
+					Decrypt(gomock.Any(), gomock.Any(), gomock.Any()).
+					Return("", errors.New("decryption failed"))
+				return mockCrypto
+			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			cryptor := tt.setupMock(ctrl)
 			conn := &Connection{
 				PasswordEncrypted:    "encrypted-password",
 				EncryptionKeyVersion: "v1",
 			}
 
-			err := conn.DecryptPassword(ctx, tt.cryptor)
+			err := conn.DecryptPassword(ctx, cryptor)
 
 			if tt.expectError {
 				if err == nil {

@@ -61,6 +61,16 @@ type FilterCondition struct {
 	// Multiple values treated as AND NOT conditions.
 	// Example: {"nin": ["deleted", "archived"]} excludes these statuses
 	NotIn []any `json:"nin,omitempty"`
+
+	// NotEquals specifies values that must NOT match the provided value.
+	// Should contain exactly one value for comparison.
+	// Example: {"ne": ["active"]} excludes this status
+	NotEquals []any `json:"ne,omitempty"`
+
+	// Like specifies values that must match the provided value using LIKE pattern matching.
+	// Should contain exactly one value for comparison.
+	// Example: {"like": ["%active%"]} matches any status containing "active"
+	Like []any `json:"like,omitempty"`
 }
 
 // QueueMessage represents the structure for generating messages in the queue.

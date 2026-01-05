@@ -37,7 +37,7 @@ const (
 type Repository interface {
 	Create(ctx context.Context, job *model.Job) (*model.Job, error)
 	Update(ctx context.Context, job *model.Job) (*model.Job, error)
-	UpdateStatus(ctx context.Context, id, organizationID uuid.UUID, status model.JobStatus, metadata map[string]any) error
+	UpdateStatus(ctx context.Context, id, organizationID uuid.UUID, status model.JobStatus, resultPath string, metadata map[string]any) error
 	FindByID(ctx context.Context, id, organizationID uuid.UUID) (*model.Job, error)
 	FindByRequestHashWithinWindow(ctx context.Context, organizationID uuid.UUID, requestHash string, windowMinutes int) (*model.Job, error)
 	List(ctx context.Context, filters *ListFilter) ([]*model.Job, error)
@@ -237,8 +237,8 @@ func (jr *JobMongoDBRepository) Update(ctx context.Context, job *model.Job) (*mo
 	return job, nil
 }
 
-// UpdateStatus updates only the status and metadata of a job, automatically managing CompletedAt.
-func (jr *JobMongoDBRepository) UpdateStatus(ctx context.Context, id, organizationID uuid.UUID, status model.JobStatus, metadata map[string]any) error {
+// UpdateStatus updates only the status, resultPath and metadata of a job, automatically managing CompletedAt.
+func (jr *JobMongoDBRepository) UpdateStatus(ctx context.Context, id, organizationID uuid.UUID, status model.JobStatus, resultPath string, metadata map[string]any) error {
 	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "mongodb.update_job_status")
@@ -287,6 +287,11 @@ func (jr *JobMongoDBRepository) UpdateStatus(ctx context.Context, id, organizati
 		update["$unset"] = bson.M{
 			"completed_at": "",
 		}
+	}
+
+	// Update resultPath if provided
+	if resultPath != "" {
+		update["$set"].(bson.M)["result_path"] = resultPath
 	}
 
 	// Update metadata if provided
@@ -354,6 +359,7 @@ func (jr *JobMongoDBRepository) FindByID(ctx context.Context, id, organizationID
 		}
 
 		libOpentelemetry.HandleSpanError(&span, "Failed to find job", err)
+
 		return nil, err
 	}
 
@@ -459,6 +465,7 @@ func (jr *JobMongoDBRepository) ExistsRunningByMappedFieldKey(ctx context.Contex
 	if !configNameRegex.MatchString(keyPattern) {
 		errInvalidKey := errors.New("invalid key pattern format")
 		libOpentelemetry.HandleSpanError(&span, "Key pattern validation failed", errInvalidKey)
+
 		return false, pkg.ValidateInternalError(errInvalidKey, "job")
 	}
 

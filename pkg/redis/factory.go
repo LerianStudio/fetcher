@@ -40,6 +40,7 @@ func NewCacheWithFallback[T any](
 
 	// Redis connected successfully - create fallback cache
 	redisCache := NewRedisCache[T](redisConn, ttl, keyPrefix)
+
 	return NewFallbackCache(redisCache, logger, ttl), nil
 }
 
@@ -55,5 +56,6 @@ func MustNewCacheWithFallback[T any](
 	if err != nil {
 		panic(err)
 	}
+
 	return cache
 }
