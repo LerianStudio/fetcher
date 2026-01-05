@@ -194,8 +194,8 @@ build:
 # Test Commands
 #-------------------------------------------------------
 
-.PHONY: test
-test:
+.PHONY: test-unit
+test-unit:
 	$(call print_title,Running unit tests)
 	@PACKAGES=$$(go list ./... | grep -v -f ./scripts/coverage_ignore.txt 2>/dev/null || go list ./...); \
 	go test -v $$PACKAGES
