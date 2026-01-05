@@ -196,9 +196,10 @@ build:
 
 .PHONY: test
 test:
-	$(call print_title,Running tests)
-	@go test -v ./...
-	@echo "[ok] Tests completed successfully"
+	$(call print_title,Running unit tests)
+	@PACKAGES=$$(go list ./... | grep -v -f ./scripts/coverage_ignore.txt 2>/dev/null || go list ./...); \
+	go test -v $$PACKAGES
+	@echo "[ok] Unit tests completed successfully"
 
 # =============================================================================
 # test-integration-container: Full Integration Tests
