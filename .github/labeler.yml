@@ -1,0 +1,64 @@
+# Auto-label PRs based on changed files (Monorepo)
+
+# Component labels
+'component: manager':
+  - changed-files:
+      - any-glob-to-any-file:
+          - components/manager/**/*
+
+'component: worker':
+  - changed-files:
+      - any-glob-to-any-file:
+          - components/worker/**/*
+
+'component: infra':
+  - changed-files:
+      - any-glob-to-any-file:
+          - components/infra/**/*
+
+# Area labels
+'area: documentation':
+  - changed-files:
+      - any-glob-to-any-file:
+          - '**/*.md'
+          - docs/**/*
+
+'area: ci/cd':
+  - changed-files:
+      - any-glob-to-any-file:
+          - .github/**/*
+          - .golangci.yml
+          - .releaserc.yml
+
+'area: dependencies':
+  - changed-files:
+      - any-glob-to-any-file:
+          - '**/go.mod'
+          - '**/go.sum'
+
+'area: build':
+  - changed-files:
+      - any-glob-to-any-file:
+          - '**/Makefile'
+          - '**/Dockerfile'
+          - '**/docker-compose*.yml'
+
+'area: tests':
+  - changed-files:
+      - any-glob-to-any-file:
+          - '**/*_test.go'
+
+'area: api':
+  - changed-files:
+      - any-glob-to-any-file:
+          - '**/api/**/*'
+
+'area: pkg':
+  - changed-files:
+      - any-glob-to-any-file:
+          - pkg/**/*
+
+'area: scripts':
+  - changed-files:
+      - any-glob-to-any-file:
+          - scripts/**/*
