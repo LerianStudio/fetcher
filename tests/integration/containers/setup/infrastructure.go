@@ -33,6 +33,7 @@ const (
 type InfrastructureOptions struct {
 	UseFixedPorts bool
 	ReuseExisting bool
+	EnableSSL     bool
 }
 
 // DefaultInfrastructureOptions returns options for normal test execution.
@@ -50,6 +51,11 @@ func ReuseInfrastructureOptions() InfrastructureOptions {
 	return InfrastructureOptions{UseFixedPorts: true, ReuseExisting: true}
 }
 
+// SSLInfrastructureOptions returns options for testing with SSL-enabled databases.
+func SSLInfrastructureOptions() InfrastructureOptions {
+	return InfrastructureOptions{UseFixedPorts: true, ReuseExisting: false, EnableSSL: true}
+}
+
 // StartInfrastructure starts all infrastructure containers with default options.
 func StartInfrastructure(ctx context.Context) (*InfrastructureContainers, error) {
 	return StartInfrastructureWithOptions(ctx, DefaultInfrastructureOptions())
@@ -62,6 +68,7 @@ func StartInfrastructureWithOptions(ctx context.Context, opts InfrastructureOpti
 		ReuseExisting:   opts.ReuseExisting,
 		SkipExternalDBs: false,
 		InitScripts:     true,
+		EnableSSL:       opts.EnableSSL,
 	})
 }
 

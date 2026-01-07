@@ -13,11 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// contains is a helper to check if a string contains a substring (case-insensitive).
-func contains(s, substr string) bool {
-	return strings.Contains(strings.ToLower(s), strings.ToLower(substr))
-}
-
 // TestRedisUnavailable_RateLimitingFallback tests that rate limiting
 // continues to work (via in-memory fallback) when Redis is unavailable.
 func (s *ChaosTestSuite) TestRedisUnavailable_RateLimitingFallback() {
@@ -98,7 +93,7 @@ func (s *ChaosTestSuite) TestRedisUnavailable_RateLimitingFallback() {
 		} else {
 			// Check if error indicates rate limiting
 			errStr := testErr.Error()
-			if contains(errStr, "rate limit") || contains(errStr, "429") || contains(errStr, "too many") {
+			if strings.Contains(errStr, "rate limit") || strings.Contains(errStr, "429") || strings.Contains(errStr, "too many") {
 				rateLimitedCount++
 				t.Logf("Rapid request %d: rate limited (fallback working)", i+1)
 			}

@@ -577,12 +577,12 @@ func PurgeTestQueue(ctx context.Context, amqpURL string) (int, error)
 - `fetcher.dlx` (direct) - Dead letter exchange
 
 **Queues:**
-- `extract-external-data-queue` - Main job queue (TTL: 7 days, max: 10k messages)
+- `fetcher.extract-external-data.queue` - Main job queue (TTL: 7 days, max: 10k messages)
 - `fetcher.dlq` - Dead letter queue
 - `test.job.events` - Test event capture queue
 
 **Bindings:**
-- `extract-external-data-queue` ← `fetcher.extract-external-data.exchange` (key: `fetcher.job.key`)
+- `fetcher.extract-external-data.queue` ← `fetcher.extract-external-data.exchange` (key: `fetcher.job.key`)
 - `fetcher.dlq` ← `fetcher.dlx` (key: `fetcher.dlq.key`)
 - `test.job.events` ← `fetcher.job.events` (keys: `job.completed.*`, `job.failed.*`)
 

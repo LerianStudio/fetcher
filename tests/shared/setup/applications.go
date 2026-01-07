@@ -36,6 +36,7 @@ func buildImageWithDocker(ctx context.Context, projectRoot, dockerfile, imageNam
 	if githubToken != "" {
 		cmd.Env = append(cmd.Env, "GITHUB_TOKEN="+githubToken)
 	}
+
 	cmd.Dir = projectRoot
 
 	output, err := cmd.CombinedOutput()
@@ -241,6 +242,8 @@ func (i *SharedInfrastructure) StartApplicationsWithOptions(ctx context.Context,
 		"CRYPTO_HASH_SECRET_KEY_SEAWEEDFS":    cfg.EncryptionKeyHex,
 		"ORGANIZATION_IDS":                    "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
 		"LICENSE_KEY":                         "test-license-key",
+		"RABBITMQ_FETCHER_WORK_QUEUE":         "fetcher.extract-external-data.queue",
+		"RABBITMQ_JOB_EVENTS_EXCHANGE":        "fetcher.job.events",
 	}
 
 	// Check for GitHub token for private dependencies
@@ -323,8 +326,18 @@ func startManagerContainer(ctx context.Context, projectRoot, networkName string,
 		return nil, "", fmt.Errorf("failed to start manager: %w", err)
 	}
 
-	host, _ := container.Host(ctx)
-	port, _ := container.MappedPort(ctx, "4006")
+	host, err := container.Host(ctx)
+	if err != nil {
+		_ = container.Terminate(ctx)
+		return nil, "", fmt.Errorf("failed to get manager host: %w", err)
+	}
+
+	port, err := container.MappedPort(ctx, "4006")
+	if err != nil {
+		_ = container.Terminate(ctx)
+		return nil, "", fmt.Errorf("failed to get manager port: %w", err)
+	}
+
 	managerURL := fmt.Sprintf("http://%s:%s", host, port.Port())
 
 	return container, managerURL, nil
@@ -355,10 +368,8 @@ func startWorkerContainer(ctx context.Context, projectRoot, networkName string, 
 			networkName: {"worker"},
 		},
 		Env: mergeEnv(commonEnv, map[string]string{
-			"RABBITMQ_GENERATE_REPORT_QUEUE": "extract-external-data-queue",
-			"RABBITMQ_JOB_EVENTS_EXCHANGE":   "fetcher.job.events",
-			"RABBITMQ_NUMBERS_OF_WORKERS":    "2",
-			"SEAWEEDFS_TTL":                  "",
+			"RABBITMQ_NUMBERS_OF_WORKERS": "2",
+			"SEAWEEDFS_TTL":               "",
 		}),
 		WaitingFor: wait.ForLog("Starting consumer").WithStartupTimeout(config.WorkerStartupTimeout),
 	}
@@ -388,14 +399,17 @@ func (i *SharedInfrastructure) DefaultApplicationConfig(encryptionKeyBase64, enc
 		cfg.MongoHost = i.MongoMain.InternalHost
 		cfg.MongoPort = "27017"
 	}
+
 	if i.RabbitMQ != nil {
 		cfg.RabbitMQHost = i.RabbitMQ.InternalHost
 		cfg.RabbitMQPort = "5672"
 	}
+
 	if i.SeaweedFS != nil {
 		cfg.SeaweedFSHost = i.SeaweedFS.InternalHost
 		cfg.SeaweedFSPort = "8888"
 	}
+
 	if i.Redis != nil {
 		cfg.RedisHost = i.Redis.InternalHost
 		cfg.RedisPort = "6379"

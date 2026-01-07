@@ -36,10 +36,10 @@ func NewRoutes(
 	})
 	tlMid := commonsHttp.NewTelemetryMiddleware(tl)
 
+	f.Use(http.WithRecover(http.WithRecoverLogger(lg)))
 	f.Use(tlMid.WithTelemetry(tl))
 	f.Use(cors.New())
 	f.Use(commonsHttp.WithHTTPLogging(commonsHttp.WithCustomLogger(lg)))
-	f.Use(http.WithRecover(http.WithRecoverLogger(lg)))
 	// TODO: Enable license middleware when ready
 	// f.Use(licenseClient.Middleware())
 

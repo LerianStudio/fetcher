@@ -139,6 +139,9 @@ func (uc *UseCase) publishJobNotification(
 		return fmt.Errorf("marshalling job notification: %w", err)
 	}
 
+	logger.Infof("Publishing job notification: jobId=%s, status=%s, routingKey=%s, exchange=%s",
+		message.JobID, status, routingKey, uc.JobEventsExchange)
+
 	if err := uc.RabbitMQPublisher.Publish(ctx, uc.JobEventsExchange, routingKey, notificationJSON); err != nil {
 		libOtel.HandleSpanError(&notifySpan, "Error publishing job notification to RabbitMQ", err)
 		logger.Errorf("Error publishing job notification to RabbitMQ: %s", err.Error())

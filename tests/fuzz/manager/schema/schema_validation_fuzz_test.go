@@ -78,12 +78,12 @@ func FuzzSchemaValidationLimits(f *testing.F) {
 	// Test at and around actual domain model limits:
 	// MaxDataSourcesPerRequest = 10, MaxTablesPerDataSource = 20, MaxFieldsPerTable = 50
 	f.Add(1, 1, 1)
-	f.Add(model.MaxDataSourcesPerRequest, 1, 1)       // At DS limit
-	f.Add(model.MaxDataSourcesPerRequest+1, 1, 1)    // Over DS limit
-	f.Add(1, model.MaxTablesPerDataSource, 1)        // At tables limit
-	f.Add(1, model.MaxTablesPerDataSource+1, 1)      // Over tables limit
-	f.Add(1, 1, model.MaxFieldsPerTable)             // At fields limit
-	f.Add(1, 1, model.MaxFieldsPerTable+1)           // Over fields limit
+	f.Add(model.MaxDataSourcesPerRequest, 1, 1)   // At DS limit
+	f.Add(model.MaxDataSourcesPerRequest+1, 1, 1) // Over DS limit
+	f.Add(1, model.MaxTablesPerDataSource, 1)     // At tables limit
+	f.Add(1, model.MaxTablesPerDataSource+1, 1)   // Over tables limit
+	f.Add(1, 1, model.MaxFieldsPerTable)          // At fields limit
+	f.Add(1, 1, model.MaxFieldsPerTable+1)        // Over fields limit
 
 	f.Fuzz(func(t *testing.T, numDS, numTables, numFields int) {
 		// Cap to slightly above limits to test boundary behavior without memory exhaustion

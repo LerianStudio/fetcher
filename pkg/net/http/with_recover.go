@@ -43,7 +43,6 @@ func WithRecover(opts ...RecoverMiddlewareOption) fiber.Handler {
 	mid := buildRecoverOpts(opts...)
 
 	return func(c *fiber.Ctx) error {
-
 		defer func() {
 			if r := recover(); r != nil {
 				logger := mid.Logger

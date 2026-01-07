@@ -19,6 +19,13 @@ type PortsConfig struct {
 	SQLServer string // SQL Server port
 	Oracle    string // Oracle port
 
+	// External databases with SSL
+	PostgresSSL  string // PostgreSQL SSL port
+	MySQLSSL     string // MySQL SSL port
+	SQLServerSSL string // SQL Server SSL port
+	OracleSSL    string // Oracle SSL port
+	MongoDBSSL   string // MongoDB SSL port
+
 	// Applications
 	Manager string // Manager API port
 }
@@ -38,6 +45,13 @@ var FixedPorts = PortsConfig{
 	MySQL:     "3306",
 	SQLServer: "1433",
 	Oracle:    "1521",
+
+	// External databases with SSL - offset ports to avoid conflicts
+	PostgresSSL:  "5433",
+	MySQLSSL:     "3307",
+	SQLServerSSL: "1434",
+	OracleSSL:    "1522",
+	MongoDBSSL:   "27019",
 
 	// Applications
 	Manager: "4006",

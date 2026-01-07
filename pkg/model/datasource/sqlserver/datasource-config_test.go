@@ -8,74 +8,15 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/model/datasource"
 	"github.com/LerianStudio/fetcher/pkg/model/job"
 	"github.com/LerianStudio/fetcher/pkg/sqlserver"
+	"github.com/LerianStudio/fetcher/pkg/testutil"
 	libConstant "github.com/LerianStudio/lib-commons/v2/commons/constants"
 	"github.com/LerianStudio/lib-commons/v2/commons/log"
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
 )
 
-// mockLogger is a simplified mock for log.Logger
-type mockLogger struct{}
-
-func (m *mockLogger) Info(args ...any)                                      {}
-func (m *mockLogger) Infof(format string, args ...any)                      {}
-func (m *mockLogger) Infoln(args ...any)                                    {}
-func (m *mockLogger) Warn(args ...any)                                      {}
-func (m *mockLogger) Warnf(format string, args ...any)                      {}
-func (m *mockLogger) Warnln(args ...any)                                    {}
-func (m *mockLogger) Warning(args ...any)                                   {}
-func (m *mockLogger) Warningf(format string, args ...any)                   {}
-func (m *mockLogger) Warningln(args ...any)                                 {}
-func (m *mockLogger) Error(args ...any)                                     {}
-func (m *mockLogger) Errorf(format string, args ...any)                     {}
-func (m *mockLogger) Errorln(args ...any)                                   {}
-func (m *mockLogger) Debug(args ...any)                                     {}
-func (m *mockLogger) Debugf(format string, args ...any)                     {}
-func (m *mockLogger) Debugln(args ...any)                                   {}
-func (m *mockLogger) Fatal(args ...any)                                     {}
-func (m *mockLogger) Fatalf(format string, args ...any)                     {}
-func (m *mockLogger) Fatalln(args ...any)                                   {}
-func (m *mockLogger) Panic(args ...any)                                     {}
-func (m *mockLogger) Panicf(format string, args ...any)                     {}
-func (m *mockLogger) Panicln(args ...any)                                   {}
-func (m *mockLogger) Trace(args ...any)                                     {}
-func (m *mockLogger) Tracef(format string, args ...any)                     {}
-func (m *mockLogger) Traceln(args ...any)                                   {}
-func (m *mockLogger) Print(args ...any)                                     {}
-func (m *mockLogger) Printf(format string, args ...any)                     {}
-func (m *mockLogger) Println(args ...any)                                   {}
-func (m *mockLogger) Log(level string, args ...any)                         {}
-func (m *mockLogger) Logf(level string, format string, args ...any)         {}
-func (m *mockLogger) Logln(level string, args ...any)                       {}
-func (m *mockLogger) WithFields(fields ...any) log.Logger                   { return m }
-func (m *mockLogger) WithField(key string, value any) log.Logger            { return m }
-func (m *mockLogger) WithError(err error) log.Logger                        { return m }
-func (m *mockLogger) WithDefaultMessageTemplate(template string) log.Logger { return m }
-func (m *mockLogger) GetLevel() string                                      { return "" }
-func (m *mockLogger) SetLevel(level string) error                           { return nil }
-func (m *mockLogger) IsLevelEnabled(level string) bool                      { return false }
-func (m *mockLogger) GetLogger() any                                        { return nil }
-func (m *mockLogger) GetOutput() any                                        { return nil }
-func (m *mockLogger) SetOutput(output any) error                            { return nil }
-func (m *mockLogger) GetFormatter() any                                     { return nil }
-func (m *mockLogger) SetFormatter(formatter any) error                      { return nil }
-func (m *mockLogger) GetHooks() any                                         { return nil }
-func (m *mockLogger) AddHook(hook any) error                                { return nil }
-func (m *mockLogger) Clone() any                                            { return m }
-func (m *mockLogger) GetContext() any                                       { return nil }
-func (m *mockLogger) SetContext(ctx any) error                              { return nil }
-func (m *mockLogger) GetCallerInfo() bool                                   { return false }
-func (m *mockLogger) SetCallerInfo(enabled bool)                            {}
-func (m *mockLogger) GetReportCaller() bool                                 { return false }
-func (m *mockLogger) SetReportCaller(enabled bool)                          {}
-func (m *mockLogger) GetExitFunc() any                                      { return nil }
-func (m *mockLogger) SetExitFunc(exitFunc any) error                        { return nil }
-func (m *mockLogger) GetBufferPool() any                                    { return nil }
-func (m *mockLogger) SetBufferPool(pool any) error                          { return nil }
-func (m *mockLogger) Sync() error                                           { return nil }
-
 func newMockLogger() log.Logger {
-	return &mockLogger{}
+	return &testutil.MockLogger{}
 }
 
 func TestDataSourceConfigSQLServer_GetConfig(t *testing.T) {
@@ -118,12 +59,12 @@ func TestDataSourceConfigSQLServer_Connect(t *testing.T) {
 }
 
 func TestDataSourceConfigSQLServer_Close(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mockRepo := sqlserver.NewMockRepository(ctrl)
-
 	t.Run("successful close", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		mockRepo := sqlserver.NewMockRepository(ctrl)
+
 		mockRepo.EXPECT().CloseConnection().Return(nil)
 
 		ds := &DataSourceConfigSQLServer{
@@ -146,6 +87,11 @@ func TestDataSourceConfigSQLServer_Close(t *testing.T) {
 	})
 
 	t.Run("close with error", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		mockRepo := sqlserver.NewMockRepository(ctrl)
+
 		mockRepo.EXPECT().CloseConnection().Return(errors.New("close error"))
 
 		ds := &DataSourceConfigSQLServer{
@@ -223,6 +169,93 @@ func TestDataSourceConfigSQLServer_Query(t *testing.T) {
 		_, err := ds.Query(ctx, tables, nil, logger)
 		assert.Error(t, err)
 	})
+}
+
+func TestGetTableFilters(t *testing.T) {
+	tests := []struct {
+		name        string
+		filters     map[string]map[string]job.FilterCondition
+		tableName   string
+		wantNil     bool
+		wantColumns int
+	}{
+		{
+			name:      "nil filters",
+			filters:   nil,
+			tableName: "users",
+			wantNil:   true,
+		},
+		{
+			name:      "empty filters",
+			filters:   map[string]map[string]job.FilterCondition{},
+			tableName: "users",
+			wantNil:   true,
+		},
+		{
+			name: "table not in filters",
+			filters: map[string]map[string]job.FilterCondition{
+				"orders": {"id": {Equals: []any{1}}},
+			},
+			tableName: "users",
+			wantNil:   true,
+		},
+		{
+			name: "exact match with schema prefix",
+			filters: map[string]map[string]job.FilterCondition{
+				"dbo.users": {
+					"id":     {Equals: []any{1}},
+					"status": {Equals: []any{"active"}},
+				},
+			},
+			tableName:   "dbo.users",
+			wantNil:     false,
+			wantColumns: 2,
+		},
+		{
+			name: "match without schema prefix when filters have schema",
+			filters: map[string]map[string]job.FilterCondition{
+				"users": {
+					"id": {Equals: []any{1}},
+				},
+			},
+			tableName:   "dbo.users",
+			wantNil:     false,
+			wantColumns: 1,
+		},
+		{
+			name: "match with default schema when tableName has no schema",
+			filters: map[string]map[string]job.FilterCondition{
+				"dbo.orders": {
+					"total": {GreaterThan: []any{100}},
+				},
+			},
+			tableName:   "orders",
+			wantNil:     false,
+			wantColumns: 1,
+		},
+		{
+			name: "no match with different schema",
+			filters: map[string]map[string]job.FilterCondition{
+				"sales.orders": {
+					"total": {GreaterThan: []any{100}},
+				},
+			},
+			tableName: "dbo.orders",
+			wantNil:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := getTableFilters(tt.filters, tt.tableName)
+			if tt.wantNil {
+				assert.Nil(t, got)
+				return
+			}
+			assert.NotNil(t, got)
+			assert.Equal(t, tt.wantColumns, len(got))
+		})
+	}
 }
 
 func TestDataSourceConfigSQLServer_GetSchemaInfo(t *testing.T) {

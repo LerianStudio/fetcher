@@ -32,7 +32,7 @@ type ChaosConfig struct {
 	Type       ChaosType
 	Direction  ChaosDirection
 	Toxicity   float32 // 0.0 to 1.0, probability of toxic being applied
-	Attributes map[string]interface{}
+	Attributes map[string]any
 }
 
 // ChaosAssertions provides assertion helpers for chaos tests.
@@ -43,6 +43,8 @@ type ChaosAssertions struct {
 
 // NewChaosAssertions creates a new ChaosAssertions instance.
 func NewChaosAssertions(t *testing.T, metrics *ChaosMetrics) *ChaosAssertions {
+	t.Helper()
+
 	return &ChaosAssertions{
 		t:       t,
 		metrics: metrics,
@@ -180,6 +182,7 @@ type SteadyStateResult struct {
 // Uses Snapshot() for atomic capture of all metrics.
 func MeasureSteadyState(metrics *ChaosMetrics) SteadyStateResult {
 	snapshot := metrics.Snapshot()
+
 	return SteadyStateResult{
 		SuccessRate:    snapshot.SuccessRate(),
 		AverageLatency: snapshot.AverageLatency(),
@@ -205,7 +208,9 @@ func DocumentHypothesis(t *testing.T, hypothesis string) {
 // DocumentResult logs the test result with metrics.
 func DocumentResult(t *testing.T, metrics *ChaosMetrics, result string) {
 	t.Helper()
+
 	snapshot := metrics.Snapshot()
+
 	t.Logf("RESULT: %s", result)
 	t.Logf("  Total Requests: %d", snapshot.TotalRequests)
 	t.Logf("  Success Rate: %.2f%%", snapshot.SuccessRate())
@@ -243,6 +248,7 @@ type SLAValidationResult struct {
 // ValidateAgainstSLA checks metrics against SLA thresholds.
 func (a *ChaosAssertions) ValidateAgainstSLA(thresholds SLAThresholds) SLAValidationResult {
 	a.t.Helper()
+
 	result := SLAValidationResult{Passed: true}
 
 	snapshot := a.metrics.Snapshot()
@@ -373,7 +379,14 @@ func (a *ChaosAssertions) AssertRecoveryWithStability(maxRecoveryTime time.Durat
 		"Recovery time %v should be within %v", recoveryTime, maxRecoveryTime)
 
 	// Assert stability maintained
-	a.AssertStabilityMaintained(100.0-float64(thresholds.MaxConsecutiveFailures)*10, thresholds.MaxConsecutiveFailures)
+	// Use minimum success rate from thresholds if available, otherwise derive from max failures
+	minPassRate := thresholds.MinSuccessRate
+	if minPassRate == 0 {
+		// Fallback: allow 10% failure rate per max consecutive failure
+		minPassRate = 100.0 - float64(thresholds.MaxConsecutiveFailures)*10
+	}
+
+	a.AssertStabilityMaintained(minPassRate, thresholds.MaxConsecutiveFailures)
 
 	// Assert stability duration
 	a.AssertStabilityDuration(thresholds.StabilityDuration)

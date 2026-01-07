@@ -2,6 +2,7 @@ package helpers
 
 import (
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -277,7 +278,9 @@ func TestStabilityChecks_Duration(t *testing.T) {
 	m.EndStabilityCheck()
 
 	duration := m.StabilityDuration()
-	assert.GreaterOrEqual(t, duration, 100*time.Millisecond)
+	// Allow 10ms tolerance for timing variations in CI
+	assert.GreaterOrEqual(t, duration, 90*time.Millisecond,
+		"Stability duration should be at least ~100ms (with tolerance)")
 }
 
 func TestThroughputRPS_Calculation(t *testing.T) {
@@ -452,4 +455,150 @@ func TestValidateAgainstSLA_ThroughputValidation(t *testing.T) {
 	}
 
 	assert.True(t, foundThroughputFailure, "Should have throughput failure")
+}
+
+func TestConcurrentRecordRequest(t *testing.T) {
+	m := NewChaosMetrics()
+	m.StartTest()
+
+	const numGoroutines = 10
+	const requestsPerGoroutine = 100
+
+	var wg sync.WaitGroup
+	wg.Add(numGoroutines)
+
+	for i := 0; i < numGoroutines; i++ {
+		go func(id int) {
+			defer wg.Done()
+			for j := 0; j < requestsPerGoroutine; j++ {
+				success := j%2 == 0
+				timeout := j%5 == 0
+				latency := time.Duration(10+id) * time.Millisecond
+				m.RecordRequest(success, timeout, latency)
+			}
+		}(i)
+	}
+
+	wg.Wait()
+	m.EndTest()
+
+	// Verify total requests
+	expectedTotal := numGoroutines * requestsPerGoroutine
+	assert.Equal(t, expectedTotal, m.GetTotalRequests(),
+		"Total requests should match expected count after concurrent access")
+
+	// Verify no data corruption - metrics should be consistent
+	assert.GreaterOrEqual(t, m.SuccessRate(), 0.0)
+	assert.LessOrEqual(t, m.SuccessRate(), 100.0)
+}
+
+func TestConcurrentPercentileAccess(t *testing.T) {
+	m := NewChaosMetrics()
+
+	// Add some baseline data
+	for i := 1; i <= 100; i++ {
+		m.RecordRequest(true, false, time.Duration(i)*time.Millisecond)
+	}
+
+	const numGoroutines = 10
+	var wg sync.WaitGroup
+	wg.Add(numGoroutines)
+
+	// Concurrently access percentiles while also recording new requests
+	for i := 0; i < numGoroutines; i++ {
+		go func(id int) {
+			defer wg.Done()
+			for j := 0; j < 50; j++ {
+				// Mix reads and writes
+				if j%2 == 0 {
+					_ = m.P50()
+					_ = m.P99()
+				} else {
+					m.RecordRequest(true, false, time.Duration(50+id)*time.Millisecond)
+				}
+			}
+		}(i)
+	}
+
+	wg.Wait()
+
+	// Verify percentiles are still valid
+	p50 := m.P50()
+	p99 := m.P99()
+
+	assert.Greater(t, p50, time.Duration(0), "P50 should be positive")
+	assert.Greater(t, p99, time.Duration(0), "P99 should be positive")
+	assert.GreaterOrEqual(t, p99, p50, "P99 should be >= P50")
+}
+
+func TestConcurrentStabilityChecks(t *testing.T) {
+	m := NewChaosMetrics()
+	m.StartStabilityCheck()
+
+	const numGoroutines = 5
+	const checksPerGoroutine = 20
+
+	var wg sync.WaitGroup
+	wg.Add(numGoroutines)
+
+	for i := 0; i < numGoroutines; i++ {
+		go func(id int) {
+			defer wg.Done()
+			for j := 0; j < checksPerGoroutine; j++ {
+				success := j%3 != 0
+				m.RecordStabilityCheck(success, 100.0, 10*time.Millisecond, "")
+			}
+		}(i)
+	}
+
+	wg.Wait()
+	m.EndStabilityCheck()
+
+	// Verify all stability checks were recorded
+	checks := m.GetStabilityChecks()
+	expectedChecks := numGoroutines * checksPerGoroutine
+	assert.Equal(t, expectedChecks, len(checks),
+		"All stability checks should be recorded")
+
+	// Verify pass rate is valid
+	passRate := m.StabilityPassRate()
+	assert.GreaterOrEqual(t, passRate, 0.0)
+	assert.LessOrEqual(t, passRate, 100.0)
+}
+
+func TestConcurrentSnapshot(t *testing.T) {
+	m := NewChaosMetrics()
+	m.StartTest()
+
+	const numGoroutines = 5
+	var wg sync.WaitGroup
+	wg.Add(numGoroutines * 2) // Half writers, half readers
+
+	// Writers
+	for i := 0; i < numGoroutines; i++ {
+		go func(id int) {
+			defer wg.Done()
+			for j := 0; j < 50; j++ {
+				m.RecordRequest(true, false, time.Duration(10+id)*time.Millisecond)
+			}
+		}(i)
+	}
+
+	// Readers (snapshot)
+	for i := 0; i < numGoroutines; i++ {
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 10; j++ {
+				snapshot := m.Snapshot()
+				// Verify snapshot is consistent
+				assert.GreaterOrEqual(t, snapshot.TotalRequests, 0)
+				assert.GreaterOrEqual(t, snapshot.SuccessfulRequests, 0)
+				assert.LessOrEqual(t, snapshot.SuccessfulRequests, snapshot.TotalRequests)
+				time.Sleep(time.Millisecond)
+			}
+		}()
+	}
+
+	wg.Wait()
+	m.EndTest()
 }

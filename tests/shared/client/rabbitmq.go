@@ -95,12 +95,14 @@ func (c *RabbitMQEventConsumer) WaitForJobEvent(ctx context.Context, jobID strin
 				continue // Skip invalid messages
 			}
 
-			fmt.Println("Received job events:", notification)
-
 			if notification.JobID == jobID {
 				return &notification, nil
+			} else {
+				// Log mismatch for debugging
+				fmt.Printf("[DEBUG] Received event for different job: %s (waiting for %s)\n", notification.JobID, jobID)
 			}
 		case <-timer.C:
+			fmt.Printf("[DEBUG] Timeout waiting for job event %s after %v\n", jobID, timeout)
 			return nil, fmt.Errorf("timeout waiting for job event %s", jobID)
 		}
 	}

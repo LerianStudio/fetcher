@@ -13,6 +13,13 @@ type InternalDBConnection struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
 	Database string `json:"database"`
+
+	// SSL configuration
+	SSLEnabled    bool   `json:"sslEnabled,omitempty"`
+	SSLMode       string `json:"sslMode,omitempty"`
+	SSLCACert     string `json:"sslCaCert,omitempty"`
+	SSLClientCert string `json:"sslClientCert,omitempty"`
+	SSLClientKey  string `json:"sslClientKey,omitempty"`
 }
 
 // InfraPorts holds the mapped ports for infrastructure services.

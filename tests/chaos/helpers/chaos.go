@@ -3,6 +3,7 @@
 package helpers
 
 import (
+	"fmt"
 	"time"
 
 	toxiproxy "github.com/Shopify/toxiproxy/v2/client"
@@ -33,11 +34,11 @@ func TimeoutMs(d time.Duration) int {
 // ChaosInjectionConfig defines configuration for chaos injection via Toxiproxy.
 // This struct provides all fields needed for Toxiproxy toxic creation.
 type ChaosInjectionConfig struct {
-	Name       string                 // Unique name for the toxic
-	Type       string                 // Toxic type: latency, timeout, bandwidth, reset_peer, slow_close
-	Direction  string                 // Direction: downstream, upstream
-	Toxicity   float32                // Probability of toxic being applied (0.0 to 1.0)
-	Attributes map[string]interface{} // Toxic-specific attributes
+	Name       string         // Unique name for the toxic
+	Type       string         // Toxic type: latency, timeout, bandwidth, reset_peer, slow_close
+	Direction  string         // Direction: downstream, upstream
+	Toxicity   float32        // Probability of toxic being applied (0.0 to 1.0)
+	Attributes map[string]any // Toxic-specific attributes
 }
 
 // =============================================================================
@@ -53,7 +54,7 @@ func DefaultLatencyConfig(latencyMs, jitterMs int) ChaosInjectionConfig {
 		Type:      "latency",
 		Direction: "downstream",
 		Toxicity:  1.0,
-		Attributes: map[string]interface{}{
+		Attributes: map[string]any{
 			"latency": latencyMs,
 			"jitter":  jitterMs,
 		},
@@ -68,7 +69,7 @@ func DefaultTimeoutConfig(timeoutMs int) ChaosInjectionConfig {
 		Type:      "timeout",
 		Direction: "downstream",
 		Toxicity:  1.0,
-		Attributes: map[string]interface{}{
+		Attributes: map[string]any{
 			"timeout": timeoutMs,
 		},
 	}
@@ -82,7 +83,7 @@ func DefaultBandwidthConfig(rateBytesPerSec int) ChaosInjectionConfig {
 		Type:      "bandwidth",
 		Direction: "downstream",
 		Toxicity:  1.0,
-		Attributes: map[string]interface{}{
+		Attributes: map[string]any{
 			"rate": rateBytesPerSec,
 		},
 	}
@@ -96,7 +97,7 @@ func DefaultResetPeerConfig(timeoutMs int) ChaosInjectionConfig {
 		Type:      "reset_peer",
 		Direction: "downstream",
 		Toxicity:  1.0,
-		Attributes: map[string]interface{}{
+		Attributes: map[string]any{
 			"timeout": timeoutMs,
 		},
 	}
@@ -110,7 +111,7 @@ func DefaultSlowCloseConfig(delayMs int) ChaosInjectionConfig {
 		Type:      "slow_close",
 		Direction: "downstream",
 		Toxicity:  1.0,
-		Attributes: map[string]interface{}{
+		Attributes: map[string]any{
 			"delay": delayMs,
 		},
 	}
@@ -125,7 +126,7 @@ func DefaultLimitDataConfig(bytes int) ChaosInjectionConfig {
 		Type:      "limit_data",
 		Direction: "downstream",
 		Toxicity:  1.0,
-		Attributes: map[string]interface{}{
+		Attributes: map[string]any{
 			"bytes": bytes,
 		},
 	}
@@ -142,7 +143,7 @@ func DefaultSlicerConfig(avgSize, sizeVariation, delayMicros int) ChaosInjection
 		Type:      "slicer",
 		Direction: "downstream",
 		Toxicity:  1.0,
-		Attributes: map[string]interface{}{
+		Attributes: map[string]any{
 			"average_size":   avgSize,
 			"size_variation": sizeVariation,
 			"delay":          delayMicros,
@@ -159,34 +160,65 @@ func DefaultSlicerConfig(avgSize, sizeVariation, delayMicros int) ChaosInjection
 func InjectChaos(proxy *toxiproxy.Proxy, cfg ChaosInjectionConfig) (*toxiproxy.Toxic, error) {
 	switch cfg.Type {
 	case "latency":
-		latency, _ := cfg.Attributes["latency"].(int)
-		jitter, _ := cfg.Attributes["jitter"].(int)
+		latency, ok := cfg.Attributes["latency"].(int)
+		if !ok {
+			return nil, fmt.Errorf("latency attribute missing or invalid type")
+		}
+		jitter, ok := cfg.Attributes["jitter"].(int)
+		if !ok {
+			return nil, fmt.Errorf("jitter attribute missing or invalid type")
+		}
+
 		return containers.AddLatency(proxy, cfg.Name, latency, jitter)
 
 	case "timeout":
-		timeout, _ := cfg.Attributes["timeout"].(int)
+		timeout, ok := cfg.Attributes["timeout"].(int)
+		if !ok {
+			return nil, fmt.Errorf("timeout attribute missing or invalid type")
+		}
 		return containers.AddTimeout(proxy, cfg.Name, timeout)
 
 	case "bandwidth":
-		rate, _ := cfg.Attributes["rate"].(int)
+		rate, ok := cfg.Attributes["rate"].(int)
+		if !ok {
+			return nil, fmt.Errorf("rate attribute missing or invalid type")
+		}
 		return containers.AddBandwidth(proxy, cfg.Name, rate)
 
 	case "reset_peer":
-		timeout, _ := cfg.Attributes["timeout"].(int)
+		timeout, ok := cfg.Attributes["timeout"].(int)
+		if !ok {
+			return nil, fmt.Errorf("timeout attribute missing or invalid type")
+		}
 		return containers.AddResetPeer(proxy, cfg.Name, timeout)
 
 	case "slow_close":
-		delay, _ := cfg.Attributes["delay"].(int)
+		delay, ok := cfg.Attributes["delay"].(int)
+		if !ok {
+			return nil, fmt.Errorf("delay attribute missing or invalid type")
+		}
 		return containers.AddSlowClose(proxy, cfg.Name, delay)
 
 	case "limit_data":
-		bytes, _ := cfg.Attributes["bytes"].(int)
+		bytes, ok := cfg.Attributes["bytes"].(int)
+		if !ok {
+			return nil, fmt.Errorf("bytes attribute missing or invalid type")
+		}
 		return containers.AddLimitData(proxy, cfg.Name, bytes)
 
 	case "slicer":
-		avgSize, _ := cfg.Attributes["average_size"].(int)
-		sizeVariation, _ := cfg.Attributes["size_variation"].(int)
-		delay, _ := cfg.Attributes["delay"].(int)
+		avgSize, ok := cfg.Attributes["average_size"].(int)
+		if !ok {
+			return nil, fmt.Errorf("average_size attribute missing or invalid type")
+		}
+		sizeVariation, ok := cfg.Attributes["size_variation"].(int)
+		if !ok {
+			return nil, fmt.Errorf("size_variation attribute missing or invalid type")
+		}
+		delay, ok := cfg.Attributes["delay"].(int)
+		if !ok {
+			return nil, fmt.Errorf("delay attribute missing or invalid type")
+		}
 		return containers.AddSlicer(proxy, cfg.Name, avgSize, sizeVariation, delay)
 
 	default:

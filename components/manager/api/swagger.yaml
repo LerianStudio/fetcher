@@ -88,14 +88,51 @@ definitions:
       username:
         type: string
     type: object
+  github_com_LerianStudio_fetcher_pkg_model.ConnectionUpdateInput:
+    properties:
+      configName:
+        example: production-db
+        maxLength: 100
+        minLength: 3
+        type: string
+      databaseName:
+        example: mydatabase
+        type: string
+      host:
+        example: db.example.com
+        type: string
+      metadata:
+        additionalProperties: {}
+        type: object
+      password:
+        example: secretpassword
+        type: string
+      port:
+        example: 5432
+        maximum: 65535
+        minimum: 1
+        type: integer
+      ssl:
+        $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.SSLUpdateInput'
+      type:
+        enum:
+        - ORACLE
+        - SQL_SERVER
+        - POSTGRESQL
+        - MONGODB
+        - MYSQL
+        example: POSTGRESQL
+        type: string
+      username:
+        example: dbuser
+        type: string
+    type: object
   github_com_LerianStudio_fetcher_pkg_model.DataRequest:
     description: DataRequest encapsulates field mappings and optional filters for
       data extraction.
     properties:
       filters:
-        items:
-          $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.FilterRequest'
-        type: array
+        $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.NestedFilters'
       mappedFields:
         additionalProperties:
           additionalProperties:
@@ -132,36 +169,6 @@ definitions:
       status:
         type: string
     type: object
-  github_com_LerianStudio_fetcher_pkg_model.Filter:
-    properties:
-      field:
-        type: string
-      operator:
-        type: string
-      value:
-        items: {}
-        type: array
-    required:
-    - field
-    - operator
-    - value
-    type: object
-  github_com_LerianStudio_fetcher_pkg_model.FilterRequest:
-    description: FilterRequest defines a filter condition with field, operator, and
-      value(s).
-    properties:
-      field:
-        type: string
-      operator:
-        type: string
-      value:
-        items: {}
-        type: array
-    required:
-    - field
-    - operator
-    - value
-    type: object
   github_com_LerianStudio_fetcher_pkg_model.JobResponse:
     description: JobResponse represents the complete information about a data extraction
       job.
@@ -171,9 +178,7 @@ definitions:
       createdAt:
         type: string
       filters:
-        items:
-          $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.Filter'
-        type: array
+        $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.NestedFilters'
       id:
         type: string
       mappedFields:
@@ -196,6 +201,14 @@ definitions:
       status:
         type: string
     type: object
+  github_com_LerianStudio_fetcher_pkg_model.NestedFilters:
+    additionalProperties:
+      additionalProperties:
+        additionalProperties:
+          $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model_job.FilterCondition'
+        type: object
+      type: object
+    type: object
   github_com_LerianStudio_fetcher_pkg_model.SSLInput:
     properties:
       ca:
@@ -210,12 +223,25 @@ definitions:
       mode:
         example: require
         type: string
-    required:
-    - mode
     type: object
   github_com_LerianStudio_fetcher_pkg_model.SSLResponse:
     properties:
       mode:
+        type: string
+    type: object
+  github_com_LerianStudio_fetcher_pkg_model.SSLUpdateInput:
+    properties:
+      ca:
+        example: |-
+          -----BEGIN CERTIFICATE-----
+          ...
+        type: string
+      cert:
+        type: string
+      key:
+        type: string
+      mode:
+        example: require
         type: string
     type: object
   github_com_LerianStudio_fetcher_pkg_model.SchemaValidationError:
@@ -258,6 +284,78 @@ definitions:
       status:
         description: '"success" or "failure"'
         type: string
+    type: object
+  github_com_LerianStudio_fetcher_pkg_model_job.FilterCondition:
+    properties:
+      between:
+        description: |-
+          Between specifies a range condition with exactly two values [min, max].
+          Matches records where min <= field <= max
+          Example: {"between": [100, 1000]} matches records where 100 <= field <= 1000
+        items: {}
+        type: array
+      eq:
+        description: |-
+          Equals specifies exact value matches. Multiple values treated as OR conditions.
+          Example: {"eq": ["active", "pending"]} matches records where field equals "active" OR "pending"
+        items: {}
+        type: array
+      gt:
+        description: |-
+          GreaterThan specifies values that must be greater than the provided value.
+          Should contain exactly one value for comparison.
+          Example: {"gt": [100]} matches records where field > 100
+        items: {}
+        type: array
+      gte:
+        description: |-
+          GreaterOrEqual specifies values that must be greater than or equal to the provided value.
+          Should contain exactly one value for comparison.
+          Example: {"gte": ["2025-06-01"]} matches records where field >= "2025-06-01"
+        items: {}
+        type: array
+      in:
+        description: |-
+          In specifies a list of values where the field must match any one of them.
+          Multiple values treated as OR conditions.
+          Example: {"in": ["active", "pending", "suspended"]} matches any of these statuses
+        items: {}
+        type: array
+      like:
+        description: |-
+          Like specifies values that must match the provided value using LIKE pattern matching.
+          Should contain exactly one value for comparison.
+          Example: {"like": ["%active%"]} matches any status containing "active"
+        items: {}
+        type: array
+      lt:
+        description: |-
+          LessThan specifies values that must be less than the provided value.
+          Should contain exactly one value for comparison.
+          Example: {"lt": [1000]} matches records where field < 1000
+        items: {}
+        type: array
+      lte:
+        description: |-
+          LessOrEqual specifies values that must be less than or equal to the provided value.
+          Should contain exactly one value for comparison.
+          Example: {"lte": ["2025-06-30"]} matches records where field <= "2025-06-30"
+        items: {}
+        type: array
+      ne:
+        description: |-
+          NotEquals specifies values that must NOT match the provided value.
+          Should contain exactly one value for comparison.
+          Example: {"ne": ["active"]} excludes this status
+        items: {}
+        type: array
+      nin:
+        description: |-
+          NotIn specifies a list of values where the field must NOT match any of them.
+          Multiple values treated as AND NOT conditions.
+          Example: {"nin": ["deleted", "archived"]} excludes these statuses
+        items: {}
+        type: array
     type: object
   pkg.HTTPError:
     properties:
@@ -538,12 +636,8 @@ paths:
       produces:
       - application/json
       responses:
-        "200":
-          description: Deleted connection identifier
-          schema:
-            additionalProperties:
-              type: string
-            type: object
+        "204":
+          description: No Content
         "400":
           description: Bad Request
           schema:
@@ -606,8 +700,8 @@ paths:
     patch:
       consumes:
       - application/json
-      description: Apply a partial update to a connection. Returns 409 if there is
-        any active job.
+      description: Apply a partial update to a connection. Only include fields you
+        want to change. Returns 409 if there is any active job.
       parameters:
       - description: The authorization token in the 'Bearer access_token' format.
           Only required when auth plugin is enabled.
@@ -624,12 +718,12 @@ paths:
         name: id
         required: true
         type: string
-      - description: Fields to update (partial payload)
+      - description: Fields to update (only include fields you want to change)
         in: body
         name: connection
         required: true
         schema:
-          $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.ConnectionInput'
+          $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.ConnectionUpdateInput'
       produces:
       - application/json
       responses:

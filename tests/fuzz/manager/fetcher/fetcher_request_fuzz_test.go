@@ -21,7 +21,7 @@ func FuzzFetcherRequestParsing(f *testing.F) {
 		[]byte(`{"dataRequest":{"mappedFields":{"ds1":{"t1":["f1"]}}}}`),
 		[]byte(`{"dataRequest":{"mappedFields":{"ds1":{"t1":[]}}}}`),
 		[]byte(`{"dataRequest":{"mappedFields":{"":{"t1":["f1"]}}}}`),
-		[]byte(`{"dataRequest":{"filters":[{"field":"ds.t.f","operator":"eq","value":["x"]}]}}`),
+		[]byte(`{"dataRequest":{"filters":{"ds":{"t":{"f":{"eq":["x"]}}}}}}`),
 		[]byte(`{"metadata":{"key":"value"}}`),
 	}
 
@@ -51,10 +51,16 @@ func FuzzFetcherRequestParsing(f *testing.F) {
 		}
 
 		if request.DataRequest.Filters != nil {
-			for _, filter := range request.DataRequest.Filters {
-				_ = filter.Field
-				_ = filter.Operator
-				_ = filter.Value
+			for ds, tables := range request.DataRequest.Filters {
+				for t, fields := range tables {
+					for f, cond := range fields {
+						_ = ds
+						_ = t
+						_ = f
+						_ = cond.Equals
+						_ = cond.In
+					}
+				}
 			}
 		}
 

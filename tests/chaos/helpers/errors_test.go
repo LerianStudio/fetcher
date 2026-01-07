@@ -43,7 +43,7 @@ func TestClassifyError_Network(t *testing.T) {
 		"dns lookup failed",
 		"no route to host",
 		"network is down",
-		"no such host",                                         // DNS resolution failure
+		"no such host", // DNS resolution failure
 		"lookup database-host on 127.0.0.1:53: no such host", // Full DNS error
 	}
 

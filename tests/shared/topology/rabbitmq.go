@@ -52,7 +52,7 @@ func SetupRabbitMQTopology(ctx context.Context, amqpURL string) error {
 		args amqp.Table
 	}{
 		{
-			"extract-external-data-queue",
+			"fetcher.extract-external-data.queue",
 			amqp.Table{
 				"x-dead-letter-exchange":    "fetcher.dlx",
 				"x-dead-letter-routing-key": "fetcher.dlq.key",
@@ -92,11 +92,11 @@ func SetupRabbitMQTopology(ctx context.Context, amqpURL string) error {
 		routingKey string
 		exchange   string
 	}{
-		{"extract-external-data-queue", "fetcher.job.key", "fetcher.extract-external-data.exchange"},
+		{"fetcher.extract-external-data.queue", "fetcher.job.key", "fetcher.extract-external-data.exchange"},
 		{"fetcher.dlq", "fetcher.dlq.key", "fetcher.dlx"},
 		// Test queue bindings for job events (topic exchange with wildcards)
-		{"test.job.events", "job.completed.*", "fetcher.job.events"},
-		{"test.job.events", "job.failed.*", "fetcher.job.events"},
+		{"test.job.events", "job.completed.#", "fetcher.job.events"},
+		{"test.job.events", "job.failed.#", "fetcher.job.events"},
 	}
 
 	for _, b := range bindings {

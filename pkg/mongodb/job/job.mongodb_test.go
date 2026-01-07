@@ -95,7 +95,7 @@ func jobFixture() *model.Job {
 				"table1": {"field1", "field2"},
 			},
 		},
-		Filters:     []model.Filter{},
+		Filters:     model.NestedFilters{},
 		Status:      model.JobStatusPending,
 		ResultPath:  "/tmp/result.csv",
 		RequestHash: "dummyhashvalue1234567890abcdef1234567890abcdef1234567890abcdef12",

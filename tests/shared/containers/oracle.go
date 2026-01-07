@@ -22,6 +22,7 @@ type OracleContainer struct {
 	Port         string
 	InternalHost string
 	Internal     config.InternalDBConnection
+	SSL          *SSLConnectionInfo
 }
 
 // OracleOptions configures Oracle container startup.
@@ -31,6 +32,7 @@ type OracleOptions struct {
 	FixedHostPort string
 	Password      string
 	InitScript    string
+	SSL           *SSLConfig
 }
 
 // DefaultOracleOptions returns default Oracle options.
@@ -40,6 +42,21 @@ func DefaultOracleOptions(networkName string) OracleOptions {
 		NetworkAlias: "oracle-external",
 		Password:     "TestPass123",
 	}
+}
+
+// DefaultOracleSSLOptions returns Oracle options with SSL enabled.
+// Note: Oracle SSL in containers requires wallet configuration which is complex.
+// This function marks SSL as enabled but actual SSL setup requires additional
+// container configuration. Use with limited support awareness.
+func DefaultOracleSSLOptions(networkName string) OracleOptions {
+	opts := DefaultOracleOptions(networkName)
+	opts.NetworkAlias = "oracle-external-ssl"
+	opts.SSL = &SSLConfig{
+		Enabled: true,
+		Mode:    "TCPS",
+	}
+
+	return opts
 }
 
 // StartOracle starts an Oracle XE container with the given options.
@@ -90,19 +107,41 @@ func StartOracle(ctx context.Context, opts OracleOptions) (*OracleContainer, err
 		}
 	}
 
+	// Build internal connection with SSL info
+	internal := config.InternalDBConnection{
+		Host:     opts.NetworkAlias,
+		Port:     1521,
+		Username: "system",
+		Password: opts.Password,
+		Database: "XEPDB1",
+	}
+
+	// Populate SSL connection info
+	// Note: Oracle SSL requires wallet configuration which is complex in containers.
+	// This marks SSL as enabled but actual TLS connections require additional setup.
+	var sslConnInfo *SSLConnectionInfo
+
+	if opts.SSL != nil && opts.SSL.Enabled {
+		internal.SSLEnabled = true
+
+		internal.SSLMode = opts.SSL.Mode
+		if opts.SSL.CertBundle != nil {
+			internal.SSLCACert = opts.SSL.CertBundle.CACertPEM
+			internal.SSLClientCert = opts.SSL.CertBundle.ClientCertPEM
+			internal.SSLClientKey = opts.SSL.CertBundle.ClientKeyPEM
+		}
+
+		sslConnInfo = opts.SSL.ToConnectionInfo()
+	}
+
 	return &OracleContainer{
 		Container:    container,
 		URL:          connStr,
 		Host:         host,
 		Port:         port.Port(),
 		InternalHost: opts.NetworkAlias,
-		Internal: config.InternalDBConnection{
-			Host:     opts.NetworkAlias,
-			Port:     1521,
-			Username: "system",
-			Password: opts.Password,
-			Database: "XEPDB1",
-		},
+		Internal:     internal,
+		SSL:          sslConnInfo,
 	}, nil
 }
 
@@ -151,23 +190,18 @@ func runOracleInit(ctx context.Context, connStr, script string) error {
 			// Handle the DROP TABLE from PL/SQL block
 			if matches := dropTablePattern.FindStringSubmatch(block); len(matches) > 1 {
 				tableName := matches[1]
-				_, err := db.ExecContext(ctx, "DROP TABLE "+tableName)
-				if err != nil && !strings.Contains(err.Error(), "ORA-00942") {
-					return fmt.Errorf("failed to drop table %s: %w", tableName, err)
-				}
-			}
-			continue
-		}
 
-		// Pure PL/SQL block with DROP TABLE
-		if hasBegin && hasExecuteImmediate {
-			if matches := dropTablePattern.FindStringSubmatch(block); len(matches) > 1 {
-				tableName := matches[1]
+				// Validate table name contains only alphanumeric and underscore
+				if !regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`).MatchString(tableName) {
+					return fmt.Errorf("invalid table name: %s", tableName)
+				}
+
 				_, err := db.ExecContext(ctx, "DROP TABLE "+tableName)
 				if err != nil && !strings.Contains(err.Error(), "ORA-00942") {
 					return fmt.Errorf("failed to drop table %s: %w", tableName, err)
 				}
 			}
+
 			continue
 		}
 
@@ -199,20 +233,25 @@ func executeOracleStatements(ctx context.Context, db *sql.DB, block string) erro
 			return fmt.Errorf("failed to run statement: %w", err)
 		}
 	}
+
 	return nil
 }
 
 // removeCommentLines removes SQL comment lines (starting with --) from a statement.
 func removeCommentLines(stmt string) string {
 	lines := strings.Split(stmt, "\n")
-	var result []string
+
+	result := make([]string, 0, len(lines))
+
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" || strings.HasPrefix(trimmed, "--") {
 			continue
 		}
+
 		result = append(result, line)
 	}
+
 	return strings.TrimSpace(strings.Join(result, "\n"))
 }
 
@@ -221,5 +260,6 @@ func (o *OracleContainer) Stop(ctx context.Context) error {
 	if o.Container != nil {
 		return o.Container.Terminate(ctx)
 	}
+
 	return nil
 }

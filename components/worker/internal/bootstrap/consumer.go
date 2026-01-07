@@ -30,7 +30,7 @@ func NewMultiQueueConsumer(routes *rabbitmq.ConsumerRoutes, useCase *services.Us
 	}
 
 	// Registry handlers for each queue
-	routes.Register(os.Getenv("RABBITMQ_GENERATE_REPORT_QUEUE"), consumer.handlerGenerateReport)
+	routes.Register(os.Getenv("RABBITMQ_FETCHER_WORK_QUEUE"), consumer.handlerGenerateReport)
 
 	return consumer
 }

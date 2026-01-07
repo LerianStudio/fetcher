@@ -9,12 +9,15 @@ package setup
 import (
 	"context"
 	"fmt"
+	"os"
+	"reflect"
 
 	"github.com/testcontainers/testcontainers-go"
 
 	"github.com/LerianStudio/fetcher/tests/shared/config"
 	"github.com/LerianStudio/fetcher/tests/shared/containers"
 	"github.com/LerianStudio/fetcher/tests/shared/fixtures"
+	"github.com/LerianStudio/fetcher/tests/shared/fixtures/ssl"
 	"github.com/LerianStudio/fetcher/tests/shared/network"
 	"github.com/LerianStudio/fetcher/tests/shared/topology"
 )
@@ -38,6 +41,19 @@ type SharedInfrastructure struct {
 	MySQLExternal     *containers.MySQLContainer
 	SQLServerExternal *containers.SQLServerContainer
 	OracleExternal    *containers.OracleContainer
+
+	// SSL-enabled database containers (optional)
+	MongoDBSSL   *containers.MongoDBContainer
+	PostgresSSL  *containers.PostgresContainer
+	MySQLSSL     *containers.MySQLContainer
+	SQLServerSSL *containers.SQLServerContainer
+	OracleSSL    *containers.OracleContainer
+
+	// SSL certificate bundle (populated when EnableSSL is true)
+	SSLCertBundle *ssl.CertificateBundle
+
+	// SSLCertDir is the directory where SSL certificates are written
+	SSLCertDir string
 }
 
 // InfrastructureOptions controls how infrastructure is started.
@@ -57,6 +73,10 @@ type InfrastructureOptions struct {
 	// InitScripts controls whether to run init scripts for databases.
 	// Set to false for chaos tests that need empty databases.
 	InitScripts bool
+
+	// EnableSSL starts additional SSL-enabled database containers.
+	// When true, SSL containers are started alongside regular containers on separate ports.
+	EnableSSL bool
 }
 
 // DefaultOptions returns options for normal test execution with all containers.
@@ -99,6 +119,17 @@ func CoreOnlyOptions() InfrastructureOptions {
 	}
 }
 
+// SSLOptions returns options for starting infrastructure with SSL-enabled databases.
+func SSLOptions() InfrastructureOptions {
+	return InfrastructureOptions{
+		UseFixedPorts:   true,
+		ReuseExisting:   false,
+		SkipExternalDBs: false,
+		InitScripts:     true,
+		EnableSSL:       true,
+	}
+}
+
 // Start starts all infrastructure containers with default options.
 func Start(ctx context.Context) (*SharedInfrastructure, error) {
 	return StartWithOptions(ctx, DefaultOptions())
@@ -133,6 +164,7 @@ func startNew(ctx context.Context, opts InfrastructureOptions) (*SharedInfrastru
 	if err != nil {
 		return nil, fmt.Errorf("failed to create network: %w", err)
 	}
+
 	infra.Network = net
 
 	networkName := config.NetworkName
@@ -143,7 +175,50 @@ func startNew(ctx context.Context, opts InfrastructureOptions) (*SharedInfrastru
 		containerCount += 4 // Postgres, MySQL, SQLServer, Oracle
 	}
 
+	if opts.EnableSSL && !opts.SkipExternalDBs {
+		containerCount += 5 // PostgresSSL, MySQLSSL, SQLServerSSL, OracleSSL, MongoDBSSL
+	}
+
 	errChan := make(chan error, containerCount)
+
+	// Generate SSL certificates if enabled
+	var (
+		certBundle            *ssl.CertificateBundle
+		certDir               string
+		postgresSSLConfigPath string
+	)
+
+	if opts.EnableSSL {
+		var err error
+
+		certBundle, err = ssl.GenerateCertificates(ssl.DefaultGenerateOptions())
+		if err != nil {
+			_ = infra.Stop(ctx)
+			return nil, fmt.Errorf("failed to generate SSL certificates: %w", err)
+		}
+
+		// Write certificates to temp directory for container mounting
+		certDir, err = os.MkdirTemp("", "fetcher-ssl-certs-*")
+		if err != nil {
+			_ = infra.Stop(ctx)
+			return nil, fmt.Errorf("failed to create cert directory: %w", err)
+		}
+
+		if err := certBundle.WriteToDir(certDir); err != nil {
+			_ = infra.Stop(ctx)
+			return nil, fmt.Errorf("failed to write certificates: %w", err)
+		}
+
+		// Write PostgreSQL SSL config file
+		postgresSSLConfigPath, err = containers.WritePostgresSSLConfig(certDir)
+		if err != nil {
+			_ = infra.Stop(ctx)
+			return nil, fmt.Errorf("failed to write PostgreSQL SSL config: %w", err)
+		}
+
+		infra.SSLCertBundle = certBundle
+		infra.SSLCertDir = certDir
+	}
 
 	// Get fixed ports if needed
 	var fixedPorts config.PortsConfig
@@ -163,7 +238,9 @@ func startNew(ctx context.Context, opts InfrastructureOptions) (*SharedInfrastru
 			errChan <- fmt.Errorf("mongodb-main: %w", err)
 			return
 		}
+
 		infra.MongoMain = ctr
+
 		errChan <- nil
 	}()
 
@@ -179,7 +256,9 @@ func startNew(ctx context.Context, opts InfrastructureOptions) (*SharedInfrastru
 			errChan <- fmt.Errorf("mongodb-external: %w", err)
 			return
 		}
+
 		infra.MongoExternal = ctr
+
 		errChan <- nil
 	}()
 
@@ -195,7 +274,9 @@ func startNew(ctx context.Context, opts InfrastructureOptions) (*SharedInfrastru
 			errChan <- fmt.Errorf("rabbitmq: %w", err)
 			return
 		}
+
 		infra.RabbitMQ = ctr
+
 		errChan <- nil
 	}()
 
@@ -211,7 +292,9 @@ func startNew(ctx context.Context, opts InfrastructureOptions) (*SharedInfrastru
 			errChan <- fmt.Errorf("seaweedfs: %w", err)
 			return
 		}
+
 		infra.SeaweedFS = ctr
+
 		errChan <- nil
 	}()
 
@@ -227,7 +310,9 @@ func startNew(ctx context.Context, opts InfrastructureOptions) (*SharedInfrastru
 			errChan <- fmt.Errorf("redis: %w", err)
 			return
 		}
+
 		infra.Redis = ctr
+
 		errChan <- nil
 	}()
 
@@ -239,12 +324,14 @@ func startNew(ctx context.Context, opts InfrastructureOptions) (*SharedInfrastru
 			if opts.UseFixedPorts {
 				postgresOpts.FixedHostPort = fixedPorts.Postgres
 			}
+
 			if opts.InitScripts {
 				initSQL, err := fixtures.GetPostgresInitSQL()
 				if err != nil {
 					errChan <- fmt.Errorf("postgres init script: %w", err)
 					return
 				}
+
 				postgresOpts.InitScript = initSQL
 			}
 
@@ -253,7 +340,9 @@ func startNew(ctx context.Context, opts InfrastructureOptions) (*SharedInfrastru
 				errChan <- fmt.Errorf("postgres: %w", err)
 				return
 			}
+
 			infra.PostgresExternal = ctr
+
 			errChan <- nil
 		}()
 
@@ -263,12 +352,14 @@ func startNew(ctx context.Context, opts InfrastructureOptions) (*SharedInfrastru
 			if opts.UseFixedPorts {
 				mysqlOpts.FixedHostPort = fixedPorts.MySQL
 			}
+
 			if opts.InitScripts {
 				initSQL, err := fixtures.GetMySQLInitSQL()
 				if err != nil {
 					errChan <- fmt.Errorf("mysql init script: %w", err)
 					return
 				}
+
 				mysqlOpts.InitScript = initSQL
 			}
 
@@ -277,7 +368,9 @@ func startNew(ctx context.Context, opts InfrastructureOptions) (*SharedInfrastru
 				errChan <- fmt.Errorf("mysql: %w", err)
 				return
 			}
+
 			infra.MySQLExternal = ctr
+
 			errChan <- nil
 		}()
 
@@ -287,12 +380,14 @@ func startNew(ctx context.Context, opts InfrastructureOptions) (*SharedInfrastru
 			if opts.UseFixedPorts {
 				sqlserverOpts.FixedHostPort = fixedPorts.SQLServer
 			}
+
 			if opts.InitScripts {
 				initSQL, err := fixtures.GetSQLServerInitSQL()
 				if err != nil {
 					errChan <- fmt.Errorf("sqlserver init script: %w", err)
 					return
 				}
+
 				sqlserverOpts.InitScript = initSQL
 			}
 
@@ -301,7 +396,9 @@ func startNew(ctx context.Context, opts InfrastructureOptions) (*SharedInfrastru
 				errChan <- fmt.Errorf("sqlserver: %w", err)
 				return
 			}
+
 			infra.SQLServerExternal = ctr
+
 			errChan <- nil
 		}()
 
@@ -311,12 +408,14 @@ func startNew(ctx context.Context, opts InfrastructureOptions) (*SharedInfrastru
 			if opts.UseFixedPorts {
 				oracleOpts.FixedHostPort = fixedPorts.Oracle
 			}
+
 			if opts.InitScripts {
 				initSQL, err := fixtures.GetOracleInitSQL()
 				if err != nil {
 					errChan <- fmt.Errorf("oracle init script: %w", err)
 					return
 				}
+
 				oracleOpts.InitScript = initSQL
 			}
 
@@ -325,13 +424,160 @@ func startNew(ctx context.Context, opts InfrastructureOptions) (*SharedInfrastru
 				errChan <- fmt.Errorf("oracle: %w", err)
 				return
 			}
+
 			infra.OracleExternal = ctr
+
+			errChan <- nil
+		}()
+	}
+
+	// Start SSL-enabled containers if enabled
+	if opts.EnableSSL && !opts.SkipExternalDBs {
+		// Start PostgreSQL SSL
+		go func() {
+			postgresSSLOpts := containers.DefaultPostgresSSLOptions(networkName)
+			if opts.UseFixedPorts {
+				postgresSSLOpts.FixedHostPort = fixedPorts.PostgresSSL
+			}
+
+			postgresSSLOpts.SSL.CertBundle = certBundle
+			postgresSSLOpts.SSL.PostgresConfigPath = postgresSSLConfigPath
+
+			if opts.InitScripts {
+				initSQL, err := fixtures.GetPostgresInitSQL()
+				if err != nil {
+					errChan <- fmt.Errorf("postgres-ssl init script: %w", err)
+					return
+				}
+
+				postgresSSLOpts.InitScript = initSQL
+			}
+
+			ctr, err := containers.StartPostgres(ctx, postgresSSLOpts)
+			if err != nil {
+				errChan <- fmt.Errorf("postgres-ssl: %w", err)
+				return
+			}
+
+			infra.PostgresSSL = ctr
+
+			errChan <- nil
+		}()
+
+		// Start MySQL SSL
+		go func() {
+			mysqlSSLOpts := containers.DefaultMySQLSSLOptions(networkName)
+			if opts.UseFixedPorts {
+				mysqlSSLOpts.FixedHostPort = fixedPorts.MySQLSSL
+			}
+
+			mysqlSSLOpts.SSL.CertBundle = certBundle
+
+			if opts.InitScripts {
+				initSQL, err := fixtures.GetMySQLInitSQL()
+				if err != nil {
+					errChan <- fmt.Errorf("mysql-ssl init script: %w", err)
+					return
+				}
+
+				mysqlSSLOpts.InitScript = initSQL
+			}
+
+			ctr, err := containers.StartMySQL(ctx, mysqlSSLOpts)
+			if err != nil {
+				errChan <- fmt.Errorf("mysql-ssl: %w", err)
+				return
+			}
+
+			infra.MySQLSSL = ctr
+
+			errChan <- nil
+		}()
+
+		// Start SQL Server SSL
+		go func() {
+			sqlserverSSLOpts := containers.DefaultSQLServerSSLOptions(networkName)
+			if opts.UseFixedPorts {
+				sqlserverSSLOpts.FixedHostPort = fixedPorts.SQLServerSSL
+			}
+
+			sqlserverSSLOpts.SSL.CertBundle = certBundle
+
+			if opts.InitScripts {
+				initSQL, err := fixtures.GetSQLServerInitSQL()
+				if err != nil {
+					errChan <- fmt.Errorf("sqlserver-ssl init script: %w", err)
+					return
+				}
+
+				sqlserverSSLOpts.InitScript = initSQL
+			}
+
+			ctr, err := containers.StartSQLServer(ctx, sqlserverSSLOpts)
+			if err != nil {
+				errChan <- fmt.Errorf("sqlserver-ssl: %w", err)
+				return
+			}
+
+			infra.SQLServerSSL = ctr
+
+			errChan <- nil
+		}()
+
+		// Start Oracle SSL
+		go func() {
+			oracleSSLOpts := containers.DefaultOracleSSLOptions(networkName)
+			if opts.UseFixedPorts {
+				oracleSSLOpts.FixedHostPort = fixedPorts.OracleSSL
+			}
+
+			oracleSSLOpts.SSL.CertBundle = certBundle
+
+			if opts.InitScripts {
+				initSQL, err := fixtures.GetOracleInitSQL()
+				if err != nil {
+					errChan <- fmt.Errorf("oracle-ssl init script: %w", err)
+					return
+				}
+
+				oracleSSLOpts.InitScript = initSQL
+			}
+
+			ctr, err := containers.StartOracle(ctx, oracleSSLOpts)
+			if err != nil {
+				errChan <- fmt.Errorf("oracle-ssl: %w", err)
+				return
+			}
+
+			infra.OracleSSL = ctr
+
+			errChan <- nil
+		}()
+
+		// Start MongoDB SSL
+		go func() {
+			mongoSSLOpts := containers.DefaultMongoDBSSLOptions(networkName)
+			if opts.UseFixedPorts {
+				mongoSSLOpts.FixedHostPort = fixedPorts.MongoDBSSL
+			}
+
+			mongoSSLOpts.SSL.CertBundle = certBundle
+
+			ctr, err := containers.StartMongoDB(ctx, mongoSSLOpts)
+			if err != nil {
+				errChan <- fmt.Errorf("mongodb-ssl: %w", err)
+				return
+			}
+
+			infra.MongoDBSSL = ctr
+
 			errChan <- nil
 		}()
 	}
 
 	// Wait for all containers
 	var errs []error
+
 	for i := 0; i < containerCount; i++ {
 		if err := <-errChan; err != nil {
 			errs = append(errs, err)
@@ -414,61 +660,32 @@ func connectToExisting(ctx context.Context) (*SharedInfrastructure, error) {
 	return infra, nil
 }
 
+type Stopper interface {
+	Stop(ctx context.Context) error
+}
+
 // Stop terminates all infrastructure containers.
 func (i *SharedInfrastructure) Stop(ctx context.Context) error {
 	var errs []error
 
-	if i.MongoMain != nil {
-		if err := i.MongoMain.Stop(ctx); err != nil {
-			errs = append(errs, err)
+	stoppers := []Stopper{
+		i.MongoMain, i.MongoExternal, i.RabbitMQ, i.SeaweedFS, i.Redis,
+		i.PostgresExternal, i.MySQLExternal, i.SQLServerExternal, i.OracleExternal,
+		i.PostgresSSL, i.MySQLSSL, i.SQLServerSSL, i.OracleSSL, i.MongoDBSSL,
+	}
+
+	for _, s := range stoppers {
+		if !isNil(s) {
+			if err := s.Stop(ctx); err != nil {
+				errs = append(errs, err)
+			}
 		}
 	}
 
-	if i.MongoExternal != nil {
-		if err := i.MongoExternal.Stop(ctx); err != nil {
-			errs = append(errs, err)
-		}
-	}
-
-	if i.RabbitMQ != nil {
-		if err := i.RabbitMQ.Stop(ctx); err != nil {
-			errs = append(errs, err)
-		}
-	}
-
-	if i.SeaweedFS != nil {
-		if err := i.SeaweedFS.Stop(ctx); err != nil {
-			errs = append(errs, err)
-		}
-	}
-
-	if i.Redis != nil {
-		if err := i.Redis.Stop(ctx); err != nil {
-			errs = append(errs, err)
-		}
-	}
-
-	if i.PostgresExternal != nil {
-		if err := i.PostgresExternal.Stop(ctx); err != nil {
-			errs = append(errs, err)
-		}
-	}
-
-	if i.MySQLExternal != nil {
-		if err := i.MySQLExternal.Stop(ctx); err != nil {
-			errs = append(errs, err)
-		}
-	}
-
-	if i.SQLServerExternal != nil {
-		if err := i.SQLServerExternal.Stop(ctx); err != nil {
-			errs = append(errs, err)
-		}
-	}
-
-	if i.OracleExternal != nil {
-		if err := i.OracleExternal.Stop(ctx); err != nil {
-			errs = append(errs, err)
+	// Cleanup SSL certificate directory
+	if i.SSLCertDir != "" {
+		if err := os.RemoveAll(i.SSLCertDir); err != nil {
+			errs = append(errs, fmt.Errorf("failed to remove SSL cert dir: %w", err))
 		}
 	}
 
@@ -485,11 +702,22 @@ func (i *SharedInfrastructure) Stop(ctx context.Context) error {
 	return nil
 }
 
+func isNil(i any) bool {
+	if i == nil {
+		return true
+	}
+
+	v := reflect.ValueOf(i)
+
+	return v.Kind() == reflect.Ptr && v.IsNil()
+}
+
 // SetupRabbitMQTopology creates the required exchanges and queues.
 func (i *SharedInfrastructure) SetupRabbitMQTopology(ctx context.Context) error {
 	if i.RabbitMQ == nil {
 		return fmt.Errorf("RabbitMQ container not available")
 	}
+
 	return topology.SetupRabbitMQTopology(ctx, i.RabbitMQ.URI)
 }
 
@@ -498,6 +726,7 @@ func (i *SharedInfrastructure) PurgeTestQueue(ctx context.Context) (int, error) 
 	if i.RabbitMQ == nil {
 		return 0, fmt.Errorf("RabbitMQ container not available")
 	}
+
 	return topology.PurgeTestQueue(ctx, i.RabbitMQ.URI)
 }
 
@@ -511,30 +740,38 @@ func (i *SharedInfrastructure) SaveConfig() error {
 	if i.MongoMain != nil {
 		cfg.MongoMainURI = i.MongoMain.URI
 	}
+
 	if i.MongoExternal != nil {
 		cfg.MongoExternalURI = i.MongoExternal.URI
 	}
+
 	if i.RabbitMQ != nil {
 		cfg.RabbitMQURI = i.RabbitMQ.URI
 	}
+
 	if i.SeaweedFS != nil {
 		cfg.SeaweedFSURL = i.SeaweedFS.URL
 	}
+
 	if i.Redis != nil {
 		cfg.RedisURL = i.Redis.URL
 	}
+
 	if i.PostgresExternal != nil {
 		cfg.PostgresURL = i.PostgresExternal.URL
 		cfg.PostgresInternal = i.PostgresExternal.Internal
 	}
+
 	if i.MySQLExternal != nil {
 		cfg.MySQLURL = i.MySQLExternal.URL
 		cfg.MySQLInternal = i.MySQLExternal.Internal
 	}
+
 	if i.SQLServerExternal != nil {
 		cfg.SQLServerURL = i.SQLServerExternal.URL
 		cfg.SQLServerInternal = i.SQLServerExternal.Internal
 	}
+
 	if i.OracleExternal != nil {
 		cfg.OracleURL = i.OracleExternal.URL
 		cfg.OracleInternal = i.OracleExternal.Internal
@@ -561,6 +798,7 @@ func getPort(m *containers.MongoDBContainer) string {
 	if m != nil {
 		return m.Port
 	}
+
 	return ""
 }
 
@@ -568,6 +806,7 @@ func getRabbitMQPort(r *containers.RabbitMQContainer) string {
 	if r != nil {
 		return r.Port
 	}
+
 	return ""
 }
 
@@ -575,6 +814,7 @@ func getSeaweedFSPort(s *containers.SeaweedFSContainers) string {
 	if s != nil {
 		return s.Port
 	}
+
 	return ""
 }
 
@@ -582,6 +822,7 @@ func getRedisPort(r *containers.RedisContainer) string {
 	if r != nil {
 		return r.Port
 	}
+
 	return ""
 }
 
@@ -589,6 +830,7 @@ func getPostgresPort(p *containers.PostgresContainer) string {
 	if p != nil {
 		return p.Port
 	}
+
 	return ""
 }
 
@@ -596,6 +838,7 @@ func getMySQLPort(m *containers.MySQLContainer) string {
 	if m != nil {
 		return m.Port
 	}
+
 	return ""
 }
 
@@ -603,6 +846,7 @@ func getSQLServerPort(s *containers.SQLServerContainer) string {
 	if s != nil {
 		return s.Port
 	}
+
 	return ""
 }
 
@@ -610,6 +854,7 @@ func getOraclePort(o *containers.OracleContainer) string {
 	if o != nil {
 		return o.Port
 	}
+
 	return ""
 }
 
@@ -619,6 +864,7 @@ func (i *SharedInfrastructure) GetMongoExternalInternal() config.InternalDBConne
 	if i.MongoExternal == nil {
 		return config.InternalDBConnection{}
 	}
+
 	return config.InternalDBConnection{
 		Host:     i.MongoExternal.InternalHost,
 		Port:     27017,
@@ -639,6 +885,7 @@ func (i *SharedInfrastructure) RabbitMQURI() string {
 	if i.RabbitMQ == nil {
 		return ""
 	}
+
 	return i.RabbitMQ.URI
 }
 
@@ -647,6 +894,7 @@ func (i *SharedInfrastructure) SeaweedFSURL() string {
 	if i.SeaweedFS == nil {
 		return ""
 	}
+
 	return i.SeaweedFS.URL
 }
 
@@ -655,6 +903,7 @@ func (i *SharedInfrastructure) RedisURL() string {
 	if i.Redis == nil {
 		return ""
 	}
+
 	return i.Redis.URL
 }
 
@@ -663,6 +912,7 @@ func (i *SharedInfrastructure) MongoMainURI() string {
 	if i.MongoMain == nil {
 		return ""
 	}
+
 	return i.MongoMain.URI
 }
 
@@ -671,6 +921,7 @@ func (i *SharedInfrastructure) MongoExternalURI() string {
 	if i.MongoExternal == nil {
 		return ""
 	}
+
 	return i.MongoExternal.URI
 }
 
@@ -679,6 +930,7 @@ func (i *SharedInfrastructure) PostgresInternal() config.InternalDBConnection {
 	if i.PostgresExternal == nil {
 		return config.InternalDBConnection{}
 	}
+
 	return i.PostgresExternal.Internal
 }
 
@@ -687,6 +939,7 @@ func (i *SharedInfrastructure) MySQLInternal() config.InternalDBConnection {
 	if i.MySQLExternal == nil {
 		return config.InternalDBConnection{}
 	}
+
 	return i.MySQLExternal.Internal
 }
 
@@ -695,6 +948,7 @@ func (i *SharedInfrastructure) SQLServerInternal() config.InternalDBConnection {
 	if i.SQLServerExternal == nil {
 		return config.InternalDBConnection{}
 	}
+
 	return i.SQLServerExternal.Internal
 }
 
@@ -703,6 +957,7 @@ func (i *SharedInfrastructure) OracleInternal() config.InternalDBConnection {
 	if i.OracleExternal == nil {
 		return config.InternalDBConnection{}
 	}
+
 	return i.OracleExternal.Internal
 }
 
@@ -716,6 +971,7 @@ func (i *SharedInfrastructure) PostgresURL() string {
 	if i.PostgresExternal == nil {
 		return ""
 	}
+
 	return i.PostgresExternal.URL
 }
 
@@ -724,6 +980,7 @@ func (i *SharedInfrastructure) MySQLURL() string {
 	if i.MySQLExternal == nil {
 		return ""
 	}
+
 	return i.MySQLExternal.URL
 }
 
@@ -732,6 +989,7 @@ func (i *SharedInfrastructure) SQLServerURL() string {
 	if i.SQLServerExternal == nil {
 		return ""
 	}
+
 	return i.SQLServerExternal.URL
 }
 
@@ -740,5 +998,112 @@ func (i *SharedInfrastructure) OracleURL() string {
 	if i.OracleExternal == nil {
 		return ""
 	}
+
 	return i.OracleExternal.URL
+}
+
+// =============================================================================
+// SSL Accessor Methods
+// =============================================================================
+// These methods provide access to SSL-enabled database containers.
+
+// PostgresSSLInternal returns the internal connection info for PostgreSQL with SSL.
+func (i *SharedInfrastructure) PostgresSSLInternal() config.InternalDBConnection {
+	if i.PostgresSSL == nil {
+		return config.InternalDBConnection{}
+	}
+
+	return i.PostgresSSL.Internal
+}
+
+// MySQLSSLInternal returns the internal connection info for MySQL with SSL.
+func (i *SharedInfrastructure) MySQLSSLInternal() config.InternalDBConnection {
+	if i.MySQLSSL == nil {
+		return config.InternalDBConnection{}
+	}
+
+	return i.MySQLSSL.Internal
+}
+
+// SQLServerSSLInternal returns the internal connection info for SQL Server with SSL.
+func (i *SharedInfrastructure) SQLServerSSLInternal() config.InternalDBConnection {
+	if i.SQLServerSSL == nil {
+		return config.InternalDBConnection{}
+	}
+
+	return i.SQLServerSSL.Internal
+}
+
+// OracleSSLInternal returns the internal connection info for Oracle with SSL.
+func (i *SharedInfrastructure) OracleSSLInternal() config.InternalDBConnection {
+	if i.OracleSSL == nil {
+		return config.InternalDBConnection{}
+	}
+
+	return i.OracleSSL.Internal
+}
+
+// MongoDBSSLInternal returns the internal connection info for MongoDB with SSL.
+func (i *SharedInfrastructure) MongoDBSSLInternal() config.InternalDBConnection {
+	if i.MongoDBSSL == nil {
+		return config.InternalDBConnection{}
+	}
+
+	return config.InternalDBConnection{
+		Host:     i.MongoDBSSL.InternalHost,
+		Port:     27017,
+		Username: "root",
+		Password: "password",
+		Database: "external_transactions",
+	}
+}
+
+// PostgresSSLURL returns the PostgreSQL SSL connection URL.
+func (i *SharedInfrastructure) PostgresSSLURL() string {
+	if i.PostgresSSL == nil {
+		return ""
+	}
+
+	return i.PostgresSSL.URL
+}
+
+// MySQLSSLURL returns the MySQL SSL connection URL.
+func (i *SharedInfrastructure) MySQLSSLURL() string {
+	if i.MySQLSSL == nil {
+		return ""
+	}
+
+	return i.MySQLSSL.URL
+}
+
+// SQLServerSSLURL returns the SQL Server SSL connection URL.
+func (i *SharedInfrastructure) SQLServerSSLURL() string {
+	if i.SQLServerSSL == nil {
+		return ""
+	}
+
+	return i.SQLServerSSL.URL
+}
+
+// OracleSSLURL returns the Oracle SSL connection URL.
+func (i *SharedInfrastructure) OracleSSLURL() string {
+	if i.OracleSSL == nil {
+		return ""
+	}
+
+	return i.OracleSSL.URL
+}
+
+// MongoDBSSLURI returns the MongoDB SSL connection URI.
+func (i *SharedInfrastructure) MongoDBSSLURI() string {
+	if i.MongoDBSSL == nil {
+		return ""
+	}
+
+	return i.MongoDBSSL.URI
+}
+
+// GetSSLCertBundle returns the SSL certificate bundle used for SSL connections.
+func (i *SharedInfrastructure) GetSSLCertBundle() *ssl.CertificateBundle {
+	return i.SSLCertBundle
 }

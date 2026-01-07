@@ -100,6 +100,7 @@ func StartChaosInfrastructureWithOptions(ctx context.Context, opts ChaosOptions)
 
 	// Start Toxiproxy
 	toxiOpts := containers.DefaultToxiproxyOptions(config.NetworkName)
+
 	toxiContainer, err := containers.StartToxiproxy(ctx, toxiOpts)
 	if err != nil {
 		_ = shared.Stop(ctx)
@@ -108,10 +109,12 @@ func StartChaosInfrastructureWithOptions(ctx context.Context, opts ChaosOptions)
 
 	// Create standard proxies for all services
 	upstreams := containers.DefaultStandardUpstreams()
+
 	proxies, err := toxiContainer.CreateStandardProxies(upstreams)
 	if err != nil {
 		_ = toxiContainer.Stop(ctx)
 		_ = shared.Stop(ctx)
+
 		return nil, fmt.Errorf("failed to create proxies: %w", err)
 	}
 
@@ -120,10 +123,12 @@ func StartChaosInfrastructureWithOptions(ctx context.Context, opts ChaosOptions)
 	encryptionKeyBase64 := "dGVzdC1lbmNyeXB0aW9uLWtleS0zMmJ5dGVzLW9rISE="
 	encryptionKeyHex := "746573742d656e6372797074696f6e2d6b65792d333262797465732d6f6b2121"
 	appConfig := shared.DefaultApplicationConfig(encryptionKeyBase64, encryptionKeyHex)
+
 	apps, err := shared.StartApplications(ctx, appConfig)
 	if err != nil {
 		_ = toxiContainer.Stop(ctx)
 		_ = shared.Stop(ctx)
+
 		return nil, fmt.Errorf("failed to start applications: %w", err)
 	}
 
@@ -139,6 +144,7 @@ func StartChaosInfrastructureWithOptions(ctx context.Context, opts ChaosOptions)
 		_ = apps.Stop(ctx)
 		_ = toxiContainer.Stop(ctx)
 		_ = shared.Stop(ctx)
+
 		return nil, fmt.Errorf("failed to build proxy URLs: %w", err)
 	}
 
@@ -180,6 +186,7 @@ func (c *ChaosInfrastructure) buildProxyURLs(ctx context.Context) error {
 	if c.Toxiproxy == nil {
 		return fmt.Errorf("cannot build proxy URLs: Toxiproxy container is nil")
 	}
+
 	if c.Proxies == nil {
 		return fmt.Errorf("cannot build proxy URLs: StandardProxies is nil")
 	}
@@ -205,11 +212,13 @@ func (c *ChaosInfrastructure) buildProxyURLs(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("failed to extract manager proxy port: %w", err)
 		}
+
 		if containerPort != "" {
 			hostPort, err := c.Toxiproxy.GetProxyHostPort(ctx, containerPort)
 			if err != nil {
 				return fmt.Errorf("failed to get manager proxy host port: %w", err)
 			}
+
 			c.ManagerProxyURL = fmt.Sprintf("http://%s", hostPort)
 		}
 	}
@@ -220,11 +229,13 @@ func (c *ChaosInfrastructure) buildProxyURLs(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("failed to extract seaweedfs proxy port: %w", err)
 		}
+
 		if containerPort != "" {
 			hostPort, err := c.Toxiproxy.GetProxyHostPort(ctx, containerPort)
 			if err != nil {
 				return fmt.Errorf("failed to get seaweedfs proxy host port: %w", err)
 			}
+
 			c.SeaweedFSProxyURL = fmt.Sprintf("http://%s", hostPort)
 		}
 	}
@@ -238,11 +249,13 @@ func (c *ChaosInfrastructure) buildProxyURLs(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("failed to extract rabbitmq proxy port: %w", err)
 		}
+
 		if containerPort != "" {
 			hostPort, err := c.Toxiproxy.GetProxyHostPort(ctx, containerPort)
 			if err != nil {
 				return fmt.Errorf("failed to get rabbitmq proxy host port: %w", err)
 			}
+
 			c.RabbitMQProxyURI = fmt.Sprintf("amqp://guest:guest@%s/", hostPort)
 		}
 	}
@@ -260,6 +273,7 @@ func (c *ChaosInfrastructure) GetRabbitMQProxy() *toxiproxy.Proxy {
 	if c.Proxies == nil {
 		return nil
 	}
+
 	return c.Proxies.RabbitMQ
 }
 
@@ -268,6 +282,7 @@ func (c *ChaosInfrastructure) GetMongoMainProxy() *toxiproxy.Proxy {
 	if c.Proxies == nil {
 		return nil
 	}
+
 	return c.Proxies.MongoMain
 }
 
@@ -276,6 +291,7 @@ func (c *ChaosInfrastructure) GetMongoExternalProxy() *toxiproxy.Proxy {
 	if c.Proxies == nil {
 		return nil
 	}
+
 	return c.Proxies.MongoExternal
 }
 
@@ -284,6 +300,7 @@ func (c *ChaosInfrastructure) GetRedisProxy() *toxiproxy.Proxy {
 	if c.Proxies == nil {
 		return nil
 	}
+
 	return c.Proxies.Redis
 }
 
@@ -292,6 +309,7 @@ func (c *ChaosInfrastructure) GetPostgresProxy() *toxiproxy.Proxy {
 	if c.Proxies == nil {
 		return nil
 	}
+
 	return c.Proxies.Postgres
 }
 
@@ -300,6 +318,7 @@ func (c *ChaosInfrastructure) GetMySQLProxy() *toxiproxy.Proxy {
 	if c.Proxies == nil {
 		return nil
 	}
+
 	return c.Proxies.MySQL
 }
 
@@ -308,6 +327,7 @@ func (c *ChaosInfrastructure) GetSQLServerProxy() *toxiproxy.Proxy {
 	if c.Proxies == nil {
 		return nil
 	}
+
 	return c.Proxies.SQLServer
 }
 
@@ -316,6 +336,7 @@ func (c *ChaosInfrastructure) GetOracleProxy() *toxiproxy.Proxy {
 	if c.Proxies == nil {
 		return nil
 	}
+
 	return c.Proxies.Oracle
 }
 
@@ -324,6 +345,7 @@ func (c *ChaosInfrastructure) GetSeaweedFSProxy() *toxiproxy.Proxy {
 	if c.Proxies == nil {
 		return nil
 	}
+
 	return c.Proxies.SeaweedFS
 }
 
@@ -332,6 +354,7 @@ func (c *ChaosInfrastructure) GetManagerProxy() *toxiproxy.Proxy {
 	if c.Proxies == nil {
 		return nil
 	}
+
 	return c.Proxies.Manager
 }
 
@@ -518,6 +541,7 @@ func (c *ChaosInfrastructure) ResetChaos() error {
 // Traffic flows: Worker -> Toxiproxy:5433 -> postgres-external:5432
 func (c *ChaosInfrastructure) PostgresProxyInternal() config.InternalDBConnection {
 	direct := c.PostgresInternal()
+
 	return config.InternalDBConnection{
 		Host:     c.Toxiproxy.InternalHost, // "toxiproxy"
 		Port:     5433,                     // Toxiproxy listen port for postgres
@@ -531,6 +555,7 @@ func (c *ChaosInfrastructure) PostgresProxyInternal() config.InternalDBConnectio
 // Traffic flows: Worker -> Toxiproxy:3307 -> mysql-external:3306
 func (c *ChaosInfrastructure) MySQLProxyInternal() config.InternalDBConnection {
 	direct := c.MySQLInternal()
+
 	return config.InternalDBConnection{
 		Host:     c.Toxiproxy.InternalHost,
 		Port:     3307,
@@ -544,6 +569,7 @@ func (c *ChaosInfrastructure) MySQLProxyInternal() config.InternalDBConnection {
 // Traffic flows: Worker -> Toxiproxy:1434 -> sqlserver-external:1433
 func (c *ChaosInfrastructure) SQLServerProxyInternal() config.InternalDBConnection {
 	direct := c.SQLServerInternal()
+
 	return config.InternalDBConnection{
 		Host:     c.Toxiproxy.InternalHost,
 		Port:     1434,
@@ -557,6 +583,7 @@ func (c *ChaosInfrastructure) SQLServerProxyInternal() config.InternalDBConnecti
 // Traffic flows: Worker -> Toxiproxy:1522 -> oracle-external:1521
 func (c *ChaosInfrastructure) OracleProxyInternal() config.InternalDBConnection {
 	direct := c.OracleInternal()
+
 	return config.InternalDBConnection{
 		Host:     c.Toxiproxy.InternalHost,
 		Port:     1522,
@@ -570,6 +597,7 @@ func (c *ChaosInfrastructure) OracleProxyInternal() config.InternalDBConnection 
 // Traffic flows: Worker -> Toxiproxy:27101 -> fetcher-mongodb-external:27017
 func (c *ChaosInfrastructure) MongoExternalProxyInternal() config.InternalDBConnection {
 	direct := c.MongoExternalInternal()
+
 	return config.InternalDBConnection{
 		Host:     c.Toxiproxy.InternalHost,
 		Port:     27101,

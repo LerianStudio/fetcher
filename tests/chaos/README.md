@@ -322,7 +322,7 @@ setup.ChaosBandwidthValues.High   // 100 KB/s
 |-----------|-----------------|
 | **RabbitMQ** | Latency, timeout, circuit breaker recovery |
 | **MongoDB** | Main (Manager state), External (extraction) |
-| **Redis** | Rate limiting fallback, health check recovery |
+| **Redis** | Rate-limiting fallback, health check recovery |
 | **PostgreSQL** | Latency, timeout, connection reset |
 | **MySQL** | Timeout handling, recovery |
 | **SQL Server** | Latency injection, extraction under chaos |

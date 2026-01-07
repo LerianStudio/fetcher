@@ -12,8 +12,14 @@ import (
 
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
+	"github.com/LerianStudio/fetcher/pkg/model/job"
 	"github.com/google/uuid"
 )
+
+// NestedFilters represents the nested filter format for data extraction jobs.
+// Structure: map[datasource]map[table]map[field]FilterCondition
+// This format is used for both API input/output and internal storage.
+type NestedFilters = map[string]map[string]map[string]job.FilterCondition
 
 const (
 	// MaxDatasourcesPerJob is the maximum number of datasources allowed per job.
@@ -62,7 +68,7 @@ type Job struct {
 	OrganizationID uuid.UUID
 	Metadata       map[string]any
 	MappedFields   map[string]map[string][]string
-	Filters        []Filter
+	Filters        NestedFilters
 	Status         JobStatus
 	ResultPath     string
 	RequestHash    string
@@ -74,7 +80,7 @@ func NewJob(
 	organizationID uuid.UUID,
 	metadata map[string]any,
 	mappedFields map[string]map[string][]string,
-	filters []Filter,
+	filters NestedFilters,
 	status JobStatus,
 	resultPath string,
 	requestHash string,
@@ -100,84 +106,21 @@ func NewJob(
 	}, nil
 }
 
-type Filter struct {
-	Field    string `json:"field" validate:"required"`
-	Operator string `json:"operator" validate:"required"`
-	Value    []any  `json:"value" validate:"required"`
-}
-
-// ParsedFilterField represents the components of a qualified filter field.
-// Supports formats:
-// - configName.tableName.fieldName (3 parts)
-// - configName.schema.tableName.fieldName (4 parts)
-type ParsedFilterField struct {
-	ConfigName string
-	TableName  string
-	FieldName  string
-}
-
-// ParseFilterField parses a qualified filter field string into its components.
-// Valid formats:
-// - "configName.tableName.fieldName" → ConfigName="configName", TableName="tableName", FieldName="fieldName"
-// - "configName.schema.tableName.fieldName" → ConfigName="configName", TableName="schema.tableName", FieldName="fieldName"
-func ParseFilterField(field string) (*ParsedFilterField, error) {
-	if field == "" {
-		return nil, errors.New("filter field cannot be empty")
-	}
-
-	parts := strings.Split(field, ".")
-
-	switch len(parts) {
-	case 3:
-		// configName.tableName.fieldName
-		if parts[0] == "" || parts[1] == "" || parts[2] == "" {
-			return nil, fmt.Errorf("invalid filter field format: empty component in '%s'", field)
-		}
-
-		return &ParsedFilterField{
-			ConfigName: parts[0],
-			TableName:  parts[1],
-			FieldName:  parts[2],
-		}, nil
-	case 4:
-		// configName.schema.tableName.fieldName
-		if parts[0] == "" || parts[1] == "" || parts[2] == "" || parts[3] == "" {
-			return nil, fmt.Errorf("invalid filter field format: empty component in '%s'", field)
-		}
-
-		return &ParsedFilterField{
-			ConfigName: parts[0],
-			TableName:  parts[1] + "." + parts[2], // Reconstruct schema.tableName
-			FieldName:  parts[3],
-		}, nil
-	default:
-		return nil, fmt.Errorf("invalid filter field format: expected 'configName.tableName.fieldName' or 'configName.schema.tableName.fieldName', got '%s' with %d parts", field, len(parts))
-	}
-}
-
-// ValidateFilterReferences validates that all filter field references exist in mappedFields.
-// Only validates that configName exists - tableName resolution is handled by DataSource adapters
-// which can apply default schema fallback logic (e.g., "transactions" → "public.transactions").
-func ValidateFilterReferences(filters []Filter, mappedFields map[string]map[string][]string) error {
+// ValidateFilterReferences validates that all filter datasource references exist in mappedFields.
+// Only validates that datasource names exist - table/field resolution is handled by DataSource adapters
+// which can apply default schema fallback logic (e.g., "transactions" -> "public.transactions").
+func ValidateFilterReferences(filters NestedFilters, mappedFields map[string]map[string][]string) error {
 	if len(filters) == 0 {
 		return nil
 	}
 
 	var validationErrors []string
 
-	for i, f := range filters {
-		parsed, err := ParseFilterField(f.Field)
-		if err != nil {
-			validationErrors = append(validationErrors, fmt.Sprintf("filter[%d]: %v", i, err))
-			continue
-		}
-
-		// Check if configName exists in mappedFields
-		// NOTE: We do NOT validate tableName here - the DataSource adapter will handle
-		// schema resolution with fallback logic (e.g., trying "public.table" if "table" not found)
-		if _, exists := mappedFields[parsed.ConfigName]; !exists {
+	for datasourceName := range filters {
+		// Check if datasource exists in mappedFields
+		if _, exists := mappedFields[datasourceName]; !exists {
 			validationErrors = append(validationErrors,
-				fmt.Sprintf("filter[%d]: datasource '%s' not found in mappedFields", i, parsed.ConfigName))
+				fmt.Sprintf("filter references unknown datasource '%s' not found in mappedFields", datasourceName))
 		}
 	}
 
@@ -328,18 +271,7 @@ type FetcherRequest struct {
 // @Description DataRequest encapsulates field mappings and optional filters for data extraction.
 type DataRequest struct {
 	MappedFields map[string]map[string][]string `json:"mappedFields" validate:"required"`
-	Filters      []FilterRequest                `json:"filters,omitempty"`
-}
-
-// FilterRequest represents a single filter condition.
-//
-// swagger:model FilterRequest
-//
-// @Description FilterRequest defines a filter condition with field, operator, and value(s).
-type FilterRequest struct {
-	Field    string `json:"field" validate:"required"`
-	Operator string `json:"operator" validate:"required"`
-	Value    []any  `json:"value" validate:"required"`
+	Filters      NestedFilters                  `json:"filters,omitempty"`
 }
 
 // ComputeRequestHash generates a SHA-256 hash of the request for idempotency checks.
@@ -388,7 +320,7 @@ type JobResponse struct {
 	OrganizationID uuid.UUID                      `json:"organizationId"`
 	Metadata       map[string]any                 `json:"metadata,omitempty"`
 	MappedFields   map[string]map[string][]string `json:"mappedFields"`
-	Filters        []Filter                       `json:"filters,omitempty"`
+	Filters        NestedFilters                  `json:"filters,omitempty"`
 	Status         string                         `json:"status"`
 	ResultPath     string                         `json:"resultPath,omitempty"`
 	RequestHash    string                         `json:"requestHash,omitempty"`
@@ -397,21 +329,21 @@ type JobResponse struct {
 }
 
 // NewJobResponseFrom creates a JobResponse from a Job entity.
-func NewJobResponseFrom(job *Job) *JobResponse {
-	if job == nil {
+func NewJobResponseFrom(j *Job) *JobResponse {
+	if j == nil {
 		return nil
 	}
 
 	return &JobResponse{
-		ID:             job.ID,
-		OrganizationID: job.OrganizationID,
-		Metadata:       job.Metadata,
-		MappedFields:   job.MappedFields,
-		Filters:        job.Filters,
-		Status:         string(job.Status),
-		ResultPath:     job.ResultPath,
-		RequestHash:    job.RequestHash,
-		CreatedAt:      job.CreatedAt,
-		CompletedAt:    job.CompletedAt,
+		ID:             j.ID,
+		OrganizationID: j.OrganizationID,
+		Metadata:       j.Metadata,
+		MappedFields:   j.MappedFields,
+		Filters:        j.Filters,
+		Status:         string(j.Status),
+		ResultPath:     j.ResultPath,
+		RequestHash:    j.RequestHash,
+		CreatedAt:      j.CreatedAt,
+		CompletedAt:    j.CompletedAt,
 	}
 }

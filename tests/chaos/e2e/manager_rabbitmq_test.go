@@ -63,7 +63,9 @@ func (s *ChaosTestSuite) TestRabbitMQLatency_JobCompletionWithDelay() {
 
 	// Verify baseline connection was created successfully
 	require.NotEmpty(t, connResp.ID, "Baseline connection ID should not be empty")
-	_ = s.managerClient.DeleteConnectionByConfigName(s.ctx, configName)
+	if err := s.managerClient.DeleteConnectionByConfigName(s.ctx, configName); err != nil {
+		t.Logf("Warning: baseline connection cleanup failed: %v", err)
+	}
 
 	// Phase 2: Inject RabbitMQ latency chaos
 	t.Log("Phase 2: Injecting RabbitMQ latency chaos...")

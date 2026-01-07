@@ -103,6 +103,7 @@ func (t *ToxiproxyContainer) Stop(ctx context.Context) error {
 	if t.Container != nil {
 		return t.Container.Terminate(ctx)
 	}
+
 	return nil
 }
 
@@ -119,6 +120,7 @@ func (t *ToxiproxyContainer) CreateProxy(cfg ProxyConfig) (*toxiproxy.Proxy, err
 	if err != nil {
 		return nil, fmt.Errorf("failed to create proxy %s: %w", cfg.Name, err)
 	}
+
 	return proxy, nil
 }
 
@@ -128,6 +130,7 @@ func (t *ToxiproxyContainer) GetProxyHostPort(ctx context.Context, containerPort
 	if err != nil {
 		return "", fmt.Errorf("failed to get mapped port %s: %w", containerPort, err)
 	}
+
 	return fmt.Sprintf("%s:%s", t.Host, port.Port()), nil
 }
 
@@ -149,125 +152,36 @@ type StandardProxies struct {
 // The upstream addresses should be the Docker network hostnames (e.g., "fetcher-mongodb:27017").
 func (t *ToxiproxyContainer) CreateStandardProxies(upstreams StandardUpstreams) (*StandardProxies, error) {
 	proxies := &StandardProxies{}
-	var err error
-
-	// MongoDB Main
-	if upstreams.MongoMain != "" {
-		proxies.MongoMain, err = t.CreateProxy(ProxyConfig{
-			Name:     "mongo-main",
-			Listen:   "0.0.0.0:27100",
-			Upstream: upstreams.MongoMain,
-		})
-		if err != nil {
-			return nil, err
-		}
+	proxyConfigs := []struct {
+		name     string
+		listen   string
+		upstream string
+		target   **toxiproxy.Proxy
+	}{
+		{"mongo-main", "0.0.0.0:27100", upstreams.MongoMain, &proxies.MongoMain},
+		{"mongo-external", "0.0.0.0:27101", upstreams.MongoExternal, &proxies.MongoExternal},
+		{"rabbitmq", "0.0.0.0:5673", upstreams.RabbitMQ, &proxies.RabbitMQ},
+		{"seaweedfs", "0.0.0.0:8889", upstreams.SeaweedFS, &proxies.SeaweedFS},
+		{"redis", "0.0.0.0:6380", upstreams.Redis, &proxies.Redis},
+		{"postgres", "0.0.0.0:5433", upstreams.Postgres, &proxies.Postgres},
+		{"mysql", "0.0.0.0:3307", upstreams.MySQL, &proxies.MySQL},
+		{"sqlserver", "0.0.0.0:1434", upstreams.SQLServer, &proxies.SQLServer},
+		{"oracle", "0.0.0.0:1522", upstreams.Oracle, &proxies.Oracle},
+		{"manager", "0.0.0.0:4007", upstreams.Manager, &proxies.Manager},
 	}
 
-	// MongoDB External
-	if upstreams.MongoExternal != "" {
-		proxies.MongoExternal, err = t.CreateProxy(ProxyConfig{
-			Name:     "mongo-external",
-			Listen:   "0.0.0.0:27101",
-			Upstream: upstreams.MongoExternal,
-		})
-		if err != nil {
-			return nil, err
-		}
-	}
+	for _, cfg := range proxyConfigs {
+		if cfg.upstream != "" {
+			var err error
 
-	// RabbitMQ
-	if upstreams.RabbitMQ != "" {
-		proxies.RabbitMQ, err = t.CreateProxy(ProxyConfig{
-			Name:     "rabbitmq",
-			Listen:   "0.0.0.0:5673",
-			Upstream: upstreams.RabbitMQ,
-		})
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	// SeaweedFS
-	if upstreams.SeaweedFS != "" {
-		proxies.SeaweedFS, err = t.CreateProxy(ProxyConfig{
-			Name:     "seaweedfs",
-			Listen:   "0.0.0.0:8889",
-			Upstream: upstreams.SeaweedFS,
-		})
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	// Redis
-	if upstreams.Redis != "" {
-		proxies.Redis, err = t.CreateProxy(ProxyConfig{
-			Name:     "redis",
-			Listen:   "0.0.0.0:6380",
-			Upstream: upstreams.Redis,
-		})
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	// PostgreSQL
-	if upstreams.Postgres != "" {
-		proxies.Postgres, err = t.CreateProxy(ProxyConfig{
-			Name:     "postgres",
-			Listen:   "0.0.0.0:5433",
-			Upstream: upstreams.Postgres,
-		})
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	// MySQL
-	if upstreams.MySQL != "" {
-		proxies.MySQL, err = t.CreateProxy(ProxyConfig{
-			Name:     "mysql",
-			Listen:   "0.0.0.0:3307",
-			Upstream: upstreams.MySQL,
-		})
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	// SQL Server
-	if upstreams.SQLServer != "" {
-		proxies.SQLServer, err = t.CreateProxy(ProxyConfig{
-			Name:     "sqlserver",
-			Listen:   "0.0.0.0:1434",
-			Upstream: upstreams.SQLServer,
-		})
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	// Oracle
-	if upstreams.Oracle != "" {
-		proxies.Oracle, err = t.CreateProxy(ProxyConfig{
-			Name:     "oracle",
-			Listen:   "0.0.0.0:1522",
-			Upstream: upstreams.Oracle,
-		})
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	// Manager
-	if upstreams.Manager != "" {
-		proxies.Manager, err = t.CreateProxy(ProxyConfig{
-			Name:     "manager",
-			Listen:   "0.0.0.0:4007",
-			Upstream: upstreams.Manager,
-		})
-		if err != nil {
-			return nil, err
+			*cfg.target, err = t.CreateProxy(ProxyConfig{
+				Name:     cfg.name,
+				Listen:   cfg.listen,
+				Upstream: cfg.upstream,
+			})
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -309,7 +223,9 @@ func DisableProxy(proxy *toxiproxy.Proxy) error {
 	if proxy == nil {
 		return nil
 	}
+
 	proxy.Enabled = false
+
 	return proxy.Save()
 }
 
@@ -318,7 +234,9 @@ func EnableProxy(proxy *toxiproxy.Proxy) error {
 	if proxy == nil {
 		return nil
 	}
+
 	proxy.Enabled = true
+
 	return proxy.Save()
 }
 
@@ -327,6 +245,7 @@ func AddLatency(proxy *toxiproxy.Proxy, name string, latencyMS int, jitterMS int
 	if proxy == nil {
 		return nil, fmt.Errorf("proxy is nil")
 	}
+
 	return proxy.AddToxic(name, "latency", "downstream", 1.0, toxiproxy.Attributes{
 		"latency": latencyMS,
 		"jitter":  jitterMS,
@@ -338,6 +257,7 @@ func AddTimeout(proxy *toxiproxy.Proxy, name string, timeoutMS int) (*toxiproxy.
 	if proxy == nil {
 		return nil, fmt.Errorf("proxy is nil")
 	}
+
 	return proxy.AddToxic(name, "timeout", "downstream", 1.0, toxiproxy.Attributes{
 		"timeout": timeoutMS,
 	})
@@ -348,6 +268,7 @@ func AddBandwidth(proxy *toxiproxy.Proxy, name string, rateBytesPerSec int) (*to
 	if proxy == nil {
 		return nil, fmt.Errorf("proxy is nil")
 	}
+
 	return proxy.AddToxic(name, "bandwidth", "downstream", 1.0, toxiproxy.Attributes{
 		"rate": rateBytesPerSec,
 	})
@@ -358,6 +279,7 @@ func AddSlowClose(proxy *toxiproxy.Proxy, name string, delayMS int) (*toxiproxy.
 	if proxy == nil {
 		return nil, fmt.Errorf("proxy is nil")
 	}
+
 	return proxy.AddToxic(name, "slow_close", "downstream", 1.0, toxiproxy.Attributes{
 		"delay": delayMS,
 	})
@@ -368,6 +290,7 @@ func AddResetPeer(proxy *toxiproxy.Proxy, name string, timeoutMS int) (*toxiprox
 	if proxy == nil {
 		return nil, fmt.Errorf("proxy is nil")
 	}
+
 	return proxy.AddToxic(name, "reset_peer", "downstream", 1.0, toxiproxy.Attributes{
 		"timeout": timeoutMS,
 	})
@@ -378,6 +301,7 @@ func RemoveToxic(proxy *toxiproxy.Proxy, name string) error {
 	if proxy == nil {
 		return nil
 	}
+
 	return proxy.RemoveToxic(name)
 }
 
@@ -386,15 +310,18 @@ func RemoveAllToxics(proxy *toxiproxy.Proxy) error {
 	if proxy == nil {
 		return nil
 	}
+
 	toxics, err := proxy.Toxics()
 	if err != nil {
 		return fmt.Errorf("failed to get toxics: %w", err)
 	}
+
 	for _, toxic := range toxics {
 		if err := proxy.RemoveToxic(toxic.Name); err != nil {
 			return fmt.Errorf("failed to remove toxic %s: %w", toxic.Name, err)
 		}
 	}
+
 	return nil
 }
 
@@ -404,6 +331,7 @@ func AddLimitData(proxy *toxiproxy.Proxy, name string, bytes int) (*toxiproxy.To
 	if proxy == nil {
 		return nil, fmt.Errorf("proxy is nil")
 	}
+
 	return proxy.AddToxic(name, "limit_data", "downstream", 1.0, toxiproxy.Attributes{
 		"bytes": bytes,
 	})
@@ -417,6 +345,7 @@ func AddSlicer(proxy *toxiproxy.Proxy, name string, avgSize, sizeVariation, dela
 	if proxy == nil {
 		return nil, fmt.Errorf("proxy is nil")
 	}
+
 	return proxy.AddToxic(name, "slicer", "downstream", 1.0, toxiproxy.Attributes{
 		"average_size":   avgSize,
 		"size_variation": sizeVariation,

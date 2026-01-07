@@ -39,7 +39,9 @@ func (s *ChaosTestSuite) TestMongoDBTimeout_ConnectionCreationFails() {
 	})
 	require.NoError(t, err, "Baseline connection should succeed")
 	assert.NotEmpty(t, connResp.ID)
-	_ = s.managerClient.DeleteConnectionByConfigName(s.ctx, configName)
+	if cleanupErr := s.managerClient.DeleteConnectionByConfigName(s.ctx, configName); cleanupErr != nil {
+		t.Logf("Baseline cleanup warning: %v", cleanupErr)
+	}
 
 	// Phase 2: Inject MongoDB timeout chaos
 	t.Log("Phase 2: Injecting MongoDB timeout chaos...")

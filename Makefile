@@ -123,12 +123,9 @@ help:
 	@echo "  make test-integration-clean      	   - Clean up testcontainers and networks"
 	@echo "  make test-integration-check      	   - Check for port conflicts before starting"
 	@echo "  make test-fuzzy					   - Run fuzz tests on all components"
-	@echo ""
-	@echo ""
-	@echo "Chaos Test Commands:"
-	@echo "  make test-chaos              	   - Run chaos E2E tests (full suite, ~45min)"
-	@echo "  make test-chaos-quick        	   - Run quick chaos tests (latency only, ~20min)"
-	@echo "  make test-chaos-verbose      	   - Run chaos tests with verbose output"
+	@echo "  make test-chaos              	   	   - Run chaos E2E tests (full suite, ~45min)"
+	@echo "  make test-chaos-quick        	   	   - Run quick chaos tests (latency only, ~20min)"
+	@echo "  make test-chaos-verbose      	   	   - Run chaos tests with verbose output"
 	@echo ""
 
 

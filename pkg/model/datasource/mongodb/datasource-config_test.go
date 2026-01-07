@@ -32,10 +32,10 @@ func TestDataSourceConfigMongoDB_GetType(t *testing.T) {
 
 func TestGetCollectionFilters(t *testing.T) {
 	tests := []struct {
-		name           string
+		name            string
 		databaseFilters map[string]map[string]job.FilterCondition
-		collection     string
-		expectedFilter map[string]job.FilterCondition
+		collection      string
+		expectedFilter  map[string]job.FilterCondition
 	}{
 		{
 			name: "with filters for collection",
@@ -54,22 +54,22 @@ func TestGetCollectionFilters(t *testing.T) {
 			expectedFilter: nil,
 		},
 		{
-			name:           "nil filters",
+			name:            "nil filters",
 			databaseFilters: nil,
-			collection:     "users",
-			expectedFilter: nil,
+			collection:      "users",
+			expectedFilter:  nil,
 		},
 		{
-			name:           "empty filters map",
+			name:            "empty filters map",
 			databaseFilters: map[string]map[string]job.FilterCondition{},
-			collection:     "users",
-			expectedFilter: nil,
+			collection:      "users",
+			expectedFilter:  nil,
 		},
 		{
 			name: "multiple collections returns correct one",
 			databaseFilters: map[string]map[string]job.FilterCondition{
-				"users":   {"status": {Equals: []any{"active"}}},
-				"orders":  {"amount": {GreaterThan: []any{100}}},
+				"users":    {"status": {Equals: []any{"active"}}},
+				"orders":   {"amount": {GreaterThan: []any{100}}},
 				"products": {"category": {In: []any{"electronics", "books"}}},
 			},
 			collection:     "orders",

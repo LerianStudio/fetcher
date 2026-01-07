@@ -124,18 +124,21 @@ func (s *ChaosTestSuite) TearDownTest() {
 
 // waitForManagerReady waits for the Manager API to be accessible.
 func (s *ChaosTestSuite) waitForManagerReady() error {
-	deadline := time.Now().Add(setup.ManagerReadyTimeout)
-	for {
-		if time.Now().After(deadline) {
-			return context.DeadlineExceeded
-		}
+	ctx, cancel := context.WithTimeout(s.ctx, setup.ManagerReadyTimeout)
+	defer cancel()
 
-		err := s.managerClient.HealthCheck(s.ctx)
-		if err == nil {
+	ticker := time.NewTicker(setup.ManagerReadyPollInterval)
+	defer ticker.Stop()
+
+	for {
+		if err := s.managerClient.HealthCheck(ctx); err == nil {
 			return nil
 		}
-
-		time.Sleep(setup.ManagerReadyPollInterval)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
 	}
 }
 

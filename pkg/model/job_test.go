@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/LerianStudio/fetcher/pkg/model/job"
 	"github.com/google/uuid"
 )
 
@@ -18,11 +19,11 @@ func TestFetcherRequest_ComputeRequestHash(t *testing.T) {
 						"table1": {"field1", "field2"},
 					},
 				},
-				Filters: []FilterRequest{
-					{
-						Field:    "datasource1.table1.field1",
-						Operator: "eq",
-						Value:    []any{"value1"},
+				Filters: NestedFilters{
+					"datasource1": {
+						"table1": {
+							"field1": job.FilterCondition{Equals: []any{"value1"}},
+						},
 					},
 				},
 			},
@@ -35,11 +36,11 @@ func TestFetcherRequest_ComputeRequestHash(t *testing.T) {
 						"table1": {"field1", "field2"},
 					},
 				},
-				Filters: []FilterRequest{
-					{
-						Field:    "datasource1.table1.field1",
-						Operator: "eq",
-						Value:    []any{"value1"},
+				Filters: NestedFilters{
+					"datasource1": {
+						"table1": {
+							"field1": job.FilterCondition{Equals: []any{"value1"}},
+						},
 					},
 				},
 			},
@@ -180,123 +181,6 @@ func TestFetcherRequest_ComputeRequestHash(t *testing.T) {
 			t.Logf("nil and empty metadata produce different hashes: %s vs %s", hash1, hash2)
 		}
 	})
-}
-
-func TestParseFilterField(t *testing.T) {
-	tests := []struct {
-		name       string
-		field      string
-		wantConfig string
-		wantTable  string
-		wantField  string
-		wantErr    bool
-		errMsg     string
-	}{
-		{
-			name:       "valid 3-part format",
-			field:      "postgres_db.transactions.status",
-			wantConfig: "postgres_db",
-			wantTable:  "transactions",
-			wantField:  "status",
-			wantErr:    false,
-		},
-		{
-			name:       "valid 4-part format with schema",
-			field:      "postgres_db.public.transactions.status",
-			wantConfig: "postgres_db",
-			wantTable:  "public.transactions",
-			wantField:  "status",
-			wantErr:    false,
-		},
-		{
-			name:       "valid 4-part format with dbo schema",
-			field:      "sqlserver_db.dbo.orders.amount",
-			wantConfig: "sqlserver_db",
-			wantTable:  "dbo.orders",
-			wantField:  "amount",
-			wantErr:    false,
-		},
-		{
-			name:       "valid 4-part format with hr schema (Oracle)",
-			field:      "oracle_db.hr.employees.salary",
-			wantConfig: "oracle_db",
-			wantTable:  "hr.employees",
-			wantField:  "salary",
-			wantErr:    false,
-		},
-		{
-			name:    "empty string",
-			field:   "",
-			wantErr: true,
-			errMsg:  "filter field cannot be empty",
-		},
-		{
-			name:    "single part only",
-			field:   "status",
-			wantErr: true,
-			errMsg:  "invalid filter field format",
-		},
-		{
-			name:    "two parts only",
-			field:   "postgres_db.status",
-			wantErr: true,
-			errMsg:  "invalid filter field format",
-		},
-		{
-			name:    "five parts (too many)",
-			field:   "a.b.c.d.e",
-			wantErr: true,
-			errMsg:  "invalid filter field format",
-		},
-		{
-			name:    "empty config name",
-			field:   ".transactions.status",
-			wantErr: true,
-			errMsg:  "empty component",
-		},
-		{
-			name:    "empty table name",
-			field:   "postgres_db..status",
-			wantErr: true,
-			errMsg:  "empty component",
-		},
-		{
-			name:    "empty field name",
-			field:   "postgres_db.transactions.",
-			wantErr: true,
-			errMsg:  "empty component",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := ParseFilterField(tt.field)
-
-			if tt.wantErr {
-				if err == nil {
-					t.Fatalf("expected error containing %q, got nil", tt.errMsg)
-				}
-				if !strings.Contains(err.Error(), tt.errMsg) {
-					t.Fatalf("expected error containing %q, got %q", tt.errMsg, err.Error())
-				}
-				return
-			}
-
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-
-			if result.ConfigName != tt.wantConfig {
-				t.Errorf("ConfigName = %q, want %q", result.ConfigName, tt.wantConfig)
-			}
-			if result.TableName != tt.wantTable {
-				t.Errorf("TableName = %q, want %q", result.TableName, tt.wantTable)
-			}
-			if result.FieldName != tt.wantField {
-				t.Errorf("FieldName = %q, want %q", result.FieldName, tt.wantField)
-			}
-		})
-	}
 }
 
 func TestJobStatus_IsValid(t *testing.T) {
@@ -657,8 +541,12 @@ func TestNewJobResponseFrom(t *testing.T) {
 			MappedFields: map[string]map[string][]string{
 				"db1": {"table1": {"field1"}},
 			},
-			Filters: []Filter{
-				{Field: "db1.table1.field1", Operator: "eq", Value: []any{"test"}},
+			Filters: NestedFilters{
+				"db1": {
+					"table1": {
+						"field1": job.FilterCondition{Equals: []any{"test"}},
+					},
+				},
 			},
 			Status:      JobStatusCompleted,
 			ResultPath:  "/path/to/result",
@@ -706,8 +594,12 @@ func TestNewJob(t *testing.T) {
 		mappedFields := map[string]map[string][]string{
 			"db1": {"table1": {"field1"}},
 		}
-		filters := []Filter{
-			{Field: "db1.table1.field1", Operator: "eq", Value: []any{"test"}},
+		filters := NestedFilters{
+			"db1": {
+				"table1": {
+					"field1": job.FilterCondition{Equals: []any{"test"}},
+				},
+			},
 		}
 		createdAt := time.Now().UTC()
 
@@ -758,49 +650,78 @@ func TestValidateFilterReferences(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		filters []Filter
+		filters NestedFilters
 		wantErr bool
 		errMsg  string
 	}{
 		{
 			name:    "empty filters",
-			filters: []Filter{},
+			filters: NestedFilters{},
+			wantErr: false,
+		},
+		{
+			name:    "nil filters",
+			filters: nil,
 			wantErr: false,
 		},
 		{
 			name: "valid single filter",
-			filters: []Filter{
-				{Field: "postgres_db.transactions.status", Operator: "eq", Value: []any{"completed"}},
+			filters: NestedFilters{
+				"postgres_db": {
+					"transactions": {
+						"status": job.FilterCondition{Equals: []any{"completed"}},
+					},
+				},
 			},
 			wantErr: false,
 		},
 		{
 			name: "valid filter with schema",
-			filters: []Filter{
-				{Field: "postgres_db.public.transactions.status", Operator: "eq", Value: []any{"completed"}},
+			filters: NestedFilters{
+				"postgres_db": {
+					"public.transactions": {
+						"status": job.FilterCondition{Equals: []any{"completed"}},
+					},
+				},
 			},
 			wantErr: false,
 		},
 		{
 			name: "valid multiple filters same datasource",
-			filters: []Filter{
-				{Field: "postgres_db.transactions.status", Operator: "eq", Value: []any{"completed"}},
-				{Field: "postgres_db.transactions.amount", Operator: "gt", Value: []any{100}},
+			filters: NestedFilters{
+				"postgres_db": {
+					"transactions": {
+						"status": job.FilterCondition{Equals: []any{"completed"}},
+						"amount": job.FilterCondition{GreaterThan: []any{100}},
+					},
+				},
 			},
 			wantErr: false,
 		},
 		{
 			name: "valid multiple filters different datasources",
-			filters: []Filter{
-				{Field: "postgres_db.transactions.status", Operator: "eq", Value: []any{"completed"}},
-				{Field: "mysql_db.orders.total", Operator: "gt", Value: []any{50}},
+			filters: NestedFilters{
+				"postgres_db": {
+					"transactions": {
+						"status": job.FilterCondition{Equals: []any{"completed"}},
+					},
+				},
+				"mysql_db": {
+					"orders": {
+						"total": job.FilterCondition{GreaterThan: []any{50}},
+					},
+				},
 			},
 			wantErr: false,
 		},
 		{
 			name: "unknown datasource",
-			filters: []Filter{
-				{Field: "unknown_db.transactions.status", Operator: "eq", Value: []any{"completed"}},
+			filters: NestedFilters{
+				"unknown_db": {
+					"transactions": {
+						"status": job.FilterCondition{Equals: []any{"completed"}},
+					},
+				},
 			},
 			wantErr: true,
 			errMsg:  "datasource 'unknown_db' not found",
@@ -809,24 +730,28 @@ func TestValidateFilterReferences(t *testing.T) {
 			// NOTE: Unknown table is NOT an error at validation time
 			// The DataSource adapter will handle schema resolution with fallback
 			name: "unknown table passes validation (resolved by adapter)",
-			filters: []Filter{
-				{Field: "postgres_db.unknown_table.status", Operator: "eq", Value: []any{"completed"}},
+			filters: NestedFilters{
+				"postgres_db": {
+					"unknown_table": {
+						"status": job.FilterCondition{Equals: []any{"completed"}},
+					},
+				},
 			},
 			wantErr: false, // Changed: adapter will resolve
 		},
 		{
-			name: "invalid field format",
-			filters: []Filter{
-				{Field: "status", Operator: "eq", Value: []any{"completed"}},
-			},
-			wantErr: true,
-			errMsg:  "invalid filter field format",
-		},
-		{
 			name: "only unknown datasource causes error",
-			filters: []Filter{
-				{Field: "unknown_db.table.field", Operator: "eq", Value: []any{"a"}},
-				{Field: "postgres_db.any_table.field", Operator: "eq", Value: []any{"b"}}, // passes - table check delegated
+			filters: NestedFilters{
+				"unknown_db": {
+					"table": {
+						"field": job.FilterCondition{Equals: []any{"a"}},
+					},
+				},
+				"postgres_db": {
+					"any_table": {
+						"field": job.FilterCondition{Equals: []any{"b"}},
+					},
+				},
 			},
 			wantErr: true,
 			errMsg:  "datasource 'unknown_db' not found",

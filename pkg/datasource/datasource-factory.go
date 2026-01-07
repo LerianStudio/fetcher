@@ -102,8 +102,14 @@ func newDataSourceConfigMongoDB(ctx context.Context, base datasource.DataSourceC
 	}
 
 	var params []string
-	if conn.SSL != nil && conn.SSL.Mode == "true" {
-		params = append(params, "ssl=true")
+	if conn.SSL != nil && conn.SSL.Mode != "" && conn.SSL.Mode != "false" && conn.SSL.Mode != "disable" {
+		// Enable TLS for MongoDB connection
+		params = append(params, "tls=true")
+		// For self-signed certificates in local/test environments, we allow skipping verification.
+		// In production, this should be avoided to prevent MitM attacks.
+		if conn.SSL.Mode == "skip-verify" || conn.SSL.Mode == "insecure" {
+			params = append(params, "tlsInsecure=true")
+		}
 	}
 
 	if len(params) > 0 {
@@ -324,12 +330,28 @@ func newDataSourceConfigSQLServer(ctx context.Context, base datasource.DataSourc
 		return nil, fmt.Errorf("failed to decrypt password for SQL Server connection: %w", err)
 	}
 
-	// SQL Server connection string format: sqlserver://user:password@host:port?database=database&encrypt=disable
+	// SQL Server connection string format: sqlserver://user:password@host:port?database=database&encrypt=mode
+	// SSL modes:
+	// - "disable": No encryption
+	// - "true"/"require": Encryption with TrustServerCertificate=true (for self-signed certs)
+	// - "strict": Strict encryption with certificate validation
 	sslMode := "disable"
+	trustServerCert := false
 
 	if conn.SSL != nil && conn.SSL.Mode != "" {
-		if conn.SSL.Mode == "true" || conn.SSL.Mode == "require" {
+		switch conn.SSL.Mode {
+		case "true", "require":
 			sslMode = "true"
+			trustServerCert = true // Required for self-signed certificates in test environments
+		case "strict":
+			sslMode = "strict"
+			trustServerCert = false // Strict mode validates certificates
+		default:
+			// For backwards compatibility, treat unknown modes as encrypted with trust
+			if conn.SSL.Mode != "disable" {
+				sslMode = "true"
+				trustServerCert = true
+			}
 		}
 	}
 
@@ -341,6 +363,10 @@ func newDataSourceConfigSQLServer(ctx context.Context, base datasource.DataSourc
 		conn.DatabaseName,
 		sslMode,
 	)
+
+	if trustServerCert {
+		connectionString += "&TrustServerCertificate=true"
+	}
 
 	sqlServerConnection := &sqlserver.Connection{
 		ConnectionString:   connectionString,

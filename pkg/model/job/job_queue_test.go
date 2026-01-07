@@ -74,9 +74,12 @@ func TestJobQueuePayload_JSONSerialization(t *testing.T) {
 				t.Fatalf("json.Unmarshal() error = %v", err)
 			}
 
-			// Re-serialize for comparison
-			gotData, _ := json.Marshal(got)
-			wantData, _ := json.Marshal(tt.payload)
+			// Re-serialize both for normalized comparison (avoids JSON key order dependency)
+			gotData, err := json.Marshal(got)
+			if err != nil {
+				t.Fatalf("json.Marshal(got) error = %v", err)
+			}
+			wantData := data // Reuse the initial marshal result from line 66
 
 			if string(gotData) != string(wantData) {
 				t.Errorf("Roundtrip failed:\ngot:  %s\nwant: %s", gotData, wantData)
@@ -216,5 +219,8 @@ func TestDataRequest_EmptyMaps(t *testing.T) {
 	// Nil maps should serialize as null
 	if got.Filters != nil && len(got.Filters) != 0 {
 		t.Errorf("Filters should be nil or empty, got %v", got.Filters)
+	}
+	if got.MappedFields != nil && len(got.MappedFields) != 0 {
+		t.Errorf("MappedFields should be nil or empty, got %v", got.MappedFields)
 	}
 }

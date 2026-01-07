@@ -24,6 +24,7 @@ type SQLServerContainer struct {
 	Port         string
 	InternalHost string
 	Internal     config.InternalDBConnection
+	SSL          *SSLConnectionInfo
 }
 
 // SQLServerOptions configures SQL Server container startup.
@@ -34,6 +35,7 @@ type SQLServerOptions struct {
 	Password      string
 	Database      string
 	InitScript    string
+	SSL           *SSLConfig
 }
 
 // DefaultSQLServerOptions returns default SQL Server options.
@@ -44,6 +46,18 @@ func DefaultSQLServerOptions(networkName string) SQLServerOptions {
 		Password:     "TestPass123!",
 		Database:     "testdb",
 	}
+}
+
+// DefaultSQLServerSSLOptions returns SQL Server options with SSL enabled.
+func DefaultSQLServerSSLOptions(networkName string) SQLServerOptions {
+	opts := DefaultSQLServerOptions(networkName)
+	opts.NetworkAlias = "sqlserver-external-ssl"
+	opts.SSL = &SSLConfig{
+		Enabled: true,
+		Mode:    "true",
+	}
+
+	return opts
 }
 
 // StartSQLServer starts a SQL Server container with the given options.
@@ -70,6 +84,59 @@ func StartSQLServer(ctx context.Context, opts SQLServerOptions) (*SQLServerConta
 
 	if opts.FixedHostPort != "" {
 		containerOpts = append(containerOpts, WithFixedPort("1433/tcp", opts.FixedHostPort))
+	}
+
+	// Add SSL configuration if enabled
+	// SQL Server uses mssql.conf file for TLS configuration.
+	// SQL Server 2022 runs as mssql user (uid 10001), so we use /var/opt/mssql/ssl
+	// which is writable by the mssql user.
+	// Reference: https://learn.microsoft.com/en-us/sql/linux/sql-server-linux-docker-container-security
+	if opts.SSL != nil && opts.SSL.Enabled && opts.SSL.CertBundle != nil {
+		sslWrapperScript := `#!/bin/bash
+set -e
+
+# Create SSL directory in mssql's data directory (writable by mssql user)
+mkdir -p /var/opt/mssql/ssl
+
+# Write certificates from environment variables
+echo "$SSL_SERVER_CERT" > /var/opt/mssql/ssl/mssql.pem
+echo "$SSL_SERVER_KEY" > /var/opt/mssql/ssl/mssql.key
+
+# Set correct permissions for certificates
+chmod 644 /var/opt/mssql/ssl/mssql.pem
+chmod 600 /var/opt/mssql/ssl/mssql.key
+
+# Create mssql.conf with TLS settings
+cat > /var/opt/mssql/mssql.conf << 'CONF'
+[network]
+tlscert = /var/opt/mssql/ssl/mssql.pem
+tlskey = /var/opt/mssql/ssl/mssql.key
+tlsprotocols = 1.2
+forceencryption = 1
+CONF
+
+# Call the original entrypoint with the original command
+exec /opt/mssql/bin/launch_sqlservr.sh /opt/mssql/bin/sqlservr
+`
+		containerOpts = append(containerOpts,
+			testcontainers.WithEnv(map[string]string{
+				"SSL_SERVER_CERT": opts.SSL.CertBundle.ServerCertPEM,
+				"SSL_SERVER_KEY":  opts.SSL.CertBundle.ServerKeyPEM,
+			}),
+			testcontainers.CustomizeRequest(testcontainers.GenericContainerRequest{
+				ContainerRequest: testcontainers.ContainerRequest{
+					Files: []testcontainers.ContainerFile{
+						{
+							ContainerFilePath: "/ssl-wrapper.sh",
+							Reader:            strings.NewReader(sslWrapperScript),
+							FileMode:          0755,
+						},
+					},
+					Entrypoint: []string{"/ssl-wrapper.sh"},
+					Cmd:        []string{},
+				},
+			}),
+		)
 	}
 
 	container, err := mssql.Run(ctx, "mcr.microsoft.com/mssql/server:2022-latest", containerOpts...)
@@ -106,19 +173,39 @@ func StartSQLServer(ctx context.Context, opts SQLServerOptions) (*SQLServerConta
 		}
 	}
 
+	// Build internal connection with SSL info
+	internal := config.InternalDBConnection{
+		Host:     opts.NetworkAlias,
+		Port:     1433,
+		Username: "sa",
+		Password: opts.Password,
+		Database: opts.Database,
+	}
+
+	// Populate SSL connection info
+	var sslConnInfo *SSLConnectionInfo
+
+	if opts.SSL != nil && opts.SSL.Enabled {
+		internal.SSLEnabled = true
+
+		internal.SSLMode = opts.SSL.Mode
+		if opts.SSL.CertBundle != nil {
+			internal.SSLCACert = opts.SSL.CertBundle.CACertPEM
+			internal.SSLClientCert = opts.SSL.CertBundle.ClientCertPEM
+			internal.SSLClientKey = opts.SSL.CertBundle.ClientKeyPEM
+		}
+
+		sslConnInfo = opts.SSL.ToConnectionInfo()
+	}
+
 	return &SQLServerContainer{
 		Container:    container,
 		URL:          connStr,
 		Host:         host,
 		Port:         port.Port(),
 		InternalHost: opts.NetworkAlias,
-		Internal: config.InternalDBConnection{
-			Host:     opts.NetworkAlias,
-			Port:     1433,
-			Username: "sa",
-			Password: opts.Password,
-			Database: opts.Database,
-		},
+		Internal:     internal,
+		SSL:          sslConnInfo,
 	}, nil
 }
 
@@ -169,5 +256,6 @@ func (s *SQLServerContainer) Stop(ctx context.Context) error {
 	if s.Container != nil {
 		return s.Container.Terminate(ctx)
 	}
+
 	return nil
 }

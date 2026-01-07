@@ -508,14 +508,8 @@ const docTemplate = `{
                     }
                 ],
                 "responses": {
-                    "200": {
-                        "description": "Deleted connection identifier",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
+                    "204": {
+                        "description": "No Content"
                     },
                     "400": {
                         "description": "Bad Request",
@@ -544,7 +538,7 @@ const docTemplate = `{
                 }
             },
             "patch": {
-                "description": "Apply a partial update to a connection. Returns 409 if there is any active job.",
+                "description": "Apply a partial update to a connection. Only include fields you want to change. Returns 409 if there is any active job.",
                 "consumes": [
                     "application/json"
                 ],
@@ -577,12 +571,12 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "description": "Fields to update (partial payload)",
+                        "description": "Fields to update (only include fields you want to change)",
                         "name": "connection",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.ConnectionInput"
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.ConnectionUpdateInput"
                         }
                     }
                 ],
@@ -807,6 +801,57 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_LerianStudio_fetcher_pkg_model.ConnectionUpdateInput": {
+            "type": "object",
+            "properties": {
+                "configName": {
+                    "type": "string",
+                    "maxLength": 100,
+                    "minLength": 3,
+                    "example": "production-db"
+                },
+                "databaseName": {
+                    "type": "string",
+                    "example": "mydatabase"
+                },
+                "host": {
+                    "type": "string",
+                    "example": "db.example.com"
+                },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "password": {
+                    "type": "string",
+                    "example": "secretpassword"
+                },
+                "port": {
+                    "type": "integer",
+                    "maximum": 65535,
+                    "minimum": 1,
+                    "example": 5432
+                },
+                "ssl": {
+                    "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.SSLUpdateInput"
+                },
+                "type": {
+                    "type": "string",
+                    "enum": [
+                        "ORACLE",
+                        "SQL_SERVER",
+                        "POSTGRESQL",
+                        "MONGODB",
+                        "MYSQL"
+                    ],
+                    "example": "POSTGRESQL"
+                },
+                "username": {
+                    "type": "string",
+                    "example": "dbuser"
+                }
+            }
+        },
         "github_com_LerianStudio_fetcher_pkg_model.DataRequest": {
             "description": "DataRequest encapsulates field mappings and optional filters for data extraction.",
             "type": "object",
@@ -815,10 +860,7 @@ const docTemplate = `{
             ],
             "properties": {
                 "filters": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.FilterRequest"
-                    }
+                    "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.NestedFilters"
                 },
                 "mappedFields": {
                     "type": "object",
@@ -868,47 +910,6 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_LerianStudio_fetcher_pkg_model.Filter": {
-            "type": "object",
-            "required": [
-                "field",
-                "operator",
-                "value"
-            ],
-            "properties": {
-                "field": {
-                    "type": "string"
-                },
-                "operator": {
-                    "type": "string"
-                },
-                "value": {
-                    "type": "array",
-                    "items": {}
-                }
-            }
-        },
-        "github_com_LerianStudio_fetcher_pkg_model.FilterRequest": {
-            "description": "FilterRequest defines a filter condition with field, operator, and value(s).",
-            "type": "object",
-            "required": [
-                "field",
-                "operator",
-                "value"
-            ],
-            "properties": {
-                "field": {
-                    "type": "string"
-                },
-                "operator": {
-                    "type": "string"
-                },
-                "value": {
-                    "type": "array",
-                    "items": {}
-                }
-            }
-        },
         "github_com_LerianStudio_fetcher_pkg_model.JobResponse": {
             "description": "JobResponse represents the complete information about a data extraction job.",
             "type": "object",
@@ -920,10 +921,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "filters": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.Filter"
-                    }
+                    "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.NestedFilters"
                 },
                 "id": {
                     "type": "string"
@@ -958,11 +956,20 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_LerianStudio_fetcher_pkg_model.NestedFilters": {
+            "type": "object",
+            "additionalProperties": {
+                "type": "object",
+                "additionalProperties": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model_job.FilterCondition"
+                    }
+                }
+            }
+        },
         "github_com_LerianStudio_fetcher_pkg_model.SSLInput": {
             "type": "object",
-            "required": [
-                "mode"
-            ],
             "properties": {
                 "ca": {
                     "type": "string",
@@ -985,6 +992,25 @@ const docTemplate = `{
             "properties": {
                 "mode": {
                     "type": "string"
+                }
+            }
+        },
+        "github_com_LerianStudio_fetcher_pkg_model.SSLUpdateInput": {
+            "type": "object",
+            "properties": {
+                "ca": {
+                    "type": "string",
+                    "example": "-----BEGIN CERTIFICATE-----\n..."
+                },
+                "cert": {
+                    "type": "string"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "mode": {
+                    "type": "string",
+                    "example": "require"
                 }
             }
         },
@@ -1042,6 +1068,61 @@ const docTemplate = `{
                 "status": {
                     "description": "\"success\" or \"failure\"",
                     "type": "string"
+                }
+            }
+        },
+        "github_com_LerianStudio_fetcher_pkg_model_job.FilterCondition": {
+            "type": "object",
+            "properties": {
+                "between": {
+                    "description": "Between specifies a range condition with exactly two values [min, max].\nMatches records where min \u003c= field \u003c= max\nExample: {\"between\": [100, 1000]} matches records where 100 \u003c= field \u003c= 1000",
+                    "type": "array",
+                    "items": {}
+                },
+                "eq": {
+                    "description": "Equals specifies exact value matches. Multiple values treated as OR conditions.\nExample: {\"eq\": [\"active\", \"pending\"]} matches records where field equals \"active\" OR \"pending\"",
+                    "type": "array",
+                    "items": {}
+                },
+                "gt": {
+                    "description": "GreaterThan specifies values that must be greater than the provided value.\nShould contain exactly one value for comparison.\nExample: {\"gt\": [100]} matches records where field \u003e 100",
+                    "type": "array",
+                    "items": {}
+                },
+                "gte": {
+                    "description": "GreaterOrEqual specifies values that must be greater than or equal to the provided value.\nShould contain exactly one value for comparison.\nExample: {\"gte\": [\"2025-06-01\"]} matches records where field \u003e= \"2025-06-01\"",
+                    "type": "array",
+                    "items": {}
+                },
+                "in": {
+                    "description": "In specifies a list of values where the field must match any one of them.\nMultiple values treated as OR conditions.\nExample: {\"in\": [\"active\", \"pending\", \"suspended\"]} matches any of these statuses",
+                    "type": "array",
+                    "items": {}
+                },
+                "like": {
+                    "description": "Like specifies values that must match the provided value using LIKE pattern matching.\nShould contain exactly one value for comparison.\nExample: {\"like\": [\"%active%\"]} matches any status containing \"active\"",
+                    "type": "array",
+                    "items": {}
+                },
+                "lt": {
+                    "description": "LessThan specifies values that must be less than the provided value.\nShould contain exactly one value for comparison.\nExample: {\"lt\": [1000]} matches records where field \u003c 1000",
+                    "type": "array",
+                    "items": {}
+                },
+                "lte": {
+                    "description": "LessOrEqual specifies values that must be less than or equal to the provided value.\nShould contain exactly one value for comparison.\nExample: {\"lte\": [\"2025-06-30\"]} matches records where field \u003c= \"2025-06-30\"",
+                    "type": "array",
+                    "items": {}
+                },
+                "ne": {
+                    "description": "NotEquals specifies values that must NOT match the provided value.\nShould contain exactly one value for comparison.\nExample: {\"ne\": [\"active\"]} excludes this status",
+                    "type": "array",
+                    "items": {}
+                },
+                "nin": {
+                    "description": "NotIn specifies a list of values where the field must NOT match any of them.\nMultiple values treated as AND NOT conditions.\nExample: {\"nin\": [\"deleted\", \"archived\"]} excludes these statuses",
+                    "type": "array",
+                    "items": {}
                 }
             }
         },

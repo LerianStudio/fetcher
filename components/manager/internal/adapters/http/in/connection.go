@@ -106,7 +106,7 @@ func (h *ConnectionHandler) CreateConnection(c *fiber.Ctx) error {
 	resp := model.NewConnectionResponseFrom(conn)
 	logger.Infof("connection created id=%s org=%s", resp.ID, orgID)
 
-	return httpUtils.Created(c, fiber.Map{"id": resp.ID})
+	return httpUtils.Created(c, resp)
 }
 
 // ListConnections is a method that retrieves connections with optional pagination and filters.
@@ -312,14 +312,14 @@ func (h *ConnectionHandler) TestConnection(c *fiber.Ctx) error {
 // UpdateConnection is a method that partially updates a connection.
 //
 //	@Summary		Update connection
-//	@Description	Apply a partial update to a connection. Returns 409 if there is any active job.
+//	@Description	Apply a partial update to a connection. Only include fields you want to change. Returns 409 if there is any active job.
 //	@Tags			Connections
 //	@Accept			json
 //	@Produce		json
-//	@Param			Authorization		header		string					false	"The authorization token in the 'Bearer access_token' format. Only required when auth plugin is enabled."
-//	@Param			X-Organization-Id	header		string					true	"Organization ID"
-//	@Param			id					path		string					true	"Connection ID"
-//	@Param			connection			body		model.ConnectionInput	true	"Fields to update (partial payload)"
+//	@Param			Authorization		header		string						false	"The authorization token in the 'Bearer access_token' format. Only required when auth plugin is enabled."
+//	@Param			X-Organization-Id	header		string						true	"Organization ID"
+//	@Param			id					path		string						true	"Connection ID"
+//	@Param			connection			body		model.ConnectionUpdateInput	true	"Fields to update (only include fields you want to change)"
 //	@Success		200					{object}	model.ConnectionResponse
 //	@Failure		400					{object}	pkg.HTTPError
 //	@Failure		404					{object}	pkg.HTTPError
@@ -359,7 +359,7 @@ func (h *ConnectionHandler) UpdateConnection(c *fiber.Ctx) error {
 
 	span.SetAttributes(attribute.String("app.request.connection_id", id.String()))
 
-	var request model.ConnectionInput
+	var request model.ConnectionUpdateInput
 	if errParser := c.BodyParser(&request); errParser != nil {
 		libOpentelemetry.HandleSpanError(&span, "failed to parse payload", errParser)
 
@@ -394,7 +394,7 @@ func (h *ConnectionHandler) UpdateConnection(c *fiber.Ctx) error {
 //	@Param			Authorization		header		string	false	"The authorization token in the 'Bearer access_token' format. Only required when auth plugin is enabled."
 //	@Param			X-Organization-Id	header		string	true	"Organization ID"
 //	@Param			id					path		string	true	"Connection ID"
-//	@Success		200					{object}	map[string]string	"Deleted connection identifier"
+//	@Success		204					"No Content"
 //	@Failure		400					{object}	pkg.HTTPError
 //	@Failure		404					{object}	pkg.HTTPError
 //	@Failure		409					{object}	pkg.HTTPError
@@ -442,7 +442,7 @@ func (h *ConnectionHandler) DeleteConnection(c *fiber.Ctx) error {
 
 	logger.Infof("connection deleted id=%s org=%s", id, orgID)
 
-	return httpUtils.OK(c, fiber.Map{"id": id})
+	return c.Status(fiber.StatusNoContent).Send(nil)
 }
 
 // ValidateSchema validates schema references against configured datasources.

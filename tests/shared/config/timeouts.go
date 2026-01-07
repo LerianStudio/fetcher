@@ -30,11 +30,11 @@ const (
 
 const (
 	// JobCompletionTimeout is the default timeout for waiting for a job to complete.
-	JobCompletionTimeout = 6000 * time.Second
+	JobCompletionTimeout = 60 * time.Second
 
 	// JobCompletionTimeoutSlow is the timeout for slower datasources like Oracle
 	// or multi-datasource jobs that require more processing time.
-	JobCompletionTimeoutSlow = 9000 * time.Second
+	JobCompletionTimeoutSlow = 90 * time.Second
 )
 
 // -----------------------------------------------------------------------------
@@ -69,7 +69,7 @@ const (
 	// SQLServerInitDelay is the additional delay after SQL Server reports ready
 	// before executing init scripts. SQL Server needs time to fully configure
 	// the sa user even after reporting "ready for client connections".
-	SQLServerInitDelay = 5 * time.Second
+	SQLServerInitDelay = 10 * time.Second
 
 	// OracleStartupTimeout is the time to wait for Oracle XE to become ready.
 	// Oracle takes significantly longer to initialize.

@@ -115,6 +115,7 @@ func StartSeaweedFS(ctx context.Context, opts SeaweedFSOptions) (*SeaweedFSConta
 	if err != nil {
 		_ = volume.Terminate(ctx)
 		_ = master.Terminate(ctx)
+
 		return nil, fmt.Errorf("failed to start SeaweedFS filer: %w", err)
 	}
 
@@ -123,6 +124,7 @@ func StartSeaweedFS(ctx context.Context, opts SeaweedFSOptions) (*SeaweedFSConta
 		_ = filer.Terminate(ctx)
 		_ = volume.Terminate(ctx)
 		_ = master.Terminate(ctx)
+
 		return nil, fmt.Errorf("failed to get SeaweedFS host: %w", err)
 	}
 
@@ -131,6 +133,7 @@ func StartSeaweedFS(ctx context.Context, opts SeaweedFSOptions) (*SeaweedFSConta
 		_ = filer.Terminate(ctx)
 		_ = volume.Terminate(ctx)
 		_ = master.Terminate(ctx)
+
 		return nil, fmt.Errorf("failed to get SeaweedFS port: %w", err)
 	}
 

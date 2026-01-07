@@ -1,7 +1,7 @@
 services:
   fetcher-mongodb:
     container_name: fetcher-mongodb
-    image: mongo:latest
+    image: mongo:8
     env_file:
       - .env
     restart: always
@@ -103,7 +103,7 @@ services:
 
   fetcher-valkey:
     container_name: fetcher-valkey
-    image: valkey/valkey:latest
+    image: valkey/valkey:8
     restart: always
     env_file:
       - .env

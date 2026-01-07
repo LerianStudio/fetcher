@@ -59,8 +59,8 @@ func DefaultSLAThresholds() SLAThresholds {
 func StrictSLAThresholds() SLAThresholds {
 	return SLAThresholds{
 		// Success rates
-		MinSuccessRate:      80.0,  // At least 80% success during chaos
-		RecoverySuccessRate: 99.9,  // 99.9% after recovery
+		MinSuccessRate:      80.0, // At least 80% success during chaos
+		RecoverySuccessRate: 99.9, // 99.9% after recovery
 
 		// Latency
 		MaxP50Latency:  1 * time.Second,

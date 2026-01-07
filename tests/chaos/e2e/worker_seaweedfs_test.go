@@ -7,7 +7,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
+	"path/filepath"
 	"time"
 
 	"github.com/LerianStudio/fetcher/tests/chaos/helpers"
@@ -97,8 +99,9 @@ func (s *ChaosTestSuite) TestSeaweedFSLatency_FileUploadSlowed() {
 	s.metrics.RecordRequest(true, false, duration)
 
 	// Phase 4: Verify file exists in SeaweedFS
+	// Worker stores results at /external-data/{jobID}.json (see constant.ExternalDataBucketName)
 	t.Log("Phase 4: Verifying result file exists...")
-	filePath := fmt.Sprintf("/buckets/fetcher/%s/result.json", jobResp.JobID)
+	filePath := fmt.Sprintf("/external-data/%s.json", jobResp.JobID)
 	_, fileErr := s.seaweedClient.GetFile(s.ctx, filePath)
 	assert.NoError(t, fileErr, "Result file should exist in SeaweedFS")
 
@@ -460,26 +463,46 @@ func (s *ChaosTestSuite) TestSeaweedFSDirectUpload_WithResetPeer() {
 // Helper Functions
 // =============================================================================
 
-// uploadToSeaweedFS uploads content to SeaweedFS using HTTP PUT.
+// uploadToSeaweedFS uploads content to SeaweedFS using multipart/form-data.
+// SeaweedFS filer requires multipart encoding for file uploads.
 func uploadToSeaweedFS(ctx context.Context, baseURL, path string, content []byte) error {
 	url := fmt.Sprintf("%s%s", baseURL, path)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(content))
+	// Create multipart form
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+
+	// Use the filename from the path
+	filename := filepath.Base(path)
+	part, err := writer.CreateFormFile("file", filename)
+	if err != nil {
+		return fmt.Errorf("failed to create form file: %w", err)
+	}
+
+	if _, err := part.Write(content); err != nil {
+		return fmt.Errorf("failed to write content: %w", err)
+	}
+
+	if err := writer.Close(); err != nil {
+		return fmt.Errorf("failed to close multipart writer: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, &body)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/octet-stream")
+	req.Header.Set("Content-Type", writer.FormDataContentType())
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	httpClient := &http.Client{Timeout: setup.SeaweedFSFileTimeout}
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to upload: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("upload failed with status %d: %s", resp.StatusCode, string(body))
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("upload failed with status %d: %s", resp.StatusCode, string(respBody))
 	}
 
 	return nil

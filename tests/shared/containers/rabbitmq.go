@@ -101,5 +101,6 @@ func (r *RabbitMQContainer) Stop(ctx context.Context) error {
 	if r.Container != nil {
 		return r.Container.Terminate(ctx)
 	}
+
 	return nil
 }

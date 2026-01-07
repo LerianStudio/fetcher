@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/LerianStudio/fetcher/pkg/model/job"
-	"github.com/LerianStudio/lib-commons/v2/commons/log"
+	"github.com/LerianStudio/fetcher/pkg/testutil"
 	"github.com/Masterminds/squirrel"
 	"github.com/google/uuid"
 )
@@ -862,7 +862,7 @@ func TestValidateUUIDFieldValues(t *testing.T) {
 }
 
 func TestCreateRowMap(t *testing.T) {
-	mockLogger := &mockLogger{}
+	mockLogger := &testutil.MockLogger{}
 
 	tests := []struct {
 		name    string
@@ -1023,7 +1023,7 @@ func TestApplyFilter(t *testing.T) {
 }
 
 func TestConnect_ErrorHandling(t *testing.T) {
-	mockLogger := &mockLogger{}
+	mockLogger := &testutil.MockLogger{}
 
 	tests := []struct {
 		name             string
@@ -1065,7 +1065,7 @@ func TestConnect_ErrorHandling(t *testing.T) {
 }
 
 func TestGetDB_WithNilConnection(t *testing.T) {
-	mockLogger := &mockLogger{}
+	mockLogger := &testutil.MockLogger{}
 
 	conn := &Connection{
 		ConnectionString:   "invalid://connection",
@@ -1676,7 +1676,7 @@ func TestTableSchema_Structure(t *testing.T) {
 }
 
 func TestConnection_InitialState(t *testing.T) {
-	mockLogger := &mockLogger{}
+	mockLogger := &testutil.MockLogger{}
 
 	tests := []struct {
 		name string
@@ -1729,7 +1729,7 @@ func TestConnection_InitialState(t *testing.T) {
 }
 
 func TestGetDB_MultipleCallsWithError(t *testing.T) {
-	mockLogger := &mockLogger{}
+	mockLogger := &testutil.MockLogger{}
 
 	conn := &Connection{
 		ConnectionString:   "invalid",
@@ -1764,6 +1764,10 @@ func containsHelper(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+func testMockLogger() *testutil.MockLogger {
+	return &testutil.MockLogger{}
 }
 
 func TestParseJSONBField(t *testing.T) {
@@ -1822,7 +1826,7 @@ func TestParseJSONBField(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// We need a mock logger for this test
-			mockLogger := &mockLogger{}
+			mockLogger := testMockLogger()
 			got := parseJSONBField(tt.value, mockLogger)
 
 			// For map comparisons, we need to do a deep comparison
@@ -1896,63 +1900,3 @@ func valuesEqual(a, b any) bool {
 	}
 	return a == b
 }
-
-// mockLogger implements a basic logger for testing
-type mockLogger struct{}
-
-func (m *mockLogger) Info(args ...any)                                      {}
-func (m *mockLogger) Infof(format string, args ...any)                      {}
-func (m *mockLogger) Warn(args ...any)                                      {}
-func (m *mockLogger) Warnf(format string, args ...any)                      {}
-func (m *mockLogger) Error(args ...any)                                     {}
-func (m *mockLogger) Errorf(format string, args ...any)                     {}
-func (m *mockLogger) Debug(args ...any)                                     {}
-func (m *mockLogger) Debugf(format string, args ...any)                     {}
-func (m *mockLogger) Fatal(args ...any)                                     {}
-func (m *mockLogger) Fatalf(format string, args ...any)                     {}
-func (m *mockLogger) Panic(args ...any)                                     {}
-func (m *mockLogger) Panicf(format string, args ...any)                     {}
-func (m *mockLogger) WithFields(fields ...any) log.Logger                   { return m }
-func (m *mockLogger) WithField(key string, value any) log.Logger            { return m }
-func (m *mockLogger) WithError(err error) log.Logger                        { return m }
-func (m *mockLogger) GetLevel() string                                      { return "info" }
-func (m *mockLogger) SetLevel(level string) error                           { return nil }
-func (m *mockLogger) IsLevelEnabled(level string) bool                      { return true }
-func (m *mockLogger) GetLogger() any                                        { return m }
-func (m *mockLogger) GetOutput() any                                        { return nil }
-func (m *mockLogger) SetOutput(output any) error                            { return nil }
-func (m *mockLogger) GetFormatter() any                                     { return nil }
-func (m *mockLogger) SetFormatter(formatter any) error                      { return nil }
-func (m *mockLogger) GetHooks() any                                         { return nil }
-func (m *mockLogger) AddHook(hook any) error                                { return nil }
-func (m *mockLogger) Clone() any                                            { return m }
-func (m *mockLogger) GetContext() any                                       { return nil }
-func (m *mockLogger) SetContext(ctx any) error                              { return nil }
-func (m *mockLogger) GetCallerInfo() bool                                   { return false }
-func (m *mockLogger) SetCallerInfo(enabled bool)                            {}
-func (m *mockLogger) GetReportCaller() bool                                 { return false }
-func (m *mockLogger) SetReportCaller(enabled bool)                          {}
-func (m *mockLogger) GetExitFunc() any                                      { return nil }
-func (m *mockLogger) SetExitFunc(exitFunc any) error                        { return nil }
-func (m *mockLogger) GetBufferPool() any                                    { return nil }
-func (m *mockLogger) SetBufferPool(pool any) error                          { return nil }
-func (m *mockLogger) Printf(format string, args ...any)                     {}
-func (m *mockLogger) Print(args ...any)                                     {}
-func (m *mockLogger) Println(args ...any)                                   {}
-func (m *mockLogger) Trace(args ...any)                                     {}
-func (m *mockLogger) Tracef(format string, args ...any)                     {}
-func (m *mockLogger) Traceln(args ...any)                                   {}
-func (m *mockLogger) Infoln(args ...any)                                    {}
-func (m *mockLogger) Warnln(args ...any)                                    {}
-func (m *mockLogger) Warningln(args ...any)                                 {}
-func (m *mockLogger) Errorln(args ...any)                                   {}
-func (m *mockLogger) Fatalln(args ...any)                                   {}
-func (m *mockLogger) Panicln(args ...any)                                   {}
-func (m *mockLogger) Debugln(args ...any)                                   {}
-func (m *mockLogger) Warning(args ...any)                                   {}
-func (m *mockLogger) Warningf(format string, args ...any)                   {}
-func (m *mockLogger) Log(level string, args ...any)                         {}
-func (m *mockLogger) Logf(level string, format string, args ...any)         {}
-func (m *mockLogger) Logln(level string, args ...any)                       {}
-func (m *mockLogger) Sync() error                                           { return nil }
-func (m *mockLogger) WithDefaultMessageTemplate(template string) log.Logger { return m }

@@ -214,7 +214,7 @@ Press `F5` and select **"Worker (Test Infra)"**
         "RABBITMQ_PORT_AMQP": "5672",
         "RABBITMQ_DEFAULT_USER": "guest",
         "RABBITMQ_DEFAULT_PASS": "guest",
-        "RABBITMQ_GENERATE_REPORT_QUEUE": "extract-external-data-queue",
+        "RABBITMQ_FETCHER_WORK_QUEUE": "fetcher.extract-external-data.queue",
         "RABBITMQ_JOB_EVENTS_EXCHANGE": "fetcher.job.events",
         "RABBITMQ_NUMBERS_OF_WORKERS": "2",
         "SEAWEEDFS_HOST": "fetcher-seaweedfs-filer",
@@ -539,6 +539,34 @@ Add this `inputs` section to enable test picker and image source prompt:
 | `TestJob_AllFilterOperators` | All filter operators (eq, ne, gt, gte, lt, lte, in, nin) |
 | `TestConnection_Metadata` | Custom metadata persistence on connection creation |
 
+### SSL Connection Tests (P2)
+
+These tests validate SSL/TLS connections to databases. Run with `ENABLE_SSL=true`.
+
+| Test | Description |
+|------|-------------|
+| `TestSSLConnectionValidation` | Validates SSL connections to PostgreSQL, MySQL, MongoDB, and SQL Server |
+| `TestMultiDatasourceSSLConnections` | Multi-datasource extraction using SSL connections |
+
+**Running SSL tests:**
+
+```bash
+# Run all tests including SSL
+ENABLE_SSL=true \
+MANAGER_IMAGE=fetcher-manager:local \
+WORKER_IMAGE=fetcher-worker:local \
+  make test-integration-container
+
+# Run only SSL tests
+ENABLE_SSL=true \
+MANAGER_IMAGE=fetcher-manager:local \
+WORKER_IMAGE=fetcher-worker:local \
+TEST=TestSSLConnectionValidation \
+  make test-integration-container
+```
+
+> **Note:** SSL tests are skipped when `ENABLE_SSL` is not set or set to `false`. The SSL infrastructure starts additional database containers on separate ports (PostgreSQL:5433, MySQL:3307, etc.) with self-signed certificates.
+
 ## Configuration Reference
 
 ### Environment Variables
@@ -555,6 +583,7 @@ Add this `inputs` section to enable test picker and image source prompt:
 | `TEST` | Run specific test by name | No |
 | `TEST_ENCRYPTION_KEY_BASE64` | Base64 encryption key for Manager | No |
 | `TEST_ENCRYPTION_KEY_HEX` | Hex encryption key for Worker | No |
+| `ENABLE_SSL` | Enable SSL database containers and tests (`true`/`false`) | No |
 
 **Image resolution priority:**
 1. If `GITHUB_TOKEN` is set → Build image from Dockerfile using Docker CLI with BuildKit
@@ -575,6 +604,16 @@ Add this `inputs` section to enable test picker and image source prompt:
 | SQL Server | 1433 | `mssql-external` |
 | Oracle | 1521 | `oracle-external` |
 | Manager API | 4006 | `localhost` |
+
+### SSL Ports (ENABLE_SSL=true)
+
+| Service | Port | Hostname |
+|---------|------|----------|
+| PostgreSQL SSL | 5433 | `postgres-external-ssl` |
+| MySQL SSL | 3307 | `mysql-external-ssl` |
+| SQL Server SSL | 1434 | `sqlserver-external-ssl` |
+| Oracle SSL | 1522 | `oracle-external-ssl` |
+| MongoDB SSL | 27019 | `fetcher-mongodb-external-ssl` |
 
 ## Infrastructure Management
 

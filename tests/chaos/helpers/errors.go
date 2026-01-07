@@ -100,8 +100,10 @@ func ClassifyError(errMsg string) ErrorCategory {
 
 	// Application patterns (HTTP status codes and error messages)
 	applicationPatterns := []string{
-		"400", "401", "403", "404", "405",
-		"500", "502", "503", "504",
+		"status 400", "status 401", "status 403", "status 404", "status 405",
+		"status 500", "status 502", "status 503", "status 504",
+		"http 400", "http 401", "http 403", "http 404", "http 405",
+		"http 500", "http 502", "http 503", "http 504",
 		"bad request", "unauthorized", "forbidden",
 		"not found", "internal server error",
 		"bad gateway", "service unavailable",
@@ -209,4 +211,26 @@ func (e *ErrorClassifier) Reset() {
 
 	e.errors = make(map[ErrorCategory]map[string]*ClassifiedError)
 	e.total = 0
+}
+
+// Clone creates a deep copy of the ErrorClassifier for thread-safe snapshots.
+func (e *ErrorClassifier) Clone() *ErrorClassifier {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	clone := &ErrorClassifier{
+		errors: make(map[ErrorCategory]map[string]*ClassifiedError),
+		total:  e.total,
+	}
+
+	for category, categoryErrors := range e.errors {
+		clone.errors[category] = make(map[string]*ClassifiedError)
+
+		for msg, err := range categoryErrors {
+			errCopy := *err
+			clone.errors[category][msg] = &errCopy
+		}
+	}
+
+	return clone
 }
