@@ -451,7 +451,7 @@ type ConnectionUpdateInput struct {
 	Host         *string         `json:"host,omitempty" validate:"omitempty" example:"db.example.com"`
 	Port         *int            `json:"port,omitempty" validate:"omitempty,min=1,max=65535" example:"5432"`
 	DatabaseName *string         `json:"databaseName,omitempty" validate:"omitempty" example:"mydatabase"`
-	Username     *string         `json:"username,omitempty" validate:"omitempty" example:"dbuser"`
+	Username     *string         `json:"userName,omitempty" validate:"omitempty" example:"dbuser"`
 	Password     *string         `json:"password,omitempty" validate:"omitempty" example:"secretpassword"`
 	SSL          *SSLUpdateInput `json:"ssl,omitempty"`
 	Metadata     *map[string]any `json:"metadata,omitempty"`

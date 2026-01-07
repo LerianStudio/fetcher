@@ -67,7 +67,7 @@ type ConnectionPartialUpdateInput struct {
 	Host         *string                `json:"host,omitempty"`
 	Port         *int                   `json:"port,omitempty"`
 	DatabaseName *string                `json:"databaseName,omitempty"`
-	Username     *string                `json:"username,omitempty"`
+	Username     *string                `json:"userName,omitempty"`
 	Password     *string                `json:"password,omitempty"`
 	SSL          *SSLPartialUpdateInput `json:"ssl,omitempty"`
 	Metadata     map[string]any         `json:"metadata,omitempty"`

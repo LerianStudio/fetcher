@@ -846,7 +846,7 @@ const docTemplate = `{
                     ],
                     "example": "POSTGRESQL"
                 },
-                "username": {
+                "userName": {
                     "type": "string",
                     "example": "dbuser"
                 }

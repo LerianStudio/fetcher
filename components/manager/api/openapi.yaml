@@ -696,7 +696,7 @@ components:
           - MYSQL
           example: POSTGRESQL
           type: string
-        username:
+        userName:
           example: dbuser
           type: string
       type: object
