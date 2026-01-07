@@ -10,7 +10,7 @@ import (
 type InternalDBConnection struct {
 	Host     string `json:"host"`
 	Port     int    `json:"port"`
-	Username string `json:"username"`
+	Username string `json:"userName"`
 	Password string `json:"password"`
 	Database string `json:"database"`
 

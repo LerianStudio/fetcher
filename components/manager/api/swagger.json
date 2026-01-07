@@ -705,7 +705,7 @@
                 "password",
                 "port",
                 "type",
-                "username"
+                "userName"
             ],
             "properties": {
                 "configName": {
@@ -750,7 +750,7 @@
                     ],
                     "example": "POSTGRESQL"
                 },
-                "username": {
+                "userName": {
                     "type": "string",
                     "example": "dbuser"
                 }
@@ -790,7 +790,7 @@
                 "updatedAt": {
                     "type": "string"
                 },
-                "username": {
+                "userName": {
                     "type": "string"
                 }
             }

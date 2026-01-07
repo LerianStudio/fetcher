@@ -711,7 +711,7 @@ const docTemplate = `{
                 "password",
                 "port",
                 "type",
-                "username"
+                "userName"
             ],
             "properties": {
                 "configName": {
@@ -756,7 +756,7 @@ const docTemplate = `{
                     ],
                     "example": "POSTGRESQL"
                 },
-                "username": {
+                "userName": {
                     "type": "string",
                     "example": "dbuser"
                 }
@@ -796,7 +796,7 @@ const docTemplate = `{
                 "updatedAt": {
                     "type": "string"
                 },
-                "username": {
+                "userName": {
                     "type": "string"
                 }
             }

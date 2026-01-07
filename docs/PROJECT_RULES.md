@@ -965,7 +965,7 @@ type ConnectionInput struct {
     Host         string         `json:"host"`
     Port         int            `json:"port"`         // int type
     DatabaseName string         `json:"databaseName"`
-    Username     string         `json:"username"`
+    Username     string         `json:"userName"`
     Password     string         `json:"password"`
     Metadata     map[string]any `json:"metadata,omitempty"`
 }

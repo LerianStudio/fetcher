@@ -65,11 +65,11 @@ var ChaosTimeoutValues = struct {
 
 // ChaosBandwidthValues contains standard bandwidth limits for testing.
 var ChaosBandwidthValues = struct {
-	Slow   int // Very slow connection (1KB/s)
-	Medium int // Moderate speed (10KB/s)
-	Fast   int // Light throttling (100KB/s)
+	Low    int // Very slow connection (1 KB/s)
+	Medium int // Moderate speed (10 KB/s)
+	High   int // Light throttling (100 KB/s)
 }{
-	Slow:   1024,   // 1 KB/s
+	Low:    1024,   // 1 KB/s
 	Medium: 10240,  // 10 KB/s
-	Fast:   102400, // 100 KB/s
+	High:   102400, // 100 KB/s
 }

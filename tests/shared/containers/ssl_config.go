@@ -16,8 +16,8 @@ listen_addresses = '*'
 
 # SSL Settings
 ssl = on
-ssl_ca_file = '/tmp/testcontainers-go/postgres/ca_cert.pem'
-ssl_cert_file = '/tmp/testcontainers-go/postgres/server.cert'
+ssl_ca_file = '/tmp/testcontainers-go/postgres/ca.crt'
+ssl_cert_file = '/tmp/testcontainers-go/postgres/server.crt'
 ssl_key_file = '/tmp/testcontainers-go/postgres/server.key'
 `
 

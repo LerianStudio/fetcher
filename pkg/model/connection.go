@@ -395,7 +395,7 @@ type ConnectionInput struct {
 	Host         string          `json:"host" validate:"required,hostname|ip" example:"db.example.com"`
 	Port         int             `json:"port" validate:"required,min=1,max=65535" example:"5432"`
 	DatabaseName string          `json:"databaseName" validate:"required" example:"mydatabase"`
-	Username     string          `json:"username" validate:"required" example:"dbuser"`
+	Username     string          `json:"userName" validate:"required" example:"dbuser"`
 	Password     string          `json:"password" validate:"required" example:"secretpassword"`
 	SSL          *SSLInput       `json:"ssl,omitempty"`
 	Metadata     *map[string]any `json:"metadata,omitempty"`
@@ -534,7 +534,7 @@ type ConnectionResponse struct {
 	Host         string          `json:"host"`
 	Port         int             `json:"port"`
 	DatabaseName string          `json:"databaseName"`
-	Username     string          `json:"username"`
+	Username     string          `json:"userName"`
 	SSL          *SSLResponse    `json:"ssl,omitempty"`
 	Metadata     *map[string]any `json:"metadata,omitempty"`
 	CreatedAt    time.Time       `json:"createdAt"`

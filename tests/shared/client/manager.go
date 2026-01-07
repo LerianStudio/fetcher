@@ -53,7 +53,7 @@ type ConnectionInput struct {
 	Host         string         `json:"host"`
 	Port         int            `json:"port"`
 	DatabaseName string         `json:"databaseName"`
-	Username     string         `json:"username"`
+	Username     string         `json:"userName"`
 	Password     string         `json:"password"`
 	SSL          *SSLInput      `json:"ssl,omitempty"`
 	Metadata     map[string]any `json:"metadata,omitempty"`
@@ -131,7 +131,7 @@ type ConnectionResponse struct {
 	Host         string         `json:"host"`
 	Port         int            `json:"port"`
 	DatabaseName string         `json:"databaseName"`
-	Username     string         `json:"username"`
+	Username     string         `json:"userName"`
 	Metadata     map[string]any `json:"metadata,omitempty"`
 	CreatedAt    string         `json:"createdAt"`
 	UpdatedAt    string         `json:"updatedAt"`

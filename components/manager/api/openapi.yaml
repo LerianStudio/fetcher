@@ -607,7 +607,7 @@ components:
           - MYSQL
           example: POSTGRESQL
           type: string
-        username:
+        userName:
           example: dbuser
           type: string
       required:
@@ -617,7 +617,7 @@ components:
       - password
       - port
       - type
-      - username
+      - userName
       type: object
     github_com_LerianStudio_fetcher_pkg_model.ConnectionResponse:
       example:
@@ -630,10 +630,10 @@ components:
         host: host
         id: id
         type: type
+        userName: userName
         ssl:
           mode: mode
         updatedAt: updatedAt
-        username: username
       properties:
         configName:
           type: string
@@ -657,7 +657,7 @@ components:
           type: string
         updatedAt:
           type: string
-        username:
+        userName:
           type: string
       type: object
     github_com_LerianStudio_fetcher_pkg_model.ConnectionUpdateInput:
@@ -1092,10 +1092,10 @@ components:
           host: host
           id: id
           type: type
+          userName: userName
           ssl:
             mode: mode
           updatedAt: updatedAt
-          username: username
         - configName: configName
           createdAt: createdAt
           metadata:
@@ -1105,10 +1105,10 @@ components:
           host: host
           id: id
           type: type
+          userName: userName
           ssl:
             mode: mode
           updatedAt: updatedAt
-          username: username
       properties:
         Pagination:
           $ref: '#/components/schemas/Pagination'

@@ -86,7 +86,7 @@ type PortsConfig struct {
 type InternalDBConnection struct {
     Host     string `json:"host"`
     Port     int    `json:"port"`      // Note: int, not string
-    Username string `json:"username"`  // Note: Username, not User
+    Username string `json:"userName"`  // Note: Username, not User
     Password string `json:"password"`
     Database string `json:"database"`
 }
@@ -221,7 +221,7 @@ type ConnectionInput struct {
     Host         string         `json:"host"`
     Port         int            `json:"port"`         // Note: int
     DatabaseName string         `json:"databaseName"`
-    Username     string         `json:"username"`
+    Username     string         `json:"userName"`
     Password     string         `json:"password"`
     Metadata     map[string]any `json:"metadata,omitempty"`
 }

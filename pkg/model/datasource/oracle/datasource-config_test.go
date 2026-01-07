@@ -59,12 +59,11 @@ func TestDataSourceConfigOracle_Connect(t *testing.T) {
 }
 
 func TestDataSourceConfigOracle_Close(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mockRepo := oracle.NewMockRepository(ctrl)
-
 	t.Run("successful close", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		mockRepo := oracle.NewMockRepository(ctrl)
+
 		mockRepo.EXPECT().CloseConnection().Return(nil)
 
 		ds := &DataSourceConfigOracle{
@@ -87,6 +86,10 @@ func TestDataSourceConfigOracle_Close(t *testing.T) {
 	})
 
 	t.Run("close with error", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		mockRepo := oracle.NewMockRepository(ctrl)
+
 		mockRepo.EXPECT().CloseConnection().Return(errors.New("close error"))
 
 		ds := &DataSourceConfigOracle{
@@ -99,10 +102,6 @@ func TestDataSourceConfigOracle_Close(t *testing.T) {
 }
 
 func TestDataSourceConfigOracle_Query(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mockRepo := oracle.NewMockRepository(ctrl)
 	logger := newMockLogger()
 	ctx := context.Background()
 
@@ -111,6 +110,10 @@ func TestDataSourceConfigOracle_Query(t *testing.T) {
 	}
 
 	t.Run("successful query without filters", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		mockRepo := oracle.NewMockRepository(ctrl)
+
 		mockRepo.EXPECT().GetDatabaseSchema(gomock.Any(), gomock.Any()).Return(schemaResult, nil)
 		mockRepo.EXPECT().Query(gomock.Any(), schemaResult, "USERS", []string{"ID", "NAME"}, nil).
 			Return([]map[string]any{{"ID": 1, "NAME": "John"}}, nil)
@@ -129,6 +132,10 @@ func TestDataSourceConfigOracle_Query(t *testing.T) {
 	})
 
 	t.Run("query with filters", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		mockRepo := oracle.NewMockRepository(ctrl)
+
 		filters := map[string]map[string]job.FilterCondition{
 			"USERS": {"STATUS": {Equals: []any{"active"}}},
 		}
@@ -151,6 +158,10 @@ func TestDataSourceConfigOracle_Query(t *testing.T) {
 	})
 
 	t.Run("query with schema error", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		mockRepo := oracle.NewMockRepository(ctrl)
+
 		mockRepo.EXPECT().GetDatabaseSchema(gomock.Any(), gomock.Any()).Return(nil, errors.New("schema error"))
 
 		ds := &DataSourceConfigOracle{
@@ -167,12 +178,11 @@ func TestDataSourceConfigOracle_Query(t *testing.T) {
 }
 
 func TestDataSourceConfigOracle_GetSchemaInfo(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mockRepo := oracle.NewMockRepository(ctrl)
-
 	t.Run("successful schema retrieval", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		mockRepo := oracle.NewMockRepository(ctrl)
+
 		schemaResult := []oracle.TableSchema{
 			{
 				TableName: "USERS",
@@ -200,6 +210,10 @@ func TestDataSourceConfigOracle_GetSchemaInfo(t *testing.T) {
 	})
 
 	t.Run("schema retrieval error", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		mockRepo := oracle.NewMockRepository(ctrl)
+
 		mockRepo.EXPECT().GetDatabaseSchema(gomock.Any(), gomock.Any()).Return(nil, errors.New("db error"))
 
 		ds := &DataSourceConfigOracle{

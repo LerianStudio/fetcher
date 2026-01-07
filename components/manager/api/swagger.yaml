@@ -50,7 +50,7 @@ definitions:
         - MYSQL
         example: POSTGRESQL
         type: string
-      username:
+      userName:
         example: dbuser
         type: string
     required:
@@ -60,7 +60,7 @@ definitions:
     - password
     - port
     - type
-    - username
+    - userName
     type: object
   github_com_LerianStudio_fetcher_pkg_model.ConnectionResponse:
     properties:
@@ -85,7 +85,7 @@ definitions:
         type: string
       updatedAt:
         type: string
-      username:
+      userName:
         type: string
     type: object
   github_com_LerianStudio_fetcher_pkg_model.ConnectionUpdateInput:

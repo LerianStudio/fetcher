@@ -61,12 +61,11 @@ func TestDataSourceConfigMySQL_Connect(t *testing.T) {
 }
 
 func TestDataSourceConfigMySQL_Close(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mockRepo := mysql.NewMockRepository(ctrl)
-
 	t.Run("successful close", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		mockRepo := mysql.NewMockRepository(ctrl)
+
 		mockRepo.EXPECT().CloseConnection().Return(nil)
 
 		ds := &DataSourceConfigMySQL{
@@ -89,6 +88,10 @@ func TestDataSourceConfigMySQL_Close(t *testing.T) {
 	})
 
 	t.Run("close with error", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		mockRepo := mysql.NewMockRepository(ctrl)
+
 		mockRepo.EXPECT().CloseConnection().Return(errors.New("close error"))
 
 		ds := &DataSourceConfigMySQL{
@@ -156,10 +159,6 @@ func TestGetTableFilters(t *testing.T) {
 }
 
 func TestDataSourceConfigMySQL_Query(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mockRepo := mysql.NewMockRepository(ctrl)
 	logger := newMockLogger()
 	ctx := context.Background()
 
@@ -168,6 +167,10 @@ func TestDataSourceConfigMySQL_Query(t *testing.T) {
 	}
 
 	t.Run("successful query without filters", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		mockRepo := mysql.NewMockRepository(ctrl)
+
 		mockRepo.EXPECT().GetDatabaseSchema(gomock.Any()).Return(schemaResult, nil)
 		mockRepo.EXPECT().Query(gomock.Any(), schemaResult, "users", []string{"id", "name"}, nil).
 			Return([]map[string]any{{"id": 1, "name": "John"}}, nil)
@@ -186,6 +189,10 @@ func TestDataSourceConfigMySQL_Query(t *testing.T) {
 	})
 
 	t.Run("query with filters", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		mockRepo := mysql.NewMockRepository(ctrl)
+
 		filters := map[string]map[string]job.FilterCondition{
 			"users": {"status": {Equals: []any{"active"}}},
 		}
@@ -208,6 +215,10 @@ func TestDataSourceConfigMySQL_Query(t *testing.T) {
 	})
 
 	t.Run("query with schema error", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		mockRepo := mysql.NewMockRepository(ctrl)
+
 		mockRepo.EXPECT().GetDatabaseSchema(gomock.Any()).Return(nil, errors.New("schema error"))
 
 		ds := &DataSourceConfigMySQL{
@@ -221,15 +232,62 @@ func TestDataSourceConfigMySQL_Query(t *testing.T) {
 		_, err := ds.Query(ctx, tables, nil, logger)
 		assert.Error(t, err)
 	})
+
+	t.Run("query execution error", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		mockRepo := mysql.NewMockRepository(ctrl)
+
+		mockRepo.EXPECT().GetDatabaseSchema(gomock.Any()).Return(schemaResult, nil)
+		mockRepo.EXPECT().Query(gomock.Any(), schemaResult, "users", []string{"id"}, nil).
+			Return(nil, errors.New("query execution failed"))
+
+		ds := &DataSourceConfigMySQL{
+			MySQLRepository: mockRepo,
+		}
+
+		tables := map[string][]string{
+			"users": {"id"},
+		}
+
+		_, err := ds.Query(ctx, tables, nil, logger)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "query execution failed")
+	})
+
+	t.Run("query with advanced filters error", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		mockRepo := mysql.NewMockRepository(ctrl)
+
+		filters := map[string]map[string]job.FilterCondition{
+			"users": {"status": {Equals: []any{"active"}}},
+		}
+
+		mockRepo.EXPECT().GetDatabaseSchema(gomock.Any()).Return(schemaResult, nil)
+		mockRepo.EXPECT().QueryWithAdvancedFilters(gomock.Any(), schemaResult, "users", []string{"id"}, gomock.Any()).
+			Return(nil, errors.New("advanced query failed"))
+
+		ds := &DataSourceConfigMySQL{
+			MySQLRepository: mockRepo,
+		}
+
+		tables := map[string][]string{
+			"users": {"id"},
+		}
+
+		_, err := ds.Query(ctx, tables, filters, logger)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "advanced query failed")
+	})
 }
 
 func TestDataSourceConfigMySQL_GetSchemaInfo(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mockRepo := mysql.NewMockRepository(ctrl)
-
 	t.Run("successful schema retrieval", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		mockRepo := mysql.NewMockRepository(ctrl)
+
 		schemaResult := []mysql.TableSchema{
 			{
 				TableName: "users",
@@ -266,6 +324,10 @@ func TestDataSourceConfigMySQL_GetSchemaInfo(t *testing.T) {
 	})
 
 	t.Run("schema retrieval error", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		mockRepo := mysql.NewMockRepository(ctrl)
+
 		mockRepo.EXPECT().GetDatabaseSchema(gomock.Any()).Return(nil, errors.New("db error"))
 
 		ds := &DataSourceConfigMySQL{

@@ -106,24 +106,34 @@ func parseParameters(
 		}
 
 		switch {
-		case strings.Contains(key, "metadata."):
+		case strings.HasPrefix(key, "metadata."):
 			metadata[key] = value
-		case strings.Contains(key, "limit"):
-			*limit, _ = strconv.Atoi(value)
-		case strings.Contains(key, "page"):
-			*page, _ = strconv.Atoi(value)
-		case strings.Contains(key, "cursor"):
+		case key == "limit":
+			parsed, err := strconv.Atoi(value)
+			if err != nil {
+				return pkg.ValidateBusinessError(constant.ErrInvalidQueryParameter, "limit")
+			}
+
+			*limit = parsed
+		case key == "page":
+			parsed, err := strconv.Atoi(value)
+			if err != nil {
+				return pkg.ValidateBusinessError(constant.ErrInvalidQueryParameter, "page")
+			}
+
+			*page = parsed
+		case key == "cursor":
 			*cursor = value
-		case strings.Contains(key, "sortOrder"):
+		case key == "sortOrder":
 			*sortOrder = strings.ToLower(value)
-		case strings.Contains(key, "startDate"):
+		case key == "startDate":
 			parsed, err := time.Parse("2006-01-02", value)
 			if err != nil {
 				return pkg.ValidateBusinessError(constant.ErrInvalidDateFormat, "startDate")
 			}
 
 			*startDate = parsed
-		case strings.Contains(key, "endDate"):
+		case key == "endDate":
 			parsed, err := time.Parse("2006-01-02", value)
 			if err != nil {
 				return pkg.ValidateBusinessError(constant.ErrInvalidDateFormat, "endDate")
