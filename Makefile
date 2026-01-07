@@ -353,20 +353,13 @@ test-integration-check:
 cover:
 	$(call print_title,Generating test coverage report)
 	$(call check_command,go,Install Go from https://golang.org/doc/install)
-	@mkdir -p $(ARTIFACTS_DIR)
-	@PACKAGES=$$(go list ./... | grep -v -f ./scripts/coverage_ignore.txt 2>/dev/null || go list ./...); \
-	go test -coverprofile=$(ARTIFACTS_DIR)/coverage.raw.out $$PACKAGES
-	@# Filter out mock files from coverage (they are generated and should not be tested)
-	@grep -v '\.mock\.go' $(ARTIFACTS_DIR)/coverage.raw.out > $(ARTIFACTS_DIR)/coverage.out || cp $(ARTIFACTS_DIR)/coverage.raw.out $(ARTIFACTS_DIR)/coverage.out
-	@go tool cover -html=$(ARTIFACTS_DIR)/coverage.out -o $(ARTIFACTS_DIR)/coverage.html
-	@echo "Coverage report generated at $(ARTIFACTS_DIR)/coverage.html"
+	@sh ./scripts/coverage.sh $(ARTIFACTS_DIR)
 	@echo ""
-	@echo "Coverage Summary (excluding .mock.go files):"
+	@echo "Coverage Summary:"
 	@echo "----------------------------------------"
 	@go tool cover -func=$(ARTIFACTS_DIR)/coverage.out | grep total | awk '{print "Total coverage: " $$3}'
 	@echo "----------------------------------------"
 	@echo "Open $(ARTIFACTS_DIR)/coverage.html in your browser to view detailed coverage report"
-	@rm -f $(ARTIFACTS_DIR)/coverage.raw.out
 	@echo "[ok] Coverage report generated successfully"
 
 #-------------------------------------------------------

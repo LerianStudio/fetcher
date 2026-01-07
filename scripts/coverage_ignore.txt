@@ -5,6 +5,8 @@ github.com/LerianStudio/fetcher/components/worker/cmd/app
 github.com/LerianStudio/fetcher/components/worker/internal/bootstrap
 github.com/LerianStudio/fetcher/components/worker/internal/adapters/rabbitmq
 github.com/LerianStudio/fetcher/tests
+github.com/LerianStudio/fetcher/pkg/mongodb
+github.com/LerianStudio/fetcher/pkg/rabbitmq
 github.com/LerianStudio/fetcher/pkg/mongodb/connection
 github.com/LerianStudio/fetcher/pkg/mongodb/job
 github.com/LerianStudio/fetcher/pkg/constant
@@ -15,3 +17,4 @@ github.com/LerianStudio/fetcher/pkg/model/datasource/oracle
 github.com/LerianStudio/fetcher/pkg/model/datasource/postgres
 github.com/LerianStudio/fetcher/pkg/model/datasource/sqlserver
 github.com/LerianStudio/fetcher/pkg/datasource
+github.com/LerianStudio/fetcher/pkg/testutil
