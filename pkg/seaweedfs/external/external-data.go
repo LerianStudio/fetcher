@@ -19,12 +19,12 @@ type Repository interface {
 
 // SimpleRepository provides access to SeaweedFS storage for file operations using direct HTTP.
 type SimpleRepository struct {
-	client *seaweedfs.SeaweedFSClient
+	client seaweedfs.Client
 	bucket string
 }
 
 // NewSimpleRepository creates a new instance of SimpleRepository with the given HTTP client and bucket name.
-func NewSimpleRepository(client *seaweedfs.SeaweedFSClient, bucket string) *SimpleRepository {
+func NewSimpleRepository(client seaweedfs.Client, bucket string) *SimpleRepository {
 	return &SimpleRepository{
 		client: client,
 		bucket: bucket,

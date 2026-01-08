@@ -58,25 +58,8 @@ func ValidateParameters(params map[string]string) (*QueryHeader, error) {
 		useMetadata = false
 	)
 
-	for key, value := range params {
-		switch {
-		case strings.Contains(key, "metadata."):
-			metadata[key] = value
-		case strings.Contains(key, "limit"):
-			limit, _ = strconv.Atoi(value)
-		case strings.Contains(key, "page"):
-			page, _ = strconv.Atoi(value)
-		case strings.Contains(key, "cursor"):
-			cursor = value
-		case strings.Contains(key, "sortOrder"):
-			sortOrder = strings.ToLower(value)
-		case strings.Contains(key, "startDate"):
-			startDate, _ = time.Parse("2006-01-02", value)
-		case strings.Contains(key, "endDate"):
-			endDate, _ = time.Parse("2006-01-02", value)
-		default:
-			metadata[key] = value
-		}
+	if err := parseParameters(params, metadata, &startDate, &endDate, &cursor, &limit, &page, &sortOrder); err != nil {
+		return nil, err
 	}
 
 	var metadataPtr *bson.M
@@ -90,7 +73,7 @@ func ValidateParameters(params map[string]string) (*QueryHeader, error) {
 		return nil, err
 	}
 
-	err = validatePagination(cursor, sortOrder, limit)
+	err = validatePagination(cursor, sortOrder, limit, page)
 	if err != nil {
 		return nil, err
 	}
@@ -107,6 +90,62 @@ func ValidateParameters(params map[string]string) (*QueryHeader, error) {
 	}
 
 	return query, nil
+}
+
+func parseParameters(
+	params map[string]string,
+	metadata bson.M,
+	startDate, endDate *time.Time,
+	cursor *string,
+	limit, page *int,
+	sortOrder *string,
+) error {
+	for key, value := range params {
+		if value == "" {
+			continue
+		}
+
+		switch {
+		case strings.HasPrefix(key, "metadata."):
+			metadata[key] = value
+		case key == "limit":
+			parsed, err := strconv.Atoi(value)
+			if err != nil {
+				return pkg.ValidateBusinessError(constant.ErrInvalidQueryParameter, "limit")
+			}
+
+			*limit = parsed
+		case key == "page":
+			parsed, err := strconv.Atoi(value)
+			if err != nil {
+				return pkg.ValidateBusinessError(constant.ErrInvalidQueryParameter, "page")
+			}
+
+			*page = parsed
+		case key == "cursor":
+			*cursor = value
+		case key == "sortOrder":
+			*sortOrder = strings.ToLower(value)
+		case key == "startDate":
+			parsed, err := time.Parse("2006-01-02", value)
+			if err != nil {
+				return pkg.ValidateBusinessError(constant.ErrInvalidDateFormat, "startDate")
+			}
+
+			*startDate = parsed
+		case key == "endDate":
+			parsed, err := time.Parse("2006-01-02", value)
+			if err != nil {
+				return pkg.ValidateBusinessError(constant.ErrInvalidDateFormat, "endDate")
+			}
+
+			*endDate = parsed
+		default:
+			metadata[key] = value
+		}
+	}
+
+	return nil
 }
 
 func validateDates(startDate, endDate *time.Time) error {
@@ -209,11 +248,19 @@ func ClampNonNegative(page int) int {
 	return page
 }
 
-func validatePagination(cursor, sortOrder string, limit int) error {
+func validatePagination(cursor, sortOrder string, limit, page int) error {
 	maxPaginationLimit := libCommons.SafeInt64ToInt(pkg.GetenvIntOrDefault("MAX_PAGINATION_LIMIT", 100))
+
+	if limit < 1 {
+		return pkg.ValidateBusinessError(constant.ErrInvalidQueryParameter, "", "limit must be greater than 0")
+	}
 
 	if limit > maxPaginationLimit {
 		return pkg.ValidateBusinessError(constant.ErrPaginationLimitExceeded, "", maxPaginationLimit)
+	}
+
+	if page < 1 {
+		return pkg.ValidateBusinessError(constant.ErrInvalidQueryParameter, "", "page must be greater than 0")
 	}
 
 	if (sortOrder != string(constant.Asc)) && (sortOrder != string(constant.Desc)) {

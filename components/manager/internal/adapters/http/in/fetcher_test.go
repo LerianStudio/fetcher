@@ -826,8 +826,8 @@ func TestFetcherHandler_CreateJob_WithFilters(t *testing.T) {
 			})
 		}
 
-		// Verify filters were parsed
-		if len(request.DataRequest.Filters) == 0 {
+		// Verify filters were parsed (nested format is a map)
+		if request.DataRequest.Filters == nil || len(request.DataRequest.Filters) == 0 {
 			return httpUtils.WithError(c, pkg.ValidationError{
 				EntityType: "fetcher",
 				Code:       constant.ErrBadRequest.Error(),
@@ -850,13 +850,13 @@ func TestFetcherHandler_CreateJob_WithFilters(t *testing.T) {
 			"mappedFields": {
 				"ds1": {"table1": ["field1"]}
 			},
-			"filters": [
-				{
-					"field": "ds1.table1.field1",
-					"operator": "eq",
-					"value": ["test-value"]
+			"filters": {
+				"ds1": {
+					"table1": {
+						"field1": {"eq": ["test-value"]}
+					}
 				}
-			]
+			}
 		}
 	}`
 

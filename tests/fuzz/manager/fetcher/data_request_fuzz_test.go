@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/LerianStudio/fetcher/pkg/model"
+	"github.com/LerianStudio/fetcher/pkg/model/job"
 )
 
 func FuzzDataRequestValidation(f *testing.F) {
@@ -34,37 +35,17 @@ func FuzzDataRequestValidation(f *testing.F) {
 	})
 }
 
-func FuzzFilterFieldParsing(f *testing.F) {
-	f.Add("config.table.field")
-	f.Add("config.schema.table.field")
-	f.Add("")
-	f.Add(".")
-	f.Add("..")
-	f.Add("...")
-	f.Add("config.")
-	f.Add(".table.field")
-	f.Add("a.b.c.d.e")
-	f.Add("ab")
-
-	f.Fuzz(func(t *testing.T, field string) {
-		parsed, err := model.ParseFilterField(field)
-		if err == nil && parsed != nil {
-			_ = parsed.ConfigName
-			_ = parsed.TableName
-			_ = parsed.FieldName
-		}
-	})
-}
-
 func FuzzFilterReferencesValidation(f *testing.F) {
-	f.Add("ds1.table1.field1", "eq", "ds1")
+	f.Add("ds1", "table1", "field1", "ds1")
 
-	f.Fuzz(func(t *testing.T, filterField, operator, mappedDS string) {
-		filters := []model.Filter{
-			{
-				Field:    filterField,
-				Operator: operator,
-				Value:    []any{"value"},
+	f.Fuzz(func(t *testing.T, datasource, table, field, mappedDS string) {
+		filters := model.NestedFilters{
+			datasource: {
+				table: {
+					field: job.FilterCondition{
+						Equals: []any{"value"},
+					},
+				},
 			},
 		}
 

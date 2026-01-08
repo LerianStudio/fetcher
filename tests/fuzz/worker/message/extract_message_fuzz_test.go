@@ -7,17 +7,17 @@ import (
 	"encoding/json"
 	"testing"
 
+	modelJob "github.com/LerianStudio/fetcher/pkg/model/job"
 	"github.com/LerianStudio/fetcher/tests/fuzz/shared/generators"
 	"github.com/google/uuid"
-	modelJob "github.com/LerianStudio/fetcher/pkg/model/job"
 )
 
 type ExtractExternalDataMessage struct {
-	JobID          uuid.UUID                                             `json:"jobId"`
-	OrganizationID uuid.UUID                                             `json:"organizationId"`
-	MappedFields   map[string]map[string][]string                        `json:"mappedFields"`
+	JobID          uuid.UUID                                                 `json:"jobId"`
+	OrganizationID uuid.UUID                                                 `json:"organizationId"`
+	MappedFields   map[string]map[string][]string                            `json:"mappedFields"`
 	Filters        map[string]map[string]map[string]modelJob.FilterCondition `json:"filters"`
-	Metadata       map[string]any                                        `json:"metadata"`
+	Metadata       map[string]any                                            `json:"metadata"`
 }
 
 func FuzzExtractExternalDataMessageParsing(f *testing.F) {

@@ -21,7 +21,7 @@ type DataSourceConfigOracle struct {
 	datasource.DataSourceConfig
 
 	OracleConnection *oracle.Connection
-	OracleRepository *oracle.ExternalDataSource
+	OracleRepository oracle.Repository
 }
 
 // GetConfig returns the base DataSourceConfig.

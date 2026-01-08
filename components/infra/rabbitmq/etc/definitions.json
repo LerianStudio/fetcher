@@ -41,15 +41,6 @@
       }
     },
     {
-      "name": "reporter.generate-report.queue",
-      "vhost": "/",
-      "durable": true,
-      "arguments": {
-        "x-dead-letter-exchange": "reporter.dlx",
-        "x-dead-letter-routing-key": "reporter.dlq.key"
-      }
-    },
-    {
       "name": "reporter.dlq",
       "vhost": "/",
       "durable": true,
@@ -85,12 +76,6 @@
       "name": "fetcher.job.events",
       "vhost": "/",
       "type": "topic",
-      "durable": true
-    },
-    {
-      "name": "reporter.generate-report.exchange",
-      "vhost": "/",
-      "type": "direct",
       "durable": true
     },
     {
@@ -142,13 +127,6 @@
       "destination": "reporter.fetcher-notifications.queue",
       "destination_type": "queue",
       "routing_key": "job.failed.reporter"
-    },
-    {
-      "source": "reporter.generate-report.exchange",
-      "vhost": "/",
-      "destination": "reporter.generate-report.queue",
-      "destination_type": "queue",
-      "routing_key": "reporter.generate-report.key"
     },
     {
       "source": "reporter.dlx",

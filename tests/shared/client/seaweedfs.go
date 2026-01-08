@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
-	"github.com/LerianStudio/fetcher/tests/integration/containers/setup"
+	"github.com/LerianStudio/fetcher/tests/shared/config"
 )
 
 // SeaweedFSClient provides HTTP access to SeaweedFS for result validation.
@@ -21,7 +22,7 @@ func NewSeaweedFSClient(baseURL string) *SeaweedFSClient {
 	return &SeaweedFSClient{
 		baseURL: baseURL,
 		httpClient: &http.Client{
-			Timeout: setup.HTTPClientTimeout,
+			Timeout: config.HTTPClientTimeout,
 		},
 	}
 }
@@ -80,7 +81,7 @@ func (c *SeaweedFSClient) WaitForFile(ctx context.Context, path string, timeout 
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 
-	ticker := time.NewTicker(setup.PollingInterval)
+	ticker := time.NewTicker(config.PollingInterval)
 	defer ticker.Stop()
 
 	for {
@@ -90,11 +91,22 @@ func (c *SeaweedFSClient) WaitForFile(ctx context.Context, path string, timeout 
 		case <-timer.C:
 			return nil, fmt.Errorf("timeout waiting for file %s", path)
 		case <-ticker.C:
+			// Check context again before potentially blocking call
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+
 			data, err := c.GetFile(ctx, path)
 			if err == nil {
 				return data, nil
 			}
+
 			// File not found yet - continue waiting
+			// Continue waiting only for "file not found" errors
+			// Other errors (network, server) should fail immediately
+			if !strings.Contains(err.Error(), "file not found") {
+				return nil, fmt.Errorf("error while waiting for file: %w", err)
+			}
 		}
 	}
 }

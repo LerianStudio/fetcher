@@ -11,7 +11,6 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/datasource"
 	"github.com/LerianStudio/fetcher/pkg/model"
-	"github.com/LerianStudio/fetcher/pkg/model/job"
 	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 	jobRepo "github.com/LerianStudio/fetcher/pkg/mongodb/job"
 	"github.com/LerianStudio/fetcher/pkg/rabbitmq"
@@ -26,9 +25,6 @@ import (
 const (
 	// DeduplicationWindowMinutes is the time window for request deduplication.
 	DeduplicationWindowMinutes = 5
-
-	// ExtractExternalDataQueue is the RabbitMQ queue name for extraction jobs.
-	ExtractExternalDataQueue = "extract-external-data-queue"
 
 	// ConnectionTestTimeout is the timeout for testing connections.
 	ConnectionTestTimeout = 10 * time.Second
@@ -56,20 +52,25 @@ type CreateFetcherJob struct {
 	cryptor          crypto.Cryptor
 	rabbitMQ         *rabbitmq.RabbitMQAdapter
 	connectionTester ConnectionTester
+	queueName        string
 }
 
 // NewCreateFetcherJob creates a new CreateFetcherJob service.
+// The queueName parameter specifies the RabbitMQ queue for publishing jobs.
+// If empty or whitespace-only, defaults to "fetcher.extract-external-data.queue" for backwards compatibility.
 func NewCreateFetcherJob(
 	connectionRepo connRepo.Repository,
 	jobRepository jobRepo.Repository,
 	cryptor crypto.Cryptor,
 	rabbitMQ *rabbitmq.RabbitMQAdapter,
+	queueName string,
 ) *CreateFetcherJob {
 	svc := &CreateFetcherJob{
-		connRepo: connectionRepo,
-		jobRepo:  jobRepository,
-		cryptor:  cryptor,
-		rabbitMQ: rabbitMQ,
+		connRepo:  connectionRepo,
+		jobRepo:   jobRepository,
+		cryptor:   cryptor,
+		rabbitMQ:  rabbitMQ,
+		queueName: queueName,
 	}
 	// Use default connection tester that tests real connections
 	svc.connectionTester = svc
@@ -79,12 +80,15 @@ func NewCreateFetcherJob(
 
 // NewCreateFetcherJobWithTester creates a new CreateFetcherJob service with a custom connection tester.
 // This is useful for testing where you want to mock connection testing.
+// The queueName parameter specifies the RabbitMQ queue for publishing jobs.
+// If empty or whitespace-only, defaults to "fetcher.extract-external-data.queue" for backwards compatibility.
 func NewCreateFetcherJobWithTester(
 	connectionRepo connRepo.Repository,
 	jobRepository jobRepo.Repository,
 	cryptor crypto.Cryptor,
 	rabbitMQ *rabbitmq.RabbitMQAdapter,
 	tester ConnectionTester,
+	queueName string,
 ) *CreateFetcherJob {
 	svc := &CreateFetcherJob{
 		connRepo:         connectionRepo,
@@ -92,6 +96,7 @@ func NewCreateFetcherJobWithTester(
 		cryptor:          cryptor,
 		rabbitMQ:         rabbitMQ,
 		connectionTester: tester,
+		queueName:        queueName,
 	}
 	if tester == nil {
 		svc.connectionTester = svc
@@ -132,16 +137,9 @@ func (s *CreateFetcherJob) Execute(ctx context.Context, organizationID uuid.UUID
 		organizationID,
 		request.Metadata,
 		request.DataRequest.MappedFields,
-		func() []model.Filter {
-			filters := []model.Filter{}
-			for _, f := range request.DataRequest.Filters {
-				filters = append(filters, model.Filter(f))
-			}
-
-			return filters
-		}(),
-		model.JobStatusPending, // Initial status is PENDING
-		"",                     // ResultPath is empty initially
+		request.DataRequest.Filters, // Filters already in nested format
+		model.JobStatusPending,      // Initial status is PENDING
+		"",                          // ResultPath is empty initially
 		requestHash,
 		time.Now().UTC(),
 		nil, // CompletedAt is nil initially
@@ -241,7 +239,7 @@ func (s *CreateFetcherJob) Execute(ctx context.Context, organizationID uuid.UUID
 				EntityType: "fetcher",
 				Code:       constant.ErrConnectionDown.Error(),
 				Title:      "Connection Down",
-				Message:    fmt.Sprintf("Connection '%s' is not available: %s", conn.ConfigName, err.Error()),
+				Message:    fmt.Sprintf("Connection '%s' is not available", conn.ConfigName),
 			}
 		}
 	}
@@ -313,13 +311,9 @@ func (s *CreateFetcherJob) publishToQueue(ctx context.Context, j *model.Job) err
 		"createdAt":      j.CreatedAt,
 	}
 
-	// Transform filters from array format to the nested map format expected by Worker:
-	// map[datasource]map[table]map[field]FilterCondition
+	// Filters are already in the nested format expected by Worker
 	if len(j.Filters) > 0 {
-		transformedFilters := s.transformFiltersForWorker(j.Filters, j.MappedFields)
-		if len(transformedFilters) > 0 {
-			message["filters"] = transformedFilters
-		}
+		message["filters"] = j.Filters
 	}
 
 	messageBytes, err := json.Marshal(message)
@@ -332,102 +326,5 @@ func (s *CreateFetcherJob) publishToQueue(ctx context.Context, j *model.Job) err
 		"organizationId": j.OrganizationID.String(),
 	}
 
-	return s.rabbitMQ.ProducerDefault(ctx, "", ExtractExternalDataQueue, messageBytes, &header)
-}
-
-// transformFiltersForWorker converts flat filter array to nested map structure.
-// The Worker expects: map[datasource]map[table]map[field]FilterCondition
-//
-// Each filter's Field must be in qualified format:
-// - "configName.tableName.fieldName" (3 parts)
-// - "configName.schema.tableName.fieldName" (4 parts)
-//
-// Filters are applied ONLY to their specified datasource/table combination.
-//
-//nolint:gocyclo // High cyclomatic complexity is inherent to operator mapping with 9 distinct cases
-func (s *CreateFetcherJob) transformFiltersForWorker(
-	filters []model.Filter,
-	mappedFields map[string]map[string][]string,
-) map[string]map[string]map[string]job.FilterCondition {
-	if len(filters) == 0 || len(mappedFields) == 0 {
-		return nil
-	}
-
-	// Initialize result map with empty maps for all datasources and tables
-	result := make(map[string]map[string]map[string]job.FilterCondition)
-	for dsName, tables := range mappedFields {
-		result[dsName] = make(map[string]map[string]job.FilterCondition)
-		for table := range tables {
-			result[dsName][table] = make(map[string]job.FilterCondition)
-		}
-	}
-
-	// Process each filter and apply to its specific table
-	for _, f := range filters {
-		parsed, err := model.ParseFilterField(f.Field)
-		if err != nil {
-			// Skip invalid filters (validation should catch these earlier)
-			continue
-		}
-
-		// Check if the datasource and table exist in mappedFields
-		if _, dsExists := result[parsed.ConfigName]; !dsExists {
-			continue
-		}
-
-		if _, tableExists := result[parsed.ConfigName][parsed.TableName]; !tableExists {
-			continue
-		}
-
-		// Get or create the filter condition for this field
-		condition, exists := result[parsed.ConfigName][parsed.TableName][parsed.FieldName]
-		if !exists {
-			condition = job.FilterCondition{}
-		}
-
-		// Map operator to appropriate filter condition field
-		switch f.Operator {
-		case "eq":
-			condition.Equals = append(condition.Equals, f.Value...)
-		case "gt":
-			condition.GreaterThan = append(condition.GreaterThan, f.Value...)
-		case "gte":
-			condition.GreaterOrEqual = append(condition.GreaterOrEqual, f.Value...)
-		case "lt":
-			condition.LessThan = append(condition.LessThan, f.Value...)
-		case "lte":
-			condition.LessOrEqual = append(condition.LessOrEqual, f.Value...)
-		case "ne":
-			condition.NotEquals = append(condition.NotEquals, f.Value...)
-		case "in":
-			condition.In = append(condition.In, f.Value...)
-		case "nin":
-			condition.NotIn = append(condition.NotIn, f.Value...)
-		case "like":
-			condition.Like = append(condition.Like, f.Value...)
-		case "between":
-			condition.Between = append(condition.Between, f.Value...)
-		}
-
-		result[parsed.ConfigName][parsed.TableName][parsed.FieldName] = condition
-	}
-
-	// Clean up empty tables from result to avoid sending unnecessary data
-	for dsName, tables := range result {
-		for table, fields := range tables {
-			if len(fields) == 0 {
-				delete(result[dsName], table)
-			}
-		}
-
-		if len(result[dsName]) == 0 {
-			delete(result, dsName)
-		}
-	}
-
-	if len(result) == 0 {
-		return nil
-	}
-
-	return result
+	return s.rabbitMQ.ProducerDefault(ctx, "", s.queueName, messageBytes, &header)
 }

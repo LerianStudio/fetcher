@@ -94,7 +94,7 @@ func TestNewDataSourceRepository_Integration(t *testing.T) {
 	// Wait a bit for MongoDB to be fully ready
 	time.Sleep(2 * time.Second)
 
-	logger := libCommons.NewDefaultLogger()
+	logger := libCommons.NewLoggerFromContext(ctx)
 	dbName := "test_db"
 
 	t.Run("successfully creates data source repository", func(t *testing.T) {
@@ -124,7 +124,7 @@ func TestCloseConnection_Integration(t *testing.T) {
 
 	time.Sleep(2 * time.Second)
 
-	logger := libCommons.NewDefaultLogger()
+	logger := libCommons.NewLoggerFromContext(ctx)
 	dbName := "test_db"
 
 	t.Run("successfully closes connection", func(t *testing.T) {
@@ -157,7 +157,7 @@ func TestQuery_Integration(t *testing.T) {
 
 	time.Sleep(2 * time.Second)
 
-	logger := libCommons.NewDefaultLogger()
+	logger := libCommons.NewLoggerFromContext(ctx)
 	dbName := "test_db"
 
 	err = seedTestData(ctx, uri, dbName)
@@ -225,7 +225,7 @@ func TestGetDatabaseSchema_Integration(t *testing.T) {
 
 	time.Sleep(2 * time.Second)
 
-	logger := libCommons.NewDefaultLogger()
+	logger := libCommons.NewLoggerFromContext(ctx)
 	dbName := "test_db"
 
 	err = seedTestData(ctx, uri, dbName)
@@ -300,7 +300,7 @@ func TestPingMongo_Integration(t *testing.T) {
 
 	time.Sleep(2 * time.Second)
 
-	logger := libCommons.NewDefaultLogger()
+	logger := libCommons.NewLoggerFromContext(ctx)
 	dbName := "test_db"
 
 	t.Run("pings successfully with valid connection", func(t *testing.T) {

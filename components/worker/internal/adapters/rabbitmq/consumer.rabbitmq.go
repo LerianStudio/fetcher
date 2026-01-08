@@ -24,7 +24,7 @@ type QueueHandlerFunc func(ctx context.Context, body []byte, headers map[string]
 
 // ConsumerRoutes wraps RabbitMQAdapter to support multiple queues with headers.
 type ConsumerRoutes struct {
-	adapter    *rabbitmq.RabbitMQAdapter
+	adapter    rabbitmq.Adapter
 	routes     map[string]QueueHandlerFunc
 	numWorkers int
 	log.Logger
@@ -32,13 +32,17 @@ type ConsumerRoutes struct {
 	shutdownWg sync.WaitGroup
 }
 
-// NewConsumerRoutes creates a new instance of ConsumerRoutes using RabbitMQAdapter.
+// NewConsumerRoutes creates a new instance of ConsumerRoutes using a RabbitMQ connection.
 func NewConsumerRoutes(conn *libRabbitmq.RabbitMQConnection, numWorkers int, logger log.Logger, telemetry *opentelemetry.Telemetry) *ConsumerRoutes {
+	adapter := rabbitmq.NewRabbitMQAdapter(conn)
+	return NewConsumerRoutesWithAdapter(adapter, numWorkers, logger, telemetry)
+}
+
+// NewConsumerRoutesWithAdapter creates a new instance of ConsumerRoutes using a specific RabbitMQ adapter.
+func NewConsumerRoutesWithAdapter(adapter rabbitmq.Adapter, numWorkers int, logger log.Logger, telemetry *opentelemetry.Telemetry) *ConsumerRoutes {
 	if numWorkers <= 0 {
 		numWorkers = 5
 	}
-
-	adapter := rabbitmq.NewRabbitMQAdapter(conn)
 
 	cr := &ConsumerRoutes{
 		adapter:    adapter,

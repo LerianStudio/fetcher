@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/LerianStudio/fetcher/tests/integration/containers/setup"
+	"github.com/LerianStudio/fetcher/tests/shared/config"
 )
 
 // ManagerClient provides HTTP access to the Manager API.
@@ -22,13 +22,28 @@ type ManagerClient struct {
 
 // NewManagerClient creates a new Manager API client.
 func NewManagerClient(baseURL, organizationID string) *ManagerClient {
+	transport := &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 10,
+		IdleConnTimeout:     90 * time.Second,
+	}
+
 	return &ManagerClient{
 		baseURL:        baseURL,
 		organizationID: organizationID,
 		httpClient: &http.Client{
-			Timeout: setup.HTTPClientTimeout,
+			Timeout:   config.HTTPClientTimeout,
+			Transport: transport,
 		},
 	}
+}
+
+// SSLInput contains SSL configuration for connection creation.
+type SSLInput struct {
+	Mode string `json:"mode"`           // SSL mode (e.g., "require", "verify-full")
+	CA   string `json:"ca,omitempty"`   // CA certificate (PEM format)
+	Cert string `json:"cert,omitempty"` // Client certificate (PEM format)
+	Key  string `json:"key,omitempty"`  // Client private key (PEM format)
 }
 
 // ConnectionInput represents the request body for creating a connection.
@@ -38,9 +53,74 @@ type ConnectionInput struct {
 	Host         string         `json:"host"`
 	Port         int            `json:"port"`
 	DatabaseName string         `json:"databaseName"`
-	Username     string         `json:"username"`
+	Username     string         `json:"userName"`
 	Password     string         `json:"password"`
+	SSL          *SSLInput      `json:"ssl,omitempty"`
 	Metadata     map[string]any `json:"metadata,omitempty"`
+}
+
+// ConnectionPartialUpdateInput represents the request body for partial updates (PATCH).
+// All fields are pointers to distinguish "not provided" from "provided with value".
+type ConnectionPartialUpdateInput struct {
+	ConfigName   *string                `json:"configName,omitempty"`
+	Type         *string                `json:"type,omitempty"`
+	Host         *string                `json:"host,omitempty"`
+	Port         *int                   `json:"port,omitempty"`
+	DatabaseName *string                `json:"databaseName,omitempty"`
+	Username     *string                `json:"userName,omitempty"`
+	Password     *string                `json:"password,omitempty"`
+	SSL          *SSLPartialUpdateInput `json:"ssl,omitempty"`
+	Metadata     map[string]any         `json:"metadata,omitempty"`
+}
+
+// SSLPartialUpdateInput represents partial SSL configuration for updates.
+type SSLPartialUpdateInput struct {
+	Mode *string `json:"mode,omitempty"`
+	CA   *string `json:"ca,omitempty"`
+	Cert *string `json:"cert,omitempty"`
+	Key  *string `json:"key,omitempty"`
+}
+
+// NewSSLInput creates an SSLInput from SSL connection info.
+func NewSSLInput(mode, caCert, clientCert, clientKey string) *SSLInput {
+	return &SSLInput{
+		Mode: mode,
+		CA:   caCert,
+		Cert: clientCert,
+		Key:  clientKey,
+	}
+}
+
+// WithSSL returns a copy of ConnectionInput with SSL configuration.
+func (c ConnectionInput) WithSSL(ssl *SSLInput) ConnectionInput {
+	c.SSL = ssl
+	return c
+}
+
+// ConnectionInputFromInternalDB creates a ConnectionInput from InternalDBConnection.
+// This is useful for creating connections from container info.
+func ConnectionInputFromInternalDB(configName, dbType string, conn config.InternalDBConnection) ConnectionInput {
+	input := ConnectionInput{
+		ConfigName:   configName,
+		Type:         dbType,
+		Host:         conn.Host,
+		Port:         conn.Port,
+		DatabaseName: conn.Database,
+		Username:     conn.Username,
+		Password:     conn.Password,
+	}
+
+	// Add SSL if enabled
+	if conn.SSLEnabled {
+		input.SSL = &SSLInput{
+			Mode: conn.SSLMode,
+			CA:   conn.SSLCACert,
+			Cert: conn.SSLClientCert,
+			Key:  conn.SSLClientKey,
+		}
+	}
+
+	return input
 }
 
 // ConnectionResponse represents the response from creating/getting a connection.
@@ -51,7 +131,7 @@ type ConnectionResponse struct {
 	Host         string         `json:"host"`
 	Port         int            `json:"port"`
 	DatabaseName string         `json:"databaseName"`
-	Username     string         `json:"username"`
+	Username     string         `json:"userName"`
 	Metadata     map[string]any `json:"metadata,omitempty"`
 	CreatedAt    string         `json:"createdAt"`
 	UpdatedAt    string         `json:"updatedAt"`
@@ -129,20 +209,12 @@ func (c *ManagerClient) CreateConnection(ctx context.Context, input ConnectionIn
 	}
 
 	// The API returns {"id": "uuid"} on creation
-	var result map[string]string
-	if err := json.Unmarshal(respBody, &result); err != nil {
+	var connectionResponse ConnectionResponse
+	if err := json.Unmarshal(respBody, &connectionResponse); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
 
-	return &ConnectionResponse{
-		ID:           result["id"],
-		ConfigName:   input.ConfigName,
-		Type:         input.Type,
-		Host:         input.Host,
-		Port:         input.Port,
-		DatabaseName: input.DatabaseName,
-		Username:     input.Username,
-	}, nil
+	return &connectionResponse, nil
 }
 
 // CreateFetcherJob creates a new data extraction job via the Manager API.
@@ -219,7 +291,13 @@ func (c *ManagerClient) GetJob(ctx context.Context, jobID string) (*JobResponse,
 func (c *ManagerClient) WaitForJobCompletion(ctx context.Context, jobID string, timeout time.Duration) (*JobResponse, error) {
 	deadline := time.Now().Add(timeout)
 
-	ticker := time.NewTicker(setup.PollingInterval)
+	var lastErr error
+
+	consecutiveErrors := 0
+
+	const maxConsecutiveErrors = 5
+
+	ticker := time.NewTicker(config.PollingInterval)
 	defer ticker.Stop()
 
 	for {
@@ -228,13 +306,27 @@ func (c *ManagerClient) WaitForJobCompletion(ctx context.Context, jobID string, 
 			return nil, ctx.Err()
 		case <-ticker.C:
 			if time.Now().After(deadline) {
+				if lastErr != nil {
+					return nil, fmt.Errorf("timeout waiting for job %s to complete (last error: %w)", jobID, lastErr)
+				}
+
 				return nil, fmt.Errorf("timeout waiting for job %s to complete", jobID)
 			}
 
 			job, err := c.GetJob(ctx, jobID)
 			if err != nil {
-				continue // Retry on transient errors
+				lastErr = err
+
+				consecutiveErrors++
+				if consecutiveErrors >= maxConsecutiveErrors {
+					return nil, fmt.Errorf("job %s: too many consecutive errors: %w", jobID, err)
+				}
+
+				continue
 			}
+
+			consecutiveErrors = 0
+			lastErr = nil
 
 			switch job.Status {
 			case "completed":
@@ -319,7 +411,7 @@ func (c *ManagerClient) DeleteConnection(ctx context.Context, connectionID strin
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
 		respBody, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("delete connection failed with status %d: %s", resp.StatusCode, string(respBody))
 	}
@@ -412,6 +504,55 @@ func (c *ManagerClient) UpdateConnection(ctx context.Context, connectionID strin
 	}
 
 	return &result, nil
+}
+
+// PartialUpdateConnection updates specific fields of a connection via PATCH.
+// Only the provided fields (non-nil) will be updated.
+func (c *ManagerClient) PartialUpdateConnection(ctx context.Context, connectionID string, input ConnectionPartialUpdateInput) (*ConnectionResponse, error) {
+	body, err := json.Marshal(input)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal partial update input: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, c.baseURL+"/v1/management/connections/"+connectionID, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Organization-Id", c.organizationID)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("partial update connection failed with status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var result ConnectionResponse
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// StringPtr is a helper to create a string pointer (useful for partial updates).
+func StringPtr(s string) *string {
+	return &s
+}
+
+// IntPtr is a helper to create an int pointer (useful for partial updates).
+func IntPtr(i int) *int {
+	return &i
 }
 
 // ConnectionTestResponse represents the response from testing a connection.

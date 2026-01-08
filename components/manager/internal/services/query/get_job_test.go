@@ -34,7 +34,7 @@ func TestGetJob_Execute(t *testing.T) {
 				"table1": {"field1", "field2"},
 			},
 		},
-		Filters:     []model.Filter{},
+		Filters:     model.NestedFilters{},
 		RequestHash: "abc123",
 		CreatedAt:   now,
 	}

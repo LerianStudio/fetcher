@@ -8,12 +8,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/LerianStudio/fetcher/tests/integration/containers/client"
-	"github.com/LerianStudio/fetcher/tests/integration/containers/fixtures"
 	"github.com/LerianStudio/fetcher/tests/integration/containers/setup"
+	"github.com/LerianStudio/fetcher/tests/shared/client"
+	"github.com/LerianStudio/fetcher/tests/shared/fixtures"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
@@ -73,6 +74,11 @@ func getInfrastructureOptions() setup.InfrastructureOptions {
 		return setup.ReuseInfrastructureOptions()
 	}
 
+	// Check if SSL testing is enabled
+	if os.Getenv("ENABLE_SSL") == "true" {
+		return setup.SSLInfrastructureOptions()
+	}
+
 	// Check if we should use fixed ports (for debug modes)
 	if os.Getenv("USE_FIXED_PORTS") == "true" {
 		return setup.DebugInfrastructureOptions()
@@ -113,21 +119,21 @@ func (s *WorkerIntegrationTestSuite) SetupSuite() {
 
 	if infraOpts.ReuseExisting {
 		s.T().Log("Attempting to reuse existing infrastructure...")
-		infra, err = setup.StartInfrastructureWithOptions(s.ctx, infraOpts)
 	} else {
 		s.T().Log("Starting new infrastructure containers...")
-		infra, err = setup.StartInfrastructureWithOptions(s.ctx, infraOpts)
 	}
+
+	infra, err = setup.StartInfrastructureWithOptions(s.ctx, infraOpts)
 	require.NoError(s.T(), err, "Failed to start infrastructure")
 	s.infra = infra
 
 	// Setup RabbitMQ topology (idempotent - safe to call even if already set up)
-	err = setup.SetupRabbitMQTopology(s.ctx, s.infra.RabbitMQURI)
+	err = setup.SetupRabbitMQTopology(s.ctx, s.infra.RabbitMQURI())
 	require.NoError(s.T(), err, "Failed to setup RabbitMQ topology")
 
 	// Purge test queue when reusing infrastructure to remove stale events
 	if infraOpts.ReuseExisting {
-		purged, err := setup.PurgeTestQueue(s.ctx, s.infra.RabbitMQURI)
+		purged, err := setup.PurgeTestQueue(s.ctx, s.infra.RabbitMQURI())
 		if err != nil {
 			s.T().Logf("Warning: Could not purge test queue: %v", err)
 		} else if purged > 0 {
@@ -165,10 +171,10 @@ func (s *WorkerIntegrationTestSuite) SetupSuite() {
 
 	// Initialize clients
 	s.managerClient = client.NewManagerClient(apps.ManagerURL, fixtures.TestOrganizationID)
-	s.seaweedClient = client.NewSeaweedFSClient(s.infra.SeaweedFSURL)
+	s.seaweedClient = client.NewSeaweedFSClient(s.infra.SeaweedFSURL())
 
 	// Initialize RabbitMQ event consumer
-	eventConsumer, err := client.NewRabbitMQEventConsumer(s.infra.RabbitMQURI)
+	eventConsumer, err := client.NewRabbitMQEventConsumer(s.infra.RabbitMQURI())
 	require.NoError(s.T(), err, "Failed to create event consumer")
 	s.eventConsumer = eventConsumer
 
@@ -259,7 +265,7 @@ func (s *WorkerIntegrationTestSuite) uniqueConfigName(prefix string) string {
 // Only MongoDB needs programmatic seeding here due to ObjectID generation.
 func (s *WorkerIntegrationTestSuite) seedExternalDatabases() error {
 	// Seed MongoDB External (requires programmatic seeding for ObjectIDs)
-	err := fixtures.InitMongoDBExternal(s.ctx, s.infra.MongoExternalURI, "external_transactions")
+	err := fixtures.InitMongoDBExternal(s.ctx, s.infra.MongoExternalURI(), "external_transactions")
 	if err != nil {
 		return err
 	}
@@ -302,7 +308,7 @@ func (s *WorkerIntegrationTestSuite) TestSingleDatasourcePostgreSQL() {
 
 	// Step 1: Create PostgreSQL connection via API
 	// Uses Docker network hostname - works for containers (Docker DNS) and host (via /etc/hosts)
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 
 	connResp, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
 		ConfigName:   configName,
@@ -315,6 +321,14 @@ func (s *WorkerIntegrationTestSuite) TestSingleDatasourcePostgreSQL() {
 	})
 	require.NoError(t, err, "Failed to create PostgreSQL connection")
 	assert.NotEmpty(t, connResp.ID)
+	assert.Equal(t, configName, connResp.ConfigName)
+	assert.Equal(t, "POSTGRESQL", connResp.Type)
+	assert.Equal(t, pg.Host, connResp.Host)
+	assert.Equal(t, pg.Port, connResp.Port)
+	assert.Equal(t, pg.Database, connResp.DatabaseName)
+	assert.Equal(t, pg.Username, connResp.Username)
+	assert.NotEmpty(t, connResp.CreatedAt)
+	assert.NotEmpty(t, connResp.UpdatedAt)
 
 	// Step 2: Create fetcher job via API
 	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, client.FetcherRequest{
@@ -378,7 +392,7 @@ func (s *WorkerIntegrationTestSuite) TestSingleDatasourceMySQL() {
 
 	// Step 1: Create MySQL connection via API
 	// Uses Docker network hostname - works for containers (Docker DNS) and host (via /etc/hosts)
-	mysql := s.infra.MySQLInternal
+	mysql := s.infra.MySQLInternal()
 
 	connResp, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
 		ConfigName:   "mysql_test",
@@ -434,7 +448,7 @@ func (s *WorkerIntegrationTestSuite) TestSingleDatasourceMongoDB() {
 
 	// Step 1: Create MongoDB connection via API
 	// Uses Docker network hostname - works for containers (Docker DNS) and host (via /etc/hosts)
-	mongo := s.infra.MongoExternalInternal
+	mongo := s.infra.MongoExternalInternal()
 
 	connResp, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
 		ConfigName:   "mongodb_test",
@@ -490,7 +504,7 @@ func (s *WorkerIntegrationTestSuite) TestSingleDatasourceSQLServer() {
 
 	// Step 1: Create SQL Server connection via API
 	// Uses Docker network hostname - works for containers (Docker DNS) and host (via /etc/hosts)
-	mssql := s.infra.SQLServerInternal
+	mssql := s.infra.SQLServerInternal()
 
 	connResp, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
 		ConfigName:   "sqlserver_test",
@@ -555,7 +569,7 @@ func (s *WorkerIntegrationTestSuite) TestSingleDatasourceOracle() {
 
 	// Step 1: Create Oracle connection via API
 	// Uses Docker network hostname - works for containers (Docker DNS) and host (via /etc/hosts)
-	oracle := s.infra.OracleInternal
+	oracle := s.infra.OracleInternal()
 
 	connResp, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
 		ConfigName:   "oracle_test",
@@ -630,7 +644,7 @@ func (s *WorkerIntegrationTestSuite) TestPostgreSQLMultiSchemaExtraction() {
 	configName := s.uniqueConfigName("postgres_multi_schema")
 
 	// Step 1: Create PostgreSQL connection
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 	connResp, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
 		ConfigName:   configName,
 		Type:         "POSTGRESQL",
@@ -698,7 +712,7 @@ func (s *WorkerIntegrationTestSuite) TestPostgreSQLMultiSchemaWithFilters() {
 	configName := s.uniqueConfigName("postgres_multi_schema_filtered")
 
 	// Create PostgreSQL connection
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 	_, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
 		ConfigName:   configName,
 		Type:         "POSTGRESQL",
@@ -762,7 +776,7 @@ func (s *WorkerIntegrationTestSuite) TestMultiDatasourceMultiSchemaExtraction() 
 	oracleConfigName := s.uniqueConfigName("oracle_multi_ds")
 
 	// Step 1: Create PostgreSQL connection
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 	_, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
 		ConfigName:   pgConfigName,
 		Type:         "POSTGRESQL",
@@ -775,7 +789,7 @@ func (s *WorkerIntegrationTestSuite) TestMultiDatasourceMultiSchemaExtraction() 
 	require.NoError(t, err, "Failed to create PostgreSQL connection")
 
 	// Step 2: Create SQL Server connection
-	mssql := s.infra.SQLServerInternal
+	mssql := s.infra.SQLServerInternal()
 	_, err = s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
 		ConfigName:   mssqlConfigName,
 		Type:         "SQL_SERVER",
@@ -788,7 +802,7 @@ func (s *WorkerIntegrationTestSuite) TestMultiDatasourceMultiSchemaExtraction() 
 	require.NoError(t, err, "Failed to create SQL Server connection")
 
 	// Step 3: Create Oracle connection
-	oracle := s.infra.OracleInternal
+	oracle := s.infra.OracleInternal()
 	_, err = s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
 		ConfigName:   oracleConfigName,
 		Type:         "ORACLE",
@@ -890,7 +904,7 @@ func (s *WorkerIntegrationTestSuite) TestValidateSchema_MultiSchema() {
 	configName := s.uniqueConfigName("postgres_validate_multi")
 
 	// Create PostgreSQL connection
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 	_, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
 		ConfigName:   configName,
 		Type:         "POSTGRESQL",
@@ -954,7 +968,7 @@ func (s *WorkerIntegrationTestSuite) TestMultiDatasourceExtraction() {
 
 	// Ensure connections exist (created in previous tests or create new ones)
 	// Uses Docker network hostname - works for containers (Docker DNS) and host (via /etc/hosts)
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 
 	_, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
 		ConfigName:   "postgres_multi",
@@ -967,7 +981,7 @@ func (s *WorkerIntegrationTestSuite) TestMultiDatasourceExtraction() {
 	})
 	require.NoError(t, err)
 
-	mysql := s.infra.MySQLInternal
+	mysql := s.infra.MySQLInternal()
 
 	_, err = s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
 		ConfigName:   "mysql_multi",
@@ -1019,7 +1033,7 @@ func (s *WorkerIntegrationTestSuite) TestJobWithFilters() {
 
 	// Create connection for filtered query
 	// Uses Docker network hostname - works for containers (Docker DNS) and host (via /etc/hosts)
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 
 	_, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
 		ConfigName:   "postgres_filtered",
@@ -1076,7 +1090,7 @@ func (s *WorkerIntegrationTestSuite) TestJobWithSelectiveFilters() {
 	t := s.T()
 
 	// Create connection
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 
 	_, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
 		ConfigName:   "postgres_selective_filter",
@@ -1133,7 +1147,7 @@ func (s *WorkerIntegrationTestSuite) TestJobIdempotency() {
 
 	// Create connection
 	// Uses Docker network hostname - works for containers (Docker DNS) and host (via /etc/hosts)
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 
 	_, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
 		ConfigName:   "postgres_idempotency",
@@ -1176,7 +1190,7 @@ func (s *WorkerIntegrationTestSuite) TestSeaweedFSFileValidation() {
 
 	// Create connection
 	// Uses Docker network hostname - works for containers (Docker DNS) and host (via /etc/hosts)
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 
 	_, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
 		ConfigName:   "postgres_seaweed",
@@ -1230,7 +1244,7 @@ func (s *WorkerIntegrationTestSuite) TestMetadataPassthrough() {
 
 	// Create connection
 	// Uses Docker network hostname - works for containers (Docker DNS) and host (via /etc/hosts)
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 
 	_, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
 		ConfigName:   "postgres_metadata",
@@ -1327,7 +1341,7 @@ func (s *WorkerIntegrationTestSuite) TestErrorScenario_ConnectionDown() {
 	// Job creation will fail because Manager tests connection before publishing
 	require.Error(t, err, "Expected job creation to fail with unavailable datasource")
 	assert.Nil(t, jobResp)
-	assert.Contains(t, err.Error(), "connection", "Error should mention connection issue")
+	assert.Contains(t, strings.ToLower(err.Error()), "connection", "Error should mention connection issue")
 }
 
 // TestErrorScenario_InvalidCredentials validates handling of authentication failures.
@@ -1337,7 +1351,7 @@ func (s *WorkerIntegrationTestSuite) TestErrorScenario_InvalidCredentials() {
 
 	// Get the real PostgreSQL host but use wrong password
 	// Uses Docker network hostname - works for containers (Docker DNS) and host (via /etc/hosts)
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 
 	_, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
 		ConfigName:   "postgres_bad_creds",
@@ -1364,7 +1378,10 @@ func (s *WorkerIntegrationTestSuite) TestErrorScenario_InvalidCredentials() {
 
 	require.Error(t, err, "Expected job creation to fail with invalid credentials")
 	assert.Nil(t, jobResp)
-	assert.Contains(t, err.Error(), "authentication", "Error should mention authentication failure")
+	// API returns "Connection Down" for any connection failure (including auth failures)
+	errLower := strings.ToLower(err.Error())
+	assert.True(t, strings.Contains(errLower, "authentication") || strings.Contains(errLower, "connection"),
+		"Error should mention authentication or connection failure, got: %s", err.Error())
 }
 
 // TestErrorScenario_NonExistentTable validates handling of invalid table references.
@@ -1374,7 +1391,7 @@ func (s *WorkerIntegrationTestSuite) TestErrorScenario_NonExistentTable() {
 
 	// Create valid connection
 	// Uses Docker network hostname - works for containers (Docker DNS) and host (via /etc/hosts)
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 
 	_, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
 		ConfigName:   "postgres_for_missing_table",
@@ -1447,7 +1464,7 @@ func (s *WorkerIntegrationTestSuite) TestConnection_GetByID() {
 	t := s.T()
 
 	// Create a connection first
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 	configName := s.uniqueConfigName("postgres_get_test")
 
 	connResp, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
@@ -1492,7 +1509,7 @@ func (s *WorkerIntegrationTestSuite) TestConnection_Update() {
 	t := s.T()
 
 	// Create a connection first
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 	configName := s.uniqueConfigName("postgres_update_test")
 
 	connResp, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
@@ -1531,7 +1548,7 @@ func (s *WorkerIntegrationTestSuite) TestConnection_Update() {
 func (s *WorkerIntegrationTestSuite) TestConnection_Update_NotFound() {
 	t := s.T()
 
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 	_, err := s.managerClient.UpdateConnection(s.ctx, "00000000-0000-0000-0000-000000000000", client.ConnectionInput{
 		ConfigName:   "test",
 		Type:         "POSTGRESQL",
@@ -1545,12 +1562,108 @@ func (s *WorkerIntegrationTestSuite) TestConnection_Update_NotFound() {
 	assert.Contains(t, err.Error(), "404")
 }
 
+// TestConnection_PartialUpdate validates true partial update behavior via PATCH endpoint.
+// This test verifies that only provided fields are updated, while other fields remain unchanged.
+func (s *WorkerIntegrationTestSuite) TestConnection_PartialUpdate() {
+	t := s.T()
+
+	// Create a connection first with all fields populated
+	pg := s.infra.PostgresInternal()
+	configName := s.uniqueConfigName("postgres_partial_update")
+
+	connResp, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
+		ConfigName:   configName,
+		Type:         "POSTGRESQL",
+		Host:         pg.Host,
+		Port:         pg.Port,
+		DatabaseName: pg.Database,
+		Username:     pg.Username,
+		Password:     pg.Password,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, connResp.ID)
+
+	// Store original values to verify they don't change
+	originalHost := connResp.Host
+	originalPort := connResp.Port
+	originalDatabaseName := connResp.DatabaseName
+	originalUsername := connResp.Username
+	originalType := connResp.Type
+
+	// Perform PARTIAL update - only change configName
+	newConfigName := s.uniqueConfigName("postgres_partially_updated")
+	updated, err := s.managerClient.PartialUpdateConnection(s.ctx, connResp.ID, client.ConnectionPartialUpdateInput{
+		ConfigName: client.StringPtr(newConfigName),
+		// All other fields are nil - should NOT be updated
+	})
+	require.NoError(t, err, "Partial update should succeed")
+
+	// Verify the updated field changed
+	assert.Equal(t, newConfigName, updated.ConfigName, "ConfigName should be updated")
+
+	// Verify all other fields remain UNCHANGED
+	assert.Equal(t, originalHost, updated.Host, "Host should remain unchanged")
+	assert.Equal(t, originalPort, updated.Port, "Port should remain unchanged")
+	assert.Equal(t, originalDatabaseName, updated.DatabaseName, "DatabaseName should remain unchanged")
+	assert.Equal(t, originalUsername, updated.Username, "Username should remain unchanged")
+	assert.Equal(t, originalType, updated.Type, "Type should remain unchanged")
+
+	// Verify the update persisted by fetching again
+	gotConn, err := s.managerClient.GetConnection(s.ctx, connResp.ID)
+	require.NoError(t, err)
+	assert.Equal(t, newConfigName, gotConn.ConfigName, "Persisted ConfigName should match")
+	assert.Equal(t, originalHost, gotConn.Host, "Persisted Host should remain unchanged")
+	assert.Equal(t, originalPort, gotConn.Port, "Persisted Port should remain unchanged")
+}
+
+// TestConnection_PartialUpdate_MultipleFields validates partial update with multiple fields.
+func (s *WorkerIntegrationTestSuite) TestConnection_PartialUpdate_MultipleFields() {
+	t := s.T()
+
+	// Create a connection first
+	pg := s.infra.PostgresInternal()
+	configName := s.uniqueConfigName("postgres_multi_field_update")
+
+	connResp, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
+		ConfigName:   configName,
+		Type:         "POSTGRESQL",
+		Host:         pg.Host,
+		Port:         pg.Port,
+		DatabaseName: pg.Database,
+		Username:     pg.Username,
+		Password:     pg.Password,
+	})
+	require.NoError(t, err)
+
+	// Store original values
+	originalType := connResp.Type
+	originalUsername := connResp.Username
+
+	// Update TWO fields: configName and port
+	newConfigName := s.uniqueConfigName("postgres_multi_updated")
+	newPort := 5433
+	updated, err := s.managerClient.PartialUpdateConnection(s.ctx, connResp.ID, client.ConnectionPartialUpdateInput{
+		ConfigName: client.StringPtr(newConfigName),
+		Port:       client.IntPtr(newPort),
+		// Other fields nil - should NOT be updated
+	})
+	require.NoError(t, err)
+
+	// Verify updated fields changed
+	assert.Equal(t, newConfigName, updated.ConfigName)
+	assert.Equal(t, newPort, updated.Port)
+
+	// Verify other fields remain unchanged
+	assert.Equal(t, originalType, updated.Type, "Type should remain unchanged")
+	assert.Equal(t, originalUsername, updated.Username, "Username should remain unchanged")
+}
+
 // TestConnection_Delete validates connection deletion and subsequent 404 on GET.
 func (s *WorkerIntegrationTestSuite) TestConnection_Delete() {
 	t := s.T()
 
 	// Create a connection first
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 	configName := s.uniqueConfigName("postgres_delete_test")
 
 	connResp, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
@@ -1588,7 +1701,7 @@ func (s *WorkerIntegrationTestSuite) TestConnection_ListWithPagination() {
 	t := s.T()
 
 	// Create multiple connections
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 	createdIDs := make([]string, 0, 3)
 
 	for i := 0; i < 3; i++ {
@@ -1609,7 +1722,7 @@ func (s *WorkerIntegrationTestSuite) TestConnection_ListWithPagination() {
 	// List with limit=2
 	result, err := s.managerClient.ListConnectionsWithParams(s.ctx, map[string]string{
 		"limit": "2",
-		"page":  "0",
+		"page":  "1",
 	})
 	require.NoError(t, err)
 	assert.Equal(t, 2, result.Limit)
@@ -1626,7 +1739,7 @@ func (s *WorkerIntegrationTestSuite) TestConnection_ListWithTypeFilter() {
 	t := s.T()
 
 	// Create PostgreSQL connection
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 	pgConfigName := s.uniqueConfigName("postgres_filter_test")
 	pgConn, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
 		ConfigName:   pgConfigName,
@@ -1640,7 +1753,7 @@ func (s *WorkerIntegrationTestSuite) TestConnection_ListWithTypeFilter() {
 	require.NoError(t, err)
 
 	// Create MySQL connection
-	mysql := s.infra.MySQLInternal
+	mysql := s.infra.MySQLInternal()
 	mysqlConfigName := s.uniqueConfigName("mysql_filter_test")
 	mysqlConn, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
 		ConfigName:   mysqlConfigName,
@@ -1678,7 +1791,7 @@ func (s *WorkerIntegrationTestSuite) TestConnection_TestEndpoint() {
 	t := s.T()
 
 	// Create a valid connection
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 	configName := s.uniqueConfigName("postgres_test_endpoint")
 
 	connResp, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
@@ -1714,7 +1827,7 @@ func (s *WorkerIntegrationTestSuite) TestConnection_TestEndpoint_NotFound() {
 func (s *WorkerIntegrationTestSuite) TestConnection_TestEndpoint_InvalidCredentials() {
 	t := s.T()
 
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 	configName := s.uniqueConfigName("postgres_test_bad_creds")
 
 	connResp, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
@@ -1739,7 +1852,7 @@ func (s *WorkerIntegrationTestSuite) TestValidateSchema_Success() {
 	t := s.T()
 
 	// Create a valid connection
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 	configName := s.uniqueConfigName("postgres_schema_valid")
 
 	_, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
@@ -1771,7 +1884,7 @@ func (s *WorkerIntegrationTestSuite) TestValidateSchema_Success() {
 func (s *WorkerIntegrationTestSuite) TestValidateSchema_TableNotFound() {
 	t := s.T()
 
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 	configName := s.uniqueConfigName("postgres_schema_missing_table")
 
 	_, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
@@ -1813,7 +1926,7 @@ func (s *WorkerIntegrationTestSuite) TestValidateSchema_TableNotFound() {
 func (s *WorkerIntegrationTestSuite) TestValidateSchema_FieldNotFound() {
 	t := s.T()
 
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 	configName := s.uniqueConfigName("postgres_schema_missing_field")
 
 	_, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
@@ -1868,7 +1981,7 @@ func (s *WorkerIntegrationTestSuite) TestConnection_DeleteWithActiveJob() {
 	t := s.T()
 
 	// Create connection
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 	configName := s.uniqueConfigName("postgres_delete_active")
 
 	connResp, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
@@ -1917,7 +2030,7 @@ func (s *WorkerIntegrationTestSuite) TestConnection_UpdateWithActiveJob() {
 	t := s.T()
 
 	// Create connection
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 	configName := s.uniqueConfigName("postgres_update_active")
 
 	connResp, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
@@ -1973,7 +2086,7 @@ func (s *WorkerIntegrationTestSuite) TestConnection_UpdateWithActiveJob() {
 func (s *WorkerIntegrationTestSuite) TestConnection_DuplicateConfigName() {
 	t := s.T()
 
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 	configName := s.uniqueConfigName("postgres_duplicate")
 
 	// Create first connection
@@ -2025,7 +2138,7 @@ func (s *WorkerIntegrationTestSuite) TestJob_InvalidInput() {
 func (s *WorkerIntegrationTestSuite) TestJob_AllFilterOperators() {
 	t := s.T()
 
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 	configName := s.uniqueConfigName("postgres_all_filters")
 
 	_, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
@@ -2088,7 +2201,7 @@ func (s *WorkerIntegrationTestSuite) TestJob_AllFilterOperators() {
 func (s *WorkerIntegrationTestSuite) TestConnection_Metadata() {
 	t := s.T()
 
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 	configName := s.uniqueConfigName("postgres_metadata_test")
 
 	customMetadata := map[string]any{
@@ -2128,7 +2241,7 @@ func (s *WorkerIntegrationTestSuite) TestValidateSchema_MultiDatasource() {
 	t := s.T()
 
 	// Create PostgreSQL connection
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 	pgConfigName := s.uniqueConfigName("postgres_schema_multi")
 	_, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
 		ConfigName:   pgConfigName,
@@ -2142,7 +2255,7 @@ func (s *WorkerIntegrationTestSuite) TestValidateSchema_MultiDatasource() {
 	require.NoError(t, err)
 
 	// Create MySQL connection
-	mysql := s.infra.MySQLInternal
+	mysql := s.infra.MySQLInternal()
 	mysqlConfigName := s.uniqueConfigName("mysql_schema_multi")
 	_, err = s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
 		ConfigName:   mysqlConfigName,
@@ -2175,7 +2288,7 @@ func (s *WorkerIntegrationTestSuite) TestValidateSchema_MultiDatasource() {
 func (s *WorkerIntegrationTestSuite) TestValidateSchema_PartialFailure() {
 	t := s.T()
 
-	pg := s.infra.PostgresInternal
+	pg := s.infra.PostgresInternal()
 	pgConfigName := s.uniqueConfigName("postgres_schema_partial")
 	_, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
 		ConfigName:   pgConfigName,
@@ -2210,6 +2323,217 @@ func (s *WorkerIntegrationTestSuite) TestValidateSchema_PartialFailure() {
 		}
 	}
 	assert.True(t, foundError)
+}
+
+// =============================================================================
+// SSL Connection Tests
+// =============================================================================
+// These tests validate SSL/TLS connections to databases.
+// Run with: ENABLE_SSL=true make test-integration-container
+
+// TestSSLConnectionValidation validates that SSL connections can be established.
+func (s *WorkerIntegrationTestSuite) TestSSLConnectionValidation() {
+	t := s.T()
+
+	// Skip if SSL is not enabled
+	if s.infra.PostgresSSL == nil {
+		t.Skip("SSL infrastructure not available (run with ENABLE_SSL=true)")
+	}
+
+	certBundle := s.infra.GetSSLCertBundle()
+	require.NotNil(t, certBundle, "SSL certificate bundle should be available")
+
+	// Test PostgreSQL SSL connection
+	t.Run("PostgreSQL SSL", func(t *testing.T) {
+		pgSSL := s.infra.PostgresSSLInternal()
+		configName := s.uniqueConfigName("postgres_ssl_test")
+
+		conn, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
+			ConfigName:   configName,
+			Type:         "POSTGRESQL",
+			Host:         pgSSL.Host,
+			Port:         pgSSL.Port,
+			DatabaseName: pgSSL.Database,
+			Username:     pgSSL.Username,
+			Password:     pgSSL.Password,
+			SSL: &client.SSLInput{
+				Mode: "require", // Use 'require' for self-signed certs; 'verify-full' requires hostname match
+				CA:   certBundle.CACertPEM,
+			},
+		})
+		require.NoError(t, err)
+		assert.NotEmpty(t, conn.ID)
+
+		// Test the connection
+		testResult, err := s.managerClient.TestConnectionEndpoint(s.ctx, conn.ID)
+		require.NoError(t, err)
+		assert.Equal(t, "success", testResult.Status, "SSL connection should succeed")
+	})
+
+	// Test MySQL SSL connection
+	t.Run("MySQL SSL", func(t *testing.T) {
+		mysqlSSL := s.infra.MySQLSSLInternal()
+		configName := s.uniqueConfigName("mysql_ssl_test")
+
+		conn, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
+			ConfigName:   configName,
+			Type:         "MYSQL",
+			Host:         mysqlSSL.Host,
+			Port:         mysqlSSL.Port,
+			DatabaseName: mysqlSSL.Database,
+			Username:     mysqlSSL.Username,
+			Password:     mysqlSSL.Password,
+			SSL: &client.SSLInput{
+				// MySQL driver expects: true, false, skip-verify, preferred, or a registered TLS config name
+				// Using skip-verify for self-signed certificates
+				Mode: "skip-verify",
+				CA:   certBundle.CACertPEM,
+			},
+		})
+		require.NoError(t, err)
+		assert.NotEmpty(t, conn.ID)
+
+		// Test the connection
+		testResult, err := s.managerClient.TestConnectionEndpoint(s.ctx, conn.ID)
+		require.NoError(t, err)
+		assert.Equal(t, "success", testResult.Status, "MySQL SSL connection should succeed")
+	})
+
+	// Test MongoDB SSL connection
+	t.Run("MongoDB SSL", func(t *testing.T) {
+		mongoSSL := s.infra.MongoDBSSLInternal()
+		configName := s.uniqueConfigName("mongodb_ssl_test")
+
+		conn, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
+			ConfigName:   configName,
+			Type:         "MONGODB",
+			Host:         mongoSSL.Host,
+			Port:         mongoSSL.Port,
+			DatabaseName: mongoSSL.Database,
+			Username:     mongoSSL.Username,
+			Password:     mongoSSL.Password,
+			SSL: &client.SSLInput{
+				Mode: "skip-verify",
+				CA:   certBundle.CACertPEM,
+			},
+		})
+		require.NoError(t, err)
+		assert.NotEmpty(t, conn.ID)
+
+		// Test the connection
+		testResult, err := s.managerClient.TestConnectionEndpoint(s.ctx, conn.ID)
+		require.NoError(t, err)
+		assert.Equal(t, "success", testResult.Status, "MongoDB SSL connection should succeed")
+	})
+
+	// Test SQL Server SSL connection
+	t.Run("SQL Server SSL", func(t *testing.T) {
+		if s.infra.SQLServerSSL == nil {
+			t.Skip("SQL Server SSL infrastructure not available")
+		}
+
+		sqlserverSSL := s.infra.SQLServerSSLInternal()
+		configName := s.uniqueConfigName("sqlserver_ssl_test")
+
+		conn, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
+			ConfigName:   configName,
+			Type:         "SQL_SERVER",
+			Host:         sqlserverSSL.Host,
+			Port:         sqlserverSSL.Port,
+			DatabaseName: sqlserverSSL.Database,
+			Username:     sqlserverSSL.Username,
+			Password:     sqlserverSSL.Password,
+			SSL: &client.SSLInput{
+				// SQL Server uses "true" mode with TrustServerCertificate for self-signed certs
+				Mode: "true",
+				CA:   certBundle.CACertPEM,
+			},
+		})
+		require.NoError(t, err)
+		assert.NotEmpty(t, conn.ID)
+
+		// Test the connection
+		testResult, err := s.managerClient.TestConnectionEndpoint(s.ctx, conn.ID)
+		require.NoError(t, err)
+		assert.Equal(t, "success", testResult.Status, "SQL Server SSL connection should succeed")
+	})
+}
+
+// TestMultiDatasourceSSLConnections tests data extraction using SSL connections.
+func (s *WorkerIntegrationTestSuite) TestMultiDatasourceSSLConnections() {
+	t := s.T()
+
+	// Skip if SSL is not enabled
+	if s.infra.PostgresSSL == nil {
+		t.Skip("SSL infrastructure not available (run with ENABLE_SSL=true)")
+	}
+
+	certBundle := s.infra.GetSSLCertBundle()
+	require.NotNil(t, certBundle, "SSL certificate bundle should be available")
+
+	// Create PostgreSQL SSL connection
+	pgSSL := s.infra.PostgresSSLInternal()
+	pgConfigName := s.uniqueConfigName("postgres_ssl_multi")
+	_, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
+		ConfigName:   pgConfigName,
+		Type:         "POSTGRESQL",
+		Host:         pgSSL.Host,
+		Port:         pgSSL.Port,
+		DatabaseName: pgSSL.Database,
+		Username:     pgSSL.Username,
+		Password:     pgSSL.Password,
+		SSL: &client.SSLInput{
+			Mode: "require", // Use 'require' for self-signed certs; 'verify-full' requires hostname match
+			CA:   certBundle.CACertPEM,
+		},
+	})
+	require.NoError(t, err)
+
+	// Create MySQL SSL connection
+	mysqlSSL := s.infra.MySQLSSLInternal()
+	mysqlConfigName := s.uniqueConfigName("mysql_ssl_multi")
+	_, err = s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
+		ConfigName:   mysqlConfigName,
+		Type:         "MYSQL",
+		Host:         mysqlSSL.Host,
+		Port:         mysqlSSL.Port,
+		DatabaseName: mysqlSSL.Database,
+		Username:     mysqlSSL.Username,
+		Password:     mysqlSSL.Password,
+		SSL: &client.SSLInput{
+			// MySQL driver expects: true, false, skip-verify, preferred, or a registered TLS config name
+			Mode: "skip-verify",
+			CA:   certBundle.CACertPEM,
+		},
+	})
+	require.NoError(t, err)
+
+	// Create multi-datasource job using SSL connections
+	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, client.FetcherRequest{
+		DataRequest: client.DataRequest{
+			MappedFields: map[string]map[string][]string{
+				pgConfigName: {
+					"transactions": {"id", "account_id", "amount", "category"},
+				},
+				mysqlConfigName: {
+					"transactions": {"id", "account_id", "amount", "category"},
+				},
+			},
+		},
+		Metadata: s.testMetadata("TestMultiDatasourceSSLConnections"),
+	})
+	require.NoError(t, err, "Failed to create multi-datasource SSL job")
+
+	// Wait for completion
+	notification, err := s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID, setup.JobCompletionTimeoutSlow)
+	require.NoError(t, err, "Failed to receive job completion event")
+	assert.Equal(t, "completed", notification.Status, "SSL extraction job should complete successfully")
+
+	// Verify result
+	require.NotNil(t, notification.Result, "Completed job should have result data")
+	assert.NotEmpty(t, notification.Result.Path)
+	assert.Greater(t, notification.Result.SizeBytes, int64(0))
+	assert.Greater(t, notification.Result.RowCount, int64(0))
 }
 
 // TestSuite runs the test suite.

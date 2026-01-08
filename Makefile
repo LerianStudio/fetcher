@@ -123,6 +123,9 @@ help:
 	@echo "  make test-integration-clean      	   - Clean up testcontainers and networks"
 	@echo "  make test-integration-check      	   - Check for port conflicts before starting"
 	@echo "  make test-fuzzy					   - Run fuzz tests on all components"
+	@echo "  make test-chaos              	   	   - Run chaos E2E tests (full suite, ~45min)"
+	@echo "  make test-chaos-quick        	   	   - Run quick chaos tests (latency only, ~20min)"
+	@echo "  make test-chaos-verbose      	   	   - Run chaos tests with verbose output"
 	@echo ""
 
 
@@ -350,13 +353,7 @@ test-integration-check:
 cover:
 	$(call print_title,Generating test coverage report)
 	$(call check_command,go,Install Go from https://golang.org/doc/install)
-	@mkdir -p $(ARTIFACTS_DIR)
-	@PACKAGES=$$(go list ./... | grep -v -f ./scripts/coverage_ignore.txt 2>/dev/null || go list ./...); \
-	go test -coverprofile=$(ARTIFACTS_DIR)/coverage.raw.out $$PACKAGES
-	@# Filter out mock files from coverage (they are generated and should not be tested)
-	@grep -v '\.mock\.go' $(ARTIFACTS_DIR)/coverage.raw.out > $(ARTIFACTS_DIR)/coverage.out || cp $(ARTIFACTS_DIR)/coverage.raw.out $(ARTIFACTS_DIR)/coverage.out
-	@go tool cover -html=$(ARTIFACTS_DIR)/coverage.out -o $(ARTIFACTS_DIR)/coverage.html
-	@echo "Coverage report generated at $(ARTIFACTS_DIR)/coverage.html"
+	@sh ./scripts/coverage.sh $(ARTIFACTS_DIR)
 	@echo ""
 	@echo "Coverage Summary:"
 	@echo "----------------------------------------"
@@ -376,9 +373,10 @@ check-tests:
 		echo "Running test coverage check..."; \
 		go test -coverprofile=coverage.tmp ./... > /dev/null 2>&1; \
 		if [ -f coverage.tmp ]; then \
-			coverage=$$(go tool cover -func=coverage.tmp | grep total | awk '{print $$3}'); \
-			echo "Test coverage: $$coverage"; \
-			rm coverage.tmp; \
+			grep -v ".mock.go" coverage.tmp > coverage_filtered.tmp; \
+			coverage=$$(go tool cover -func=coverage_filtered.tmp | grep total | awk '{print $$3}'); \
+			echo "Test coverage (excluding .mock.go files): $$coverage"; \
+			rm coverage.tmp coverage_filtered.tmp; \
 		else \
 			echo "No coverage data generated"; \
 		fi; \
@@ -729,3 +727,31 @@ fuzz-message:
 fuzz-ci:
 	$(call print_title,Running fuzz tests for CI)
 	@FUZZ_TIME=60s $(MAKE) test-fuzzy
+
+#-------------------------------------------------------
+# Chaos Testing Commands
+#-------------------------------------------------------
+
+.PHONY: test-chaos
+test-chaos: ## Run chaos E2E tests
+	$(call print_title,Running chaos E2E tests)
+	$(call check_command,docker,Install Docker from https://docs.docker.com/get-docker/)
+	@echo "Running chaos E2E tests..."
+	@go test -v -tags=chaos -timeout 45m ./tests/chaos/...
+	@echo "[ok] Chaos tests completed successfully"
+
+.PHONY: test-chaos-quick
+test-chaos-quick: ## Run quick chaos tests (latency only)
+	$(call print_title,Running quick chaos tests)
+	$(call check_command,docker,Install Docker from https://docs.docker.com/get-docker/)
+	@echo "Running quick chaos tests..."
+	@go test -v -tags=chaos -timeout 20m -run "Latency" ./tests/chaos/e2e/...
+	@echo "[ok] Quick chaos tests completed successfully"
+
+.PHONY: test-chaos-verbose
+test-chaos-verbose: ## Run chaos tests with verbose output
+	$(call print_title,Running chaos tests with verbose output)
+	$(call check_command,docker,Install Docker from https://docs.docker.com/get-docker/)
+	@echo "Running chaos tests with verbose output..."
+	@go test -v -tags=chaos -timeout 45m -count=1 ./tests/chaos/e2e/...
+	@echo "[ok] Chaos tests completed successfully"

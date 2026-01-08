@@ -61,7 +61,7 @@ type Config struct {
 	RabbitMQPortAMQP            string `env:"RABBITMQ_PORT_AMQP"`
 	RabbitMQUser                string `env:"RABBITMQ_DEFAULT_USER"`
 	RabbitMQPass                string `env:"RABBITMQ_DEFAULT_PASS"`
-	RabbitMQGenerateReportQueue string `env:"RABBITMQ_GENERATE_REPORT_QUEUE"`
+	RabbitMQGenerateReportQueue string `env:"RABBITMQ_FETCHER_WORK_QUEUE"`
 	// Auth envs
 	AuthAddress string `env:"PLUGIN_AUTH_ADDRESS"`
 	AuthEnabled bool   `env:"PLUGIN_AUTH_ENABLED"`
@@ -223,7 +223,14 @@ func InitServers() *Service {
 	)
 
 	// Init Fetcher services and handler
-	createFetcherJobCmd := connectionCommand.NewCreateFetcherJob(connectionRepository, jobRepository, cryptoService, rabbitMQAdapter)
+	createFetcherJobCmd := connectionCommand.NewCreateFetcherJob(
+		connectionRepository,
+		jobRepository,
+		cryptoService,
+		rabbitMQAdapter,
+		cfg.RabbitMQGenerateReportQueue,
+	)
+
 	getJobQuery := connectionQuery.NewGetJob(jobRepository)
 	fetcherHandler := in2.NewFetcherHandler(createFetcherJobCmd, getJobQuery)
 

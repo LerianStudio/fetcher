@@ -16,18 +16,12 @@ type JobMongoDBModel struct {
 	OrganizationID uuid.UUID                      `bson:"organization_id"`
 	Metadata       map[string]any                 `bson:"metadata,omitempty"`
 	MappedFields   map[string]map[string][]string `bson:"mapped_fields"`
-	Filters        []FilterDBModel                `bson:"filters,omitempty"`
+	Filters        model.NestedFilters            `bson:"filters,omitempty"`
 	Status         string                         `bson:"status"`
 	ResultPath     string                         `bson:"result_path,omitempty"`
 	RequestHash    string                         `bson:"request_hash,omitempty"`
 	CreatedAt      time.Time                      `bson:"created_at"`
 	CompletedAt    *time.Time                     `bson:"completed_at"`
-}
-
-type FilterDBModel struct {
-	Field    string `bson:"field"`
-	Operator string `bson:"operator"`
-	Value    []any  `bson:"value"`
 }
 
 // ToEntity converts a MongoDB model into the API entity representation.
@@ -41,21 +35,12 @@ func (jm *JobMongoDBModel) ToEntity() (*model.Job, error) {
 		return nil, err
 	}
 
-	filters := []model.Filter{}
-	for _, f := range jm.Filters {
-		filters = append(filters, model.Filter{
-			Field:    f.Field,
-			Operator: f.Operator,
-			Value:    f.Value,
-		})
-	}
-
 	return &model.Job{
 		ID:             jm.ID,
 		OrganizationID: jm.OrganizationID,
 		Metadata:       jm.Metadata,
 		MappedFields:   jm.MappedFields,
-		Filters:        filters,
+		Filters:        jm.Filters,
 		Status:         jobStatus,
 		ResultPath:     jm.ResultPath,
 		RequestHash:    jm.RequestHash,
@@ -71,20 +56,11 @@ func (jm *JobMongoDBModel) FromEntity(job *model.Job) error {
 		return errors.New("job entity is required")
 	}
 
-	filters := []FilterDBModel{}
-	for _, f := range job.Filters {
-		filters = append(filters, FilterDBModel{
-			Field:    f.Field,
-			Operator: f.Operator,
-			Value:    f.Value,
-		})
-	}
-
 	jm.ID = job.ID
 	jm.OrganizationID = job.OrganizationID
 	jm.Metadata = job.Metadata
 	jm.MappedFields = job.MappedFields
-	jm.Filters = filters
+	jm.Filters = job.Filters
 	jm.Status = string(job.Status)
 	jm.ResultPath = job.ResultPath
 	jm.RequestHash = job.RequestHash

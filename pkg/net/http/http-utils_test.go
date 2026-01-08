@@ -149,30 +149,21 @@ func TestValidateParameters(t *testing.T) {
 			params: map[string]string{
 				"limit": "abc",
 			},
-			wantErr: false, // strconv.Atoi fails silently, returns 0
-			check: func(t *testing.T, qh *QueryHeader) {
-				assert.Equal(t, 0, qh.Limit)
-			},
+			wantErr: true, // strconv.Atoi fails, returns 0, which is invalid
 		},
 		{
 			name: "non-numeric page",
 			params: map[string]string{
 				"page": "xyz",
 			},
-			wantErr: false, // strconv.Atoi fails silently, returns 0
-			check: func(t *testing.T, qh *QueryHeader) {
-				assert.Equal(t, 0, qh.Page)
-			},
+			wantErr: true, // strconv.Atoi fails, returns 0, which is invalid
 		},
 		{
 			name: "invalid date format",
 			params: map[string]string{
 				"startDate": "01-01-2024",
 			},
-			wantErr: false, // invalid dates are parsed as zero time
-			check: func(t *testing.T, qh *QueryHeader) {
-				assert.NotNil(t, qh)
-			},
+			wantErr: true, // invalid date format now returns error
 		},
 	}
 
@@ -492,6 +483,7 @@ func TestValidatePagination(t *testing.T) {
 		cursor    string
 		sortOrder string
 		limit     int
+		page      int
 		wantErr   bool
 	}{
 		{
@@ -499,6 +491,7 @@ func TestValidatePagination(t *testing.T) {
 			cursor:    "",
 			sortOrder: "desc",
 			limit:     50,
+			page:      1,
 			wantErr:   false,
 		},
 		{
@@ -506,6 +499,7 @@ func TestValidatePagination(t *testing.T) {
 			cursor:    "",
 			sortOrder: "asc",
 			limit:     50,
+			page:      1,
 			wantErr:   false,
 		},
 		{
@@ -513,6 +507,7 @@ func TestValidatePagination(t *testing.T) {
 			cursor:    validCursor,
 			sortOrder: "desc",
 			limit:     50,
+			page:      1,
 			wantErr:   false,
 		},
 		{
@@ -520,6 +515,7 @@ func TestValidatePagination(t *testing.T) {
 			cursor:    "",
 			sortOrder: "invalid",
 			limit:     50,
+			page:      1,
 			wantErr:   true,
 		},
 		{
@@ -527,6 +523,7 @@ func TestValidatePagination(t *testing.T) {
 			cursor:    "",
 			sortOrder: "desc",
 			limit:     200,
+			page:      1,
 			wantErr:   true,
 		},
 		{
@@ -534,6 +531,7 @@ func TestValidatePagination(t *testing.T) {
 			cursor:    "invalid-cursor",
 			sortOrder: "desc",
 			limit:     50,
+			page:      1,
 			wantErr:   true,
 		},
 		{
@@ -541,13 +539,46 @@ func TestValidatePagination(t *testing.T) {
 			cursor:    "",
 			sortOrder: "desc",
 			limit:     10,
+			page:      1,
 			wantErr:   false,
+		},
+		{
+			name:      "negative limit",
+			cursor:    "",
+			sortOrder: "desc",
+			limit:     -1,
+			page:      1,
+			wantErr:   true,
+		},
+		{
+			name:      "zero limit",
+			cursor:    "",
+			sortOrder: "desc",
+			limit:     0,
+			page:      1,
+			wantErr:   true,
+		},
+		{
+			name:      "negative page",
+			cursor:    "",
+			sortOrder: "desc",
+			limit:     10,
+			page:      -1,
+			wantErr:   true,
+		},
+		{
+			name:      "zero page",
+			cursor:    "",
+			sortOrder: "desc",
+			limit:     10,
+			page:      0,
+			wantErr:   true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validatePagination(tt.cursor, tt.sortOrder, tt.limit)
+			err := validatePagination(tt.cursor, tt.sortOrder, tt.limit, tt.page)
 			if tt.wantErr {
 				assert.Error(t, err)
 			} else {

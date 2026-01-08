@@ -10,6 +10,18 @@ import (
 	"time"
 )
 
+// Client defines the interface for SeaweedFS operations
+//
+//go:generate mockgen --destination=seaweedfs.mock.go --package=seaweedfs -mock_names Client=MockSeaweedFSClient . Client
+type Client interface {
+	UploadFile(ctx context.Context, path string, data []byte) error
+	UploadFileWithTTL(ctx context.Context, path string, data []byte, ttl string) error
+	DownloadFile(ctx context.Context, path string) ([]byte, error)
+	DownloadFileWithStream(ctx context.Context, path string) (io.ReadCloser, error)
+	DeleteFile(ctx context.Context, path string) error
+	HealthCheck(ctx context.Context) error
+}
+
 // SeaweedFSClient provides direct HTTP access to SeaweedFS
 type SeaweedFSClient struct {
 	baseURL         string

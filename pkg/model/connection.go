@@ -395,7 +395,7 @@ type ConnectionInput struct {
 	Host         string          `json:"host" validate:"required,hostname|ip" example:"db.example.com"`
 	Port         int             `json:"port" validate:"required,min=1,max=65535" example:"5432"`
 	DatabaseName string          `json:"databaseName" validate:"required" example:"mydatabase"`
-	Username     string          `json:"username" validate:"required" example:"dbuser"`
+	Username     string          `json:"userName" validate:"required" example:"dbuser"`
 	Password     string          `json:"password" validate:"required" example:"secretpassword"`
 	SSL          *SSLInput       `json:"ssl,omitempty"`
 	Metadata     *map[string]any `json:"metadata,omitempty"`
@@ -442,6 +442,91 @@ func (s *SSLInput) IsEmpty() bool {
 	return s.Mode == "" && s.CA == "" && s.Cert == nil && s.Key == nil
 }
 
+// ConnectionUpdateInput is the DTO for PATCH /connections/:id requests.
+// All fields are pointers to distinguish between "not provided" (nil) and "provided with value".
+// This enables true RFC 7396 JSON Merge Patch semantics.
+type ConnectionUpdateInput struct {
+	ConfigName   *string         `json:"configName,omitempty" validate:"omitempty,min=3,max=100" example:"production-db" minLength:"3" maxLength:"100"`
+	Type         *string         `json:"type,omitempty" validate:"omitempty,oneof=ORACLE SQL_SERVER POSTGRESQL MONGODB MYSQL" example:"POSTGRESQL"`
+	Host         *string         `json:"host,omitempty" validate:"omitempty" example:"db.example.com"`
+	Port         *int            `json:"port,omitempty" validate:"omitempty,min=1,max=65535" example:"5432"`
+	DatabaseName *string         `json:"databaseName,omitempty" validate:"omitempty" example:"mydatabase"`
+	Username     *string         `json:"userName,omitempty" validate:"omitempty" example:"dbuser"`
+	Password     *string         `json:"password,omitempty" validate:"omitempty" example:"secretpassword"`
+	SSL          *SSLUpdateInput `json:"ssl,omitempty"`
+	Metadata     *map[string]any `json:"metadata,omitempty"`
+}
+
+// SSLUpdateInput is the nested DTO for SSL configuration in PATCH requests.
+// All fields are pointers for partial update semantics.
+type SSLUpdateInput struct {
+	Mode *string `json:"mode,omitempty" validate:"omitempty" example:"require"`
+	CA   *string `json:"ca,omitempty" validate:"omitempty" example:"-----BEGIN CERTIFICATE-----\n..."`
+	Cert *string `json:"cert,omitempty"`
+	Key  *string `json:"key,omitempty"`
+}
+
+// ToMapWithMask converts the ConnectionUpdateInput to a map with sensitive fields masked.
+// Used for logging and telemetry without exposing secrets.
+func (conn *ConnectionUpdateInput) ToMapWithMask() map[string]any {
+	result := make(map[string]any)
+
+	if conn.ConfigName != nil {
+		result["config_name"] = *conn.ConfigName
+	}
+
+	if conn.Type != nil {
+		result["type"] = *conn.Type
+	}
+
+	if conn.Host != nil {
+		result["host"] = *conn.Host
+	}
+
+	if conn.Port != nil {
+		result["port"] = *conn.Port
+	}
+
+	if conn.DatabaseName != nil {
+		result["database_name"] = *conn.DatabaseName
+	}
+
+	if conn.Username != nil {
+		result["username"] = *conn.Username
+	}
+
+	if conn.Password != nil {
+		result["password"] = pkg.MaskSecret(*conn.Password)
+	}
+
+	if conn.Metadata != nil {
+		result["metadata"] = conn.Metadata
+	}
+
+	if conn.SSL != nil {
+		ssl := make(map[string]any)
+		if conn.SSL.Mode != nil {
+			ssl["mode"] = *conn.SSL.Mode
+		}
+
+		if conn.SSL.CA != nil {
+			ssl["ca"] = pkg.MaskSecret(*conn.SSL.CA)
+		}
+
+		if conn.SSL.Cert != nil {
+			ssl["cert"] = pkg.MaskSecret(*conn.SSL.Cert)
+		}
+
+		if conn.SSL.Key != nil {
+			ssl["key"] = pkg.MaskSecret(*conn.SSL.Key)
+		}
+
+		result["ssl"] = ssl
+	}
+
+	return result
+}
+
 type ConnectionResponse struct {
 	ID           uuid.UUID       `json:"id"`
 	ConfigName   string          `json:"configName"`
@@ -449,7 +534,7 @@ type ConnectionResponse struct {
 	Host         string          `json:"host"`
 	Port         int             `json:"port"`
 	DatabaseName string          `json:"databaseName"`
-	Username     string          `json:"username"`
+	Username     string          `json:"userName"`
 	SSL          *SSLResponse    `json:"ssl,omitempty"`
 	Metadata     *map[string]any `json:"metadata,omitempty"`
 	CreatedAt    time.Time       `json:"createdAt"`

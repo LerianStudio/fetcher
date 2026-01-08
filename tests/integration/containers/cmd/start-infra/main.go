@@ -12,8 +12,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/LerianStudio/fetcher/tests/integration/containers/fixtures"
 	"github.com/LerianStudio/fetcher/tests/integration/containers/setup"
+	"github.com/LerianStudio/fetcher/tests/shared/fixtures"
 )
 
 func main() {
@@ -34,7 +34,7 @@ func main() {
 	}
 
 	// Setup RabbitMQ topology
-	err = setup.SetupRabbitMQTopology(ctx, infra.RabbitMQURI)
+	err = setup.SetupRabbitMQTopology(ctx, infra.RabbitMQURI())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to setup RabbitMQ topology: %v\n", err)
 		infra.Stop(ctx)
@@ -42,42 +42,42 @@ func main() {
 	}
 
 	// Seed MongoDB External
-	err = fixtures.InitMongoDBExternal(ctx, infra.MongoExternalURI, "external_transactions")
+	err = fixtures.InitMongoDBExternal(ctx, infra.MongoExternalURI(), "external_transactions")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to seed MongoDB: %v\n", err)
 		infra.Stop(ctx)
 		os.Exit(1)
 	}
 
-	// Get mapped ports for display
-	mongoMainPort, _ := infra.MongoMain.MappedPort(ctx, "27017")
-	rabbitmqPort, _ := infra.RabbitMQ.MappedPort(ctx, "5672")
-	seaweedfsPort, _ := infra.SeaweedFS.MappedPort(ctx, "8888")
-	redisPort, _ := infra.Redis.MappedPort(ctx, "6379")
-	postgresPort, _ := infra.PostgresExternal.MappedPort(ctx, "5432")
-	mysqlPort, _ := infra.MySQLExternal.MappedPort(ctx, "3306")
-	sqlserverPort, _ := infra.SQLServerExternal.MappedPort(ctx, "1433")
-	oraclePort, _ := infra.OracleExternal.MappedPort(ctx, "1521")
+	// Get ports for display
+	mongoMainPort := infra.MongoMain.Port
+	rabbitmqPort := infra.RabbitMQ.Port
+	seaweedfsPort := infra.SeaweedFS.Port
+	redisPort := infra.Redis.Port
+	postgresPort := infra.PostgresExternal.Port
+	mysqlPort := infra.MySQLExternal.Port
+	sqlserverPort := infra.SQLServerExternal.Port
+	oraclePort := infra.OracleExternal.Port
 
 	// Build config for JSON output
 	config := map[string]interface{}{
-		"mongoMainUri":       infra.MongoMainURI,
-		"mongoExternalUri":   infra.MongoExternalURI,
-		"rabbitmqUri":        infra.RabbitMQURI,
-		"seaweedfsUrl":       infra.SeaweedFSURL,
-		"redisUrl":           infra.RedisURL,
-		"postgresUrl":        infra.PostgresURL,
-		"mysqlUrl":           infra.MySQLURL,
-		"sqlserverUrl":       infra.SQLServerURL,
-		"oracleUrl":          infra.OracleURL,
-		"mongoMainPort":      mongoMainPort.Port(),
-		"rabbitmqPort":       rabbitmqPort.Port(),
-		"seaweedfsFilerPort": seaweedfsPort.Port(),
-		"redisPort":          redisPort.Port(),
-		"postgresPort":       postgresPort.Port(),
-		"mysqlPort":          mysqlPort.Port(),
-		"sqlserverPort":      sqlserverPort.Port(),
-		"oraclePort":         oraclePort.Port(),
+		"mongoMainUri":       infra.MongoMainURI(),
+		"mongoExternalUri":   infra.MongoExternalURI(),
+		"rabbitmqUri":        infra.RabbitMQURI(),
+		"seaweedfsUrl":       infra.SeaweedFSURL(),
+		"redisUrl":           infra.RedisURL(),
+		"postgresUrl":        infra.PostgresURL(),
+		"mysqlUrl":           infra.MySQLURL(),
+		"sqlserverUrl":       infra.SQLServerURL(),
+		"oracleUrl":          infra.OracleURL(),
+		"mongoMainPort":      mongoMainPort,
+		"rabbitmqPort":       rabbitmqPort,
+		"seaweedfsFilerPort": seaweedfsPort,
+		"redisPort":          redisPort,
+		"postgresPort":       postgresPort,
+		"mysqlPort":          mysqlPort,
+		"sqlserverPort":      sqlserverPort,
+		"oraclePort":         oraclePort,
 	}
 
 	configJSON, _ := json.MarshalIndent(config, "", "  ")
@@ -93,14 +93,14 @@ func main() {
 	fmt.Println("\n" + string(repeatChar('-', 70)))
 	fmt.Println("FIXED PORTS (for VS Code debugging):")
 	fmt.Println(string(repeatChar('-', 70)))
-	fmt.Printf("  MongoDB Main:     localhost:%s\n", mongoMainPort.Port())
-	fmt.Printf("  RabbitMQ:         localhost:%s\n", rabbitmqPort.Port())
-	fmt.Printf("  SeaweedFS Filer:  localhost:%s\n", seaweedfsPort.Port())
-	fmt.Printf("  Redis:            localhost:%s\n", redisPort.Port())
-	fmt.Printf("  PostgreSQL:       localhost:%s\n", postgresPort.Port())
-	fmt.Printf("  MySQL:            localhost:%s\n", mysqlPort.Port())
-	fmt.Printf("  SQL Server:       localhost:%s\n", sqlserverPort.Port())
-	fmt.Printf("  Oracle:           localhost:%s\n", oraclePort.Port())
+	fmt.Printf("  MongoDB Main:     localhost:%s\n", mongoMainPort)
+	fmt.Printf("  RabbitMQ:         localhost:%s\n", rabbitmqPort)
+	fmt.Printf("  SeaweedFS Filer:  localhost:%s\n", seaweedfsPort)
+	fmt.Printf("  Redis:            localhost:%s\n", redisPort)
+	fmt.Printf("  PostgreSQL:       localhost:%s\n", postgresPort)
+	fmt.Printf("  MySQL:            localhost:%s\n", mysqlPort)
+	fmt.Printf("  SQL Server:       localhost:%s\n", sqlserverPort)
+	fmt.Printf("  Oracle:           localhost:%s\n", oraclePort)
 
 	fmt.Println("\n" + string(repeatChar('-', 70)))
 	fmt.Println("ENVIRONMENT VARIABLES FOR MANAGER (copy/paste to terminal):")
@@ -130,7 +130,7 @@ export APP_ENC_KEY_VERSION=1
 export ENABLE_TELEMETRY=false
 export PLUGIN_AUTH_ENABLED=false
 export LICENSE_KEY=test-license-key
-`, mongoMainPort.Port(), rabbitmqPort.Port(), seaweedfsPort.Port(), redisPort.Port())
+`, mongoMainPort, rabbitmqPort, seaweedfsPort, redisPort)
 
 	fmt.Println("\n" + string(repeatChar('-', 70)))
 	fmt.Println("ENVIRONMENT VARIABLES FOR WORKER (copy/paste to terminal):")
@@ -149,7 +149,7 @@ export RABBITMQ_HOST=localhost
 export RABBITMQ_PORT_AMQP=%s
 export RABBITMQ_DEFAULT_USER=guest
 export RABBITMQ_DEFAULT_PASS=guest
-export RABBITMQ_GENERATE_REPORT_QUEUE=extract-external-data-queue
+export RABBITMQ_FETCHER_WORK_QUEUE=fetcher.extract-external-data.queue
 export RABBITMQ_JOB_EVENTS_EXCHANGE=fetcher.job.events
 export RABBITMQ_NUMBERS_OF_WORKERS=2
 export SEAWEEDFS_HOST=localhost
@@ -165,7 +165,7 @@ export CRYPTO_HASH_SECRET_KEY_SEAWEEDFS=3132333435363738393031323334353637383930
 export ENABLE_TELEMETRY=false
 export LICENSE_KEY=test-license-key
 export ORGANIZATION_IDS=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa
-`, mongoMainPort.Port(), rabbitmqPort.Port(), seaweedfsPort.Port(), redisPort.Port())
+`, mongoMainPort, rabbitmqPort, seaweedfsPort, redisPort)
 
 	fmt.Println("\n" + string(repeatChar('-', 70)))
 	fmt.Println("USAGE INSTRUCTIONS:")

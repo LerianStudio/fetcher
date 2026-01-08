@@ -1,10 +1,26 @@
-package setup
+package config
 
 import (
 	"encoding/json"
 	"fmt"
 	"os"
 )
+
+// InternalDBConnection holds connection info using Docker network hostnames.
+type InternalDBConnection struct {
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	Username string `json:"userName"`
+	Password string `json:"password"`
+	Database string `json:"database"`
+
+	// SSL configuration
+	SSLEnabled    bool   `json:"sslEnabled,omitempty"`
+	SSLMode       string `json:"sslMode,omitempty"`
+	SSLCACert     string `json:"sslCaCert,omitempty"`
+	SSLClientCert string `json:"sslClientCert,omitempty"`
+	SSLClientKey  string `json:"sslClientKey,omitempty"`
+}
 
 // InfraPorts holds the mapped ports for infrastructure services.
 type InfraPorts struct {

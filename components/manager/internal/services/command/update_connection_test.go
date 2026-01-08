@@ -36,17 +36,35 @@ func newExistingConnection(orgID, connID uuid.UUID) *model.Connection {
 	}
 }
 
-// newUpdateConnectionInput creates a valid ConnectionInput for testing updates.
-func newUpdateConnectionInput() model.ConnectionInput {
-	return model.ConnectionInput{
-		ConfigName:   "updated-connection",
-		Type:         "POSTGRESQL",
-		Host:         "new-host.example.com",
-		Port:         5433,
-		DatabaseName: "newdb",
-		Username:     "newuser",
-		Password:     "newpassword",
+// newUpdateConnectionInput creates a valid ConnectionUpdateInput for testing updates.
+func newUpdateConnectionInput() model.ConnectionUpdateInput {
+	configName := "updated-connection"
+	typ := "POSTGRESQL"
+	host := "new-host.example.com"
+	port := 5433
+	dbName := "newdb"
+	username := "newuser"
+	password := "newpassword"
+
+	return model.ConnectionUpdateInput{
+		ConfigName:   &configName,
+		Type:         &typ,
+		Host:         &host,
+		Port:         &port,
+		DatabaseName: &dbName,
+		Username:     &username,
+		Password:     &password,
 	}
+}
+
+// strPtr is a helper to create a string pointer.
+func strPtr(s string) *string {
+	return &s
+}
+
+// intPtr is a helper to create an int pointer.
+func intPtr(i int) *int {
+	return &i
 }
 
 // TestUpdateConnection_Execute_Success tests successful connection update.
@@ -96,16 +114,16 @@ func TestUpdateConnection_Execute_Success(t *testing.T) {
 		t.Fatal("expected non-nil result")
 	}
 
-	if result.ConfigName != input.ConfigName {
-		t.Fatalf("expected ConfigName %s, got %s", input.ConfigName, result.ConfigName)
+	if result.ConfigName != *input.ConfigName {
+		t.Fatalf("expected ConfigName %s, got %s", *input.ConfigName, result.ConfigName)
 	}
 
-	if result.Host != input.Host {
-		t.Fatalf("expected Host %s, got %s", input.Host, result.Host)
+	if result.Host != *input.Host {
+		t.Fatalf("expected Host %s, got %s", *input.Host, result.Host)
 	}
 
-	if result.Port != input.Port {
-		t.Fatalf("expected Port %d, got %d", input.Port, result.Port)
+	if result.Port != *input.Port {
+		t.Fatalf("expected Port %d, got %d", *input.Port, result.Port)
 	}
 }
 
@@ -451,10 +469,7 @@ func TestUpdateConnection_Execute_PartialUpdate(t *testing.T) {
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 	mockCrypto := crypto.NewMockCryptor(ctrl)
-	mockCrypto.EXPECT().
-		Encrypt(gomock.Any(), gomock.Any()).
-		Return("encrypted-newpassword", "v1", nil).
-		AnyTimes()
+	// No encryption expected since we're not providing a password
 
 	svc := NewUpdateConnection(mockConnRepo, mockJobRepo, mockCrypto)
 
@@ -463,15 +478,10 @@ func TestUpdateConnection_Execute_PartialUpdate(t *testing.T) {
 	connID := uuid.New()
 	existingConn := newExistingConnection(orgID, connID)
 
-	// Only update the host, keep other fields the same
-	input := model.ConnectionInput{
-		ConfigName:   existingConn.ConfigName,
-		Type:         string(existingConn.Type),
-		Host:         "new-host.example.com",
-		Port:         existingConn.Port,
-		DatabaseName: existingConn.DatabaseName,
-		Username:     existingConn.Username,
-		Password:     "newpassword",
+	// Only update the host - true partial update with ConnectionUpdateInput
+	input := model.ConnectionUpdateInput{
+		Host: strPtr("new-host.example.com"),
+		// All other fields are nil (not provided)
 	}
 
 	// Mock: find existing connection
@@ -532,22 +542,19 @@ func TestUpdateConnection_Execute_WithSSL(t *testing.T) {
 	connID := uuid.New()
 	existingConn := newExistingConnection(orgID, connID)
 
-	certValue := "-----BEGIN CERTIFICATE-----\ntest-cert\n-----END CERTIFICATE-----"
-	keyValue := "-----BEGIN PRIVATE KEY-----\ntest-key\n-----END PRIVATE KEY-----"
-
-	input := model.ConnectionInput{
-		ConfigName:   "ssl-connection",
-		Type:         "POSTGRESQL",
-		Host:         "secure.example.com",
-		Port:         5432,
-		DatabaseName: "securedb",
-		Username:     "secureuser",
-		Password:     "securepassword",
-		SSL: &model.SSLInput{
-			Mode: "require",
-			CA:   "-----BEGIN CERTIFICATE-----\ntest-ca\n-----END CERTIFICATE-----",
-			Cert: &certValue,
-			Key:  &keyValue,
+	input := model.ConnectionUpdateInput{
+		ConfigName:   strPtr("ssl-connection"),
+		Type:         strPtr("POSTGRESQL"),
+		Host:         strPtr("secure.example.com"),
+		Port:         intPtr(5432),
+		DatabaseName: strPtr("securedb"),
+		Username:     strPtr("secureuser"),
+		Password:     strPtr("securepassword"),
+		SSL: &model.SSLUpdateInput{
+			Mode: strPtr("require"),
+			CA:   strPtr("-----BEGIN CERTIFICATE-----\ntest-ca\n-----END CERTIFICATE-----"),
+			Cert: strPtr("-----BEGIN CERTIFICATE-----\ntest-cert\n-----END CERTIFICATE-----"),
+			Key:  strPtr("-----BEGIN PRIVATE KEY-----\ntest-key\n-----END PRIVATE KEY-----"),
 		},
 	}
 
@@ -614,14 +621,14 @@ func TestUpdateConnection_Execute_InvalidTypeError(t *testing.T) {
 	connID := uuid.New()
 	existingConn := newExistingConnection(orgID, connID)
 
-	input := model.ConnectionInput{
-		ConfigName:   "test-connection",
-		Type:         "INVALID_TYPE",
-		Host:         "localhost",
-		Port:         5432,
-		DatabaseName: "testdb",
-		Username:     "testuser",
-		Password:     "testpassword",
+	input := model.ConnectionUpdateInput{
+		ConfigName:   strPtr("test-connection"),
+		Type:         strPtr("INVALID_TYPE"),
+		Host:         strPtr("localhost"),
+		Port:         intPtr(5432),
+		DatabaseName: strPtr("testdb"),
+		Username:     strPtr("testuser"),
+		Password:     strPtr("testpassword"),
 	}
 
 	// Mock: find existing connection
@@ -683,7 +690,7 @@ func TestUpdateConnection_Execute_TableDriven(t *testing.T) {
 	tests := []struct {
 		name           string
 		setupMocks     func(*connRepo.MockRepository, *jobRepo.MockRepository, *crypto.MockCryptor, uuid.UUID, uuid.UUID, *model.Connection)
-		input          model.ConnectionInput
+		input          model.ConnectionUpdateInput
 		wantErr        bool
 		wantStatusCode int // 0 means no status code check
 		validateResult func(*testing.T, *model.Connection)
@@ -707,14 +714,14 @@ func TestUpdateConnection_Execute_TableDriven(t *testing.T) {
 						return conn, nil
 					})
 			},
-			input: model.ConnectionInput{
-				ConfigName:   "new-name",
-				Type:         "MYSQL",
-				Host:         "new-host",
-				Port:         3306,
-				DatabaseName: "newdb",
-				Username:     "newuser",
-				Password:     "newpassword",
+			input: model.ConnectionUpdateInput{
+				ConfigName:   strPtr("new-name"),
+				Type:         strPtr("MYSQL"),
+				Host:         strPtr("new-host"),
+				Port:         intPtr(3306),
+				DatabaseName: strPtr("newdb"),
+				Username:     strPtr("newuser"),
+				Password:     strPtr("newpassword"),
 			},
 			wantErr: false,
 			validateResult: func(t *testing.T, result *model.Connection) {
@@ -853,10 +860,7 @@ func TestUpdateConnection_Execute_DatabaseTypeChange(t *testing.T) {
 			mockConnRepo := connRepo.NewMockRepository(ctrl)
 			mockJobRepo := jobRepo.NewMockRepository(ctrl)
 			mockCrypto := crypto.NewMockCryptor(ctrl)
-			mockCrypto.EXPECT().
-				Encrypt(gomock.Any(), gomock.Any()).
-				Return("encrypted-newpassword", "v1", nil).
-				AnyTimes()
+			// No encryption expected since we're only updating the type
 
 			svc := NewUpdateConnection(mockConnRepo, mockJobRepo, mockCrypto)
 
@@ -865,14 +869,9 @@ func TestUpdateConnection_Execute_DatabaseTypeChange(t *testing.T) {
 			connID := uuid.New()
 			existingConn := newExistingConnection(orgID, connID)
 
-			input := model.ConnectionInput{
-				ConfigName:   existingConn.ConfigName,
-				Type:         tt.newType,
-				Host:         existingConn.Host,
-				Port:         existingConn.Port,
-				DatabaseName: existingConn.DatabaseName,
-				Username:     existingConn.Username,
-				Password:     "newpassword",
+			// Only update the type - true partial update
+			input := model.ConnectionUpdateInput{
+				Type: strPtr(tt.newType),
 			}
 
 			// Mock: find existing connection
@@ -906,4 +905,89 @@ func TestUpdateConnection_Execute_DatabaseTypeChange(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestUpdateConnection_Execute_TruePartialUpdate verifies that only provided fields are updated.
+// This is the key test for the ConnectionUpdateInput implementation.
+func TestUpdateConnection_Execute_TruePartialUpdate(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockJobRepo := jobRepo.NewMockRepository(ctrl)
+	mockCrypto := crypto.NewMockCryptor(ctrl)
+
+	svc := NewUpdateConnection(mockConnRepo, mockJobRepo, mockCrypto)
+
+	ctx := testContext()
+	orgID := uuid.New()
+	connID := uuid.New()
+	existingConn := newExistingConnection(orgID, connID)
+
+	// Store original values to verify they weren't changed
+	originalHost := existingConn.Host
+	originalPort := existingConn.Port
+	originalType := existingConn.Type
+	originalUsername := existingConn.Username
+	originalDatabaseName := existingConn.DatabaseName
+
+	// Only update ConfigName - all other fields should remain unchanged
+	newConfigName := "only-this-should-change"
+	input := model.ConnectionUpdateInput{
+		ConfigName: &newConfigName,
+		// All other fields are nil (not provided)
+	}
+
+	// Mock: find existing connection
+	mockConnRepo.EXPECT().
+		FindByID(gomock.Any(), connID, orgID).
+		Return(existingConn, nil)
+
+	// Mock: no active jobs
+	mockJobRepo.EXPECT().
+		ExistsRunningByMappedFieldKey(gomock.Any(), orgID, existingConn.ConfigName).
+		Return(false, nil)
+
+	// Mock: update returns the connection - verify only ConfigName was changed
+	mockConnRepo.EXPECT().
+		Update(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(ctx context.Context, conn *model.Connection) (*model.Connection, error) {
+			// ConfigName should be updated
+			if conn.ConfigName != newConfigName {
+				t.Errorf("expected ConfigName '%s', got '%s'", newConfigName, conn.ConfigName)
+			}
+
+			// All other fields should remain UNCHANGED
+			if conn.Host != originalHost {
+				t.Errorf("Host should not change: expected '%s', got '%s'", originalHost, conn.Host)
+			}
+			if conn.Port != originalPort {
+				t.Errorf("Port should not change: expected %d, got %d", originalPort, conn.Port)
+			}
+			if conn.Type != originalType {
+				t.Errorf("Type should not change: expected '%s', got '%s'", originalType, conn.Type)
+			}
+			if conn.Username != originalUsername {
+				t.Errorf("Username should not change: expected '%s', got '%s'", originalUsername, conn.Username)
+			}
+			if conn.DatabaseName != originalDatabaseName {
+				t.Errorf("DatabaseName should not change: expected '%s', got '%s'", originalDatabaseName, conn.DatabaseName)
+			}
+
+			return conn, nil
+		})
+
+	result, err := svc.Execute(ctx, orgID, connID, input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+
+	// Final verification
+	assert.Equal(t, newConfigName, result.ConfigName, "ConfigName should be updated")
+	assert.Equal(t, originalHost, result.Host, "Host should remain unchanged")
+	assert.Equal(t, originalPort, result.Port, "Port should remain unchanged")
 }

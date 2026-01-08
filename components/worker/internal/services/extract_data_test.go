@@ -1063,12 +1063,12 @@ func TestEncryptDataForSeaweedFS(t *testing.T) {
 	logger := testLogger()
 
 	tests := []struct {
-		name           string
-		data           []byte
-		envEncryptKey  string
-		envHashKey     string
-		wantErr        bool
-		errContains    string
+		name          string
+		data          []byte
+		envEncryptKey string
+		envHashKey    string
+		wantErr       bool
+		errContains   string
 	}{
 		{
 			name:          "missing encrypt secret key returns error",

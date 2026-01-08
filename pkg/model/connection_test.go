@@ -1461,6 +1461,106 @@ func TestConnectionInput_ToMapWithMask(t *testing.T) {
 	})
 }
 
+// TestConnectionUpdateInput_ToMapWithMask tests the ConnectionUpdateInput.ToMapWithMask method.
+func TestConnectionUpdateInput_ToMapWithMask(t *testing.T) {
+	t.Run("masks password and SSL fields", func(t *testing.T) {
+		configName := "test-config"
+		connType := "POSTGRESQL"
+		host := "localhost"
+		port := 5432
+		dbName := "testdb"
+		username := "testuser"
+		password := "secret-password"
+		sslMode := "require"
+		sslCA := "-----BEGIN CERTIFICATE-----..."
+		sslCert := "-----BEGIN CERTIFICATE-----..."
+		sslKey := "-----BEGIN PRIVATE KEY-----..."
+
+		input := &ConnectionUpdateInput{
+			ConfigName:   &configName,
+			Type:         &connType,
+			Host:         &host,
+			Port:         &port,
+			DatabaseName: &dbName,
+			Username:     &username,
+			Password:     &password,
+			SSL: &SSLUpdateInput{
+				Mode: &sslMode,
+				CA:   &sslCA,
+				Cert: &sslCert,
+				Key:  &sslKey,
+			},
+		}
+
+		result := input.ToMapWithMask()
+
+		// Check non-sensitive fields are present
+		if result["config_name"] != configName {
+			t.Fatalf("expected config_name '%s', got %v", configName, result["config_name"])
+		}
+		if result["host"] != host {
+			t.Fatalf("expected host '%s', got %v", host, result["host"])
+		}
+		if result["port"] != port {
+			t.Fatalf("expected port %d, got %v", port, result["port"])
+		}
+
+		// Check password is masked
+		if result["password"] != "[REDACTED]" {
+			t.Fatalf("expected password '[REDACTED]', got %v", result["password"])
+		}
+
+		// Check SSL fields are masked
+		ssl, ok := result["ssl"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected ssl to be map[string]any, got %T", result["ssl"])
+		}
+		if ssl["ca"] != "[REDACTED]" {
+			t.Fatalf("expected ssl.ca '[REDACTED]', got %v", ssl["ca"])
+		}
+		if ssl["cert"] != "[REDACTED]" {
+			t.Fatalf("expected ssl.cert '[REDACTED]', got %v", ssl["cert"])
+		}
+		if ssl["key"] != "[REDACTED]" {
+			t.Fatalf("expected ssl.key '[REDACTED]', got %v", ssl["key"])
+		}
+	})
+
+	t.Run("handles nil fields", func(t *testing.T) {
+		input := &ConnectionUpdateInput{}
+		result := input.ToMapWithMask()
+
+		if len(result) != 0 {
+			t.Fatalf("expected empty map for nil fields, got %v", result)
+		}
+	})
+
+	t.Run("handles partial fields", func(t *testing.T) {
+		configName := "partial-config"
+		host := "partial-host"
+
+		input := &ConnectionUpdateInput{
+			ConfigName: &configName,
+			Host:       &host,
+		}
+
+		result := input.ToMapWithMask()
+
+		if result["config_name"] != configName {
+			t.Fatalf("expected config_name '%s', got %v", configName, result["config_name"])
+		}
+		if result["host"] != host {
+			t.Fatalf("expected host '%s', got %v", host, result["host"])
+		}
+		if _, exists := result["password"]; exists {
+			t.Fatal("password should not exist when nil")
+		}
+		if _, exists := result["ssl"]; exists {
+			t.Fatal("ssl should not exist when nil")
+		}
+	})
+}
+
 // TestNewConnectionResponseFrom tests the NewConnectionResponseFrom function.
 func TestNewConnectionResponseFrom(t *testing.T) {
 	t.Run("nil connection returns nil", func(t *testing.T) {

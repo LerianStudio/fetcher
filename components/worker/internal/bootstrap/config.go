@@ -33,11 +33,10 @@ type Config struct {
 	RabbitMQPortAMQP            string `env:"RABBITMQ_PORT_AMQP"`
 	RabbitMQUser                string `env:"RABBITMQ_DEFAULT_USER"`
 	RabbitMQPass                string `env:"RABBITMQ_DEFAULT_PASS"`
-	RabbitMQGenerateReportQueue string `env:"RABBITMQ_GENERATE_REPORT_QUEUE"`
 	RabbitMQNumWorkers          int    `env:"RABBITMQ_NUMBERS_OF_WORKERS"`
 	RabbitMQHealthCheckURL      string `env:"RABBITMQ_HEALTH_CHECK_URL"`
-	// Job events topic exchange configuration
-	RabbitMQJobEventsExchange string `env:"RABBITMQ_JOB_EVENTS_EXCHANGE"`
+	RabbitMQGenerateReportQueue string `env:"RABBITMQ_FETCHER_WORK_QUEUE"`
+	RabbitMQJobEventsExchange   string `env:"RABBITMQ_JOB_EVENTS_EXCHANGE"`
 	// Otel Collector configurations
 	OtelServiceName         string `env:"OTEL_RESOURCE_SERVICE_NAME"`
 	OtelLibraryName         string `env:"OTEL_LIBRARY_NAME"`
@@ -84,10 +83,13 @@ func InitWorker() *Service {
 		Logger:                    logger,
 	})
 
-	// Init rabbitmq connection
+	// Init rabbitmq connection for consumer
+	// Consumer and Publisher use SEPARATE connections to avoid channel interference.
+	// A shared connection causes both to share the same AMQP channel, leading to issues
+	// when one invalidates/closes the channel (affects the other).
 	rabbitSource := fmt.Sprintf("%s://%s:%s@%s:%s",
 		cfg.RabbitURI, cfg.RabbitMQUser, cfg.RabbitMQPass, cfg.RabbitMQHost, cfg.RabbitMQPortAMQP)
-	rabbitMQConnection := &libRabbitMQ.RabbitMQConnection{
+	consumerConnection := &libRabbitMQ.RabbitMQConnection{
 		ConnectionStringSource: rabbitSource,
 		HealthCheckURL:         cfg.RabbitMQHealthCheckURL,
 		Host:                   cfg.RabbitMQHost,
@@ -98,9 +100,20 @@ func InitWorker() *Service {
 		Logger:                 logger,
 	}
 
-	// Initialize RabbitMQ publisher for job event notifications
-	consumerRoutes := rabbitmq.NewConsumerRoutes(rabbitMQConnection, cfg.RabbitMQNumWorkers, logger, telemetry)
-	publisherRoutes := rabbitmq.NewPublisherRoutes(rabbitMQConnection, logger, telemetry)
+	// Separate connection for Publisher to isolate channel lifecycle
+	publisherConnection := &libRabbitMQ.RabbitMQConnection{
+		ConnectionStringSource: rabbitSource,
+		HealthCheckURL:         cfg.RabbitMQHealthCheckURL,
+		Host:                   cfg.RabbitMQHost,
+		Port:                   cfg.RabbitMQPortHost,
+		User:                   cfg.RabbitMQUser,
+		Pass:                   cfg.RabbitMQPass,
+		Logger:                 logger,
+	}
+
+	// Initialize RabbitMQ consumer and publisher with separate connections
+	consumerRoutes := rabbitmq.NewConsumerRoutes(consumerConnection, cfg.RabbitMQNumWorkers, logger, telemetry)
+	publisherRoutes := rabbitmq.NewPublisherRoutes(publisherConnection, logger, telemetry)
 
 	// Config SeaweedFS connection
 	seaweedFSEndpoint := fmt.Sprintf("http://%s:%s", cfg.SeaweedFSHost, cfg.SeaweedFSFilerPort)

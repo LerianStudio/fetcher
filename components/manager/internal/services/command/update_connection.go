@@ -31,7 +31,7 @@ func NewUpdateConnection(connectionRepo connRepo.Repository, jobRepo job.Reposit
 	}
 }
 
-func (s *UpdateConnection) Execute(ctx context.Context, organizationID, connectionID uuid.UUID, connInput model.ConnectionInput) (*model.Connection, error) {
+func (s *UpdateConnection) Execute(ctx context.Context, organizationID, connectionID uuid.UUID, connInput model.ConnectionUpdateInput) (*model.Connection, error) {
 	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "service.update_connection")
@@ -76,23 +76,23 @@ func (s *UpdateConnection) Execute(ctx context.Context, organizationID, connecti
 	if errPatch := current.ApplyPatch(
 		ctx,
 		s.cryptor,
-		&connInput.ConfigName,
-		&connInput.Type,
-		&connInput.Host,
-		&connInput.Port,
-		&connInput.DatabaseName,
-		&connInput.Username,
-		&connInput.Password,
+		connInput.ConfigName,
+		connInput.Type,
+		connInput.Host,
+		connInput.Port,
+		connInput.DatabaseName,
+		connInput.Username,
+		connInput.Password,
 		connInput.Metadata,
 		func() *string {
 			if connInput.SSL != nil {
-				return &connInput.SSL.Mode
+				return connInput.SSL.Mode
 			}
 			return nil
 		}(),
 		func() *string {
 			if connInput.SSL != nil {
-				return &connInput.SSL.CA
+				return connInput.SSL.CA
 			}
 			return nil
 		}(),

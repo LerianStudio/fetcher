@@ -5,12 +5,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/LerianStudio/lib-commons/v2/commons/log"
+	"github.com/LerianStudio/fetcher/pkg/testutil"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// mockLogger is an alias to the shared testutil.MockLogger for use across test files in this package.
+type mockLogger = testutil.MockLogger
 
 // testStruct is a simple struct for testing generic cache
 type testStruct struct {
@@ -18,35 +21,6 @@ type testStruct struct {
 	Name  string `json:"name"`
 	Value int    `json:"value"`
 }
-
-// mockLogger implements log.Logger for testing.
-//
-// NOTE: This manual mock is intentionally retained because log.Logger is an external
-// interface from github.com/LerianStudio/lib-commons/v2/commons/log. Generating mockgen
-// mocks for external interfaces requires either:
-// 1. A local wrapper interface (adds unnecessary indirection)
-// 2. Reflect mode with full package path (fragile to library changes)
-// For simple logging interfaces used only in tests, a manual mock is more maintainable.
-type mockLogger struct{}
-
-func (m *mockLogger) Info(args ...any)                                     {}
-func (m *mockLogger) Infof(format string, args ...any)                     {}
-func (m *mockLogger) Infoln(args ...any)                                   {}
-func (m *mockLogger) Error(args ...any)                                    {}
-func (m *mockLogger) Errorf(format string, args ...any)                    {}
-func (m *mockLogger) Errorln(args ...any)                                  {}
-func (m *mockLogger) Warn(args ...any)                                     {}
-func (m *mockLogger) Warnf(format string, args ...any)                     {}
-func (m *mockLogger) Warnln(args ...any)                                   {}
-func (m *mockLogger) Debug(args ...any)                                    {}
-func (m *mockLogger) Debugf(format string, args ...any)                    {}
-func (m *mockLogger) Debugln(args ...any)                                  {}
-func (m *mockLogger) Fatal(args ...any)                                    {}
-func (m *mockLogger) Fatalf(format string, args ...any)                    {}
-func (m *mockLogger) Fatalln(args ...any)                                  {}
-func (m *mockLogger) WithFields(fields ...any) log.Logger                  { return m }
-func (m *mockLogger) WithDefaultMessageTemplate(message string) log.Logger { return m }
-func (m *mockLogger) Sync() error                                          { return nil }
 
 func setupMiniredis(t *testing.T) (*miniredis.Miniredis, *RedisConnection) {
 	t.Helper()
@@ -60,7 +34,7 @@ func setupMiniredis(t *testing.T) (*miniredis.Miniredis, *RedisConnection) {
 
 	conn := &RedisConnection{
 		Client:    client,
-		Logger:    &mockLogger{},
+		Logger:    &testutil.MockLogger{},
 		Connected: true,
 	}
 
@@ -315,7 +289,7 @@ func TestRedisCache_NewRedisCache_NilConnection_Panics(t *testing.T) {
 	t.Run("connection with nil client panics", func(t *testing.T) {
 		conn := &RedisConnection{
 			Client:    nil,
-			Logger:    &mockLogger{},
+			Logger:    &testutil.MockLogger{},
 			Connected: false,
 		}
 		assert.Panics(t, func() {

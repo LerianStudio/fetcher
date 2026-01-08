@@ -20,15 +20,19 @@ type PublisherRepository interface {
 
 // PublisherRoutes wraps RabbitMQAdapter to support publishing messages to topic exchanges.
 type PublisherRoutes struct {
-	adapter *rabbitmq.RabbitMQAdapter
+	adapter rabbitmq.Adapter
 	log.Logger
 	opentelemetry.Telemetry
 }
 
-// NewPublisherRoutes creates a new instance of PublisherRoutes using RabbitMQAdapter.
+// NewPublisherRoutes creates a new instance of PublisherRoutes using a RabbitMQ connection.
 func NewPublisherRoutes(conn *libRabbitmq.RabbitMQConnection, logger log.Logger, telemetry *opentelemetry.Telemetry) *PublisherRoutes {
 	adapter := rabbitmq.NewRabbitMQAdapter(conn)
+	return NewPublisherRoutesWithAdapter(adapter, logger, telemetry)
+}
 
+// NewPublisherRoutesWithAdapter creates a new instance of PublisherRoutes using a specific RabbitMQ adapter.
+func NewPublisherRoutesWithAdapter(adapter rabbitmq.Adapter, logger log.Logger, telemetry *opentelemetry.Telemetry) *PublisherRoutes {
 	pr := &PublisherRoutes{
 		adapter:   adapter,
 		Logger:    logger,
