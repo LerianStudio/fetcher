@@ -308,8 +308,27 @@ func (jr *JobMongoDBRepository) UpdateStatus(ctx context.Context, id, organizati
 		libOpentelemetry.HandleSpanError(&spanUpdate, "Failed to convert filter to JSON", err)
 	}
 
+	// Debug: Log MongoDB operation details before update
+	filterJSON, _ := bson.MarshalExtJSON(filter, false, false)
+	updateJSON, _ := bson.MarshalExtJSON(update, false, false)
+	span.SetAttributes(
+		attribute.String("app.debug.mongodb.database", jr.Database),
+		attribute.String("app.debug.mongodb.collection", constant.MongoCollectionJob),
+		attribute.String("app.debug.mongodb.filter", string(filterJSON)),
+		attribute.String("app.debug.mongodb.update", string(updateJSON)),
+	)
+
 	result, err := coll.UpdateOne(ctx, filter, update)
 	if err != nil {
+		// Debug: Log detailed error information
+		errType := "unknown"
+		if unwrapped := errors.Unwrap(err); unwrapped != nil {
+			errType = unwrapped.Error()
+		}
+		span.SetAttributes(
+			attribute.String("app.debug.mongodb.error_type", errType),
+			attribute.String("app.debug.mongodb.error_full", err.Error()),
+		)
 		libOpentelemetry.HandleSpanError(&spanUpdate, "Failed to update job status", err)
 		return err
 	}
