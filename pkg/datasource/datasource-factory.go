@@ -102,6 +102,13 @@ func newDataSourceConfigMongoDB(ctx context.Context, base datasource.DataSourceC
 		mongoURI += "?" + optionsStr
 	}
 
+	// Validate SSL mode to prevent injection attacks
+	if conn.SSL != nil && conn.SSL.Mode != "" {
+		if err := sslmode.ValidateMongoDBMode(conn.SSL.Mode); err != nil {
+			return nil, err
+		}
+	}
+
 	var params []string
 	if conn.SSL != nil && conn.SSL.Mode != "" && conn.SSL.Mode != "false" && conn.SSL.Mode != "disable" {
 		// Enable TLS for MongoDB connection
@@ -174,6 +181,11 @@ func newDataSourceConfigPostgres(ctx context.Context, base datasource.DataSource
 	sslMode := "disable"
 	if conn.SSL != nil && conn.SSL.Mode != "" {
 		sslMode = conn.SSL.Mode
+	}
+
+	// Validate SSL mode to prevent injection attacks
+	if err := sslmode.ValidatePostgreSQLMode(sslMode); err != nil {
+		return nil, err
 	}
 
 	connectionString := fmt.Sprintf("%s://%s:%s@%s:%d/%s?sslmode=%s",
@@ -352,6 +364,11 @@ func newDataSourceConfigSQLServer(ctx context.Context, base datasource.DataSourc
 	trustServerCert := false
 
 	if conn.SSL != nil && conn.SSL.Mode != "" {
+		// Validate SSL mode to prevent injection attacks
+		if err := sslmode.ValidateSQLServerMode(conn.SSL.Mode); err != nil {
+			return nil, err
+		}
+
 		switch conn.SSL.Mode {
 		case "true", "require":
 			sslMode = "true"

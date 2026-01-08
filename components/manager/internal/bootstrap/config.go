@@ -138,6 +138,18 @@ func InitServers() *Service {
 		logger.Fatalf("Failed to ensure Job indexes: %v", errJobRepo)
 	}
 
+	// Init crypto
+	cryptoService, err := crypto.NewAESGCMServiceFromEnv(cfg.AppEncryptionKey, cfg.AppEncryptionKeyVersion)
+	if err != nil {
+		logger.Fatalf("Failed to initialize crypto service: %v", err)
+	}
+
+	// Init message signer for RabbitMQ
+	messageSigner, err := crypto.NewHMACSignerFromCryptor(cryptoService)
+	if err != nil {
+		logger.Fatalf("Failed to initialize message signer: %v", err)
+	}
+
 	// Init RabbitMQ
 	escapedUserRMQ := url.PathEscape(cfg.RabbitMQUser)
 	escapedPassRMQ := url.PathEscape(cfg.RabbitMQPass)
@@ -154,7 +166,10 @@ func InitServers() *Service {
 		Logger:                 logger,
 	}
 
-	rabbitMQAdapter := rabbitmq.NewRabbitMQAdapter(rabbitMQConnection)
+	rabbitMQOptions := rabbitmq.DefaultOptions()
+	rabbitMQOptions.Signer = messageSigner
+
+	rabbitMQAdapter := rabbitmq.NewRabbitMQAdapterWithOptions(rabbitMQConnection, rabbitMQOptions)
 
 	// Init Auth middleware client
 	authClient := middleware.NewAuthClient(cfg.AuthAddress, cfg.AuthEnabled, &logger)
@@ -166,12 +181,6 @@ func InitServers() *Service {
 		cfg.OrganizationIDs,
 		&logger,
 	)
-
-	// Init crypto
-	cryptoService, err := crypto.NewAESGCMServiceFromEnv(cfg.AppEncryptionKey, cfg.AppEncryptionKeyVersion)
-	if err != nil {
-		logger.Fatalf("Failed to initialize crypto service: %v", err)
-	}
 
 	// Init rate limiter for connection tests
 	// 10 tokens per minute per connection

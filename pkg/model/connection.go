@@ -9,6 +9,7 @@ import (
 
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
+	"github.com/LerianStudio/fetcher/pkg/datasource/sslmode"
 
 	"github.com/google/uuid"
 )
@@ -219,7 +220,35 @@ func (conn *Connection) validateFieldValues() map[string]string {
 		knownInvalidFields["config_name"] = "config name must be between 3 and 100 characters"
 	}
 
+	if conn.SSL != nil && conn.SSL.Mode != "" {
+		if err := conn.validateSSLModeForType(); err != nil {
+			knownInvalidFields["ssl.mode"] = err.Error()
+		}
+	}
+
 	return knownInvalidFields
+}
+
+// validateSSLModeForType validates that the SSL mode is valid for the connection's database type.
+// Each database driver has its own set of valid SSL/TLS modes.
+func (conn *Connection) validateSSLModeForType() error {
+	var err error
+	switch conn.Type {
+	case TypeMySQL:
+		err = sslmode.ValidateMySQLMode(conn.SSL.Mode)
+	case TypePostgreSQL:
+		err = sslmode.ValidatePostgreSQLMode(conn.SSL.Mode)
+	case TypeOracle:
+		err = sslmode.ValidateOracleMode(conn.SSL.Mode)
+	case TypeMongoDB:
+		err = sslmode.ValidateMongoDBMode(conn.SSL.Mode)
+	case TypeSQLServer:
+		err = sslmode.ValidateSQLServerMode(conn.SSL.Mode)
+	default:
+		return nil
+	}
+
+	return err
 }
 
 // ApplyPatch applies partial updates to the Connection.

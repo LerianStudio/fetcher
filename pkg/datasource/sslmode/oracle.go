@@ -11,13 +11,13 @@ import (
 // Reference: https://github.com/sijms/go-ora
 //
 // Valid values:
-//   - "" (empty): SSL disabled
-//   - "disable": SSL explicitly disabled
-//   - "false": SSL disabled (alias for disable)
-//   - "true": SSL enabled with certificate verification
-//   - "enable": SSL enabled with certificate verification (alias for true)
-//   - "verify": SSL enabled with strict certificate verification
-//   - "skip-verify": SSL enabled without certificate verification (insecure)
+//   - "" (empty): SSL disabled (no encryption)
+//   - "disable": SSL explicitly disabled (no encryption)
+//   - "false": SSL disabled (alias for disable, no encryption)
+//   - "true": SSL enabled - encrypts connection, server cert validated against system CA store
+//   - "enable": SSL enabled (alias for true) - same behavior as "true"
+//   - "verify": SSL enabled with STRICT verification - requires valid CA chain AND hostname match
+//   - "skip-verify": SSL enabled but certificate NOT validated (INSECURE - vulnerable to MITM)
 //
 // The go-ora driver uses these to construct connection options:
 //   - ssl=true|enable enables SSL

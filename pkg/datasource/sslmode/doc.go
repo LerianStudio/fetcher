@@ -11,6 +11,9 @@
 // Supported databases:
 //   - MySQL: Uses the go-sql-driver/mysql tls parameter
 //   - Oracle: Uses the sijms/go-ora ssl and ssl_verify parameters
+//   - PostgreSQL: Uses the lib/pq and pgx sslmode parameter
+//   - MongoDB: Uses the mongo-go-driver tls and tlsInsecure parameters
+//   - SQL Server: Uses the go-mssqldb encrypt parameter
 //
 // Usage:
 //

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"maps"
 	"math/rand"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -19,6 +20,8 @@ import (
 	libRabbitmq "github.com/LerianStudio/lib-commons/v2/commons/rabbitmq"
 
 	"github.com/LerianStudio/fetcher/pkg"
+	"github.com/LerianStudio/fetcher/pkg/constant"
+	"github.com/LerianStudio/fetcher/pkg/crypto"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	errgroup "golang.org/x/sync/errgroup"
@@ -53,6 +56,10 @@ const (
 
 	// DefaultShutdownTimeout is the default timeout for graceful shutdown.
 	DefaultShutdownTimeout = 30 * time.Second
+
+	// DefaultSignatureTimestampTolerance is the maximum age of a message signature.
+	// Messages older than this will be rejected to prevent replay attacks.
+	DefaultSignatureTimestampTolerance = 5 * time.Minute
 )
 
 // CircuitState represents the state of the circuit breaker.
@@ -109,19 +116,39 @@ type AdapterOptions struct {
 
 	// MeterProvider is the OpenTelemetry meter provider for metrics.
 	MeterProvider metric.MeterProvider
+
+	// Signer is used for message signing and verification.
+	// If nil, message signing/verification is disabled.
+	Signer crypto.Signer
+
+	// EnableMessageSigning controls whether messages are signed when publishing.
+	// Default: true (if Signer is provided)
+	EnableMessageSigning bool
+
+	// EnableSignatureVerification controls whether signatures are verified when consuming.
+	// Default: true (if Signer is provided)
+	EnableSignatureVerification bool
+
+	// SignatureTimestampTolerance is the maximum age of a message signature.
+	// Messages with timestamps older than this will be rejected to prevent replay attacks.
+	// Default: 5 minutes
+	SignatureTimestampTolerance time.Duration
 }
 
 // DefaultOptions returns the default adapter options.
 func DefaultOptions() AdapterOptions {
 	return AdapterOptions{
-		MaxRetryAttempts:        DefaultMaxRetryAttempts,
-		MaxPublishAttempts:      DefaultMaxPublishAttempts,
-		BaseRetryDelay:          DefaultBaseRetryDelay,
-		MaxRetryDelay:           DefaultMaxRetryDelay,
-		ConsumerReconnectDelay:  DefaultConsumerReconnectDelay,
-		CircuitBreakerThreshold: DefaultCircuitBreakerThreshold,
-		CircuitBreakerCooldown:  DefaultCircuitBreakerCooldown,
-		ShutdownTimeout:         DefaultShutdownTimeout,
+		MaxRetryAttempts:            DefaultMaxRetryAttempts,
+		MaxPublishAttempts:          DefaultMaxPublishAttempts,
+		BaseRetryDelay:              DefaultBaseRetryDelay,
+		MaxRetryDelay:               DefaultMaxRetryDelay,
+		ConsumerReconnectDelay:      DefaultConsumerReconnectDelay,
+		CircuitBreakerThreshold:     DefaultCircuitBreakerThreshold,
+		CircuitBreakerCooldown:      DefaultCircuitBreakerCooldown,
+		ShutdownTimeout:             DefaultShutdownTimeout,
+		EnableMessageSigning:        true,
+		EnableSignatureVerification: true,
+		SignatureTimestampTolerance: DefaultSignatureTimestampTolerance,
 	}
 }
 
@@ -299,6 +326,15 @@ var errDeliveriesClosed = errors.New("rabbitmq deliveries channel closed")
 
 // ErrCircuitOpen is returned when the circuit breaker is open.
 var ErrCircuitOpen = errors.New("circuit breaker is open")
+
+// ErrSignatureVerificationFailed is returned when message signature verification fails.
+var ErrSignatureVerificationFailed = errors.New("message signature verification failed")
+
+// ErrMissingSignatureHeaders is returned when required signature headers are missing.
+var ErrMissingSignatureHeaders = errors.New("missing required signature headers")
+
+// ErrSignatureExpired is returned when the message signature timestamp is too old.
+var ErrSignatureExpired = errors.New("message signature has expired")
 
 // NewRabbitMQAdapter initializes a new RabbitMQAdapter with the provided RabbitMQ connection.
 // It uses default options for configuration. Use NewRabbitMQAdapterWithOptions for custom configuration.
@@ -639,6 +675,22 @@ func (prmq *RabbitMQAdapter) ProducerDefault(ctx context.Context, exchange, key 
 
 	libOpentelemetry.InjectTraceHeadersIntoQueue(ctx, (*map[string]any)(&headers))
 
+	// Sign message if signer is configured and signing is enabled
+	if prmq.options.Signer != nil && prmq.options.EnableMessageSigning {
+		timestamp := time.Now().UTC().Unix()
+		payload := crypto.BuildSignaturePayload(timestamp, queueMessage)
+		signature := prmq.options.Signer.Sign(payload)
+
+		headers[constant.HeaderMessageSignature] = signature
+		headers[constant.HeaderSignatureTimestamp] = strconv.FormatInt(timestamp, 10)
+		headers[constant.HeaderSignatureVersion] = prmq.options.Signer.SignatureVersion()
+
+		spanProducer.SetAttributes(
+			attribute.String("messaging.signature.version", prmq.options.Signer.SignatureVersion()),
+			attribute.Int64("messaging.signature.timestamp", timestamp),
+		)
+	}
+
 	publish := func(ch amqpChannel) error {
 		return ch.Publish(
 			exchange,
@@ -945,6 +997,24 @@ func (prmq *RabbitMQAdapter) processDelivery(
 		libOpentelemetry.HandleSpanError(&hspan, "Failed to convert message to JSON string", err)
 	}
 
+	// Verify message signature if signer is configured and verification is enabled
+	if prmq.options.Signer != nil && prmq.options.EnableSignatureVerification {
+		if err := prmq.verifyMessageSignature(d.Body, headers, logWithFields, &hspan); err != nil {
+			if nackErr := d.Nack(false, false); nackErr != nil {
+				logWithFields.Warnf("Failed to Nack message after signature verification failure: %v", nackErr)
+			}
+
+			libOpentelemetry.HandleSpanError(&hspan, "Message signature verification failed", err)
+			logWithFields.Errorf("Message signature verification failed: %v", err)
+			prmq.recordConsumeFailed(ctx,
+				attribute.String("queue", queue),
+				attribute.String("reason", "signature_verification_failed"),
+			)
+
+			return
+		}
+	}
+
 	// Use the logger with fields created above (logWithFields) for all logging
 	// Recover from panics during message processing
 	defer func() {
@@ -1034,6 +1104,99 @@ func (prmq *RabbitMQAdapter) Shutdown(ctx context.Context) error {
 	}
 
 	logger.Info("RabbitMQ repository shut down gracefully")
+
+	return nil
+}
+
+// verifyMessageSignature verifies the HMAC signature of a message.
+// It checks for required signature headers, validates the signature version,
+// and verifies the signature against the message body.
+func (prmq *RabbitMQAdapter) verifyMessageSignature(
+	body []byte,
+	headers map[string]any,
+	logger libLog.Logger,
+	span *trace.Span,
+) error {
+	// Extract signature from headers
+	signatureRaw, ok := headers[constant.HeaderMessageSignature]
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrMissingSignatureHeaders, constant.HeaderMessageSignature)
+	}
+
+	signature, ok := signatureRaw.(string)
+	if !ok {
+		return fmt.Errorf("%w: %s must be a string", ErrMissingSignatureHeaders, constant.HeaderMessageSignature)
+	}
+
+	// Extract timestamp from headers
+	timestampRaw, ok := headers[constant.HeaderSignatureTimestamp]
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrMissingSignatureHeaders, constant.HeaderSignatureTimestamp)
+	}
+
+	var timestamp int64
+
+	switch v := timestampRaw.(type) {
+	case string:
+		var err error
+
+		timestamp, err = strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return fmt.Errorf("%w: invalid timestamp format: %v", ErrSignatureVerificationFailed, err)
+		}
+	case int64:
+		timestamp = v
+	case int:
+		timestamp = int64(v)
+	default:
+		return fmt.Errorf("%w: %s must be a string or int64", ErrMissingSignatureHeaders, constant.HeaderSignatureTimestamp)
+	}
+
+	// Check timestamp freshness to prevent replay attacks
+	if prmq.options.SignatureTimestampTolerance > 0 {
+		messageTime := time.Unix(timestamp, 0)
+		age := time.Since(messageTime)
+		if age > prmq.options.SignatureTimestampTolerance {
+			return fmt.Errorf("%w: message is %v old, tolerance is %v",
+				ErrSignatureExpired, age.Round(time.Second), prmq.options.SignatureTimestampTolerance)
+		}
+	}
+
+	// Extract and validate signature version
+	versionRaw, ok := headers[constant.HeaderSignatureVersion]
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrMissingSignatureHeaders, constant.HeaderSignatureVersion)
+	}
+
+	version, ok := versionRaw.(string)
+	if !ok {
+		return fmt.Errorf("%w: %s must be a string", ErrMissingSignatureHeaders, constant.HeaderSignatureVersion)
+	}
+
+	// Check if the signature version matches the signer's version
+	if version != prmq.options.Signer.SignatureVersion() {
+		return fmt.Errorf("%w: expected %s, got %s",
+			crypto.ErrUnsupportedSignatureVersion,
+			prmq.options.Signer.SignatureVersion(),
+			version,
+		)
+	}
+
+	// Add signature attributes to span
+	if span != nil {
+		(*span).SetAttributes(
+			attribute.String("messaging.signature.version", version),
+			attribute.Int64("messaging.signature.timestamp", timestamp),
+		)
+	}
+
+	// Build the signature payload and verify
+	payload := crypto.BuildSignaturePayload(timestamp, body)
+	if err := prmq.options.Signer.Verify(payload, signature); err != nil {
+		return fmt.Errorf("%w: %v", ErrSignatureVerificationFailed, err)
+	}
+
+	logger.Debug("Message signature verified successfully")
 
 	return nil
 }
