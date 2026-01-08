@@ -13,9 +13,15 @@ services:
       - .:/usr/src/worker
     networks:
       - fetcher-infra-network
+      - infra-network
+      - plugin-crm-network
 
 networks:
   fetcher-infra-network:
+    external: true
+  infra-network:
+    external: true
+  plugin-crm-network:
     external: true
 
 secrets:

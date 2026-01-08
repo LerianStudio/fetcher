@@ -19,12 +19,18 @@ services:
     networks:
       - fetcher-infra-network
       - fetcher-manager-network
+      - infra-network
+      - plugin-crm-network
 
 networks:
   fetcher-infra-network:
     external: true
   fetcher-manager-network:
     driver: bridge
+  infra-network:
+    external: true
+  plugin-crm-network:
+    external: true
 
 secrets:
   github_token:

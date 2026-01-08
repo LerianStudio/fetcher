@@ -34,13 +34,13 @@ func NewFetcherHandler(createJobCmd *command.CreateFetcherJob, getJobQuery *quer
 // CreateJob handles POST /v1/fetcher requests to create a new data extraction job.
 //
 //	@Summary		Create fetcher job
-//	@Description	Create a new data extraction job. The request will be validated, deduplicated within a 5-minute window, and all referenced connections will be tested before job creation.
+//	@Description	Create a new data extraction job. The request will be validated, deduplicated within a 5-minute window, and all referenced connections will be tested before job creation. The metadata.source field is required for job notification routing.
 //	@Tags			Fetcher
 //	@Accept			json
 //	@Produce		json
 //	@Param			Authorization		header		string				false	"The authorization token in the 'Bearer access_token' format. Only required when auth plugin is enabled."
 //	@Param			X-Organization-Id	header		string				true	"Organization ID"
-//	@Param			request				body		model.FetcherRequest	true	"Fetcher request payload"
+//	@Param			request				body		model.FetcherRequest	true	"Fetcher request payload. metadata.source is required."
 //	@Success		200					{object}	model.FetcherResponse	"Duplicate request - returning existing job"
 //	@Success		202					{object}	model.FetcherResponse	"Job created and queued for processing"
 //	@Failure		400					{object}	pkg.HTTPError
@@ -78,6 +78,43 @@ func (h *FetcherHandler) CreateJob(c *fiber.Ctx) error {
 			Title:      "Invalid payload",
 			Message:    "unable to parse request body",
 			Err:        errParser,
+		})
+	}
+
+	// Validate required metadata.source field
+	if request.Metadata == nil {
+		libOpentelemetry.HandleSpanError(&span, "missing required metadata", nil)
+
+		return httpUtils.WithError(c, pkg.ValidationError{
+			EntityType: "fetcher",
+			Code:       constant.ErrMissingFieldsInRequest.Error(),
+			Title:      "Missing Required Field",
+			Message:    "metadata is required and must contain 'source' field",
+		})
+	}
+
+	source, hasSource := request.Metadata["source"]
+	if !hasSource || source == nil {
+		libOpentelemetry.HandleSpanError(&span, "missing required metadata.source", nil)
+
+		return httpUtils.WithError(c, pkg.ValidationError{
+			EntityType: "fetcher",
+			Code:       constant.ErrMissingFieldsInRequest.Error(),
+			Title:      "Missing Required Field",
+			Message:    "metadata.source is required for job notification routing",
+		})
+	}
+
+	// Validate source is a non-empty string
+	sourceStr, ok := source.(string)
+	if !ok || sourceStr == "" {
+		libOpentelemetry.HandleSpanError(&span, "invalid metadata.source type or empty value", nil)
+
+		return httpUtils.WithError(c, pkg.ValidationError{
+			EntityType: "fetcher",
+			Code:       constant.ErrMissingFieldsInRequest.Error(),
+			Title:      "Invalid Field Value",
+			Message:    "metadata.source must be a non-empty string",
 		})
 	}
 

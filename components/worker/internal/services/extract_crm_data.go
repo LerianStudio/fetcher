@@ -13,6 +13,7 @@ import (
 	libCrypto "github.com/LerianStudio/lib-commons/v2/commons/crypto"
 	"github.com/LerianStudio/lib-commons/v2/commons/log"
 	libOtel "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
+	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -23,6 +24,7 @@ func (uc *UseCase) QueryPluginCRM(
 	databaseName string,
 	collections map[string][]string,
 	databaseFilters map[string]map[string]modelJob.FilterCondition,
+	organizationID uuid.UUID,
 	result map[string]map[string][]map[string]any,
 	logger log.Logger,
 ) error {
@@ -34,12 +36,13 @@ func (uc *UseCase) QueryPluginCRM(
 	span.SetAttributes(
 		attribute.String("app.request.request_id", reqID),
 		attribute.String("app.request.database_name", databaseName),
+		attribute.String("app.request.organization_id", organizationID.String()),
 	)
 
 	for collection, fields := range collections {
 		collectionFilters := getTableFilters(databaseFilters, collection)
 
-		if err := uc.processPluginCRMCollection(ctx, dataSource, collection, fields, collectionFilters, collections, result, logger); err != nil {
+		if err := uc.processPluginCRMCollection(ctx, dataSource, collection, fields, collectionFilters, organizationID, result, logger); err != nil {
 			libOtel.HandleSpanError(&span, "Error processing plugin_crm collection", err)
 			return err
 		}
@@ -55,17 +58,14 @@ func (uc *UseCase) processPluginCRMCollection(
 	collection string,
 	fields []string,
 	collectionFilters map[string]modelJob.FilterCondition,
-	allCollections map[string][]string,
+	organizationID uuid.UUID,
 	result map[string]map[string][]map[string]any,
 	logger log.Logger,
 ) error {
-	orgFields, exists := allCollections["organization"]
-	if !exists || len(orgFields) == 0 {
-		logger.Errorf("Organization field not found for plugin_crm collection %s", collection)
-		return fmt.Errorf("organization field not found for plugin_crm collection %s", collection)
-	}
-
-	newCollection := collection + "_" + orgFields[0]
+	// Transform collection name by appending organization ID suffix
+	// e.g., "holders" becomes "holders_019b9df1-34eb-7dd0-afd5-53f859667e51"
+	newCollection := collection + "_" + organizationID.String()
+	logger.Infof("Transformed plugin_crm collection: %s -> %s", collection, newCollection)
 
 	collectionResult, err := uc.queryPluginCRMCollectionWithFilters(ctx, dataSource, newCollection, fields, collectionFilters, logger)
 	if err != nil {
