@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"maps"
 	"strings"
 
 	"github.com/LerianStudio/fetcher/pkg/constant"
@@ -631,9 +632,7 @@ func (ds *ExternalDataSource) buildMongoFilter(filter map[string]job.FilterCondi
 			return nil, fmt.Errorf("error converting filter for field '%s': %w", field, err)
 		}
 
-		for k, v := range fieldFilter {
-			mongoFilter[k] = v
-		}
+		maps.Copy(mongoFilter, fieldFilter)
 	}
 
 	return mongoFilter, nil
@@ -727,7 +726,7 @@ func (ds *ExternalDataSource) convertFilterConditionToMongoFilter(field string, 
 	filter := make(map[string]any)
 	fieldFilter := make(map[string]any)
 
-	// Handle equals
+	// Handle equals - special case that may set filter directly
 	if len(condition.Equals) > 0 {
 		if len(condition.Equals) == 1 {
 			filter[field] = condition.Equals[0]
@@ -736,22 +735,37 @@ func (ds *ExternalDataSource) convertFilterConditionToMongoFilter(field string, 
 		}
 	}
 
-	// Handle greater than
+	// Apply simple comparison operators
+	applyMongoComparisonOperators(fieldFilter, condition)
+
+	// Handle not equals
+	applyMongoNotEquals(fieldFilter, condition)
+
+	// Handle like pattern matching (MongoDB uses $regex)
+	applyMongoLikePattern(fieldFilter, condition)
+
+	// If we have complex field filters, use them, otherwise use the simple filter
+	if len(fieldFilter) > 0 {
+		filter[field] = fieldFilter
+	}
+
+	return filter, nil
+}
+
+// applyMongoComparisonOperators applies simple comparison operators to the field filter
+func applyMongoComparisonOperators(fieldFilter map[string]any, condition job.FilterCondition) {
 	if len(condition.GreaterThan) > 0 {
 		fieldFilter["$gt"] = condition.GreaterThan[0]
 	}
 
-	// Handle greater than or equal
 	if len(condition.GreaterOrEqual) > 0 {
 		fieldFilter["$gte"] = condition.GreaterOrEqual[0]
 	}
 
-	// Handle less than
 	if len(condition.LessThan) > 0 {
 		fieldFilter["$lt"] = condition.LessThan[0]
 	}
 
-	// Handle less than or equal
 	if len(condition.LessOrEqual) > 0 {
 		fieldFilter["$lte"] = condition.LessOrEqual[0]
 	}
@@ -762,57 +776,68 @@ func (ds *ExternalDataSource) convertFilterConditionToMongoFilter(field string, 
 		fieldFilter["$lte"] = condition.Between[1]
 	}
 
-	// Handle in
 	if len(condition.In) > 0 {
 		fieldFilter["$in"] = condition.In
 	}
 
-	// Handle not in
 	if len(condition.NotIn) > 0 {
 		fieldFilter["$nin"] = condition.NotIn
 	}
+}
 
-	// Handle not equals
-	if len(condition.NotEquals) > 0 {
-		if len(condition.NotEquals) == 1 {
-			fieldFilter["$ne"] = condition.NotEquals[0]
-		} else {
-			// Multiple values: use $nin for negation
-			fieldFilter["$nin"] = condition.NotEquals
-		}
+// applyMongoNotEquals applies not equals operator to the field filter
+func applyMongoNotEquals(fieldFilter map[string]any, condition job.FilterCondition) {
+	if len(condition.NotEquals) == 0 {
+		return
 	}
 
-	// Handle like pattern matching (MongoDB uses $regex)
-	if len(condition.Like) > 0 {
-		if pattern, ok := condition.Like[0].(string); ok {
-			// Convert SQL LIKE pattern to regex:
-			// % -> .* (matches any sequence)
-			// _ -> . (matches single char)
-			regexPattern := strings.ReplaceAll(pattern, "%", ".*")
-			regexPattern = strings.ReplaceAll(regexPattern, "_", ".")
-			// If pattern starts with .*, don't anchor; otherwise anchor at start
-			if !strings.HasPrefix(regexPattern, ".*") {
-				regexPattern = "^" + regexPattern
-			} else {
-				regexPattern = regexPattern[2:] // Remove leading .*
-			}
-			// If pattern ends with .*, don't anchor; otherwise anchor at end
-			if !strings.HasSuffix(regexPattern, ".*") {
-				regexPattern = regexPattern + "$"
-			} else {
-				regexPattern = regexPattern[:len(regexPattern)-2] // Remove trailing .*
-			}
-			fieldFilter["$regex"] = regexPattern
-			fieldFilter["$options"] = "i" // case-insensitive
-		}
+	if len(condition.NotEquals) == 1 {
+		fieldFilter["$ne"] = condition.NotEquals[0]
+	} else {
+		// Multiple values: use $nin for negation
+		fieldFilter["$nin"] = condition.NotEquals
+	}
+}
+
+// applyMongoLikePattern applies like pattern matching using MongoDB $regex
+func applyMongoLikePattern(fieldFilter map[string]any, condition job.FilterCondition) {
+	if len(condition.Like) == 0 {
+		return
 	}
 
-	// If we have complex field filters, use them, otherwise use the simple filter
-	if len(fieldFilter) > 0 {
-		filter[field] = fieldFilter
+	pattern, ok := condition.Like[0].(string)
+	if !ok {
+		return
 	}
 
-	return filter, nil
+	regexPattern := convertSQLLikeToRegex(pattern)
+	fieldFilter["$regex"] = regexPattern
+	fieldFilter["$options"] = "i" // case-insensitive
+}
+
+// convertSQLLikeToRegex converts SQL LIKE pattern to MongoDB regex pattern
+func convertSQLLikeToRegex(pattern string) string {
+	// Convert SQL LIKE pattern to regex:
+	// % -> .* (matches any sequence)
+	// _ -> . (matches single char)
+	regexPattern := strings.ReplaceAll(pattern, "%", ".*")
+	regexPattern = strings.ReplaceAll(regexPattern, "_", ".")
+
+	// If pattern starts with .*, don't anchor; otherwise anchor at start
+	if strings.HasPrefix(regexPattern, ".*") {
+		regexPattern = regexPattern[2:] // Remove leading .*
+	} else {
+		regexPattern = "^" + regexPattern
+	}
+
+	// If pattern ends with .*, don't anchor; otherwise anchor at end
+	if strings.HasSuffix(regexPattern, ".*") {
+		regexPattern = regexPattern[:len(regexPattern)-2] // Remove trailing .*
+	} else {
+		regexPattern = regexPattern + "$"
+	}
+
+	return regexPattern
 }
 
 // isFilterConditionEmpty checks if a FilterCondition has no active filters

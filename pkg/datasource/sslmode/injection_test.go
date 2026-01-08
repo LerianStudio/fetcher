@@ -69,8 +69,8 @@ func TestInjectionAttackVectors(t *testing.T) {
 		{name: "shell command AND", vector: "true&&whoami"},
 
 		// Unicode/encoding attacks
-		{name: "unicode homoglyph t", vector: "тrue"},  // Cyrillic т
-		{name: "unicode homoglyph e", vector: "truе"},  // Cyrillic е
+		{name: "unicode homoglyph t", vector: "тrue"}, // Cyrillic т
+		{name: "unicode homoglyph e", vector: "truе"}, // Cyrillic е
 		{name: "unicode zero width", vector: "tru\u200be"},
 		{name: "unicode BOM", vector: "\ufefftrue"},
 		{name: "UTF-7 encoding", vector: "+AHQ-rue"},

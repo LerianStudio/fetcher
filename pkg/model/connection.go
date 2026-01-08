@@ -233,6 +233,7 @@ func (conn *Connection) validateFieldValues() map[string]string {
 // Each database driver has its own set of valid SSL/TLS modes.
 func (conn *Connection) validateSSLModeForType() error {
 	var err error
+
 	switch conn.Type {
 	case TypeMySQL:
 		err = sslmode.ValidateMySQLMode(conn.SSL.Mode)

@@ -107,10 +107,12 @@ func (cm *ConnectionMongoDBModel) FromEntity(conn *model.Connection) error {
 	cm.Username = conn.Username
 	cm.PasswordEncrypted = conn.PasswordEncrypted
 	cm.EncryptionKeyVersion = conn.EncryptionKeyVersion
+
 	cm.SSL = ssl
 	if conn.Metadata != nil {
 		cm.Metadata = *conn.Metadata
 	}
+
 	cm.CreatedAt = conn.CreatedAt
 	cm.UpdatedAt = conn.UpdatedAt
 	cm.DeletedAt = conn.DeletedAt

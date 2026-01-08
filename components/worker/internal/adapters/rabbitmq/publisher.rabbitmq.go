@@ -32,6 +32,7 @@ func NewPublisherRoutes(conn *libRabbitmq.RabbitMQConnection, logger log.Logger,
 	opts := rabbitmq.DefaultOptions()
 	opts.Signer = signer
 	adapter := rabbitmq.NewRabbitMQAdapterWithOptions(conn, opts)
+
 	return NewPublisherRoutesWithAdapter(adapter, logger, telemetry)
 }
 

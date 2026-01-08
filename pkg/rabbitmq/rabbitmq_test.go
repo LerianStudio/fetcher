@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/LerianStudio/fetcher/pkg/constant"
+	"github.com/LerianStudio/fetcher/pkg/crypto"
 	libCommons "github.com/LerianStudio/lib-commons/v2/commons"
 	libConstants "github.com/LerianStudio/lib-commons/v2/commons/constants"
 	libLog "github.com/LerianStudio/lib-commons/v2/commons/log"
-	"github.com/LerianStudio/fetcher/pkg/constant"
-	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/golang/mock/gomock"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/assert"
@@ -2098,7 +2098,7 @@ func TestRabbitMQAdapter_ConsumerLoop_NacksOnMissingSignature(t *testing.T) {
 	channel := newTestAMQPChannel()
 	ack := &testAcknowledger{}
 	channel.deliveries <- amqp.Delivery{
-		Body: []byte(`{"data":"test"}`),
+		Body:    []byte(`{"data":"test"}`),
 		Headers: amqp.Table{
 			// Missing signature headers
 		},
@@ -2271,7 +2271,7 @@ func TestRabbitMQAdapter_ConsumerLoop_SkipsVerificationWhenDisabled(t *testing.T
 	channel := newTestAMQPChannel()
 	ack := &testAcknowledger{}
 	channel.deliveries <- amqp.Delivery{
-		Body: []byte(`{"data":"test"}`),
+		Body:    []byte(`{"data":"test"}`),
 		Headers: amqp.Table{
 			// No signature headers - should still work when verification disabled
 		},

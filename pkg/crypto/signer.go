@@ -99,5 +99,6 @@ func BuildSignaturePayload(timestamp int64, body []byte) []byte {
 	payload := make([]byte, 0, 20+1+len(body))
 	payload = fmt.Appendf(payload, "%d.", timestamp)
 	payload = append(payload, body...)
+
 	return payload
 }

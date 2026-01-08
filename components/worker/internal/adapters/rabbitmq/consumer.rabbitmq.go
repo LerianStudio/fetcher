@@ -39,6 +39,7 @@ func NewConsumerRoutes(conn *libRabbitmq.RabbitMQConnection, numWorkers int, log
 	opts := rabbitmq.DefaultOptions()
 	opts.Signer = signer
 	adapter := rabbitmq.NewRabbitMQAdapterWithOptions(conn, opts)
+
 	return NewConsumerRoutesWithAdapter(adapter, numWorkers, logger, telemetry)
 }
 

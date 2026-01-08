@@ -1155,6 +1155,7 @@ func (prmq *RabbitMQAdapter) verifyMessageSignature(
 	// Check timestamp freshness to prevent replay attacks
 	if prmq.options.SignatureTimestampTolerance > 0 {
 		messageTime := time.Unix(timestamp, 0)
+
 		age := time.Since(messageTime)
 		if age > prmq.options.SignatureTimestampTolerance {
 			return fmt.Errorf("%w: message is %v old, tolerance is %v",
