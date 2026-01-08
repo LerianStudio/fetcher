@@ -107,12 +107,12 @@ set -e
 # Create SSL directory
 mkdir -p /var/lib/mysql-ssl
 # Write certificates from environment variables
-echo "$SSL_CA_CERT" > /var/lib/mysql-ssl/ca.pem
-echo "$SSL_SERVER_CERT" > /var/lib/mysql-ssl/server-cert.pem
-echo "$SSL_SERVER_KEY" > /var/lib/mysql-ssl/server-key.pem
+echo "$SSL_CA_CERT" > /var/lib/mysql-ssl/ca.crt
+echo "$SSL_SERVER_CERT" > /var/lib/mysql-ssl/server.crt
+echo "$SSL_SERVER_KEY" > /var/lib/mysql-ssl/server.key
 # Set correct permissions and ownership (mysql user is uid 999)
-chmod 644 /var/lib/mysql-ssl/ca.pem /var/lib/mysql-ssl/server-cert.pem
-chmod 600 /var/lib/mysql-ssl/server-key.pem
+chmod 644 /var/lib/mysql-ssl/ca.crt /var/lib/mysql-ssl/server.crt
+chmod 600 /var/lib/mysql-ssl/server.key
 chown -R mysql:mysql /var/lib/mysql-ssl
 # Call the original entrypoint
 exec /usr/local/bin/docker-entrypoint.sh "$@"
@@ -136,9 +136,9 @@ exec /usr/local/bin/docker-entrypoint.sh "$@"
 					// Pass SSL arguments to mysqld
 					Cmd: []string{
 						"mysqld",
-						"--ssl-ca=/var/lib/mysql-ssl/ca.pem",
-						"--ssl-cert=/var/lib/mysql-ssl/server-cert.pem",
-						"--ssl-key=/var/lib/mysql-ssl/server-key.pem",
+						"--ssl-ca=/var/lib/mysql-ssl/ca.crt",
+						"--ssl-cert=/var/lib/mysql-ssl/server.crt",
+						"--ssl-key=/var/lib/mysql-ssl/server.key",
 					},
 				},
 			}),

@@ -46,7 +46,7 @@ func loadStressConfig(t *testing.T) stressTestConfig {
 		Pass:       getenv("RABBITMQ_DEFAULT_PASS", "Lerian@123"),
 		Exchange:   getenv("RABBITMQ_EXCHANGE", "fetcher.extract-external-data.exchange"),
 		Queue:      getenv("RABBITMQ_FETCHER_WORK_QUEUE", "fetcher.extract-external-data.queue"),
-		RoutingKey: getenv("RABBITMQ_FETCHER_WORK_KEY", "fetcher.extract-external-data.key"),
+		RoutingKey: "fetcher.job.key",
 		HealthURL:  getenv("RABBITMQ_HEALTH_CHECK_URL", "http://fetcher-rabbitmq:3008"),
 	}
 }

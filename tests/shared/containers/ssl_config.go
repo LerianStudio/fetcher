@@ -25,9 +25,9 @@ ssl_key_file = '/tmp/testcontainers-go/postgres/server.key'
 // This content is written to a temporary file and mounted into the container.
 // Uses /etc/mysql/conf.d/ path which exists by default in the MySQL Docker image.
 const MySQLSSLConfigContent = `[mysqld]
-ssl_ca=/etc/mysql/conf.d/ca.pem
-ssl_cert=/etc/mysql/conf.d/server-cert.pem
-ssl_key=/etc/mysql/conf.d/server-key.pem
+ssl_ca=/etc/mysql/conf.d/ca.crt
+ssl_cert=/etc/mysql/conf.d/server.crt
+ssl_key=/etc/mysql/conf.d/server.key
 `
 
 // WritePostgresSSLConfig writes the PostgreSQL SSL config file to the specified directory.
