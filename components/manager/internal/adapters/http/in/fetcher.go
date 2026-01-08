@@ -94,7 +94,7 @@ func (h *FetcherHandler) CreateJob(c *fiber.Ctx) error {
 	}
 
 	source, hasSource := request.Metadata["source"]
-	if !hasSource || source == nil || source == "" {
+	if !hasSource || source == nil {
 		libOpentelemetry.HandleSpanError(&span, "missing required metadata.source", nil)
 
 		return httpUtils.WithError(c, pkg.ValidationError{
@@ -102,6 +102,19 @@ func (h *FetcherHandler) CreateJob(c *fiber.Ctx) error {
 			Code:       constant.ErrMissingFieldsInRequest.Error(),
 			Title:      "Missing Required Field",
 			Message:    "metadata.source is required for job notification routing",
+		})
+	}
+
+	// Validate source is a non-empty string
+	sourceStr, ok := source.(string)
+	if !ok || sourceStr == "" {
+		libOpentelemetry.HandleSpanError(&span, "invalid metadata.source type or empty value", nil)
+
+		return httpUtils.WithError(c, pkg.ValidationError{
+			EntityType: "fetcher",
+			Code:       constant.ErrMissingFieldsInRequest.Error(),
+			Title:      "Invalid Field Value",
+			Message:    "metadata.source must be a non-empty string",
 		})
 	}
 
