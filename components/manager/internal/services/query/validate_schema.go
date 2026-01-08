@@ -22,6 +22,18 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 )
 
+const (
+	// pluginCRMConfigName is the config name that requires special table name transformation.
+	pluginCRMConfigName = "plugin_crm"
+)
+
+// pluginCRMTableMapping maps user-friendly table names to actual database collection names.
+// The actual collection name in the database is: <mapped_name>_<organization_id>
+var pluginCRMTableMapping = map[string]string{
+	"holders": "holders",
+	"aliases": "aliases",
+}
+
 // ValidateSchema is the query service for validating schema references.
 type ValidateSchema struct {
 	connRepo    connRepo.Repository
@@ -120,6 +132,15 @@ func (s *ValidateSchema) Execute(
 
 		tables := spec.GetTablesByConfigName(configName)
 
+		// tableNameReverseMap maps transformed names back to original names for error reporting
+		var tableNameReverseMap map[string]string
+
+		// Transform table names for plugin_crm to include organization ID suffix
+		if configName == pluginCRMConfigName {
+			tables, tableNameReverseMap = transformPluginCRMTables(tables, organizationID)
+			logger.Debugf("transformed plugin_crm tables org=%s tables=%v", organizationID, tables)
+		}
+
 		// Returns schemas only if they exist
 		schemas := datasourceModel.GetUniqueSchemas(tables)
 
@@ -138,8 +159,8 @@ func (s *ValidateSchema) Execute(
 			continue
 		}
 
-		// Validate against schema
-		schemaErrors := spec.ValidateAgainstSchema(configName, schema)
+		// Validate against schema using transformed table names
+		schemaErrors := validateTablesAgainstSchema(configName, tables, schema, tableNameReverseMap)
 		validationErrors = append(validationErrors, schemaErrors...)
 	}
 
@@ -220,6 +241,52 @@ func (s *ValidateSchema) getOrFetchSchema(
 	return schema, nil
 }
 
+// validateTablesAgainstSchema validates tables against a DataSourceSchema.
+// If reverseMap is provided, it uses original table names in error messages.
+func validateTablesAgainstSchema(
+	configName string,
+	tables map[string][]string,
+	schema *model.DataSourceSchema,
+	reverseMap map[string]string,
+) []model.SchemaValidationError {
+	var errors []model.SchemaValidationError
+
+	for tableName, fields := range tables {
+		// Determine the display name for error messages
+		displayName := tableName
+		if reverseMap != nil {
+			if original, exists := reverseMap[tableName]; exists {
+				displayName = original
+			}
+		}
+
+		// Check if table exists in schema
+		if !schema.HasTable(tableName) {
+			errors = append(errors, model.SchemaValidationError{
+				Type:         model.ErrTypeTableNotFound,
+				DataSourceID: configName,
+				Table:        displayName,
+			})
+
+			continue
+		}
+
+		// Check if each field exists in the table schema
+		for _, fieldName := range fields {
+			if !schema.HasField(tableName, fieldName) {
+				errors = append(errors, model.SchemaValidationError{
+					Type:         model.ErrTypeFieldNotFound,
+					DataSourceID: configName,
+					Table:        displayName,
+					Field:        fieldName,
+				})
+			}
+		}
+	}
+
+	return errors
+}
+
 // ensureDefaultSchemaForPostgreSQL adds the default "public" schema to the schemas list
 // if any table name is unqualified (has no schema prefix with a dot).
 // This ensures tables in the public schema are discoverable when mixed with schema-qualified tables.
@@ -251,4 +318,30 @@ func ensureDefaultSchemaForPostgreSQL(tables map[string][]string, schemas []stri
 	}
 
 	return schemas
+}
+
+// transformPluginCRMTables transforms table names for plugin_crm datasource.
+// It maps user-friendly names (e.g., "holders") to actual database collection names
+// with organization ID suffix (e.g., "holders_<org_id>").
+// Returns the transformed tables and a reverse map (transformed -> original) for error reporting.
+func transformPluginCRMTables(tables map[string][]string, organizationID uuid.UUID) (map[string][]string, map[string]string) {
+	transformed := make(map[string][]string, len(tables))
+	reverseMap := make(map[string]string, len(tables))
+
+	for tableName, fields := range tables {
+		var actualName string
+		// Check if we have a mapping for this table name
+		if mappedName, exists := pluginCRMTableMapping[tableName]; exists {
+			// Transform to actual collection name: <mapped_name>_<org_id>
+			actualName = mappedName + "_" + organizationID.String()
+		} else {
+			// No mapping found, use table name with org_id suffix as fallback
+			actualName = tableName + "_" + organizationID.String()
+		}
+
+		transformed[actualName] = fields
+		reverseMap[actualName] = tableName
+	}
+
+	return transformed, reverseMap
 }

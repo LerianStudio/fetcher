@@ -6,6 +6,7 @@ import (
 	modelJob "github.com/LerianStudio/fetcher/pkg/model/job"
 	libCrypto "github.com/LerianStudio/lib-commons/v2/commons/crypto"
 	"github.com/golang/mock/gomock"
+	"github.com/google/uuid"
 )
 
 // TestIsEncryptedField tests the encrypted field detection function.
@@ -1075,8 +1076,8 @@ func TestTransformPluginCRMAdvancedFilters_AllConditionTypes(t *testing.T) {
 	}
 }
 
-// TestProcessPluginCRMCollection_MissingOrganization tests error when organization field is missing.
-func TestProcessPluginCRMCollection_MissingOrganization(t *testing.T) {
+// TestProcessPluginCRMCollection_WithOrganizationID tests collection name transformation with organization ID.
+func TestProcessPluginCRMCollection_WithOrganizationID(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
@@ -1086,66 +1087,27 @@ func TestProcessPluginCRMCollection_MissingOrganization(t *testing.T) {
 	ctx := testContext()
 	logger := testLogger()
 
-	// All collections WITHOUT organization
-	allCollections := map[string][]string{
-		"counterparty": {"id", "name", "document"},
-	}
-
+	orgID := uuid.MustParse("019b9df1-34eb-7dd0-afd5-53f859667e51")
 	result := make(map[string]map[string][]map[string]any)
 
-	err := uc.processPluginCRMCollection(
+	// With nil data source, we expect a panic when trying to query
+	// This test validates that the function accepts organizationID parameter
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("expected panic with nil data source")
+		}
+	}()
+
+	_ = uc.processPluginCRMCollection(
 		ctx,
-		nil, // dataSource not needed since we expect early error
-		"counterparty",
+		nil, // nil dataSource will cause panic
+		"holders",
 		[]string{"id", "name"},
 		nil,
-		allCollections,
+		orgID,
 		result,
 		logger,
 	)
-
-	if err == nil {
-		t.Fatal("expected error when organization field is missing")
-	}
-
-	if err.Error() != "organization field not found for plugin_crm collection counterparty" {
-		t.Errorf("unexpected error message: %v", err)
-	}
-}
-
-// TestProcessPluginCRMCollection_EmptyOrganization tests error when organization field is empty.
-func TestProcessPluginCRMCollection_EmptyOrganization(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mocks := newTestMocks(ctrl)
-	uc := newTestUseCase(mocks)
-
-	ctx := testContext()
-	logger := testLogger()
-
-	// Organization field exists but is empty
-	allCollections := map[string][]string{
-		"counterparty": {"id", "name"},
-		"organization": {}, // empty
-	}
-
-	result := make(map[string]map[string][]map[string]any)
-
-	err := uc.processPluginCRMCollection(
-		ctx,
-		nil,
-		"counterparty",
-		[]string{"id", "name"},
-		nil,
-		allCollections,
-		result,
-		logger,
-	)
-
-	if err == nil {
-		t.Fatal("expected error when organization field is empty")
-	}
 }
 
 // TestQueryPluginCRMCollectionWithFilters_NoFilters tests querying without filters.
@@ -1247,6 +1209,7 @@ func TestQueryPluginCRM_EmptyCollections(t *testing.T) {
 	ctx := testContext()
 	logger := testLogger()
 
+	orgID := uuid.MustParse("019b9df1-34eb-7dd0-afd5-53f859667e51")
 	result := make(map[string]map[string][]map[string]any)
 
 	// Empty collections should not cause errors - just no processing
@@ -1256,6 +1219,7 @@ func TestQueryPluginCRM_EmptyCollections(t *testing.T) {
 		"plugin_crm",
 		map[string][]string{}, // empty collections
 		nil,
+		orgID,
 		result,
 		logger,
 	)
@@ -1276,6 +1240,7 @@ func TestQueryPluginCRM_NilCollections(t *testing.T) {
 	ctx := testContext()
 	logger := testLogger()
 
+	orgID := uuid.MustParse("019b9df1-34eb-7dd0-afd5-53f859667e51")
 	result := make(map[string]map[string][]map[string]any)
 
 	// Nil collections should not cause errors
@@ -1285,6 +1250,7 @@ func TestQueryPluginCRM_NilCollections(t *testing.T) {
 		"plugin_crm",
 		nil, // nil collections
 		nil,
+		orgID,
 		result,
 		logger,
 	)
@@ -1314,6 +1280,8 @@ func TestQueryPluginCRM_WithOrganizationOnly(t *testing.T) {
 		"organization": {"id", "name"},
 	}
 
+	orgID := uuid.MustParse("019b9df1-34eb-7dd0-afd5-53f859667e51")
+
 	// This will panic because nil dataSource is passed and organization is processed
 	defer func() {
 		if r := recover(); r != nil {
@@ -1327,6 +1295,7 @@ func TestQueryPluginCRM_WithOrganizationOnly(t *testing.T) {
 		"plugin_crm",
 		collections,
 		nil,
+		orgID,
 		result,
 		logger,
 	)
@@ -1691,6 +1660,8 @@ func TestQueryPluginCRM_WithFilters(t *testing.T) {
 		},
 	}
 
+	orgID := uuid.MustParse("019b9df1-34eb-7dd0-afd5-53f859667e51")
+
 	// This will fail due to nil dataSource, but we're testing the filter handling path
 	defer func() {
 		if r := recover(); r != nil {
@@ -1705,6 +1676,7 @@ func TestQueryPluginCRM_WithFilters(t *testing.T) {
 		"plugin_crm",
 		collections,
 		filters,
+		orgID,
 		result,
 		logger,
 	)
@@ -1751,12 +1723,7 @@ func TestProcessPluginCRMCollection_WithValidOrganization(t *testing.T) {
 	ctx := testContext()
 	logger := testLogger()
 
-	// All collections WITH organization
-	allCollections := map[string][]string{
-		"organization": {"id", "name"},
-		"counterparty": {"id", "name", "document"},
-	}
-
+	orgID := uuid.MustParse("019b9df1-34eb-7dd0-afd5-53f859667e51")
 	result := make(map[string]map[string][]map[string]any)
 
 	// This will panic due to nil dataSource, but tests the organization validation path
@@ -1772,7 +1739,7 @@ func TestProcessPluginCRMCollection_WithValidOrganization(t *testing.T) {
 		"counterparty",
 		[]string{"id", "name"},
 		nil,
-		allCollections,
+		orgID,
 		result,
 		logger,
 	)
