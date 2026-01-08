@@ -621,66 +621,119 @@ func (ds *ExternalDataSource) buildAdvancedFilters(queryBuilder squirrel.SelectB
 
 // applyAdvancedFilter applies a single FilterCondition to the query builder
 func (ds *ExternalDataSource) applyAdvancedFilter(queryBuilder squirrel.SelectBuilder, field string, condition job.FilterCondition) squirrel.SelectBuilder {
-	// Handle equals (IN clause for multiple values, = for single value)
-	if len(condition.Equals) > 0 {
-		if len(condition.Equals) == 1 {
-			queryBuilder = queryBuilder.Where(squirrel.Eq{field: condition.Equals[0]})
-		} else {
-			queryBuilder = queryBuilder.Where(squirrel.Eq{field: condition.Equals})
-		}
+	queryBuilder = applyEqualsFilter(queryBuilder, field, condition)
+	queryBuilder = applyComparisonFilters(queryBuilder, field, condition)
+	queryBuilder = applyBetweenFilter(queryBuilder, field, condition)
+	queryBuilder = applyInFilters(queryBuilder, field, condition)
+	queryBuilder = applyNotEqualsFilter(queryBuilder, field, condition)
+	queryBuilder = applyLikeFilter(queryBuilder, field, condition)
+
+	return queryBuilder
+}
+
+// applyEqualsFilter applies equals operator to the query builder
+func applyEqualsFilter(queryBuilder squirrel.SelectBuilder, field string, condition job.FilterCondition) squirrel.SelectBuilder {
+	if len(condition.Equals) == 0 {
+		return queryBuilder
 	}
 
-	// Handle greater than
+	if len(condition.Equals) == 1 {
+		return queryBuilder.Where(squirrel.Eq{field: condition.Equals[0]})
+	}
+
+	return queryBuilder.Where(squirrel.Eq{field: condition.Equals})
+}
+
+// applyComparisonFilters applies comparison operators (gt, gte, lt, lte) to the query builder
+func applyComparisonFilters(queryBuilder squirrel.SelectBuilder, field string, condition job.FilterCondition) squirrel.SelectBuilder {
 	if len(condition.GreaterThan) > 0 {
 		queryBuilder = queryBuilder.Where(squirrel.Gt{field: condition.GreaterThan[0]})
 	}
 
-	// Handle greater than or equal
 	if len(condition.GreaterOrEqual) > 0 {
 		queryBuilder = queryBuilder.Where(squirrel.GtOrEq{field: condition.GreaterOrEqual[0]})
 	}
 
-	// Handle less than
 	if len(condition.LessThan) > 0 {
 		queryBuilder = queryBuilder.Where(squirrel.Lt{field: condition.LessThan[0]})
 	}
 
-	// Handle less than or equal
 	if len(condition.LessOrEqual) > 0 {
 		queryBuilder = queryBuilder.Where(squirrel.LtOrEq{field: condition.LessOrEqual[0]})
 	}
 
-	// Handle between (using AND with >= and <=)
-	if len(condition.Between) == 2 {
-		// For date fields, ensure proper date range handling
-		startValue := condition.Between[0]
-		endValue := condition.Between[1]
+	return queryBuilder
+}
 
-		// If it looks like a date field and we have date strings, adjust the end date to include the full day
-		if isDateField(field) && isDateString(startValue) && isDateString(endValue) {
-			// Convert end date to end of day (23:59:59.999)
-			if endStr, ok := endValue.(string); ok {
-				// If it's just a date (YYYY-MM-DD), add time to make it end of day
-				if len(endStr) == 10 { // YYYY-MM-DD format
-					endValue = endStr + "T23:59:59.999Z"
-				}
-			}
-		}
-
-		queryBuilder = queryBuilder.Where(squirrel.GtOrEq{field: startValue}).Where(squirrel.LtOrEq{field: endValue})
+// applyBetweenFilter applies between operator to the query builder
+func applyBetweenFilter(queryBuilder squirrel.SelectBuilder, field string, condition job.FilterCondition) squirrel.SelectBuilder {
+	if len(condition.Between) != 2 {
+		return queryBuilder
 	}
 
-	// Handle in
+	startValue := condition.Between[0]
+	endValue := adjustEndDateIfNeeded(field, condition.Between[0], condition.Between[1])
+
+	return queryBuilder.Where(squirrel.GtOrEq{field: startValue}).Where(squirrel.LtOrEq{field: endValue})
+}
+
+// adjustEndDateIfNeeded adjusts end date to end of day for date fields
+func adjustEndDateIfNeeded(field string, startValue, endValue any) any {
+	if !isDateField(field) || !isDateString(startValue) || !isDateString(endValue) {
+		return endValue
+	}
+
+	endStr, ok := endValue.(string)
+	if !ok || len(endStr) != 10 { // Not YYYY-MM-DD format
+		return endValue
+	}
+
+	return endStr + "T23:59:59.999Z"
+}
+
+// applyInFilters applies in and not in operators to the query builder
+func applyInFilters(queryBuilder squirrel.SelectBuilder, field string, condition job.FilterCondition) squirrel.SelectBuilder {
 	if len(condition.In) > 0 {
 		queryBuilder = queryBuilder.Where(squirrel.Eq{field: condition.In})
 	}
 
-	// Handle not in
 	if len(condition.NotIn) > 0 {
 		queryBuilder = queryBuilder.Where(squirrel.NotEq{field: condition.NotIn})
 	}
 
 	return queryBuilder
+}
+
+// applyNotEqualsFilter applies not equals operator to the query builder
+func applyNotEqualsFilter(queryBuilder squirrel.SelectBuilder, field string, condition job.FilterCondition) squirrel.SelectBuilder {
+	if len(condition.NotEquals) == 0 {
+		return queryBuilder
+	}
+
+	if len(condition.NotEquals) == 1 {
+		return queryBuilder.Where(squirrel.NotEq{field: condition.NotEquals[0]})
+	}
+
+	// Multiple values treated as AND NOT conditions
+	for _, val := range condition.NotEquals {
+		queryBuilder = queryBuilder.Where(squirrel.NotEq{field: val})
+	}
+
+	return queryBuilder
+}
+
+// applyLikeFilter applies like pattern matching to the query builder
+func applyLikeFilter(queryBuilder squirrel.SelectBuilder, field string, condition job.FilterCondition) squirrel.SelectBuilder {
+	if len(condition.Like) == 0 {
+		return queryBuilder
+	}
+
+	pattern, ok := condition.Like[0].(string)
+	if !ok {
+		return queryBuilder
+	}
+
+	return queryBuilder.Where(squirrel.Like{field: pattern})
 }
 
 // isFilterConditionEmpty checks if a FilterCondition has no active filters
@@ -692,7 +745,9 @@ func isFilterConditionEmpty(condition job.FilterCondition) bool {
 		len(condition.LessOrEqual) == 0 &&
 		len(condition.Between) == 0 &&
 		len(condition.In) == 0 &&
-		len(condition.NotIn) == 0
+		len(condition.NotIn) == 0 &&
+		len(condition.NotEquals) == 0 &&
+		len(condition.Like) == 0
 }
 
 // validateFilterCondition validates that a FilterCondition has proper values for each operator

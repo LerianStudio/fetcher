@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/tests/chaos/helpers"
 	"github.com/LerianStudio/fetcher/tests/chaos/setup"
 	"github.com/LerianStudio/fetcher/tests/shared/client"
@@ -74,8 +75,8 @@ func (s *ChaosTestSuite) TestSeaweedFSLatency_FileUploadSlowed() {
 	// Phase 3: Create and execute job under latency
 	t.Log("Phase 3: Creating extraction job under latency...")
 	start := time.Now()
-	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, client.FetcherRequest{
-		DataRequest: client.DataRequest{
+	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, model.FetcherRequest{
+		DataRequest: model.DataRequest{
 			MappedFields: map[string]map[string][]string{
 				configName: {"transactions": {"id", "account_id", "amount"}},
 			},
@@ -87,7 +88,7 @@ func (s *ChaosTestSuite) TestSeaweedFSLatency_FileUploadSlowed() {
 	// Wait for completion - should succeed despite latency
 	notification, err := s.eventConsumer.WaitForJobEvent(
 		s.ctx,
-		jobResp.JobID,
+		jobResp.JobID.String(),
 		setup.JobCompletionTimeoutSlow, // Extended timeout for slow uploads
 	)
 
@@ -101,7 +102,7 @@ func (s *ChaosTestSuite) TestSeaweedFSLatency_FileUploadSlowed() {
 	// Phase 4: Verify file exists in SeaweedFS
 	// Worker stores results at /external-data/{jobID}.json (see constant.ExternalDataBucketName)
 	t.Log("Phase 4: Verifying result file exists...")
-	filePath := fmt.Sprintf("/external-data/%s.json", jobResp.JobID)
+	filePath := fmt.Sprintf("/external-data/%s.json", jobResp.JobID.String())
 	_, fileErr := s.seaweedClient.GetFile(s.ctx, filePath)
 	assert.NoError(t, fileErr, "Result file should exist in SeaweedFS")
 
@@ -157,8 +158,8 @@ func (s *ChaosTestSuite) TestSeaweedFSTimeout_FileOperationFails() {
 
 	// Phase 3: Create job - may fail due to SeaweedFS timeout
 	t.Log("Phase 3: Creating extraction job under timeout chaos...")
-	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, client.FetcherRequest{
-		DataRequest: client.DataRequest{
+	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, model.FetcherRequest{
+		DataRequest: model.DataRequest{
 			MappedFields: map[string]map[string][]string{
 				configName: {"transactions": {"id", "account_id"}},
 			},
@@ -174,7 +175,7 @@ func (s *ChaosTestSuite) TestSeaweedFSTimeout_FileOperationFails() {
 		// If job was created, wait for result (may fail or timeout)
 		notification, waitErr := s.eventConsumer.WaitForJobEvent(
 			s.ctx,
-			jobResp.JobID,
+			jobResp.JobID.String(),
 			setup.JobCompletionTimeout,
 		)
 
@@ -209,8 +210,8 @@ func (s *ChaosTestSuite) TestSeaweedFSTimeout_FileOperationFails() {
 	})
 	require.NoError(t, err)
 
-	recoveryJob, err := s.managerClient.CreateFetcherJob(s.ctx, client.FetcherRequest{
-		DataRequest: client.DataRequest{
+	recoveryJob, err := s.managerClient.CreateFetcherJob(s.ctx, model.FetcherRequest{
+		DataRequest: model.DataRequest{
 			MappedFields: map[string]map[string][]string{
 				recoveryConfigName: {"transactions": {"id", "account_id"}},
 			},
@@ -221,7 +222,7 @@ func (s *ChaosTestSuite) TestSeaweedFSTimeout_FileOperationFails() {
 
 	recoveryNotification, err := s.eventConsumer.WaitForJobEvent(
 		s.ctx,
-		recoveryJob.JobID,
+		recoveryJob.JobID.String(),
 		setup.JobCompletionTimeout,
 	)
 	require.NoError(t, err, "Recovery job should complete")
@@ -278,8 +279,8 @@ func (s *ChaosTestSuite) TestSeaweedFSBandwidth_SlowFileTransfer() {
 	// Phase 3: Create and execute job under bandwidth limit
 	t.Log("Phase 3: Creating extraction job under bandwidth limit...")
 	start := time.Now()
-	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, client.FetcherRequest{
-		DataRequest: client.DataRequest{
+	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, model.FetcherRequest{
+		DataRequest: model.DataRequest{
 			MappedFields: map[string]map[string][]string{
 				configName: {"transactions": {"id", "account_id"}},
 			},
@@ -291,7 +292,7 @@ func (s *ChaosTestSuite) TestSeaweedFSBandwidth_SlowFileTransfer() {
 	// Wait for completion with extended timeout for slow transfers
 	notification, err := s.eventConsumer.WaitForJobEvent(
 		s.ctx,
-		jobResp.JobID,
+		jobResp.JobID.String(),
 		setup.JobCompletionTimeoutSlow, // Extended timeout for bandwidth-limited transfers
 	)
 

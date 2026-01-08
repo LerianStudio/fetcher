@@ -5,6 +5,7 @@ package e2e
 import (
 	"time"
 
+	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/tests/chaos/helpers"
 	"github.com/LerianStudio/fetcher/tests/chaos/setup"
 	"github.com/LerianStudio/fetcher/tests/shared/client"
@@ -56,8 +57,8 @@ func (s *ChaosTestSuite) TestMongoDBExternalTimeout_ExtractionJobFails() {
 
 	// Phase 3: Create job - should be REJECTED because connection test fails
 	t.Log("Phase 3: Creating extraction job under chaos (expecting rejection)...")
-	_, err = s.managerClient.CreateFetcherJob(s.ctx, client.FetcherRequest{
-		DataRequest: client.DataRequest{
+	_, err = s.managerClient.CreateFetcherJob(s.ctx, model.FetcherRequest{
+		DataRequest: model.DataRequest{
 			MappedFields: map[string]map[string][]string{
 				configName: {"transactions": {"account_id", "amount", "currency"}},
 			},
@@ -93,8 +94,8 @@ func (s *ChaosTestSuite) TestMongoDBExternalTimeout_ExtractionJobFails() {
 	})
 	require.NoError(t, err, "Recovery connection should succeed")
 
-	recoveryJob, err := s.managerClient.CreateFetcherJob(s.ctx, client.FetcherRequest{
-		DataRequest: client.DataRequest{
+	recoveryJob, err := s.managerClient.CreateFetcherJob(s.ctx, model.FetcherRequest{
+		DataRequest: model.DataRequest{
 			MappedFields: map[string]map[string][]string{
 				recoveryConfigName: {"transactions": {"account_id", "amount"}},
 			},
@@ -105,7 +106,7 @@ func (s *ChaosTestSuite) TestMongoDBExternalTimeout_ExtractionJobFails() {
 
 	recoveryNotification, err := s.eventConsumer.WaitForJobEvent(
 		s.ctx,
-		recoveryJob.JobID,
+		recoveryJob.JobID.String(),
 		setup.JobCompletionTimeout,
 	)
 	require.NoError(t, err, "Recovery job should complete")

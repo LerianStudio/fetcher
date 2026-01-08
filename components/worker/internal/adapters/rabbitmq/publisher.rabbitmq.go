@@ -4,6 +4,7 @@ package rabbitmq
 import (
 	"context"
 
+	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/rabbitmq"
 	"github.com/LerianStudio/lib-commons/v2/commons/log"
 	"github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
@@ -26,8 +27,12 @@ type PublisherRoutes struct {
 }
 
 // NewPublisherRoutes creates a new instance of PublisherRoutes using a RabbitMQ connection.
-func NewPublisherRoutes(conn *libRabbitmq.RabbitMQConnection, logger log.Logger, telemetry *opentelemetry.Telemetry) *PublisherRoutes {
-	adapter := rabbitmq.NewRabbitMQAdapter(conn)
+// The signer parameter is optional - pass nil to disable message signing.
+func NewPublisherRoutes(conn *libRabbitmq.RabbitMQConnection, logger log.Logger, telemetry *opentelemetry.Telemetry, signer crypto.Signer) *PublisherRoutes {
+	opts := rabbitmq.DefaultOptions()
+	opts.Signer = signer
+	adapter := rabbitmq.NewRabbitMQAdapterWithOptions(conn, opts)
+
 	return NewPublisherRoutesWithAdapter(adapter, logger, telemetry)
 }
 

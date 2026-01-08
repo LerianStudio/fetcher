@@ -5,6 +5,7 @@ package e2e
 import (
 	"time"
 
+	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/tests/chaos/helpers"
 	"github.com/LerianStudio/fetcher/tests/chaos/setup"
 	"github.com/LerianStudio/fetcher/tests/shared/client"
@@ -59,8 +60,8 @@ func (s *ChaosTestSuite) TestOracleTimeout_ExtractionJobFails() {
 
 	// Phase 3: Create job - should be REJECTED because connection test fails
 	t.Log("Phase 3: Creating extraction job under chaos (expecting rejection)...")
-	_, err = s.managerClient.CreateFetcherJob(s.ctx, client.FetcherRequest{
-		DataRequest: client.DataRequest{
+	_, err = s.managerClient.CreateFetcherJob(s.ctx, model.FetcherRequest{
+		DataRequest: model.DataRequest{
 			MappedFields: map[string]map[string][]string{
 				// Oracle uses uppercase identifiers by default for unquoted names
 				configName: {"TRANSACTIONS": {"ID", "ACCOUNT_ID", "AMOUNT"}},
@@ -104,8 +105,8 @@ func (s *ChaosTestSuite) TestOracleTimeout_ExtractionJobFails() {
 	})
 	require.NoError(t, err, "Recovery connection should succeed")
 
-	recoveryJob, err := s.managerClient.CreateFetcherJob(s.ctx, client.FetcherRequest{
-		DataRequest: client.DataRequest{
+	recoveryJob, err := s.managerClient.CreateFetcherJob(s.ctx, model.FetcherRequest{
+		DataRequest: model.DataRequest{
 			MappedFields: map[string]map[string][]string{
 				recoveryConfigName: {"TRANSACTIONS": {"ID", "ACCOUNT_ID"}},
 			},
@@ -116,7 +117,7 @@ func (s *ChaosTestSuite) TestOracleTimeout_ExtractionJobFails() {
 
 	recoveryNotification, err := s.eventConsumer.WaitForJobEvent(
 		s.ctx,
-		recoveryJob.JobID,
+		recoveryJob.JobID.String(),
 		setup.JobCompletionTimeoutSlow,
 	)
 	require.NoError(t, err, "Recovery job should complete")
@@ -183,8 +184,8 @@ func (s *ChaosTestSuite) TestOracleLatency_SlowExtractionCompletes() {
 	// Phase 3: Create job under latency
 	t.Log("Phase 3: Creating extraction job under latency chaos...")
 	start := time.Now()
-	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, client.FetcherRequest{
-		DataRequest: client.DataRequest{
+	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, model.FetcherRequest{
+		DataRequest: model.DataRequest{
 			MappedFields: map[string]map[string][]string{
 				// Oracle uses uppercase identifiers by default for unquoted names
 				configName: {"TRANSACTIONS": {"ID", "ACCOUNT_ID"}},
@@ -196,7 +197,7 @@ func (s *ChaosTestSuite) TestOracleLatency_SlowExtractionCompletes() {
 
 	notification, err := s.eventConsumer.WaitForJobEvent(
 		s.ctx,
-		jobResp.JobID,
+		jobResp.JobID.String(),
 		setup.JobCompletionTimeoutSlow,
 	)
 

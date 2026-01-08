@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/LerianStudio/fetcher/pkg/model"
+	"github.com/LerianStudio/fetcher/pkg/model/job"
 	"github.com/LerianStudio/fetcher/tests/integration/containers/setup"
 	"github.com/LerianStudio/fetcher/tests/shared/client"
 	"github.com/LerianStudio/fetcher/tests/shared/fixtures"
@@ -331,8 +333,8 @@ func (s *WorkerIntegrationTestSuite) TestSingleDatasourcePostgreSQL() {
 	assert.NotEmpty(t, connResp.UpdatedAt)
 
 	// Step 2: Create fetcher job via API
-	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, client.FetcherRequest{
-		DataRequest: client.DataRequest{
+	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, model.FetcherRequest{
+		DataRequest: model.DataRequest{
 			MappedFields: map[string]map[string][]string{
 				configName: {
 					"transactions": {"id", "account_id", "amount", "currency", "type", "category", "status", "created_at"},
@@ -342,11 +344,11 @@ func (s *WorkerIntegrationTestSuite) TestSingleDatasourcePostgreSQL() {
 		Metadata: s.testMetadata("TestSingleDatasourcePostgreSQL"),
 	})
 	require.NoError(t, err, "Failed to create fetcher job")
-	assert.NotEmpty(t, jobResp.JobID)
+	assert.NotEmpty(t, jobResp.JobID.String())
 	assert.Equal(t, "pending", jobResp.Status)
 
 	// Step 3: Wait for job completion via RabbitMQ event
-	notification, err := s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID, setup.JobCompletionTimeout)
+	notification, err := s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID.String(), setup.JobCompletionTimeout)
 	require.NoError(t, err, "Failed to receive job completion event")
 	if notification.Status == "failed" {
 		t.Logf("PostgreSQL job failed with metadata: %+v", notification.Metadata)
@@ -356,7 +358,7 @@ func (s *WorkerIntegrationTestSuite) TestSingleDatasourcePostgreSQL() {
 	// Verify new result fields in notification
 	require.NotNil(t, notification.Result, "Completed job notification should have result data")
 	assert.NotEmpty(t, notification.Result.Path, "Result should have path")
-	assert.Contains(t, notification.Result.Path, jobResp.JobID, "Result path should contain job ID")
+	assert.Contains(t, notification.Result.Path, jobResp.JobID.String(), "Result path should contain job ID")
 	assert.Greater(t, notification.Result.SizeBytes, int64(0), "Result should have size > 0")
 	assert.Greater(t, notification.Result.RowCount, int64(0), "Result should have row count > 0")
 	assert.Equal(t, "json", notification.Result.Format, "Result format should be json")
@@ -369,13 +371,13 @@ func (s *WorkerIntegrationTestSuite) TestSingleDatasourcePostgreSQL() {
 	assert.NotNil(t, notification.CompletedAt, "CompletedAt should be set")
 
 	// Step 4: Verify job status via API
-	job, err := s.managerClient.GetJob(s.ctx, jobResp.JobID)
+	job, err := s.managerClient.GetJob(s.ctx, jobResp.JobID.String())
 	require.NoError(t, err, "Failed to get job")
 	assert.Equal(t, "completed", job.Status)
 	assert.NotEmpty(t, job.ResultPath)
 
 	// Step 5: Verify data in SeaweedFS
-	resultPath := "/external-data/" + jobResp.JobID + ".json"
+	resultPath := "/external-data/" + jobResp.JobID.String() + ".json"
 	data, err := s.seaweedClient.WaitForFile(s.ctx, resultPath, setup.SeaweedFSFileTimeout)
 	require.NoError(t, err, "Failed to get result file from SeaweedFS")
 
@@ -407,8 +409,8 @@ func (s *WorkerIntegrationTestSuite) TestSingleDatasourceMySQL() {
 	assert.NotEmpty(t, connResp.ID)
 
 	// Step 2: Create fetcher job via API
-	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, client.FetcherRequest{
-		DataRequest: client.DataRequest{
+	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, model.FetcherRequest{
+		DataRequest: model.DataRequest{
 			MappedFields: map[string]map[string][]string{
 				"mysql_test": {
 					"transactions": {"id", "account_id", "amount", "currency", "type", "category", "status", "created_at"},
@@ -418,10 +420,10 @@ func (s *WorkerIntegrationTestSuite) TestSingleDatasourceMySQL() {
 		Metadata: s.testMetadata("TestSingleDatasourceMySQL"),
 	})
 	require.NoError(t, err, "Failed to create fetcher job")
-	assert.NotEmpty(t, jobResp.JobID)
+	assert.NotEmpty(t, jobResp.JobID.String())
 
 	// Step 3: Wait for job completion
-	notification, err := s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID, setup.JobCompletionTimeout)
+	notification, err := s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID.String(), setup.JobCompletionTimeout)
 	require.NoError(t, err, "Failed to receive job completion event")
 	assert.Equal(t, "completed", notification.Status)
 
@@ -434,7 +436,7 @@ func (s *WorkerIntegrationTestSuite) TestSingleDatasourceMySQL() {
 	assert.NotNil(t, notification.CompletedAt)
 
 	// Step 4: Verify job status
-	job, err := s.managerClient.GetJob(s.ctx, jobResp.JobID)
+	job, err := s.managerClient.GetJob(s.ctx, jobResp.JobID.String())
 	require.NoError(t, err, "Failed to get job")
 	assert.Equal(t, "completed", job.Status)
 }
@@ -463,8 +465,8 @@ func (s *WorkerIntegrationTestSuite) TestSingleDatasourceMongoDB() {
 	assert.NotEmpty(t, connResp.ID)
 
 	// Step 2: Create fetcher job via API
-	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, client.FetcherRequest{
-		DataRequest: client.DataRequest{
+	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, model.FetcherRequest{
+		DataRequest: model.DataRequest{
 			MappedFields: map[string]map[string][]string{
 				"mongodb_test": {
 					"transactions": {"account_id", "amount", "currency", "type", "category", "status", "created_at"},
@@ -474,10 +476,10 @@ func (s *WorkerIntegrationTestSuite) TestSingleDatasourceMongoDB() {
 		Metadata: s.testMetadata("TestSingleDatasourceMongoDB"),
 	})
 	require.NoError(t, err, "Failed to create fetcher job")
-	assert.NotEmpty(t, jobResp.JobID)
+	assert.NotEmpty(t, jobResp.JobID.String())
 
 	// Step 3: Wait for job completion
-	notification, err := s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID, setup.JobCompletionTimeout)
+	notification, err := s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID.String(), setup.JobCompletionTimeout)
 	require.NoError(t, err, "Failed to receive job completion event")
 	assert.Equal(t, "completed", notification.Status)
 
@@ -490,7 +492,7 @@ func (s *WorkerIntegrationTestSuite) TestSingleDatasourceMongoDB() {
 	assert.NotNil(t, notification.CompletedAt)
 
 	// Step 4: Verify job status
-	job, err := s.managerClient.GetJob(s.ctx, jobResp.JobID)
+	job, err := s.managerClient.GetJob(s.ctx, jobResp.JobID.String())
 	require.NoError(t, err, "Failed to get job")
 	assert.Equal(t, "completed", job.Status)
 }
@@ -519,8 +521,8 @@ func (s *WorkerIntegrationTestSuite) TestSingleDatasourceSQLServer() {
 	assert.NotEmpty(t, connResp.ID)
 
 	// Step 2: Create fetcher job via API
-	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, client.FetcherRequest{
-		DataRequest: client.DataRequest{
+	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, model.FetcherRequest{
+		DataRequest: model.DataRequest{
 			MappedFields: map[string]map[string][]string{
 				"sqlserver_test": {
 					"transactions": {"id", "account_id", "amount", "currency", "type", "category", "status", "created_at"},
@@ -530,11 +532,11 @@ func (s *WorkerIntegrationTestSuite) TestSingleDatasourceSQLServer() {
 		Metadata: s.testMetadata("TestSingleDatasourceSQLServer"),
 	})
 	require.NoError(t, err, "Failed to create fetcher job")
-	assert.NotEmpty(t, jobResp.JobID)
+	assert.NotEmpty(t, jobResp.JobID.String())
 	assert.Equal(t, "pending", jobResp.Status)
 
 	// Step 3: Wait for job completion via RabbitMQ event
-	notification, err := s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID, setup.JobCompletionTimeout)
+	notification, err := s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID.String(), setup.JobCompletionTimeout)
 	require.NoError(t, err, "Failed to receive job completion event")
 	assert.Equal(t, "completed", notification.Status)
 
@@ -547,13 +549,13 @@ func (s *WorkerIntegrationTestSuite) TestSingleDatasourceSQLServer() {
 	assert.NotNil(t, notification.CompletedAt)
 
 	// Step 4: Verify job status via API
-	job, err := s.managerClient.GetJob(s.ctx, jobResp.JobID)
+	job, err := s.managerClient.GetJob(s.ctx, jobResp.JobID.String())
 	require.NoError(t, err, "Failed to get job")
 	assert.Equal(t, "completed", job.Status)
 	assert.NotEmpty(t, job.ResultPath)
 
 	// Step 5: Verify data in SeaweedFS
-	resultPath := "/external-data/" + jobResp.JobID + ".json"
+	resultPath := "/external-data/" + jobResp.JobID.String() + ".json"
 	data, err := s.seaweedClient.WaitForFile(s.ctx, resultPath, setup.SeaweedFSFileTimeout)
 	require.NoError(t, err, "Failed to get result file from SeaweedFS")
 	assert.NotEmpty(t, data)
@@ -587,8 +589,8 @@ func (s *WorkerIntegrationTestSuite) TestSingleDatasourceOracle() {
 	assert.NotEmpty(t, connResp.ID)
 
 	// Step 2: Create fetcher job via API
-	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, client.FetcherRequest{
-		DataRequest: client.DataRequest{
+	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, model.FetcherRequest{
+		DataRequest: model.DataRequest{
 			MappedFields: map[string]map[string][]string{
 				"oracle_test": {
 					"transactions": {"id", "account_id", "amount", "currency", "type", "category", "status", "created_at"},
@@ -598,11 +600,11 @@ func (s *WorkerIntegrationTestSuite) TestSingleDatasourceOracle() {
 		Metadata: s.testMetadata("TestSingleDatasourceOracle"),
 	})
 	require.NoError(t, err, "Failed to create fetcher job")
-	assert.NotEmpty(t, jobResp.JobID)
+	assert.NotEmpty(t, jobResp.JobID.String())
 	assert.Equal(t, "pending", jobResp.Status)
 
 	// Step 3: Wait for job completion via RabbitMQ event
-	notification, err := s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID, setup.JobCompletionTimeoutSlow) // Oracle may be slower
+	notification, err := s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID.String(), setup.JobCompletionTimeoutSlow) // Oracle may be slower
 	require.NoError(t, err, "Failed to receive job completion event")
 	assert.Equal(t, "completed", notification.Status)
 
@@ -615,13 +617,13 @@ func (s *WorkerIntegrationTestSuite) TestSingleDatasourceOracle() {
 	assert.NotNil(t, notification.CompletedAt)
 
 	// Step 4: Verify job status via API
-	job, err := s.managerClient.GetJob(s.ctx, jobResp.JobID)
+	job, err := s.managerClient.GetJob(s.ctx, jobResp.JobID.String())
 	require.NoError(t, err, "Failed to get job")
 	assert.Equal(t, "completed", job.Status)
 	assert.NotEmpty(t, job.ResultPath)
 
 	// Step 5: Verify data in SeaweedFS
-	resultPath := "/external-data/" + jobResp.JobID + ".json"
+	resultPath := "/external-data/" + jobResp.JobID.String() + ".json"
 	data, err := s.seaweedClient.WaitForFile(s.ctx, resultPath, setup.SeaweedFSFileTimeout)
 	require.NoError(t, err, "Failed to get result file from SeaweedFS")
 	assert.NotEmpty(t, data)
@@ -658,8 +660,8 @@ func (s *WorkerIntegrationTestSuite) TestPostgreSQLMultiSchemaExtraction() {
 	assert.NotEmpty(t, connResp.ID)
 
 	// Step 2: Create job with schema-qualified tables from multiple schemas
-	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, client.FetcherRequest{
-		DataRequest: client.DataRequest{
+	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, model.FetcherRequest{
+		DataRequest: model.DataRequest{
 			MappedFields: map[string]map[string][]string{
 				configName: {
 					// Schema: public (default)
@@ -674,11 +676,11 @@ func (s *WorkerIntegrationTestSuite) TestPostgreSQLMultiSchemaExtraction() {
 		Metadata: s.testMetadata("TestPostgreSQLMultiSchemaExtraction"),
 	})
 	require.NoError(t, err, "Failed to create fetcher job")
-	assert.NotEmpty(t, jobResp.JobID)
+	assert.NotEmpty(t, jobResp.JobID.String())
 	assert.Equal(t, "pending", jobResp.Status)
 
 	// Step 3: Wait for job completion
-	notification, err := s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID, setup.JobCompletionTimeout)
+	notification, err := s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID.String(), setup.JobCompletionTimeout)
 	require.NoError(t, err, "Failed to receive job completion event")
 
 	if notification.Status == "failed" {
@@ -698,7 +700,7 @@ func (s *WorkerIntegrationTestSuite) TestPostgreSQLMultiSchemaExtraction() {
 		"Expected %d rows (transactions:26 + invoices:10 + daily_summary:12)", expectedRows)
 
 	// Verify file exists in SeaweedFS
-	resultPath := "/external-data/" + jobResp.JobID + ".json"
+	resultPath := "/external-data/" + jobResp.JobID.String() + ".json"
 	data, err := s.seaweedClient.WaitForFile(s.ctx, resultPath, setup.SeaweedFSFileTimeout)
 	require.NoError(t, err, "Failed to get result file from SeaweedFS")
 	assert.NotEmpty(t, data)
@@ -726,24 +728,26 @@ func (s *WorkerIntegrationTestSuite) TestPostgreSQLMultiSchemaWithFilters() {
 
 	// Create job with filters - filter by status across all tables
 	// Note: 'in' operator matches 'completed' (transactions) OR 'paid' (invoices)
-	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, client.FetcherRequest{
-		DataRequest: client.DataRequest{
+	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, model.FetcherRequest{
+		DataRequest: model.DataRequest{
 			MappedFields: map[string]map[string][]string{
 				configName: {
 					"transactions":        {"id", "account_id", "amount", "status"},
 					"accounting.invoices": {"id", "account_id", "amount", "status"},
 				},
 			},
-			Filters: []client.FilterRequest{
-				{
-					Field:    configName + ".transactions.status",
-					Operator: "in",
-					Value:    []any{"completed", "paid"},
-				},
-				{
-					Field:    configName + ".accounting.invoices.status",
-					Operator: "in",
-					Value:    []any{"completed", "paid"},
+			Filters: model.NestedFilters{
+				configName: {
+					"transactions": {
+						"status": job.FilterCondition{
+							In: []any{"completed", "paid"},
+						},
+					},
+					"accounting.invoices": {
+						"status": job.FilterCondition{
+							In: []any{"completed", "paid"},
+						},
+					},
 				},
 			},
 		},
@@ -752,7 +756,7 @@ func (s *WorkerIntegrationTestSuite) TestPostgreSQLMultiSchemaWithFilters() {
 	require.NoError(t, err, "Failed to create fetcher job")
 
 	// Wait for completion
-	notification, err := s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID, setup.JobCompletionTimeout)
+	notification, err := s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID.String(), setup.JobCompletionTimeout)
 	require.NoError(t, err)
 	assert.Equal(t, "completed", notification.Status)
 
@@ -818,8 +822,8 @@ func (s *WorkerIntegrationTestSuite) TestMultiDatasourceMultiSchemaExtraction() 
 	require.NoError(t, err, "Failed to create Oracle connection")
 
 	// Step 4: Create multi-datasource, multi-schema job with filters
-	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, client.FetcherRequest{
-		DataRequest: client.DataRequest{
+	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, model.FetcherRequest{
+		DataRequest: model.DataRequest{
 			MappedFields: map[string]map[string][]string{
 				// PostgreSQL: 2 schemas
 				pgConfigName: {
@@ -837,31 +841,37 @@ func (s *WorkerIntegrationTestSuite) TestMultiDatasourceMultiSchemaExtraction() 
 					"billing_subscriptions": {"id", "account_id", "plan_name", "monthly_amount", "status"},
 				},
 			},
-			Filters: []client.FilterRequest{
-				{
-					Field:    pgConfigName + ".transactions.status",
-					Operator: "in",
-					Value:    []any{"completed", "paid", "active"},
+			Filters: model.NestedFilters{
+				pgConfigName: {
+					"transactions": {
+						"status": job.FilterCondition{
+							In: []any{"completed", "paid", "active"},
+						},
+					},
 				},
-				{
-					Field:    mssqlConfigName + ".dbo.transactions.status",
-					Operator: "in",
-					Value:    []any{"completed", "paid", "active"},
+				mssqlConfigName: {
+					"dbo.transactions": {
+						"status": job.FilterCondition{
+							In: []any{"completed", "paid", "active"},
+						},
+					},
 				},
-				{
-					Field:    oracleConfigName + ".transactions.status",
-					Operator: "in",
-					Value:    []any{"completed", "paid", "active"},
+				oracleConfigName: {
+					"transactions": {
+						"status": job.FilterCondition{
+							In: []any{"completed", "paid", "active"},
+						},
+					},
 				},
 			},
 		},
 		Metadata: s.testMetadata("TestMultiDatasourceMultiSchemaExtraction"),
 	})
 	require.NoError(t, err, "Failed to create multi-datasource job")
-	assert.NotEmpty(t, jobResp.JobID)
+	assert.NotEmpty(t, jobResp.JobID.String())
 
 	// Step 5: Wait for completion (extended timeout for Oracle)
-	notification, err := s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID, setup.JobCompletionTimeoutSlow)
+	notification, err := s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID.String(), setup.JobCompletionTimeoutSlow)
 	require.NoError(t, err, "Failed to receive job completion event")
 
 	if notification.Status == "failed" {
@@ -885,13 +895,13 @@ func (s *WorkerIntegrationTestSuite) TestMultiDatasourceMultiSchemaExtraction() 
 	assert.Greater(t, notification.ExecutionTimeMs, int64(0))
 
 	// Verify file in SeaweedFS
-	resultPath := "/external-data/" + jobResp.JobID + ".json"
+	resultPath := "/external-data/" + jobResp.JobID.String() + ".json"
 	data, err := s.seaweedClient.WaitForFile(s.ctx, resultPath, setup.SeaweedFSFileTimeout)
 	require.NoError(t, err)
 	assert.NotEmpty(t, data)
 
 	// Verify job details via API
-	job, err := s.managerClient.GetJob(s.ctx, jobResp.JobID)
+	job, err := s.managerClient.GetJob(s.ctx, jobResp.JobID.String())
 	require.NoError(t, err)
 	assert.Equal(t, "completed", job.Status)
 	assert.NotEmpty(t, job.ResultPath)
@@ -995,8 +1005,8 @@ func (s *WorkerIntegrationTestSuite) TestMultiDatasourceExtraction() {
 	require.NoError(t, err)
 
 	// Create multi-datasource job
-	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, client.FetcherRequest{
-		DataRequest: client.DataRequest{
+	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, model.FetcherRequest{
+		DataRequest: model.DataRequest{
 			MappedFields: map[string]map[string][]string{
 				"postgres_multi": {
 					"transactions": {"id", "account_id", "amount", "category"},
@@ -1011,7 +1021,7 @@ func (s *WorkerIntegrationTestSuite) TestMultiDatasourceExtraction() {
 	require.NoError(t, err, "Failed to create multi-datasource job")
 
 	// Wait for completion
-	notification, err := s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID, setup.JobCompletionTimeoutSlow)
+	notification, err := s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID.String(), setup.JobCompletionTimeoutSlow)
 	require.NoError(t, err, "Failed to receive job completion event")
 	assert.Equal(t, "completed", notification.Status)
 
@@ -1047,23 +1057,23 @@ func (s *WorkerIntegrationTestSuite) TestJobWithFilters() {
 	require.NoError(t, err)
 
 	// Create job with filters
-	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, client.FetcherRequest{
-		DataRequest: client.DataRequest{
+	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, model.FetcherRequest{
+		DataRequest: model.DataRequest{
 			MappedFields: map[string]map[string][]string{
 				"postgres_filtered": {
 					"transactions": {"id", "account_id", "amount", "category", "status"},
 				},
 			},
-			Filters: []client.FilterRequest{
-				{
-					Field:    "postgres_filtered.transactions.status",
-					Operator: "eq",
-					Value:    []any{"completed"},
-				},
-				{
-					Field:    "postgres_filtered.transactions.category",
-					Operator: "eq",
-					Value:    []any{"salary"},
+			Filters: model.NestedFilters{
+				"postgres_filtered": {
+					"transactions": {
+						"status": job.FilterCondition{
+							Equals: []any{"completed"},
+						},
+						"category": job.FilterCondition{
+							Equals: []any{"salary"},
+						},
+					},
 				},
 			},
 		},
@@ -1072,7 +1082,7 @@ func (s *WorkerIntegrationTestSuite) TestJobWithFilters() {
 	require.NoError(t, err, "Failed to create filtered job")
 
 	// Wait for completion
-	notification, err := s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID, setup.JobCompletionTimeout)
+	notification, err := s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID.String(), setup.JobCompletionTimeout)
 	require.NoError(t, err, "Failed to receive job completion event")
 	assert.Equal(t, "completed", notification.Status)
 
@@ -1105,20 +1115,21 @@ func (s *WorkerIntegrationTestSuite) TestJobWithSelectiveFilters() {
 
 	// Create job with filter on ONLY transactions table
 	// accounts table should return ALL rows (no filter applied)
-	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, client.FetcherRequest{
-		DataRequest: client.DataRequest{
+	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, model.FetcherRequest{
+		DataRequest: model.DataRequest{
 			MappedFields: map[string]map[string][]string{
 				"postgres_selective_filter": {
 					"transactions": {"id", "status", "amount"},
 					"accounts":     {"id", "name"},
 				},
 			},
-			Filters: []client.FilterRequest{
-				{
-					// Only filter transactions, NOT accounts
-					Field:    "postgres_selective_filter.transactions.status",
-					Operator: "eq",
-					Value:    []any{"completed"},
+			Filters: model.NestedFilters{
+				"postgres_selective_filter": {
+					"transactions": {
+						"status": job.FilterCondition{
+							Equals: []any{"completed"},
+						},
+					},
 				},
 			},
 		},
@@ -1127,7 +1138,7 @@ func (s *WorkerIntegrationTestSuite) TestJobWithSelectiveFilters() {
 	require.NoError(t, err, "Failed to create job with selective filters")
 
 	// Wait for completion
-	notification, err := s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID, setup.JobCompletionTimeout)
+	notification, err := s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID.String(), setup.JobCompletionTimeout)
 	require.NoError(t, err, "Failed to receive job completion event")
 	assert.Equal(t, "completed", notification.Status)
 
@@ -1161,8 +1172,8 @@ func (s *WorkerIntegrationTestSuite) TestJobIdempotency() {
 	require.NoError(t, err)
 
 	// Create first job
-	request := client.FetcherRequest{
-		DataRequest: client.DataRequest{
+	request := model.FetcherRequest{
+		DataRequest: model.DataRequest{
 			MappedFields: map[string]map[string][]string{
 				"postgres_idempotency": {
 					"transactions": {"id", "account_id", "amount"},
@@ -1204,8 +1215,8 @@ func (s *WorkerIntegrationTestSuite) TestSeaweedFSFileValidation() {
 	require.NoError(t, err)
 
 	// Create job
-	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, client.FetcherRequest{
-		DataRequest: client.DataRequest{
+	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, model.FetcherRequest{
+		DataRequest: model.DataRequest{
 			MappedFields: map[string]map[string][]string{
 				"postgres_seaweed": {
 					"transactions": {"id", "account_id", "amount"},
@@ -1217,16 +1228,16 @@ func (s *WorkerIntegrationTestSuite) TestSeaweedFSFileValidation() {
 	require.NoError(t, err)
 
 	// Wait for completion
-	_, err = s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID, setup.JobCompletionTimeout)
+	_, err = s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID.String(), setup.JobCompletionTimeout)
 	require.NoError(t, err)
 
 	// Get job to verify resultPath
-	job, err := s.managerClient.GetJob(s.ctx, jobResp.JobID)
+	job, err := s.managerClient.GetJob(s.ctx, jobResp.JobID.String())
 	require.NoError(t, err)
 	assert.NotEmpty(t, job.ResultPath, "Job should have resultPath after completion")
 
 	// Verify file exists in SeaweedFS
-	resultPath := "/external-data/" + jobResp.JobID + ".json"
+	resultPath := "/external-data/" + jobResp.JobID.String() + ".json"
 	exists, err := s.seaweedClient.FileExists(s.ctx, resultPath)
 	require.NoError(t, err)
 	assert.True(t, exists, "Result file should exist in SeaweedFS")
@@ -1269,8 +1280,8 @@ func (s *WorkerIntegrationTestSuite) TestMetadataPassthrough() {
 		},
 	}
 
-	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, client.FetcherRequest{
-		DataRequest: client.DataRequest{
+	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, model.FetcherRequest{
+		DataRequest: model.DataRequest{
 			MappedFields: map[string]map[string][]string{
 				"postgres_metadata": {
 					"transactions": {"id", "amount"},
@@ -1282,7 +1293,7 @@ func (s *WorkerIntegrationTestSuite) TestMetadataPassthrough() {
 	require.NoError(t, err)
 
 	// Wait for completion and check metadata in notification
-	notification, err := s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID, setup.JobCompletionTimeout)
+	notification, err := s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID.String(), setup.JobCompletionTimeout)
 	require.NoError(t, err)
 
 	// Verify metadata is preserved in notification
@@ -1291,7 +1302,7 @@ func (s *WorkerIntegrationTestSuite) TestMetadataPassthrough() {
 	assert.Equal(t, "value1", notification.Metadata["customField1"])
 
 	// Verify metadata in job response
-	job, err := s.managerClient.GetJob(s.ctx, jobResp.JobID)
+	job, err := s.managerClient.GetJob(s.ctx, jobResp.JobID.String())
 	require.NoError(t, err)
 
 	// Marshal and compare metadata
@@ -1328,8 +1339,8 @@ func (s *WorkerIntegrationTestSuite) TestErrorScenario_ConnectionDown() {
 	require.NoError(t, err)
 
 	// Create job targeting the unavailable datasource
-	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, client.FetcherRequest{
-		DataRequest: client.DataRequest{
+	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, model.FetcherRequest{
+		DataRequest: model.DataRequest{
 			MappedFields: map[string]map[string][]string{
 				"postgres_down": {
 					"transactions": {"id", "account_id", "amount"},
@@ -1365,8 +1376,8 @@ func (s *WorkerIntegrationTestSuite) TestErrorScenario_InvalidCredentials() {
 	require.NoError(t, err)
 
 	// Create job - Manager will test connection and fail
-	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, client.FetcherRequest{
-		DataRequest: client.DataRequest{
+	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, model.FetcherRequest{
+		DataRequest: model.DataRequest{
 			MappedFields: map[string]map[string][]string{
 				"postgres_bad_creds": {
 					"transactions": {"id", "amount"},
@@ -1405,8 +1416,8 @@ func (s *WorkerIntegrationTestSuite) TestErrorScenario_NonExistentTable() {
 	require.NoError(t, err)
 
 	// Create job requesting non-existent table
-	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, client.FetcherRequest{
-		DataRequest: client.DataRequest{
+	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, model.FetcherRequest{
+		DataRequest: model.DataRequest{
 			MappedFields: map[string]map[string][]string{
 				"postgres_for_missing_table": {
 					"this_table_does_not_exist_xyz": {"id", "name"},
@@ -1418,12 +1429,12 @@ func (s *WorkerIntegrationTestSuite) TestErrorScenario_NonExistentTable() {
 	require.NoError(t, err, "Job creation should succeed - failure happens during processing")
 
 	// Wait for job to fail
-	notification, err := s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID, setup.JobCompletionTimeout)
+	notification, err := s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID.String(), setup.JobCompletionTimeout)
 	require.NoError(t, err, "Should receive job event")
 	assert.Equal(t, "failed", notification.Status, "Job should fail for non-existent table")
 
 	// Verify job status via API
-	job, err := s.managerClient.GetJob(s.ctx, jobResp.JobID)
+	job, err := s.managerClient.GetJob(s.ctx, jobResp.JobID.String())
 	require.NoError(t, err)
 	assert.Equal(t, "failed", job.Status)
 }
@@ -1434,8 +1445,8 @@ func (s *WorkerIntegrationTestSuite) TestErrorScenario_MissingDatasource() {
 	t := s.T()
 
 	// Create job referencing a datasource that was never configured
-	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, client.FetcherRequest{
-		DataRequest: client.DataRequest{
+	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, model.FetcherRequest{
+		DataRequest: model.DataRequest{
 			MappedFields: map[string]map[string][]string{
 				"completely_unknown_datasource": {
 					"some_table": {"field1", "field2"},
@@ -1996,8 +2007,8 @@ func (s *WorkerIntegrationTestSuite) TestConnection_DeleteWithActiveJob() {
 	require.NoError(t, err)
 
 	// Create a job that uses this connection
-	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, client.FetcherRequest{
-		DataRequest: client.DataRequest{
+	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, model.FetcherRequest{
+		DataRequest: model.DataRequest{
 			MappedFields: map[string]map[string][]string{
 				configName: {
 					"transactions": {"id", "account_id", "amount"},
@@ -2007,7 +2018,7 @@ func (s *WorkerIntegrationTestSuite) TestConnection_DeleteWithActiveJob() {
 		Metadata: s.testMetadata("TestConnection_DeleteWithActiveJob"),
 	})
 	require.NoError(t, err)
-	assert.NotEmpty(t, jobResp.JobID)
+	assert.NotEmpty(t, jobResp.JobID.String())
 
 	// Try to delete connection immediately (while job is pending/processing)
 	err = s.managerClient.DeleteConnection(s.ctx, connResp.ID)
@@ -2018,7 +2029,7 @@ func (s *WorkerIntegrationTestSuite) TestConnection_DeleteWithActiveJob() {
 	}
 
 	// Wait for job to complete
-	_, _ = s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID, setup.JobCompletionTimeout)
+	_, _ = s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID.String(), setup.JobCompletionTimeout)
 
 	// Now deletion should succeed
 	err = s.managerClient.DeleteConnection(s.ctx, connResp.ID)
@@ -2045,8 +2056,8 @@ func (s *WorkerIntegrationTestSuite) TestConnection_UpdateWithActiveJob() {
 	require.NoError(t, err)
 
 	// Create a job that uses this connection
-	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, client.FetcherRequest{
-		DataRequest: client.DataRequest{
+	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, model.FetcherRequest{
+		DataRequest: model.DataRequest{
 			MappedFields: map[string]map[string][]string{
 				configName: {
 					"transactions": {"id", "account_id", "amount"},
@@ -2075,7 +2086,7 @@ func (s *WorkerIntegrationTestSuite) TestConnection_UpdateWithActiveJob() {
 	}
 
 	// Wait for job completion and cleanup
-	_, _ = s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID, setup.JobCompletionTimeout)
+	_, _ = s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID.String(), setup.JobCompletionTimeout)
 }
 
 // =============================================================================
@@ -2123,8 +2134,8 @@ func (s *WorkerIntegrationTestSuite) TestJob_InvalidInput() {
 	t := s.T()
 
 	// Test empty mappedFields
-	_, err := s.managerClient.CreateFetcherJob(s.ctx, client.FetcherRequest{
-		DataRequest: client.DataRequest{
+	_, err := s.managerClient.CreateFetcherJob(s.ctx, model.FetcherRequest{
+		DataRequest: model.DataRequest{
 			MappedFields: map[string]map[string][]string{},
 		},
 		Metadata: s.testMetadata("TestJob_InvalidInput_Empty"),
@@ -2153,46 +2164,45 @@ func (s *WorkerIntegrationTestSuite) TestJob_AllFilterOperators() {
 	require.NoError(t, err)
 
 	testCases := []struct {
-		name     string
-		operator string
-		field    string
-		value    []any
+		name      string
+		field     string
+		condition job.FilterCondition
 	}{
-		{"eq operator", "eq", "status", []any{"completed"}},
-		{"ne operator", "ne", "status", []any{"failed"}},
-		{"gt operator", "gt", "amount", []any{100}},
-		{"gte operator", "gte", "amount", []any{100}},
-		{"lt operator", "lt", "amount", []any{1000}},
-		{"lte operator", "lte", "amount", []any{1000}},
-		{"in operator", "in", "status", []any{"completed", "pending"}},
-		{"nin operator", "nin", "status", []any{"failed"}},
+		{"eq operator", "status", job.FilterCondition{Equals: []any{"completed"}}},
+		{"ne operator", "status", job.FilterCondition{NotEquals: []any{"failed"}}},
+		{"gt operator", "amount", job.FilterCondition{GreaterThan: []any{100}}},
+		{"gte operator", "amount", job.FilterCondition{GreaterOrEqual: []any{100}}},
+		{"lt operator", "amount", job.FilterCondition{LessThan: []any{1000}}},
+		{"lte operator", "amount", job.FilterCondition{LessOrEqual: []any{1000}}},
+		{"in operator", "status", job.FilterCondition{In: []any{"completed", "pending"}}},
+		{"nin operator", "status", job.FilterCondition{NotIn: []any{"failed"}}},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, client.FetcherRequest{
-				DataRequest: client.DataRequest{
+			jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, model.FetcherRequest{
+				DataRequest: model.DataRequest{
 					MappedFields: map[string]map[string][]string{
 						configName: {
 							"transactions": {"id", "account_id", "amount", "status"},
 						},
 					},
-					Filters: []client.FilterRequest{
-						{
-							Field:    configName + ".transactions." + tc.field,
-							Operator: tc.operator,
-							Value:    tc.value,
+					Filters: model.NestedFilters{
+						configName: {
+							"transactions": {
+								tc.field: tc.condition,
+							},
 						},
 					},
 				},
 				Metadata: s.testMetadata("TestJob_AllFilterOperators_" + tc.name),
 			})
-			require.NoError(t, err, "Failed to create job with %s", tc.operator)
+			require.NoError(t, err, "Failed to create job with %s", tc.name)
 
 			// Wait for completion
-			notification, err := s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID, setup.JobCompletionTimeout)
+			notification, err := s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID.String(), setup.JobCompletionTimeout)
 			require.NoError(t, err)
-			assert.Equal(t, "completed", notification.Status, "Job with %s should complete", tc.operator)
+			assert.Equal(t, "completed", notification.Status, "Job with %s should complete", tc.name)
 		})
 	}
 }
@@ -2509,8 +2519,8 @@ func (s *WorkerIntegrationTestSuite) TestMultiDatasourceSSLConnections() {
 	require.NoError(t, err)
 
 	// Create multi-datasource job using SSL connections
-	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, client.FetcherRequest{
-		DataRequest: client.DataRequest{
+	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, model.FetcherRequest{
+		DataRequest: model.DataRequest{
 			MappedFields: map[string]map[string][]string{
 				pgConfigName: {
 					"transactions": {"id", "account_id", "amount", "category"},
@@ -2525,7 +2535,7 @@ func (s *WorkerIntegrationTestSuite) TestMultiDatasourceSSLConnections() {
 	require.NoError(t, err, "Failed to create multi-datasource SSL job")
 
 	// Wait for completion
-	notification, err := s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID, setup.JobCompletionTimeoutSlow)
+	notification, err := s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID.String(), setup.JobCompletionTimeoutSlow)
 	require.NoError(t, err, "Failed to receive job completion event")
 	assert.Equal(t, "completed", notification.Status, "SSL extraction job should complete successfully")
 
@@ -2534,6 +2544,729 @@ func (s *WorkerIntegrationTestSuite) TestMultiDatasourceSSLConnections() {
 	assert.NotEmpty(t, notification.Result.Path)
 	assert.Greater(t, notification.Result.SizeBytes, int64(0))
 	assert.Greater(t, notification.Result.RowCount, int64(0))
+}
+
+// =============================================================================
+// FILTER OPERATOR TESTS - Advanced Operators (between, like)
+// =============================================================================
+// These tests validate advanced filter operators not covered by existing tests.
+// Priority: P0 (core filter functionality)
+// =============================================================================
+
+// TestJob_Filter_Between_Numeric validates the between operator on numeric fields.
+// Filters transactions where amount is between 100 and 500 (inclusive).
+func (s *WorkerIntegrationTestSuite) TestJob_Filter_Between_Numeric() {
+	t := s.T()
+
+	pg := s.infra.PostgresInternal()
+	configName := s.uniqueConfigName("postgres_between_numeric")
+
+	connResp, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
+		ConfigName:   configName,
+		Type:         "POSTGRESQL",
+		Host:         pg.Host,
+		Port:         pg.Port,
+		DatabaseName: pg.Database,
+		Username:     pg.Username,
+		Password:     pg.Password,
+	})
+	require.NoError(t, err, "Failed to create connection")
+	defer func() {
+		_ = s.managerClient.DeleteConnection(s.ctx, connResp.ID)
+	}()
+
+	// Create job with between filter on amount field
+	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, model.FetcherRequest{
+		DataRequest: model.DataRequest{
+			MappedFields: map[string]map[string][]string{
+				configName: {
+					"transactions": {"id", "account_id", "amount", "category", "status"},
+				},
+			},
+			Filters: model.NestedFilters{
+				configName: {
+					"transactions": {
+						"amount": job.FilterCondition{
+							Between: []any{100, 500},
+						},
+					},
+				},
+			},
+		},
+		Metadata: s.testMetadata("TestJob_Filter_Between_Numeric"),
+	})
+	require.NoError(t, err, "Failed to create job with between filter")
+
+	notification, err := s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID.String(), setup.JobCompletionTimeout)
+	require.NoError(t, err, "Failed to receive job completion event")
+	assert.Equal(t, "completed", notification.Status, "Job should complete successfully")
+
+	require.NotNil(t, notification.Result, "Completed job should have result data")
+	assert.NotEmpty(t, notification.Result.Path)
+	assert.Greater(t, notification.Result.RowCount, int64(0), "Should have matching rows in range 100-500")
+	assert.Less(t, notification.Result.RowCount, int64(26), "Should have fewer rows than total (26)")
+}
+
+// TestJob_Filter_Like_Contains validates the like operator with contains pattern.
+func (s *WorkerIntegrationTestSuite) TestJob_Filter_Like_Contains() {
+	t := s.T()
+
+	pg := s.infra.PostgresInternal()
+	configName := s.uniqueConfigName("postgres_like_contains")
+
+	connResp, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
+		ConfigName:   configName,
+		Type:         "POSTGRESQL",
+		Host:         pg.Host,
+		Port:         pg.Port,
+		DatabaseName: pg.Database,
+		Username:     pg.Username,
+		Password:     pg.Password,
+	})
+	require.NoError(t, err, "Failed to create connection")
+	defer func() {
+		_ = s.managerClient.DeleteConnection(s.ctx, connResp.ID)
+	}()
+
+	// Create job with like filter - matches categories containing 'sal' (salary)
+	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, model.FetcherRequest{
+		DataRequest: model.DataRequest{
+			MappedFields: map[string]map[string][]string{
+				configName: {
+					"transactions": {"id", "account_id", "amount", "category", "status"},
+				},
+			},
+			Filters: model.NestedFilters{
+				configName: {
+					"transactions": {
+						"category": job.FilterCondition{
+							Like: []any{"%sal%"},
+						},
+					},
+				},
+			},
+		},
+		Metadata: s.testMetadata("TestJob_Filter_Like_Contains"),
+	})
+	require.NoError(t, err, "Failed to create job with like filter")
+
+	notification, err := s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID.String(), setup.JobCompletionTimeout)
+	require.NoError(t, err, "Failed to receive job completion event")
+	assert.Equal(t, "completed", notification.Status, "Job should complete successfully")
+
+	require.NotNil(t, notification.Result)
+	assert.Greater(t, notification.Result.RowCount, int64(0), "Should have matching rows with pattern '%sal%'")
+	assert.Less(t, notification.Result.RowCount, int64(26), "Should have fewer rows than total")
+}
+
+// TestJob_Filter_Like_Prefix validates the like operator with prefix pattern.
+func (s *WorkerIntegrationTestSuite) TestJob_Filter_Like_Prefix() {
+	t := s.T()
+
+	pg := s.infra.PostgresInternal()
+	configName := s.uniqueConfigName("postgres_like_prefix")
+
+	connResp, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
+		ConfigName:   configName,
+		Type:         "POSTGRESQL",
+		Host:         pg.Host,
+		Port:         pg.Port,
+		DatabaseName: pg.Database,
+		Username:     pg.Username,
+		Password:     pg.Password,
+	})
+	require.NoError(t, err, "Failed to create connection")
+	defer func() {
+		_ = s.managerClient.DeleteConnection(s.ctx, connResp.ID)
+	}()
+
+	// Like prefix pattern - categories starting with 'gro' (groceries)
+	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, model.FetcherRequest{
+		DataRequest: model.DataRequest{
+			MappedFields: map[string]map[string][]string{
+				configName: {
+					"transactions": {"id", "amount", "category", "status"},
+				},
+			},
+			Filters: model.NestedFilters{
+				configName: {
+					"transactions": {
+						"category": job.FilterCondition{
+							Like: []any{"gro%"},
+						},
+					},
+				},
+			},
+		},
+		Metadata: s.testMetadata("TestJob_Filter_Like_Prefix"),
+	})
+	require.NoError(t, err, "Failed to create job with like prefix filter")
+
+	notification, err := s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID.String(), setup.JobCompletionTimeout)
+	require.NoError(t, err)
+	assert.Equal(t, "completed", notification.Status)
+
+	require.NotNil(t, notification.Result)
+	assert.Greater(t, notification.Result.RowCount, int64(0), "Should have matching rows with prefix 'gro%'")
+	assert.Less(t, notification.Result.RowCount, int64(26), "Should have fewer rows than total")
+}
+
+// =============================================================================
+// INPUT VALIDATION TESTS - ConfigName
+// =============================================================================
+// These tests validate configName field constraints (minLength: 3, maxLength: 100)
+// Priority: P0 (input validation)
+// =============================================================================
+
+// TestConnection_ConfigName_MinLength validates configName with exactly 3 characters.
+func (s *WorkerIntegrationTestSuite) TestConnection_ConfigName_MinLength() {
+	t := s.T()
+
+	pg := s.infra.PostgresInternal()
+
+	connResp, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
+		ConfigName:   "abc", // Exactly 3 characters - boundary
+		Type:         "POSTGRESQL",
+		Host:         pg.Host,
+		Port:         pg.Port,
+		DatabaseName: pg.Database,
+		Username:     pg.Username,
+		Password:     pg.Password,
+	})
+	require.NoError(t, err, "ConfigName with 3 characters should succeed")
+	assert.NotEmpty(t, connResp.ID)
+	assert.Equal(t, "abc", connResp.ConfigName)
+
+	_ = s.managerClient.DeleteConnection(s.ctx, connResp.ID)
+}
+
+// TestConnection_ConfigName_BelowMin validates configName with 2 characters fails.
+func (s *WorkerIntegrationTestSuite) TestConnection_ConfigName_BelowMin() {
+	t := s.T()
+
+	pg := s.infra.PostgresInternal()
+
+	_, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
+		ConfigName:   "ab", // Only 2 characters - below minimum
+		Type:         "POSTGRESQL",
+		Host:         pg.Host,
+		Port:         pg.Port,
+		DatabaseName: pg.Database,
+		Username:     pg.Username,
+		Password:     pg.Password,
+	})
+	require.Error(t, err, "ConfigName with 2 characters should fail")
+	assert.Contains(t, err.Error(), "400", "Should return 400 Bad Request")
+}
+
+// TestConnection_ConfigName_MaxLength validates configName with exactly 100 characters.
+func (s *WorkerIntegrationTestSuite) TestConnection_ConfigName_MaxLength() {
+	t := s.T()
+
+	pg := s.infra.PostgresInternal()
+	configName := strings.Repeat("a", 100)
+
+	connResp, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
+		ConfigName:   configName,
+		Type:         "POSTGRESQL",
+		Host:         pg.Host,
+		Port:         pg.Port,
+		DatabaseName: pg.Database,
+		Username:     pg.Username,
+		Password:     pg.Password,
+	})
+	require.NoError(t, err, "ConfigName with 100 characters should succeed")
+	assert.NotEmpty(t, connResp.ID)
+	assert.Equal(t, 100, len(connResp.ConfigName))
+
+	_ = s.managerClient.DeleteConnection(s.ctx, connResp.ID)
+}
+
+// TestConnection_ConfigName_AboveMax validates configName with 101 characters fails.
+func (s *WorkerIntegrationTestSuite) TestConnection_ConfigName_AboveMax() {
+	t := s.T()
+
+	pg := s.infra.PostgresInternal()
+	configName := strings.Repeat("a", 101)
+
+	_, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
+		ConfigName:   configName,
+		Type:         "POSTGRESQL",
+		Host:         pg.Host,
+		Port:         pg.Port,
+		DatabaseName: pg.Database,
+		Username:     pg.Username,
+		Password:     pg.Password,
+	})
+	require.Error(t, err, "ConfigName with 101 characters should fail")
+	assert.Contains(t, err.Error(), "400", "Should return 400 Bad Request")
+}
+
+// =============================================================================
+// INPUT VALIDATION TESTS - Port
+// =============================================================================
+// These tests validate port field constraints (minimum: 1, maximum: 65535)
+// Priority: P0 (input validation)
+// =============================================================================
+
+// TestConnection_Port_MinBoundary validates port with value 1.
+func (s *WorkerIntegrationTestSuite) TestConnection_Port_MinBoundary() {
+	t := s.T()
+
+	pg := s.infra.PostgresInternal()
+	configName := s.uniqueConfigName("postgres_port_min")
+
+	connResp, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
+		ConfigName:   configName,
+		Type:         "POSTGRESQL",
+		Host:         pg.Host,
+		Port:         1, // Minimum valid port
+		DatabaseName: pg.Database,
+		Username:     pg.Username,
+		Password:     pg.Password,
+	})
+	require.NoError(t, err, "Port 1 should be accepted for creation")
+	defer func() { _ = s.managerClient.DeleteConnection(s.ctx, connResp.ID) }()
+
+	assert.NotEmpty(t, connResp.ID)
+	assert.Equal(t, 1, connResp.Port)
+}
+
+// TestConnection_Port_BelowMin validates port with value 0 fails.
+func (s *WorkerIntegrationTestSuite) TestConnection_Port_BelowMin() {
+	t := s.T()
+
+	pg := s.infra.PostgresInternal()
+	configName := s.uniqueConfigName("postgres_port_zero")
+
+	_, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
+		ConfigName:   configName,
+		Type:         "POSTGRESQL",
+		Host:         pg.Host,
+		Port:         0, // Below minimum
+		DatabaseName: pg.Database,
+		Username:     pg.Username,
+		Password:     pg.Password,
+	})
+	require.Error(t, err, "Port 0 should fail validation")
+	assert.Contains(t, err.Error(), "400", "Should return 400 Bad Request")
+}
+
+// TestConnection_Port_MaxBoundary validates port with value 65535.
+func (s *WorkerIntegrationTestSuite) TestConnection_Port_MaxBoundary() {
+	t := s.T()
+
+	pg := s.infra.PostgresInternal()
+	configName := s.uniqueConfigName("postgres_port_max")
+
+	connResp, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
+		ConfigName:   configName,
+		Type:         "POSTGRESQL",
+		Host:         pg.Host,
+		Port:         65535, // Maximum valid port
+		DatabaseName: pg.Database,
+		Username:     pg.Username,
+		Password:     pg.Password,
+	})
+	require.NoError(t, err, "Port 65535 should be accepted for creation")
+	defer func() { _ = s.managerClient.DeleteConnection(s.ctx, connResp.ID) }()
+
+	assert.NotEmpty(t, connResp.ID)
+	assert.Equal(t, 65535, connResp.Port)
+}
+
+// TestConnection_Port_AboveMax validates port with value 65536 fails.
+func (s *WorkerIntegrationTestSuite) TestConnection_Port_AboveMax() {
+	t := s.T()
+
+	pg := s.infra.PostgresInternal()
+	configName := s.uniqueConfigName("postgres_port_above_max")
+
+	_, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
+		ConfigName:   configName,
+		Type:         "POSTGRESQL",
+		Host:         pg.Host,
+		Port:         65536, // Above maximum
+		DatabaseName: pg.Database,
+		Username:     pg.Username,
+		Password:     pg.Password,
+	})
+	require.Error(t, err, "Port 65536 should fail validation")
+	assert.Contains(t, err.Error(), "400", "Should return 400 Bad Request")
+}
+
+// TestConnection_Port_Negative validates port with negative value fails.
+func (s *WorkerIntegrationTestSuite) TestConnection_Port_Negative() {
+	t := s.T()
+
+	pg := s.infra.PostgresInternal()
+	configName := s.uniqueConfigName("postgres_port_negative")
+
+	_, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
+		ConfigName:   configName,
+		Type:         "POSTGRESQL",
+		Host:         pg.Host,
+		Port:         -1, // Negative value
+		DatabaseName: pg.Database,
+		Username:     pg.Username,
+		Password:     pg.Password,
+	})
+	require.Error(t, err, "Negative port should fail validation")
+	assert.Contains(t, err.Error(), "400", "Should return 400 Bad Request")
+}
+
+// =============================================================================
+// INPUT VALIDATION TESTS - Required Fields
+// =============================================================================
+// These tests validate that missing required fields return 400 Bad Request.
+// Required: configName, databaseName, host, password, type, userName
+// Note: Port validation is covered in Port Validation Tests section above
+// Priority: P0 (input validation)
+// =============================================================================
+
+// TestConnection_MissingConfigName validates error when configName is missing.
+func (s *WorkerIntegrationTestSuite) TestConnection_MissingConfigName() {
+	t := s.T()
+
+	pg := s.infra.PostgresInternal()
+
+	_, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
+		ConfigName:   "", // Missing required field
+		Type:         "POSTGRESQL",
+		Host:         pg.Host,
+		Port:         pg.Port,
+		DatabaseName: pg.Database,
+		Username:     pg.Username,
+		Password:     pg.Password,
+	})
+	require.Error(t, err, "Missing configName should fail")
+	assert.Contains(t, err.Error(), "400", "Should return 400 Bad Request")
+}
+
+// TestConnection_MissingHost validates error when host is missing.
+func (s *WorkerIntegrationTestSuite) TestConnection_MissingHost() {
+	t := s.T()
+
+	pg := s.infra.PostgresInternal()
+	configName := s.uniqueConfigName("postgres_missing_host")
+
+	_, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
+		ConfigName:   configName,
+		Type:         "POSTGRESQL",
+		Host:         "", // Missing required field
+		Port:         pg.Port,
+		DatabaseName: pg.Database,
+		Username:     pg.Username,
+		Password:     pg.Password,
+	})
+	require.Error(t, err, "Missing host should fail")
+	assert.Contains(t, err.Error(), "400", "Should return 400 Bad Request")
+}
+
+// TestConnection_MissingPassword validates error when password is missing.
+func (s *WorkerIntegrationTestSuite) TestConnection_MissingPassword() {
+	t := s.T()
+
+	pg := s.infra.PostgresInternal()
+	configName := s.uniqueConfigName("postgres_missing_password")
+
+	_, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
+		ConfigName:   configName,
+		Type:         "POSTGRESQL",
+		Host:         pg.Host,
+		Port:         pg.Port,
+		DatabaseName: pg.Database,
+		Username:     pg.Username,
+		Password:     "", // Missing required field
+	})
+	require.Error(t, err, "Missing password should fail")
+	assert.Contains(t, err.Error(), "400", "Should return 400 Bad Request")
+}
+
+// TestConnection_MissingType validates error when type is missing.
+func (s *WorkerIntegrationTestSuite) TestConnection_MissingType() {
+	t := s.T()
+
+	pg := s.infra.PostgresInternal()
+	configName := s.uniqueConfigName("postgres_missing_type")
+
+	_, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
+		ConfigName:   configName,
+		Type:         "", // Missing required field
+		Host:         pg.Host,
+		Port:         pg.Port,
+		DatabaseName: pg.Database,
+		Username:     pg.Username,
+		Password:     pg.Password,
+	})
+	require.Error(t, err, "Missing type should fail")
+	assert.Contains(t, err.Error(), "400", "Should return 400 Bad Request")
+}
+
+// TestConnection_MissingDatabaseName validates error when databaseName is missing.
+func (s *WorkerIntegrationTestSuite) TestConnection_MissingDatabaseName() {
+	t := s.T()
+
+	pg := s.infra.PostgresInternal()
+	configName := s.uniqueConfigName("postgres_missing_db")
+
+	_, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
+		ConfigName:   configName,
+		Type:         "POSTGRESQL",
+		Host:         pg.Host,
+		Port:         pg.Port,
+		DatabaseName: "", // Missing required field
+		Username:     pg.Username,
+		Password:     pg.Password,
+	})
+	require.Error(t, err, "Missing databaseName should fail")
+	assert.Contains(t, err.Error(), "400", "Should return 400 Bad Request")
+}
+
+// TestConnection_MissingUsername validates error when userName is missing.
+func (s *WorkerIntegrationTestSuite) TestConnection_MissingUsername() {
+	t := s.T()
+
+	pg := s.infra.PostgresInternal()
+	configName := s.uniqueConfigName("postgres_missing_user")
+
+	_, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
+		ConfigName:   configName,
+		Type:         "POSTGRESQL",
+		Host:         pg.Host,
+		Port:         pg.Port,
+		DatabaseName: pg.Database,
+		Username:     "", // Missing required field
+		Password:     pg.Password,
+	})
+	require.Error(t, err, "Missing userName should fail")
+	assert.Contains(t, err.Error(), "400", "Should return 400 Bad Request")
+}
+
+// =============================================================================
+// RATE LIMITING TESTS
+// =============================================================================
+// These tests validate rate limiting behavior on the test connection endpoint.
+// Rate limit: 10 requests per minute per connection.
+// Priority: P0 (production reliability)
+// =============================================================================
+
+// TestConnection_TestEndpoint_RateLimit validates 429 response when rate limit is exceeded.
+func (s *WorkerIntegrationTestSuite) TestConnection_TestEndpoint_RateLimit() {
+	t := s.T()
+
+	pg := s.infra.PostgresInternal()
+	configName := s.uniqueConfigName("postgres_rate_limit")
+
+	connResp, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
+		ConfigName:   configName,
+		Type:         "POSTGRESQL",
+		Host:         pg.Host,
+		Port:         pg.Port,
+		DatabaseName: pg.Database,
+		Username:     pg.Username,
+		Password:     pg.Password,
+	})
+	require.NoError(t, err, "Failed to create connection")
+	defer func() { _ = s.managerClient.DeleteConnection(s.ctx, connResp.ID) }()
+
+	// Call test endpoint rapidly to trigger rate limit (10/min)
+	rateLimitExceeded := false
+	for i := 0; i < 15; i++ {
+		_, err := s.managerClient.TestConnectionEndpoint(s.ctx, connResp.ID)
+		if err != nil && strings.Contains(err.Error(), "429") {
+			rateLimitExceeded = true
+			t.Logf("Rate limit triggered after %d requests", i+1)
+			break
+		}
+		if err != nil && strings.Contains(strings.ToLower(err.Error()), "rate") {
+			rateLimitExceeded = true
+			t.Logf("Rate limit triggered after %d requests", i+1)
+			break
+		}
+	}
+
+	assert.True(t, rateLimitExceeded, "Rate limit should be triggered after multiple rapid requests")
+}
+
+// =============================================================================
+// HEADER VALIDATION TESTS - X-Organization-Id
+// =============================================================================
+// These tests validate X-Organization-Id header requirements.
+// Priority: P0 (required header validation)
+// =============================================================================
+
+// TestConnection_MissingOrganizationId validates 400 response when header is missing.
+func (s *WorkerIntegrationTestSuite) TestConnection_MissingOrganizationId() {
+	t := s.T()
+
+	pg := s.infra.PostgresInternal()
+	configName := s.uniqueConfigName("postgres_no_org_id")
+
+	_, err := s.managerClient.CreateConnectionWithoutOrgHeader(s.ctx, client.ConnectionInput{
+		ConfigName:   configName,
+		Type:         "POSTGRESQL",
+		Host:         pg.Host,
+		Port:         pg.Port,
+		DatabaseName: pg.Database,
+		Username:     pg.Username,
+		Password:     pg.Password,
+	})
+	require.Error(t, err, "Missing X-Organization-Id should fail")
+	assert.Contains(t, err.Error(), "400", "Should return 400 Bad Request")
+}
+
+// TestConnection_InvalidOrganizationId validates 400 response for invalid UUID format.
+func (s *WorkerIntegrationTestSuite) TestConnection_InvalidOrganizationId() {
+	t := s.T()
+
+	pg := s.infra.PostgresInternal()
+	configName := s.uniqueConfigName("postgres_invalid_org_id")
+
+	_, err := s.managerClient.CreateConnectionWithInvalidOrgHeader(s.ctx, client.ConnectionInput{
+		ConfigName:   configName,
+		Type:         "POSTGRESQL",
+		Host:         pg.Host,
+		Port:         pg.Port,
+		DatabaseName: pg.Database,
+		Username:     pg.Username,
+		Password:     pg.Password,
+	}, "not-a-valid-uuid")
+	require.Error(t, err, "Invalid X-Organization-Id should fail")
+	assert.Contains(t, err.Error(), "400", "Should return 400 Bad Request")
+}
+
+// TestConnection_EmptyOrganizationId validates 400 response for empty header value.
+func (s *WorkerIntegrationTestSuite) TestConnection_EmptyOrganizationId() {
+	t := s.T()
+
+	pg := s.infra.PostgresInternal()
+	configName := s.uniqueConfigName("postgres_empty_org_id")
+
+	_, err := s.managerClient.CreateConnectionWithInvalidOrgHeader(s.ctx, client.ConnectionInput{
+		ConfigName:   configName,
+		Type:         "POSTGRESQL",
+		Host:         pg.Host,
+		Port:         pg.Port,
+		DatabaseName: pg.Database,
+		Username:     pg.Username,
+		Password:     pg.Password,
+	}, "")
+	require.Error(t, err, "Empty X-Organization-Id should fail")
+	assert.Contains(t, err.Error(), "400", "Should return 400 Bad Request")
+}
+
+// =============================================================================
+// EDGE CASE TESTS - Empty Results
+// =============================================================================
+// These tests validate handling of edge cases like empty result sets.
+// Priority: P0 (edge case handling)
+// =============================================================================
+
+// TestJob_EmptyResultSet validates job completion when filter matches zero rows.
+func (s *WorkerIntegrationTestSuite) TestJob_EmptyResultSet() {
+	t := s.T()
+
+	pg := s.infra.PostgresInternal()
+	configName := s.uniqueConfigName("postgres_empty_result")
+
+	connResp, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
+		ConfigName:   configName,
+		Type:         "POSTGRESQL",
+		Host:         pg.Host,
+		Port:         pg.Port,
+		DatabaseName: pg.Database,
+		Username:     pg.Username,
+		Password:     pg.Password,
+	})
+	require.NoError(t, err, "Failed to create connection")
+	defer func() { _ = s.managerClient.DeleteConnection(s.ctx, connResp.ID) }()
+
+	// Filter that matches no rows
+	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, model.FetcherRequest{
+		DataRequest: model.DataRequest{
+			MappedFields: map[string]map[string][]string{
+				configName: {
+					"transactions": {"id", "account_id", "amount", "status"},
+				},
+			},
+			Filters: model.NestedFilters{
+				configName: {
+					"transactions": {
+						"status": job.FilterCondition{
+							Equals: []any{"nonexistent_status_xyz"},
+						},
+					},
+				},
+			},
+		},
+		Metadata: s.testMetadata("TestJob_EmptyResultSet"),
+	})
+	require.NoError(t, err, "Failed to create job with zero-match filter")
+
+	notification, err := s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID.String(), setup.JobCompletionTimeout)
+	require.NoError(t, err, "Failed to receive job completion event")
+
+	assert.Equal(t, "completed", notification.Status, "Job should complete successfully with empty result")
+	require.NotNil(t, notification.Result, "Completed job should have result data")
+	assert.Equal(t, int64(0), notification.Result.RowCount, "RowCount should be 0 for empty result set")
+	assert.NotEmpty(t, notification.Result.Path, "Result path should be set")
+
+	fetchedJob, err := s.managerClient.GetJob(s.ctx, jobResp.JobID.String())
+	require.NoError(t, err)
+	assert.Equal(t, "completed", fetchedJob.Status)
+}
+
+// TestJob_EmptyResultSet_MultipleFilters validates empty result with multiple filter conditions.
+func (s *WorkerIntegrationTestSuite) TestJob_EmptyResultSet_MultipleFilters() {
+	t := s.T()
+
+	pg := s.infra.PostgresInternal()
+	configName := s.uniqueConfigName("postgres_empty_multi_filter")
+
+	connResp, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
+		ConfigName:   configName,
+		Type:         "POSTGRESQL",
+		Host:         pg.Host,
+		Port:         pg.Port,
+		DatabaseName: pg.Database,
+		Username:     pg.Username,
+		Password:     pg.Password,
+	})
+	require.NoError(t, err)
+	defer func() { _ = s.managerClient.DeleteConnection(s.ctx, connResp.ID) }()
+
+	// Combined filters that yield no results
+	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, model.FetcherRequest{
+		DataRequest: model.DataRequest{
+			MappedFields: map[string]map[string][]string{
+				configName: {
+					"transactions": {"id", "amount", "status"},
+				},
+			},
+			Filters: model.NestedFilters{
+				configName: {
+					"transactions": {
+						"status": job.FilterCondition{
+							Equals: []any{"completed"},
+						},
+						"amount": job.FilterCondition{
+							GreaterThan: []any{1000000}, // No transaction > 1 million
+						},
+					},
+				},
+			},
+		},
+		Metadata: s.testMetadata("TestJob_EmptyResultSet_MultipleFilters"),
+	})
+	require.NoError(t, err)
+
+	notification, err := s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID.String(), setup.JobCompletionTimeout)
+	require.NoError(t, err)
+
+	assert.Equal(t, "completed", notification.Status)
+	require.NotNil(t, notification.Result)
+	assert.Equal(t, int64(0), notification.Result.RowCount)
 }
 
 // TestSuite runs the test suite.

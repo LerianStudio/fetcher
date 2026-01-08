@@ -32,6 +32,7 @@ var (
 	ErrInvalidMetadataNesting       = errors.New("FET-0410")
 	ErrMetadataValueLengthExceeded  = errors.New("FET-0411")
 	ErrMetadataKeyLengthExceeded    = errors.New("FET-0412")
+	ErrInvalidSSLMode               = errors.New("FET-0413")
 
 	// #################################################### BUSINESS LOGIC ERRORS ####################################################
 

@@ -532,6 +532,15 @@ func TestValidateBusinessError_AllErrorTypes(t *testing.T) {
 			wantType:   "ValidationError",
 			wantCode:   constant.ErrSchemaValidationLimit.Error(),
 		},
+		// SSL mode validation errors
+		{
+			name:       "invalid ssl mode",
+			err:        constant.ErrInvalidSSLMode,
+			entityType: "connection",
+			args:       []any{"skip-verify-malicious"},
+			wantType:   "ValidationError",
+			wantCode:   constant.ErrInvalidSSLMode.Error(),
+		},
 	}
 
 	for _, tt := range tests {

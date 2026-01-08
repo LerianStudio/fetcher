@@ -215,7 +215,7 @@ test-integration-container:
 	@echo "  - GITHUB_TOKEN set (to build from Dockerfile)"
 	@echo "  - MANAGER_IMAGE and WORKER_IMAGE set (to use pre-built images)"
 	@echo ""
-	@DOCKER_BUILDKIT=1 go test -tags=integration -v -timeout 30m ./tests/integration/containers/...
+	@DOCKER_BUILDKIT=1 go test -tags=integration -v -timeout 30m -count=1 ./tests/integration/containers/...
 	@echo "[ok] Integration tests completed successfully"
 
 # =============================================================================

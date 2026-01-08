@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/tests/shared/config"
 )
 
@@ -137,47 +138,6 @@ type ConnectionResponse struct {
 	UpdatedAt    string         `json:"updatedAt"`
 }
 
-// FetcherRequest represents the request body for creating a fetcher job.
-type FetcherRequest struct {
-	DataRequest DataRequest    `json:"dataRequest"`
-	Metadata    map[string]any `json:"metadata,omitempty"`
-}
-
-// DataRequest encapsulates field mappings and optional filters.
-type DataRequest struct {
-	MappedFields map[string]map[string][]string `json:"mappedFields"`
-	Filters      []FilterRequest                `json:"filters,omitempty"`
-}
-
-// FilterRequest defines a filter condition.
-type FilterRequest struct {
-	Field    string `json:"field"`
-	Operator string `json:"operator"`
-	Value    []any  `json:"value"`
-}
-
-// FetcherResponse represents the response from creating a fetcher job.
-type FetcherResponse struct {
-	JobID     string `json:"jobId"`
-	Status    string `json:"status"`
-	Message   string `json:"message"`
-	CreatedAt string `json:"createdAt"`
-}
-
-// JobResponse represents the response from getting a job.
-type JobResponse struct {
-	ID             string                         `json:"id"`
-	OrganizationID string                         `json:"organizationId"`
-	Status         string                         `json:"status"`
-	MappedFields   map[string]map[string][]string `json:"mappedFields"`
-	Filters        []FilterRequest                `json:"filters,omitempty"`
-	ResultPath     string                         `json:"resultPath,omitempty"`
-	Metadata       map[string]any                 `json:"metadata,omitempty"`
-	RequestHash    string                         `json:"requestHash"`
-	CreatedAt      string                         `json:"createdAt"`
-	CompletedAt    *string                        `json:"completedAt,omitempty"`
-}
-
 // CreateConnection creates a new database connection via the Manager API.
 func (c *ManagerClient) CreateConnection(ctx context.Context, input ConnectionInput) (*ConnectionResponse, error) {
 	body, err := json.Marshal(input)
@@ -218,7 +178,7 @@ func (c *ManagerClient) CreateConnection(ctx context.Context, input ConnectionIn
 }
 
 // CreateFetcherJob creates a new data extraction job via the Manager API.
-func (c *ManagerClient) CreateFetcherJob(ctx context.Context, request FetcherRequest) (*FetcherResponse, error) {
+func (c *ManagerClient) CreateFetcherJob(ctx context.Context, request model.FetcherRequest) (*model.FetcherResponse, error) {
 	body, err := json.Marshal(request)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal fetcher request: %w", err)
@@ -247,7 +207,7 @@ func (c *ManagerClient) CreateFetcherJob(ctx context.Context, request FetcherReq
 		return nil, fmt.Errorf("create fetcher job failed with status %d: %s", resp.StatusCode, string(respBody))
 	}
 
-	var result FetcherResponse
+	var result model.FetcherResponse
 	if err := json.Unmarshal(respBody, &result); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
@@ -256,7 +216,7 @@ func (c *ManagerClient) CreateFetcherJob(ctx context.Context, request FetcherReq
 }
 
 // GetJob retrieves job details by ID via the Manager API.
-func (c *ManagerClient) GetJob(ctx context.Context, jobID string) (*JobResponse, error) {
+func (c *ManagerClient) GetJob(ctx context.Context, jobID string) (*model.JobResponse, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/v1/fetcher/"+jobID, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -279,7 +239,7 @@ func (c *ManagerClient) GetJob(ctx context.Context, jobID string) (*JobResponse,
 		return nil, fmt.Errorf("get job failed with status %d: %s", resp.StatusCode, string(respBody))
 	}
 
-	var result JobResponse
+	var result model.JobResponse
 	if err := json.Unmarshal(respBody, &result); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
@@ -288,7 +248,7 @@ func (c *ManagerClient) GetJob(ctx context.Context, jobID string) (*JobResponse,
 }
 
 // WaitForJobCompletion polls the job status until it's completed or failed.
-func (c *ManagerClient) WaitForJobCompletion(ctx context.Context, jobID string, timeout time.Duration) (*JobResponse, error) {
+func (c *ManagerClient) WaitForJobCompletion(ctx context.Context, jobID string, timeout time.Duration) (*model.JobResponse, error) {
 	deadline := time.Now().Add(timeout)
 
 	var lastErr error
@@ -662,6 +622,83 @@ type PaginatedConnectionsResponse struct {
 	Page  int                  `json:"page"`
 	Limit int                  `json:"limit"`
 	Total int                  `json:"total"`
+}
+
+// CreateConnectionWithoutOrgHeader creates a connection without X-Organization-Id header.
+// This is used to test header validation.
+func (c *ManagerClient) CreateConnectionWithoutOrgHeader(ctx context.Context, input ConnectionInput) (*ConnectionResponse, error) {
+	body, err := json.Marshal(input)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal connection input: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/management/connections", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	// Intentionally NOT setting X-Organization-Id header
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("create connection failed with status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var connectionResponse ConnectionResponse
+	if err := json.Unmarshal(respBody, &connectionResponse); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+
+	return &connectionResponse, nil
+}
+
+// CreateConnectionWithInvalidOrgHeader creates a connection with an invalid X-Organization-Id header.
+func (c *ManagerClient) CreateConnectionWithInvalidOrgHeader(ctx context.Context, input ConnectionInput, invalidOrgID string) (*ConnectionResponse, error) {
+	body, err := json.Marshal(input)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal connection input: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/management/connections", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Organization-Id", invalidOrgID)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("create connection failed with status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var connectionResponse ConnectionResponse
+	if err := json.Unmarshal(respBody, &connectionResponse); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+
+	return &connectionResponse, nil
 }
 
 // ListConnectionsWithParams retrieves connections with query parameters.

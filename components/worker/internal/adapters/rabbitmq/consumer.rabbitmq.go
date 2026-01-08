@@ -5,6 +5,7 @@ import (
 	"context"
 	"sync"
 
+	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/rabbitmq"
 	"github.com/LerianStudio/lib-commons/v2/commons/log"
 	"github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
@@ -33,8 +34,12 @@ type ConsumerRoutes struct {
 }
 
 // NewConsumerRoutes creates a new instance of ConsumerRoutes using a RabbitMQ connection.
-func NewConsumerRoutes(conn *libRabbitmq.RabbitMQConnection, numWorkers int, logger log.Logger, telemetry *opentelemetry.Telemetry) *ConsumerRoutes {
-	adapter := rabbitmq.NewRabbitMQAdapter(conn)
+// The signer parameter is optional - pass nil to disable signature verification.
+func NewConsumerRoutes(conn *libRabbitmq.RabbitMQConnection, numWorkers int, logger log.Logger, telemetry *opentelemetry.Telemetry, signer crypto.Signer) *ConsumerRoutes {
+	opts := rabbitmq.DefaultOptions()
+	opts.Signer = signer
+	adapter := rabbitmq.NewRabbitMQAdapterWithOptions(conn, opts)
+
 	return NewConsumerRoutesWithAdapter(adapter, numWorkers, logger, telemetry)
 }
 

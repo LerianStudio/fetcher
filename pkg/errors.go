@@ -358,6 +358,12 @@ func ValidateBusinessError(err error, entityType string, args ...any) error {
 				return "The request contains invalid data. Please check the request payload and try again."
 			}(),
 		},
+		constant.ErrInvalidSSLMode: ValidationError{
+			EntityType: entityType,
+			Code:       constant.ErrInvalidSSLMode.Error(),
+			Title:      "Invalid SSL Mode",
+			Message:    fmt.Sprintf("Invalid SSL mode. The provided SSL mode '%s' is not supported. Please use a valid SSL mode for this database type.", args...),
+		},
 
 		// Entity related errors
 		constant.ErrEntityNotFound: ResponseErrorWithStatusCode{

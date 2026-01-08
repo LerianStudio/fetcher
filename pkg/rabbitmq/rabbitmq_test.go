@@ -3,12 +3,16 @@ package rabbitmq
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
 	"time"
 
+	"github.com/LerianStudio/fetcher/pkg/constant"
+	"github.com/LerianStudio/fetcher/pkg/crypto"
 	libCommons "github.com/LerianStudio/lib-commons/v2/commons"
 	libConstants "github.com/LerianStudio/lib-commons/v2/commons/constants"
 	libLog "github.com/LerianStudio/lib-commons/v2/commons/log"
+	"github.com/golang/mock/gomock"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1898,4 +1902,673 @@ func (t *testRabbitConnectionWithAttempts) EnsureChannel() (amqpChannel, error) 
 func (t *testRabbitConnectionWithAttempts) Close() error {
 	t.closeCalls++
 	return nil
+}
+
+// -----------------------------------------------------------------------------
+// Unit Tests: Message Signing
+// -----------------------------------------------------------------------------
+
+func TestRabbitMQAdapter_ProducerDefault_SignsMessage(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockSigner := crypto.NewMockSigner(ctrl)
+	mockSigner.EXPECT().Sign(gomock.Any()).Return("test-signature")
+	mockSigner.EXPECT().SignatureVersion().Return("v1").Times(2)
+
+	channel := newTestAMQPChannel()
+	conn := &testRabbitConnection{channel: channel}
+
+	opts := DefaultOptions()
+	opts.Signer = mockSigner
+	opts.EnableMessageSigning = true
+
+	adapter := &RabbitMQAdapter{
+		conn:           conn,
+		options:        opts,
+		circuitBreaker: newCircuitBreaker(opts.CircuitBreakerThreshold, opts.CircuitBreakerCooldown),
+	}
+
+	t.Cleanup(func() {
+		_ = adapter.Shutdown(testContextWithHeader("cleanup"))
+	})
+
+	ctx := testContextWithHeader("req-sign")
+	err := adapter.ProducerDefault(ctx, "test-exchange", "test-key", []byte(`{"data":"test"}`), nil)
+
+	require.NoError(t, err)
+	require.Len(t, channel.published, 1)
+
+	headers := channel.published[0].message.Headers
+	assert.Equal(t, "test-signature", headers[constant.HeaderMessageSignature])
+	assert.Equal(t, "v1", headers[constant.HeaderSignatureVersion])
+
+	// Verify timestamp is a valid number
+	timestampStr, ok := headers[constant.HeaderSignatureTimestamp].(string)
+	require.True(t, ok, "timestamp should be a string")
+	_, err = strconv.ParseInt(timestampStr, 10, 64)
+	assert.NoError(t, err, "timestamp should be a valid int64")
+}
+
+func TestRabbitMQAdapter_ProducerDefault_SkipsSigningWhenDisabled(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockSigner := crypto.NewMockSigner(ctrl)
+	// No expectations - signer should not be called
+
+	channel := newTestAMQPChannel()
+	conn := &testRabbitConnection{channel: channel}
+
+	opts := DefaultOptions()
+	opts.Signer = mockSigner
+	opts.EnableMessageSigning = false
+
+	adapter := &RabbitMQAdapter{
+		conn:           conn,
+		options:        opts,
+		circuitBreaker: newCircuitBreaker(opts.CircuitBreakerThreshold, opts.CircuitBreakerCooldown),
+	}
+
+	t.Cleanup(func() {
+		_ = adapter.Shutdown(testContextWithHeader("cleanup"))
+	})
+
+	ctx := testContextWithHeader("req-no-sign")
+	err := adapter.ProducerDefault(ctx, "test-exchange", "test-key", []byte(`{"data":"test"}`), nil)
+
+	require.NoError(t, err)
+	require.Len(t, channel.published, 1)
+
+	headers := channel.published[0].message.Headers
+	assert.Nil(t, headers[constant.HeaderMessageSignature], "signature header should not be present")
+	assert.Nil(t, headers[constant.HeaderSignatureTimestamp], "timestamp header should not be present")
+	assert.Nil(t, headers[constant.HeaderSignatureVersion], "version header should not be present")
+}
+
+func TestRabbitMQAdapter_ProducerDefault_SkipsSigningWhenNoSigner(t *testing.T) {
+	t.Parallel()
+
+	channel := newTestAMQPChannel()
+	conn := &testRabbitConnection{channel: channel}
+
+	opts := DefaultOptions()
+	opts.Signer = nil
+	opts.EnableMessageSigning = true
+
+	adapter := &RabbitMQAdapter{
+		conn:           conn,
+		options:        opts,
+		circuitBreaker: newCircuitBreaker(opts.CircuitBreakerThreshold, opts.CircuitBreakerCooldown),
+	}
+
+	t.Cleanup(func() {
+		_ = adapter.Shutdown(testContextWithHeader("cleanup"))
+	})
+
+	ctx := testContextWithHeader("req-no-signer")
+	err := adapter.ProducerDefault(ctx, "test-exchange", "test-key", []byte(`{"data":"test"}`), nil)
+
+	require.NoError(t, err)
+	require.Len(t, channel.published, 1)
+
+	headers := channel.published[0].message.Headers
+	assert.Nil(t, headers[constant.HeaderMessageSignature])
+}
+
+func TestRabbitMQAdapter_ConsumerLoop_VerifiesSignatureSuccessfully(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockSigner := crypto.NewMockSigner(ctrl)
+	mockSigner.EXPECT().SignatureVersion().Return("v1")
+	mockSigner.EXPECT().Verify(gomock.Any(), "valid-signature").Return(nil)
+
+	ctx, cancel := context.WithCancel(testContextWithHeader("req-verify-ok"))
+	defer cancel()
+
+	channel := newTestAMQPChannel()
+	ack := &testAcknowledger{}
+	channel.deliveries <- amqp.Delivery{
+		Body: []byte(`{"data":"test"}`),
+		Headers: amqp.Table{
+			constant.HeaderMessageSignature:   "valid-signature",
+			constant.HeaderSignatureTimestamp: "1704067200",
+			constant.HeaderSignatureVersion:   "v1",
+		},
+		Acknowledger: ack,
+	}
+
+	conn := &testRabbitConnection{channel: channel}
+
+	opts := DefaultOptions()
+	opts.Signer = mockSigner
+	opts.EnableSignatureVerification = true
+
+	adapter := &RabbitMQAdapter{
+		conn:           conn,
+		options:        opts,
+		circuitBreaker: newCircuitBreaker(opts.CircuitBreakerThreshold, opts.CircuitBreakerCooldown),
+	}
+
+	t.Cleanup(func() {
+		_ = adapter.Shutdown(testContextWithHeader("cleanup"))
+	})
+
+	handled := make(chan struct{})
+	handler := func(ctx context.Context, body []byte, headers map[string]any) error {
+		close(handled)
+		cancel()
+		return nil
+	}
+
+	err := adapter.ConsumerLoop(ctx, "queue-verify", 1, handler)
+	require.NoError(t, err)
+
+	select {
+	case <-handled:
+		// Success - handler was called
+	case <-time.After(time.Second):
+		t.Fatal("handler was not invoked")
+	}
+
+	require.Eventually(t, func() bool {
+		return ack.acks == 1 && ack.nacks == 0
+	}, time.Second, 10*time.Millisecond)
+}
+
+func TestRabbitMQAdapter_ConsumerLoop_NacksOnMissingSignature(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockSigner := crypto.NewMockSigner(ctrl)
+	// No expectations - verification should fail before calling signer
+
+	ctx, cancel := context.WithCancel(testContextWithHeader("req-missing-sig"))
+	defer cancel()
+
+	channel := newTestAMQPChannel()
+	ack := &testAcknowledger{}
+	channel.deliveries <- amqp.Delivery{
+		Body:    []byte(`{"data":"test"}`),
+		Headers: amqp.Table{
+			// Missing signature headers
+		},
+		Acknowledger: ack,
+	}
+
+	conn := &testRabbitConnection{channel: channel}
+
+	opts := DefaultOptions()
+	opts.Signer = mockSigner
+	opts.EnableSignatureVerification = true
+
+	adapter := &RabbitMQAdapter{
+		conn:           conn,
+		options:        opts,
+		circuitBreaker: newCircuitBreaker(opts.CircuitBreakerThreshold, opts.CircuitBreakerCooldown),
+	}
+
+	t.Cleanup(func() {
+		_ = adapter.Shutdown(testContextWithHeader("cleanup"))
+	})
+
+	handler := func(ctx context.Context, body []byte, headers map[string]any) error {
+		t.Fatal("handler should not be called when signature is missing")
+		return nil
+	}
+
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+	}()
+
+	err := adapter.ConsumerLoop(ctx, "queue-missing-sig", 1, handler)
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		return ack.nacks == 1 && ack.acks == 0
+	}, time.Second, 10*time.Millisecond)
+}
+
+func TestRabbitMQAdapter_ConsumerLoop_NacksOnInvalidSignature(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockSigner := crypto.NewMockSigner(ctrl)
+	mockSigner.EXPECT().SignatureVersion().Return("v1")
+	mockSigner.EXPECT().Verify(gomock.Any(), "invalid-signature").Return(crypto.ErrInvalidSignature)
+
+	ctx, cancel := context.WithCancel(testContextWithHeader("req-invalid-sig"))
+	defer cancel()
+
+	channel := newTestAMQPChannel()
+	ack := &testAcknowledger{}
+	channel.deliveries <- amqp.Delivery{
+		Body: []byte(`{"data":"test"}`),
+		Headers: amqp.Table{
+			constant.HeaderMessageSignature:   "invalid-signature",
+			constant.HeaderSignatureTimestamp: "1704067200",
+			constant.HeaderSignatureVersion:   "v1",
+		},
+		Acknowledger: ack,
+	}
+
+	conn := &testRabbitConnection{channel: channel}
+
+	opts := DefaultOptions()
+	opts.Signer = mockSigner
+	opts.EnableSignatureVerification = true
+
+	adapter := &RabbitMQAdapter{
+		conn:           conn,
+		options:        opts,
+		circuitBreaker: newCircuitBreaker(opts.CircuitBreakerThreshold, opts.CircuitBreakerCooldown),
+	}
+
+	t.Cleanup(func() {
+		_ = adapter.Shutdown(testContextWithHeader("cleanup"))
+	})
+
+	handler := func(ctx context.Context, body []byte, headers map[string]any) error {
+		t.Fatal("handler should not be called when signature is invalid")
+		return nil
+	}
+
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+	}()
+
+	err := adapter.ConsumerLoop(ctx, "queue-invalid-sig", 1, handler)
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		return ack.nacks == 1 && ack.acks == 0
+	}, time.Second, 10*time.Millisecond)
+}
+
+func TestRabbitMQAdapter_ConsumerLoop_NacksOnVersionMismatch(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockSigner := crypto.NewMockSigner(ctrl)
+	mockSigner.EXPECT().SignatureVersion().Return("v2").AnyTimes() // Signer expects v2
+
+	ctx, cancel := context.WithCancel(testContextWithHeader("req-version-mismatch"))
+	defer cancel()
+
+	channel := newTestAMQPChannel()
+	ack := &testAcknowledger{}
+	channel.deliveries <- amqp.Delivery{
+		Body: []byte(`{"data":"test"}`),
+		Headers: amqp.Table{
+			constant.HeaderMessageSignature:   "some-signature",
+			constant.HeaderSignatureTimestamp: "1704067200",
+			constant.HeaderSignatureVersion:   "v1", // Message has v1
+		},
+		Acknowledger: ack,
+	}
+
+	conn := &testRabbitConnection{channel: channel}
+
+	opts := DefaultOptions()
+	opts.Signer = mockSigner
+	opts.EnableSignatureVerification = true
+
+	adapter := &RabbitMQAdapter{
+		conn:           conn,
+		options:        opts,
+		circuitBreaker: newCircuitBreaker(opts.CircuitBreakerThreshold, opts.CircuitBreakerCooldown),
+	}
+
+	t.Cleanup(func() {
+		_ = adapter.Shutdown(testContextWithHeader("cleanup"))
+	})
+
+	handler := func(ctx context.Context, body []byte, headers map[string]any) error {
+		t.Fatal("handler should not be called when version mismatches")
+		return nil
+	}
+
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+	}()
+
+	err := adapter.ConsumerLoop(ctx, "queue-version-mismatch", 1, handler)
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		return ack.nacks == 1 && ack.acks == 0
+	}, time.Second, 10*time.Millisecond)
+}
+
+func TestRabbitMQAdapter_ConsumerLoop_SkipsVerificationWhenDisabled(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockSigner := crypto.NewMockSigner(ctrl)
+	// No expectations - signer should not be called
+
+	ctx, cancel := context.WithCancel(testContextWithHeader("req-skip-verify"))
+	defer cancel()
+
+	channel := newTestAMQPChannel()
+	ack := &testAcknowledger{}
+	channel.deliveries <- amqp.Delivery{
+		Body:    []byte(`{"data":"test"}`),
+		Headers: amqp.Table{
+			// No signature headers - should still work when verification disabled
+		},
+		Acknowledger: ack,
+	}
+
+	conn := &testRabbitConnection{channel: channel}
+
+	opts := DefaultOptions()
+	opts.Signer = mockSigner
+	opts.EnableSignatureVerification = false
+
+	adapter := &RabbitMQAdapter{
+		conn:           conn,
+		options:        opts,
+		circuitBreaker: newCircuitBreaker(opts.CircuitBreakerThreshold, opts.CircuitBreakerCooldown),
+	}
+
+	t.Cleanup(func() {
+		_ = adapter.Shutdown(testContextWithHeader("cleanup"))
+	})
+
+	handled := make(chan struct{})
+	handler := func(ctx context.Context, body []byte, headers map[string]any) error {
+		close(handled)
+		cancel()
+		return nil
+	}
+
+	err := adapter.ConsumerLoop(ctx, "queue-skip-verify", 1, handler)
+	require.NoError(t, err)
+
+	select {
+	case <-handled:
+		// Success - handler was called without verification
+	case <-time.After(time.Second):
+		t.Fatal("handler was not invoked")
+	}
+
+	require.Eventually(t, func() bool {
+		return ack.acks == 1 && ack.nacks == 0
+	}, time.Second, 10*time.Millisecond)
+}
+
+// -----------------------------------------------------------------------------
+// Unit Tests: verifyMessageSignature
+// -----------------------------------------------------------------------------
+
+func TestVerifyMessageSignature_MissingSignatureHeader(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockSigner := crypto.NewMockSigner(ctrl)
+
+	opts := DefaultOptions()
+	opts.Signer = mockSigner
+
+	adapter := &RabbitMQAdapter{options: opts}
+	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+
+	headers := map[string]any{
+		constant.HeaderSignatureTimestamp: "1704067200",
+		constant.HeaderSignatureVersion:   "v1",
+	}
+
+	err := adapter.verifyMessageSignature([]byte(`{}`), headers, logger, nil)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrMissingSignatureHeaders)
+	assert.Contains(t, err.Error(), constant.HeaderMessageSignature)
+}
+
+func TestVerifyMessageSignature_MissingTimestampHeader(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockSigner := crypto.NewMockSigner(ctrl)
+
+	opts := DefaultOptions()
+	opts.Signer = mockSigner
+
+	adapter := &RabbitMQAdapter{options: opts}
+	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+
+	headers := map[string]any{
+		constant.HeaderMessageSignature: "some-signature",
+		constant.HeaderSignatureVersion: "v1",
+	}
+
+	err := adapter.verifyMessageSignature([]byte(`{}`), headers, logger, nil)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrMissingSignatureHeaders)
+	assert.Contains(t, err.Error(), constant.HeaderSignatureTimestamp)
+}
+
+func TestVerifyMessageSignature_MissingVersionHeader(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockSigner := crypto.NewMockSigner(ctrl)
+
+	opts := DefaultOptions()
+	opts.Signer = mockSigner
+
+	adapter := &RabbitMQAdapter{options: opts}
+	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+
+	headers := map[string]any{
+		constant.HeaderMessageSignature:   "some-signature",
+		constant.HeaderSignatureTimestamp: "1704067200",
+	}
+
+	err := adapter.verifyMessageSignature([]byte(`{}`), headers, logger, nil)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrMissingSignatureHeaders)
+	assert.Contains(t, err.Error(), constant.HeaderSignatureVersion)
+}
+
+func TestVerifyMessageSignature_InvalidTimestampFormat(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockSigner := crypto.NewMockSigner(ctrl)
+
+	opts := DefaultOptions()
+	opts.Signer = mockSigner
+
+	adapter := &RabbitMQAdapter{options: opts}
+	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+
+	headers := map[string]any{
+		constant.HeaderMessageSignature:   "some-signature",
+		constant.HeaderSignatureTimestamp: "not-a-number",
+		constant.HeaderSignatureVersion:   "v1",
+	}
+
+	err := adapter.verifyMessageSignature([]byte(`{}`), headers, logger, nil)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrSignatureVerificationFailed)
+	assert.Contains(t, err.Error(), "invalid timestamp")
+}
+
+func TestVerifyMessageSignature_TimestampAsInt64(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockSigner := crypto.NewMockSigner(ctrl)
+	mockSigner.EXPECT().SignatureVersion().Return("v1")
+	mockSigner.EXPECT().Verify(gomock.Any(), "valid-signature").Return(nil)
+
+	opts := DefaultOptions()
+	opts.Signer = mockSigner
+
+	adapter := &RabbitMQAdapter{options: opts}
+	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+
+	headers := map[string]any{
+		constant.HeaderMessageSignature:   "valid-signature",
+		constant.HeaderSignatureTimestamp: int64(1704067200),
+		constant.HeaderSignatureVersion:   "v1",
+	}
+
+	err := adapter.verifyMessageSignature([]byte(`{}`), headers, logger, nil)
+
+	require.NoError(t, err)
+}
+
+func TestVerifyMessageSignature_TimestampAsInt(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockSigner := crypto.NewMockSigner(ctrl)
+	mockSigner.EXPECT().SignatureVersion().Return("v1")
+	mockSigner.EXPECT().Verify(gomock.Any(), "valid-signature").Return(nil)
+
+	opts := DefaultOptions()
+	opts.Signer = mockSigner
+
+	adapter := &RabbitMQAdapter{options: opts}
+	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+
+	headers := map[string]any{
+		constant.HeaderMessageSignature:   "valid-signature",
+		constant.HeaderSignatureTimestamp: int(1704067200),
+		constant.HeaderSignatureVersion:   "v1",
+	}
+
+	err := adapter.verifyMessageSignature([]byte(`{}`), headers, logger, nil)
+
+	require.NoError(t, err)
+}
+
+func TestVerifyMessageSignature_NonStringSignature(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockSigner := crypto.NewMockSigner(ctrl)
+
+	opts := DefaultOptions()
+	opts.Signer = mockSigner
+
+	adapter := &RabbitMQAdapter{options: opts}
+	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+
+	headers := map[string]any{
+		constant.HeaderMessageSignature:   12345, // Non-string
+		constant.HeaderSignatureTimestamp: "1704067200",
+		constant.HeaderSignatureVersion:   "v1",
+	}
+
+	err := adapter.verifyMessageSignature([]byte(`{}`), headers, logger, nil)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrMissingSignatureHeaders)
+	assert.Contains(t, err.Error(), "must be a string")
+}
+
+func TestVerifyMessageSignature_NonStringVersion(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockSigner := crypto.NewMockSigner(ctrl)
+
+	opts := DefaultOptions()
+	opts.Signer = mockSigner
+
+	adapter := &RabbitMQAdapter{options: opts}
+	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+
+	headers := map[string]any{
+		constant.HeaderMessageSignature:   "some-signature",
+		constant.HeaderSignatureTimestamp: "1704067200",
+		constant.HeaderSignatureVersion:   123, // Non-string
+	}
+
+	err := adapter.verifyMessageSignature([]byte(`{}`), headers, logger, nil)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrMissingSignatureHeaders)
+	assert.Contains(t, err.Error(), "must be a string")
+}
+
+func TestVerifyMessageSignature_UnsupportedTimestampType(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockSigner := crypto.NewMockSigner(ctrl)
+
+	opts := DefaultOptions()
+	opts.Signer = mockSigner
+
+	adapter := &RabbitMQAdapter{options: opts}
+	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+
+	headers := map[string]any{
+		constant.HeaderMessageSignature:   "some-signature",
+		constant.HeaderSignatureTimestamp: []byte("timestamp"), // Unsupported type
+		constant.HeaderSignatureVersion:   "v1",
+	}
+
+	err := adapter.verifyMessageSignature([]byte(`{}`), headers, logger, nil)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrMissingSignatureHeaders)
+}
+
+// -----------------------------------------------------------------------------
+// Unit Tests: DefaultOptions with signing
+// -----------------------------------------------------------------------------
+
+func TestDefaultOptions_IncludesSigningDefaults(t *testing.T) {
+	t.Parallel()
+
+	opts := DefaultOptions()
+
+	assert.True(t, opts.EnableMessageSigning, "EnableMessageSigning should default to true")
+	assert.True(t, opts.EnableSignatureVerification, "EnableSignatureVerification should default to true")
+	assert.Nil(t, opts.Signer, "Signer should be nil by default")
 }
