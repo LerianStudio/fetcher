@@ -95,6 +95,19 @@ func (h *ConnectionHandler) CreateConnection(c *fiber.Ctx) error {
 		})
 	}
 
+	if request.IsEmpty() {
+		err := pkg.ValidationError{
+			EntityType: "connection",
+			Code:       constant.ErrBadRequest.Error(),
+			Title:      "Invalid payload",
+			Message:    "empty request body",
+		}
+
+		libOpentelemetry.HandleSpanError(&span, "empty request body", err)
+
+		return httpUtils.WithError(c, err)
+	}
+
 	conn, err := h.CreateCmd.Execute(ctx, orgID, request)
 	if err != nil {
 		logger.Errorf("Failed to execute create connection command, Error: %s", err.Error())
@@ -117,7 +130,7 @@ func (h *ConnectionHandler) CreateConnection(c *fiber.Ctx) error {
 //	@Produce		json
 //	@Param			Authorization		header		string	false	"The authorization token in the 'Bearer access_token' format. Only required when auth plugin is enabled."
 //	@Param			X-Organization-Id	header		string	true	"Organization ID"
-//	@Param			page				query		int		false	"Page number (default 0)"	default(0)
+//	@Param			page				query		int		false	"Page number (default 1)"	default(1)
 //	@Param			limit				query		int		false	"Page size (default 50, max 1000)"	default(50)
 //	@Param			sortOrder			query		string	false	"Sort order"											Enums(asc, desc)	default(desc)
 //	@Param			type				query		string	false	"Filter by database type"								Enums(ORACLE, SQL_SERVER, POSTGRESQL, MONGODB, MYSQL)
@@ -370,6 +383,19 @@ func (h *ConnectionHandler) UpdateConnection(c *fiber.Ctx) error {
 			Message:    "unable to parse request body",
 			Err:        errParser,
 		})
+	}
+
+	if request.IsEmpty() {
+		err := pkg.ValidationError{
+			EntityType: "connection",
+			Code:       constant.ErrBadRequest.Error(),
+			Title:      "Invalid payload",
+			Message:    "empty request body",
+		}
+
+		libOpentelemetry.HandleSpanError(&span, "empty request body", err)
+
+		return httpUtils.WithError(c, err)
 	}
 
 	conn, err := h.UpdateCmd.Execute(ctx, orgID, id, request)

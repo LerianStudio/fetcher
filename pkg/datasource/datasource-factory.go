@@ -10,6 +10,7 @@ import (
 
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
+	"github.com/LerianStudio/fetcher/pkg/datasource/sslmode"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/model/datasource"
 	datsourceMongoConfig "github.com/LerianStudio/fetcher/pkg/model/datasource/mongodb"
@@ -233,6 +234,13 @@ func newDataSourceConfigOracle(ctx context.Context, base datasource.DataSourceCo
 		return nil, fmt.Errorf("serviceName is required in metadata for Oracle connection")
 	}
 
+	// Validate SSL mode if provided to prevent injection attacks
+	if conn.SSL != nil && conn.SSL.Mode != "" {
+		if err := sslmode.ValidateOracleMode(conn.SSL.Mode); err != nil {
+			return nil, err
+		}
+	}
+
 	connectionString := fmt.Sprintf("oracle://%s:%s@%s:%d/%s",
 		conn.Username,
 		url.QueryEscape(password),
@@ -284,6 +292,11 @@ func newDataSourceConfigMySQL(ctx context.Context, base datasource.DataSourceCon
 	sslMode := "false"
 	if conn.SSL != nil && conn.SSL.Mode != "" {
 		sslMode = conn.SSL.Mode
+	}
+
+	// Validate SSL mode to prevent injection attacks
+	if err := sslmode.ValidateMySQLMode(sslMode); err != nil {
+		return nil, err
 	}
 
 	connectionString := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?tls=%s",

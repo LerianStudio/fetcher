@@ -868,6 +868,25 @@ func (ds *ExternalDataSource) applyAdvancedFilter(queryBuilder squirrel.SelectBu
 		queryBuilder = queryBuilder.Where(squirrel.NotEq{field: condition.NotIn})
 	}
 
+	// Handle not equals
+	if len(condition.NotEquals) > 0 {
+		if len(condition.NotEquals) == 1 {
+			queryBuilder = queryBuilder.Where(squirrel.NotEq{field: condition.NotEquals[0]})
+		} else {
+			// Multiple values treated as AND NOT conditions
+			for _, val := range condition.NotEquals {
+				queryBuilder = queryBuilder.Where(squirrel.NotEq{field: val})
+			}
+		}
+	}
+
+	// Handle like pattern matching
+	if len(condition.Like) > 0 {
+		if pattern, ok := condition.Like[0].(string); ok {
+			queryBuilder = queryBuilder.Where(squirrel.Like{field: pattern})
+		}
+	}
+
 	return queryBuilder
 }
 
@@ -880,7 +899,9 @@ func isFilterConditionEmpty(condition job.FilterCondition) bool {
 		len(condition.LessOrEqual) == 0 &&
 		len(condition.Between) == 0 &&
 		len(condition.In) == 0 &&
-		len(condition.NotIn) == 0
+		len(condition.NotIn) == 0 &&
+		len(condition.NotEquals) == 0 &&
+		len(condition.Like) == 0
 }
 
 // validateFilterCondition validates that a FilterCondition has proper values for each operator

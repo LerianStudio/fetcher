@@ -303,8 +303,8 @@ conn, _ := mgr.CreateConnection(ctx, client.ConnectionInput{
 })
 
 // Create and monitor job
-job, _ := mgr.CreateFetcherJob(ctx, client.FetcherRequest{
-    DataRequest: client.DataRequest{
+job, _ := mgr.CreateFetcherJob(ctx, model.FetcherRequest{
+    DataRequest: model.DataRequest{
         MappedFields: map[string]map[string][]string{
             "test-postgres": {
                 "transactions": {"id", "account_id", "amount"},
@@ -652,8 +652,8 @@ func TestIntegration(t *testing.T) {
         Password:     pg.Internal.Password,
     })
 
-    job, _ := mgr.CreateFetcherJob(ctx, client.FetcherRequest{
-        DataRequest: client.DataRequest{
+    job, _ := mgr.CreateFetcherJob(ctx, model.FetcherRequest{
+        DataRequest: model.DataRequest{
             MappedFields: map[string]map[string][]string{
                 "test-postgres": {"transactions": {"id", "account_id", "amount"}},
             },

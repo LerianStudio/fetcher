@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"strings"
 
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/model/job"
@@ -771,6 +772,41 @@ func (ds *ExternalDataSource) convertFilterConditionToMongoFilter(field string, 
 		fieldFilter["$nin"] = condition.NotIn
 	}
 
+	// Handle not equals
+	if len(condition.NotEquals) > 0 {
+		if len(condition.NotEquals) == 1 {
+			fieldFilter["$ne"] = condition.NotEquals[0]
+		} else {
+			// Multiple values: use $nin for negation
+			fieldFilter["$nin"] = condition.NotEquals
+		}
+	}
+
+	// Handle like pattern matching (MongoDB uses $regex)
+	if len(condition.Like) > 0 {
+		if pattern, ok := condition.Like[0].(string); ok {
+			// Convert SQL LIKE pattern to regex:
+			// % -> .* (matches any sequence)
+			// _ -> . (matches single char)
+			regexPattern := strings.ReplaceAll(pattern, "%", ".*")
+			regexPattern = strings.ReplaceAll(regexPattern, "_", ".")
+			// If pattern starts with .*, don't anchor; otherwise anchor at start
+			if !strings.HasPrefix(regexPattern, ".*") {
+				regexPattern = "^" + regexPattern
+			} else {
+				regexPattern = regexPattern[2:] // Remove leading .*
+			}
+			// If pattern ends with .*, don't anchor; otherwise anchor at end
+			if !strings.HasSuffix(regexPattern, ".*") {
+				regexPattern = regexPattern + "$"
+			} else {
+				regexPattern = regexPattern[:len(regexPattern)-2] // Remove trailing .*
+			}
+			fieldFilter["$regex"] = regexPattern
+			fieldFilter["$options"] = "i" // case-insensitive
+		}
+	}
+
 	// If we have complex field filters, use them, otherwise use the simple filter
 	if len(fieldFilter) > 0 {
 		filter[field] = fieldFilter
@@ -788,7 +824,9 @@ func isFilterConditionEmpty(condition job.FilterCondition) bool {
 		len(condition.LessOrEqual) == 0 &&
 		len(condition.Between) == 0 &&
 		len(condition.In) == 0 &&
-		len(condition.NotIn) == 0
+		len(condition.NotIn) == 0 &&
+		len(condition.NotEquals) == 0 &&
+		len(condition.Like) == 0
 }
 
 // validateFilterCondition validates that a FilterCondition has proper values for each operator
