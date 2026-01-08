@@ -195,6 +195,7 @@ func (cr *ConnectionMongoDBRepository) Update(ctx context.Context, conn *model.C
 			"password_encrypted":     conn.PasswordEncrypted,
 			"encryption_key_version": conn.EncryptionKeyVersion,
 			"updated_at":             conn.UpdatedAt,
+			"metadata":               conn.Metadata,
 		},
 	}
 

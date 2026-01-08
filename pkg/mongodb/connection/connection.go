@@ -22,7 +22,7 @@ type ConnectionMongoDBModel struct {
 	PasswordEncrypted    string                 `bson:"password_encrypted"`
 	EncryptionKeyVersion string                 `bson:"encryption_key_version"`
 	SSL                  *SSLConfigMongoDBModel `bson:"ssl,omitempty"`
-	Metadata             *map[string]any        `bson:"metadata,omitempty"`
+	Metadata             map[string]any         `bson:"metadata,omitempty"`
 	CreatedAt            time.Time              `bson:"created_at"`
 	UpdatedAt            time.Time              `bson:"updated_at"`
 	DeletedAt            *time.Time             `bson:"deleted_at"`
@@ -57,6 +57,11 @@ func (cm *ConnectionMongoDBModel) ToEntity() (*model.Connection, error) {
 		}
 	}
 
+	var metadata *map[string]any
+	if len(cm.Metadata) > 0 {
+		metadata = &cm.Metadata
+	}
+
 	return &model.Connection{
 		ID:                   cm.ID,
 		OrganizationID:       cm.OrganizationID,
@@ -69,7 +74,7 @@ func (cm *ConnectionMongoDBModel) ToEntity() (*model.Connection, error) {
 		PasswordEncrypted:    cm.PasswordEncrypted,
 		EncryptionKeyVersion: cm.EncryptionKeyVersion,
 		SSL:                  ssl,
-		Metadata:             cm.Metadata,
+		Metadata:             metadata,
 		CreatedAt:            cm.CreatedAt,
 		UpdatedAt:            cm.UpdatedAt,
 		DeletedAt:            cm.DeletedAt,
@@ -102,8 +107,12 @@ func (cm *ConnectionMongoDBModel) FromEntity(conn *model.Connection) error {
 	cm.Username = conn.Username
 	cm.PasswordEncrypted = conn.PasswordEncrypted
 	cm.EncryptionKeyVersion = conn.EncryptionKeyVersion
+
 	cm.SSL = ssl
-	cm.Metadata = conn.Metadata
+	if conn.Metadata != nil {
+		cm.Metadata = *conn.Metadata
+	}
+
 	cm.CreatedAt = conn.CreatedAt
 	cm.UpdatedAt = conn.UpdatedAt
 	cm.DeletedAt = conn.DeletedAt

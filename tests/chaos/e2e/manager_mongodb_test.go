@@ -5,6 +5,7 @@ package e2e
 import (
 	"time"
 
+	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/tests/chaos/helpers"
 	"github.com/LerianStudio/fetcher/tests/chaos/setup"
 	"github.com/LerianStudio/fetcher/tests/shared/client"
@@ -152,8 +153,8 @@ func (s *ChaosTestSuite) TestMongoDBLatency_SlowJobStatusQueries() {
 	})
 	require.NoError(t, err)
 
-	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, client.FetcherRequest{
-		DataRequest: client.DataRequest{
+	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, model.FetcherRequest{
+		DataRequest: model.DataRequest{
 			MappedFields: map[string]map[string][]string{
 				configName: {"transactions": {"id", "account_id"}},
 			},
@@ -163,7 +164,7 @@ func (s *ChaosTestSuite) TestMongoDBLatency_SlowJobStatusQueries() {
 	require.NoError(t, err)
 
 	// Wait for job to complete
-	_, err = s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID, setup.JobCompletionTimeout)
+	_, err = s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID.String(), setup.JobCompletionTimeout)
 	require.NoError(t, err, "Job should complete before chaos injection")
 
 	// Phase 2: Inject MongoDB latency
@@ -191,7 +192,7 @@ func (s *ChaosTestSuite) TestMongoDBLatency_SlowJobStatusQueries() {
 
 	for i := 0; i < 5; i++ { // Increased sample size for better statistical validity
 		start := time.Now()
-		job, queryErr := s.managerClient.GetJob(s.ctx, jobResp.JobID)
+		job, queryErr := s.managerClient.GetJob(s.ctx, jobResp.JobID.String())
 		duration := time.Since(start)
 
 		if queryErr == nil {
@@ -218,7 +219,7 @@ func (s *ChaosTestSuite) TestMongoDBLatency_SlowJobStatusQueries() {
 	t.Log("Phase 4: Verifying recovery...")
 	s.metrics.StartRecovery()
 	recoveryStart := time.Now()
-	job, err := s.managerClient.GetJob(s.ctx, jobResp.JobID)
+	job, err := s.managerClient.GetJob(s.ctx, jobResp.JobID.String())
 	recoveryDuration := time.Since(recoveryStart)
 	require.NoError(t, err, "Should be able to get job after chaos removal")
 	assert.Equal(t, "completed", job.Status)

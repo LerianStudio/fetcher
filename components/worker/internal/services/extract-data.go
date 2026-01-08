@@ -307,7 +307,7 @@ func (uc *UseCase) queryExternalData(ctx context.Context, message ExtractExterna
 	defer span.End()
 
 	for databaseName, tables := range message.MappedFields {
-		if err := uc.queryDatabase(ctx, databaseName, tables, connections, message.Filters, result, logger, tracer); err != nil {
+		if err := uc.queryDatabase(ctx, databaseName, tables, connections, message.Filters, message.OrganizationID, result, logger, tracer); err != nil {
 			return err
 		}
 	}
@@ -324,6 +324,7 @@ func (uc *UseCase) queryDatabase(
 	tables map[string][]string,
 	connections []*model.Connection,
 	allFilters map[string]map[string]map[string]modelJob.FilterCondition,
+	organizationID uuid.UUID,
 	result map[string]map[string][]map[string]any,
 	logger log.Logger,
 	tracer trace.Tracer,
@@ -384,7 +385,7 @@ func (uc *UseCase) queryDatabase(
 			return fmt.Errorf("invalid MongoDB data source type")
 		}
 
-		return uc.QueryPluginCRM(ctx, mongoDS, databaseName, tables, databaseFilters, result, logger)
+		return uc.QueryPluginCRM(ctx, mongoDS, databaseName, tables, databaseFilters, organizationID, result, logger)
 	}
 
 	queryResult, errQuery := dataSource.Query(ctx, tables, databaseFilters, logger)

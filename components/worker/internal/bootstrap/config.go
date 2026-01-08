@@ -87,8 +87,11 @@ func InitWorker() *Service {
 	// Consumer and Publisher use SEPARATE connections to avoid channel interference.
 	// A shared connection causes both to share the same AMQP channel, leading to issues
 	// when one invalidates/closes the channel (affects the other).
+	// URL-encode credentials to handle special characters (@ : / etc.)
+	escapedUserRMQ := url.PathEscape(cfg.RabbitMQUser)
+	escapedPassRMQ := url.QueryEscape(cfg.RabbitMQPass)
 	rabbitSource := fmt.Sprintf("%s://%s:%s@%s:%s",
-		cfg.RabbitURI, cfg.RabbitMQUser, cfg.RabbitMQPass, cfg.RabbitMQHost, cfg.RabbitMQPortAMQP)
+		cfg.RabbitURI, escapedUserRMQ, escapedPassRMQ, cfg.RabbitMQHost, cfg.RabbitMQPortAMQP)
 	consumerConnection := &libRabbitMQ.RabbitMQConnection{
 		ConnectionStringSource: rabbitSource,
 		HealthCheckURL:         cfg.RabbitMQHealthCheckURL,
@@ -111,9 +114,21 @@ func InitWorker() *Service {
 		Logger:                 logger,
 	}
 
+	// Init crypto service (same as manager) - moved before RabbitMQ for signer
+	cryptoService, errCrypto := crypto.NewAESGCMServiceFromEnv(cfg.AppEncryptionKey, cfg.AppEncryptionKeyVersion)
+	if errCrypto != nil {
+		logger.Fatalf("Failed to initialize crypto service: %v", errCrypto)
+	}
+
+	// Init message signer for RabbitMQ
+	messageSigner, errSigner := crypto.NewHMACSignerFromCryptor(cryptoService)
+	if errSigner != nil {
+		logger.Fatalf("Failed to initialize message signer: %v", errSigner)
+	}
+
 	// Initialize RabbitMQ consumer and publisher with separate connections
-	consumerRoutes := rabbitmq.NewConsumerRoutes(consumerConnection, cfg.RabbitMQNumWorkers, logger, telemetry)
-	publisherRoutes := rabbitmq.NewPublisherRoutes(publisherConnection, logger, telemetry)
+	consumerRoutes := rabbitmq.NewConsumerRoutes(consumerConnection, cfg.RabbitMQNumWorkers, logger, telemetry, messageSigner)
+	publisherRoutes := rabbitmq.NewPublisherRoutes(publisherConnection, logger, telemetry, messageSigner)
 
 	// Config SeaweedFS connection
 	seaweedFSEndpoint := fmt.Sprintf("http://%s:%s", cfg.SeaweedFSHost, cfg.SeaweedFSFilerPort)
@@ -146,12 +161,6 @@ func InitWorker() *Service {
 	connectionRepository, errConnectRepo := connection.NewConnectionMongoDBRepository(mongoConnection)
 	if errConnectRepo != nil {
 		logger.Fatalf("Failed to initialize connection repository: %v", errConnectRepo)
-	}
-
-	// Init crypto service (same as manager)
-	cryptoService, errCrypto := crypto.NewAESGCMServiceFromEnv(cfg.AppEncryptionKey, cfg.AppEncryptionKeyVersion)
-	if errCrypto != nil {
-		logger.Fatalf("Failed to initialize crypto service: %v", errCrypto)
 	}
 
 	service := &services.UseCase{

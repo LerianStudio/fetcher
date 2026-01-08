@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/tests/chaos/helpers"
 	"github.com/LerianStudio/fetcher/tests/chaos/setup"
 	"github.com/LerianStudio/fetcher/tests/shared/client"
@@ -43,8 +44,8 @@ func (s *ChaosTestSuite) TestRabbitMQLatency_JobCompletionWithDelay() {
 	require.NoError(t, err, "Failed to create connection")
 
 	baselineStart := time.Now()
-	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, client.FetcherRequest{
-		DataRequest: client.DataRequest{
+	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, model.FetcherRequest{
+		DataRequest: model.DataRequest{
 			MappedFields: map[string]map[string][]string{
 				configName: {
 					"transactions": {"id", "account_id", "amount", "currency"},
@@ -55,7 +56,7 @@ func (s *ChaosTestSuite) TestRabbitMQLatency_JobCompletionWithDelay() {
 	})
 	require.NoError(t, err, "Failed to create baseline job")
 
-	notification, err := s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID, setup.JobCompletionTimeout)
+	notification, err := s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID.String(), setup.JobCompletionTimeout)
 	require.NoError(t, err, "Baseline job failed to complete")
 	assert.Equal(t, "completed", notification.Status)
 	baselineDuration := time.Since(baselineStart)
@@ -103,8 +104,8 @@ func (s *ChaosTestSuite) TestRabbitMQLatency_JobCompletionWithDelay() {
 	require.NotEmpty(t, connResp.ID, "Connection ID should not be empty")
 
 	chaosStart := time.Now()
-	jobResp, err = s.managerClient.CreateFetcherJob(s.ctx, client.FetcherRequest{
-		DataRequest: client.DataRequest{
+	jobResp, err = s.managerClient.CreateFetcherJob(s.ctx, model.FetcherRequest{
+		DataRequest: model.DataRequest{
 			MappedFields: map[string]map[string][]string{
 				configName: {
 					"transactions": {"id", "account_id", "amount", "currency"},
@@ -118,7 +119,7 @@ func (s *ChaosTestSuite) TestRabbitMQLatency_JobCompletionWithDelay() {
 	// Wait longer due to latency - job should still complete
 	notification, err = s.eventConsumer.WaitForJobEvent(
 		s.ctx,
-		jobResp.JobID,
+		jobResp.JobID.String(),
 		setup.JobCompletionTimeout+30*time.Second, // Extended timeout
 	)
 	require.NoError(t, err, "Job should complete despite RabbitMQ latency")
@@ -141,7 +142,7 @@ func (s *ChaosTestSuite) TestRabbitMQLatency_JobCompletionWithDelay() {
 	s.metrics.StartRecovery()
 
 	// Quick verification that system is responsive
-	job, err := s.managerClient.GetJob(s.ctx, jobResp.JobID)
+	job, err := s.managerClient.GetJob(s.ctx, jobResp.JobID.String())
 	require.NoError(t, err, "Should be able to get job after chaos removal")
 	assert.Equal(t, "completed", job.Status)
 
@@ -213,8 +214,8 @@ func (s *ChaosTestSuite) TestRabbitMQResetPeer_CircuitBreakerActivation() {
 	// Try to create jobs - some should fail due to RabbitMQ reset
 	failureCount := 0
 	for i := 0; i < 7; i++ { // More than circuit breaker threshold (5)
-		_, jobErr := s.managerClient.CreateFetcherJob(s.ctx, client.FetcherRequest{
-			DataRequest: client.DataRequest{
+		_, jobErr := s.managerClient.CreateFetcherJob(s.ctx, model.FetcherRequest{
+			DataRequest: model.DataRequest{
 				MappedFields: map[string]map[string][]string{
 					configName: {"transactions": {"id"}},
 				},
@@ -261,8 +262,8 @@ func (s *ChaosTestSuite) TestRabbitMQResetPeer_CircuitBreakerActivation() {
 	require.NoError(t, recoveryConnErr, "Connection creation should succeed after circuit breaker cooldown")
 	require.NotEmpty(t, recoveryConnResp.ID, "Connection ID should not be empty after recovery")
 
-	jobResp, jobErr := s.managerClient.CreateFetcherJob(s.ctx, client.FetcherRequest{
-		DataRequest: client.DataRequest{
+	jobResp, jobErr := s.managerClient.CreateFetcherJob(s.ctx, model.FetcherRequest{
+		DataRequest: model.DataRequest{
 			MappedFields: map[string]map[string][]string{
 				configName: {"transactions": {"id", "account_id"}},
 			},
@@ -273,7 +274,7 @@ func (s *ChaosTestSuite) TestRabbitMQResetPeer_CircuitBreakerActivation() {
 
 	notification, waitErr := s.eventConsumer.WaitForJobEvent(
 		s.ctx,
-		jobResp.JobID,
+		jobResp.JobID.String(),
 		setup.JobCompletionTimeout,
 	)
 	require.NoError(t, waitErr, "Job should complete after circuit breaker recovery")

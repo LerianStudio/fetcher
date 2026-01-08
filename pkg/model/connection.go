@@ -9,6 +9,7 @@ import (
 
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
+	"github.com/LerianStudio/fetcher/pkg/datasource/sslmode"
 
 	"github.com/google/uuid"
 )
@@ -163,6 +164,8 @@ func (conn *Connection) validateRequiredFields() map[string]string {
 
 	if conn.Port <= 0 {
 		requiredFields["port"] = "port must be a positive integer"
+	} else if conn.Port > 65535 {
+		requiredFields["port"] = "port must be between 1 and 65535"
 	}
 
 	if conn.Host == "" {
@@ -217,7 +220,36 @@ func (conn *Connection) validateFieldValues() map[string]string {
 		knownInvalidFields["config_name"] = "config name must be between 3 and 100 characters"
 	}
 
+	if conn.SSL != nil && conn.SSL.Mode != "" {
+		if err := conn.validateSSLModeForType(); err != nil {
+			knownInvalidFields["ssl.mode"] = err.Error()
+		}
+	}
+
 	return knownInvalidFields
+}
+
+// validateSSLModeForType validates that the SSL mode is valid for the connection's database type.
+// Each database driver has its own set of valid SSL/TLS modes.
+func (conn *Connection) validateSSLModeForType() error {
+	var err error
+
+	switch conn.Type {
+	case TypeMySQL:
+		err = sslmode.ValidateMySQLMode(conn.SSL.Mode)
+	case TypePostgreSQL:
+		err = sslmode.ValidatePostgreSQLMode(conn.SSL.Mode)
+	case TypeOracle:
+		err = sslmode.ValidateOracleMode(conn.SSL.Mode)
+	case TypeMongoDB:
+		err = sslmode.ValidateMongoDBMode(conn.SSL.Mode)
+	case TypeSQLServer:
+		err = sslmode.ValidateSQLServerMode(conn.SSL.Mode)
+	default:
+		return nil
+	}
+
+	return err
 }
 
 // ApplyPatch applies partial updates to the Connection.
@@ -432,6 +464,23 @@ func (conn *ConnectionInput) ToMapWithMask() map[string]any {
 	}
 }
 
+// IsEmpty returns true if all fields are empty/nil.
+func (conn *ConnectionInput) IsEmpty() bool {
+	if conn == nil {
+		return true
+	}
+
+	return conn.ConfigName == "" &&
+		conn.Type == "" &&
+		conn.Host == "" &&
+		conn.Port == 0 &&
+		conn.DatabaseName == "" &&
+		conn.Username == "" &&
+		conn.Password == "" &&
+		(conn.SSL == nil || conn.SSL.IsEmpty()) &&
+		conn.Metadata == nil
+}
+
 // IsEmpty returns true if all SSL fields are empty/nil.
 // This is used to treat "ssl": {} as if SSL was not provided at all.
 func (s *SSLInput) IsEmpty() bool {
@@ -525,6 +574,39 @@ func (conn *ConnectionUpdateInput) ToMapWithMask() map[string]any {
 	}
 
 	return result
+}
+
+// IsEmpty returns true if all fields are empty/nil.
+func (conn *ConnectionUpdateInput) IsEmpty() bool {
+	if conn == nil {
+		return true
+	}
+
+	if conn.ConfigName != nil ||
+		conn.Type != nil ||
+		conn.Host != nil ||
+		conn.Port != nil ||
+		conn.DatabaseName != nil ||
+		conn.Username != nil ||
+		conn.Password != nil ||
+		conn.Metadata != nil {
+		return false
+	}
+
+	if conn.SSL != nil {
+		return conn.SSL.IsEmpty()
+	}
+
+	return true
+}
+
+// IsEmpty returns true if all SSL fields are empty/nil.
+func (s *SSLUpdateInput) IsEmpty() bool {
+	if s == nil {
+		return true
+	}
+
+	return s.Mode == nil && s.CA == nil && s.Cert == nil && s.Key == nil
 }
 
 type ConnectionResponse struct {

@@ -5,6 +5,7 @@ package e2e
 import (
 	"time"
 
+	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/tests/chaos/helpers"
 	"github.com/LerianStudio/fetcher/tests/chaos/setup"
 	"github.com/LerianStudio/fetcher/tests/shared/client"
@@ -39,8 +40,8 @@ func (s *ChaosTestSuite) TestFullFlow_ChaosMidExtraction() {
 
 	// Start job
 	t.Log("Starting extraction job...")
-	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, client.FetcherRequest{
-		DataRequest: client.DataRequest{
+	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, model.FetcherRequest{
+		DataRequest: model.DataRequest{
 			MappedFields: map[string]map[string][]string{
 				configName: {"transactions": {"id", "account_id", "amount", "currency", "type"}},
 			},
@@ -51,7 +52,7 @@ func (s *ChaosTestSuite) TestFullFlow_ChaosMidExtraction() {
 
 	// Wait for job to start processing before injecting chaos
 	t.Log("Waiting for job to start processing...")
-	err = s.waitForJobProcessing(jobResp.JobID, 10*time.Second)
+	err = s.waitForJobProcessing(jobResp.JobID.String(), 10*time.Second)
 	require.NoError(t, err, "Job should start processing")
 
 	t.Log("Injecting chaos mid-extraction...")
@@ -85,7 +86,7 @@ func (s *ChaosTestSuite) TestFullFlow_ChaosMidExtraction() {
 
 	notification, err := s.eventConsumer.WaitForJobEvent(
 		s.ctx,
-		jobResp.JobID,
+		jobResp.JobID.String(),
 		setup.JobCompletionTimeoutSlow,
 	)
 
@@ -97,7 +98,7 @@ func (s *ChaosTestSuite) TestFullFlow_ChaosMidExtraction() {
 	t.Logf("Job completed with status: %s", notification.Status)
 
 	// Verify job status via API
-	job, err := s.managerClient.GetJob(s.ctx, jobResp.JobID)
+	job, err := s.managerClient.GetJob(s.ctx, jobResp.JobID.String())
 	require.NoError(t, err)
 	assert.Equal(t, "completed", job.Status)
 
@@ -162,8 +163,8 @@ func (s *ChaosTestSuite) TestFullFlow_MultiPointChaos() {
 	// Create job under multi-point chaos
 	t.Log("Creating job under multi-point chaos...")
 	start := time.Now()
-	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, client.FetcherRequest{
-		DataRequest: client.DataRequest{
+	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, model.FetcherRequest{
+		DataRequest: model.DataRequest{
 			MappedFields: map[string]map[string][]string{
 				configName: {"transactions": {"id", "account_id"}},
 			},
@@ -175,7 +176,7 @@ func (s *ChaosTestSuite) TestFullFlow_MultiPointChaos() {
 	// Wait for completion
 	notification, err := s.eventConsumer.WaitForJobEvent(
 		s.ctx,
-		jobResp.JobID,
+		jobResp.JobID.String(),
 		setup.JobCompletionTimeoutSlow,
 	)
 
@@ -219,8 +220,8 @@ func (s *ChaosTestSuite) TestFullFlow_RecoveryValidation() {
 	require.NoError(t, err)
 
 	baselineStart := time.Now()
-	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, client.FetcherRequest{
-		DataRequest: client.DataRequest{
+	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, model.FetcherRequest{
+		DataRequest: model.DataRequest{
 			MappedFields: map[string]map[string][]string{
 				configName: {"transactions": {"id", "account_id"}},
 			},
@@ -229,7 +230,7 @@ func (s *ChaosTestSuite) TestFullFlow_RecoveryValidation() {
 	})
 	require.NoError(t, err)
 
-	_, err = s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID, setup.JobCompletionTimeout)
+	_, err = s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID.String(), setup.JobCompletionTimeout)
 	require.NoError(t, err)
 	baselineDuration := time.Since(baselineStart)
 	t.Logf("Baseline: %v", baselineDuration)
@@ -301,8 +302,8 @@ func (s *ChaosTestSuite) TestFullFlow_RecoveryValidation() {
 	require.NoError(t, err)
 
 	recoveryStart := time.Now()
-	jobResp, err = s.managerClient.CreateFetcherJob(s.ctx, client.FetcherRequest{
-		DataRequest: client.DataRequest{
+	jobResp, err = s.managerClient.CreateFetcherJob(s.ctx, model.FetcherRequest{
+		DataRequest: model.DataRequest{
 			MappedFields: map[string]map[string][]string{
 				configName: {"transactions": {"id", "account_id"}},
 			},
@@ -311,7 +312,7 @@ func (s *ChaosTestSuite) TestFullFlow_RecoveryValidation() {
 	})
 	require.NoError(t, err)
 
-	notification, err := s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID, setup.JobCompletionTimeout)
+	notification, err := s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID.String(), setup.JobCompletionTimeout)
 	require.NoError(t, err)
 	assert.Equal(t, "completed", notification.Status)
 

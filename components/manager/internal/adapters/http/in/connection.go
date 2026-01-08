@@ -95,6 +95,19 @@ func (h *ConnectionHandler) CreateConnection(c *fiber.Ctx) error {
 		})
 	}
 
+	if request.IsEmpty() {
+		err := pkg.ValidationError{
+			EntityType: "connection",
+			Code:       constant.ErrBadRequest.Error(),
+			Title:      "Invalid payload",
+			Message:    "empty request body",
+		}
+
+		libOpentelemetry.HandleSpanError(&span, "empty request body", err)
+
+		return httpUtils.WithError(c, err)
+	}
+
 	conn, err := h.CreateCmd.Execute(ctx, orgID, request)
 	if err != nil {
 		logger.Errorf("Failed to execute create connection command, Error: %s", err.Error())
@@ -370,6 +383,19 @@ func (h *ConnectionHandler) UpdateConnection(c *fiber.Ctx) error {
 			Message:    "unable to parse request body",
 			Err:        errParser,
 		})
+	}
+
+	if request.IsEmpty() {
+		err := pkg.ValidationError{
+			EntityType: "connection",
+			Code:       constant.ErrBadRequest.Error(),
+			Title:      "Invalid payload",
+			Message:    "empty request body",
+		}
+
+		libOpentelemetry.HandleSpanError(&span, "empty request body", err)
+
+		return httpUtils.WithError(c, err)
 	}
 
 	conn, err := h.UpdateCmd.Execute(ctx, orgID, id, request)
