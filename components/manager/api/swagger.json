@@ -1,0 +1,1136 @@
+{
+    "swagger": "2.0",
+    "info": {
+        "contact": {}
+    },
+    "paths": {
+        "/v1/fetcher": {
+            "post": {
+                "description": "Create a new data extraction job. The request will be validated, deduplicated within a 5-minute window, and all referenced connections will be tested before job creation.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Fetcher"
+                ],
+                "summary": "Create fetcher job",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "The authorization token in the 'Bearer access_token' format. Only required when auth plugin is enabled.",
+                        "name": "Authorization",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Organization ID",
+                        "name": "X-Organization-Id",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "Fetcher request payload",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/model.FetcherRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Duplicate request - returning existing job",
+                        "schema": {
+                            "$ref": "#/definitions/model.FetcherResponse"
+                        }
+                    },
+                    "202": {
+                        "description": "Job created and queued for processing",
+                        "schema": {
+                            "$ref": "#/definitions/model.FetcherResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                        }
+                    },
+                    "413": {
+                        "description": "Request Entity Too Large",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/fetcher/{id}": {
+            "get": {
+                "description": "Retrieve detailed information about a specific data extraction job.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Fetcher"
+                ],
+                "summary": "Get fetcher job",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "The authorization token in the 'Bearer access_token' format. Only required when auth plugin is enabled.",
+                        "name": "Authorization",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Organization ID",
+                        "name": "X-Organization-Id",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Job ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/model.JobResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/management/connections": {
+            "get": {
+                "description": "List connections with pagination and filters.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Connections"
+                ],
+                "summary": "List connections",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "The authorization token in the 'Bearer access_token' format. Only required when auth plugin is enabled.",
+                        "name": "Authorization",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Organization ID",
+                        "name": "X-Organization-Id",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "default": 1,
+                        "description": "Page number (minimum 1)",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 50,
+                        "description": "Page size (default 50, max 1000)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "asc",
+                            "desc"
+                        ],
+                        "type": "string",
+                        "default": "desc",
+                        "description": "Sort order",
+                        "name": "sortOrder",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "ORACLE",
+                            "SQL_SERVER",
+                            "POSTGRESQL",
+                            "MONGODB",
+                            "MYSQL"
+                        ],
+                        "type": "string",
+                        "description": "Filter by database type",
+                        "name": "type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by host",
+                        "name": "host",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by database name",
+                        "name": "databaseName",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by start date (YYYY-MM-DD)",
+                        "name": "startDate",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by end date (YYYY-MM-DD)",
+                        "name": "endDate",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/Pagination"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "items": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/model.ConnectionResponse"
+                                            }
+                                        },
+                                        "limit": {
+                                            "type": "integer"
+                                        },
+                                        "page": {
+                                            "type": "integer"
+                                        },
+                                        "total": {
+                                            "type": "integer"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "description": "Create a new database connection for the organization. ConfigName must be unique per organization; password is encrypted and a UUID is generated on creation.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Connections"
+                ],
+                "summary": "Create connection",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "The authorization token in the 'Bearer access_token' format. Only required when auth plugin is enabled.",
+                        "name": "Authorization",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Organization ID",
+                        "name": "X-Organization-Id",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "Connection payload",
+                        "name": "connection",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/model.ConnectionInput"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created connection identifier",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/management/connections/validate-schema": {
+            "post": {
+                "description": "Validate that tables and fields referenced in the request exist in the configured datasources.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Connections"
+                ],
+                "summary": "Validate schema",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "The authorization token in the 'Bearer access_token' format. Only required when auth plugin is enabled.",
+                        "name": "Authorization",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Organization ID",
+                        "name": "X-Organization-Id",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "Schema validation request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/model.SchemaValidationRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/model.SchemaValidationResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/management/connections/{id}": {
+            "get": {
+                "description": "Get connection details by ID for the given organization.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Connections"
+                ],
+                "summary": "Get connection",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "The authorization token in the 'Bearer access_token' format. Only required when auth plugin is enabled.",
+                        "name": "Authorization",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Organization ID",
+                        "name": "X-Organization-Id",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Connection ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/model.ConnectionResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "description": "Soft delete a connection when no active jobs are running for it. Returns 409 if there is any active job.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Connections"
+                ],
+                "summary": "Delete connection",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "The authorization token in the 'Bearer access_token' format. Only required when auth plugin is enabled.",
+                        "name": "Authorization",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Organization ID",
+                        "name": "X-Organization-Id",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Connection ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "description": "Apply a partial update to a connection. Only include fields you want to change. Returns 409 if there is any active job.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Connections"
+                ],
+                "summary": "Update connection",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "The authorization token in the 'Bearer access_token' format. Only required when auth plugin is enabled.",
+                        "name": "Authorization",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Organization ID",
+                        "name": "X-Organization-Id",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Connection ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Fields to update (only include fields you want to change)",
+                        "name": "connection",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/model.ConnectionUpdateInput"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/model.ConnectionResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/management/connections/{id}/test": {
+            "post": {
+                "description": "Test the configured connection by establishing and closing a connection.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Connections"
+                ],
+                "summary": "Test connection",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "The authorization token in the 'Bearer access_token' format. Only required when auth plugin is enabled.",
+                        "name": "Authorization",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Organization ID",
+                        "name": "X-Organization-Id",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Connection ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Connection test result",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "Pagination": {
+            "description": "Pagination is the struct designed to store the pagination data of an entity list.",
+            "type": "object",
+            "properties": {
+                "items": {},
+                "limit": {
+                    "type": "integer",
+                    "example": 10
+                },
+                "page": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "total": {
+                    "type": "integer",
+                    "example": 10
+                }
+            }
+        },
+        "github_com_LerianStudio_fetcher_pkg.HTTPError": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "entityType": {
+                    "type": "string"
+                },
+                "err": {},
+                "message": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
+        "job.FilterCondition": {
+            "type": "object",
+            "properties": {
+                "between": {
+                    "description": "Between specifies a range condition with exactly two values [min, max].\nMatches records where min \u003c= field \u003c= max\nExample: {\"between\": [100, 1000]} matches records where 100 \u003c= field \u003c= 1000",
+                    "type": "array",
+                    "items": {}
+                },
+                "eq": {
+                    "description": "Equals specifies exact value matches. Multiple values treated as OR conditions.\nExample: {\"eq\": [\"active\", \"pending\"]} matches records where field equals \"active\" OR \"pending\"",
+                    "type": "array",
+                    "items": {}
+                },
+                "gt": {
+                    "description": "GreaterThan specifies values that must be greater than the provided value.\nShould contain exactly one value for comparison.\nExample: {\"gt\": [100]} matches records where field \u003e 100",
+                    "type": "array",
+                    "items": {}
+                },
+                "gte": {
+                    "description": "GreaterOrEqual specifies values that must be greater than or equal to the provided value.\nShould contain exactly one value for comparison.\nExample: {\"gte\": [\"2025-06-01\"]} matches records where field \u003e= \"2025-06-01\"",
+                    "type": "array",
+                    "items": {}
+                },
+                "in": {
+                    "description": "In specifies a list of values where the field must match any one of them.\nMultiple values treated as OR conditions.\nExample: {\"in\": [\"active\", \"pending\", \"suspended\"]} matches any of these statuses",
+                    "type": "array",
+                    "items": {}
+                },
+                "like": {
+                    "description": "Like specifies values that must match the provided value using LIKE pattern matching.\nShould contain exactly one value for comparison.\nExample: {\"like\": [\"%active%\"]} matches any status containing \"active\"",
+                    "type": "array",
+                    "items": {}
+                },
+                "lt": {
+                    "description": "LessThan specifies values that must be less than the provided value.\nShould contain exactly one value for comparison.\nExample: {\"lt\": [1000]} matches records where field \u003c 1000",
+                    "type": "array",
+                    "items": {}
+                },
+                "lte": {
+                    "description": "LessOrEqual specifies values that must be less than or equal to the provided value.\nShould contain exactly one value for comparison.\nExample: {\"lte\": [\"2025-06-30\"]} matches records where field \u003c= \"2025-06-30\"",
+                    "type": "array",
+                    "items": {}
+                },
+                "ne": {
+                    "description": "NotEquals specifies values that must NOT match the provided value.\nShould contain exactly one value for comparison.\nExample: {\"ne\": [\"active\"]} excludes this status",
+                    "type": "array",
+                    "items": {}
+                },
+                "nin": {
+                    "description": "NotIn specifies a list of values where the field must NOT match any of them.\nMultiple values treated as AND NOT conditions.\nExample: {\"nin\": [\"deleted\", \"archived\"]} excludes these statuses",
+                    "type": "array",
+                    "items": {}
+                }
+            }
+        },
+        "model.ConnectionInput": {
+            "type": "object",
+            "required": [
+                "configName",
+                "databaseName",
+                "host",
+                "password",
+                "port",
+                "type",
+                "userName"
+            ],
+            "properties": {
+                "configName": {
+                    "type": "string",
+                    "maxLength": 100,
+                    "minLength": 3,
+                    "example": "production-db"
+                },
+                "databaseName": {
+                    "type": "string",
+                    "example": "mydatabase"
+                },
+                "host": {
+                    "type": "string",
+                    "example": "db.example.com"
+                },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "password": {
+                    "type": "string",
+                    "example": "secretpassword"
+                },
+                "port": {
+                    "type": "integer",
+                    "maximum": 65535,
+                    "minimum": 1,
+                    "example": 5432
+                },
+                "ssl": {
+                    "$ref": "#/definitions/model.SSLInput"
+                },
+                "type": {
+                    "type": "string",
+                    "enum": [
+                        "ORACLE",
+                        "SQL_SERVER",
+                        "POSTGRESQL",
+                        "MONGODB",
+                        "MYSQL"
+                    ],
+                    "example": "POSTGRESQL"
+                },
+                "userName": {
+                    "type": "string",
+                    "example": "dbuser"
+                }
+            }
+        },
+        "model.ConnectionResponse": {
+            "type": "object",
+            "properties": {
+                "configName": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "databaseName": {
+                    "type": "string"
+                },
+                "host": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "port": {
+                    "type": "integer"
+                },
+                "ssl": {
+                    "$ref": "#/definitions/model.SSLResponse"
+                },
+                "type": {
+                    "type": "string"
+                },
+                "updatedAt": {
+                    "type": "string"
+                },
+                "userName": {
+                    "type": "string"
+                }
+            }
+        },
+        "model.ConnectionUpdateInput": {
+            "type": "object",
+            "properties": {
+                "configName": {
+                    "type": "string",
+                    "maxLength": 100,
+                    "minLength": 3,
+                    "example": "production-db"
+                },
+                "databaseName": {
+                    "type": "string",
+                    "example": "mydatabase"
+                },
+                "host": {
+                    "type": "string",
+                    "example": "db.example.com"
+                },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "password": {
+                    "type": "string",
+                    "example": "secretpassword"
+                },
+                "port": {
+                    "type": "integer",
+                    "maximum": 65535,
+                    "minimum": 1,
+                    "example": 5432
+                },
+                "ssl": {
+                    "$ref": "#/definitions/model.SSLUpdateInput"
+                },
+                "type": {
+                    "type": "string",
+                    "enum": [
+                        "ORACLE",
+                        "SQL_SERVER",
+                        "POSTGRESQL",
+                        "MONGODB",
+                        "MYSQL"
+                    ],
+                    "example": "POSTGRESQL"
+                },
+                "userName": {
+                    "type": "string",
+                    "example": "dbuser"
+                }
+            }
+        },
+        "model.DataRequest": {
+            "description": "DataRequest encapsulates field mappings and optional filters for data extraction.",
+            "type": "object",
+            "required": [
+                "mappedFields"
+            ],
+            "properties": {
+                "filters": {
+                    "$ref": "#/definitions/model.NestedFilters"
+                },
+                "mappedFields": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "model.FetcherRequest": {
+            "description": "FetcherRequest represents the request body for creating a new data extraction job.",
+            "type": "object",
+            "required": [
+                "dataRequest"
+            ],
+            "properties": {
+                "dataRequest": {
+                    "$ref": "#/definitions/model.DataRequest"
+                },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": {}
+                }
+            }
+        },
+        "model.FetcherResponse": {
+            "description": "FetcherResponse represents the response after successfully creating a data extraction job.",
+            "type": "object",
+            "properties": {
+                "createdAt": {
+                    "type": "string"
+                },
+                "jobId": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "model.JobResponse": {
+            "description": "JobResponse represents the complete information about a data extraction job.",
+            "type": "object",
+            "properties": {
+                "completedAt": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "filters": {
+                    "$ref": "#/definitions/model.NestedFilters"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "mappedFields": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "organizationId": {
+                    "type": "string"
+                },
+                "requestHash": {
+                    "type": "string"
+                },
+                "resultPath": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "model.NestedFilters": {
+            "type": "object",
+            "additionalProperties": {
+                "type": "object",
+                "additionalProperties": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/job.FilterCondition"
+                    }
+                }
+            }
+        },
+        "model.SSLInput": {
+            "type": "object",
+            "properties": {
+                "ca": {
+                    "type": "string",
+                    "example": "-----BEGIN CERTIFICATE-----\n..."
+                },
+                "cert": {
+                    "type": "string"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "mode": {
+                    "type": "string",
+                    "example": "require"
+                }
+            }
+        },
+        "model.SSLResponse": {
+            "type": "object",
+            "properties": {
+                "mode": {
+                    "type": "string"
+                }
+            }
+        },
+        "model.SSLUpdateInput": {
+            "type": "object",
+            "properties": {
+                "ca": {
+                    "type": "string",
+                    "example": "-----BEGIN CERTIFICATE-----\n..."
+                },
+                "cert": {
+                    "type": "string"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "mode": {
+                    "type": "string",
+                    "example": "require"
+                }
+            }
+        },
+        "model.SchemaValidationError": {
+            "type": "object",
+            "properties": {
+                "dataSourceId": {
+                    "type": "string"
+                },
+                "field": {
+                    "type": "string"
+                },
+                "table": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "model.SchemaValidationRequest": {
+            "description": "Request body for schema validation containing mapped fields per datasource.",
+            "type": "object",
+            "required": [
+                "mappedFields"
+            ],
+            "properties": {
+                "mappedFields": {
+                    "description": "MappedFields maps datasource config names to their tables and fields\nKey: configName (e.g., \"midaz_onboarding\")\nValue: map of table names to field names",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "model.SchemaValidationResponse": {
+            "type": "object",
+            "properties": {
+                "errors": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/model.SchemaValidationError"
+                    }
+                },
+                "message": {
+                    "type": "string"
+                },
+                "status": {
+                    "description": "\"success\" or \"failure\"",
+                    "type": "string"
+                }
+            }
+        }
+    }
+}
