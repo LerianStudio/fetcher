@@ -1,8 +1,9 @@
 package http
 
 import (
-	"golang-plugin-boilerplate/pkg"
 	"net/http"
+
+	"github.com/LerianStudio/fetcher/pkg"
 
 	"github.com/gofiber/fiber/v2"
 )
@@ -108,6 +109,15 @@ func InternalServerError(c *fiber.Ctx, code, title, message string) error {
 // JSONResponseError sends a JSON formatted error response with a custom error struct.
 func JSONResponseError(c *fiber.Ctx, err pkg.ResponseError) error {
 	return c.Status(err.Code).JSON(err)
+}
+
+// JSONResponseErrorWithStatusCode sends a JSON formatted error response with a custom status code and error struct.
+func JSONResponseErrorWithStatusCode(c *fiber.Ctx, err pkg.ResponseErrorWithStatusCode) error {
+	return c.Status(err.StatusCode).JSON(fiber.Map{
+		"title":   err.Title,
+		"message": err.Message,
+		"code":    err.Code,
+	})
 }
 
 // JSONResponse sends a custom status code and body as a JSON response.

@@ -1,0 +1,1126 @@
+openapi: 3.0.1
+info:
+  contact: {}
+  description: API documentation for the Fetcher Manager component
+  termsOfService: http://swagger.io/terms/
+  title: Fetcher Manager API
+  version: 1.0.0
+servers:
+- url: //localhost:4006/
+paths:
+  /v1/fetcher:
+    post:
+      description: Create a new data extraction job. The request will be validated,
+        deduplicated within a 5-minute window, and all referenced connections will
+        be tested before job creation.
+      parameters:
+      - description: The authorization token in the 'Bearer access_token' format.
+          Only required when auth plugin is enabled.
+        in: header
+        name: Authorization
+        schema:
+          type: string
+      - description: Organization ID
+        in: header
+        name: X-Organization-Id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/github_com_LerianStudio_fetcher_pkg_model.FetcherRequest'
+        description: Fetcher request payload
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_LerianStudio_fetcher_pkg_model.FetcherResponse'
+          description: Duplicate request - returning existing job
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_LerianStudio_fetcher_pkg_model.FetcherResponse'
+          description: Job created and queued for processing
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Bad Request
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Conflict
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Request Entity Too Large
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Internal Server Error
+      summary: Create fetcher job
+      tags:
+      - Fetcher
+      x-codegen-request-body-name: request
+  /v1/fetcher/{id}:
+    get:
+      description: Retrieve detailed information about a specific data extraction
+        job.
+      parameters:
+      - description: The authorization token in the 'Bearer access_token' format.
+          Only required when auth plugin is enabled.
+        in: header
+        name: Authorization
+        schema:
+          type: string
+      - description: Organization ID
+        in: header
+        name: X-Organization-Id
+        required: true
+        schema:
+          type: string
+      - description: Job ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_LerianStudio_fetcher_pkg_model.JobResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Internal Server Error
+      summary: Get fetcher job
+      tags:
+      - Fetcher
+  /v1/management/connections:
+    get:
+      description: List connections with pagination and filters.
+      parameters:
+      - description: The authorization token in the 'Bearer access_token' format.
+          Only required when auth plugin is enabled.
+        in: header
+        name: Authorization
+        schema:
+          type: string
+      - description: Organization ID
+        in: header
+        name: X-Organization-Id
+        required: true
+        schema:
+          type: string
+      - description: Page number (default 0)
+        in: query
+        name: page
+        schema:
+          default: 0
+          type: integer
+      - description: Page size (default 50, max 1000)
+        in: query
+        name: limit
+        schema:
+          default: 50
+          type: integer
+      - description: Sort order
+        in: query
+        name: sortOrder
+        schema:
+          default: desc
+          enum:
+          - asc
+          - desc
+          type: string
+      - description: Filter by database type
+        in: query
+        name: type
+        schema:
+          enum:
+          - ORACLE
+          - SQL_SERVER
+          - POSTGRESQL
+          - MONGODB
+          - MYSQL
+          type: string
+      - description: Filter by host
+        in: query
+        name: host
+        schema:
+          type: string
+      - description: Filter by database name
+        in: query
+        name: databaseName
+        schema:
+          type: string
+      - description: Filter by start date (YYYY-MM-DD)
+        in: query
+        name: startDate
+        schema:
+          type: string
+      - description: Filter by end date (YYYY-MM-DD)
+        in: query
+        name: endDate
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/inline_response_200'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Internal Server Error
+      summary: List connections
+      tags:
+      - Connections
+    post:
+      description: Create a new database connection for the organization. ConfigName
+        must be unique per organization; password is encrypted and a UUID is generated
+        on creation.
+      parameters:
+      - description: The authorization token in the 'Bearer access_token' format.
+          Only required when auth plugin is enabled.
+        in: header
+        name: Authorization
+        schema:
+          type: string
+      - description: Organization ID
+        in: header
+        name: X-Organization-Id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/github_com_LerianStudio_fetcher_pkg_model.ConnectionInput'
+        description: Connection payload
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: Created connection identifier
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Bad Request
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Internal Server Error
+      summary: Create connection
+      tags:
+      - Connections
+      x-codegen-request-body-name: connection
+  /v1/management/connections/validate-schema:
+    post:
+      description: Validate that tables and fields referenced in the request exist
+        in the configured datasources.
+      parameters:
+      - description: The authorization token in the 'Bearer access_token' format.
+          Only required when auth plugin is enabled.
+        in: header
+        name: Authorization
+        schema:
+          type: string
+      - description: Organization ID
+        in: header
+        name: X-Organization-Id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/github_com_LerianStudio_fetcher_pkg_model.SchemaValidationRequest'
+        description: Schema validation request
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_LerianStudio_fetcher_pkg_model.SchemaValidationResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Internal Server Error
+      summary: Validate schema
+      tags:
+      - Connections
+      x-codegen-request-body-name: request
+  /v1/management/connections/{id}:
+    delete:
+      description: Soft delete a connection when no active jobs are running for it.
+        Returns 409 if there is any active job.
+      parameters:
+      - description: The authorization token in the 'Bearer access_token' format.
+          Only required when auth plugin is enabled.
+        in: header
+        name: Authorization
+        schema:
+          type: string
+      - description: Organization ID
+        in: header
+        name: X-Organization-Id
+        required: true
+        schema:
+          type: string
+      - description: Connection ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          content: {}
+          description: No Content
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Internal Server Error
+      summary: Delete connection
+      tags:
+      - Connections
+    get:
+      description: Get connection details by ID for the given organization.
+      parameters:
+      - description: The authorization token in the 'Bearer access_token' format.
+          Only required when auth plugin is enabled.
+        in: header
+        name: Authorization
+        schema:
+          type: string
+      - description: Organization ID
+        in: header
+        name: X-Organization-Id
+        required: true
+        schema:
+          type: string
+      - description: Connection ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_LerianStudio_fetcher_pkg_model.ConnectionResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Internal Server Error
+      summary: Get connection
+      tags:
+      - Connections
+    patch:
+      description: Apply a partial update to a connection. Only include fields you
+        want to change. Returns 409 if there is any active job.
+      parameters:
+      - description: The authorization token in the 'Bearer access_token' format.
+          Only required when auth plugin is enabled.
+        in: header
+        name: Authorization
+        schema:
+          type: string
+      - description: Organization ID
+        in: header
+        name: X-Organization-Id
+        required: true
+        schema:
+          type: string
+      - description: Connection ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/github_com_LerianStudio_fetcher_pkg_model.ConnectionUpdateInput'
+        description: Fields to update (only include fields you want to change)
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_LerianStudio_fetcher_pkg_model.ConnectionResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Internal Server Error
+      summary: Update connection
+      tags:
+      - Connections
+      x-codegen-request-body-name: connection
+  /v1/management/connections/{id}/test:
+    post:
+      description: Test the configured connection by establishing and closing a connection.
+      parameters:
+      - description: The authorization token in the 'Bearer access_token' format.
+          Only required when auth plugin is enabled.
+        in: header
+        name: Authorization
+        schema:
+          type: string
+      - description: Organization ID
+        in: header
+        name: X-Organization-Id
+        required: true
+        schema:
+          type: string
+      - description: Connection ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: object
+                type: object
+          description: Connection test result
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Not Found
+        "429":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Too Many Requests
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Internal Server Error
+      summary: Test connection
+      tags:
+      - Connections
+components:
+  schemas:
+    Pagination:
+      description: Pagination is the struct designed to store the pagination data
+        of an entity list.
+      example:
+        total: 10
+        limit: 10
+        page: 1
+        items: '{}'
+      properties:
+        items:
+          type: object
+        limit:
+          example: 10
+          type: integer
+        page:
+          example: 1
+          type: integer
+        total:
+          example: 10
+          type: integer
+      type: object
+    github_com_LerianStudio_fetcher_pkg_model.ConnectionInput:
+      properties:
+        configName:
+          example: production-db
+          maxLength: 100
+          minLength: 3
+          type: string
+        databaseName:
+          example: mydatabase
+          type: string
+        host:
+          example: db.example.com
+          type: string
+        metadata:
+          additionalProperties:
+            type: object
+          type: object
+        password:
+          example: secretpassword
+          type: string
+        port:
+          example: 5432
+          maximum: 65535
+          minimum: 1
+          type: integer
+        ssl:
+          $ref: '#/components/schemas/github_com_LerianStudio_fetcher_pkg_model.SSLInput'
+        type:
+          enum:
+          - ORACLE
+          - SQL_SERVER
+          - POSTGRESQL
+          - MONGODB
+          - MYSQL
+          example: POSTGRESQL
+          type: string
+        userName:
+          example: dbuser
+          type: string
+      required:
+      - configName
+      - databaseName
+      - host
+      - password
+      - port
+      - type
+      - userName
+      type: object
+    github_com_LerianStudio_fetcher_pkg_model.ConnectionResponse:
+      example:
+        configName: configName
+        createdAt: createdAt
+        metadata:
+          key: '{}'
+        databaseName: databaseName
+        port: 0
+        host: host
+        id: id
+        type: type
+        userName: userName
+        ssl:
+          mode: mode
+        updatedAt: updatedAt
+      properties:
+        configName:
+          type: string
+        createdAt:
+          type: string
+        databaseName:
+          type: string
+        host:
+          type: string
+        id:
+          type: string
+        metadata:
+          additionalProperties:
+            type: object
+          type: object
+        port:
+          type: integer
+        ssl:
+          $ref: '#/components/schemas/github_com_LerianStudio_fetcher_pkg_model.SSLResponse'
+        type:
+          type: string
+        updatedAt:
+          type: string
+        userName:
+          type: string
+      type: object
+    github_com_LerianStudio_fetcher_pkg_model.ConnectionUpdateInput:
+      properties:
+        configName:
+          example: production-db
+          maxLength: 100
+          minLength: 3
+          type: string
+        databaseName:
+          example: mydatabase
+          type: string
+        host:
+          example: db.example.com
+          type: string
+        metadata:
+          additionalProperties:
+            type: object
+          type: object
+        password:
+          example: secretpassword
+          type: string
+        port:
+          example: 5432
+          maximum: 65535
+          minimum: 1
+          type: integer
+        ssl:
+          $ref: '#/components/schemas/github_com_LerianStudio_fetcher_pkg_model.SSLUpdateInput'
+        type:
+          enum:
+          - ORACLE
+          - SQL_SERVER
+          - POSTGRESQL
+          - MONGODB
+          - MYSQL
+          example: POSTGRESQL
+          type: string
+        userName:
+          example: dbuser
+          type: string
+      type: object
+    github_com_LerianStudio_fetcher_pkg_model.DataRequest:
+      description: DataRequest encapsulates field mappings and optional filters for
+        data extraction.
+      properties:
+        filters:
+          additionalProperties:
+            additionalProperties:
+              additionalProperties:
+                $ref: '#/components/schemas/github_com_LerianStudio_fetcher_pkg_model_job.FilterCondition'
+              type: object
+            type: object
+          type: object
+        mappedFields:
+          additionalProperties:
+            additionalProperties:
+              items:
+                type: string
+              type: array
+            type: object
+          type: object
+      required:
+      - mappedFields
+      type: object
+    github_com_LerianStudio_fetcher_pkg_model.FetcherRequest:
+      description: FetcherRequest represents the request body for creating a new data
+        extraction job.
+      properties:
+        dataRequest:
+          $ref: '#/components/schemas/github_com_LerianStudio_fetcher_pkg_model.DataRequest'
+        metadata:
+          additionalProperties:
+            type: object
+          type: object
+      required:
+      - dataRequest
+      type: object
+    github_com_LerianStudio_fetcher_pkg_model.FetcherResponse:
+      description: FetcherResponse represents the response after successfully creating
+        a data extraction job.
+      example:
+        createdAt: createdAt
+        jobId: jobId
+        message: message
+        status: status
+      properties:
+        createdAt:
+          type: string
+        jobId:
+          type: string
+        message:
+          type: string
+        status:
+          type: string
+      type: object
+    github_com_LerianStudio_fetcher_pkg_model.JobResponse:
+      description: JobResponse represents the complete information about a data extraction
+        job.
+      example:
+        organizationId: organizationId
+        createdAt: createdAt
+        mappedFields:
+          key:
+            key:
+            - mappedFields
+            - mappedFields
+        completedAt: completedAt
+        metadata:
+          key: '{}'
+        requestHash: requestHash
+        resultPath: resultPath
+        filters:
+          key:
+            key:
+              key:
+                nin:
+                - '{}'
+                - '{}'
+                in:
+                - '{}'
+                - '{}'
+                like:
+                - '{}'
+                - '{}'
+                ne:
+                - '{}'
+                - '{}'
+                lt:
+                - '{}'
+                - '{}'
+                gte:
+                - '{}'
+                - '{}'
+                eq:
+                - '{}'
+                - '{}'
+                lte:
+                - '{}'
+                - '{}'
+                gt:
+                - '{}'
+                - '{}'
+                between:
+                - '{}'
+                - '{}'
+        id: id
+        status: status
+      properties:
+        completedAt:
+          type: string
+        createdAt:
+          type: string
+        filters:
+          additionalProperties:
+            additionalProperties:
+              additionalProperties:
+                $ref: '#/components/schemas/github_com_LerianStudio_fetcher_pkg_model_job.FilterCondition'
+              type: object
+            type: object
+          type: object
+        id:
+          type: string
+        mappedFields:
+          additionalProperties:
+            additionalProperties:
+              items:
+                type: string
+              type: array
+            type: object
+          type: object
+        metadata:
+          additionalProperties:
+            type: object
+          type: object
+        organizationId:
+          type: string
+        requestHash:
+          type: string
+        resultPath:
+          type: string
+        status:
+          type: string
+      type: object
+    github_com_LerianStudio_fetcher_pkg_model.NestedFilters:
+      additionalProperties:
+        additionalProperties:
+          additionalProperties:
+            $ref: '#/components/schemas/github_com_LerianStudio_fetcher_pkg_model_job.FilterCondition'
+          type: object
+        type: object
+      type: object
+    github_com_LerianStudio_fetcher_pkg_model.SSLInput:
+      properties:
+        ca:
+          example: |-
+            -----BEGIN CERTIFICATE-----
+            ...
+          type: string
+        cert:
+          type: string
+        key:
+          type: string
+        mode:
+          example: require
+          type: string
+      type: object
+    github_com_LerianStudio_fetcher_pkg_model.SSLResponse:
+      example:
+        mode: mode
+      properties:
+        mode:
+          type: string
+      type: object
+    github_com_LerianStudio_fetcher_pkg_model.SSLUpdateInput:
+      properties:
+        ca:
+          example: |-
+            -----BEGIN CERTIFICATE-----
+            ...
+          type: string
+        cert:
+          type: string
+        key:
+          type: string
+        mode:
+          example: require
+          type: string
+      type: object
+    github_com_LerianStudio_fetcher_pkg_model.SchemaValidationError:
+      example:
+        dataSourceId: dataSourceId
+        field: field
+        type: type
+        table: table
+      properties:
+        dataSourceId:
+          type: string
+        field:
+          type: string
+        table:
+          type: string
+        type:
+          type: string
+      type: object
+    github_com_LerianStudio_fetcher_pkg_model.SchemaValidationRequest:
+      description: Request body for schema validation containing mapped fields per
+        datasource.
+      properties:
+        mappedFields:
+          additionalProperties:
+            additionalProperties:
+              items:
+                type: string
+              type: array
+            type: object
+          description: |-
+            MappedFields maps datasource config names to their tables and fields
+            Key: configName (e.g., "midaz_onboarding")
+            Value: map of table names to field names
+          type: object
+      required:
+      - mappedFields
+      type: object
+    github_com_LerianStudio_fetcher_pkg_model.SchemaValidationResponse:
+      example:
+        message: message
+        errors:
+        - dataSourceId: dataSourceId
+          field: field
+          type: type
+          table: table
+        - dataSourceId: dataSourceId
+          field: field
+          type: type
+          table: table
+        status: status
+      properties:
+        errors:
+          items:
+            $ref: '#/components/schemas/github_com_LerianStudio_fetcher_pkg_model.SchemaValidationError'
+          type: array
+        message:
+          type: string
+        status:
+          description: '"success" or "failure"'
+          type: string
+      type: object
+    github_com_LerianStudio_fetcher_pkg_model_job.FilterCondition:
+      example:
+        nin:
+        - '{}'
+        - '{}'
+        in:
+        - '{}'
+        - '{}'
+        like:
+        - '{}'
+        - '{}'
+        ne:
+        - '{}'
+        - '{}'
+        lt:
+        - '{}'
+        - '{}'
+        gte:
+        - '{}'
+        - '{}'
+        eq:
+        - '{}'
+        - '{}'
+        lte:
+        - '{}'
+        - '{}'
+        gt:
+        - '{}'
+        - '{}'
+        between:
+        - '{}'
+        - '{}'
+      properties:
+        between:
+          description: |-
+            Between specifies a range condition with exactly two values [min, max].
+            Matches records where min <= field <= max
+            Example: {"between": [100, 1000]} matches records where 100 <= field <= 1000
+          items:
+            type: object
+          type: array
+        eq:
+          description: |-
+            Equals specifies exact value matches. Multiple values treated as OR conditions.
+            Example: {"eq": ["active", "pending"]} matches records where field equals "active" OR "pending"
+          items:
+            type: object
+          type: array
+        gt:
+          description: |-
+            GreaterThan specifies values that must be greater than the provided value.
+            Should contain exactly one value for comparison.
+            Example: {"gt": [100]} matches records where field > 100
+          items:
+            type: object
+          type: array
+        gte:
+          description: |-
+            GreaterOrEqual specifies values that must be greater than or equal to the provided value.
+            Should contain exactly one value for comparison.
+            Example: {"gte": ["2025-06-01"]} matches records where field >= "2025-06-01"
+          items:
+            type: object
+          type: array
+        in:
+          description: |-
+            In specifies a list of values where the field must match any one of them.
+            Multiple values treated as OR conditions.
+            Example: {"in": ["active", "pending", "suspended"]} matches any of these statuses
+          items:
+            type: object
+          type: array
+        like:
+          description: |-
+            Like specifies values that must match the provided value using LIKE pattern matching.
+            Should contain exactly one value for comparison.
+            Example: {"like": ["%active%"]} matches any status containing "active"
+          items:
+            type: object
+          type: array
+        lt:
+          description: |-
+            LessThan specifies values that must be less than the provided value.
+            Should contain exactly one value for comparison.
+            Example: {"lt": [1000]} matches records where field < 1000
+          items:
+            type: object
+          type: array
+        lte:
+          description: |-
+            LessOrEqual specifies values that must be less than or equal to the provided value.
+            Should contain exactly one value for comparison.
+            Example: {"lte": ["2025-06-30"]} matches records where field <= "2025-06-30"
+          items:
+            type: object
+          type: array
+        ne:
+          description: |-
+            NotEquals specifies values that must NOT match the provided value.
+            Should contain exactly one value for comparison.
+            Example: {"ne": ["active"]} excludes this status
+          items:
+            type: object
+          type: array
+        nin:
+          description: |-
+            NotIn specifies a list of values where the field must NOT match any of them.
+            Multiple values treated as AND NOT conditions.
+            Example: {"nin": ["deleted", "archived"]} excludes these statuses
+          items:
+            type: object
+          type: array
+      type: object
+    pkg.HTTPError:
+      properties:
+        code:
+          type: string
+        entityType:
+          type: string
+        err:
+          type: object
+        message:
+          type: string
+        title:
+          type: string
+      type: object
+    inline_response_200:
+      example:
+        Pagination:
+          total: 10
+          limit: 10
+          page: 1
+          items: '{}'
+        total: 5
+        limit: 6
+        page: 1
+        items:
+        - configName: configName
+          createdAt: createdAt
+          metadata:
+            key: '{}'
+          databaseName: databaseName
+          port: 0
+          host: host
+          id: id
+          type: type
+          userName: userName
+          ssl:
+            mode: mode
+          updatedAt: updatedAt
+        - configName: configName
+          createdAt: createdAt
+          metadata:
+            key: '{}'
+          databaseName: databaseName
+          port: 0
+          host: host
+          id: id
+          type: type
+          userName: userName
+          ssl:
+            mode: mode
+          updatedAt: updatedAt
+      properties:
+        Pagination:
+          $ref: '#/components/schemas/Pagination'
+        items:
+          items:
+            $ref: '#/components/schemas/github_com_LerianStudio_fetcher_pkg_model.ConnectionResponse'
+          type: array
+        limit:
+          type: integer
+        page:
+          type: integer
+        total:
+          type: integer
+      type: object
+x-original-swagger-version: "2.0"

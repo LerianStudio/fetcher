@@ -1,0 +1,139 @@
+{
+  "users": [
+    {
+      "name": "plugin",
+      "password_hash": "Pexngh1ls20Hs8hMsMFNJSwQuDPSybD+/ZrrnFM+SUM6Dcsx",
+      "hashing_algorithm": "rabbit_password_hashing_sha256",
+      "tags": "administrator"
+    }
+  ],
+  "vhosts": [
+    {
+      "name": "/"
+    }
+  ],
+  "permissions": [
+    {
+      "user": "plugin",
+      "vhost": "/",
+      "configure": ".*",
+      "write": ".*",
+      "read": ".*"
+    }
+  ],
+  "queues": [
+    {
+      "name": "fetcher.extract-external-data.queue",
+      "vhost": "/",
+      "durable": true,
+      "arguments": {
+        "x-dead-letter-exchange": "fetcher.dlx",
+        "x-dead-letter-routing-key": "fetcher.dlq.key"
+      }
+    },
+    {
+      "name": "fetcher.dlq",
+      "vhost": "/",
+      "durable": true,
+      "arguments": {
+        "x-message-ttl": 604800000,
+        "x-max-length": 10000
+      }
+    },
+    {
+      "name": "reporter.dlq",
+      "vhost": "/",
+      "durable": true,
+      "arguments": {
+        "x-message-ttl": 604800000,
+        "x-max-length": 10000
+      }
+    },
+    {
+      "name": "reporter.fetcher-notifications.queue",
+      "vhost": "/",
+      "durable": true,
+      "arguments": {
+        "x-dead-letter-exchange": "reporter.dlx",
+        "x-dead-letter-routing-key": "reporter.dlq.key"
+      }
+    }
+  ],
+  "exchanges": [
+    {
+      "name": "fetcher.extract-external-data.exchange",
+      "vhost": "/",
+      "type": "direct",
+      "durable": true
+    },
+    {
+      "name": "fetcher.dlx",
+      "vhost": "/",
+      "type": "direct",
+      "durable": true
+    },
+    {
+      "name": "fetcher.job.events",
+      "vhost": "/",
+      "type": "topic",
+      "durable": true
+    },
+    {
+      "name": "reporter.dlx",
+      "vhost": "/",
+      "type": "direct",
+      "durable": true
+    }
+  ],
+  "bindings": [
+    {
+      "source": "fetcher.extract-external-data.exchange",
+      "vhost": "/",
+      "destination": "fetcher.extract-external-data.queue",
+      "destination_type": "queue",
+      "routing_key": "fetcher.job.key"
+    },
+    {
+      "source": "fetcher.extract-external-data.exchange",
+      "vhost": "/",
+      "destination": "reporter.fetcher-notifications.queue",
+      "destination_type": "queue",
+      "routing_key": "job.completed.reporter"
+    },
+    {
+      "source": "fetcher.extract-external-data.exchange",
+      "vhost": "/",
+      "destination": "reporter.fetcher-notifications.queue",
+      "destination_type": "queue",
+      "routing_key": "job.failed.reporter"
+    },
+    {
+      "source": "fetcher.dlx",
+      "vhost": "/",
+      "destination": "fetcher.dlq",
+      "destination_type": "queue",
+      "routing_key": "fetcher.dlq.key"
+    },
+    {
+      "source": "fetcher.job.events",
+      "vhost": "/",
+      "destination": "reporter.fetcher-notifications.queue",
+      "destination_type": "queue",
+      "routing_key": "job.completed.reporter"
+    },
+    {
+      "source": "fetcher.job.events",
+      "vhost": "/",
+      "destination": "reporter.fetcher-notifications.queue",
+      "destination_type": "queue",
+      "routing_key": "job.failed.reporter"
+    },
+    {
+      "source": "reporter.dlx",
+      "vhost": "/",
+      "destination": "reporter.dlq",
+      "destination_type": "queue",
+      "routing_key": "reporter.dlq.key"
+    }
+  ]
+}
