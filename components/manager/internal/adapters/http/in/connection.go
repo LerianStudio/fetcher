@@ -130,7 +130,7 @@ func (h *ConnectionHandler) CreateConnection(c *fiber.Ctx) error {
 //	@Produce		json
 //	@Param			Authorization		header		string	false	"The authorization token in the 'Bearer access_token' format. Only required when auth plugin is enabled."
 //	@Param			X-Organization-Id	header		string	true	"Organization ID"
-//	@Param			page				query		int		false	"Page number (default 1)"	default(1)
+//	@Param			page				query		int		false	"Page number (minimum 1)"	default(1)
 //	@Param			limit				query		int		false	"Page size (default 50, max 1000)"	default(50)
 //	@Param			sortOrder			query		string	false	"Sort order"											Enums(asc, desc)	default(desc)
 //	@Param			type				query		string	false	"Filter by database type"								Enums(ORACLE, SQL_SERVER, POSTGRESQL, MONGODB, MYSQL)
