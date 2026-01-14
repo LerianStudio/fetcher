@@ -14,7 +14,7 @@ on:
 
 jobs:
   build:
-    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/build.yml@v1.3.5
+    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/build.yml@v1.7.0
     with:
       runner_type: "blacksmith-4vcpu-ubuntu-2404"
       # Monorepo configuration
