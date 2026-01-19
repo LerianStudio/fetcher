@@ -1,3 +1,6 @@
+## Test Entry
+- Test GPT changelog generation 2026-01-19
+
 ## [v1.0.1-beta.1] - 2026-01-14
 
 ### 🔧 Maintenance
