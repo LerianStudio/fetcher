@@ -1,58 +1,70 @@
 name: "Build"
-
 # This workflow builds and pushes Docker images
 # Triggered on any tag push (e.g., v1.0.0, v1.0.0-beta.1)
 #
 # Strategy:
 # - beta/rc tags: linux/amd64 only (faster CI)
 # - release tags: linux/amd64 + linux/arm64 (full multi-arch)
-
 on:
   push:
     tags:
       - '**'
+      - 'v*.*.*-beta.*'
+      - 'v*.*.*-rc.*'
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+  packages: write
 
 jobs:
   build:
-    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/build.yml@v1.7.0
+    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/build.yml@v1.10.1
     with:
       runner_type: "blacksmith-4vcpu-ubuntu-2404"
       # Monorepo configuration
       filter_paths: |-
         components/manager
         components/worker
-      path_level: 2
+      path_level: '2'
       app_name_prefix: "fetcher"
       # Registry configuration
       enable_dockerhub: true
       enable_ghcr: true
       dockerhub_org: lerianstudio
       # Enable when GitOps is configured for this service
-      enable_gitops_artifacts: false
+      enable_gitops_artifacts: true
+      # Helm dispatch configuration (triggers on production and RC releases)
+      enable_helm_dispatch: true
+      helm_repository: "LerianStudio/helm"
+      helm_chart: "fetcher"
+      helm_target_ref: "main"
+      helm_components_base_path: "components"
+      helm_env_file: ".env.example"
+      helm_detect_env_changes: true
+      helm_values_key_mappings: '{"fetcher-manager": "manager", "fetcher-worker": "worker"}'
     secrets: inherit
 
-  # =========================
-  # GITOPS UPDATE
-  # =========================
-  # TODO: Enable when GitOps is configured for this service
-  # 1. Set enable_gitops_artifacts: true in build job above
-  # 2. Uncomment the job below
-  # update_gitops:
-  #   needs: [build]
-  #   if: needs.build.result == 'success'
-  #   uses: LerianStudio/github-actions-shared-workflows/.github/workflows/gitops-update.yml@v1.0.0-beta.6
-  #   with:
-  #     yaml_key_mappings: '{"fetcher.tag": ".image.tag"}'
-  #   secrets:
-  #     manage_token: ${{ secrets.MANAGE_TOKEN }}
-  #     ci_cd_user_name: ${{ secrets.LERIAN_CI_CD_USER_NAME }}
-  #     ci_cd_user_email: ${{ secrets.LERIAN_CI_CD_USER_EMAIL }}
-  #     argocd_token: ${{ secrets.ARGOCD_GHUSER_TOKEN }}
-  #     argocd_url: ${{ secrets.ARGOCD_URL }}
-  #     docker_username: ${{ secrets.DOCKER_USERNAME }}
-  #     docker_password: ${{ secrets.DOCKER_PASSWORD }}
+  update_gitops:
+    needs: build
+    if: (contains(github.ref, '-beta') || contains(github.ref, '-rc')) && needs.build.result == 'success'
+    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/gitops-update.yml@v1.10.1
+    with:
+      runner_type: "firmino-lxc-runners"
+      gitops_repository: "LerianStudio/midaz-firmino-gitops"
+      gitops_server: "firmino"
+      app_name: "fetcher"
+      gitops_file_dev: "environments/firmino/helmfile/applications/dev/fetcher/values.yaml"
+      gitops_file_stg: "environments/firmino/helmfile/applications/stg/fetcher/values.yaml"
+      artifact_pattern: "gitops-tags-fetcher*"
+      yaml_key_mappings: '{"fetcher-manager.tag": ".manager.image.tag", "fetcher-worker.tag": ".worker.image.tag"}'
+      commit_message_prefix: "fetcher"
+      enable_argocd_sync: true
+      argocd_app_name: "firmino-fetcher"
+    secrets: inherit
 
-  # =========================
   # E2E TESTS
   # =========================
   # TODO: Enable when E2E tests are configured for this service
