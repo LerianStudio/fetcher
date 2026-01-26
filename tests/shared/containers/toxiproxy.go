@@ -107,6 +107,12 @@ func (t *ToxiproxyContainer) Stop(ctx context.Context) error {
 	return nil
 }
 
+// GetHost returns the container's host address.
+func (t *ToxiproxyContainer) GetHost() string { return t.Host }
+
+// GetPort returns the container's API port.
+func (t *ToxiproxyContainer) GetPort() string { return t.APIPort }
+
 // ProxyConfig defines configuration for creating a proxy.
 type ProxyConfig struct {
 	Name     string

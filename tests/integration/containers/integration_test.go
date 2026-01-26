@@ -665,7 +665,7 @@ func (s *WorkerIntegrationTestSuite) TestPostgreSQLMultiSchemaExtraction() {
 			MappedFields: map[string]map[string][]string{
 				configName: {
 					// Schema: public (default)
-					"transactions": {"id", "account_id", "amount", "currency", "status"},
+					"public.transactions": {"id", "account_id", "amount", "currency", "status"},
 					// Schema: accounting
 					"accounting.invoices": {"id", "account_id", "invoice_number", "amount", "status"},
 					// Schema: reporting
@@ -907,8 +907,8 @@ func (s *WorkerIntegrationTestSuite) TestMultiDatasourceMultiSchemaExtraction() 
 	assert.NotEmpty(t, job.ResultPath)
 }
 
-// TestValidateSchema_MultiSchema validates schema validation with schema-qualified table names.
-func (s *WorkerIntegrationTestSuite) TestValidateSchema_MultiSchema() {
+// TestValidateSchema_MultiSchema_PostgreSQL validates schema validation with schema-qualified table names.
+func (s *WorkerIntegrationTestSuite) TestValidateSchema_MultiSchema_PostgreSQL() {
 	t := s.T()
 
 	configName := s.uniqueConfigName("postgres_validate_multi")
@@ -961,6 +961,125 @@ func (s *WorkerIntegrationTestSuite) TestValidateSchema_MultiSchema() {
 		}
 	}
 	assert.True(t, foundTableError, "Expected TABLE_NOT_FOUND error for non-existent schema")
+}
+
+// TestValidateSchema_MultiSchema_SQLServer validates schema validation with schema-qualified table names for SQL Server.
+func (s *WorkerIntegrationTestSuite) TestValidateSchema_MultiSchema_SQLServer() {
+	t := s.T()
+
+	configName := s.uniqueConfigName("sqlserver_validate_multi")
+
+	// Create SQL Server connection
+	mssql := s.infra.SQLServerInternal()
+	_, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
+		ConfigName:   configName,
+		Type:         "SQL_SERVER",
+		Host:         mssql.Host,
+		Port:         mssql.Port,
+		DatabaseName: mssql.Database,
+		Username:     mssql.Username,
+		Password:     mssql.Password,
+	})
+	require.NoError(t, err)
+
+	// Test 1: Validate existing schema-qualified tables
+	// SQL Server has: dbo.transactions (default schema), finance.payments, analytics.monthly_metrics
+	result, err := s.managerClient.ValidateSchema(s.ctx, client.SchemaValidationRequest{
+		MappedFields: map[string]map[string][]string{
+			configName: {
+				"transactions":              {"id", "account_id", "amount"},
+				"finance.payments":          {"id", "account_id", "payment_reference"},
+				"analytics.monthly_metrics": {"id", "metric_month", "account_id"},
+			},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "success", result.Status, "Validation should succeed for existing tables")
+	assert.Empty(t, result.Errors)
+
+	// Test 2: Validate with non-existent schema
+	result, err = s.managerClient.ValidateSchema(s.ctx, client.SchemaValidationRequest{
+		MappedFields: map[string]map[string][]string{
+			configName: {
+				"nonexistent_schema.fake_table": {"id", "name"},
+			},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "failure", result.Status, "Validation should fail for non-existent schema")
+	assert.NotEmpty(t, result.Errors)
+
+	// Verify the error type
+	foundTableError := false
+	for _, e := range result.Errors {
+		if e.Type == "TABLE_NOT_FOUND" {
+			foundTableError = true
+			break
+		}
+	}
+	assert.True(t, foundTableError, "Expected TABLE_NOT_FOUND error for non-existent schema")
+}
+
+// TestValidateSchema_MultiSchema_Oracle validates schema validation with table names for Oracle.
+// Note: Oracle uses owner/user as the "schema" concept. In our test setup, all tables
+// belong to the same owner, but we test the multi-schema resolution logic.
+func (s *WorkerIntegrationTestSuite) TestValidateSchema_MultiSchema_Oracle() {
+	t := s.T()
+
+	configName := s.uniqueConfigName("oracle_validate_multi")
+
+	// Create Oracle connection
+	oracle := s.infra.OracleInternal()
+	_, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
+		ConfigName:   configName,
+		Type:         "ORACLE",
+		Host:         oracle.Host,
+		Port:         oracle.Port,
+		DatabaseName: oracle.Database,
+		Username:     oracle.Username,
+		Password:     oracle.Password,
+		Metadata: map[string]any{
+			"serviceName": oracle.Database,
+		},
+	})
+	require.NoError(t, err)
+
+	// Test 1: Validate existing tables in default owner schema
+	// Oracle has: transactions, billing_subscriptions, audit_events
+	result, err := s.managerClient.ValidateSchema(s.ctx, client.SchemaValidationRequest{
+		MappedFields: map[string]map[string][]string{
+			configName: {
+				"transactions":          {"id", "account_id", "amount"},
+				"billing_subscriptions": {"id", "account_id", "plan_name"},
+				"audit_events":          {"id", "account_id", "event_type"},
+			},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "success", result.Status, "Validation should succeed for existing tables")
+	assert.Empty(t, result.Errors)
+
+	// Test 2: Validate with non-existent owner/schema prefix
+	result, err = s.managerClient.ValidateSchema(s.ctx, client.SchemaValidationRequest{
+		MappedFields: map[string]map[string][]string{
+			configName: {
+				"NONEXISTENT_OWNER.fake_table": {"id", "name"},
+			},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "failure", result.Status, "Validation should fail for non-existent owner")
+	assert.NotEmpty(t, result.Errors)
+
+	// Verify the error type
+	foundTableError := false
+	for _, e := range result.Errors {
+		if e.Type == "TABLE_NOT_FOUND" {
+			foundTableError = true
+			break
+		}
+	}
+	assert.True(t, foundTableError, "Expected TABLE_NOT_FOUND error for non-existent owner")
 }
 
 // =============================================================================
@@ -2339,7 +2458,7 @@ func (s *WorkerIntegrationTestSuite) TestValidateSchema_PartialFailure() {
 // SSL Connection Tests
 // =============================================================================
 // These tests validate SSL/TLS connections to databases.
-// Run with: ENABLE_SSL=true make test-integration-container
+// Run with: ENABLE_SSL=true make test-integration
 
 // TestSSLConnectionValidation validates that SSL connections can be established.
 func (s *WorkerIntegrationTestSuite) TestSSLConnectionValidation() {
@@ -2423,7 +2542,9 @@ func (s *WorkerIntegrationTestSuite) TestSSLConnectionValidation() {
 			Username:     mongoSSL.Username,
 			Password:     mongoSSL.Password,
 			SSL: &client.SSLInput{
-				Mode: "skip-verify",
+				// MongoDB valid SSL modes: disable, false, true, enable, insecure
+				// Use "insecure" for self-signed certificates (enables TLS, skips verification)
+				Mode: "insecure",
 				CA:   certBundle.CACertPEM,
 			},
 		})

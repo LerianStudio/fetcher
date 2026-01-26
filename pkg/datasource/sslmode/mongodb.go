@@ -21,7 +21,6 @@ import (
 // Note: MongoDB Go driver uses tlsInsecure=true to skip verification,
 // which maps to our "insecure" mode.
 var validMongoDBModes = map[string]struct{}{
-	"":         {}, // Empty string uses driver defaults
 	"disable":  {}, // Explicitly disable TLS
 	"false":    {}, // Disable TLS (same as disable)
 	"true":     {}, // Enable TLS with verification

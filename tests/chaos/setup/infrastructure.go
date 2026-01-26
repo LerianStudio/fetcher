@@ -9,25 +9,38 @@ import (
 
 	toxiproxy "github.com/Shopify/toxiproxy/v2/client"
 
+	"github.com/LerianStudio/fetcher/tests/shared/chaos"
 	"github.com/LerianStudio/fetcher/tests/shared/config"
 	"github.com/LerianStudio/fetcher/tests/shared/containers"
-	sharedsetup "github.com/LerianStudio/fetcher/tests/shared/setup"
+	"github.com/LerianStudio/fetcher/tests/shared/setup"
 )
 
 // ChaosInfrastructure composes SharedInfrastructure with Toxiproxy.
 // It provides access to all standard infrastructure plus chaos injection capabilities.
 type ChaosInfrastructure struct {
 	// Embedded shared infrastructure - provides all base containers
-	*sharedsetup.SharedInfrastructure
+	*setup.SharedInfrastructure
 
 	// Application containers (Manager and Worker)
-	Applications *sharedsetup.ApplicationContainers
+	Applications *setup.ApplicationContainers
 
 	// Toxiproxy for chaos injection
 	Toxiproxy *containers.ToxiproxyContainer
 
 	// Standard proxies for all services
 	Proxies *containers.StandardProxies
+
+	// ProxyRegistry provides type-safe access to proxies by service name.
+	// Use this instead of direct Proxies field access for new code.
+	ProxyRegistry *chaos.ProxyRegistry
+
+	// ChaosOps provides generic chaos injection operations.
+	// Use this instead of service-specific methods (DisableRabbitMQ, etc.) for new code.
+	ChaosOps *chaos.ChaosOperations
+
+	// ProxyRouter provides generic proxy connection routing.
+	// Use this instead of service-specific methods (PostgresProxyInternal, etc.) for new code.
+	ProxyRouter *chaos.ProxyRouter
 
 	// Proxy URLs for client connections (traffic goes through Toxiproxy)
 	// Use these URLs instead of direct service URLs for chaos injection to work.
@@ -79,7 +92,7 @@ func StartChaosInfrastructure(ctx context.Context) (*ChaosInfrastructure, error)
 // StartChaosInfrastructureWithOptions starts chaos infrastructure with specified options.
 func StartChaosInfrastructureWithOptions(ctx context.Context, opts ChaosOptions) (*ChaosInfrastructure, error) {
 	// Convert chaos options to shared infrastructure options
-	sharedOpts := sharedsetup.InfrastructureOptions{
+	sharedOpts := setup.InfrastructureOptions{
 		UseFixedPorts:   opts.UseFixedPorts,
 		ReuseExisting:   opts.ReuseExisting,
 		SkipExternalDBs: opts.SkipExternalDBs,
@@ -87,7 +100,7 @@ func StartChaosInfrastructureWithOptions(ctx context.Context, opts ChaosOptions)
 	}
 
 	// Start shared infrastructure (all containers)
-	shared, err := sharedsetup.StartWithOptions(ctx, sharedOpts)
+	shared, err := setup.StartWithOptions(ctx, sharedOpts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to start shared infrastructure: %w", err)
 	}
@@ -132,11 +145,29 @@ func StartChaosInfrastructureWithOptions(ctx context.Context, opts ChaosOptions)
 		return nil, fmt.Errorf("failed to start applications: %w", err)
 	}
 
+	// Initialize ProxyRegistry from standard proxies
+	registry := chaos.NewProxyRegistry()
+	registry.RegisterFromStandardProxies(&chaos.StandardProxiesAdapter{
+		MongoMain:     proxies.MongoMain,
+		MongoExternal: proxies.MongoExternal,
+		RabbitMQ:      proxies.RabbitMQ,
+		SeaweedFS:     proxies.SeaweedFS,
+		Redis:         proxies.Redis,
+		Postgres:      proxies.Postgres,
+		MySQL:         proxies.MySQL,
+		SQLServer:     proxies.SQLServer,
+		Oracle:        proxies.Oracle,
+		Manager:       proxies.Manager,
+	})
+
 	chaosInfra := &ChaosInfrastructure{
 		SharedInfrastructure: shared,
 		Applications:         apps,
 		Toxiproxy:            toxiContainer,
 		Proxies:              proxies,
+		ProxyRegistry:        registry,
+		ChaosOps:             chaos.NewChaosOperations(registry),
+		ProxyRouter:          chaos.NewProxyRouter(toxiContainer.InternalHost),
 	}
 
 	// Build proxy URLs for client connections
@@ -264,345 +295,23 @@ func (c *ChaosInfrastructure) buildProxyURLs(ctx context.Context) error {
 }
 
 // =============================================================================
-// Proxy Accessor Methods
-// =============================================================================
-// These methods provide convenient access to individual proxies for chaos injection.
-
-// GetRabbitMQProxy returns the RabbitMQ proxy for chaos injection.
-func (c *ChaosInfrastructure) GetRabbitMQProxy() *toxiproxy.Proxy {
-	if c.Proxies == nil {
-		return nil
-	}
-
-	return c.Proxies.RabbitMQ
-}
-
-// GetMongoMainProxy returns the MongoDB main proxy for chaos injection.
-func (c *ChaosInfrastructure) GetMongoMainProxy() *toxiproxy.Proxy {
-	if c.Proxies == nil {
-		return nil
-	}
-
-	return c.Proxies.MongoMain
-}
-
-// GetMongoExternalProxy returns the MongoDB external proxy for chaos injection.
-func (c *ChaosInfrastructure) GetMongoExternalProxy() *toxiproxy.Proxy {
-	if c.Proxies == nil {
-		return nil
-	}
-
-	return c.Proxies.MongoExternal
-}
-
-// GetRedisProxy returns the Redis proxy for chaos injection.
-func (c *ChaosInfrastructure) GetRedisProxy() *toxiproxy.Proxy {
-	if c.Proxies == nil {
-		return nil
-	}
-
-	return c.Proxies.Redis
-}
-
-// GetPostgresProxy returns the PostgreSQL proxy for chaos injection.
-func (c *ChaosInfrastructure) GetPostgresProxy() *toxiproxy.Proxy {
-	if c.Proxies == nil {
-		return nil
-	}
-
-	return c.Proxies.Postgres
-}
-
-// GetMySQLProxy returns the MySQL proxy for chaos injection.
-func (c *ChaosInfrastructure) GetMySQLProxy() *toxiproxy.Proxy {
-	if c.Proxies == nil {
-		return nil
-	}
-
-	return c.Proxies.MySQL
-}
-
-// GetSQLServerProxy returns the SQL Server proxy for chaos injection.
-func (c *ChaosInfrastructure) GetSQLServerProxy() *toxiproxy.Proxy {
-	if c.Proxies == nil {
-		return nil
-	}
-
-	return c.Proxies.SQLServer
-}
-
-// GetOracleProxy returns the Oracle proxy for chaos injection.
-func (c *ChaosInfrastructure) GetOracleProxy() *toxiproxy.Proxy {
-	if c.Proxies == nil {
-		return nil
-	}
-
-	return c.Proxies.Oracle
-}
-
-// GetSeaweedFSProxy returns the SeaweedFS proxy for chaos injection.
-func (c *ChaosInfrastructure) GetSeaweedFSProxy() *toxiproxy.Proxy {
-	if c.Proxies == nil {
-		return nil
-	}
-
-	return c.Proxies.SeaweedFS
-}
-
-// GetManagerProxy returns the Manager proxy for chaos injection.
-func (c *ChaosInfrastructure) GetManagerProxy() *toxiproxy.Proxy {
-	if c.Proxies == nil {
-		return nil
-	}
-
-	return c.Proxies.Manager
-}
-
-// =============================================================================
-// Chaos Injection Convenience Methods
-// =============================================================================
-// These methods provide shortcuts for common chaos injection patterns.
-
-// DisableRabbitMQ disables the RabbitMQ proxy, simulating a complete outage.
-func (c *ChaosInfrastructure) DisableRabbitMQ() error {
-	return containers.DisableProxy(c.GetRabbitMQProxy())
-}
-
-// EnableRabbitMQ enables the RabbitMQ proxy, restoring connectivity.
-func (c *ChaosInfrastructure) EnableRabbitMQ() error {
-	return containers.EnableProxy(c.GetRabbitMQProxy())
-}
-
-// AddRabbitMQLatency adds latency to RabbitMQ connections.
-func (c *ChaosInfrastructure) AddRabbitMQLatency(name string, latencyMS, jitterMS int) (*toxiproxy.Toxic, error) {
-	return containers.AddLatency(c.GetRabbitMQProxy(), name, latencyMS, jitterMS)
-}
-
-// DisableMongoMain disables the MongoDB main proxy.
-func (c *ChaosInfrastructure) DisableMongoMain() error {
-	return containers.DisableProxy(c.GetMongoMainProxy())
-}
-
-// EnableMongoMain enables the MongoDB main proxy.
-func (c *ChaosInfrastructure) EnableMongoMain() error {
-	return containers.EnableProxy(c.GetMongoMainProxy())
-}
-
-// AddMongoMainLatency adds latency to MongoDB main connections.
-func (c *ChaosInfrastructure) AddMongoMainLatency(name string, latencyMS, jitterMS int) (*toxiproxy.Toxic, error) {
-	return containers.AddLatency(c.GetMongoMainProxy(), name, latencyMS, jitterMS)
-}
-
-// DisableRedis disables the Redis proxy.
-func (c *ChaosInfrastructure) DisableRedis() error {
-	return containers.DisableProxy(c.GetRedisProxy())
-}
-
-// EnableRedis enables the Redis proxy.
-func (c *ChaosInfrastructure) EnableRedis() error {
-	return containers.EnableProxy(c.GetRedisProxy())
-}
-
-// AddRedisLatency adds latency to Redis connections.
-func (c *ChaosInfrastructure) AddRedisLatency(name string, latencyMS, jitterMS int) (*toxiproxy.Toxic, error) {
-	return containers.AddLatency(c.GetRedisProxy(), name, latencyMS, jitterMS)
-}
-
-// DisablePostgres disables the PostgreSQL proxy.
-func (c *ChaosInfrastructure) DisablePostgres() error {
-	return containers.DisableProxy(c.GetPostgresProxy())
-}
-
-// EnablePostgres enables the PostgreSQL proxy.
-func (c *ChaosInfrastructure) EnablePostgres() error {
-	return containers.EnableProxy(c.GetPostgresProxy())
-}
-
-// AddPostgresLatency adds latency to PostgreSQL connections.
-func (c *ChaosInfrastructure) AddPostgresLatency(name string, latencyMS, jitterMS int) (*toxiproxy.Toxic, error) {
-	return containers.AddLatency(c.GetPostgresProxy(), name, latencyMS, jitterMS)
-}
-
-// DisableSeaweedFS disables the SeaweedFS proxy, simulating a complete storage outage.
-func (c *ChaosInfrastructure) DisableSeaweedFS() error {
-	return containers.DisableProxy(c.GetSeaweedFSProxy())
-}
-
-// EnableSeaweedFS enables the SeaweedFS proxy, restoring storage connectivity.
-func (c *ChaosInfrastructure) EnableSeaweedFS() error {
-	return containers.EnableProxy(c.GetSeaweedFSProxy())
-}
-
-// AddSeaweedFSLatency adds latency to SeaweedFS connections.
-func (c *ChaosInfrastructure) AddSeaweedFSLatency(name string, latencyMS, jitterMS int) (*toxiproxy.Toxic, error) {
-	return containers.AddLatency(c.GetSeaweedFSProxy(), name, latencyMS, jitterMS)
-}
-
-// AddSeaweedFSTimeout adds a timeout toxic to SeaweedFS connections.
-func (c *ChaosInfrastructure) AddSeaweedFSTimeout(name string, timeoutMS int) (*toxiproxy.Toxic, error) {
-	return containers.AddTimeout(c.GetSeaweedFSProxy(), name, timeoutMS)
-}
-
-// AddSeaweedFSBandwidth limits the bandwidth of SeaweedFS connections.
-func (c *ChaosInfrastructure) AddSeaweedFSBandwidth(name string, rateBytesPerSec int) (*toxiproxy.Toxic, error) {
-	return containers.AddBandwidth(c.GetSeaweedFSProxy(), name, rateBytesPerSec)
-}
-
-// =============================================================================
 // Cleanup Methods
 // =============================================================================
 
 // RemoveAllToxics removes all toxics from all proxies.
+// Delegates to ChaosOps for consistent behavior.
 func (c *ChaosInfrastructure) RemoveAllToxics() error {
-	var errs []error
-
-	proxies := []*toxiproxy.Proxy{
-		c.GetRabbitMQProxy(),
-		c.GetMongoMainProxy(),
-		c.GetMongoExternalProxy(),
-		c.GetRedisProxy(),
-		c.GetPostgresProxy(),
-		c.GetMySQLProxy(),
-		c.GetSQLServerProxy(),
-		c.GetOracleProxy(),
-		c.GetSeaweedFSProxy(),
-		c.GetManagerProxy(),
-	}
-
-	for _, proxy := range proxies {
-		if proxy != nil {
-			if err := containers.RemoveAllToxics(proxy); err != nil {
-				errs = append(errs, err)
-			}
-		}
-	}
-
-	if len(errs) > 0 {
-		return fmt.Errorf("errors removing toxics: %v", errs)
-	}
-
-	return nil
+	return c.ChaosOps.RemoveAllToxics()
 }
 
 // EnableAllProxies enables all proxies (restores connectivity).
+// Delegates to ChaosOps for consistent behavior.
 func (c *ChaosInfrastructure) EnableAllProxies() error {
-	var errs []error
-
-	proxies := []*toxiproxy.Proxy{
-		c.GetRabbitMQProxy(),
-		c.GetMongoMainProxy(),
-		c.GetMongoExternalProxy(),
-		c.GetRedisProxy(),
-		c.GetPostgresProxy(),
-		c.GetMySQLProxy(),
-		c.GetSQLServerProxy(),
-		c.GetOracleProxy(),
-		c.GetSeaweedFSProxy(),
-		c.GetManagerProxy(),
-	}
-
-	for _, proxy := range proxies {
-		if proxy != nil {
-			if err := containers.EnableProxy(proxy); err != nil {
-				errs = append(errs, err)
-			}
-		}
-	}
-
-	if len(errs) > 0 {
-		return fmt.Errorf("errors enabling proxies: %v", errs)
-	}
-
-	return nil
+	return c.ChaosOps.EnableAll()
 }
 
 // ResetChaos removes all toxics and enables all proxies.
 // This is useful for cleanup between test cases.
 func (c *ChaosInfrastructure) ResetChaos() error {
-	if err := c.RemoveAllToxics(); err != nil {
-		return fmt.Errorf("failed to remove toxics: %w", err)
-	}
-
-	if err := c.EnableAllProxies(); err != nil {
-		return fmt.Errorf("failed to enable proxies: %w", err)
-	}
-
-	return nil
-}
-
-// =============================================================================
-// Proxy Connection Methods
-// =============================================================================
-// These methods return connection info that routes through Toxiproxy.
-// Use these instead of direct connection methods when you want chaos injection
-// to affect the traffic.
-
-// PostgresProxyInternal returns PostgreSQL connection info routed through Toxiproxy.
-// Traffic flows: Worker -> Toxiproxy:5433 -> postgres-external:5432
-func (c *ChaosInfrastructure) PostgresProxyInternal() config.InternalDBConnection {
-	direct := c.PostgresInternal()
-
-	return config.InternalDBConnection{
-		Host:     c.Toxiproxy.InternalHost, // "toxiproxy"
-		Port:     5433,                     // Toxiproxy listen port for postgres
-		Username: direct.Username,
-		Password: direct.Password,
-		Database: direct.Database,
-	}
-}
-
-// MySQLProxyInternal returns MySQL connection info routed through Toxiproxy.
-// Traffic flows: Worker -> Toxiproxy:3307 -> mysql-external:3306
-func (c *ChaosInfrastructure) MySQLProxyInternal() config.InternalDBConnection {
-	direct := c.MySQLInternal()
-
-	return config.InternalDBConnection{
-		Host:     c.Toxiproxy.InternalHost,
-		Port:     3307,
-		Username: direct.Username,
-		Password: direct.Password,
-		Database: direct.Database,
-	}
-}
-
-// SQLServerProxyInternal returns SQL Server connection info routed through Toxiproxy.
-// Traffic flows: Worker -> Toxiproxy:1434 -> sqlserver-external:1433
-func (c *ChaosInfrastructure) SQLServerProxyInternal() config.InternalDBConnection {
-	direct := c.SQLServerInternal()
-
-	return config.InternalDBConnection{
-		Host:     c.Toxiproxy.InternalHost,
-		Port:     1434,
-		Username: direct.Username,
-		Password: direct.Password,
-		Database: direct.Database,
-	}
-}
-
-// OracleProxyInternal returns Oracle connection info routed through Toxiproxy.
-// Traffic flows: Worker -> Toxiproxy:1522 -> oracle-external:1521
-func (c *ChaosInfrastructure) OracleProxyInternal() config.InternalDBConnection {
-	direct := c.OracleInternal()
-
-	return config.InternalDBConnection{
-		Host:     c.Toxiproxy.InternalHost,
-		Port:     1522,
-		Username: direct.Username,
-		Password: direct.Password,
-		Database: direct.Database,
-	}
-}
-
-// MongoExternalProxyInternal returns external MongoDB connection info routed through Toxiproxy.
-// Traffic flows: Worker -> Toxiproxy:27101 -> fetcher-mongodb-external:27017
-func (c *ChaosInfrastructure) MongoExternalProxyInternal() config.InternalDBConnection {
-	direct := c.MongoExternalInternal()
-
-	return config.InternalDBConnection{
-		Host:     c.Toxiproxy.InternalHost,
-		Port:     27101,
-		Username: direct.Username,
-		Password: direct.Password,
-		Database: direct.Database,
-	}
+	return c.ChaosOps.ResetAll()
 }

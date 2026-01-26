@@ -98,3 +98,12 @@ func (r *RedisContainer) Stop(ctx context.Context) error {
 
 	return nil
 }
+
+// GetHost returns the container's host address.
+func (r *RedisContainer) GetHost() string { return r.Host }
+
+// GetPort returns the container's mapped port.
+func (r *RedisContainer) GetPort() string { return r.Port }
+
+// GetURI returns the container's connection URL.
+func (r *RedisContainer) GetURI() string { return r.URL }

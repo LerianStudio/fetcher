@@ -3,6 +3,7 @@ package oracle
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/model/datasource"
@@ -21,7 +22,7 @@ type DataSourceConfigOracle struct {
 	datasource.DataSourceConfig
 
 	OracleConnection *oracle.Connection
-	OracleRepository oracle.Repository
+	OracleRepository oracle.Datasource
 }
 
 // GetConfig returns the base DataSourceConfig.
@@ -132,10 +133,14 @@ func (ds *DataSourceConfigOracle) GetSchemaInfo(ctx context.Context, schemas []s
 	for _, table := range schemaResult {
 		columns := make([]string, len(table.Columns))
 		for i, col := range table.Columns {
-			columns[i] = col.Name
+			// Normalize column names to lowercase for case-insensitive matching
+			columns[i] = strings.ToLower(col.Name)
 		}
 
-		schema.AddTable(table.TableName, columns)
+		// Normalize table name to lowercase for case-insensitive matching
+		// Oracle returns UPPERCASE table names, but users typically query lowercase
+		tableName := strings.ToLower(table.TableName)
+		schema.AddTable(tableName, columns)
 	}
 
 	span.SetAttributes(attribute.Int("app.schema.tables_count", len(schema.Tables)))

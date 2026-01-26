@@ -10,6 +10,14 @@ import (
 	_ "github.com/sijms/go-ora/v2" // Oracle driver
 )
 
+// DefaultSchema represents Oracle's default schema behavior.
+// Unlike PostgreSQL ("public") or SQL Server ("dbo"), Oracle uses the
+// current user as the default schema. This constant is empty because
+// Oracle's default schema is dynamic and determined at runtime.
+// Table name normalization for Oracle is handled differently - see
+// normalizeTableNameForValidation in validate_schema.go.
+const DefaultSchema = ""
+
 // Connection is a hub which deals with Oracle connections.
 type Connection struct {
 	ConnectionString   string

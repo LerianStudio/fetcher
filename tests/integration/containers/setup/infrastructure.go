@@ -6,12 +6,12 @@ import (
 	"context"
 
 	"github.com/LerianStudio/fetcher/tests/shared/config"
-	sharedsetup "github.com/LerianStudio/fetcher/tests/shared/setup"
+	"github.com/LerianStudio/fetcher/tests/shared/setup"
 	"github.com/LerianStudio/fetcher/tests/shared/topology"
 )
 
 // InfrastructureContainers is an alias for SharedInfrastructure.
-type InfrastructureContainers = sharedsetup.SharedInfrastructure
+type InfrastructureContainers = setup.SharedInfrastructure
 
 // Re-export only what's actually used by integration tests.
 var (
@@ -63,7 +63,7 @@ func StartInfrastructure(ctx context.Context) (*InfrastructureContainers, error)
 
 // StartInfrastructureWithOptions starts infrastructure with specified options.
 func StartInfrastructureWithOptions(ctx context.Context, opts InfrastructureOptions) (*InfrastructureContainers, error) {
-	return sharedsetup.StartWithOptions(ctx, sharedsetup.InfrastructureOptions{
+	return setup.StartWithOptions(ctx, setup.InfrastructureOptions{
 		UseFixedPorts:   opts.UseFixedPorts,
 		ReuseExisting:   opts.ReuseExisting,
 		SkipExternalDBs: false,

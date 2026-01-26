@@ -80,12 +80,15 @@ Run all tests with Manager and Worker as containers:
 # Option 1: Using pre-built images (recommended for local dev)
 MANAGER_IMAGE=fetcher-manager:local \
 WORKER_IMAGE=fetcher-worker:local \
-  make test-integration-container
+  make test-integration
 
 # Option 2: Build from Dockerfile (CI/CD or fresh build)
 # Uses Docker CLI with BuildKit for proper syntax directive support
 export GITHUB_TOKEN=your_token
-make test-integration-container
+make test-integration
+
+# Option 3: Run specific test with pre-built images
+export GITHUB_TOKEN=your_token && TEST=TestValidateSchema_MultiSchema make test-integration
 ```
 
 > **Note:** When `GITHUB_TOKEN` is set, images are built using Docker CLI with BuildKit enabled. This is required because the Dockerfiles use `# syntax=docker/dockerfile:1.4` directive which needs proper BuildKit session support.
@@ -106,7 +109,7 @@ Both Manager and Worker run as containers. Ideal for CI/CD pipelines.
 ```bash
 MANAGER_IMAGE=fetcher-manager:local \
 WORKER_IMAGE=fetcher-worker:local \
-  make test-integration-container
+  make test-integration
 ```
 
 ### 2. Manager Debug Mode
@@ -172,7 +175,7 @@ Press `F5` and select **"Manager (Test Infra)"**
 make test-integration-debug-manager
 
 # Run specific test
-make test-integration-debug-manager TEST=TestSingleDatasourcePostgreSQL
+WORKER_IMAGE=fetcher-worker:local make test-integration-debug-manager TEST=TestSingleDatasourcePostgreSQL
 ```
 
 ### 3. Worker Debug Mode
@@ -243,7 +246,7 @@ Press `F5` and select **"Worker (Test Infra)"**
 make test-integration-debug-worker
 
 # Run specific test
-make test-integration-debug-worker TEST=TestSingleDatasourceMySQL
+MANAGER_IMAGE=fetcher-manager:local make test-integration-debug-worker TEST=TestSingleDatasourceMySQL
 ```
 
 ### 4. Full Debug Mode
@@ -555,14 +558,14 @@ These tests validate SSL/TLS connections to databases. Run with `ENABLE_SSL=true
 ENABLE_SSL=true \
 MANAGER_IMAGE=fetcher-manager:local \
 WORKER_IMAGE=fetcher-worker:local \
-  make test-integration-container
+  make test-integration
 
 # Run only SSL tests
 ENABLE_SSL=true \
 MANAGER_IMAGE=fetcher-manager:local \
 WORKER_IMAGE=fetcher-worker:local \
 TEST=TestSSLConnectionValidation \
-  make test-integration-container
+  make test-integration
 ```
 
 > **Note:** SSL tests are skipped when `ENABLE_SSL` is not set or set to `false`. The SSL infrastructure starts additional database containers on separate ports (PostgreSQL:5433, MySQL:3307, etc.) with self-signed certificates.

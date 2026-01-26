@@ -20,7 +20,6 @@ import (
 	libRabbitmq "github.com/LerianStudio/lib-commons/v2/commons/rabbitmq"
 
 	"github.com/LerianStudio/fetcher/pkg"
-	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -60,6 +59,15 @@ const (
 	// DefaultSignatureTimestampTolerance is the maximum age of a message signature.
 	// Messages older than this will be rejected to prevent replay attacks.
 	DefaultSignatureTimestampTolerance = 5 * time.Minute
+
+	// HeaderMessageSignature contains the HMAC-SHA256 signature of the message payload
+	HeaderMessageSignature = "x-message-signature"
+
+	// HeaderSignatureTimestamp contains the Unix timestamp when the signature was created
+	HeaderSignatureTimestamp = "t"
+
+	// HeaderSignatureVersion contains the version of the signature algorithm (e.g., "v1")
+	HeaderSignatureVersion = "signature-version"
 )
 
 // CircuitState represents the state of the circuit breaker.
@@ -277,14 +285,6 @@ func (cb *circuitBreaker) recordFailure() {
 // Adapter defines the interface for RabbitMQ operations.
 //
 //go:generate mockgen --destination=rabbitmq.mock.go --package=rabbitmq . Adapter
-type Adapter interface {
-	ProducerDefault(ctx context.Context, exchange, key string, queueMessage []byte, header *map[string]any) error
-	ConsumerLoop(ctx context.Context, queue string, concurrency int, handler func(ctx context.Context, body []byte, headers map[string]any) error) error
-	Shutdown(ctx context.Context) error
-	IsHealthy() bool
-	CircuitBreakerState() CircuitState
-}
-
 type metrics struct {
 	publishAttempts     metric.Int64Counter
 	publishSuccesses    metric.Int64Counter
@@ -294,6 +294,29 @@ type metrics struct {
 	consumeFailed       metric.Int64Counter
 	circuitBreakerGauge metric.Int64ObservableGauge
 }
+
+// Adapter defines the interface for RabbitMQ operations.
+type Adapter interface {
+	ProducerDefault(ctx context.Context, exchange, key string, queueMessage []byte, header *map[string]any) error
+	ConsumerLoop(ctx context.Context, queue string, concurrency int, handler func(ctx context.Context, body []byte, headers map[string]any) error) error
+	Shutdown(ctx context.Context) error
+	IsHealthy() bool
+	CircuitBreakerState() CircuitState
+}
+
+var errDeliveriesClosed = errors.New("rabbitmq deliveries channel closed")
+
+// ErrCircuitOpen is returned when the circuit breaker is open.
+var ErrCircuitOpen = errors.New("circuit breaker is open")
+
+// ErrSignatureVerificationFailed is returned when message signature verification fails.
+var ErrSignatureVerificationFailed = errors.New("message signature verification failed")
+
+// ErrMissingSignatureHeaders is returned when required signature headers are missing.
+var ErrMissingSignatureHeaders = errors.New("missing required signature headers")
+
+// ErrSignatureExpired is returned when the message signature timestamp is too old.
+var ErrSignatureExpired = errors.New("message signature has expired")
 
 // RabbitMQAdapter provides resilient publish and consumer operations over RabbitMQ.
 type RabbitMQAdapter struct {
@@ -321,20 +344,6 @@ type RabbitMQAdapter struct {
 	// metrics holds operational metrics.
 	metrics *metrics
 }
-
-var errDeliveriesClosed = errors.New("rabbitmq deliveries channel closed")
-
-// ErrCircuitOpen is returned when the circuit breaker is open.
-var ErrCircuitOpen = errors.New("circuit breaker is open")
-
-// ErrSignatureVerificationFailed is returned when message signature verification fails.
-var ErrSignatureVerificationFailed = errors.New("message signature verification failed")
-
-// ErrMissingSignatureHeaders is returned when required signature headers are missing.
-var ErrMissingSignatureHeaders = errors.New("missing required signature headers")
-
-// ErrSignatureExpired is returned when the message signature timestamp is too old.
-var ErrSignatureExpired = errors.New("message signature has expired")
 
 // NewRabbitMQAdapter initializes a new RabbitMQAdapter with the provided RabbitMQ connection.
 // It uses default options for configuration. Use NewRabbitMQAdapterWithOptions for custom configuration.
@@ -681,9 +690,9 @@ func (prmq *RabbitMQAdapter) ProducerDefault(ctx context.Context, exchange, key 
 		payload := crypto.BuildSignaturePayload(timestamp, queueMessage)
 		signature := prmq.options.Signer.Sign(payload)
 
-		headers[constant.HeaderMessageSignature] = signature
-		headers[constant.HeaderSignatureTimestamp] = strconv.FormatInt(timestamp, 10)
-		headers[constant.HeaderSignatureVersion] = prmq.options.Signer.SignatureVersion()
+		headers[HeaderMessageSignature] = signature
+		headers[HeaderSignatureTimestamp] = strconv.FormatInt(timestamp, 10)
+		headers[HeaderSignatureVersion] = prmq.options.Signer.SignatureVersion()
 
 		spanProducer.SetAttributes(
 			attribute.String("messaging.signature.version", prmq.options.Signer.SignatureVersion()),
@@ -1118,20 +1127,20 @@ func (prmq *RabbitMQAdapter) verifyMessageSignature(
 	span *trace.Span,
 ) error {
 	// Extract signature from headers
-	signatureRaw, ok := headers[constant.HeaderMessageSignature]
+	signatureRaw, ok := headers[HeaderMessageSignature]
 	if !ok {
-		return fmt.Errorf("%w: %s", ErrMissingSignatureHeaders, constant.HeaderMessageSignature)
+		return fmt.Errorf("%w: %s", ErrMissingSignatureHeaders, HeaderMessageSignature)
 	}
 
 	signature, ok := signatureRaw.(string)
 	if !ok {
-		return fmt.Errorf("%w: %s must be a string", ErrMissingSignatureHeaders, constant.HeaderMessageSignature)
+		return fmt.Errorf("%w: %s must be a string", ErrMissingSignatureHeaders, HeaderMessageSignature)
 	}
 
 	// Extract timestamp from headers
-	timestampRaw, ok := headers[constant.HeaderSignatureTimestamp]
+	timestampRaw, ok := headers[HeaderSignatureTimestamp]
 	if !ok {
-		return fmt.Errorf("%w: %s", ErrMissingSignatureHeaders, constant.HeaderSignatureTimestamp)
+		return fmt.Errorf("%w: %s", ErrMissingSignatureHeaders, HeaderSignatureTimestamp)
 	}
 
 	var timestamp int64
@@ -1149,7 +1158,7 @@ func (prmq *RabbitMQAdapter) verifyMessageSignature(
 	case int:
 		timestamp = int64(v)
 	default:
-		return fmt.Errorf("%w: %s must be a string or int64", ErrMissingSignatureHeaders, constant.HeaderSignatureTimestamp)
+		return fmt.Errorf("%w: %s must be a string or int64", ErrMissingSignatureHeaders, HeaderSignatureTimestamp)
 	}
 
 	// Check timestamp freshness to prevent replay attacks
@@ -1164,14 +1173,14 @@ func (prmq *RabbitMQAdapter) verifyMessageSignature(
 	}
 
 	// Extract and validate signature version
-	versionRaw, ok := headers[constant.HeaderSignatureVersion]
+	versionRaw, ok := headers[HeaderSignatureVersion]
 	if !ok {
-		return fmt.Errorf("%w: %s", ErrMissingSignatureHeaders, constant.HeaderSignatureVersion)
+		return fmt.Errorf("%w: %s", ErrMissingSignatureHeaders, HeaderSignatureVersion)
 	}
 
 	version, ok := versionRaw.(string)
 	if !ok {
-		return fmt.Errorf("%w: %s must be a string", ErrMissingSignatureHeaders, constant.HeaderSignatureVersion)
+		return fmt.Errorf("%w: %s must be a string", ErrMissingSignatureHeaders, HeaderSignatureVersion)
 	}
 
 	// Check if the signature version matches the signer's version

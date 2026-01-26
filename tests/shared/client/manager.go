@@ -15,6 +15,8 @@ import (
 
 // ManagerClient provides HTTP access to the Manager API.
 // This is the ONLY interface tests use to interact with the system.
+// Uses RequestBuilder to eliminate duplicated request construction logic.
+// Thread-safe: creates new RequestBuilder per request.
 type ManagerClient struct {
 	baseURL        string
 	httpClient     *http.Client
@@ -37,6 +39,12 @@ func NewManagerClient(baseURL, organizationID string) *ManagerClient {
 			Transport: transport,
 		},
 	}
+}
+
+// newRequest creates a new RequestBuilder for this client.
+// Each request gets its own builder for thread safety.
+func (c *ManagerClient) newRequest() *RequestBuilder {
+	return NewRequestBuilder(c.httpClient)
 }
 
 // SSLInput contains SSL configuration for connection creation.
@@ -140,76 +148,33 @@ type ConnectionResponse struct {
 
 // CreateConnection creates a new database connection via the Manager API.
 func (c *ManagerClient) CreateConnection(ctx context.Context, input ConnectionInput) (*ConnectionResponse, error) {
-	body, err := json.Marshal(input)
+	var result ConnectionResponse
+
+	err := c.newRequest().
+		Post(c.baseURL+"/v1/management/connections").
+		WithOrganizationID(c.organizationID).
+		WithJSONBody(input).
+		ExpectStatus(http.StatusCreated, http.StatusOK).
+		Execute(ctx, &result)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal connection input: %w", err)
+		return nil, fmt.Errorf("CreateConnection: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/management/connections", bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Organization-Id", c.organizationID)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("create connection failed with status %d: %s", resp.StatusCode, string(respBody))
-	}
-
-	// The API returns {"id": "uuid"} on creation
-	var connectionResponse ConnectionResponse
-	if err := json.Unmarshal(respBody, &connectionResponse); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
-	}
-
-	return &connectionResponse, nil
+	return &result, nil
 }
 
 // CreateFetcherJob creates a new data extraction job via the Manager API.
 func (c *ManagerClient) CreateFetcherJob(ctx context.Context, request model.FetcherRequest) (*model.FetcherResponse, error) {
-	body, err := json.Marshal(request)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal fetcher request: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/fetcher", bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Organization-Id", c.organizationID)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("create fetcher job failed with status %d: %s", resp.StatusCode, string(respBody))
-	}
-
 	var result model.FetcherResponse
-	if err := json.Unmarshal(respBody, &result); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+
+	err := c.newRequest().
+		Post(c.baseURL+"/v1/fetcher").
+		WithOrganizationID(c.organizationID).
+		WithJSONBody(request).
+		ExpectStatus(http.StatusAccepted, http.StatusOK).
+		Execute(ctx, &result)
+	if err != nil {
+		return nil, fmt.Errorf("CreateFetcherJob: %w", err)
 	}
 
 	return &result, nil
@@ -217,103 +182,58 @@ func (c *ManagerClient) CreateFetcherJob(ctx context.Context, request model.Fetc
 
 // GetJob retrieves job details by ID via the Manager API.
 func (c *ManagerClient) GetJob(ctx context.Context, jobID string) (*model.JobResponse, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/v1/fetcher/"+jobID, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("X-Organization-Id", c.organizationID)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("get job failed with status %d: %s", resp.StatusCode, string(respBody))
-	}
-
 	var result model.JobResponse
-	if err := json.Unmarshal(respBody, &result); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+
+	err := c.newRequest().
+		Get(c.baseURL+"/v1/fetcher/"+jobID).
+		WithOrganizationID(c.organizationID).
+		ExpectStatus(http.StatusOK).
+		Execute(ctx, &result)
+	if err != nil {
+		return nil, fmt.Errorf("GetJob: %w", err)
 	}
 
 	return &result, nil
 }
 
 // WaitForJobCompletion polls the job status until it's completed or failed.
+// Uses Poller with retry support for transient errors.
 func (c *ManagerClient) WaitForJobCompletion(ctx context.Context, jobID string, timeout time.Duration) (*model.JobResponse, error) {
-	deadline := time.Now().Add(timeout)
-
-	var lastErr error
-
-	consecutiveErrors := 0
+	poller := NewPoller(config.PollingInterval)
 
 	const maxConsecutiveErrors = 5
 
-	ticker := time.NewTicker(config.PollingInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-ticker.C:
-			if time.Now().After(deadline) {
-				if lastErr != nil {
-					return nil, fmt.Errorf("timeout waiting for job %s to complete (last error: %w)", jobID, lastErr)
-				}
-
-				return nil, fmt.Errorf("timeout waiting for job %s to complete", jobID)
-			}
-
-			job, err := c.GetJob(ctx, jobID)
-			if err != nil {
-				lastErr = err
-
-				consecutiveErrors++
-				if consecutiveErrors >= maxConsecutiveErrors {
-					return nil, fmt.Errorf("job %s: too many consecutive errors: %w", jobID, err)
-				}
-
-				continue
-			}
-
-			consecutiveErrors = 0
-			lastErr = nil
-
-			switch job.Status {
-			case "completed":
-				return job, nil
-			case "failed":
-				return job, fmt.Errorf("job %s failed", jobID)
-			}
-			// Status is "pending" or "processing" - continue polling
+	job, err := WaitForWithRetry(poller, ctx, timeout, maxConsecutiveErrors, func() (*model.JobResponse, bool, error) {
+		job, err := c.GetJob(ctx, jobID)
+		if err != nil {
+			return nil, false, err // Transient error, will retry
 		}
+		// Check if job is in terminal state
+		if job.Status == "completed" || job.Status == "failed" || job.Status == "cancelled" {
+			return job, true, nil
+		}
+
+		return nil, false, nil // Continue polling
+	})
+	if err != nil {
+		return nil, fmt.Errorf("WaitForJobCompletion: %w", err)
 	}
+	// Return job with error if it failed
+	if job.Status == "failed" {
+		return job, fmt.Errorf("job %s failed", jobID)
+	}
+
+	return job, nil
 }
 
 // HealthCheck checks if the Manager API is accessible.
 func (c *ManagerClient) HealthCheck(ctx context.Context) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/health", nil)
+	err := c.newRequest().
+		Get(c.baseURL+"/health").
+		ExpectStatus(http.StatusOK).
+		Execute(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("health check failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("health check failed with status %d", resp.StatusCode)
+		return fmt.Errorf("HealthCheck: %w", err)
 	}
 
 	return nil
@@ -326,31 +246,15 @@ type ListConnectionsResponse struct {
 
 // ListConnections retrieves all connections via the Manager API.
 func (c *ManagerClient) ListConnections(ctx context.Context) ([]ConnectionResponse, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/v1/management/connections", nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("X-Organization-Id", c.organizationID)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("list connections failed with status %d: %s", resp.StatusCode, string(respBody))
-	}
-
 	var result ListConnectionsResponse
-	if err := json.Unmarshal(respBody, &result); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+
+	err := c.newRequest().
+		Get(c.baseURL+"/v1/management/connections").
+		WithOrganizationID(c.organizationID).
+		ExpectStatus(http.StatusOK).
+		Execute(ctx, &result)
+	if err != nil {
+		return nil, fmt.Errorf("ListConnections: %w", err)
 	}
 
 	return result.Items, nil
@@ -358,22 +262,13 @@ func (c *ManagerClient) ListConnections(ctx context.Context) ([]ConnectionRespon
 
 // DeleteConnection deletes a connection by ID via the Manager API.
 func (c *ManagerClient) DeleteConnection(ctx context.Context, connectionID string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.baseURL+"/v1/management/connections/"+connectionID, nil)
+	err := c.newRequest().
+		Delete(c.baseURL+"/v1/management/connections/"+connectionID).
+		WithOrganizationID(c.organizationID).
+		ExpectStatus(http.StatusNoContent, http.StatusOK, http.StatusAccepted).
+		Execute(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("X-Organization-Id", c.organizationID)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
-		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("delete connection failed with status %d: %s", resp.StatusCode, string(respBody))
+		return fmt.Errorf("DeleteConnection: %w", err)
 	}
 
 	return nil
@@ -398,31 +293,15 @@ func (c *ManagerClient) DeleteConnectionByConfigName(ctx context.Context, config
 
 // GetConnection retrieves a connection by ID via the Manager API.
 func (c *ManagerClient) GetConnection(ctx context.Context, connectionID string) (*ConnectionResponse, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/v1/management/connections/"+connectionID, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("X-Organization-Id", c.organizationID)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("get connection failed with status %d: %s", resp.StatusCode, string(respBody))
-	}
-
 	var result ConnectionResponse
-	if err := json.Unmarshal(respBody, &result); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+
+	err := c.newRequest().
+		Get(c.baseURL+"/v1/management/connections/"+connectionID).
+		WithOrganizationID(c.organizationID).
+		ExpectStatus(http.StatusOK).
+		Execute(ctx, &result)
+	if err != nil {
+		return nil, fmt.Errorf("GetConnection: %w", err)
 	}
 
 	return &result, nil
@@ -430,37 +309,16 @@ func (c *ManagerClient) GetConnection(ctx context.Context, connectionID string) 
 
 // UpdateConnection updates a connection by ID via the Manager API.
 func (c *ManagerClient) UpdateConnection(ctx context.Context, connectionID string, input ConnectionInput) (*ConnectionResponse, error) {
-	body, err := json.Marshal(input)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal connection input: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, c.baseURL+"/v1/management/connections/"+connectionID, bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Organization-Id", c.organizationID)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("update connection failed with status %d: %s", resp.StatusCode, string(respBody))
-	}
-
 	var result ConnectionResponse
-	if err := json.Unmarshal(respBody, &result); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+
+	err := c.newRequest().
+		Patch(c.baseURL+"/v1/management/connections/"+connectionID).
+		WithOrganizationID(c.organizationID).
+		WithJSONBody(input).
+		ExpectStatus(http.StatusOK).
+		Execute(ctx, &result)
+	if err != nil {
+		return nil, fmt.Errorf("UpdateConnection: %w", err)
 	}
 
 	return &result, nil
@@ -469,37 +327,16 @@ func (c *ManagerClient) UpdateConnection(ctx context.Context, connectionID strin
 // PartialUpdateConnection updates specific fields of a connection via PATCH.
 // Only the provided fields (non-nil) will be updated.
 func (c *ManagerClient) PartialUpdateConnection(ctx context.Context, connectionID string, input ConnectionPartialUpdateInput) (*ConnectionResponse, error) {
-	body, err := json.Marshal(input)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal partial update input: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, c.baseURL+"/v1/management/connections/"+connectionID, bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Organization-Id", c.organizationID)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("partial update connection failed with status %d: %s", resp.StatusCode, string(respBody))
-	}
-
 	var result ConnectionResponse
-	if err := json.Unmarshal(respBody, &result); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+
+	err := c.newRequest().
+		Patch(c.baseURL+"/v1/management/connections/"+connectionID).
+		WithOrganizationID(c.organizationID).
+		WithJSONBody(input).
+		ExpectStatus(http.StatusOK).
+		Execute(ctx, &result)
+	if err != nil {
+		return nil, fmt.Errorf("PartialUpdateConnection: %w", err)
 	}
 
 	return &result, nil
@@ -524,35 +361,15 @@ type ConnectionTestResponse struct {
 
 // TestConnectionEndpoint tests a connection by ID via the Manager API.
 func (c *ManagerClient) TestConnectionEndpoint(ctx context.Context, connectionID string) (*ConnectionTestResponse, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/management/connections/"+connectionID+"/test", nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("X-Organization-Id", c.organizationID)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
-
-	if resp.StatusCode == http.StatusTooManyRequests {
-		return nil, fmt.Errorf("rate limited: %s", string(respBody))
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("test connection failed with status %d: %s", resp.StatusCode, string(respBody))
-	}
-
 	var result ConnectionTestResponse
-	if err := json.Unmarshal(respBody, &result); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+
+	err := c.newRequest().
+		Post(c.baseURL+"/v1/management/connections/"+connectionID+"/test").
+		WithOrganizationID(c.organizationID).
+		ExpectStatus(http.StatusOK).
+		Execute(ctx, &result)
+	if err != nil {
+		return nil, fmt.Errorf("TestConnectionEndpoint: %w", err)
 	}
 
 	return &result, nil
@@ -580,37 +397,16 @@ type SchemaValidationResponse struct {
 
 // ValidateSchema validates schema references via the Manager API.
 func (c *ManagerClient) ValidateSchema(ctx context.Context, request SchemaValidationRequest) (*SchemaValidationResponse, error) {
-	body, err := json.Marshal(request)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/management/connections/validate-schema", bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Organization-Id", c.organizationID)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("validate schema failed with status %d: %s", resp.StatusCode, string(respBody))
-	}
-
 	var result SchemaValidationResponse
-	if err := json.Unmarshal(respBody, &result); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+
+	err := c.newRequest().
+		Post(c.baseURL+"/v1/management/connections/validate-schema").
+		WithOrganizationID(c.organizationID).
+		WithJSONBody(request).
+		ExpectStatus(http.StatusOK).
+		Execute(ctx, &result)
+	if err != nil {
+		return nil, fmt.Errorf("ValidateSchema: %w", err)
 	}
 
 	return &result, nil

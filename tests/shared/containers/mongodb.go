@@ -213,3 +213,12 @@ func (m *MongoDBContainer) Stop(ctx context.Context) error {
 
 	return nil
 }
+
+// GetHost returns the container's host address.
+func (m *MongoDBContainer) GetHost() string { return m.Host }
+
+// GetPort returns the container's mapped port.
+func (m *MongoDBContainer) GetPort() string { return m.Port }
+
+// GetURI returns the container's connection URI.
+func (m *MongoDBContainer) GetURI() string { return m.URI }

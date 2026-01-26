@@ -49,7 +49,7 @@ func NewRabbitMQEventConsumer(amqpURL string) (*RabbitMQEventConsumer, error) {
 }
 
 // WaitForJobEvent waits for a specific job's completion or failure event.
-// Uses the persistent test.job.events queue that is pre-bound during setup.
+// Uses the persistent test.job.events queue that is pre-bound during chaos.
 func (c *RabbitMQEventConsumer) WaitForJobEvent(ctx context.Context, jobID string, timeout time.Duration) (*JobNotification, error) {
 	// Create fresh connection for this wait operation
 	conn, err := amqp.Dial(c.amqpURL)

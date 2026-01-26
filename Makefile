@@ -115,16 +115,17 @@ help:
 	@echo ""
 	@echo ""
 	@echo "Test Suite Aliases:"
-	@echo "  make test-integration-container  	   - Run integration tests with all containers"
+	@echo "  make test 					           - Run unit tests on all components"
+	@echo "  make test-integration  			   - Run integration tests with all containers (full suite, ~3min). Main command for the integration test."
+	@echo "  make test-fuzzy					   - Run fuzz tests on all components (full suite, ~9min). Main command for the fuzz test."
+	@echo "  make test-chaos              	   	   - Run chaos E2E tests (full suite, ~10min). Main command for the chaos test."
 	@echo "  make test-integration-infra      	   - Start infrastructure for debugging (fixed ports)"
 	@echo "  make test-integration-debug-manager   - Debug Manager in IDE, Worker in container"
 	@echo "  make test-integration-debug-worker    - Debug Worker in IDE, Manager in container"
 	@echo "  make test-integration-debug-full      - Debug both Manager and Worker in IDE"
 	@echo "  make test-integration-clean      	   - Clean up testcontainers and networks"
 	@echo "  make test-integration-check      	   - Check for port conflicts before starting"
-	@echo "  make test-fuzzy					   - Run fuzz tests on all components"
-	@echo "  make test-chaos              	   	   - Run chaos E2E tests (full suite, ~45min)"
-	@echo "  make test-chaos-quick        	   	   - Run quick chaos tests (latency only, ~20min)"
+	@echo "  make test-chaos-quick        	   	   - Run quick chaos tests (latency only, ~5min)"
 	@echo "  make test-chaos-verbose      	   	   - Run chaos tests with verbose output"
 	@echo ""
 
@@ -205,18 +206,33 @@ test-unit:
 	@echo "[ok] Unit tests completed successfully"
 
 # =============================================================================
-# test-integration-container: Full Integration Tests
+# test-integration: Full Integration Tests
 # =============================================================================
-.PHONY: test-integration-container
-test-integration-container:
+.PHONY: test-integration
+test-integration:
 	$(call print_title,Running integration tests with Testcontainers)
 	$(call check_command,docker,Install Docker from https://docs.docker.com/get-docker/)
 	@echo "Note: Integration tests require either:"
 	@echo "  - GITHUB_TOKEN set (to build from Dockerfile)"
 	@echo "  - MANAGER_IMAGE and WORKER_IMAGE set (to use pre-built images)"
 	@echo ""
-	@DOCKER_BUILDKIT=1 go test -tags=integration -v -timeout 30m -count=1 ./tests/integration/containers/...
-	@echo "[ok] Integration tests completed successfully"
+	@start_time=$$(date +%s); \
+	DOCKER_BUILDKIT=1 go test -tags=integration -v -timeout 30m -count=1 ./tests/integration/containers/...; \
+	test_exit_code=$$?; \
+	end_time=$$(date +%s); \
+	elapsed=$$((end_time - start_time)); \
+	minutes=$$((elapsed / 60)); \
+	seconds=$$((elapsed % 60)); \
+	echo ""; \
+	echo "------------------------------------------"; \
+	echo "   Test Duration: $${minutes}m $${seconds}s"; \
+	echo "------------------------------------------"; \
+	if [ $$test_exit_code -eq 0 ]; then \
+		echo "[ok] Integration tests completed successfully"; \
+	else \
+		echo "[error] Integration tests failed"; \
+		exit $$test_exit_code; \
+	fi
 
 # =============================================================================
 # test-integration-infra: Start Infrastructure for Debug Sessions
@@ -685,8 +701,24 @@ FUZZ_TIME ?= 30s
 
 .PHONY: test-fuzzy fuzz-manager fuzz-worker fuzz-connection fuzz-fetcher fuzz-schema fuzz-message
 
-test-fuzzy: fuzz-manager fuzz-worker
-	@echo "[ok] All fuzz tests completed successfully"
+test-fuzzy:
+	@start_time=$$(date +%s); \
+	$(MAKE) fuzz-manager fuzz-worker; \
+	test_exit_code=$$?; \
+	end_time=$$(date +%s); \
+	elapsed=$$((end_time - start_time)); \
+	minutes=$$((elapsed / 60)); \
+	seconds=$$((elapsed % 60)); \
+	echo ""; \
+	echo "------------------------------------------"; \
+	echo "   Test Duration: $${minutes}m $${seconds}s"; \
+	echo "------------------------------------------"; \
+	if [ $$test_exit_code -eq 0 ]; then \
+		echo "[ok] All fuzz tests completed successfully"; \
+	else \
+		echo "[error] Fuzz tests failed"; \
+		exit $$test_exit_code; \
+	fi
 
 fuzz-manager: fuzz-connection fuzz-fetcher fuzz-schema
 	@echo "[ok] Manager fuzz tests completed"
@@ -737,8 +769,23 @@ test-chaos: ## Run chaos E2E tests
 	$(call print_title,Running chaos E2E tests)
 	$(call check_command,docker,Install Docker from https://docs.docker.com/get-docker/)
 	@echo "Running chaos E2E tests..."
-	@go test -v -tags=chaos -timeout 45m ./tests/chaos/...
-	@echo "[ok] Chaos tests completed successfully"
+	@start_time=$$(date +%s); \
+	go test -v -tags=chaos -timeout 45m ./tests/chaos/...; \
+	test_exit_code=$$?; \
+	end_time=$$(date +%s); \
+	elapsed=$$((end_time - start_time)); \
+	minutes=$$((elapsed / 60)); \
+	seconds=$$((elapsed % 60)); \
+	echo ""; \
+	echo "------------------------------------------"; \
+	echo "   Test Duration: $${minutes}m $${seconds}s"; \
+	echo "------------------------------------------"; \
+	if [ $$test_exit_code -eq 0 ]; then \
+		echo "[ok] Chaos tests completed successfully"; \
+	else \
+		echo "[error] Chaos tests failed"; \
+		exit $$test_exit_code; \
+	fi
 
 .PHONY: test-chaos-quick
 test-chaos-quick: ## Run quick chaos tests (latency only)

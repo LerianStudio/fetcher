@@ -259,3 +259,12 @@ func (s *SQLServerContainer) Stop(ctx context.Context) error {
 
 	return nil
 }
+
+// GetHost returns the container's host address.
+func (s *SQLServerContainer) GetHost() string { return s.Host }
+
+// GetPort returns the container's mapped port.
+func (s *SQLServerContainer) GetPort() string { return s.Port }
+
+// GetURI returns the container's connection URL.
+func (s *SQLServerContainer) GetURI() string { return s.URL }

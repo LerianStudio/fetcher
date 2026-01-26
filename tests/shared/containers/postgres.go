@@ -231,3 +231,12 @@ func (p *PostgresContainer) Stop(ctx context.Context) error {
 
 	return nil
 }
+
+// GetHost returns the container's host address.
+func (p *PostgresContainer) GetHost() string { return p.Host }
+
+// GetPort returns the container's mapped port.
+func (p *PostgresContainer) GetPort() string { return p.Port }
+
+// GetURI returns the container's connection URI.
+func (p *PostgresContainer) GetURI() string { return p.URL }

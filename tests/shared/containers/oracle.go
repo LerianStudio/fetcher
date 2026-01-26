@@ -263,3 +263,12 @@ func (o *OracleContainer) Stop(ctx context.Context) error {
 
 	return nil
 }
+
+// GetHost returns the container's host address.
+func (o *OracleContainer) GetHost() string { return o.Host }
+
+// GetPort returns the container's mapped port.
+func (o *OracleContainer) GetPort() string { return o.Port }
+
+// GetURI returns the container's connection URL.
+func (o *OracleContainer) GetURI() string { return o.URL }

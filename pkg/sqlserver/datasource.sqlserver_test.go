@@ -2284,11 +2284,11 @@ func TestExternalDataSource_GetDatabaseSchema(t *testing.T) {
 			name:    "successful schema retrieval with default schema",
 			schemas: []string{},
 			setupMock: func(mock sqlmock.Sqlmock) {
-				// Tables query
-				tableRows := sqlmock.NewRows([]string{"table_name"}).
-					AddRow("users").
-					AddRow("orders")
-				mock.ExpectQuery("SELECT table_name").WillReturnRows(tableRows)
+				// Tables query - now returns table_schema and table_name
+				tableRows := sqlmock.NewRows([]string{"table_schema", "table_name"}).
+					AddRow("dbo", "users").
+					AddRow("dbo", "orders")
+				mock.ExpectQuery("SELECT table_schema, table_name").WillReturnRows(tableRows)
 
 				// Primary keys query
 				pkRows := sqlmock.NewRows([]string{"table_schema", "table_name", "column_name"}).
@@ -2314,9 +2314,10 @@ func TestExternalDataSource_GetDatabaseSchema(t *testing.T) {
 			name:    "successful schema retrieval with custom schemas",
 			schemas: []string{"custom", "public"},
 			setupMock: func(mock sqlmock.Sqlmock) {
-				tableRows := sqlmock.NewRows([]string{"table_name"}).
-					AddRow("products")
-				mock.ExpectQuery("SELECT table_name").WillReturnRows(tableRows)
+				// Tables query - custom schema returns qualified table names
+				tableRows := sqlmock.NewRows([]string{"table_schema", "table_name"}).
+					AddRow("custom", "products")
+				mock.ExpectQuery("SELECT table_schema, table_name").WillReturnRows(tableRows)
 
 				pkRows := sqlmock.NewRows([]string{"table_schema", "table_name", "column_name"}).
 					AddRow("custom", "products", "id")
@@ -2334,7 +2335,7 @@ func TestExternalDataSource_GetDatabaseSchema(t *testing.T) {
 			name:    "tables query error",
 			schemas: []string{},
 			setupMock: func(mock sqlmock.Sqlmock) {
-				mock.ExpectQuery("SELECT table_name").WillReturnError(errors.New("tables query error"))
+				mock.ExpectQuery("SELECT table_schema, table_name").WillReturnError(errors.New("tables query error"))
 			},
 			expectError: true,
 			expectCount: 0,
@@ -2343,9 +2344,9 @@ func TestExternalDataSource_GetDatabaseSchema(t *testing.T) {
 			name:    "primary keys query error",
 			schemas: []string{},
 			setupMock: func(mock sqlmock.Sqlmock) {
-				tableRows := sqlmock.NewRows([]string{"table_name"}).
-					AddRow("users")
-				mock.ExpectQuery("SELECT table_name").WillReturnRows(tableRows)
+				tableRows := sqlmock.NewRows([]string{"table_schema", "table_name"}).
+					AddRow("dbo", "users")
+				mock.ExpectQuery("SELECT table_schema, table_name").WillReturnRows(tableRows)
 
 				mock.ExpectQuery("SELECT tc.table_schema").WillReturnError(errors.New("pk query error"))
 			},
@@ -2356,9 +2357,9 @@ func TestExternalDataSource_GetDatabaseSchema(t *testing.T) {
 			name:    "column query error",
 			schemas: []string{},
 			setupMock: func(mock sqlmock.Sqlmock) {
-				tableRows := sqlmock.NewRows([]string{"table_name"}).
-					AddRow("users")
-				mock.ExpectQuery("SELECT table_name").WillReturnRows(tableRows)
+				tableRows := sqlmock.NewRows([]string{"table_schema", "table_name"}).
+					AddRow("dbo", "users")
+				mock.ExpectQuery("SELECT table_schema, table_name").WillReturnRows(tableRows)
 
 				pkRows := sqlmock.NewRows([]string{"table_schema", "table_name", "column_name"}).
 					AddRow("dbo", "users", "id")
@@ -2405,53 +2406,57 @@ func TestExternalDataSource_GetDatabaseSchema(t *testing.T) {
 // TestQueryTables tests the queryTables internal method
 func TestQueryTables(t *testing.T) {
 	tests := []struct {
-		name        string
-		schemas     []string
-		setupMock   func(sqlmock.Sqlmock)
-		expectError bool
-		expectCount int
+		name           string
+		schemas        []string
+		setupMock      func(sqlmock.Sqlmock)
+		expectError    bool
+		expectCount    int
+		expectedTables []string
 	}{
 		{
 			name:    "default schema",
 			schemas: []string{},
 			setupMock: func(mock sqlmock.Sqlmock) {
-				rows := sqlmock.NewRows([]string{"table_name"}).
-					AddRow("users").
-					AddRow("orders")
-				mock.ExpectQuery("SELECT table_name").WillReturnRows(rows)
+				rows := sqlmock.NewRows([]string{"table_schema", "table_name"}).
+					AddRow("dbo", "users").
+					AddRow("dbo", "orders")
+				mock.ExpectQuery("SELECT table_schema, table_name").WillReturnRows(rows)
 			},
-			expectError: false,
-			expectCount: 2,
+			expectError:    false,
+			expectCount:    2,
+			expectedTables: []string{"users", "orders"}, // default schema tables don't get prefix
 		},
 		{
 			name:    "empty schemas (whitespace only)",
 			schemas: []string{"  ", ""},
 			setupMock: func(mock sqlmock.Sqlmock) {
-				rows := sqlmock.NewRows([]string{"table_name"}).
-					AddRow("users")
-				mock.ExpectQuery("SELECT table_name").WillReturnRows(rows)
+				rows := sqlmock.NewRows([]string{"table_schema", "table_name"}).
+					AddRow("dbo", "users")
+				mock.ExpectQuery("SELECT table_schema, table_name").WillReturnRows(rows)
 			},
-			expectError: false,
-			expectCount: 1,
+			expectError:    false,
+			expectCount:    1,
+			expectedTables: []string{"users"},
 		},
 		{
 			name:    "multiple schemas",
 			schemas: []string{"dbo", "custom"},
 			setupMock: func(mock sqlmock.Sqlmock) {
-				rows := sqlmock.NewRows([]string{"table_name"}).
-					AddRow("users").
-					AddRow("products").
-					AddRow("orders")
-				mock.ExpectQuery("SELECT table_name").WillReturnRows(rows)
+				rows := sqlmock.NewRows([]string{"table_schema", "table_name"}).
+					AddRow("dbo", "users").
+					AddRow("custom", "products").
+					AddRow("dbo", "orders")
+				mock.ExpectQuery("SELECT table_schema, table_name").WillReturnRows(rows)
 			},
-			expectError: false,
-			expectCount: 3,
+			expectError:    false,
+			expectCount:    3,
+			expectedTables: []string{"users", "custom.products", "orders"}, // non-default schema gets prefix
 		},
 		{
 			name:    "query error",
 			schemas: []string{},
 			setupMock: func(mock sqlmock.Sqlmock) {
-				mock.ExpectQuery("SELECT table_name").WillReturnError(errors.New("query error"))
+				mock.ExpectQuery("SELECT table_schema, table_name").WillReturnError(errors.New("query error"))
 			},
 			expectError: true,
 			expectCount: 0,
@@ -2461,9 +2466,9 @@ func TestQueryTables(t *testing.T) {
 			schemas: []string{},
 			setupMock: func(mock sqlmock.Sqlmock) {
 				// Create rows with wrong column count to cause scan error
-				rows := sqlmock.NewRows([]string{"table_name", "extra"}).
-					AddRow("users", nil)
-				mock.ExpectQuery("SELECT table_name").WillReturnRows(rows)
+				rows := sqlmock.NewRows([]string{"table_schema", "table_name", "extra"}).
+					AddRow("dbo", "users", nil)
+				mock.ExpectQuery("SELECT table_schema, table_name").WillReturnRows(rows)
 			},
 			expectError: true,
 			expectCount: 0,
@@ -2496,6 +2501,9 @@ func TestQueryTables(t *testing.T) {
 			} else {
 				require.NoError(t, err)
 				assert.Len(t, result, tt.expectCount)
+				if tt.expectedTables != nil {
+					assert.Equal(t, tt.expectedTables, result)
+				}
 			}
 		})
 	}
@@ -3023,12 +3031,186 @@ func TestQueryTables_RowsIterationError(t *testing.T) {
 	ds := &ExternalDataSource{connection: conn}
 
 	// Create rows with an error during iteration
-	rows := sqlmock.NewRows([]string{"table_name"}).
-		AddRow("users").
+	rows := sqlmock.NewRows([]string{"table_schema", "table_name"}).
+		AddRow("dbo", "users").
 		RowError(0, errors.New("row iteration error"))
-	mock.ExpectQuery("SELECT table_name").WillReturnRows(rows)
+	mock.ExpectQuery("SELECT table_schema, table_name").WillReturnRows(rows)
 
 	result, err := ds.queryTables(context.Background(), []string{})
 	assert.Error(t, err)
 	assert.Nil(t, result)
+}
+
+// TestSQLInjectionPrevention verifies that malicious input cannot be used for SQL injection.
+// SQL Server uses parameterized queries with @p1, @p2 placeholders via squirrel query builder.
+func TestSQLInjectionPrevention(t *testing.T) {
+	ctx := testContext(t)
+
+	// Malicious inputs that could be used for SQL injection attacks
+	maliciousInputs := []string{
+		"users; DROP TABLE users;--",
+		"users' OR '1'='1",
+		`users"; DROP TABLE users;--`,
+		"users UNION SELECT * FROM passwords--",
+		"users; DELETE FROM users WHERE 1=1;--",
+	}
+
+	t.Run("malicious table names are rejected by validation", func(t *testing.T) {
+		db, _, err := sqlmock.New()
+		require.NoError(t, err)
+		defer db.Close()
+
+		conn := &Connection{
+			ConnectionDB: db,
+			Connected:    true,
+			Logger:       &testutil.MockLogger{},
+		}
+
+		ds := &ExternalDataSource{connection: conn}
+
+		// Schema with only valid table names
+		schema := []TableSchema{
+			{
+				TableName: "users",
+				Columns: []ColumnInformation{
+					{Name: "id", DataType: "int"},
+					{Name: "name", DataType: "nvarchar"},
+				},
+			},
+		}
+
+		for _, maliciousTable := range maliciousInputs {
+			t.Run(maliciousTable, func(t *testing.T) {
+				// Attempting to query with a malicious table name should fail validation
+				_, err := ds.Query(ctx, schema, maliciousTable, []string{"id"}, nil)
+
+				// Should fail because the malicious table doesn't exist in schema
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "does not exist")
+			})
+		}
+	})
+
+	t.Run("malicious field names are rejected by validation", func(t *testing.T) {
+		db, _, err := sqlmock.New()
+		require.NoError(t, err)
+		defer db.Close()
+
+		conn := &Connection{
+			ConnectionDB: db,
+			Connected:    true,
+			Logger:       &testutil.MockLogger{},
+		}
+
+		ds := &ExternalDataSource{connection: conn}
+
+		schema := []TableSchema{
+			{
+				TableName: "users",
+				Columns: []ColumnInformation{
+					{Name: "id", DataType: "int"},
+					{Name: "name", DataType: "nvarchar"},
+				},
+			},
+		}
+
+		for _, maliciousField := range maliciousInputs {
+			t.Run(maliciousField, func(t *testing.T) {
+				// Attempting to query with a malicious field name should fail validation
+				_, err := ds.Query(ctx, schema, "users", []string{maliciousField}, nil)
+
+				// Should fail because the malicious field doesn't exist in schema
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "invalid fields")
+			})
+		}
+	})
+
+	t.Run("filter values are parameterized with SQL Server placeholders", func(t *testing.T) {
+		db, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer db.Close()
+
+		conn := &Connection{
+			ConnectionDB: db,
+			Connected:    true,
+			Logger:       &testutil.MockLogger{},
+		}
+
+		ds := &ExternalDataSource{connection: conn}
+
+		schema := []TableSchema{
+			{
+				TableName: "users",
+				Columns: []ColumnInformation{
+					{Name: "id", DataType: "int"},
+					{Name: "name", DataType: "nvarchar"},
+				},
+			},
+		}
+
+		// Even with malicious filter values, they should be passed as parameters
+		maliciousValue := "'; DROP TABLE users;--"
+
+		// Mock expects the query with SQL Server's @p1 parameterized placeholder
+		rows := sqlmock.NewRows([]string{"id", "name"})
+		mock.ExpectQuery(`SELECT id, name FROM users WHERE name = @p1`).
+			WithArgs(maliciousValue).
+			WillReturnRows(rows)
+
+		filter := map[string][]any{
+			"name": {maliciousValue},
+		}
+
+		// Query should succeed - the malicious value is safely parameterized
+		result, err := ds.Query(ctx, schema, "users", []string{"id", "name"}, filter)
+
+		require.NoError(t, err)
+		assert.Empty(t, result) // No rows returned, but no error
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("advanced filter values are parameterized", func(t *testing.T) {
+		db, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer db.Close()
+
+		conn := &Connection{
+			ConnectionDB: db,
+			Connected:    true,
+			Logger:       &testutil.MockLogger{},
+		}
+
+		ds := &ExternalDataSource{connection: conn}
+
+		schema := []TableSchema{
+			{
+				TableName: "users",
+				Columns: []ColumnInformation{
+					{Name: "id", DataType: "int"},
+					{Name: "name", DataType: "nvarchar"},
+				},
+			},
+		}
+
+		maliciousValue := "admin' OR '1'='1"
+
+		// Mock expects parameterized query with SQL Server @p1 placeholder
+		rows := sqlmock.NewRows([]string{"id", "name"})
+		mock.ExpectQuery(`SELECT id, name FROM users WHERE name = @p1`).
+			WithArgs(maliciousValue).
+			WillReturnRows(rows)
+
+		filter := map[string]job.FilterCondition{
+			"name": {
+				Equals: []any{maliciousValue},
+			},
+		}
+
+		result, err := ds.QueryWithAdvancedFilters(ctx, schema, "users", []string{"id", "name"}, filter)
+
+		require.NoError(t, err)
+		assert.Empty(t, result)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
 }

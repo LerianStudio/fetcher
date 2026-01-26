@@ -1,6 +1,29 @@
 # tests/shared - Shared Test Infrastructure
 
-Centralized testing infrastructure library for integration and chaos tests.
+Centralized testing infrastructure library for integration tests, chaos tests, and direct datasource testing.
+
+## Table of Contents
+
+- [Architecture Overview](#architecture-overview)
+- [Quick Start](#quick-start)
+  - [Option A: Direct Datasource Testing (Lightweight)](#option-a-direct-datasource-testing-lightweight)
+  - [Option B: Full Stack Testing (End-to-End)](#option-b-full-stack-testing-end-to-end)
+- [Package Reference](#package-reference)
+  - [config](#config)
+  - [client](#client)
+  - [containers](#containers)
+  - [network](#network)
+  - [fixtures](#fixtures)
+  - [topology](#topology)
+- [Complete Integration Example](#complete-integration-example)
+- [Datasource Integration Test Example](#datasource-integration-test-example)
+- [Dependencies](#dependencies)
+- [Key Design Decisions](#key-design-decisions)
+- [setup](#setup)
+- [Toxiproxy (containers)](#toxiproxy-containers)
+- [Chaos Testing Framework (tests/shared/chaos)](#chaos-testing-framework-testssharedchaos)
+
+---
 
 ## Architecture Overview
 
@@ -25,6 +48,101 @@ tests/shared/
 ---
 
 ## Quick Start
+
+This library supports two main usage patterns:
+
+### Option A: Direct Datasource Testing (Lightweight)
+
+Test datasources directly without Manager API, RabbitMQ, or SeaweedFS. Ideal for unit/component tests of datasource packages.
+
+```go
+import (
+    "github.com/LerianStudio/fetcher/pkg/postgres"
+    "github.com/LerianStudio/fetcher/tests/shared/config"
+    "github.com/LerianStudio/fetcher/tests/shared/containers"
+    "github.com/LerianStudio/fetcher/tests/shared/fixtures"
+    "github.com/LerianStudio/fetcher/tests/shared/network"
+    libCommons "github.com/LerianStudio/lib-commons/v2/commons"
+)
+
+// 1. Create network
+net, _ := network.CreateNetwork(ctx)
+
+// 2. Start database container
+pgOpts := containers.DefaultPostgresOptions(config.NetworkName)
+pgOpts.InitScript, _ = fixtures.GetPostgresInitSQL()
+pg, _ := containers.StartPostgres(ctx, pgOpts)
+
+// 3. Create datasource directly (no Manager API needed!)
+logger := libCommons.NewLoggerFromContext(ctx)
+conn := &postgres.Connection{
+    ConnectionString:   pg.URL,  // Container provides ready-to-use connection string
+    DBName:             pg.Internal.Database,
+    Logger:             logger,
+    MaxOpenConnections: 25,
+    MaxIdleConnections: 5,
+}
+ds, _ := postgres.NewDataSourceRepository(conn)
+defer ds.CloseConnection()
+
+// 4. Test datasource directly
+schema, _ := ds.GetDatabaseSchema(ctx, []string{"public"})
+results, _ := ds.Query(ctx, schema, "transactions", []string{"id", "amount"}, nil)
+
+// OR
+
+// 1. Start database container
+accountsInitSQL = `
+CREATE TABLE IF NOT EXISTS accounts (
+    id UUID PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    alias VARCHAR(32) NOT NULL UNIQUE,
+    balance DECIMAL(19,4) NOT NULL DEFAULT 0,
+    status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
+    metadata JSONB,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_accounts_alias ON accounts(alias);
+CREATE INDEX IF NOT EXISTS idx_accounts_status ON accounts(status);
+`
+
+pgOpts := containers.PostgresOptions{
+	NetworkAlias: "test-postgres",
+	Username:     "testuser",
+	Password:     "testpass",
+	Database:     "testdb",
+	InitScript:   accountsInitSQL,
+}
+
+testPostgresContainer, err := containers.StartPostgres(ctx, pgOpts)
+if err != nil {
+	fmt.Fprintf(os.Stderr, "failed to start PostgreSQL container: %v\n", err)
+	os.Exit(1)
+}
+
+// 2. Create datasource directly (no Manager API needed!)
+logger := libCommons.NewLoggerFromContext(ctx)
+conn := &postgres.Connection{
+    ConnectionString:   pg.URL,  // Container provides ready-to-use connection string
+    DBName:             pg.Internal.Database,
+    Logger:             logger,
+    MaxOpenConnections: 25,
+    MaxIdleConnections: 5,
+}
+ds, _ := postgres.NewDataSourceRepository(conn)
+defer ds.CloseConnection()
+
+// 3. Test datasource directly
+schema, _ := ds.GetDatabaseSchema(ctx, []string{"public"})
+results, _ := ds.Query(ctx, schema, "transactions", []string{"id", "amount"}, nil)
+
+```
+
+### Option B: Full Stack Testing (End-to-End)
+
+Test complete flow through Manager API with all infrastructure. Ideal for E2E and integration tests.
 
 ```go
 import (
@@ -441,6 +559,60 @@ fmt.Println(pg.InternalHost)  // Docker network hostname
 fmt.Println(pg.Internal.Port) // Internal port (int): 5432
 ```
 
+#### Direct Datasource Connection
+
+Containers provide all information needed to create datasources directly, without using the Manager API:
+
+```go
+// PostgreSQL
+pg, _ := containers.StartPostgres(ctx, pgOpts)
+conn := &postgres.Connection{
+    ConnectionString:   pg.URL,
+    DBName:             pg.Internal.Database,
+    Logger:             logger,
+    MaxOpenConnections: 25,
+    MaxIdleConnections: 5,
+}
+ds, _ := postgres.NewDataSourceRepository(conn)
+
+// MySQL
+my, _ := containers.StartMySQL(ctx, myOpts)
+conn := &mysql.Connection{
+    ConnectionString:   my.URL,
+    DBName:             my.Internal.Database,
+    Logger:             logger,
+    MaxOpenConnections: 25,
+    MaxIdleConnections: 5,
+}
+ds, _ := mysql.NewDataSourceRepository(conn)
+
+// MongoDB
+mongo, _ := containers.StartMongoDB(ctx, mongoOpts)
+ds, _ := mongodb.NewDataSourceRepository(mongo.URI, mongo.Internal.Database, logger)
+
+// Oracle
+ora, _ := containers.StartOracle(ctx, oraOpts)
+conn := &oracle.Connection{
+    ConnectionString:   ora.URL,
+    DBName:             ora.Internal.Database,
+    Logger:             logger,
+    MaxOpenConnections: 25,
+    MaxIdleConnections: 5,
+}
+ds, _ := oracle.NewDataSourceRepository(conn)
+
+// SQL Server
+sql, _ := containers.StartSQLServer(ctx, sqlOpts)
+conn := &sqlserver.Connection{
+    ConnectionString:   sql.URL,
+    DBName:             sql.Internal.Database,
+    Logger:             logger,
+    MaxOpenConnections: 25,
+    MaxIdleConnections: 5,
+}
+ds, _ := sqlserver.NewDataSourceRepository(conn)
+```
+
 ---
 
 ### network
@@ -670,6 +842,190 @@ func TestIntegration(t *testing.T) {
 
 ---
 
+## Datasource Integration Test Example
+
+Test datasources directly without the full Fetcher stack. This approach is ideal for:
+- Testing datasource query logic in isolation
+- Faster feedback cycles (no Manager/Worker/RabbitMQ overhead)
+- Debugging datasource-specific issues
+
+```go
+//go:build integration
+// +build integration
+
+package postgres_test
+
+import (
+    "context"
+    "testing"
+    "time"
+
+    libCommons "github.com/LerianStudio/lib-commons/v2/commons"
+    "github.com/LerianStudio/fetcher/pkg/postgres"
+    "github.com/LerianStudio/fetcher/tests/shared/config"
+    "github.com/LerianStudio/fetcher/tests/shared/containers"
+    "github.com/LerianStudio/fetcher/tests/shared/fixtures"
+    "github.com/LerianStudio/fetcher/tests/shared/network"
+    "github.com/stretchr/testify/assert"
+    "github.com/stretchr/testify/require"
+)
+
+func TestPostgresDataSource_Integration(t *testing.T) {
+    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+    defer cancel()
+
+    // 1. Create Docker network
+    net, err := network.CreateNetwork(ctx)
+    require.NoError(t, err)
+    defer net.Remove(ctx)
+
+    // 2. Start PostgreSQL container with test data
+    pgOpts := containers.DefaultPostgresOptions(config.NetworkName)
+    pgOpts.InitScript, err = fixtures.GetPostgresInitSQL()
+    require.NoError(t, err)
+
+    pg, err := containers.StartPostgres(ctx, pgOpts)
+    require.NoError(t, err)
+    defer pg.Stop(ctx)
+
+    // 3. Create connection from container info
+    logger := libCommons.NewLoggerFromContext(ctx)
+    conn := &postgres.Connection{
+        ConnectionString:   pg.URL,
+        DBName:             pg.Internal.Database,
+        Logger:             logger,
+        MaxOpenConnections: 25,
+        MaxIdleConnections: 5,
+    }
+
+    // 4. Create datasource (injects connection)
+    ds, err := postgres.NewDataSourceRepository(conn)
+    require.NoError(t, err)
+    defer ds.CloseConnection()
+
+    // 5. Run tests
+    t.Run("GetDatabaseSchema returns table structure", func(t *testing.T) {
+        schema, err := ds.GetDatabaseSchema(ctx, []string{"public"})
+        require.NoError(t, err)
+        assert.NotEmpty(t, schema)
+
+        // Find transactions table
+        var transactionsSchema *postgres.TableSchema
+        for i := range schema {
+            if schema[i].TableName == "transactions" {
+                transactionsSchema = &schema[i]
+                break
+            }
+        }
+
+        require.NotNil(t, transactionsSchema, "transactions table should exist")
+        assert.NotEmpty(t, transactionsSchema.Columns)
+
+        // Verify expected columns exist
+        columnNames := make(map[string]bool)
+        for _, col := range transactionsSchema.Columns {
+            columnNames[col.Name] = true
+        }
+
+        assert.True(t, columnNames["id"], "should have id column")
+        assert.True(t, columnNames["account_id"], "should have account_id column")
+        assert.True(t, columnNames["amount"], "should have amount column")
+    })
+
+    t.Run("Query returns all records with wildcard fields", func(t *testing.T) {
+        schema, err := ds.GetDatabaseSchema(ctx, []string{"public"})
+        require.NoError(t, err)
+
+        results, err := ds.Query(ctx, schema, "transactions", []string{"*"}, nil)
+        require.NoError(t, err)
+
+        expectedCount := fixtures.ExpectedPostgresRecordCount()
+        assert.Len(t, results, expectedCount)
+    })
+
+    t.Run("Query returns specific fields", func(t *testing.T) {
+        schema, err := ds.GetDatabaseSchema(ctx, []string{"public"})
+        require.NoError(t, err)
+
+        results, err := ds.Query(ctx, schema, "transactions", []string{"id", "amount", "currency"}, nil)
+        require.NoError(t, err)
+        assert.NotEmpty(t, results)
+
+        // Verify only requested fields are present
+        for _, row := range results {
+            assert.Contains(t, row, "id")
+            assert.Contains(t, row, "amount")
+            assert.Contains(t, row, "currency")
+        }
+    })
+
+    t.Run("Query with equality filter", func(t *testing.T) {
+        schema, err := ds.GetDatabaseSchema(ctx, []string{"public"})
+        require.NoError(t, err)
+
+        filter := map[string][]any{
+            "account_id": {fixtures.TestAccountIDs[0]},
+        }
+
+        results, err := ds.Query(ctx, schema, "transactions", []string{"*"}, filter)
+        require.NoError(t, err)
+
+        for _, row := range results {
+            assert.Equal(t, fixtures.TestAccountIDs[0], row["account_id"])
+        }
+    })
+
+    t.Run("Query with multiple value filter (IN)", func(t *testing.T) {
+        schema, err := ds.GetDatabaseSchema(ctx, []string{"public"})
+        require.NoError(t, err)
+
+        filter := map[string][]any{
+            "account_id": {fixtures.TestAccountIDs[0], fixtures.TestAccountIDs[1]},
+        }
+
+        results, err := ds.Query(ctx, schema, "transactions", []string{"*"}, filter)
+        require.NoError(t, err)
+
+        validIDs := map[string]bool{
+            fixtures.TestAccountIDs[0]: true,
+            fixtures.TestAccountIDs[1]: true,
+        }
+        for _, row := range results {
+            accountID := row["account_id"].(string)
+            assert.True(t, validIDs[accountID], "account_id should be in filter list")
+        }
+    })
+
+    t.Run("Query non-existent table returns error", func(t *testing.T) {
+        schema, err := ds.GetDatabaseSchema(ctx, []string{"public"})
+        require.NoError(t, err)
+
+        _, err = ds.Query(ctx, schema, "non_existent_table", []string{"*"}, nil)
+        assert.Error(t, err)
+    })
+
+    t.Run("Query with no matching filter returns empty", func(t *testing.T) {
+        schema, err := ds.GetDatabaseSchema(ctx, []string{"public"})
+        require.NoError(t, err)
+
+        filter := map[string][]any{
+            "account_id": {"00000000-0000-0000-0000-000000000000"},
+        }
+
+        results, err := ds.Query(ctx, schema, "transactions", []string{"*"}, filter)
+        require.NoError(t, err)
+        assert.Empty(t, results)
+    })
+}
+```
+
+**Run with:**
+```bash
+go test -tags=integration -v ./pkg/postgres/...
+```
+
+---
+
 ## Dependencies
 
 | Package | Purpose |
@@ -694,6 +1050,7 @@ func TestIntegration(t *testing.T) {
 7. **Event-Driven Testing**: RabbitMQ events for async job completion notification
 8. **Shared Setup Package**: Orchestrates all containers in parallel, supports reuse
 9. **Toxiproxy Integration**: Network chaos injection for resilience testing
+10. **Direct Datasource Testing**: Containers expose `.URL` and `.Internal` for creating datasources directly, enabling lightweight integration tests without the full Fetcher stack (Manager, Worker, RabbitMQ, SeaweedFS)
 
 ---
 
@@ -776,11 +1133,11 @@ func (i *SharedInfrastructure) MongoExternalInternal() config.InternalDBConnecti
 import "github.com/LerianStudio/fetcher/tests/shared/setup"
 
 // Simple start with defaults
-infra, err := setup.Start(ctx)
+infra, err := chaos.Start(ctx)
 defer infra.Stop(ctx)
 
 // Start with options
-infra, err := setup.StartWithOptions(ctx, setup.DebugOptions())
+infra, err := chaos.StartWithOptions(ctx, chaos.DebugOptions())
 
 // Setup RabbitMQ topology after start
 infra.SetupRabbitMQTopology(ctx)
@@ -805,7 +1162,7 @@ fmt.Println(pg.Host, pg.Port, pg.Database)
 ```go
 // Integration tests - use setup directly
 func TestIntegration(t *testing.T) {
-    infra, _ := setup.Start(ctx)
+    infra, _ := chaos.Start(ctx)
     defer infra.Stop(ctx)
     infra.SetupRabbitMQTopology(ctx)
     // ... run tests using infra.* containers
@@ -813,7 +1170,7 @@ func TestIntegration(t *testing.T) {
 
 // Chaos tests - compose with Toxiproxy
 func TestChaos(t *testing.T) {
-    infra, _ := setup.Start(ctx)
+    infra, _ := chaos.Start(ctx)
     defer infra.Stop(ctx)
 
     // Add Toxiproxy layer
@@ -962,7 +1319,7 @@ func TestRabbitMQNetworkPartition(t *testing.T) {
     ctx := context.Background()
 
     // Start base infrastructure
-    infra, _ := setup.Start(ctx)
+    infra, _ := chaos.Start(ctx)
     defer infra.Stop(ctx)
     infra.SetupRabbitMQTopology(ctx)
 
@@ -995,3 +1352,424 @@ func TestRabbitMQNetworkPartition(t *testing.T) {
     notification3 := waitForJobEvent(ctx, job3.JobID)
     assert.Equal(t, "completed", notification3.Status)
 }
+```
+
+---
+
+## Chaos Testing Framework (tests/shared/chaos)
+
+A project-agnostic chaos testing framework for measuring system resilience under network fault injection. This package provides metrics collection, error classification, SLA validation, and assertion helpers that work with any project using Toxiproxy.
+
+### Architecture
+
+```
+tests/shared/chaos/
+├── doc.go              # Package documentation
+├── interfaces.go       # MetricsProvider, MetricsSnapshot interfaces
+├── errors.go           # ErrorClassifier for categorizing failures
+├── metrics.go          # ChaosMetrics - core metrics collection
+├── thresholds.go       # SLAThresholds - validation thresholds
+├── assertions.go       # ChaosAssertions - test assertions
+├── config.go           # ChaosInjectionConfig - Toxiproxy configuration
+├── injection.go        # InjectChaos, RemoveChaos wrappers
+├── constants.go        # Standard chaos values (latency, timeout, bandwidth)
+├── extended_metrics.go     # ExtendedMetrics - adds recovery/stability tracking
+├── extended_thresholds.go  # ExtendedSLAThresholds - extended validation
+└── extended_assertions.go  # ExtendedAssertions - recovery/stability assertions
+```
+
+**Design Patterns:**
+- **Interface-based**: `MetricsProvider` interface allows custom metrics implementations
+- **Composition**: Extended types embed core types for backward compatibility
+- **Thread-safe**: All metrics operations protected by mutex
+- **Percentile caching**: Efficient P50/P90/P99/P99.9 calculations with cache invalidation
+
+### Core Types
+
+#### ChaosMetrics
+
+Collects request metrics, latency measurements, and error classification during chaos tests.
+
+```go
+import "github.com/LerianStudio/fetcher/tests/shared/chaos"
+
+// Create metrics collector
+m := chaos.NewChaosMetrics()
+
+// Lifecycle methods
+m.StartTest()
+m.StartChaos()      // Mark chaos injection start
+m.EndChaos()        // Mark chaos injection end
+m.EndTest()
+
+// Record requests (thread-safe)
+m.RecordRequest(success bool, timeout bool, latency time.Duration)
+m.RecordRequestWithError(success bool, timeout bool, latency time.Duration, err error)
+
+// Query metrics
+m.SuccessRate()           // Returns percentage (0-100)
+m.ThroughputRPS()         // Requests per second over test duration
+m.SuccessfulThroughputRPS() // Successful requests per second
+m.ChaosThroughputRPS()    // Requests per second during chaos period
+m.AverageLatency()        // Mean latency
+
+// Percentile latencies
+m.P50()                   // 50th percentile
+m.P90()                   // 90th percentile
+m.P99()                   // 99th percentile
+m.P999()                  // 99.9th percentile
+m.Percentile(p float64)   // Any percentile (0-100)
+
+// Duration tracking
+m.ChaosDuration()         // Time chaos was active
+m.TestDuration()          // Total test time
+
+// Error classification
+counts := m.GetErrorCounts()  // map[ErrorCategory]int
+```
+
+#### ErrorClassifier
+
+Classifies errors into categories for analysis.
+
+```go
+// Error categories
+const (
+    ErrorCategoryTimeout     // Connection/context timeouts
+    ErrorCategoryConnection  // Connection refused, reset, EOF
+    ErrorCategoryNetwork     // DNS failures, no route to host
+    ErrorCategoryApplication // HTTP errors, business logic
+    ErrorCategoryUnknown     // Unclassified errors
+)
+
+// Classify an error
+category := chaos.ClassifyError(err)
+
+// Or use the classifier in metrics
+m.RecordRequestWithError(false, true, latency, err)
+breakdown := m.ErrorClassifier.GetErrorsByCategory()
+```
+
+#### SLAThresholds
+
+Define success criteria for chaos tests.
+
+```go
+// Default thresholds
+thresholds := chaos.DefaultSLAThresholds()
+// MinSuccessRate: 95.0%
+// MaxP99Latency: 5 seconds
+// MaxErrorRate: 5.0%
+// MinThroughputRPS: 1.0
+
+// Strict production thresholds
+thresholds := chaos.StrictSLAThresholds()
+// MinSuccessRate: 99.9%
+// MaxP99Latency: 1 second
+// MaxErrorRate: 0.1%
+// MinThroughputRPS: 10.0
+
+// Scenario-specific thresholds
+thresholds := chaos.LatencyChaosThresholds()   // Higher latency tolerance
+thresholds := chaos.TimeoutChaosThresholds()   // Accepts failures during timeout
+thresholds := chaos.BandwidthChaosThresholds() // Accepts 50% failures
+```
+
+#### ChaosAssertions
+
+Test assertions for validating metrics against SLA thresholds.
+
+```go
+import "github.com/LerianStudio/fetcher/tests/shared/chaos"
+
+func TestChaosResilience(t *testing.T) {
+    m := chaos.NewChaosMetrics()
+    a := chaos.NewChaosAssertions(t, m)
+
+    // ... run chaos test ...
+
+    // Individual assertions
+    a.AssertSuccessRate(95.0)          // Minimum 95% success
+    a.AssertLatencyP99(5 * time.Second) // Max P99 latency
+    a.AssertErrorRate(5.0)             // Maximum 5% errors
+    a.AssertThroughput(10.0)           // Minimum 10 RPS
+
+    // SLA validation (all at once)
+    result := a.ValidateAgainstSLA(chaos.DefaultSLAThresholds())
+    if !result.Passed {
+        t.Logf("SLA violations: %v", result.Violations)
+    }
+
+    // Assert SLA is met (fails test if not)
+    a.AssertSLAMet(chaos.DefaultSLAThresholds())
+}
+```
+
+#### ChaosInjectionConfig
+
+Configuration helpers for Toxiproxy toxic injection.
+
+```go
+// Pre-built configurations
+cfg := chaos.DefaultLatencyConfig()   // 500ms latency, 100ms jitter
+cfg := chaos.DefaultTimeoutConfig()   // 10s timeout
+cfg := chaos.DefaultBandwidthConfig() // 10KB/s limit
+cfg := chaos.DefaultResetPeerConfig() // Connection reset after 5s
+cfg := chaos.DefaultSlowCloseConfig() // 3s close delay
+cfg := chaos.DefaultLimitDataConfig() // 1KB data limit
+cfg := chaos.DefaultSlicerConfig()    // 1KB chunks, 10ms delay
+
+// Custom configuration
+cfg := chaos.ChaosInjectionConfig{
+    Type:       "latency",
+    Name:       "my-latency",
+    Attributes: map[string]interface{}{
+        "latency": chaos.LatencyMs(1000), // Helper: converts to ms
+        "jitter":  chaos.LatencyMs(200),
+    },
+    Stream:     "downstream",
+    Toxicity:   1.0,
+}
+
+// Inject into proxy
+toxic, err := chaos.InjectChaos(proxy, cfg)
+
+// Remove chaos
+chaos.RemoveChaos(proxy, "my-latency")
+chaos.RemoveAllChaos(proxy)
+
+// Disable/enable proxy
+chaos.DisableProxy(proxy)
+chaos.EnableProxy(proxy)
+```
+
+### Extended Types (Recovery & Stability)
+
+For tests that need to validate recovery time and post-recovery stability.
+
+#### ExtendedMetrics
+
+Extends ChaosMetrics with recovery and stability tracking.
+
+```go
+m := chaos.NewExtendedMetrics()
+
+// Base metrics (inherited from ChaosMetrics)
+m.StartTest()
+m.RecordRequest(true, false, 100*time.Millisecond)
+
+// Recovery tracking
+m.StartRecovery()
+// ... wait for system to recover ...
+m.EndRecovery()
+recoveryTime := m.GetRecoveryTime()
+
+// Stability tracking
+m.StartStabilityCheck()
+m.RecordStabilityCheck(success bool, successRate float64, latency time.Duration, errMsg string)
+m.EndStabilityCheck()
+
+// Stability metrics
+m.StabilityDuration()         // How long stability was monitored
+m.StabilityPassRate()         // Percentage of checks that passed
+m.GetMaxConsecutiveFailures() // Worst failure streak
+m.GetStabilityChecks()        // All recorded checks
+```
+
+#### ExtendedSLAThresholds
+
+Adds recovery and stability thresholds.
+
+```go
+thresholds := chaos.DefaultExtendedSLAThresholds()
+// Inherits base SLAThresholds plus:
+// RecoverySuccessRate: 99.0%
+// StabilityDuration: 10 seconds
+// StabilityCheckCount: 5
+// MaxConsecutiveFailures: 1
+```
+
+#### ExtendedAssertions
+
+Adds recovery and stability assertions.
+
+```go
+m := chaos.NewExtendedMetrics()
+a := chaos.NewExtendedAssertions(t, m)
+
+// Base assertions (inherited)
+a.AssertSuccessRate(95.0)
+a.AssertSLAMet(chaos.DefaultExtendedSLAThresholds())
+
+// Recovery assertions
+a.AssertRecoveryWithin(30 * time.Second)
+a.AssertRecoverySuccessRate(99.0)
+
+// Stability assertions
+a.AssertStabilityMaintained(95.0, 2) // 95% pass rate, max 2 consecutive failures
+a.AssertStabilityDuration(10 * time.Second)
+
+// Combined recovery + stability
+a.AssertRecoveryWithStability(30*time.Second, chaos.DefaultExtendedSLAThresholds())
+```
+
+### Constants
+
+Standard chaos values for consistent testing.
+
+```go
+// Latency values
+chaos.ChaosLatencyValues.Low    // 500ms - noticeable but not disruptive
+chaos.ChaosLatencyValues.Medium // 3s - significant delay
+chaos.ChaosLatencyValues.High   // 5s - severe latency
+chaos.ChaosLatencyValues.Jitter // 500ms - standard jitter
+
+// Timeout values
+chaos.ChaosTimeoutValues.Short  // 5s - quick operations
+chaos.ChaosTimeoutValues.Medium // 15s - normal operations
+chaos.ChaosTimeoutValues.Long   // 30s - slow operations
+
+// Bandwidth limits (bytes per second)
+chaos.ChaosBandwidthValues.Low    // 1KB/s - very slow
+chaos.ChaosBandwidthValues.Medium // 10KB/s - moderate
+chaos.ChaosBandwidthValues.High   // 100KB/s - light throttle
+
+// Success rate thresholds
+chaos.ChaosSuccessRateThresholds.DuringChaos        // 50%
+chaos.ChaosSuccessRateThresholds.AfterRecovery      // 99%
+chaos.ChaosSuccessRateThresholds.DuringLatencyChaos // 90%
+chaos.ChaosSuccessRateThresholds.DuringTimeoutChaos // 0%
+
+// Timing constants
+chaos.StabilizationDelay        // 2s - wait after injecting chaos
+chaos.RecoveryObservationTime   // 5s - wait after removing chaos
+chaos.ChaosInjectionDuration    // 10s - default chaos duration
+```
+
+### Documentation Helpers
+
+```go
+// Document test hypothesis
+chaos.DocumentHypothesis(t, "System should maintain 90% success rate under 500ms latency")
+
+// Or format hypothesis
+hypothesis := chaos.FormatHypothesis(
+    "maintain 90% success rate",
+    "latency injection of 500ms",
+)
+chaos.DocumentHypothesis(t, hypothesis)
+
+// Capture baseline before chaos
+baseline := chaos.MeasureSteadyState(m)
+
+// Document test results
+chaos.DocumentResult(t, m, "PASS")
+// Outputs: success rate, latency percentiles, throughput, error breakdown
+
+// Document error breakdown
+chaos.DocumentErrorBreakdown(t, m)
+```
+
+### Complete Chaos Test Example
+
+```go
+//go:build chaos
+
+package chaos_test
+
+import (
+    "context"
+    "testing"
+    "time"
+
+    "github.com/LerianStudio/fetcher/tests/shared/chaos"
+    "github.com/LerianStudio/fetcher/tests/shared/config"
+    "github.com/LerianStudio/fetcher/tests/shared/containers"
+    "github.com/LerianStudio/fetcher/tests/shared/setup"
+    "github.com/stretchr/testify/require"
+)
+
+func TestDatabaseLatencyResilience(t *testing.T) {
+    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+    defer cancel()
+
+    // 1. Setup infrastructure with Toxiproxy
+    infra, err := chaos.Start(ctx)
+    require.NoError(t, err)
+    defer infra.Stop(ctx)
+
+    toxiproxy, err := containers.StartToxiproxy(ctx, containers.DefaultToxiproxyOptions(config.NetworkName))
+    require.NoError(t, err)
+    defer toxiproxy.Stop(ctx)
+
+    proxies, err := toxiproxy.CreateStandardProxies(containers.DefaultStandardUpstreams())
+    require.NoError(t, err)
+
+    // 2. Setup metrics and document hypothesis
+    metrics := chaos.NewExtendedMetrics()
+    chaos.DocumentHypothesis(t, chaos.FormatHypothesis(
+        "maintain 90% success rate",
+        "PostgreSQL latency injection of 500ms",
+    ))
+
+    // 3. Capture steady state baseline
+    metrics.StartTest()
+    baseline := chaos.MeasureSteadyState(metrics)
+    t.Logf("Baseline success rate: %.2f%%", baseline.SuccessRate)
+
+    // 4. Inject chaos
+    metrics.StartChaos()
+    _, err = chaos.InjectChaos(proxies.Postgres, chaos.DefaultLatencyConfig())
+    require.NoError(t, err)
+    time.Sleep(chaos.StabilizationDelay)
+
+    // 5. Run operations under chaos
+    for i := 0; i < 100; i++ {
+        start := time.Now()
+        err := performDatabaseOperation(ctx)
+        latency := time.Since(start)
+        metrics.RecordRequestWithError(err == nil, false, latency, err)
+    }
+
+    // 6. Remove chaos and track recovery
+    chaos.RemoveAllChaos(proxies.Postgres)
+    metrics.EndChaos()
+    metrics.StartRecovery()
+    time.Sleep(chaos.RecoveryObservationTime)
+    metrics.EndRecovery()
+
+    // 7. Monitor stability
+    metrics.StartStabilityCheck()
+    for i := 0; i < 5; i++ {
+        start := time.Now()
+        err := performDatabaseOperation(ctx)
+        latency := time.Since(start)
+        metrics.RecordStabilityCheck(err == nil, metrics.SuccessRate(), latency, "")
+        time.Sleep(time.Second)
+    }
+    metrics.EndStabilityCheck()
+    metrics.EndTest()
+
+    // 8. Validate and document results
+    assertions := chaos.NewExtendedAssertions(t, metrics)
+    thresholds := chaos.LatencyExtendedSLAThresholds()
+
+    assertions.AssertSLAMet(thresholds)
+    assertions.AssertRecoveryWithStability(30*time.Second, thresholds)
+
+    chaos.DocumentResultExtended(t, metrics, "PASS")
+}
+```
+
+### Running Chaos Tests
+
+```bash
+# Run all chaos tests
+go test -tags=chaos -v ./tests/chaos/...
+
+# Run specific test
+go test -tags=chaos -v -run TestDatabaseLatencyResilience ./tests/chaos/e2e/
+
+# Run with short flag (skip long-running tests)
+go test -tags=chaos -v -short ./tests/chaos/...
+```

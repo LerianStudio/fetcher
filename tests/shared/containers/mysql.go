@@ -227,3 +227,12 @@ func (m *MySQLContainer) Stop(ctx context.Context) error {
 
 	return nil
 }
+
+// GetHost returns the container's host address.
+func (m *MySQLContainer) GetHost() string { return m.Host }
+
+// GetPort returns the container's mapped port.
+func (m *MySQLContainer) GetPort() string { return m.Port }
+
+// GetURI returns the container's connection URL.
+func (m *MySQLContainer) GetURI() string { return m.URL }

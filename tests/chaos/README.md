@@ -18,35 +18,38 @@ Test Flow:
 ```
 tests/chaos/
 ├── setup/
-│   ├── infrastructure.go    # ChaosInfrastructure with Toxiproxy
-│   ├── constants.go         # Chaos values, timing constants
-│   └── timeouts.go          # Infrastructure & chaos timing
-├── helpers/
-│   ├── doc.go               # Package documentation
-│   ├── metrics.go           # ChaosMetrics - thread-safe metrics collection
-│   ├── assertions.go        # ChaosAssertions - SLA validation
-│   ├── chaos.go             # Chaos injection helpers
-│   ├── errors.go            # ErrorClassifier - error categorization
-│   ├── thresholds.go        # SLAThresholds - SLA definitions
-│   ├── metrics_test.go      # 58 unit tests
-│   └── errors_test.go       # Error classifier tests
-└── e2e/
-    ├── suite_test.go              # ChaosTestSuite base class
-    ├── manager_rabbitmq_test.go   # RabbitMQ event broker chaos
-    ├── manager_mongodb_test.go    # MongoDB fallback storage chaos
-    ├── manager_redis_test.go      # Redis rate limiting fallback
-    ├── worker_postgres_test.go    # PostgreSQL extraction chaos
-    ├── worker_mysql_test.go       # MySQL extraction chaos
-    ├── worker_sqlserver_test.go   # SQL Server extraction chaos
-    ├── worker_oracle_test.go      # Oracle extraction chaos
-    ├── worker_mongodb_test.go     # MongoDB external extraction chaos
-    ├── worker_seaweedfs_test.go   # SeaweedFS storage chaos
-    └── full_flow_test.go          # Multi-point chaos scenarios
+│   ├── infrastructure.go         # ChaosInfrastructure with Toxiproxy
+│   └── timeouts.go               # Infrastructure & chaos timing
+├── suite_test.go                 # ChaosTestSuite base class
+├── manager_rabbitmq_test.go      # RabbitMQ event broker chaos
+├── manager_mongodb_test.go       # MongoDB fallback storage chaos
+├── manager_redis_test.go         # Redis rate limiting fallback
+├── worker_postgres_test.go       # PostgreSQL extraction chaos
+├── worker_mysql_test.go          # MySQL extraction chaos
+├── worker_sqlserver_test.go      # SQL Server extraction chaos
+├── worker_oracle_test.go         # Oracle extraction chaos
+├── worker_mongodb_test.go        # MongoDB external extraction chaos
+├── worker_seaweedfs_test.go      # SeaweedFS storage chaos
+└── full_flow_test.go             # Multi-point chaos scenarios
+
+tests/shared/chaos/               # Shared chaos utilities
+├── doc.go                        # Package documentation
+├── constants.go                  # Chaos values, timing constants
+├── config.go                     # ChaosInjectionConfig builders
+├── injection.go                  # Chaos injection helpers
+├── operations.go                 # ChaosOperations facade
+├── service_registry.go           # ProxyRegistry for type-safe access
+├── proxy_router.go               # ProxyRouter for connection routing
+├── metrics.go                    # ChaosMetrics - thread-safe collection
+├── assertions.go                 # ChaosAssertions - SLA validation
+├── errors.go                     # ErrorClassifier - error categorization
+├── thresholds.go                 # SLAThresholds - SLA definitions
+└── *_test.go                     # Unit tests for all components
 ```
 
 ## Key Abstractions
 
-### ChaosMetrics (`helpers/metrics.go`)
+### ChaosMetrics (`tests/shared/chaos/metrics.go`)
 
 Thread-safe metrics collection with automatic percentile caching:
 
@@ -67,7 +70,7 @@ s.metrics.ThroughputRPS()         // Requests per second
 s.metrics.GetRecoveryTime()       // Recovery duration
 ```
 
-### ChaosAssertions (`helpers/assertions.go`)
+### ChaosAssertions (`tests/shared/chaos/assertions.go`)
 
 Custom assertions for chaos testing:
 
@@ -91,7 +94,7 @@ result := assertions.ValidateAgainstSLA(helpers.DefaultSLAThresholds())
 assertions.AssertSLAMet(helpers.StrictSLAThresholds())
 ```
 
-### SLAThresholds (`helpers/thresholds.go`)
+### SLAThresholds (`tests/shared/chaos/thresholds.go`)
 
 Predefined SLA configurations:
 
@@ -103,7 +106,7 @@ Predefined SLA configurations:
 | `TimeoutChaosThresholds()` | 0% success | 99% success | Expected failures |
 | `BandwidthChaosThresholds()` | 70% success | 99% success | Bandwidth limiting |
 
-### ErrorClassifier (`helpers/errors.go`)
+### ErrorClassifier (`tests/shared/chaos/errors.go`)
 
 Categorizes errors during chaos:
 
@@ -150,7 +153,7 @@ go test -v -tags=chaos -run "TestChaosE2E/TestPostgres" ./tests/chaos/e2e/...
 export GITHUB_TOKEN=<your_token> && go test -v -tags=chaos -run "TestChaosE2E/TestPostgres" ./tests/chaos/e2e/...
 
 # Unit tests only (no Docker required)
-go test -v ./tests/chaos/helpers/...
+go test -v ./tests/shared/chaos/...
 ```
 
 ## Chaos Types
@@ -181,16 +184,15 @@ func (s *ChaosTestSuite) TestComponent_Scenario() {
 
     // Phase 1: Setup (create connections before chaos)
     configName := s.uniqueConfigName("chaos_postgres")
-    pg := s.chaosInfra.PostgresProxyInternal()
+    pg := s.chaosInfra.ProxyRouter.GetProxyConnection(chaos.ServicePostgres, s.chaosInfra.PostgresInternal())
     _, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{...})
 
     // Phase 2: Inject chaos
     s.metrics.StartChaos()
-    proxy := s.chaosInfra.GetPostgresProxy()
-    chaosConfig := helpers.DefaultLatencyConfig(500, 100)
-    toxic, err := helpers.InjectChaos(proxy, chaosConfig)
-    defer helpers.RemoveChaos(proxy, chaosConfig.Name)
-    time.Sleep(setup.StabilizationDelay)
+    chaosConfig := chaos.DefaultLatencyConfig(500, 100)
+    toxic, err := s.chaosInfra.ChaosOps.AddChaos(chaos.ServicePostgres, chaosConfig)
+    defer s.chaosInfra.ChaosOps.RemoveChaos(chaos.ServicePostgres, chaosConfig.Name)
+    time.Sleep(chaos.StabilizationDelay)
 
     // Phase 3: Test under chaos
     jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, ...)
@@ -199,9 +201,9 @@ func (s *ChaosTestSuite) TestComponent_Scenario() {
     s.metrics.EndChaos()
 
     // Phase 4: Remove chaos & verify recovery
-    helpers.RemoveChaos(proxy, chaosConfig.Name)
+    s.chaosInfra.ChaosOps.RemoveChaos(chaos.ServicePostgres, chaosConfig.Name)
     s.metrics.StartRecovery()
-    time.Sleep(setup.RecoveryObservationTime)
+    time.Sleep(chaos.RecoveryObservationTime)
     // ... verify recovery job succeeds ...
     s.metrics.EndRecovery()
 
@@ -216,15 +218,15 @@ func (s *ChaosTestSuite) TestComponent_Scenario() {
 
 ### Database Connection Info
 
-Use **method calls**, not field access:
+Use **ProxyRouter** for connections through Toxiproxy:
 
 ```go
-// Proxied connections (through Toxiproxy)
-pg := s.chaosInfra.PostgresProxyInternal()
-mysql := s.chaosInfra.MySQLProxyInternal()
-mssql := s.chaosInfra.SQLServerProxyInternal()
-oracle := s.chaosInfra.OracleProxyInternal()
-mongo := s.chaosInfra.MongoExternalProxyInternal()
+// Proxied connections (through Toxiproxy for chaos injection)
+pg := s.chaosInfra.ProxyRouter.GetProxyConnection(chaos.ServicePostgres, s.chaosInfra.PostgresInternal())
+mysql := s.chaosInfra.ProxyRouter.GetProxyConnection(chaos.ServiceMySQL, s.chaosInfra.MySQLInternal())
+mssql := s.chaosInfra.ProxyRouter.GetProxyConnection(chaos.ServiceSQLServer, s.chaosInfra.SQLServerInternal())
+oracle := s.chaosInfra.ProxyRouter.GetProxyConnection(chaos.ServiceOracle, s.chaosInfra.OracleInternal())
+mongo := s.chaosInfra.ProxyRouter.GetProxyConnection(chaos.ServiceMongoExternal, s.chaosInfra.MongoExternalInternal())
 
 // Direct connections (bypass proxy - use for baseline)
 pg := s.chaosInfra.PostgresInternal()
@@ -232,35 +234,40 @@ pg := s.chaosInfra.PostgresInternal()
 
 ### Proxy Access
 
-Use **specific getter methods**:
+Use **ProxyRegistry** for type-safe proxy access:
 
 ```go
 // Database proxies
-proxy := s.chaosInfra.GetPostgresProxy()
-proxy := s.chaosInfra.GetMySQLProxy()
-proxy := s.chaosInfra.GetSQLServerProxy()
-proxy := s.chaosInfra.GetOracleProxy()
+proxy := s.chaosInfra.ProxyRegistry.GetProxy(chaos.ServicePostgres)
+proxy := s.chaosInfra.ProxyRegistry.GetProxy(chaos.ServiceMySQL)
+proxy := s.chaosInfra.ProxyRegistry.GetProxy(chaos.ServiceSQLServer)
+proxy := s.chaosInfra.ProxyRegistry.GetProxy(chaos.ServiceOracle)
 
 // Infrastructure proxies
-proxy := s.chaosInfra.GetRabbitMQProxy()
-proxy := s.chaosInfra.GetRedisProxy()
-proxy := s.chaosInfra.GetMongoMainProxy()      // Manager state
-proxy := s.chaosInfra.GetMongoExternalProxy()  // External extraction
-proxy := s.chaosInfra.GetSeaweedFSProxy()
-proxy := s.chaosInfra.GetManagerProxy()
+proxy := s.chaosInfra.ProxyRegistry.GetProxy(chaos.ServiceRabbitMQ)
+proxy := s.chaosInfra.ProxyRegistry.GetProxy(chaos.ServiceRedis)
+proxy := s.chaosInfra.ProxyRegistry.GetProxy(chaos.ServiceMongoMain)      // Manager state
+proxy := s.chaosInfra.ProxyRegistry.GetProxy(chaos.ServiceMongoExternal)  // External extraction
+proxy := s.chaosInfra.ProxyRegistry.GetProxy(chaos.ServiceSeaweedFS)
+proxy := s.chaosInfra.ProxyRegistry.GetProxy(chaos.ServiceManager)
 ```
 
-### Convenience Methods
+### Chaos Operations (via ChaosOps)
 
 ```go
 // Enable/disable entire proxy
-s.chaosInfra.DisablePostgres()
-s.chaosInfra.EnablePostgres()
+s.chaosInfra.ChaosOps.DisableService(chaos.ServicePostgres)
+s.chaosInfra.ChaosOps.EnableService(chaos.ServicePostgres)
 
-// Add chaos directly
-s.chaosInfra.AddPostgresLatency("latency", 500, 100)
-s.chaosInfra.AddSeaweedFSTimeout("timeout", 5000)
-s.chaosInfra.AddSeaweedFSBandwidth("bandwidth", 10240)
+// Add chaos with config builders
+latencyConfig := chaos.DefaultLatencyConfig(500, 100)
+s.chaosInfra.ChaosOps.AddChaos(chaos.ServicePostgres, latencyConfig)
+
+timeoutConfig := chaos.DefaultTimeoutConfig(5000)
+s.chaosInfra.ChaosOps.AddChaos(chaos.ServiceSeaweedFS, timeoutConfig)
+
+bandwidthConfig := chaos.DefaultBandwidthConfig(10240)
+s.chaosInfra.ChaosOps.AddChaos(chaos.ServiceSeaweedFS, bandwidthConfig)
 
 // Cleanup
 s.chaosInfra.RemoveAllToxics()    // Clear all chaos
@@ -284,18 +291,18 @@ s.chaosInfra.ResetChaos()         // Both
 ### Chaos Values
 
 ```go
-setup.ChaosLatencyValues.Low      // 500ms
-setup.ChaosLatencyValues.Medium   // 3s
-setup.ChaosLatencyValues.High     // 5s
-setup.ChaosLatencyValues.Jitter   // 500ms
+chaos.ChaosLatencyValues.Low      // 500ms
+chaos.ChaosLatencyValues.Medium   // 3s
+chaos.ChaosLatencyValues.High     // 5s
+chaos.ChaosLatencyValues.Jitter   // 500ms
 
-setup.ChaosTimeoutValues.Short    // 5s
-setup.ChaosTimeoutValues.Medium   // 15s
-setup.ChaosTimeoutValues.Long     // 30s
+chaos.ChaosTimeoutValues.Short    // 5s
+chaos.ChaosTimeoutValues.Medium   // 15s
+chaos.ChaosTimeoutValues.Long     // 30s
 
-setup.ChaosBandwidthValues.Low    // 1 KB/s
-setup.ChaosBandwidthValues.Medium // 10 KB/s
-setup.ChaosBandwidthValues.High   // 100 KB/s
+chaos.ChaosBandwidthValues.Low    // 1 KB/s
+chaos.ChaosBandwidthValues.Medium // 10 KB/s
+chaos.ChaosBandwidthValues.High   // 100 KB/s
 ```
 
 ## Prerequisites

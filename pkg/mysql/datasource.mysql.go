@@ -18,10 +18,10 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 )
 
-// Repository defines an interface for querying data from a specified table and fields.
+// Datasource defines an interface for querying data from a specified table and fields.
 //
-//go:generate mockgen --destination=datasource.mysql.mock.go --package=mysql . Repository
-type Repository interface {
+//go:generate mockgen --destination=datasource.mysql.mock.go --package=mysql . Datasource
+type Datasource interface {
 	Query(ctx context.Context, schema []TableSchema, table string, fields []string, filter map[string][]any) ([]map[string]any, error)
 	QueryWithAdvancedFilters(ctx context.Context, schema []TableSchema, table string, fields []string, filter map[string]job.FilterCondition) ([]map[string]any, error)
 	GetDatabaseSchema(ctx context.Context) ([]TableSchema, error)

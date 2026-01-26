@@ -9,15 +9,20 @@ import (
 
 // PostgresSSLConfigContent contains the PostgreSQL configuration for SSL.
 // This content is written to a temporary file and mounted into the container.
+// IMPORTANT: The file paths MUST match what testcontainers-go/modules/postgres.WithSSLCert() mounts:
+//   - ca_cert.pem (not ca.crt)
+//   - server.cert (not server.crt)
+//   - server.key
 const PostgresSSLConfigContent = `# PostgreSQL SSL Configuration for testcontainers
 # This file configures PostgreSQL to accept SSL connections.
 
 listen_addresses = '*'
 
 # SSL Settings
+# File paths must match testcontainers-go postgres module WithSSLCert() mount paths
 ssl = on
-ssl_ca_file = '/tmp/testcontainers-go/postgres/ca.crt'
-ssl_cert_file = '/tmp/testcontainers-go/postgres/server.crt'
+ssl_ca_file = '/tmp/testcontainers-go/postgres/ca_cert.pem'
+ssl_cert_file = '/tmp/testcontainers-go/postgres/server.cert'
 ssl_key_file = '/tmp/testcontainers-go/postgres/server.key'
 `
 

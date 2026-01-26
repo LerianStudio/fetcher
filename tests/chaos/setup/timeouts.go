@@ -1,5 +1,3 @@
-//go:build !chaos
-
 package setup
 
 import "time"
@@ -37,6 +35,12 @@ const (
 
 	// HealthCheckInterval is the interval for health checks during chaos.
 	HealthCheckInterval = 1 * time.Second
+
+	// RedisHealthCheckWait is the wait time for Redis health checks.
+	RedisHealthCheckWait = 5 * time.Second
+
+	// CircuitBreakerCooldown is the cooldown period for circuit breakers.
+	CircuitBreakerCooldown = 30 * time.Second
 )
 
 // ChaosLatencyValues contains standard latency values for testing.

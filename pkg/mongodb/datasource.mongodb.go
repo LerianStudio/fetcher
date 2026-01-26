@@ -23,10 +23,10 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 )
 
-// Repository defines an interface for querying data from MongoDB collections.
+// Datasource defines an interface for querying data from MongoDB collections.
 //
-//go:generate mockgen --destination=datasource.mongodb.mock.go --package=mongodb . Repository
-type Repository interface {
+//go:generate mockgen --destination=datasource.mongodb.mock.go --package=mongodb . Datasource
+type Datasource interface {
 	Query(ctx context.Context, collection string, fields []string, filter map[string][]any) ([]map[string]any, error)
 	QueryWithAdvancedFilters(ctx context.Context, collection string, fields []string, filter map[string]job.FilterCondition) ([]map[string]any, error)
 	GetDatabaseSchema(ctx context.Context) ([]CollectionSchema, error)

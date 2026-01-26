@@ -176,3 +176,12 @@ func (s *SeaweedFSContainers) Stop(ctx context.Context) error {
 
 	return nil
 }
+
+// GetHost returns the container's host address.
+func (s *SeaweedFSContainers) GetHost() string { return s.Host }
+
+// GetPort returns the container's mapped port.
+func (s *SeaweedFSContainers) GetPort() string { return s.Port }
+
+// GetURI returns the container's URL.
+func (s *SeaweedFSContainers) GetURI() string { return s.URL }

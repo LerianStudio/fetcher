@@ -104,3 +104,12 @@ func (r *RabbitMQContainer) Stop(ctx context.Context) error {
 
 	return nil
 }
+
+// GetHost returns the container's host address.
+func (r *RabbitMQContainer) GetHost() string { return r.Host }
+
+// GetPort returns the container's mapped port.
+func (r *RabbitMQContainer) GetPort() string { return r.Port }
+
+// GetURI returns the container's connection URI.
+func (r *RabbitMQContainer) GetURI() string { return r.URI }

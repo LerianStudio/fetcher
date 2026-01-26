@@ -4,22 +4,22 @@ import (
 	"context"
 	"os"
 
-	sharedsetup "github.com/LerianStudio/fetcher/tests/shared/setup"
+	"github.com/LerianStudio/fetcher/tests/shared/setup"
 )
 
 // Re-export types from shared setup for backward compatibility.
 type (
-	ApplicationContainers = sharedsetup.ApplicationContainers
-	ApplicationConfig     = sharedsetup.ApplicationConfig
-	ApplicationOptions    = sharedsetup.ApplicationOptions
+	ApplicationContainers = setup.ApplicationContainers
+	ApplicationConfig     = setup.ApplicationConfig
+	ApplicationOptions    = setup.ApplicationOptions
 )
 
 // Re-export functions from shared setup for backward compatibility.
 var (
-	DefaultApplicationOptions = sharedsetup.DefaultApplicationOptions
-	ManagerDebugOptions       = sharedsetup.ManagerDebugOptions
-	WorkerDebugOptions        = sharedsetup.WorkerDebugOptions
-	FullDebugOptions          = sharedsetup.FullDebugOptions
+	DefaultApplicationOptions = setup.DefaultApplicationOptions
+	ManagerDebugOptions       = setup.ManagerDebugOptions
+	WorkerDebugOptions        = setup.WorkerDebugOptions
+	FullDebugOptions          = setup.FullDebugOptions
 )
 
 // StartApplications starts Manager and Worker containers.

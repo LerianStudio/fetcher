@@ -977,12 +977,12 @@ type ConnectionInput struct {
 # Run all integration tests with pre-built images
 MANAGER_IMAGE=fetcher-manager:local \
 WORKER_IMAGE=fetcher-worker:local \
-  make test-integration-container
+  make test-integration
 
 # Run specific test
 MANAGER_IMAGE=fetcher-manager:local \
 WORKER_IMAGE=fetcher-worker:local \
-  make test-integration-container TEST=TestSingleDatasourcePostgreSQL
+  make test-integration TEST=TestSingleDatasourcePostgreSQL
 
 # Start infrastructure for debugging
 make test-integration-infra
