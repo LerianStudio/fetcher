@@ -42,6 +42,7 @@ scripts/node_modules
 .windsurf
 .claude
 .agent
+.docs
 *.http
 
 # ----------------------------------------
