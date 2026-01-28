@@ -1793,7 +1793,7 @@ func TestConnectionHandler_ValidateSchema_HandlerDirectly_InvalidJSON(t *testing
 // ============================================================================
 
 func TestNewConnectionHandler(t *testing.T) {
-	handler := NewConnectionHandler(nil, nil, nil, nil, nil, nil, nil)
+	handler := NewConnectionHandler(nil, nil, nil, nil, nil, nil, nil, nil)
 
 	assert.NotNil(t, handler)
 	assert.Nil(t, handler.CreateCmd)
@@ -1803,6 +1803,7 @@ func TestNewConnectionHandler(t *testing.T) {
 	assert.Nil(t, handler.ListQuery)
 	assert.Nil(t, handler.TestQuery)
 	assert.Nil(t, handler.ValidateSchemaQuery)
+	assert.Nil(t, handler.GetSchemaQuery)
 }
 
 // ============================================================================
