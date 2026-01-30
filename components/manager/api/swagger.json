@@ -1,12 +1,18 @@
 {
     "swagger": "2.0",
     "info": {
-        "contact": {}
+        "description": "API documentation for the Fetcher Manager component",
+        "title": "Fetcher Manager API",
+        "termsOfService": "http://swagger.io/terms/",
+        "contact": {},
+        "version": "1.0.0"
     },
+    "host": "localhost:4006",
+    "basePath": "/",
     "paths": {
         "/v1/fetcher": {
             "post": {
-                "description": "Create a new data extraction job. The request will be validated, deduplicated within a 5-minute window, and all referenced connections will be tested before job creation.",
+                "description": "Create a new data extraction job. The request will be validated, deduplicated within a 5-minute window, and all referenced connections will be tested before job creation. The metadata.source field is required for job notification routing.",
                 "consumes": [
                     "application/json"
                 ],
@@ -32,7 +38,7 @@
                         "required": true
                     },
                     {
-                        "description": "Fetcher request payload",
+                        "description": "Fetcher request payload. metadata.source is required.",
                         "name": "request",
                         "in": "body",
                         "required": true,
@@ -348,7 +354,7 @@
         },
         "/v1/management/connections/validate-schema": {
             "post": {
-                "description": "Validate that tables and fields referenced in the request exist in the configured datasources.",
+                "description": "Validate that tables and fields referenced in the request exist in the configured datasources. Returns 200 when validation passes, 422 when validation fails with detailed error information.",
                 "consumes": [
                     "application/json"
                 ],
@@ -385,19 +391,25 @@
                 ],
                 "responses": {
                     "200": {
-                        "description": "OK",
+                        "description": "Validation successful - all tables and fields exist",
                         "schema": {
                             "$ref": "#/definitions/model.SchemaValidationResponse"
                         }
                     },
                     "400": {
-                        "description": "Bad Request",
+                        "description": "Invalid request payload or missing headers",
                         "schema": {
                             "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
                         }
                     },
+                    "422": {
+                        "description": "Validation failed - schema errors found (missing tables, fields, or unreachable datasources)",
+                        "schema": {
+                            "$ref": "#/definitions/model.SchemaValidationErrorResponse"
+                        }
+                    },
                     "500": {
-                        "description": "Internal Server Error",
+                        "description": "Internal server error",
                         "schema": {
                             "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
                         }
@@ -1088,6 +1100,26 @@
                     "type": "string"
                 },
                 "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "model.SchemaValidationErrorResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "errors": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/model.SchemaValidationError"
+                    }
+                },
+                "message": {
+                    "type": "string"
+                },
+                "title": {
                     "type": "string"
                 }
             }

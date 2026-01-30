@@ -9,6 +9,7 @@ const docTemplate = `{
     "info": {
         "description": "{{escape .Description}}",
         "title": "{{.Title}}",
+        "termsOfService": "http://swagger.io/terms/",
         "contact": {},
         "version": "{{.Version}}"
     },
@@ -17,7 +18,7 @@ const docTemplate = `{
     "paths": {
         "/v1/fetcher": {
             "post": {
-                "description": "Create a new data extraction job. The request will be validated, deduplicated within a 5-minute window, and all referenced connections will be tested before job creation.",
+                "description": "Create a new data extraction job. The request will be validated, deduplicated within a 5-minute window, and all referenced connections will be tested before job creation. The metadata.source field is required for job notification routing.",
                 "consumes": [
                     "application/json"
                 ],
@@ -43,7 +44,7 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "description": "Fetcher request payload",
+                        "description": "Fetcher request payload. metadata.source is required.",
                         "name": "request",
                         "in": "body",
                         "required": true,
@@ -359,7 +360,7 @@ const docTemplate = `{
         },
         "/v1/management/connections/validate-schema": {
             "post": {
-                "description": "Validate that tables and fields referenced in the request exist in the configured datasources.",
+                "description": "Validate that tables and fields referenced in the request exist in the configured datasources. Returns 200 when validation passes, 422 when validation fails with detailed error information.",
                 "consumes": [
                     "application/json"
                 ],
@@ -396,19 +397,25 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "OK",
+                        "description": "Validation successful - all tables and fields exist",
                         "schema": {
                             "$ref": "#/definitions/model.SchemaValidationResponse"
                         }
                     },
                     "400": {
-                        "description": "Bad Request",
+                        "description": "Invalid request payload or missing headers",
                         "schema": {
                             "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
                         }
                     },
+                    "422": {
+                        "description": "Validation failed - schema errors found (missing tables, fields, or unreachable datasources)",
+                        "schema": {
+                            "$ref": "#/definitions/model.SchemaValidationErrorResponse"
+                        }
+                    },
                     "500": {
-                        "description": "Internal Server Error",
+                        "description": "Internal server error",
                         "schema": {
                             "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
                         }
@@ -1103,6 +1110,26 @@ const docTemplate = `{
                 }
             }
         },
+        "model.SchemaValidationErrorResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "errors": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/model.SchemaValidationError"
+                    }
+                },
+                "message": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
         "model.SchemaValidationRequest": {
             "description": "Request body for schema validation containing mapped fields per datasource.",
             "type": "object",
@@ -1148,12 +1175,12 @@ const docTemplate = `{
 
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
-	Version:          "",
-	Host:             "",
-	BasePath:         "",
+	Version:          "1.0.0",
+	Host:             "localhost:4006",
+	BasePath:         "/",
 	Schemes:          []string{},
-	Title:            "",
-	Description:      "",
+	Title:            "Fetcher Manager API",
+	Description:      "API documentation for the Fetcher Manager component",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,
 	LeftDelim:        "{{",

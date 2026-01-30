@@ -473,17 +473,22 @@ func (h *ConnectionHandler) DeleteConnection(c *fiber.Ctx) error {
 
 // ValidateSchema validates schema references against configured datasources.
 //
+// Returns 200 OK with SchemaValidationResponse when all tables and fields exist.
+// Returns 422 Unprocessable Entity with SchemaValidationErrorResponse when any
+// datasource is not found, table doesn't exist, field is missing, or datasource is unreachable.
+//
 //	@Summary		Validate schema
-//	@Description	Validate that tables and fields referenced in the request exist in the configured datasources.
+//	@Description	Validate that tables and fields referenced in the request exist in the configured datasources. Returns 200 when validation passes, 422 when validation fails with detailed error information.
 //	@Tags			Connections
 //	@Accept			json
 //	@Produce		json
 //	@Param			Authorization		header		string							false	"The authorization token in the 'Bearer access_token' format. Only required when auth plugin is enabled."
 //	@Param			X-Organization-Id	header		string							true	"Organization ID"
 //	@Param			request				body		model.SchemaValidationRequest	true	"Schema validation request"
-//	@Success		200					{object}	model.SchemaValidationResponse
-//	@Failure		400					{object}	pkg.HTTPError
-//	@Failure		500					{object}	pkg.HTTPError
+//	@Success		200					{object}	model.SchemaValidationResponse			"Validation successful - all tables and fields exist"
+//	@Failure		400					{object}	pkg.HTTPError							"Invalid request payload or missing headers"
+//	@Failure		422					{object}	model.SchemaValidationErrorResponse		"Validation failed - schema errors found (missing tables, fields, or unreachable datasources)"
+//	@Failure		500					{object}	pkg.HTTPError							"Internal server error"
 //	@Router			/v1/management/connections/validate-schema [post]
 func (h *ConnectionHandler) ValidateSchema(c *fiber.Ctx) error {
 	ctx := c.UserContext()
@@ -527,6 +532,15 @@ func (h *ConnectionHandler) ValidateSchema(c *fiber.Ctx) error {
 	}
 
 	logger.Infof("schema validation completed org=%s status=%s", orgID, resp.Status)
+
+	if resp.Status == model.StatusFailure {
+		return httpUtils.JSONResponse(c, fiber.StatusUnprocessableEntity, model.SchemaValidationErrorResponse{
+			Title:   "Schema validation failed",
+			Code:    constant.ErrSchemaValidationFailed.Error(),
+			Message: resp.Message,
+			Errors:  resp.Errors,
+		})
+	}
 
 	return httpUtils.OK(c, resp)
 }

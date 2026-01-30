@@ -1,3 +1,4 @@
+basePath: /
 definitions:
   Pagination:
     description: Pagination is the struct designed to store the pagination data of
@@ -338,6 +339,19 @@ definitions:
       type:
         type: string
     type: object
+  model.SchemaValidationErrorResponse:
+    properties:
+      code:
+        type: string
+      errors:
+        items:
+          $ref: '#/definitions/model.SchemaValidationError'
+        type: array
+      message:
+        type: string
+      title:
+        type: string
+    type: object
   model.SchemaValidationRequest:
     description: Request body for schema validation containing mapped fields per datasource.
     properties:
@@ -368,8 +382,13 @@ definitions:
         description: '"success" or "failure"'
         type: string
     type: object
+host: localhost:4006
 info:
   contact: {}
+  description: API documentation for the Fetcher Manager component
+  termsOfService: http://swagger.io/terms/
+  title: Fetcher Manager API
+  version: 1.0.0
 paths:
   /v1/fetcher:
     post:
@@ -377,7 +396,8 @@ paths:
       - application/json
       description: Create a new data extraction job. The request will be validated,
         deduplicated within a 5-minute window, and all referenced connections will
-        be tested before job creation.
+        be tested before job creation. The metadata.source field is required for job
+        notification routing.
       parameters:
       - description: The authorization token in the 'Bearer access_token' format.
           Only required when auth plugin is enabled.
@@ -389,7 +409,7 @@ paths:
         name: X-Organization-Id
         required: true
         type: string
-      - description: Fetcher request payload
+      - description: Fetcher request payload. metadata.source is required.
         in: body
         name: request
         required: true
@@ -795,7 +815,8 @@ paths:
       consumes:
       - application/json
       description: Validate that tables and fields referenced in the request exist
-        in the configured datasources.
+        in the configured datasources. Returns 200 when validation passes, 422 when
+        validation fails with detailed error information.
       parameters:
       - description: The authorization token in the 'Bearer access_token' format.
           Only required when auth plugin is enabled.
@@ -817,15 +838,20 @@ paths:
       - application/json
       responses:
         "200":
-          description: OK
+          description: Validation successful - all tables and fields exist
           schema:
             $ref: '#/definitions/model.SchemaValidationResponse'
         "400":
-          description: Bad Request
+          description: Invalid request payload or missing headers
           schema:
             $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError'
+        "422":
+          description: Validation failed - schema errors found (missing tables, fields,
+            or unreachable datasources)
+          schema:
+            $ref: '#/definitions/model.SchemaValidationErrorResponse'
         "500":
-          description: Internal Server Error
+          description: Internal server error
           schema:
             $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError'
       summary: Validate schema
