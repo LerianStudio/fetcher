@@ -51,8 +51,8 @@ func buildImageWithSecrets(ctx context.Context, cfg BuildConfig) (string, error)
 		tag = generateImageTag()
 	}
 
-	// Build the docker build command
-	args := []string{"build"}
+	// Build the docker build command (always use --no-cache for fresh builds)
+	args := []string{"build", "--no-cache"}
 
 	// Add dockerfile path
 	args = append(args, "-f", filepath.Join(cfg.ContextDir, dockerfile))

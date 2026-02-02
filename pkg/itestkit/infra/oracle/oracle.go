@@ -3,8 +3,8 @@ package oracle
 import (
 	"context"
 	"fmt"
+	"net"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/testcontainers/testcontainers-go"
@@ -33,9 +33,12 @@ type OracleEndpoint struct {
 }
 
 type OracleInfra struct {
-	cfg       OracleConfig
-	container testcontainers.Container
-	endpoint  *OracleEndpoint
+	cfg          OracleConfig
+	container    testcontainers.Container
+	endpoint     *OracleEndpoint
+	networkAlias string // alias for internal network communication
+	stubHost     string // used by stub to return raw host without normalization
+	stubPort     int    // used by stub to return raw port
 }
 
 func NewOracleInfra(cfg OracleConfig) *OracleInfra {
@@ -65,6 +68,9 @@ func (o *OracleInfra) Start(ctx context.Context, env *itestkit.Env) error {
 		}
 	}
 
+	// Build network alias based on infra name
+	alias := fmt.Sprintf("oracle-%s", o.cfg.Name)
+
 	req := testcontainers.ContainerRequest{
 		Image:        o.cfg.Image,
 		ExposedPorts: []string{"1521/tcp"},
@@ -72,6 +78,15 @@ func (o *OracleInfra) Start(ctx context.Context, env *itestkit.Env) error {
 			"ORACLE_PASSWORD": o.cfg.Password,
 		},
 		WaitingFor: wait.ForLog("DATABASE IS READY TO USE!").WithStartupTimeout(5 * time.Minute),
+	}
+
+	// Add to shared network if available
+	if env != nil && env.Network != "" {
+		req.Networks = []string{env.Network}
+		req.NetworkAliases = map[string][]string{
+			env.Network: {alias},
+		}
+		o.networkAlias = alias
 	}
 
 	genericReq := testcontainers.GenericContainerRequest{
@@ -105,7 +120,15 @@ func (o *OracleInfra) Start(ctx context.Context, env *itestkit.Env) error {
 	proxyListen := ""
 
 	if o.cfg.EnableProxy && env != nil && env.Chaos != nil {
-		ref, err := env.Chaos.CreateProxy(ctx, o.cfg.ProxyName, upstream)
+		// Use the container's network alias for proxy upstream when in shared network
+		var proxyUpstream string
+		if o.networkAlias != "" {
+			proxyUpstream = fmt.Sprintf("%s:1521", o.networkAlias)
+		} else {
+			// Fallback to host.docker.internal for backward compatibility
+			proxyUpstream = fmt.Sprintf("host.docker.internal:%s", port.Port())
+		}
+		ref, err := env.Chaos.CreateProxy(ctx, o.cfg.ProxyName, proxyUpstream)
 		if err != nil {
 			return err
 		}
@@ -150,31 +173,47 @@ func (o *OracleInfra) GoDRORDSN() (string, error) {
 }
 
 // HostPort returns the host and port as separate values.
-// If a proxy is configured, returns the proxy address; otherwise returns the upstream address.
-// The host is automatically normalized so containers can reach it (localhost is replaced with
-// the Docker gateway IP).
+// If a proxy is configured, returns the proxy address.
+// If in a shared network (no proxy), returns the network alias and internal port.
+// Otherwise returns the upstream address normalized for Docker access.
 func (o *OracleInfra) HostPort() (host string, port int, err error) {
+	// If stub values are set, return them directly without normalization
+	if o.stubHost != "" {
+		return o.stubHost, o.stubPort, nil
+	}
+
 	endpoint, err := o.Endpoint()
 	if err != nil {
 		return "", 0, err
 	}
 
-	addr := endpoint.Upstream
+	// If proxy is configured, return proxy address
 	if endpoint.ProxyListen != "" {
-		addr = endpoint.ProxyListen
+		hostStr, portStr, err := net.SplitHostPort(endpoint.ProxyListen)
+		if err != nil {
+			return "", 0, fmt.Errorf("invalid proxy address: %s: %w", endpoint.ProxyListen, err)
+		}
+		portNum, _ := strconv.Atoi(portStr)
+		return hostStr, portNum, nil
 	}
 
-	parts := strings.Split(addr, ":")
-	if len(parts) != 2 {
-		return "", 0, fmt.Errorf("invalid address format: %s", addr)
+	// If in shared network, return network alias and internal port
+	if o.networkAlias != "" {
+		return o.networkAlias, 1521, nil
 	}
 
-	portNum, err := strconv.Atoi(parts[1])
+	// Fallback: return upstream address normalized for Docker access
+	hostStr, portStr, err := net.SplitHostPort(endpoint.Upstream)
 	if err != nil {
-		return "", 0, fmt.Errorf("invalid port: %s", parts[1])
+		return "", 0, fmt.Errorf("invalid address format: %s: %w", endpoint.Upstream, err)
 	}
 
-	return itestkit.NormalizeHost(parts[0]), portNum, nil
+	portNum, err := strconv.Atoi(portStr)
+	if err != nil {
+		return "", 0, fmt.Errorf("invalid port: %s", portStr)
+	}
+
+	return itestkit.NormalizeHost(hostStr), portNum, nil
 }
 
 func (o *OracleInfra) Terminate(ctx context.Context) error {
@@ -186,3 +225,19 @@ func (o *OracleInfra) Terminate(ctx context.Context) error {
 
 func (o *OracleInfra) InfraKind() string { return "oracle" }
 func (o *OracleInfra) InfraName() string { return o.cfg.Name }
+
+// NewOracleInfraStub creates an OracleInfra with a pre-configured endpoint.
+// Use this when reusing existing infrastructure that was started separately.
+// The stub doesn't manage a container, just provides connection details.
+func NewOracleInfraStub(cfg OracleConfig, host string, port int) *OracleInfra {
+	o := NewOracleInfra(cfg)
+	upstream := fmt.Sprintf("%s:%d", host, port)
+	o.endpoint = &OracleEndpoint{
+		Upstream: upstream,
+		DSN:      fmt.Sprintf("oracle://system:%s@%s/%s", cfg.Password, upstream, cfg.SID),
+	}
+	// Store the raw host for HostPort() to return without normalization
+	o.stubHost = host
+	o.stubPort = port
+	return o
+}

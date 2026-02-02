@@ -1,3 +1,6 @@
+//go:build itestkit
+// +build itestkit
+
 package redis_test
 
 import (

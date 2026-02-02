@@ -3,8 +3,8 @@ package redis
 import (
 	"context"
 	"fmt"
+	"net"
 	"strconv"
-	"strings"
 
 	"github.com/testcontainers/testcontainers-go"
 	tcredis "github.com/testcontainers/testcontainers-go/modules/redis"
@@ -31,9 +31,10 @@ type RedisEndpoint struct {
 }
 
 type RedisInfra struct {
-	cfg       RedisConfig
-	container *tcredis.RedisContainer
-	endpoint  *RedisEndpoint
+	cfg          RedisConfig
+	container    *tcredis.RedisContainer
+	endpoint     *RedisEndpoint
+	networkAlias string // alias for internal network communication
 }
 
 func NewRedisInfra(cfg RedisConfig) *RedisInfra {
@@ -57,9 +58,22 @@ func (r *RedisInfra) Start(ctx context.Context, env *itestkit.Env) error {
 		}
 	}
 
+	// Build network alias based on infra name
+	alias := fmt.Sprintf("redis-%s", r.cfg.Name)
+
 	runOpts := []testcontainers.ContainerCustomizer{
 		testcontainers.WithImage(r.cfg.Image),
 	}
+
+	// Add to shared network if available
+	if env != nil && env.Network != "" {
+		runOpts = append(runOpts,
+			itestkit.CNetworks(env.Network),
+			itestkit.CNetworkAliases(env.Network, alias),
+		)
+		r.networkAlias = alias
+	}
+
 	runOpts = append(runOpts, opts.runOpts...)
 
 	c, err := tcredis.Run(ctx, r.cfg.Image, runOpts...)
@@ -82,7 +96,15 @@ func (r *RedisInfra) Start(ctx context.Context, env *itestkit.Env) error {
 	proxyListen := ""
 
 	if r.cfg.EnableProxy && env != nil && env.Chaos != nil {
-		ref, err := env.Chaos.CreateProxy(ctx, r.cfg.ProxyName, upstream)
+		// Use the container's network alias for proxy upstream when in shared network
+		var proxyUpstream string
+		if r.networkAlias != "" {
+			proxyUpstream = fmt.Sprintf("%s:6379", r.networkAlias)
+		} else {
+			// Fallback to host.docker.internal for backward compatibility
+			proxyUpstream = fmt.Sprintf("host.docker.internal:%s", port.Port())
+		}
+		ref, err := env.Chaos.CreateProxy(ctx, r.cfg.ProxyName, proxyUpstream)
 		if err != nil {
 			return err
 		}
@@ -131,31 +153,42 @@ func (r *RedisInfra) Addr() (string, error) {
 }
 
 // HostPort returns the host and port as separate values.
-// If a proxy is configured, returns the proxy address; otherwise returns the upstream address.
-// The host is automatically normalized so containers can reach it (localhost is replaced with
-// the Docker gateway IP).
+// If a proxy is configured, returns the proxy address.
+// If in a shared network (no proxy), returns the network alias and internal port.
+// Otherwise returns the upstream address normalized for Docker access.
 func (r *RedisInfra) HostPort() (host string, port int, err error) {
 	endpoint, err := r.Endpoint()
 	if err != nil {
 		return "", 0, err
 	}
 
-	addr := endpoint.Upstream
+	// If proxy is configured, return proxy address
 	if endpoint.ProxyListen != "" {
-		addr = endpoint.ProxyListen
+		hostStr, portStr, err := net.SplitHostPort(endpoint.ProxyListen)
+		if err != nil {
+			return "", 0, fmt.Errorf("invalid proxy address: %s: %w", endpoint.ProxyListen, err)
+		}
+		portNum, _ := strconv.Atoi(portStr)
+		return hostStr, portNum, nil
 	}
 
-	parts := strings.Split(addr, ":")
-	if len(parts) != 2 {
-		return "", 0, fmt.Errorf("invalid address format: %s", addr)
+	// If in shared network, return network alias and internal port
+	if r.networkAlias != "" {
+		return r.networkAlias, 6379, nil
 	}
 
-	portNum, err := strconv.Atoi(parts[1])
+	// Fallback: return upstream address normalized for Docker access
+	hostStr, portStr, err := net.SplitHostPort(endpoint.Upstream)
 	if err != nil {
-		return "", 0, fmt.Errorf("invalid port: %s", parts[1])
+		return "", 0, fmt.Errorf("invalid address format: %s: %w", endpoint.Upstream, err)
 	}
 
-	return itestkit.NormalizeHost(parts[0]), portNum, nil
+	portNum, err := strconv.Atoi(portStr)
+	if err != nil {
+		return "", 0, fmt.Errorf("invalid port: %s", portStr)
+	}
+
+	return itestkit.NormalizeHost(hostStr), portNum, nil
 }
 
 func (r *RedisInfra) Terminate(ctx context.Context) error {

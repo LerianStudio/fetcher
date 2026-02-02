@@ -1,3 +1,6 @@
+//go:build itestkit
+// +build itestkit
+
 package postgres_test
 
 import (

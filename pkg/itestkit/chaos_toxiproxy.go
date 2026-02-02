@@ -3,30 +3,61 @@ package itestkit
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	toxiclient "github.com/Shopify/toxiproxy/v2/client"
+	"github.com/docker/go-connections/nat"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
+const (
+	// proxyPortRangeStart is the first port in the range for proxy allocation.
+	proxyPortRangeStart = 10000
+	// proxyPortRangeEnd is the last port in the range for proxy allocation.
+	proxyPortRangeEnd = 10019
+	// maxProxies is the maximum number of proxies that can be created.
+	maxProxies = proxyPortRangeEnd - proxyPortRangeStart + 1
+)
+
+const toxiproxyAlias = "toxiproxy"
+
 type toxiproxyChaos struct {
-	container testcontainers.Container
-	client    *toxiclient.Client
-	proxies   map[string]*toxiclient.Proxy
+	container     testcontainers.Container
+	client        *toxiclient.Client
+	proxies       map[string]*toxiclient.Proxy
+	proxyMappings map[string]string // proxyName -> host:port (mapped port on host)
+	nextPort      atomic.Int32
+	hostIP        string
+	networkAlias  string // alias for internal network communication
 }
 
-func NewToxiproxyChaos(ctx context.Context, cfg ChaosConfig) (ChaosInterface, error) {
+func NewToxiproxyChaos(ctx context.Context, cfg ChaosConfig, networkName string) (ChaosInterface, error) {
 	image := cfg.Image
 	if image == "" {
 		image = "ghcr.io/shopify/toxiproxy:2.9.0"
 	}
 
+	// Build list of exposed ports: API port + proxy ports range
+	exposedPorts := []string{"8474/tcp"}
+	for port := proxyPortRangeStart; port <= proxyPortRangeEnd; port++ {
+		exposedPorts = append(exposedPorts, fmt.Sprintf("%d/tcp", port))
+	}
+
 	req := testcontainers.ContainerRequest{
 		Image:        image,
-		ExposedPorts: []string{"8474/tcp"},
+		ExposedPorts: exposedPorts,
 		WaitingFor:   wait.ForListeningPort("8474/tcp").WithStartupTimeout(30 * time.Second),
 		ExtraHosts:   []string{"host.docker.internal:host-gateway"},
+	}
+
+	// Add to shared network if provided
+	if networkName != "" {
+		req.Networks = []string{networkName}
+		req.NetworkAliases = map[string][]string{
+			networkName: {toxiproxyAlias},
+		}
 	}
 
 	c, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
@@ -50,20 +81,52 @@ func NewToxiproxyChaos(ctx context.Context, cfg ChaosConfig) (ChaosInterface, er
 
 	api := fmt.Sprintf("http://%s:%s", host, port.Port())
 
-	return &toxiproxyChaos{
-		container: c,
-		client:    toxiclient.NewClient(api),
-		proxies:   make(map[string]*toxiclient.Proxy),
-	}, nil
+	tc := &toxiproxyChaos{
+		container:     c,
+		client:        toxiclient.NewClient(api),
+		proxies:       make(map[string]*toxiclient.Proxy),
+		proxyMappings: make(map[string]string),
+		hostIP:        host,
+		networkAlias:  toxiproxyAlias,
+	}
+	tc.nextPort.Store(proxyPortRangeStart)
+
+	return tc, nil
 }
 
 func (t *toxiproxyChaos) CreateProxy(ctx context.Context, name string, upstream string) (ProxyRef, error) {
-	p, err := t.client.CreateProxy(name, "0.0.0.0:0", upstream)
+	// Allocate the next available port from our pre-exposed range
+	internalPort := int(t.nextPort.Add(1) - 1)
+	if internalPort > proxyPortRangeEnd {
+		return ProxyRef{}, fmt.Errorf("too many proxies: max %d supported", maxProxies)
+	}
+
+	// Create proxy listening on the allocated port inside the container
+	listenAddr := fmt.Sprintf("0.0.0.0:%d", internalPort)
+	p, err := t.client.CreateProxy(name, listenAddr, upstream)
 	if err != nil {
 		return ProxyRef{}, err
 	}
 	t.proxies[name] = p
-	return ProxyRef{Name: name, ListenAddr: p.Listen, Upstream: upstream}, nil
+
+	// If we have a network alias, use internal address for container-to-container communication
+	if t.networkAlias != "" {
+		internalAddr := fmt.Sprintf("%s:%d", t.networkAlias, internalPort)
+		t.proxyMappings[name] = internalAddr
+		return ProxyRef{Name: name, ListenAddr: internalAddr, Upstream: upstream}, nil
+	}
+
+	// Fallback: Get the mapped port on the host for this internal port
+	mappedPort, err := t.container.MappedPort(ctx, nat.Port(fmt.Sprintf("%d/tcp", internalPort)))
+	if err != nil {
+		return ProxyRef{}, fmt.Errorf("get mapped port for proxy %s: %w", name, err)
+	}
+
+	// Store the mapping and return the host-accessible address
+	hostAddr := fmt.Sprintf("%s:%s", t.hostIP, mappedPort.Port())
+	t.proxyMappings[name] = hostAddr
+
+	return ProxyRef{Name: name, ListenAddr: hostAddr, Upstream: upstream}, nil
 }
 
 func (t *toxiproxyChaos) AddLatency(ctx context.Context, proxyName string, latency, jitter time.Duration) error {
@@ -158,33 +221,16 @@ func (t *toxiproxyChaos) RemoveAllToxics(ctx context.Context, proxyName string) 
 		return err
 	}
 
-	switch toxics := any(toxicsAny).(type) {
-
-	case []toxiclient.Toxic:
-		for _, toxic := range toxics {
-			if toxic.Name == "" {
-				continue
-			}
-			if err := p.RemoveToxic(toxic.Name); err != nil {
-				return err
-			}
+	// toxiclient.Toxics is defined as []Toxic
+	for _, toxic := range toxicsAny {
+		if toxic.Name == "" {
+			continue
 		}
-		return nil
-
-	case []*toxiclient.Toxic:
-		for _, toxic := range toxics {
-			if toxic == nil || toxic.Name == "" {
-				continue
-			}
-			if err := p.RemoveToxic(toxic.Name); err != nil {
-				return err
-			}
+		if err := p.RemoveToxic(toxic.Name); err != nil {
+			return err
 		}
-		return nil
-
-	default:
-		return fmt.Errorf("unexpected toxics type from toxiproxy client: %T", toxicsAny)
 	}
+	return nil
 }
 
 func (t *toxiproxyChaos) Close(ctx context.Context) error {

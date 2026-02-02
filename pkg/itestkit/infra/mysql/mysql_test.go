@@ -1,3 +1,6 @@
+//go:build itestkit
+// +build itestkit
+
 package mysql_test
 
 import (

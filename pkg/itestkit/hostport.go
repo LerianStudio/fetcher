@@ -70,14 +70,20 @@ func HostGatewayIP() string {
 	return hostGatewayIP
 }
 
-// NormalizeHost replaces localhost/127.0.0.1 with the Docker gateway IP
+// NormalizeHost replaces localhost/loopback/wildcard addresses with the Docker gateway IP
 // so containers can reach services running on the host.
+//
+// Addresses that are replaced:
+//   - localhost, 127.0.0.1, ::1 (loopback)
+//   - 0.0.0.0, :: (wildcard/all interfaces)
 //
 // This is automatically called by all infra HostPort() methods, so tests
 // don't need to manually handle this conversion.
 func NormalizeHost(host string) string {
-	if host == "localhost" || host == "127.0.0.1" {
+	switch host {
+	case "localhost", "127.0.0.1", "::1", "0.0.0.0", "::":
 		return HostGatewayIP()
+	default:
+		return host
 	}
-	return host
 }

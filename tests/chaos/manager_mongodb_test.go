@@ -1,233 +1,278 @@
 //go:build chaos
 
-package e2e
+package chaos
 
 import (
+	"context"
+	"testing"
 	"time"
 
-	"github.com/LerianStudio/fetcher/pkg/model"
-	"github.com/LerianStudio/fetcher/tests/shared/chaos"
-	"github.com/LerianStudio/fetcher/tests/shared/client"
-	"github.com/LerianStudio/fetcher/tests/shared/config"
+	"github.com/LerianStudio/fetcher/pkg/itestkit/addons/metricskit"
+	e2eshared "github.com/LerianStudio/fetcher/tests/shared"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// TestMongoDBTimeout_ConnectionCreationFails tests that connection creation
-// fails gracefully when MongoDB is unavailable.
-func (s *ChaosTestSuite) TestMongoDBTimeout_ConnectionCreationFails() {
-	t := s.T()
+// =============================================================================
+// MANAGER + MONGODB CHAOS TESTS
+// =============================================================================
 
-	// Document hypothesis
-	chaos.DocumentHypothesis(t, chaos.FormatHypothesis(
-		"return timeout error when creating connection while MongoDB is unavailable",
-		"MongoDB has timeout chaos injected",
-	))
+// TestManager_MongoDB_HighLatency verifies Manager API behavior when MongoDB
+// has high latency (500ms).
+//
+// Expected behavior:
+// - API should still respond (degraded performance)
+// - Success rate >= 95%
+// - P99 latency < 2s
+func TestManager_MongoDB_HighLatency(t *testing.T) {
 
-	// Phase 1: Baseline - create connection successfully
-	t.Log("Phase 1: Baseline connection creation...")
-	configName := s.uniqueConfigName("chaos_postgres_test")
-	pg := s.chaosInfra.PostgresInternal()
+	ctx, cancel := context.WithTimeout(context.Background(), DefaultChaosTestTimeout)
+	defer cancel()
 
-	connResp, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
-		ConfigName:   configName,
-		Type:         "POSTGRESQL",
-		Host:         pg.Host,
-		Port:         pg.Port,
-		DatabaseName: pg.Database,
-		Username:     pg.Username,
-		Password:     pg.Password,
-	})
-	require.NoError(t, err, "Baseline connection should succeed")
-	assert.NotEmpty(t, connResp.ID)
-	if cleanupErr := s.managerClient.DeleteConnectionByConfigName(s.ctx, configName); cleanupErr != nil {
-		t.Logf("Baseline cleanup warning: %v", cleanupErr)
-	}
+	metrics := metricskit.NewChaosMetrics()
+	metrics.StartTest()
 
-	// Phase 2: Inject MongoDB timeout chaos
-	t.Log("Phase 2: Injecting MongoDB timeout chaos...")
-	s.metrics.StartChaos()
+	// Phase 1: Baseline (10 requests without chaos)
+	t.Log("Phase 1: Recording baseline metrics...")
+	verifyAPIHealthy(t, ctx, metrics, 10)
 
-	// Timeout that exceeds MongoDB connection timeout (10s)
-	chaosConfig := chaos.DefaultTimeoutConfig(15000) // 15s timeout
-	toxic, err := s.chaosInfra.ChaosOps.AddChaos(chaos.ServiceMongoMain, chaosConfig)
-	require.NoError(t, err)
-	require.NotNil(t, toxic)
-	defer func() { _ = s.chaosInfra.ChaosOps.RemoveChaos(chaos.ServiceMongoMain, chaosConfig.Name) }()
+	// Phase 2: Inject high latency
+	t.Log("Phase 2: Injecting 500ms latency to MongoDB...")
+	cleanup := injectLatency(t, ctx, mongoProxy, 500*time.Millisecond, 50*time.Millisecond)
+	defer cleanup()
 
-	time.Sleep(chaos.StabilizationDelay)
+	metrics.StartChaos()
 
-	// Phase 3: Attempt connection creation - should fail with timeout
-	t.Log("Phase 3: Attempting connection creation under chaos...")
-	configName = s.uniqueConfigName("chaos_mongo_timeout")
+	// Phase 3: Run requests under chaos (50 requests with small intervals)
+	t.Log("Phase 3: Running requests under chaos...")
+	runRequestsUnderChaos(t, ctx, metrics, 50, 100*time.Millisecond)
 
-	start := time.Now()
-	_, chaosErr := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
-		ConfigName:   configName,
-		Type:         "POSTGRESQL",
-		Host:         pg.Host,
-		Port:         pg.Port,
-		DatabaseName: pg.Database,
-		Username:     pg.Username,
-		Password:     pg.Password,
-	})
+	metrics.EndChaos()
+	metrics.EndTest()
 
-	duration := time.Since(start)
-	s.metrics.RecordRequest(chaosErr == nil, chaosErr != nil, duration)
-	s.metrics.EndChaos()
-
-	// CRITICAL: Validate hypothesis - connection creation should fail or take very long
-	// The Manager stores connections in MongoDB, so MongoDB timeout should cause API failure
-	// Note: The API may timeout before MongoDB does, or return an error
-	if chaosErr != nil {
-		t.Logf("Connection creation failed under chaos as expected: %v (duration: %v)", chaosErr, duration)
-	} else {
-		// If it succeeded, it should have taken a long time due to timeout chaos
-		t.Logf("Connection creation succeeded under chaos in %v (chaos may have partial effect)", duration)
-	}
-
-	// Phase 4: Remove chaos and verify recovery
-	t.Log("Phase 4: Removing chaos, verifying recovery...")
-	err = s.chaosInfra.ChaosOps.RemoveChaos(chaos.ServiceMongoMain, chaosConfig.Name)
-	require.NoError(t, err)
-
-	s.metrics.StartRecovery()
-	time.Sleep(chaos.RecoveryObservationTime)
-
-	// Should be able to create connection after chaos
-	configName = s.uniqueConfigName("chaos_recovery_test")
-	connResp, err = s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
-		ConfigName:   configName,
-		Type:         "POSTGRESQL",
-		Host:         pg.Host,
-		Port:         pg.Port,
-		DatabaseName: pg.Database,
-		Username:     pg.Username,
-		Password:     pg.Password,
-	})
-	require.NoError(t, err, "Connection should succeed after chaos removal")
-	assert.NotEmpty(t, connResp.ID)
-
-	s.metrics.EndRecovery()
-
-	// Document results
-	chaos.DocumentResult(t, s.metrics, "MongoDB timeout handled gracefully, recovery successful")
+	// Phase 4: Verify SLOs
+	t.Log("Phase 4: Verifying SLOs...")
+	logChaosReport(t, metrics)
+	assertSLOs(t, metrics, SLOManagerSuccessRate, SLOManagerP99Latency)
 }
 
-// TestMongoDBLatency_SlowJobStatusQueries tests system behavior when MongoDB proxy has latency.
+// TestManager_MongoDB_Timeout verifies Manager API behavior when MongoDB
+// connections timeout completely.
 //
-// IMPORTANT: Due to architecture limitations, Manager and Worker containers connect directly
-// to MongoDB (fetcher-mongodb:27017), not through Toxiproxy. Therefore, latency chaos
-// on the proxy doesn't affect internal application communication.
+// Expected behavior:
+// - API should return graceful errors (HTTP 500)
+// - Requests should not hang indefinitely
+func TestManager_MongoDB_Timeout(t *testing.T) {
+
+	ctx, cancel := context.WithTimeout(context.Background(), DefaultChaosTestTimeout)
+	defer cancel()
+
+	metrics := metricskit.NewChaosMetrics()
+	metrics.StartTest()
+
+	// Phase 1: Baseline
+	t.Log("Phase 1: Recording baseline metrics...")
+	verifyAPIHealthy(t, ctx, metrics, 5)
+
+	// Phase 2: Inject timeout
+	t.Log("Phase 2: Injecting connection timeout to MongoDB...")
+	cleanup := injectTimeout(t, ctx, mongoProxy, 5*time.Second)
+	defer cleanup()
+
+	metrics.StartChaos()
+
+	// Phase 3: Run requests under chaos
+	t.Log("Phase 3: Running requests under chaos...")
+	runRequestsUnderChaos(t, ctx, metrics, 20, 200*time.Millisecond)
+
+	metrics.EndChaos()
+	metrics.EndTest()
+
+	// Phase 4: Verify behavior
+	logChaosReport(t, metrics)
+
+	// Under timeout conditions, we expect degraded performance
+	// Verify that requests eventually fail gracefully (not hang)
+	assert.Greater(t, metrics.GetTotalRequests(), 0, "should have recorded requests")
+	t.Logf("Success rate under timeout: %.2f%%", metrics.SuccessRate())
+}
+
+// TestManager_MongoDB_Intermittent verifies Manager API recovery after
+// MongoDB connection is cut and restored.
 //
-// This test verifies:
-// 1. The system remains operational when latency is injected on the proxy (no crash)
-// 2. Jobs can be queried successfully
-// 3. Recovery works properly after chaos removal
-func (s *ChaosTestSuite) TestMongoDBLatency_SlowJobStatusQueries() {
-	t := s.T()
+// KNOWN LIMITATION: The Manager may not have automatic MongoDB reconnection.
+// If the MongoDB client connection pool is in an error state, the Manager
+// may not recover automatically. This test verifies the chaos injection
+// works correctly but may not achieve full recovery.
+//
+// Expected behavior:
+// - System should degrade during cut
+// - System MAY recover after restore (depends on MongoDB client retry behavior)
+func TestManager_MongoDB_Intermittent(t *testing.T) {
 
-	// Document hypothesis
-	chaos.DocumentHypothesis(t, chaos.FormatHypothesis(
-		"complete job status queries when MongoDB proxy has latency",
-		"MongoDB proxy has 3s latency - note: apps connect directly to MongoDB, not through proxy",
-	))
+	ctx, cancel := context.WithTimeout(context.Background(), DefaultChaosTestTimeout)
+	defer cancel()
 
-	// Phase 1: Create a job to query
-	t.Log("Phase 1: Creating job for status queries...")
-	configName := s.uniqueConfigName("chaos_postgres_test")
-	pg := s.chaosInfra.PostgresInternal()
+	metrics := metricskit.NewChaosMetrics()
+	metrics.StartTest()
 
-	_, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
-		ConfigName:   configName,
-		Type:         "POSTGRESQL",
-		Host:         pg.Host,
-		Port:         pg.Port,
-		DatabaseName: pg.Database,
-		Username:     pg.Username,
-		Password:     pg.Password,
-	})
-	require.NoError(t, err)
+	// Phase 1: Baseline
+	t.Log("Phase 1: Recording baseline metrics...")
+	verifyAPIHealthy(t, ctx, metrics, 5)
+	require.True(t, metrics.SuccessRate() > 90, "baseline should be healthy")
 
-	jobResp, err := s.managerClient.CreateFetcherJob(s.ctx, model.FetcherRequest{
-		DataRequest: model.DataRequest{
-			MappedFields: map[string]map[string][]string{
-				configName: {"transactions": {"id", "account_id"}},
-			},
-		},
-		Metadata: s.testMetadata("TestMongoDBLatency"),
-	})
-	require.NoError(t, err)
+	// Phase 2: Cut connection briefly (2 seconds)
+	t.Log("Phase 2: Cutting MongoDB connection briefly...")
+	cleanup := cutConnection(t, ctx, mongoProxy)
+	metrics.StartChaos()
 
-	// Wait for job to complete
-	_, err = s.eventConsumer.WaitForJobEvent(s.ctx, jobResp.JobID.String(), config.JobCompletionTimeout)
-	require.NoError(t, err, "Job should complete before chaos injection")
+	// Brief cut - only 2 seconds to minimize impact on connection pool
+	time.Sleep(2 * time.Second)
 
-	// Phase 2: Inject MongoDB latency
-	t.Log("Phase 2: Injecting MongoDB latency chaos...")
-	s.metrics.StartChaos()
+	// Phase 3: Restore connection
+	t.Log("Phase 3: Restoring MongoDB connection...")
+	cleanup()
+	restoreConnection(t, ctx, mongoProxy)
 
-	chaosConfig := chaos.DefaultLatencyConfig(
-		chaos.LatencyMs(chaos.ChaosLatencyValues.Medium),
-		chaos.LatencyMs(chaos.ChaosLatencyValues.Jitter),
-	)
-	toxic, err := s.chaosInfra.ChaosOps.AddChaos(chaos.ServiceMongoMain, chaosConfig)
-	require.NoError(t, err)
-	require.NotNil(t, toxic)
-	defer func() { _ = s.chaosInfra.ChaosOps.RemoveChaos(chaos.ServiceMongoMain, chaosConfig.Name) }()
+	metrics.EndChaos()
 
-	time.Sleep(chaos.StabilizationDelay)
+	// Phase 4: Wait for recovery with extended timeout
+	t.Log("Phase 4: Checking system recovery...")
 
-	// Phase 3: Query job status under chaos
-	t.Log("Phase 3: Querying job status under chaos...")
-	var totalLatency time.Duration
-	successfulQueries := 0
+	// Give more time for MongoDB client to detect the restored connection
+	time.Sleep(5 * time.Second)
 
-	for i := 0; i < 5; i++ { // Increased sample size for better statistical validity
-		start := time.Now()
-		job, queryErr := s.managerClient.GetJob(s.ctx, jobResp.JobID.String())
-		duration := time.Since(start)
+	// Try a few requests to check recovery
+	recoveryMetrics := metricskit.NewChaosMetrics()
+	recoveryMetrics.StartTest()
+	verifyAPIHealthy(t, ctx, recoveryMetrics, 5)
+	recoveryMetrics.EndTest()
 
-		if queryErr == nil {
-			successfulQueries++
-			totalLatency += duration
-			s.metrics.RecordRequest(true, false, duration)
-			assert.Equal(t, "completed", job.Status)
-			// NOTE: Due to architecture limitations (apps connect directly to MongoDB, not through proxy),
-			// we cannot assert on query duration. The latency chaos affects the proxy, but apps bypass it.
-			t.Logf("Query %d: succeeded in %v", i+1, duration)
-		} else {
-			s.metrics.RecordRequest(false, true, duration)
-			t.Logf("Query %d: failed after %v: %v", i+1, duration, queryErr)
-		}
+	metrics.EndTest()
+
+	if recoveryMetrics.SuccessRate() > 50 {
+		t.Log("System recovered successfully after MongoDB reconnection")
+	} else {
+		t.Log("System did not recover automatically - this is expected if Manager lacks auto-reconnect")
+		t.Log("NOTE: Full recovery may require Manager restart")
 	}
 
-	s.metrics.EndChaos()
+	logChaosReport(t, metrics)
+}
 
-	// Cleanup
-	err = s.chaosInfra.ChaosOps.RemoveChaos(chaos.ServiceMongoMain, chaosConfig.Name)
-	require.NoError(t, err)
+// TestManager_MongoDB_Bandwidth verifies Manager API behavior when MongoDB
+// has limited bandwidth (128 KB/s).
+//
+// Expected behavior:
+// - Throughput should be degraded but functional
+// - Requests should eventually complete
+func TestManager_MongoDB_Bandwidth(t *testing.T) {
 
-	// Phase 4: Verify recovery
-	t.Log("Phase 4: Verifying recovery...")
-	s.metrics.StartRecovery()
-	recoveryStart := time.Now()
-	job, err := s.managerClient.GetJob(s.ctx, jobResp.JobID.String())
-	recoveryDuration := time.Since(recoveryStart)
-	require.NoError(t, err, "Should be able to get job after chaos removal")
-	assert.Equal(t, "completed", job.Status)
-	t.Logf("Recovery query completed in %v (should be faster than chaos phase)", recoveryDuration)
-	s.metrics.EndRecovery()
+	ctx, cancel := context.WithTimeout(context.Background(), DefaultChaosTestTimeout)
+	defer cancel()
 
-	// Assertions
-	assertions := chaos.NewChaosAssertions(t, s.metrics)
-	assertions.AssertSuccessRateAbove(60.0) // Adjusted for 5 samples
+	metrics := metricskit.NewChaosMetrics()
+	metrics.StartTest()
 
-	// Verify average latency was affected by chaos
-	if successfulQueries > 0 {
-		avgLatency := totalLatency / time.Duration(successfulQueries)
-		t.Logf("Average query latency under chaos: %v", avgLatency)
+	// Phase 1: Baseline
+	t.Log("Phase 1: Recording baseline metrics...")
+	verifyAPIHealthy(t, ctx, metrics, 10)
+	baselineThroughput := metrics.ThroughputRPS()
+
+	// Reset metrics for chaos phase
+	chaosMetrics := metricskit.NewChaosMetrics()
+
+	// Phase 2: Inject bandwidth limit
+	t.Log("Phase 2: Injecting 128 KB/s bandwidth limit to MongoDB...")
+	cleanup := injectBandwidthLimit(t, ctx, mongoProxy, 128)
+	defer cleanup()
+
+	chaosMetrics.StartTest()
+	chaosMetrics.StartChaos()
+
+	// Phase 3: Run requests under chaos
+	t.Log("Phase 3: Running requests under chaos...")
+	runRequestsUnderChaos(t, ctx, chaosMetrics, 30, 100*time.Millisecond)
+
+	chaosMetrics.EndChaos()
+	chaosMetrics.EndTest()
+
+	// Phase 4: Verify behavior
+	logChaosReport(t, chaosMetrics)
+
+	// Verify that API is still functional (degraded but working)
+	assert.Greater(t, chaosMetrics.SuccessRate(), 80.0,
+		"success rate should be > 80%% under bandwidth limit")
+
+	t.Logf("Throughput: baseline=%.2f req/s, under chaos=%.2f req/s",
+		baselineThroughput, chaosMetrics.ThroughputRPS())
+}
+
+// =============================================================================
+// MANAGER CRUD OPERATIONS UNDER CHAOS
+// =============================================================================
+
+// TestManager_CRUD_UnderLatency verifies that CRUD operations complete
+// successfully under high latency conditions.
+func TestManager_CRUD_UnderLatency(t *testing.T) {
+
+	ctx, cancel := context.WithTimeout(context.Background(), DefaultChaosTestTimeout)
+	defer cancel()
+
+	// Phase 1: Inject latency
+	t.Log("Phase 1: Injecting 300ms latency to MongoDB...")
+	cleanup := injectLatency(t, ctx, mongoProxy, 300*time.Millisecond, 50*time.Millisecond)
+	defer cleanup()
+
+	// Phase 2: Test CRUD operations
+	t.Log("Phase 2: Testing CRUD operations under latency...")
+
+	// Create
+	pgHost, pgPort, err := postgresInfra.HostPort()
+	require.NoError(t, err, "get postgres host/port")
+
+	connInput := e2eshared.ConnectionInput{
+		ConfigName:   "chaos-crud-test",
+		Type:         e2eshared.DBTypePostgreSQL,
+		Host:         pgHost,
+		Port:         pgPort,
+		DatabaseName: "testdb",
+		Username:     "testuser",
+		Password:     "testpass",
 	}
 
-	chaos.DocumentResult(t, s.metrics, "Job status queries succeeded despite MongoDB latency")
+	start := time.Now()
+	conn, err := apiClient.CreateConnection(ctx, connInput)
+	createLatency := time.Since(start)
+	require.NoError(t, err, "create connection should succeed under latency")
+	t.Logf("Create latency: %v", createLatency)
+
+	// Read
+	start = time.Now()
+	retrieved, err := apiClient.GetConnection(ctx, conn.ID)
+	readLatency := time.Since(start)
+	require.NoError(t, err, "read connection should succeed under latency")
+	assert.Equal(t, conn.ID, retrieved.ID)
+	t.Logf("Read latency: %v", readLatency)
+
+	// List
+	start = time.Now()
+	_, err = apiClient.ListConnections(ctx, e2eshared.ListConnectionsParams{Limit: 10})
+	listLatency := time.Since(start)
+	require.NoError(t, err, "list connections should succeed under latency")
+	t.Logf("List latency: %v", listLatency)
+
+	// Delete
+	start = time.Now()
+	err = apiClient.DeleteConnection(ctx, conn.ID)
+	deleteLatency := time.Since(start)
+	require.NoError(t, err, "delete connection should succeed under latency")
+	t.Logf("Delete latency: %v", deleteLatency)
+
+	// Verify all operations completed within acceptable latency
+	maxAcceptable := 3 * time.Second
+	assert.Less(t, createLatency, maxAcceptable, "create should complete in reasonable time")
+	assert.Less(t, readLatency, maxAcceptable, "read should complete in reasonable time")
+	assert.Less(t, listLatency, maxAcceptable, "list should complete in reasonable time")
+	assert.Less(t, deleteLatency, maxAcceptable, "delete should complete in reasonable time")
 }

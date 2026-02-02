@@ -1,6 +1,10 @@
 package postgres
 
-import "github.com/testcontainers/testcontainers-go"
+import (
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/go-connections/nat"
+	"github.com/testcontainers/testcontainers-go"
+)
 
 type PostgresOption func(*postgresOptions)
 
@@ -44,5 +48,23 @@ func WithPGInitFile(hostPath string, containerFileName string) PostgresOption {
 				},
 			),
 		)
+	}
+}
+
+// WithPGFixedPort binds the PostgreSQL container to a specific host port.
+// Use this for debugging scenarios where the local app needs to connect
+// to the containerized database on a predictable port.
+func WithPGFixedPort(hostPort string) PostgresOption {
+	return func(o *postgresOptions) {
+		o.runOpts = append(o.runOpts, testcontainers.WithHostConfigModifier(
+			func(hc *container.HostConfig) {
+				if hc.PortBindings == nil {
+					hc.PortBindings = nat.PortMap{}
+				}
+				hc.PortBindings["5432/tcp"] = []nat.PortBinding{
+					{HostIP: "0.0.0.0", HostPort: hostPort},
+				}
+			},
+		))
 	}
 }

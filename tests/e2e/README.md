@@ -1,6 +1,6 @@
 # E2E Tests
 
-End-to-end tests for the Fetcher application using the `itestkit` framework.
+End-to-end tests for the Fetcher application using the `itestkit` framework. These tests validate the complete flow from API requests through job processing to result storage.
 
 ## Quick Start
 
@@ -8,14 +8,14 @@ End-to-end tests for the Fetcher application using the `itestkit` framework.
 # Run all e2e tests
 go test -v -tags e2e ./tests/e2e -timeout 5m
 
-# Run with fixed ports (useful for debugging)
-FIXED_PORT=true go test -v -tags e2e ./tests/e2e -timeout 5m
-
-# Run with Skip Docker build, use pre-built images
-GITHUB_TOKEN=... E2E_SKIP_BUILD=false go test -v -tags e2e ./tests/e2e -timeout 5m
-
 # Run a specific test
 go test -v -tags e2e ./tests/e2e -run TestPostgresExtraction -timeout 5m
+
+# Run with Skip Docker build, use pre-built images
+GITHUB_TOKEN=`cat .secrets/github_token.txt` E2E_SKIP_BUILD=false go test -v -tags e2e ./tests/e2e -timeout 5m
+
+# Run with fixed ports (useful for debugging)
+FIXED_PORT=true go test -v -tags e2e ./tests/e2e -timeout 5m
 ```
 
 ## Environment Variables
@@ -27,6 +27,51 @@ go test -v -tags e2e ./tests/e2e -run TestPostgresExtraction -timeout 5m
 | `WORKER_IMAGE` | `fetcher-worker:latest` | Docker image for Worker |
 | `E2E_SKIP_BUILD` | `true` | Skip Docker build, use pre-built images |
 | `GITHUB_TOKEN` | `""` | GitHub token for fetching and worker images |
+
+## Prerequisites
+
+- Go 1.21+
+- Docker with Docker Compose
+- Pre-built Fetcher images (`fetcher-manager:latest`, `fetcher-worker:latest`)
+
+To build the images before running tests:
+
+```bash
+make build-manager
+make build-worker
+```
+
+## Test Architecture
+
+The E2E tests spin up a complete test environment using [testcontainers-go](https://golang.testcontainers.org/):
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        Test Environment                          │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  ┌──────────┐         ┌──────────┐                              │
+│  │ Manager  │◄───────►│ MongoDB  │  (Connection storage)        │
+│  └──────────┘         └──────────┘                              │
+│       │                                                          │
+│       │ HTTP API                                                 │
+│       ▼                                                          │
+│  ┌──────────┐         ┌──────────┐                              │
+│  │  Worker  │◄───────►│ RabbitMQ │  (Job queue)                 │
+│  └──────────┘         └──────────┘                              │
+│       │                                                          │
+│       │ Extract                                                  │
+│       ▼                                                          │
+│  ┌────────────┐       ┌──────────┐                              │
+│  │ PostgreSQL │       │  Redis   │  (Cache/Locking)             │
+│  │   MySQL    │       └──────────┘                              │
+│  │   Oracle   │                                                  │
+│  │   MSSQL    │       ┌───────────┐                             │
+│  └────────────┘       │ SeaweedFS │  (Result storage)           │
+│   (Source DBs)        └───────────┘                             │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
 
 ## Project Structure
 
@@ -347,3 +392,10 @@ docker ps -a | grep -E "(mongo|rabbit|redis|seaweed|postgres)" | awk '{print $1}
 6. **Keep tests independent** - each test should set up its own state
 7. **Use meaningful assertions** - verify both success conditions and error messages
 8. **Use matchers with unique IDs** - filter queue messages by job ID to receive only your test's events
+
+## Related Documentation
+
+- [Chaos Tests](../chaos/README.md) - Chaos engineering and resilience tests
+- [itestkit Package](../../pkg/itestkit/README.md) - Integration test infrastructure
+- [queuekit Addon](../../pkg/itestkit/addons/queuekit/) - Queue consumer and assertions
+- [e2ekit Addon](../../pkg/itestkit/addons/e2ekit/) - Application container builder

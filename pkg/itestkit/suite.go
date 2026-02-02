@@ -2,19 +2,25 @@ package itestkit
 
 import (
 	"context"
+	"fmt"
 	"testing"
+	"time"
+
+	"github.com/testcontainers/testcontainers-go"
 )
 
 type Suite struct {
-	t     *testing.T
-	infra []Infra
-	chaos ChaosInterface
-	env   *Env
+	t       *testing.T
+	infra   []Infra
+	chaos   ChaosInterface
+	env     *Env
+	network testcontainers.Network
 }
 
 type Env struct {
 	Containers map[string]ContainerEndpoint
 	Chaos      ChaosInterface
+	Network    string // Name of the shared Docker network for container communication
 }
 
 type Builder struct {
@@ -63,22 +69,37 @@ func (b *Builder) Build(ctx context.Context) (*Suite, error) {
 		b.t.Helper()
 	}
 
+	// Create shared Docker network for container communication
+	networkName := fmt.Sprintf("itestkit-%d", time.Now().UnixNano())
+	network, err := testcontainers.GenericNetwork(ctx, testcontainers.GenericNetworkRequest{
+		NetworkRequest: testcontainers.NetworkRequest{
+			Name:   networkName,
+			Driver: "bridge",
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create network: %w", err)
+	}
+
 	var chaos ChaosInterface
 	if b.chaosConf.Enabled {
-		tc, err := NewToxiproxyChaos(ctx, b.chaosConf)
+		tc, err := NewToxiproxyChaos(ctx, b.chaosConf, networkName)
 		if err != nil {
+			_ = network.Remove(ctx)
 			return nil, err
 		}
 		chaos = tc
 	}
 
 	s := &Suite{
-		t:     b.t,
-		infra: b.infra,
-		chaos: chaos,
+		t:       b.t,
+		infra:   b.infra,
+		chaos:   chaos,
+		network: network,
 		env: &Env{
 			Containers: map[string]ContainerEndpoint{},
 			Chaos:      chaos,
+			Network:    networkName,
 		},
 	}
 
@@ -108,5 +129,17 @@ func (s *Suite) Terminate(ctx context.Context) error {
 	if s.chaos != nil {
 		_ = s.chaos.Close(ctx)
 	}
+	if s.network != nil {
+		_ = s.network.Remove(ctx)
+	}
 	return nil
+}
+
+// Network returns the name of the shared Docker network.
+// Use this to add additional containers to the same network.
+func (s *Suite) Network() string {
+	if s.env != nil {
+		return s.env.Network
+	}
+	return ""
 }

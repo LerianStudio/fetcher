@@ -1,3 +1,6 @@
+//go:build itestkit
+// +build itestkit
+
 package mssql_test
 
 import (

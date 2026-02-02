@@ -3,8 +3,8 @@ package mongodb
 import (
 	"context"
 	"fmt"
+	"net"
 	"strconv"
-	"strings"
 
 	"github.com/testcontainers/testcontainers-go"
 	tcmongo "github.com/testcontainers/testcontainers-go/modules/mongodb"
@@ -32,9 +32,12 @@ type MongoDBEndpoint struct {
 }
 
 type MongoDBInfra struct {
-	cfg       MongoDBConfig
-	container *tcmongo.MongoDBContainer
-	endpoint  *MongoDBEndpoint
+	cfg          MongoDBConfig
+	container    *tcmongo.MongoDBContainer
+	endpoint     *MongoDBEndpoint
+	networkAlias string // alias for internal network communication
+	stubHost     string // used by stub to return raw host without normalization
+	stubPort     int    // used by stub to return raw port
 }
 
 func NewMongoDBInfra(cfg MongoDBConfig) *MongoDBInfra {
@@ -58,6 +61,9 @@ func (m *MongoDBInfra) Start(ctx context.Context, env *itestkit.Env) error {
 		}
 	}
 
+	// Build network alias based on infra name
+	alias := fmt.Sprintf("mongodb-%s", m.cfg.Name)
+
 	runOpts := []testcontainers.ContainerCustomizer{
 		testcontainers.WithImage(m.cfg.Image),
 	}
@@ -67,6 +73,15 @@ func (m *MongoDBInfra) Start(ctx context.Context, env *itestkit.Env) error {
 			tcmongo.WithUsername(m.cfg.Username),
 			tcmongo.WithPassword(m.cfg.Password),
 		)
+	}
+
+	// Add to shared network if available
+	if env != nil && env.Network != "" {
+		runOpts = append(runOpts,
+			itestkit.CNetworks(env.Network),
+			itestkit.CNetworkAliases(env.Network, alias),
+		)
+		m.networkAlias = alias
 	}
 
 	runOpts = append(runOpts, opts.runOpts...)
@@ -91,7 +106,15 @@ func (m *MongoDBInfra) Start(ctx context.Context, env *itestkit.Env) error {
 	proxyListen := ""
 
 	if m.cfg.EnableProxy && env != nil && env.Chaos != nil {
-		ref, err := env.Chaos.CreateProxy(ctx, m.cfg.ProxyName, upstream)
+		// Use the container's network alias for proxy upstream when in shared network
+		var proxyUpstream string
+		if m.networkAlias != "" {
+			proxyUpstream = fmt.Sprintf("%s:27017", m.networkAlias)
+		} else {
+			// Fallback to host.docker.internal for backward compatibility
+			proxyUpstream = fmt.Sprintf("host.docker.internal:%s", port.Port())
+		}
+		ref, err := env.Chaos.CreateProxy(ctx, m.cfg.ProxyName, proxyUpstream)
 		if err != nil {
 			return err
 		}
@@ -131,31 +154,47 @@ func (m *MongoDBInfra) URI() (string, error) {
 }
 
 // HostPort returns the host and port as separate values.
-// If a proxy is configured, returns the proxy address; otherwise returns the upstream address.
-// The host is automatically normalized so containers can reach it (localhost is replaced with
-// the Docker gateway IP).
+// If a proxy is configured, returns the proxy address.
+// If in a shared network (no proxy), returns the network alias and internal port.
+// Otherwise returns the upstream address normalized for Docker access.
 func (m *MongoDBInfra) HostPort() (host string, port int, err error) {
+	// If stub values are set, return them directly without normalization
+	if m.stubHost != "" {
+		return m.stubHost, m.stubPort, nil
+	}
+
 	endpoint, err := m.Endpoint()
 	if err != nil {
 		return "", 0, err
 	}
 
-	addr := endpoint.Upstream
+	// If proxy is configured, return proxy address
 	if endpoint.ProxyListen != "" {
-		addr = endpoint.ProxyListen
+		hostStr, portStr, err := net.SplitHostPort(endpoint.ProxyListen)
+		if err != nil {
+			return "", 0, fmt.Errorf("invalid proxy address: %s: %w", endpoint.ProxyListen, err)
+		}
+		portNum, _ := strconv.Atoi(portStr)
+		return hostStr, portNum, nil
 	}
 
-	parts := strings.Split(addr, ":")
-	if len(parts) != 2 {
-		return "", 0, fmt.Errorf("invalid address format: %s", addr)
+	// If in shared network, return network alias and internal port
+	if m.networkAlias != "" {
+		return m.networkAlias, 27017, nil
 	}
 
-	portNum, err := strconv.Atoi(parts[1])
+	// Fallback: return upstream address normalized for Docker access
+	hostStr, portStr, err := net.SplitHostPort(endpoint.Upstream)
 	if err != nil {
-		return "", 0, fmt.Errorf("invalid port: %s", parts[1])
+		return "", 0, fmt.Errorf("invalid address format: %s: %w", endpoint.Upstream, err)
 	}
 
-	return itestkit.NormalizeHost(parts[0]), portNum, nil
+	portNum, err := strconv.Atoi(portStr)
+	if err != nil {
+		return "", 0, fmt.Errorf("invalid port: %s", portStr)
+	}
+
+	return itestkit.NormalizeHost(hostStr), portNum, nil
 }
 
 func (m *MongoDBInfra) Terminate(ctx context.Context) error {
@@ -167,3 +206,25 @@ func (m *MongoDBInfra) Terminate(ctx context.Context) error {
 
 func (m *MongoDBInfra) InfraKind() string { return "mongodb" }
 func (m *MongoDBInfra) InfraName() string { return m.cfg.Name }
+
+// NewMongoDBInfraStub creates a MongoDBInfra with a pre-configured endpoint.
+// Use this when reusing existing infrastructure that was started separately.
+// The stub doesn't manage a container, just provides connection details.
+func NewMongoDBInfraStub(cfg MongoDBConfig, host string, port int) *MongoDBInfra {
+	m := NewMongoDBInfra(cfg)
+	upstream := fmt.Sprintf("%s:%d", host, port)
+	var uri string
+	if cfg.Username != "" && cfg.Password != "" {
+		uri = fmt.Sprintf("mongodb://%s:%s@%s", cfg.Username, cfg.Password, upstream)
+	} else {
+		uri = fmt.Sprintf("mongodb://%s", upstream)
+	}
+	m.endpoint = &MongoDBEndpoint{
+		Upstream: upstream,
+		URI:      uri,
+	}
+	// Store the raw host for HostPort() to return without normalization
+	m.stubHost = host
+	m.stubPort = port
+	return m
+}

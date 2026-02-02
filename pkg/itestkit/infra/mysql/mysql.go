@@ -34,9 +34,12 @@ type MySQLEndpoint struct {
 }
 
 type MySQLInfra struct {
-	cfg       MySQLConfig
-	container *tcmysql.MySQLContainer
-	endpoint  *MySQLEndpoint
+	cfg          MySQLConfig
+	container    *tcmysql.MySQLContainer
+	endpoint     *MySQLEndpoint
+	networkAlias string // alias for internal network communication
+	stubHost     string // used by stub to return raw host without normalization
+	stubPort     int    // used by stub to return raw port
 }
 
 func NewMySQLInfra(cfg MySQLConfig) *MySQLInfra {
@@ -72,12 +75,25 @@ func (m *MySQLInfra) Start(ctx context.Context, env *itestkit.Env) error {
 		}
 	}
 
+	// Build network alias based on infra name
+	alias := fmt.Sprintf("mysql-%s", m.cfg.Name)
+
 	runOpts := []testcontainers.ContainerCustomizer{
 		testcontainers.WithImage(m.cfg.Image),
 		tcmysql.WithDatabase(m.cfg.Database),
 		tcmysql.WithUsername(m.cfg.Username),
 		tcmysql.WithPassword(m.cfg.Password),
 	}
+
+	// Add to shared network if available
+	if env != nil && env.Network != "" {
+		runOpts = append(runOpts,
+			itestkit.CNetworks(env.Network),
+			itestkit.CNetworkAliases(env.Network, alias),
+		)
+		m.networkAlias = alias
+	}
+
 	runOpts = append(runOpts, opts.runOpts...)
 
 	c, err := tcmysql.Run(ctx, m.cfg.Image, runOpts...)
@@ -133,23 +149,39 @@ func (m *MySQLInfra) DSN() (string, error) {
 }
 
 // HostPort returns the host and port as separate values.
-// If a proxy is configured, returns the proxy address; otherwise returns the upstream address.
-// The host is automatically normalized so containers can reach it (localhost is replaced with
-// the Docker gateway IP).
+// If a proxy is configured, returns the proxy address.
+// If in a shared network (no proxy), returns the network alias and internal port.
+// Otherwise returns the upstream address normalized for Docker access.
 func (m *MySQLInfra) HostPort() (host string, port int, err error) {
+	// If stub values are set, return them directly without normalization
+	if m.stubHost != "" {
+		return m.stubHost, m.stubPort, nil
+	}
+
 	endpoint, err := m.Endpoint()
 	if err != nil {
 		return "", 0, err
 	}
 
-	addr := endpoint.Upstream
+	// If proxy is configured, return proxy address
 	if endpoint.ProxyListen != "" {
-		addr = endpoint.ProxyListen
+		parts := strings.Split(endpoint.ProxyListen, ":")
+		if len(parts) != 2 {
+			return "", 0, fmt.Errorf("invalid proxy address: %s", endpoint.ProxyListen)
+		}
+		portNum, _ := strconv.Atoi(parts[1])
+		return parts[0], portNum, nil
 	}
 
-	parts := strings.Split(addr, ":")
+	// If in shared network, return network alias and internal port
+	if m.networkAlias != "" {
+		return m.networkAlias, 3306, nil
+	}
+
+	// Fallback: return upstream address normalized for Docker access
+	parts := strings.Split(endpoint.Upstream, ":")
 	if len(parts) != 2 {
-		return "", 0, fmt.Errorf("invalid address format: %s", addr)
+		return "", 0, fmt.Errorf("invalid address format: %s", endpoint.Upstream)
 	}
 
 	portNum, err := strconv.Atoi(parts[1])
@@ -169,3 +201,19 @@ func (m *MySQLInfra) Terminate(ctx context.Context) error {
 
 func (m *MySQLInfra) InfraKind() string { return "mysql" }
 func (m *MySQLInfra) InfraName() string { return m.cfg.Name }
+
+// NewMySQLInfraStub creates a MySQLInfra with a pre-configured endpoint.
+// Use this when reusing existing infrastructure that was started separately.
+// The stub doesn't manage a container, just provides connection details.
+func NewMySQLInfraStub(cfg MySQLConfig, host string, port int) *MySQLInfra {
+	m := NewMySQLInfra(cfg)
+	upstream := fmt.Sprintf("%s:%d", host, port)
+	m.endpoint = &MySQLEndpoint{
+		Upstream: upstream,
+		DSN:      fmt.Sprintf("%s:%s@tcp(%s)/%s?parseTime=true", cfg.Username, cfg.Password, upstream, cfg.Database),
+	}
+	// Store the raw host for HostPort() to return without normalization
+	m.stubHost = host
+	m.stubPort = port
+	return m
+}

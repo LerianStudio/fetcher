@@ -3,8 +3,8 @@ package mssql
 import (
 	"context"
 	"fmt"
+	"net"
 	"strconv"
-	"strings"
 
 	"github.com/testcontainers/testcontainers-go"
 	tcmssql "github.com/testcontainers/testcontainers-go/modules/mssql"
@@ -32,9 +32,12 @@ type MSSQLEndpoint struct {
 }
 
 type MSSQLInfra struct {
-	cfg       MSSQLConfig
-	container *tcmssql.MSSQLServerContainer
-	endpoint  *MSSQLEndpoint
+	cfg          MSSQLConfig
+	container    *tcmssql.MSSQLServerContainer
+	endpoint     *MSSQLEndpoint
+	networkAlias string // alias for internal network communication
+	stubHost     string // used by stub to return raw host without normalization
+	stubPort     int    // used by stub to return raw port
 }
 
 func NewMSSQLInfra(cfg MSSQLConfig) *MSSQLInfra {
@@ -61,11 +64,24 @@ func (m *MSSQLInfra) Start(ctx context.Context, env *itestkit.Env) error {
 		}
 	}
 
+	// Build network alias based on infra name
+	alias := fmt.Sprintf("mssql-%s", m.cfg.Name)
+
 	runOpts := []testcontainers.ContainerCustomizer{
 		testcontainers.WithImage(m.cfg.Image),
 		tcmssql.WithAcceptEULA(),
 		tcmssql.WithPassword(m.cfg.Password),
 	}
+
+	// Add to shared network if available
+	if env != nil && env.Network != "" {
+		runOpts = append(runOpts,
+			itestkit.CNetworks(env.Network),
+			itestkit.CNetworkAliases(env.Network, alias),
+		)
+		m.networkAlias = alias
+	}
+
 	runOpts = append(runOpts, opts.runOpts...)
 
 	c, err := tcmssql.Run(ctx, m.cfg.Image, runOpts...)
@@ -88,7 +104,15 @@ func (m *MSSQLInfra) Start(ctx context.Context, env *itestkit.Env) error {
 	proxyListen := ""
 
 	if m.cfg.EnableProxy && env != nil && env.Chaos != nil {
-		ref, err := env.Chaos.CreateProxy(ctx, m.cfg.ProxyName, upstream)
+		// Use the container's network alias for proxy upstream when in shared network
+		var proxyUpstream string
+		if m.networkAlias != "" {
+			proxyUpstream = fmt.Sprintf("%s:1433", m.networkAlias)
+		} else {
+			// Fallback to host.docker.internal for backward compatibility
+			proxyUpstream = fmt.Sprintf("host.docker.internal:%s", port.Port())
+		}
+		ref, err := env.Chaos.CreateProxy(ctx, m.cfg.ProxyName, proxyUpstream)
 		if err != nil {
 			return err
 		}
@@ -126,31 +150,47 @@ func (m *MSSQLInfra) DSN() (string, error) {
 }
 
 // HostPort returns the host and port as separate values.
-// If a proxy is configured, returns the proxy address; otherwise returns the upstream address.
-// The host is automatically normalized so containers can reach it (localhost is replaced with
-// the Docker gateway IP).
+// If a proxy is configured, returns the proxy address.
+// If in a shared network (no proxy), returns the network alias and internal port.
+// Otherwise returns the upstream address normalized for Docker access.
 func (m *MSSQLInfra) HostPort() (host string, port int, err error) {
+	// If stub values are set, return them directly without normalization
+	if m.stubHost != "" {
+		return m.stubHost, m.stubPort, nil
+	}
+
 	endpoint, err := m.Endpoint()
 	if err != nil {
 		return "", 0, err
 	}
 
-	addr := endpoint.Upstream
+	// If proxy is configured, return proxy address
 	if endpoint.ProxyListen != "" {
-		addr = endpoint.ProxyListen
+		hostStr, portStr, err := net.SplitHostPort(endpoint.ProxyListen)
+		if err != nil {
+			return "", 0, fmt.Errorf("invalid proxy address: %s: %w", endpoint.ProxyListen, err)
+		}
+		portNum, _ := strconv.Atoi(portStr)
+		return hostStr, portNum, nil
 	}
 
-	parts := strings.Split(addr, ":")
-	if len(parts) != 2 {
-		return "", 0, fmt.Errorf("invalid address format: %s", addr)
+	// If in shared network, return network alias and internal port
+	if m.networkAlias != "" {
+		return m.networkAlias, 1433, nil
 	}
 
-	portNum, err := strconv.Atoi(parts[1])
+	// Fallback: return upstream address normalized for Docker access
+	hostStr, portStr, err := net.SplitHostPort(endpoint.Upstream)
 	if err != nil {
-		return "", 0, fmt.Errorf("invalid port: %s", parts[1])
+		return "", 0, fmt.Errorf("invalid address format: %s: %w", endpoint.Upstream, err)
 	}
 
-	return itestkit.NormalizeHost(parts[0]), portNum, nil
+	portNum, err := strconv.Atoi(portStr)
+	if err != nil {
+		return "", 0, fmt.Errorf("invalid port: %s", portStr)
+	}
+
+	return itestkit.NormalizeHost(hostStr), portNum, nil
 }
 
 func (m *MSSQLInfra) Terminate(ctx context.Context) error {
@@ -162,3 +202,23 @@ func (m *MSSQLInfra) Terminate(ctx context.Context) error {
 
 func (m *MSSQLInfra) InfraKind() string { return "mssql" }
 func (m *MSSQLInfra) InfraName() string { return m.cfg.Name }
+
+// NewMSSQLInfraStub creates a MSSQLInfra with a pre-configured endpoint.
+// Use this when reusing existing infrastructure that was started separately.
+// The stub doesn't manage a container, just provides connection details.
+func NewMSSQLInfraStub(cfg MSSQLConfig, host string, port int) *MSSQLInfra {
+	m := NewMSSQLInfra(cfg)
+	upstream := fmt.Sprintf("%s:%d", host, port)
+	dsn := fmt.Sprintf("sqlserver://sa:%s@%s", cfg.Password, upstream)
+	if cfg.Database != "" {
+		dsn = fmt.Sprintf("%s?database=%s", dsn, cfg.Database)
+	}
+	m.endpoint = &MSSQLEndpoint{
+		Upstream: upstream,
+		DSN:      dsn,
+	}
+	// Store the raw host for HostPort() to return without normalization
+	m.stubHost = host
+	m.stubPort = port
+	return m
+}
