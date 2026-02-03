@@ -616,6 +616,53 @@ func (c *ManagerClient) ValidateSchema(ctx context.Context, request SchemaValida
 	return &result, nil
 }
 
+// ConnectionSchemaResponse represents the response from getting connection schema.
+type ConnectionSchemaResponse struct {
+	ID           string        `json:"id"`
+	ConfigName   string        `json:"configName"`
+	DatabaseName string        `json:"databaseName"`
+	Type         string        `json:"type"`
+	Tables       []TableDetail `json:"tables"`
+}
+
+// TableDetail represents a table/collection with its fields.
+type TableDetail struct {
+	Name   string   `json:"name"`
+	Fields []string `json:"fields"`
+}
+
+// GetConnectionSchema retrieves the schema (tables/collections and fields) for a connection.
+func (c *ManagerClient) GetConnectionSchema(ctx context.Context, connectionID string) (*ConnectionSchemaResponse, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/v1/management/connections/"+connectionID+"/schema", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("X-Organization-Id", c.organizationID)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("get connection schema failed with status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var result ConnectionSchemaResponse
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+
+	return &result, nil
+}
+
 // PaginatedConnectionsResponse represents paginated connections response.
 type PaginatedConnectionsResponse struct {
 	Items []ConnectionResponse `json:"items"`

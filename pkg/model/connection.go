@@ -660,6 +660,43 @@ func NewConnectionResponseFrom(conn *Connection) *ConnectionResponse {
 	return resp
 }
 
+// ConnectionSchemaResponse is the response DTO for GET /v1/management/connections/{id}/schema.
+// It contains the connection details along with the list of tables/collections and their fields.
+type ConnectionSchemaResponse struct {
+	ID           string         `json:"id"`
+	ConfigName   string         `json:"configName"`
+	DatabaseName string         `json:"databaseName"`
+	Type         string         `json:"type"`
+	Tables       []TableDetails `json:"tables"`
+}
+
+// TableDetails contains information about a table or collection.
+// The Name field is the qualified name (e.g., "schema.table" for SQL databases
+// or "database.collection" for MongoDB).
+type TableDetails struct {
+	Name   string   `json:"name"`
+	Fields []string `json:"fields"`
+}
+
+// NewConnectionSchemaFrom creates a ConnectionSchemaResponse from a Connection and a list of tables.
+func NewConnectionSchemaFrom(conn *Connection, tables []TableDetails) *ConnectionSchemaResponse {
+	if conn == nil {
+		return nil
+	}
+
+	if tables == nil {
+		tables = []TableDetails{}
+	}
+
+	return &ConnectionSchemaResponse{
+		ID:           conn.ID.String(),
+		ConfigName:   conn.ConfigName,
+		DatabaseName: conn.DatabaseName,
+		Type:         string(conn.Type),
+		Tables:       tables,
+	}
+}
+
 type DBType string
 
 const (

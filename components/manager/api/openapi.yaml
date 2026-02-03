@@ -12,7 +12,8 @@ paths:
     post:
       description: Create a new data extraction job. The request will be validated,
         deduplicated within a 5-minute window, and all referenced connections will
-        be tested before job creation.
+        be tested before job creation. The metadata.source field is required for job
+        notification routing.
       parameters:
       - description: The authorization token in the 'Bearer access_token' format.
           Only required when auth plugin is enabled.
@@ -31,7 +32,7 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/github_com_LerianStudio_fetcher_pkg_model.FetcherRequest'
-        description: Fetcher request payload
+        description: Fetcher request payload. metadata.source is required.
         required: true
       responses:
         "200":
@@ -141,11 +142,11 @@ paths:
         required: true
         schema:
           type: string
-      - description: Page number (default 0)
+      - description: Page number (minimum 1)
         in: query
         name: page
         schema:
-          default: 0
+          default: 1
           type: integer
       - description: Page size (default 50, max 1000)
         in: query
@@ -490,6 +491,56 @@ paths:
       tags:
       - Connections
       x-codegen-request-body-name: connection
+  /v1/management/connections/{id}/schema:
+    get:
+      description: Get the database schema (tables and fields) for a connection.
+      parameters:
+      - description: The authorization token in the 'Bearer access_token' format.
+          Only required when auth plugin is enabled.
+        in: header
+        name: Authorization
+        schema:
+          type: string
+      - description: Organization ID
+        in: header
+        name: X-Organization-Id
+        required: true
+        schema:
+          type: string
+      - description: Connection ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_LerianStudio_fetcher_pkg_model.ConnectionSchemaResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Internal Server Error
+      summary: Get connection schema
+      tags:
+      - Connections
   /v1/management/connections/{id}/test:
     post:
       description: Test the configured connection by establishing and closing a connection.
@@ -658,6 +709,35 @@ components:
         updatedAt:
           type: string
         userName:
+          type: string
+      type: object
+    github_com_LerianStudio_fetcher_pkg_model.ConnectionSchemaResponse:
+      example:
+        configName: configName
+        tables:
+        - name: name
+          fields:
+          - fields
+          - fields
+        - name: name
+          fields:
+          - fields
+          - fields
+        databaseName: databaseName
+        id: id
+        type: type
+      properties:
+        configName:
+          type: string
+        databaseName:
+          type: string
+        id:
+          type: string
+        tables:
+          items:
+            $ref: '#/components/schemas/github_com_LerianStudio_fetcher_pkg_model.TableDetails'
+          type: array
+        type:
           type: string
       type: object
     github_com_LerianStudio_fetcher_pkg_model.ConnectionUpdateInput:
@@ -944,6 +1024,20 @@ components:
           type: string
         status:
           description: '"success" or "failure"'
+          type: string
+      type: object
+    github_com_LerianStudio_fetcher_pkg_model.TableDetails:
+      example:
+        name: name
+        fields:
+        - fields
+        - fields
+      properties:
+        fields:
+          items:
+            type: string
+          type: array
+        name:
           type: string
       type: object
     github_com_LerianStudio_fetcher_pkg_model_job.FilterCondition:

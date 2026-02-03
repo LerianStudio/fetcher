@@ -235,6 +235,12 @@ func (s *WorkerIntegrationTestSuite) SetupTest() {
 		"postgres_down",
 		"postgres_bad_creds",
 		"postgres_for_missing_table",
+		// Schema retrieval tests
+		"postgres_schema_test",
+		"mysql_schema_test",
+		"mongodb_schema_test",
+		"sqlserver_schema_test",
+		"oracle_schema_test",
 	}
 
 	for _, configName := range testConnections {
@@ -323,6 +329,10 @@ func (s *WorkerIntegrationTestSuite) TestSingleDatasourcePostgreSQL() {
 	})
 	require.NoError(t, err, "Failed to create PostgreSQL connection")
 	assert.NotEmpty(t, connResp.ID)
+	defer func() {
+		_ = s.managerClient.DeleteConnection(s.ctx, connResp.ID)
+	}()
+
 	assert.Equal(t, configName, connResp.ConfigName)
 	assert.Equal(t, "POSTGRESQL", connResp.Type)
 	assert.Equal(t, pg.Host, connResp.Host)
@@ -3267,6 +3277,482 @@ func (s *WorkerIntegrationTestSuite) TestJob_EmptyResultSet_MultipleFilters() {
 	assert.Equal(t, "completed", notification.Status)
 	require.NotNil(t, notification.Result)
 	assert.Equal(t, int64(0), notification.Result.RowCount)
+}
+
+// =============================================================================
+// CONNECTION SCHEMA RETRIEVAL TESTS
+// =============================================================================
+// These tests validate the GET /v1/management/connections/{id}/schema endpoint
+// for each supported database type. Each test creates a connection, retrieves
+// the schema, and validates the returned tables and fields.
+// Priority: P1 (core API functionality for schema discovery)
+// =============================================================================
+
+// TestConnectionSchema_PostgreSQL validates schema retrieval for PostgreSQL.
+// Expected tables: accounts, transactions (public schema), accounting.invoices, reporting.daily_summary
+func (s *WorkerIntegrationTestSuite) TestConnectionSchema_PostgreSQL() {
+	t := s.T()
+
+	// Create PostgreSQL connection
+	pg := s.infra.PostgresInternal()
+	configName := s.uniqueConfigName("postgres_schema_test")
+
+	connResp, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
+		ConfigName:   configName,
+		Type:         "POSTGRESQL",
+		Host:         pg.Host,
+		Port:         pg.Port,
+		DatabaseName: pg.Database,
+		Username:     pg.Username,
+		Password:     pg.Password,
+	})
+	require.NoError(t, err, "Failed to create PostgreSQL connection")
+	require.NotEmpty(t, connResp.ID)
+
+	// Get connection schema
+	schema, err := s.managerClient.GetConnectionSchema(s.ctx, connResp.ID)
+	require.NoError(t, err, "Failed to get PostgreSQL schema")
+
+	// Validate response structure
+	assert.Equal(t, connResp.ID, schema.ID)
+	assert.Equal(t, configName, schema.ConfigName)
+	assert.Equal(t, pg.Database, schema.DatabaseName)
+	assert.Equal(t, "POSTGRESQL", schema.Type)
+	assert.NotEmpty(t, schema.Tables, "Schema should have tables")
+
+	// Build table map for easier validation
+	tableMap := make(map[string][]string)
+	for _, table := range schema.Tables {
+		tableMap[table.Name] = table.Fields
+	}
+
+	// Verify expected tables exist (public schema - no prefix)
+	expectedPublicTables := []string{"accounts", "transactions"}
+	for _, tableName := range expectedPublicTables {
+		fields, exists := tableMap[tableName]
+		assert.True(t, exists, "Table %s should exist", tableName)
+		assert.NotEmpty(t, fields, "Table %s should have fields", tableName)
+	}
+
+	// Verify multi-schema tables exist (with schema prefix)
+	expectedSchemaTables := []string{"accounting.invoices", "reporting.daily_summary"}
+	for _, tableName := range expectedSchemaTables {
+		fields, exists := tableMap[tableName]
+		assert.True(t, exists, "Schema-qualified table %s should exist", tableName)
+		assert.NotEmpty(t, fields, "Table %s should have fields", tableName)
+	}
+
+	// Validate specific fields for transactions table
+	txFields, exists := tableMap["transactions"]
+	if assert.True(t, exists, "transactions table should exist") {
+		expectedFields := []string{"id", "account_id", "amount", "currency", "type", "description", "category", "status", "created_at", "updated_at"}
+		for _, field := range expectedFields {
+			assert.Contains(t, txFields, field, "transactions should have field %s", field)
+		}
+	}
+
+	// Validate fields for accounting.invoices
+	invFields, exists := tableMap["accounting.invoices"]
+	if assert.True(t, exists, "accounting.invoices table should exist") {
+		expectedFields := []string{"id", "account_id", "invoice_number", "amount", "currency", "status", "due_date", "created_at"}
+		for _, field := range expectedFields {
+			assert.Contains(t, invFields, field, "accounting.invoices should have field %s", field)
+		}
+	}
+
+	// Verify system tables are filtered out
+	systemTables := []string{"pg_catalog", "information_schema", "pg_tables", "pg_stat_activity"}
+	for _, sysTable := range systemTables {
+		_, exists := tableMap[sysTable]
+		assert.False(t, exists, "System table %s should be filtered out", sysTable)
+	}
+
+	// Verify fields are sorted alphabetically
+	for _, table := range schema.Tables {
+		if len(table.Fields) > 1 {
+			for i := 1; i < len(table.Fields); i++ {
+				assert.LessOrEqual(t, table.Fields[i-1], table.Fields[i],
+					"Fields in table %s should be sorted alphabetically", table.Name)
+			}
+		}
+	}
+}
+
+// TestConnectionSchema_MySQL validates schema retrieval for MySQL.
+// Expected table: transactions
+func (s *WorkerIntegrationTestSuite) TestConnectionSchema_MySQL() {
+	t := s.T()
+
+	// Create MySQL connection
+	mysql := s.infra.MySQLInternal()
+	configName := s.uniqueConfigName("mysql_schema_test")
+
+	connResp, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
+		ConfigName:   configName,
+		Type:         "MYSQL",
+		Host:         mysql.Host,
+		Port:         mysql.Port,
+		DatabaseName: mysql.Database,
+		Username:     mysql.Username,
+		Password:     mysql.Password,
+	})
+	require.NoError(t, err, "Failed to create MySQL connection")
+	require.NotEmpty(t, connResp.ID)
+
+	// Get connection schema
+	schema, err := s.managerClient.GetConnectionSchema(s.ctx, connResp.ID)
+	require.NoError(t, err, "Failed to get MySQL schema")
+
+	// Validate response structure
+	assert.Equal(t, connResp.ID, schema.ID)
+	assert.Equal(t, configName, schema.ConfigName)
+	assert.Equal(t, mysql.Database, schema.DatabaseName)
+	assert.Equal(t, "MYSQL", schema.Type)
+	assert.NotEmpty(t, schema.Tables, "Schema should have tables")
+
+	// Build table map
+	tableMap := make(map[string][]string)
+	for _, table := range schema.Tables {
+		tableMap[table.Name] = table.Fields
+	}
+
+	// Verify transactions table exists
+	txFields, exists := tableMap["transactions"]
+	require.True(t, exists, "transactions table should exist")
+	assert.NotEmpty(t, txFields, "transactions should have fields")
+
+	// Validate specific fields for transactions table
+	expectedFields := []string{"id", "account_id", "amount", "currency", "type", "description", "category", "status", "created_at", "updated_at"}
+	for _, field := range expectedFields {
+		assert.Contains(t, txFields, field, "transactions should have field %s", field)
+	}
+
+	// Verify MySQL system schemas are filtered out
+	systemSchemas := []string{"mysql", "information_schema", "performance_schema", "sys"}
+	for _, table := range schema.Tables {
+		for _, sysSchema := range systemSchemas {
+			assert.False(t, strings.HasPrefix(table.Name, sysSchema+"."),
+				"System schema %s should be filtered out (found: %s)", sysSchema, table.Name)
+		}
+	}
+
+	// Verify fields are sorted alphabetically
+	for _, table := range schema.Tables {
+		if len(table.Fields) > 1 {
+			for i := 1; i < len(table.Fields); i++ {
+				assert.LessOrEqual(t, table.Fields[i-1], table.Fields[i],
+					"Fields in table %s should be sorted alphabetically", table.Name)
+			}
+		}
+	}
+}
+
+// TestConnectionSchema_MongoDB validates schema retrieval for MongoDB.
+// Expected collection: transactions (in external_transactions database)
+func (s *WorkerIntegrationTestSuite) TestConnectionSchema_MongoDB() {
+	t := s.T()
+
+	// Create MongoDB connection
+	mongo := s.infra.MongoExternalInternal()
+	configName := s.uniqueConfigName("mongodb_schema_test")
+
+	connResp, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
+		ConfigName:   configName,
+		Type:         "MONGODB",
+		Host:         mongo.Host,
+		Port:         mongo.Port,
+		DatabaseName: "external_transactions",
+		Username:     mongo.Username,
+		Password:     mongo.Password,
+	})
+	require.NoError(t, err, "Failed to create MongoDB connection")
+	require.NotEmpty(t, connResp.ID)
+
+	// Get connection schema
+	schema, err := s.managerClient.GetConnectionSchema(s.ctx, connResp.ID)
+	require.NoError(t, err, "Failed to get MongoDB schema")
+
+	// Validate response structure
+	assert.Equal(t, connResp.ID, schema.ID)
+	assert.Equal(t, configName, schema.ConfigName)
+	assert.Equal(t, "external_transactions", schema.DatabaseName)
+	assert.Equal(t, "MONGODB", schema.Type)
+	assert.NotEmpty(t, schema.Tables, "Schema should have collections")
+
+	// Build collection map (MongoDB uses "tables" to represent collections)
+	collectionMap := make(map[string][]string)
+	for _, coll := range schema.Tables {
+		collectionMap[coll.Name] = coll.Fields
+	}
+
+	// Verify transactions collection exists
+	// Note: MongoDB schema returns collection names, may be qualified as "database.collection"
+	var txFields []string
+	var txExists bool
+	for name, fields := range collectionMap {
+		if name == "transactions" || strings.HasSuffix(name, ".transactions") {
+			txFields = fields
+			txExists = true
+			break
+		}
+	}
+	require.True(t, txExists, "transactions collection should exist")
+	assert.NotEmpty(t, txFields, "transactions should have fields")
+
+	// Validate some expected fields from MongoDB transactions
+	expectedFields := []string{"account_id", "amount", "currency", "type", "description", "category", "status", "created_at"}
+	for _, field := range expectedFields {
+		assert.Contains(t, txFields, field, "transactions should have field %s", field)
+	}
+
+	// Verify MongoDB system collections are filtered out
+	systemCollections := []string{"system.indexes", "system.profile", "system.views"}
+	for _, table := range schema.Tables {
+		for _, sysColl := range systemCollections {
+			assert.NotEqual(t, table.Name, sysColl,
+				"System collection %s should be filtered out", sysColl)
+			assert.False(t, strings.HasSuffix(table.Name, "."+sysColl),
+				"System collection %s should be filtered out", sysColl)
+		}
+	}
+
+	// Verify fields are sorted alphabetically
+	for _, coll := range schema.Tables {
+		if len(coll.Fields) > 1 {
+			for i := 1; i < len(coll.Fields); i++ {
+				assert.LessOrEqual(t, coll.Fields[i-1], coll.Fields[i],
+					"Fields in collection %s should be sorted alphabetically", coll.Name)
+			}
+		}
+	}
+}
+
+// TestConnectionSchema_SQLServer validates schema retrieval for SQL Server.
+// Expected tables: dbo.transactions, finance.payments, analytics.monthly_metrics
+func (s *WorkerIntegrationTestSuite) TestConnectionSchema_SQLServer() {
+	t := s.T()
+
+	// Create SQL Server connection
+	mssql := s.infra.SQLServerInternal()
+	configName := s.uniqueConfigName("sqlserver_schema_test")
+
+	connResp, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
+		ConfigName:   configName,
+		Type:         "SQL_SERVER",
+		Host:         mssql.Host,
+		Port:         mssql.Port,
+		DatabaseName: mssql.Database,
+		Username:     mssql.Username,
+		Password:     mssql.Password,
+	})
+	require.NoError(t, err, "Failed to create SQL Server connection")
+	require.NotEmpty(t, connResp.ID)
+
+	// Get connection schema
+	schema, err := s.managerClient.GetConnectionSchema(s.ctx, connResp.ID)
+	require.NoError(t, err, "Failed to get SQL Server schema")
+
+	// Validate response structure
+	assert.Equal(t, connResp.ID, schema.ID)
+	assert.Equal(t, configName, schema.ConfigName)
+	assert.Equal(t, mssql.Database, schema.DatabaseName)
+	assert.Equal(t, "SQL_SERVER", schema.Type)
+	assert.NotEmpty(t, schema.Tables, "Schema should have tables")
+
+	// Build table map
+	tableMap := make(map[string][]string)
+	for _, table := range schema.Tables {
+		tableMap[table.Name] = table.Fields
+	}
+
+	// Verify expected tables exist (dbo schema tables should be prefixed or not based on implementation)
+	// Try both qualified and unqualified names
+	var txFields []string
+	if fields, ok := tableMap["dbo.transactions"]; ok {
+		txFields = fields
+	} else if fields, ok := tableMap["transactions"]; ok {
+		txFields = fields
+	}
+	require.NotEmpty(t, txFields, "transactions table should exist (either as 'transactions' or 'dbo.transactions')")
+
+	// Validate specific fields for transactions table
+	expectedFields := []string{"id", "account_id", "amount", "currency", "type", "description", "category", "status", "created_at"}
+	for _, field := range expectedFields {
+		assert.Contains(t, txFields, field, "transactions should have field %s", field)
+	}
+
+	// Verify multi-schema tables exist
+	multiSchemaTables := []string{"finance.payments", "analytics.monthly_metrics"}
+	for _, tableName := range multiSchemaTables {
+		fields, exists := tableMap[tableName]
+		assert.True(t, exists, "Schema-qualified table %s should exist", tableName)
+		assert.NotEmpty(t, fields, "Table %s should have fields", tableName)
+	}
+
+	// Validate fields for finance.payments
+	paymentFields, exists := tableMap["finance.payments"]
+	if assert.True(t, exists, "finance.payments table should exist") {
+		expectedPaymentFields := []string{"id", "account_id", "payment_reference", "amount", "currency", "payment_method", "status", "processed_at"}
+		for _, field := range expectedPaymentFields {
+			assert.Contains(t, paymentFields, field, "finance.payments should have field %s", field)
+		}
+	}
+
+	// Verify SQL Server system schemas are filtered out
+	systemSchemas := []string{"sys.", "information_schema.", "db_"}
+	for _, table := range schema.Tables {
+		for _, sysPrefix := range systemSchemas {
+			assert.False(t, strings.HasPrefix(strings.ToLower(table.Name), sysPrefix),
+				"System schema table %s should be filtered out (found: %s)", sysPrefix, table.Name)
+		}
+	}
+
+	// Verify fields are sorted alphabetically
+	for _, table := range schema.Tables {
+		if len(table.Fields) > 1 {
+			for i := 1; i < len(table.Fields); i++ {
+				assert.LessOrEqual(t, table.Fields[i-1], table.Fields[i],
+					"Fields in table %s should be sorted alphabetically", table.Name)
+			}
+		}
+	}
+}
+
+// TestConnectionSchema_Oracle validates schema retrieval for Oracle.
+// Expected tables: transactions, billing_subscriptions, audit_events
+func (s *WorkerIntegrationTestSuite) TestConnectionSchema_Oracle() {
+	t := s.T()
+
+	// Create Oracle connection
+	oracle := s.infra.OracleInternal()
+	configName := s.uniqueConfigName("oracle_schema_test")
+
+	connResp, err := s.managerClient.CreateConnection(s.ctx, client.ConnectionInput{
+		ConfigName:   configName,
+		Type:         "ORACLE",
+		Host:         oracle.Host,
+		Port:         oracle.Port,
+		DatabaseName: oracle.Database,
+		Username:     oracle.Username,
+		Password:     oracle.Password,
+		Metadata: map[string]any{
+			"serviceName": oracle.Database,
+		},
+	})
+	require.NoError(t, err, "Failed to create Oracle connection")
+	require.NotEmpty(t, connResp.ID)
+
+	// Get connection schema
+	schema, err := s.managerClient.GetConnectionSchema(s.ctx, connResp.ID)
+	require.NoError(t, err, "Failed to get Oracle schema")
+
+	// Validate response structure
+	assert.Equal(t, connResp.ID, schema.ID)
+	assert.Equal(t, configName, schema.ConfigName)
+	assert.Equal(t, oracle.Database, schema.DatabaseName)
+	assert.Equal(t, "ORACLE", schema.Type)
+	assert.NotEmpty(t, schema.Tables, "Schema should have tables")
+
+	// Build table map (Oracle table names are typically uppercase)
+	tableMap := make(map[string][]string)
+	for _, table := range schema.Tables {
+		tableMap[strings.ToUpper(table.Name)] = table.Fields
+		tableMap[strings.ToLower(table.Name)] = table.Fields
+		tableMap[table.Name] = table.Fields
+	}
+
+	// Verify transactions table exists (case-insensitive check)
+	var txFields []string
+	if fields, ok := tableMap["TRANSACTIONS"]; ok {
+		txFields = fields
+	} else if fields, ok := tableMap["transactions"]; ok {
+		txFields = fields
+	}
+	require.NotEmpty(t, txFields, "transactions table should exist")
+
+	// Validate specific fields for transactions table (Oracle uses uppercase)
+	expectedFields := []string{"id", "account_id", "amount", "currency", "type", "description", "category", "status", "created_at"}
+	for _, field := range expectedFields {
+		found := false
+		for _, f := range txFields {
+			if strings.EqualFold(f, field) {
+				found = true
+				break
+			}
+		}
+		assert.True(t, found, "transactions should have field %s (case-insensitive)", field)
+	}
+
+	// Verify billing_subscriptions table exists
+	var subFields []string
+	if fields, ok := tableMap["BILLING_SUBSCRIPTIONS"]; ok {
+		subFields = fields
+	} else if fields, ok := tableMap["billing_subscriptions"]; ok {
+		subFields = fields
+	}
+	require.NotEmpty(t, subFields, "billing_subscriptions table should exist")
+
+	// Validate fields for billing_subscriptions
+	expectedSubFields := []string{"id", "account_id", "plan_name", "monthly_amount", "currency", "status", "start_date"}
+	for _, field := range expectedSubFields {
+		found := false
+		for _, f := range subFields {
+			if strings.EqualFold(f, field) {
+				found = true
+				break
+			}
+		}
+		assert.True(t, found, "billing_subscriptions should have field %s (case-insensitive)", field)
+	}
+
+	// Verify audit_events table exists
+	var auditFields []string
+	if fields, ok := tableMap["AUDIT_EVENTS"]; ok {
+		auditFields = fields
+	} else if fields, ok := tableMap["audit_events"]; ok {
+		auditFields = fields
+	}
+	require.NotEmpty(t, auditFields, "audit_events table should exist")
+
+	// Verify Oracle system schemas are filtered out
+	oracleSystemSchemas := []string{"SYS", "SYSTEM", "OUTLN", "XDB", "MDSYS", "CTXSYS", "DBSNMP", "WMSYS"}
+	for _, table := range schema.Tables {
+		tableName := strings.ToUpper(table.Name)
+		for _, sysSchema := range oracleSystemSchemas {
+			assert.False(t, strings.HasPrefix(tableName, sysSchema+"."),
+				"Oracle system schema %s should be filtered out (found: %s)", sysSchema, table.Name)
+		}
+	}
+
+	// Verify fields are sorted alphabetically
+	for _, table := range schema.Tables {
+		if len(table.Fields) > 1 {
+			for i := 1; i < len(table.Fields); i++ {
+				assert.LessOrEqual(t, strings.ToLower(table.Fields[i-1]), strings.ToLower(table.Fields[i]),
+					"Fields in table %s should be sorted alphabetically (case-insensitive)", table.Name)
+			}
+		}
+	}
+}
+
+// TestConnectionSchema_NotFound validates 404 response for non-existent connection.
+func (s *WorkerIntegrationTestSuite) TestConnectionSchema_NotFound() {
+	t := s.T()
+
+	// Try to get schema for non-existent connection
+	_, err := s.managerClient.GetConnectionSchema(s.ctx, "00000000-0000-0000-0000-000000000000")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "404")
+}
+
+// TestConnectionSchema_InvalidConnectionID validates error for invalid connection ID format.
+func (s *WorkerIntegrationTestSuite) TestConnectionSchema_InvalidConnectionID() {
+	t := s.T()
+
+	// Try to get schema with invalid UUID format
+	_, err := s.managerClient.GetConnectionSchema(s.ctx, "invalid-uuid")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "400")
 }
 
 // TestSuite runs the test suite.
