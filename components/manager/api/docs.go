@@ -360,7 +360,7 @@ const docTemplate = `{
         },
         "/v1/management/connections/validate-schema": {
             "post": {
-                "description": "Validate that tables and fields referenced in the request exist in the configured datasources.",
+                "description": "Validate that tables and fields referenced in the request exist in the configured datasources. Returns 200 when validation passes, 422 when validation fails with detailed error information.",
                 "consumes": [
                     "application/json"
                 ],
@@ -397,19 +397,25 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "OK",
+                        "description": "Validation successful - all tables and fields exist",
                         "schema": {
                             "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.SchemaValidationResponse"
                         }
                     },
                     "400": {
-                        "description": "Bad Request",
+                        "description": "Invalid request payload or missing headers",
                         "schema": {
                             "$ref": "#/definitions/pkg.HTTPError"
                         }
                     },
+                    "422": {
+                        "description": "Validation failed - schema errors found (missing tables, fields, or unreachable datasources)",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.SchemaValidationErrorResponse"
+                        }
+                    },
                     "500": {
-                        "description": "Internal Server Error",
+                        "description": "Internal server error",
                         "schema": {
                             "$ref": "#/definitions/pkg.HTTPError"
                         }
@@ -1110,6 +1116,26 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_LerianStudio_fetcher_pkg_model.SchemaValidationErrorResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "errors": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.SchemaValidationError"
+                    }
+                },
+                "message": {
+                    "type": "string"
+                },
+                "title": {
                     "type": "string"
                 }
             }

@@ -22,6 +22,12 @@ const (
 	MaxFieldsPerTable        = 50
 )
 
+// Schema validation status constants.
+const (
+	StatusSuccess = "success"
+	StatusFailure = "failure"
+)
+
 // SchemaValidationRequest represents the POST /v1/management/connections/validate-schema request body.
 //
 // swagger:model SchemaValidationRequest
@@ -47,6 +53,17 @@ type SchemaValidationError struct {
 	DataSourceID string `json:"dataSourceId"`
 	Table        string `json:"table,omitempty"`
 	Field        string `json:"field,omitempty"`
+}
+
+// SchemaValidationErrorResponse represents a validation failure response (HTTP 422).
+// This follows the project's standard error response format (Title, Code, Message)
+// with an additional Errors array containing detailed validation failures.
+// Note: Success responses use SchemaValidationResponse with a different structure.
+type SchemaValidationErrorResponse struct {
+	Title   string                  `json:"title"`
+	Code    string                  `json:"code"`
+	Message string                  `json:"message"`
+	Errors  []SchemaValidationError `json:"errors"`
 }
 
 // ToMapWithMask returns a masked version for logging.
@@ -301,7 +318,7 @@ func (s *SchemaValidationSpec) ValidateAgainstSchema(
 // NewSuccessResponse creates a success response.
 func NewSuccessResponse() *SchemaValidationResponse {
 	return &SchemaValidationResponse{
-		Status:  "success",
+		Status:  StatusSuccess,
 		Message: "Schema validated successfully. All datasources, tables, and fields exist.",
 	}
 }
@@ -309,7 +326,7 @@ func NewSuccessResponse() *SchemaValidationResponse {
 // NewFailureResponse creates a failure response with errors.
 func NewFailureResponse(errors []SchemaValidationError) *SchemaValidationResponse {
 	return &SchemaValidationResponse{
-		Status:  "failure",
+		Status:  StatusFailure,
 		Message: "Schema validation found inconsistencies.",
 		Errors:  errors,
 	}

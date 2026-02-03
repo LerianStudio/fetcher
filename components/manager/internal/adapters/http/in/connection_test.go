@@ -1371,14 +1371,19 @@ func TestConnectionHandler_ValidateSchema_Failure_TableNotFound(t *testing.T) {
 		}
 
 		// Simulate validation failure - table not found
-		errors := []model.SchemaValidationError{
+		validationErrors := []model.SchemaValidationError{
 			{
 				Type:         model.ErrTypeTableNotFound,
 				DataSourceID: "ds1",
 				Table:        "unknown_table",
 			},
 		}
-		return httpUtils.OK(c, model.NewFailureResponse(errors))
+		return httpUtils.JSONResponse(c, fiber.StatusUnprocessableEntity, model.SchemaValidationErrorResponse{
+			Title:   "Schema validation failed",
+			Code:    constant.ErrSchemaValidationFailed.Error(),
+			Message: "Schema validation found inconsistencies.",
+			Errors:  validationErrors,
+		})
 	})
 
 	payload := `{
@@ -1397,12 +1402,13 @@ func TestConnectionHandler_ValidateSchema_Failure_TableNotFound(t *testing.T) {
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
-	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+	assert.Equal(t, fiber.StatusUnprocessableEntity, resp.StatusCode)
 
-	var body model.SchemaValidationResponse
+	var body model.SchemaValidationErrorResponse
 	err = json.NewDecoder(resp.Body).Decode(&body)
 	require.NoError(t, err)
-	assert.Equal(t, "failure", body.Status)
+	assert.Equal(t, "Schema validation failed", body.Title)
+	assert.Equal(t, "FET-1060", body.Code)
 	assert.Len(t, body.Errors, 1)
 	assert.Equal(t, model.ErrTypeTableNotFound, body.Errors[0].Type)
 }
@@ -1432,7 +1438,7 @@ func TestConnectionHandler_ValidateSchema_Failure_FieldNotFound(t *testing.T) {
 		}
 
 		// Simulate validation failure - field not found
-		errors := []model.SchemaValidationError{
+		validationErrors := []model.SchemaValidationError{
 			{
 				Type:         model.ErrTypeFieldNotFound,
 				DataSourceID: "ds1",
@@ -1440,7 +1446,12 @@ func TestConnectionHandler_ValidateSchema_Failure_FieldNotFound(t *testing.T) {
 				Field:        "unknown_field",
 			},
 		}
-		return httpUtils.OK(c, model.NewFailureResponse(errors))
+		return httpUtils.JSONResponse(c, fiber.StatusUnprocessableEntity, model.SchemaValidationErrorResponse{
+			Title:   "Schema validation failed",
+			Code:    constant.ErrSchemaValidationFailed.Error(),
+			Message: "Schema validation found inconsistencies.",
+			Errors:  validationErrors,
+		})
 	})
 
 	payload := `{
@@ -1459,12 +1470,13 @@ func TestConnectionHandler_ValidateSchema_Failure_FieldNotFound(t *testing.T) {
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
-	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+	assert.Equal(t, fiber.StatusUnprocessableEntity, resp.StatusCode)
 
-	var body model.SchemaValidationResponse
+	var body model.SchemaValidationErrorResponse
 	err = json.NewDecoder(resp.Body).Decode(&body)
 	require.NoError(t, err)
-	assert.Equal(t, "failure", body.Status)
+	assert.Equal(t, "Schema validation failed", body.Title)
+	assert.Equal(t, "FET-1060", body.Code)
 	assert.Len(t, body.Errors, 1)
 	assert.Equal(t, model.ErrTypeFieldNotFound, body.Errors[0].Type)
 }
@@ -1494,10 +1506,15 @@ func TestConnectionHandler_ValidateSchema_Failure_DataSourceNotFound(t *testing.
 		}
 
 		// Simulate validation failure - datasource not found
-		errors := []model.SchemaValidationError{
+		validationErrors := []model.SchemaValidationError{
 			model.NewDataSourceNotFoundError("unknown_ds"),
 		}
-		return httpUtils.OK(c, model.NewFailureResponse(errors))
+		return httpUtils.JSONResponse(c, fiber.StatusUnprocessableEntity, model.SchemaValidationErrorResponse{
+			Title:   "Schema validation failed",
+			Code:    constant.ErrSchemaValidationFailed.Error(),
+			Message: "Schema validation found inconsistencies.",
+			Errors:  validationErrors,
+		})
 	})
 
 	payload := `{
@@ -1516,12 +1533,13 @@ func TestConnectionHandler_ValidateSchema_Failure_DataSourceNotFound(t *testing.
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
-	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+	assert.Equal(t, fiber.StatusUnprocessableEntity, resp.StatusCode)
 
-	var body model.SchemaValidationResponse
+	var body model.SchemaValidationErrorResponse
 	err = json.NewDecoder(resp.Body).Decode(&body)
 	require.NoError(t, err)
-	assert.Equal(t, "failure", body.Status)
+	assert.Equal(t, "Schema validation failed", body.Title)
+	assert.Equal(t, "FET-1060", body.Code)
 	assert.Len(t, body.Errors, 1)
 	assert.Equal(t, model.ErrTypeDataSourceNotFound, body.Errors[0].Type)
 }
@@ -1551,10 +1569,15 @@ func TestConnectionHandler_ValidateSchema_Failure_DataSourceDown(t *testing.T) {
 		}
 
 		// Simulate validation failure - datasource down
-		errors := []model.SchemaValidationError{
+		validationErrors := []model.SchemaValidationError{
 			model.NewDataSourceDownError("ds1"),
 		}
-		return httpUtils.OK(c, model.NewFailureResponse(errors))
+		return httpUtils.JSONResponse(c, fiber.StatusUnprocessableEntity, model.SchemaValidationErrorResponse{
+			Title:   "Schema validation failed",
+			Code:    constant.ErrSchemaValidationFailed.Error(),
+			Message: "Schema validation found inconsistencies.",
+			Errors:  validationErrors,
+		})
 	})
 
 	req := httptest.NewRequest("POST", "/v1/management/connections/validate-schema", strings.NewReader(validSchemaValidationRequest()))
@@ -1565,12 +1588,13 @@ func TestConnectionHandler_ValidateSchema_Failure_DataSourceDown(t *testing.T) {
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
-	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+	assert.Equal(t, fiber.StatusUnprocessableEntity, resp.StatusCode)
 
-	var body model.SchemaValidationResponse
+	var body model.SchemaValidationErrorResponse
 	err = json.NewDecoder(resp.Body).Decode(&body)
 	require.NoError(t, err)
-	assert.Equal(t, "failure", body.Status)
+	assert.Equal(t, "Schema validation failed", body.Title)
+	assert.Equal(t, "FET-1060", body.Code)
 	assert.Len(t, body.Errors, 1)
 	assert.Equal(t, model.ErrTypeDataSourceDown, body.Errors[0].Type)
 }
