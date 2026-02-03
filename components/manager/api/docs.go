@@ -411,7 +411,7 @@ const docTemplate = `{
                     "422": {
                         "description": "Validation failed - schema errors found (missing tables, fields, or unreachable datasources)",
                         "schema": {
-                            "$ref": "#/definitions/model.SchemaValidationErrorResponse"
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.SchemaValidationErrorResponse"
                         }
                     },
                     "500": {
@@ -1120,7 +1120,7 @@ const docTemplate = `{
                 }
             }
         },
-        "model.SchemaValidationErrorResponse": {
+        "github_com_LerianStudio_fetcher_pkg_model.SchemaValidationErrorResponse": {
             "type": "object",
             "properties": {
                 "code": {
@@ -1129,7 +1129,7 @@ const docTemplate = `{
                 "errors": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/model.SchemaValidationError"
+                        "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.SchemaValidationError"
                     }
                 },
                 "message": {
@@ -1140,7 +1140,6 @@ const docTemplate = `{
                 }
             }
         },
-        "model.SchemaValidationRequest": {
         "github_com_LerianStudio_fetcher_pkg_model.SchemaValidationRequest": {
             "description": "Request body for schema validation containing mapped fields per datasource.",
             "type": "object",

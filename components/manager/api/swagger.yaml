@@ -270,20 +270,19 @@ definitions:
       type:
         type: string
     type: object
-  model.SchemaValidationErrorResponse:
+  github_com_LerianStudio_fetcher_pkg_model.SchemaValidationErrorResponse:
     properties:
       code:
         type: string
       errors:
         items:
-          $ref: '#/definitions/model.SchemaValidationError'
+          $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.SchemaValidationError'
         type: array
       message:
         type: string
       title:
         type: string
     type: object
-  model.SchemaValidationRequest:
   github_com_LerianStudio_fetcher_pkg_model.SchemaValidationRequest:
     description: Request body for schema validation containing mapped fields per datasource.
     properties:
@@ -910,13 +909,12 @@ paths:
         "400":
           description: Invalid request payload or missing headers
           schema:
-            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError'
+            $ref: '#/definitions/pkg.HTTPError'
         "422":
           description: Validation failed - schema errors found (missing tables, fields,
             or unreachable datasources)
           schema:
-            $ref: '#/definitions/model.SchemaValidationErrorResponse'
-            $ref: '#/definitions/pkg.HTTPError'
+            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.SchemaValidationErrorResponse'
         "500":
           description: Internal server error
           schema:
