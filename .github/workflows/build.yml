@@ -1,27 +1,13 @@
 name: "Build"
-# This workflow builds and pushes Docker images
-# Triggered on any tag push (e.g., v1.0.0, v1.0.0-beta.1)
-#
-# Strategy:
-# - beta/rc tags: linux/amd64 only (faster CI)
-# - release tags: linux/amd64 + linux/arm64 (full multi-arch)
+
 on:
   push:
     tags:
       - '**'
-      - 'v*.*.*-beta.*'
-      - 'v*.*.*-rc.*'
-      - 'v[0-9]+.[0-9]+.[0-9]+'
-
-permissions:
-  id-token: write
-  contents: read
-  pull-requests: write
-  packages: write
 
 jobs:
   build:
-    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/build.yml@v1.10.1
+    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/build.yml@v1.10.2
     with:
       runner_type: "blacksmith-4vcpu-ubuntu-2404"
       # Monorepo configuration
@@ -34,7 +20,6 @@ jobs:
       enable_dockerhub: true
       enable_ghcr: true
       dockerhub_org: lerianstudio
-      # Enable when GitOps is configured for this service
       enable_gitops_artifacts: true
       # Helm dispatch configuration (triggers on production and RC releases)
       enable_helm_dispatch: true
@@ -48,34 +33,15 @@ jobs:
     secrets: inherit
 
   update_gitops:
-    needs: build
-    if: (contains(github.ref, '-beta') || contains(github.ref, '-rc')) && needs.build.result == 'success'
+    needs: [build]
+    if: needs.build.result == 'success'
     uses: LerianStudio/github-actions-shared-workflows/.github/workflows/gitops-update.yml@v1.10.1
     with:
       runner_type: "firmino-lxc-runners"
-      gitops_repository: "LerianStudio/midaz-firmino-gitops"
-      gitops_server: "firmino"
-      app_name: "fetcher"
-      gitops_file_dev: "environments/firmino/helmfile/applications/dev/fetcher/values.yaml"
-      gitops_file_stg: "environments/firmino/helmfile/applications/stg/fetcher/values.yaml"
-      artifact_pattern: "gitops-tags-fetcher*"
+      artifact_pattern: "gitops-tags-fetcher-*"
+      gitops_file_dev: "gitops/environments/firmino/helmfile/applications/dev/fetcher/values.yaml"
+      gitops_file_stg: "gitops/environments/firmino/helmfile/applications/stg/fetcher/values.yaml"
+      gitops_file_sandbox: "gitops/environments/firmino/helmfile/applications/sandbox/fetcher/values.yaml"
+      gitops_file_prd: "gitops/environments/firmino/helmfile/applications/prd/fetcher/values.yaml"
       yaml_key_mappings: '{"fetcher-manager.tag": ".manager.image.tag", "fetcher-worker.tag": ".worker.image.tag"}'
-      commit_message_prefix: "fetcher"
-      enable_argocd_sync: true
-      argocd_app_name: "firmino-fetcher"
     secrets: inherit
-
-  # E2E TESTS
-  # =========================
-  # TODO: Enable when E2E tests are configured for this service
-  # api-dog-e2e-tests:
-  #   needs: [update_gitops]
-  #   if: needs.update_gitops.result == 'success'
-  #   uses: LerianStudio/github-actions-shared-workflows/.github/workflows/api-dog-e2e-tests.yml@main
-  #   with:
-  #     auto_detect_environment: true
-  #   secrets:
-  #     test_scenario_id: ${{ secrets.FETCHER_APIDOG_TEST_SCENARIO_ID }}
-  #     apidog_access_token: ${{ secrets.APIDOG_ACCESS_TOKEN }}
-  #     dev_environment_id: ${{ secrets.FETCHER_APIDOG_DEV_ENVIRONMENT_ID }}
-  #     stg_environment_id: ${{ secrets.FETCHER_APIDOG_STG_ENVIRONMENT_ID }}

@@ -15,6 +15,7 @@ import (
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
+	datasourceFactory "github.com/LerianStudio/fetcher/pkg/datasource"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 	"github.com/LerianStudio/fetcher/pkg/mongodb/job"
@@ -220,6 +221,11 @@ func InitServers() *Service {
 	listConnectionsQuery := connectionQuery.NewListConnections(connectionRepository)
 	testConnectionQuery := connectionQuery.NewTestConnection(connectionRepository, cryptoService, connectionTestStore)
 	validateSchemaQuery := connectionQuery.NewValidateSchema(connectionRepository, cryptoService, schemaCache)
+	getConnectionSchemaQuery := connectionQuery.NewGetConnectionSchema(
+		connectionRepository,
+		cryptoService,
+		datasourceFactory.NewDataSourceFromConnectionWithLogger(logger),
+	)
 
 	connectionHandler := in2.NewConnectionHandler(
 		createConnectionCmd,
@@ -229,6 +235,7 @@ func InitServers() *Service {
 		listConnectionsQuery,
 		testConnectionQuery,
 		validateSchemaQuery,
+		getConnectionSchemaQuery,
 	)
 
 	// Init Fetcher services and handler

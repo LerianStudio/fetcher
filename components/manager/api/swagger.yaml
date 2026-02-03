@@ -15,19 +15,315 @@ definitions:
         example: 10
         type: integer
     type: object
-  github_com_LerianStudio_fetcher_pkg.HTTPError:
+  github_com_LerianStudio_fetcher_pkg_model.ConnectionInput:
+    properties:
+      configName:
+        example: production-db
+        maxLength: 100
+        minLength: 3
+        type: string
+      databaseName:
+        example: mydatabase
+        type: string
+      host:
+        example: db.example.com
+        type: string
+      metadata:
+        additionalProperties: {}
+        type: object
+      password:
+        example: secretpassword
+        type: string
+      port:
+        example: 5432
+        maximum: 65535
+        minimum: 1
+        type: integer
+      ssl:
+        $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.SSLInput'
+      type:
+        enum:
+        - ORACLE
+        - SQL_SERVER
+        - POSTGRESQL
+        - MONGODB
+        - MYSQL
+        example: POSTGRESQL
+        type: string
+      userName:
+        example: dbuser
+        type: string
+    required:
+    - configName
+    - databaseName
+    - host
+    - password
+    - port
+    - type
+    - userName
+    type: object
+  github_com_LerianStudio_fetcher_pkg_model.ConnectionResponse:
+    properties:
+      configName:
+        type: string
+      createdAt:
+        type: string
+      databaseName:
+        type: string
+      host:
+        type: string
+      id:
+        type: string
+      metadata:
+        additionalProperties: {}
+        type: object
+      port:
+        type: integer
+      ssl:
+        $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.SSLResponse'
+      type:
+        type: string
+      updatedAt:
+        type: string
+      userName:
+        type: string
+    type: object
+  github_com_LerianStudio_fetcher_pkg_model.ConnectionSchemaResponse:
+    properties:
+      configName:
+        type: string
+      databaseName:
+        type: string
+      id:
+        type: string
+      tables:
+        items:
+          $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.TableDetails'
+        type: array
+      type:
+        type: string
+    type: object
+  github_com_LerianStudio_fetcher_pkg_model.ConnectionUpdateInput:
+    properties:
+      configName:
+        example: production-db
+        maxLength: 100
+        minLength: 3
+        type: string
+      databaseName:
+        example: mydatabase
+        type: string
+      host:
+        example: db.example.com
+        type: string
+      metadata:
+        additionalProperties: {}
+        type: object
+      password:
+        example: secretpassword
+        type: string
+      port:
+        example: 5432
+        maximum: 65535
+        minimum: 1
+        type: integer
+      ssl:
+        $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.SSLUpdateInput'
+      type:
+        enum:
+        - ORACLE
+        - SQL_SERVER
+        - POSTGRESQL
+        - MONGODB
+        - MYSQL
+        example: POSTGRESQL
+        type: string
+      userName:
+        example: dbuser
+        type: string
+    type: object
+  github_com_LerianStudio_fetcher_pkg_model.DataRequest:
+    description: DataRequest encapsulates field mappings and optional filters for
+      data extraction.
+    properties:
+      filters:
+        $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.NestedFilters'
+      mappedFields:
+        additionalProperties:
+          additionalProperties:
+            items:
+              type: string
+            type: array
+          type: object
+        type: object
+    required:
+    - mappedFields
+    type: object
+  github_com_LerianStudio_fetcher_pkg_model.FetcherRequest:
+    description: FetcherRequest represents the request body for creating a new data
+      extraction job.
+    properties:
+      dataRequest:
+        $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.DataRequest'
+      metadata:
+        additionalProperties: {}
+        type: object
+    required:
+    - dataRequest
+    type: object
+  github_com_LerianStudio_fetcher_pkg_model.FetcherResponse:
+    description: FetcherResponse represents the response after successfully creating
+      a data extraction job.
+    properties:
+      createdAt:
+        type: string
+      jobId:
+        type: string
+      message:
+        type: string
+      status:
+        type: string
+    type: object
+  github_com_LerianStudio_fetcher_pkg_model.JobResponse:
+    description: JobResponse represents the complete information about a data extraction
+      job.
+    properties:
+      completedAt:
+        type: string
+      createdAt:
+        type: string
+      filters:
+        $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.NestedFilters'
+      id:
+        type: string
+      mappedFields:
+        additionalProperties:
+          additionalProperties:
+            items:
+              type: string
+            type: array
+          type: object
+        type: object
+      metadata:
+        additionalProperties: {}
+        type: object
+      organizationId:
+        type: string
+      requestHash:
+        type: string
+      resultPath:
+        type: string
+      status:
+        type: string
+    type: object
+  github_com_LerianStudio_fetcher_pkg_model.NestedFilters:
+    additionalProperties:
+      additionalProperties:
+        additionalProperties:
+          $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model_job.FilterCondition'
+        type: object
+      type: object
+    type: object
+  github_com_LerianStudio_fetcher_pkg_model.SSLInput:
+    properties:
+      ca:
+        example: |-
+          -----BEGIN CERTIFICATE-----
+          ...
+        type: string
+      cert:
+        type: string
+      key:
+        type: string
+      mode:
+        example: require
+        type: string
+    type: object
+  github_com_LerianStudio_fetcher_pkg_model.SSLResponse:
+    properties:
+      mode:
+        type: string
+    type: object
+  github_com_LerianStudio_fetcher_pkg_model.SSLUpdateInput:
+    properties:
+      ca:
+        example: |-
+          -----BEGIN CERTIFICATE-----
+          ...
+        type: string
+      cert:
+        type: string
+      key:
+        type: string
+      mode:
+        example: require
+        type: string
+    type: object
+  github_com_LerianStudio_fetcher_pkg_model.SchemaValidationError:
+    properties:
+      dataSourceId:
+        type: string
+      field:
+        type: string
+      table:
+        type: string
+      type:
+        type: string
+    type: object
+  model.SchemaValidationErrorResponse:
     properties:
       code:
         type: string
-      entityType:
-        type: string
-      err: {}
+      errors:
+        items:
+          $ref: '#/definitions/model.SchemaValidationError'
+        type: array
       message:
         type: string
       title:
         type: string
     type: object
-  job.FilterCondition:
+  model.SchemaValidationRequest:
+  github_com_LerianStudio_fetcher_pkg_model.SchemaValidationRequest:
+    description: Request body for schema validation containing mapped fields per datasource.
+    properties:
+      mappedFields:
+        additionalProperties:
+          additionalProperties:
+            items:
+              type: string
+            type: array
+          type: object
+        description: |-
+          MappedFields maps datasource config names to their tables and fields
+          Key: configName (e.g., "midaz_onboarding")
+          Value: map of table names to field names
+        type: object
+    required:
+    - mappedFields
+    type: object
+  github_com_LerianStudio_fetcher_pkg_model.SchemaValidationResponse:
+    properties:
+      errors:
+        items:
+          $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.SchemaValidationError'
+        type: array
+      message:
+        type: string
+      status:
+        description: '"success" or "failure"'
+        type: string
+    type: object
+  github_com_LerianStudio_fetcher_pkg_model.TableDetails:
+    properties:
+      fields:
+        items:
+          type: string
+        type: array
+      name:
+        type: string
+    type: object
+  github_com_LerianStudio_fetcher_pkg_model_job.FilterCondition:
     properties:
       between:
         description: |-
@@ -99,287 +395,16 @@ definitions:
         items: {}
         type: array
     type: object
-  model.ConnectionInput:
-    properties:
-      configName:
-        example: production-db
-        maxLength: 100
-        minLength: 3
-        type: string
-      databaseName:
-        example: mydatabase
-        type: string
-      host:
-        example: db.example.com
-        type: string
-      metadata:
-        additionalProperties: {}
-        type: object
-      password:
-        example: secretpassword
-        type: string
-      port:
-        example: 5432
-        maximum: 65535
-        minimum: 1
-        type: integer
-      ssl:
-        $ref: '#/definitions/model.SSLInput'
-      type:
-        enum:
-        - ORACLE
-        - SQL_SERVER
-        - POSTGRESQL
-        - MONGODB
-        - MYSQL
-        example: POSTGRESQL
-        type: string
-      userName:
-        example: dbuser
-        type: string
-    required:
-    - configName
-    - databaseName
-    - host
-    - password
-    - port
-    - type
-    - userName
-    type: object
-  model.ConnectionResponse:
-    properties:
-      configName:
-        type: string
-      createdAt:
-        type: string
-      databaseName:
-        type: string
-      host:
-        type: string
-      id:
-        type: string
-      metadata:
-        additionalProperties: {}
-        type: object
-      port:
-        type: integer
-      ssl:
-        $ref: '#/definitions/model.SSLResponse'
-      type:
-        type: string
-      updatedAt:
-        type: string
-      userName:
-        type: string
-    type: object
-  model.ConnectionUpdateInput:
-    properties:
-      configName:
-        example: production-db
-        maxLength: 100
-        minLength: 3
-        type: string
-      databaseName:
-        example: mydatabase
-        type: string
-      host:
-        example: db.example.com
-        type: string
-      metadata:
-        additionalProperties: {}
-        type: object
-      password:
-        example: secretpassword
-        type: string
-      port:
-        example: 5432
-        maximum: 65535
-        minimum: 1
-        type: integer
-      ssl:
-        $ref: '#/definitions/model.SSLUpdateInput'
-      type:
-        enum:
-        - ORACLE
-        - SQL_SERVER
-        - POSTGRESQL
-        - MONGODB
-        - MYSQL
-        example: POSTGRESQL
-        type: string
-      userName:
-        example: dbuser
-        type: string
-    type: object
-  model.DataRequest:
-    description: DataRequest encapsulates field mappings and optional filters for
-      data extraction.
-    properties:
-      filters:
-        $ref: '#/definitions/model.NestedFilters'
-      mappedFields:
-        additionalProperties:
-          additionalProperties:
-            items:
-              type: string
-            type: array
-          type: object
-        type: object
-    required:
-    - mappedFields
-    type: object
-  model.FetcherRequest:
-    description: FetcherRequest represents the request body for creating a new data
-      extraction job.
-    properties:
-      dataRequest:
-        $ref: '#/definitions/model.DataRequest'
-      metadata:
-        additionalProperties: {}
-        type: object
-    required:
-    - dataRequest
-    type: object
-  model.FetcherResponse:
-    description: FetcherResponse represents the response after successfully creating
-      a data extraction job.
-    properties:
-      createdAt:
-        type: string
-      jobId:
-        type: string
-      message:
-        type: string
-      status:
-        type: string
-    type: object
-  model.JobResponse:
-    description: JobResponse represents the complete information about a data extraction
-      job.
-    properties:
-      completedAt:
-        type: string
-      createdAt:
-        type: string
-      filters:
-        $ref: '#/definitions/model.NestedFilters'
-      id:
-        type: string
-      mappedFields:
-        additionalProperties:
-          additionalProperties:
-            items:
-              type: string
-            type: array
-          type: object
-        type: object
-      metadata:
-        additionalProperties: {}
-        type: object
-      organizationId:
-        type: string
-      requestHash:
-        type: string
-      resultPath:
-        type: string
-      status:
-        type: string
-    type: object
-  model.NestedFilters:
-    additionalProperties:
-      additionalProperties:
-        additionalProperties:
-          $ref: '#/definitions/job.FilterCondition'
-        type: object
-      type: object
-    type: object
-  model.SSLInput:
-    properties:
-      ca:
-        example: |-
-          -----BEGIN CERTIFICATE-----
-          ...
-        type: string
-      cert:
-        type: string
-      key:
-        type: string
-      mode:
-        example: require
-        type: string
-    type: object
-  model.SSLResponse:
-    properties:
-      mode:
-        type: string
-    type: object
-  model.SSLUpdateInput:
-    properties:
-      ca:
-        example: |-
-          -----BEGIN CERTIFICATE-----
-          ...
-        type: string
-      cert:
-        type: string
-      key:
-        type: string
-      mode:
-        example: require
-        type: string
-    type: object
-  model.SchemaValidationError:
-    properties:
-      dataSourceId:
-        type: string
-      field:
-        type: string
-      table:
-        type: string
-      type:
-        type: string
-    type: object
-  model.SchemaValidationErrorResponse:
+  pkg.HTTPError:
     properties:
       code:
         type: string
-      errors:
-        items:
-          $ref: '#/definitions/model.SchemaValidationError'
-        type: array
+      entityType:
+        type: string
+      err: {}
       message:
         type: string
       title:
-        type: string
-    type: object
-  model.SchemaValidationRequest:
-    description: Request body for schema validation containing mapped fields per datasource.
-    properties:
-      mappedFields:
-        additionalProperties:
-          additionalProperties:
-            items:
-              type: string
-            type: array
-          type: object
-        description: |-
-          MappedFields maps datasource config names to their tables and fields
-          Key: configName (e.g., "midaz_onboarding")
-          Value: map of table names to field names
-        type: object
-    required:
-    - mappedFields
-    type: object
-  model.SchemaValidationResponse:
-    properties:
-      errors:
-        items:
-          $ref: '#/definitions/model.SchemaValidationError'
-        type: array
-      message:
-        type: string
-      status:
-        description: '"success" or "failure"'
         type: string
     type: object
 host: localhost:4006
@@ -414,34 +439,34 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/model.FetcherRequest'
+          $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.FetcherRequest'
       produces:
       - application/json
       responses:
         "200":
           description: Duplicate request - returning existing job
           schema:
-            $ref: '#/definitions/model.FetcherResponse'
+            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.FetcherResponse'
         "202":
           description: Job created and queued for processing
           schema:
-            $ref: '#/definitions/model.FetcherResponse'
+            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.FetcherResponse'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError'
+            $ref: '#/definitions/pkg.HTTPError'
         "409":
           description: Conflict
           schema:
-            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError'
+            $ref: '#/definitions/pkg.HTTPError'
         "413":
           description: Request Entity Too Large
           schema:
-            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError'
+            $ref: '#/definitions/pkg.HTTPError'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError'
+            $ref: '#/definitions/pkg.HTTPError'
       summary: Create fetcher job
       tags:
       - Fetcher
@@ -471,19 +496,19 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/model.JobResponse'
+            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.JobResponse'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError'
+            $ref: '#/definitions/pkg.HTTPError'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError'
+            $ref: '#/definitions/pkg.HTTPError'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError'
+            $ref: '#/definitions/pkg.HTTPError'
       summary: Get fetcher job
       tags:
       - Fetcher
@@ -556,7 +581,7 @@ paths:
             - properties:
                 items:
                   items:
-                    $ref: '#/definitions/model.ConnectionResponse'
+                    $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.ConnectionResponse'
                   type: array
                 limit:
                   type: integer
@@ -568,15 +593,15 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError'
+            $ref: '#/definitions/pkg.HTTPError'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError'
+            $ref: '#/definitions/pkg.HTTPError'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError'
+            $ref: '#/definitions/pkg.HTTPError'
       summary: List connections
       tags:
       - Connections
@@ -602,7 +627,7 @@ paths:
         name: connection
         required: true
         schema:
-          $ref: '#/definitions/model.ConnectionInput'
+          $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.ConnectionInput'
       produces:
       - application/json
       responses:
@@ -615,15 +640,15 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError'
+            $ref: '#/definitions/pkg.HTTPError'
         "409":
           description: Conflict
           schema:
-            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError'
+            $ref: '#/definitions/pkg.HTTPError'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError'
+            $ref: '#/definitions/pkg.HTTPError'
       summary: Create connection
       tags:
       - Connections
@@ -655,19 +680,19 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError'
+            $ref: '#/definitions/pkg.HTTPError'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError'
+            $ref: '#/definitions/pkg.HTTPError'
         "409":
           description: Conflict
           schema:
-            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError'
+            $ref: '#/definitions/pkg.HTTPError'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError'
+            $ref: '#/definitions/pkg.HTTPError'
       summary: Delete connection
       tags:
       - Connections
@@ -695,19 +720,19 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/model.ConnectionResponse'
+            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.ConnectionResponse'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError'
+            $ref: '#/definitions/pkg.HTTPError'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError'
+            $ref: '#/definitions/pkg.HTTPError'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError'
+            $ref: '#/definitions/pkg.HTTPError'
       summary: Get connection
       tags:
       - Connections
@@ -737,31 +762,72 @@ paths:
         name: connection
         required: true
         schema:
-          $ref: '#/definitions/model.ConnectionUpdateInput'
+          $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.ConnectionUpdateInput'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/model.ConnectionResponse'
+            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.ConnectionResponse'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError'
+            $ref: '#/definitions/pkg.HTTPError'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError'
+            $ref: '#/definitions/pkg.HTTPError'
         "409":
           description: Conflict
           schema:
-            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError'
+            $ref: '#/definitions/pkg.HTTPError'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError'
+            $ref: '#/definitions/pkg.HTTPError'
       summary: Update connection
+      tags:
+      - Connections
+  /v1/management/connections/{id}/schema:
+    get:
+      description: Get the database schema (tables and fields) for a connection.
+      parameters:
+      - description: The authorization token in the 'Bearer access_token' format.
+          Only required when auth plugin is enabled.
+        in: header
+        name: Authorization
+        type: string
+      - description: Organization ID
+        in: header
+        name: X-Organization-Id
+        required: true
+        type: string
+      - description: Connection ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.ConnectionSchemaResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+      summary: Get connection schema
       tags:
       - Connections
   /v1/management/connections/{id}/test:
@@ -794,19 +860,19 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError'
+            $ref: '#/definitions/pkg.HTTPError'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError'
+            $ref: '#/definitions/pkg.HTTPError'
         "429":
           description: Too Many Requests
           schema:
-            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError'
+            $ref: '#/definitions/pkg.HTTPError'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError'
+            $ref: '#/definitions/pkg.HTTPError'
       summary: Test connection
       tags:
       - Connections
@@ -833,14 +899,14 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/model.SchemaValidationRequest'
+          $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.SchemaValidationRequest'
       produces:
       - application/json
       responses:
         "200":
           description: Validation successful - all tables and fields exist
           schema:
-            $ref: '#/definitions/model.SchemaValidationResponse'
+            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.SchemaValidationResponse'
         "400":
           description: Invalid request payload or missing headers
           schema:
@@ -850,10 +916,11 @@ paths:
             or unreachable datasources)
           schema:
             $ref: '#/definitions/model.SchemaValidationErrorResponse'
+            $ref: '#/definitions/pkg.HTTPError'
         "500":
           description: Internal server error
           schema:
-            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError'
+            $ref: '#/definitions/pkg.HTTPError'
       summary: Validate schema
       tags:
       - Connections

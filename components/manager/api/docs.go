@@ -49,7 +49,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/model.FetcherRequest"
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.FetcherRequest"
                         }
                     }
                 ],
@@ -57,37 +57,37 @@ const docTemplate = `{
                     "200": {
                         "description": "Duplicate request - returning existing job",
                         "schema": {
-                            "$ref": "#/definitions/model.FetcherResponse"
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.FetcherResponse"
                         }
                     },
                     "202": {
                         "description": "Job created and queued for processing",
                         "schema": {
-                            "$ref": "#/definitions/model.FetcherResponse"
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.FetcherResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                            "$ref": "#/definitions/pkg.HTTPError"
                         }
                     },
                     "409": {
                         "description": "Conflict",
                         "schema": {
-                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                            "$ref": "#/definitions/pkg.HTTPError"
                         }
                     },
                     "413": {
                         "description": "Request Entity Too Large",
                         "schema": {
-                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                            "$ref": "#/definitions/pkg.HTTPError"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                            "$ref": "#/definitions/pkg.HTTPError"
                         }
                     }
                 }
@@ -129,25 +129,25 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/model.JobResponse"
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.JobResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                            "$ref": "#/definitions/pkg.HTTPError"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                            "$ref": "#/definitions/pkg.HTTPError"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                            "$ref": "#/definitions/pkg.HTTPError"
                         }
                     }
                 }
@@ -254,7 +254,7 @@ const docTemplate = `{
                                         "items": {
                                             "type": "array",
                                             "items": {
-                                                "$ref": "#/definitions/model.ConnectionResponse"
+                                                "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.ConnectionResponse"
                                             }
                                         },
                                         "limit": {
@@ -274,19 +274,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                            "$ref": "#/definitions/pkg.HTTPError"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                            "$ref": "#/definitions/pkg.HTTPError"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                            "$ref": "#/definitions/pkg.HTTPError"
                         }
                     }
                 }
@@ -323,7 +323,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/model.ConnectionInput"
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.ConnectionInput"
                         }
                     }
                 ],
@@ -340,19 +340,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                            "$ref": "#/definitions/pkg.HTTPError"
                         }
                     },
                     "409": {
                         "description": "Conflict",
                         "schema": {
-                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                            "$ref": "#/definitions/pkg.HTTPError"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                            "$ref": "#/definitions/pkg.HTTPError"
                         }
                     }
                 }
@@ -391,7 +391,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/model.SchemaValidationRequest"
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.SchemaValidationRequest"
                         }
                     }
                 ],
@@ -399,13 +399,13 @@ const docTemplate = `{
                     "200": {
                         "description": "Validation successful - all tables and fields exist",
                         "schema": {
-                            "$ref": "#/definitions/model.SchemaValidationResponse"
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.SchemaValidationResponse"
                         }
                     },
                     "400": {
                         "description": "Invalid request payload or missing headers",
                         "schema": {
-                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                            "$ref": "#/definitions/pkg.HTTPError"
                         }
                     },
                     "422": {
@@ -417,7 +417,7 @@ const docTemplate = `{
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                            "$ref": "#/definitions/pkg.HTTPError"
                         }
                     }
                 }
@@ -459,25 +459,25 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/model.ConnectionResponse"
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.ConnectionResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                            "$ref": "#/definitions/pkg.HTTPError"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                            "$ref": "#/definitions/pkg.HTTPError"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                            "$ref": "#/definitions/pkg.HTTPError"
                         }
                     }
                 }
@@ -520,25 +520,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                            "$ref": "#/definitions/pkg.HTTPError"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                            "$ref": "#/definitions/pkg.HTTPError"
                         }
                     },
                     "409": {
                         "description": "Conflict",
                         "schema": {
-                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                            "$ref": "#/definitions/pkg.HTTPError"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                            "$ref": "#/definitions/pkg.HTTPError"
                         }
                     }
                 }
@@ -582,7 +582,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/model.ConnectionUpdateInput"
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.ConnectionUpdateInput"
                         }
                     }
                 ],
@@ -590,31 +590,91 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/model.ConnectionResponse"
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.ConnectionResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                            "$ref": "#/definitions/pkg.HTTPError"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                            "$ref": "#/definitions/pkg.HTTPError"
                         }
                     },
                     "409": {
                         "description": "Conflict",
                         "schema": {
-                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                            "$ref": "#/definitions/pkg.HTTPError"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                            "$ref": "#/definitions/pkg.HTTPError"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/management/connections/{id}/schema": {
+            "get": {
+                "description": "Get the database schema (tables and fields) for a connection.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Connections"
+                ],
+                "summary": "Get connection schema",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "The authorization token in the 'Bearer access_token' format. Only required when auth plugin is enabled.",
+                        "name": "Authorization",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Organization ID",
+                        "name": "X-Organization-Id",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Connection ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.ConnectionSchemaResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/pkg.HTTPError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/pkg.HTTPError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/pkg.HTTPError"
                         }
                     }
                 }
@@ -663,25 +723,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                            "$ref": "#/definitions/pkg.HTTPError"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                            "$ref": "#/definitions/pkg.HTTPError"
                         }
                     },
                     "429": {
                         "description": "Too Many Requests",
                         "schema": {
-                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                            "$ref": "#/definitions/pkg.HTTPError"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg.HTTPError"
+                            "$ref": "#/definitions/pkg.HTTPError"
                         }
                     }
                 }
@@ -708,16 +768,370 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_LerianStudio_fetcher_pkg.HTTPError": {
+        "github_com_LerianStudio_fetcher_pkg_model.ConnectionInput": {
+            "type": "object",
+            "required": [
+                "configName",
+                "databaseName",
+                "host",
+                "password",
+                "port",
+                "type",
+                "userName"
+            ],
+            "properties": {
+                "configName": {
+                    "type": "string",
+                    "maxLength": 100,
+                    "minLength": 3,
+                    "example": "production-db"
+                },
+                "databaseName": {
+                    "type": "string",
+                    "example": "mydatabase"
+                },
+                "host": {
+                    "type": "string",
+                    "example": "db.example.com"
+                },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "password": {
+                    "type": "string",
+                    "example": "secretpassword"
+                },
+                "port": {
+                    "type": "integer",
+                    "maximum": 65535,
+                    "minimum": 1,
+                    "example": 5432
+                },
+                "ssl": {
+                    "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.SSLInput"
+                },
+                "type": {
+                    "type": "string",
+                    "enum": [
+                        "ORACLE",
+                        "SQL_SERVER",
+                        "POSTGRESQL",
+                        "MONGODB",
+                        "MYSQL"
+                    ],
+                    "example": "POSTGRESQL"
+                },
+                "userName": {
+                    "type": "string",
+                    "example": "dbuser"
+                }
+            }
+        },
+        "github_com_LerianStudio_fetcher_pkg_model.ConnectionResponse": {
+            "type": "object",
+            "properties": {
+                "configName": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "databaseName": {
+                    "type": "string"
+                },
+                "host": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "port": {
+                    "type": "integer"
+                },
+                "ssl": {
+                    "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.SSLResponse"
+                },
+                "type": {
+                    "type": "string"
+                },
+                "updatedAt": {
+                    "type": "string"
+                },
+                "userName": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_LerianStudio_fetcher_pkg_model.ConnectionSchemaResponse": {
+            "type": "object",
+            "properties": {
+                "configName": {
+                    "type": "string"
+                },
+                "databaseName": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "tables": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.TableDetails"
+                    }
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_LerianStudio_fetcher_pkg_model.ConnectionUpdateInput": {
+            "type": "object",
+            "properties": {
+                "configName": {
+                    "type": "string",
+                    "maxLength": 100,
+                    "minLength": 3,
+                    "example": "production-db"
+                },
+                "databaseName": {
+                    "type": "string",
+                    "example": "mydatabase"
+                },
+                "host": {
+                    "type": "string",
+                    "example": "db.example.com"
+                },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "password": {
+                    "type": "string",
+                    "example": "secretpassword"
+                },
+                "port": {
+                    "type": "integer",
+                    "maximum": 65535,
+                    "minimum": 1,
+                    "example": 5432
+                },
+                "ssl": {
+                    "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.SSLUpdateInput"
+                },
+                "type": {
+                    "type": "string",
+                    "enum": [
+                        "ORACLE",
+                        "SQL_SERVER",
+                        "POSTGRESQL",
+                        "MONGODB",
+                        "MYSQL"
+                    ],
+                    "example": "POSTGRESQL"
+                },
+                "userName": {
+                    "type": "string",
+                    "example": "dbuser"
+                }
+            }
+        },
+        "github_com_LerianStudio_fetcher_pkg_model.DataRequest": {
+            "description": "DataRequest encapsulates field mappings and optional filters for data extraction.",
+            "type": "object",
+            "required": [
+                "mappedFields"
+            ],
+            "properties": {
+                "filters": {
+                    "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.NestedFilters"
+                },
+                "mappedFields": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "github_com_LerianStudio_fetcher_pkg_model.FetcherRequest": {
+            "description": "FetcherRequest represents the request body for creating a new data extraction job.",
+            "type": "object",
+            "required": [
+                "dataRequest"
+            ],
+            "properties": {
+                "dataRequest": {
+                    "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.DataRequest"
+                },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": {}
+                }
+            }
+        },
+        "github_com_LerianStudio_fetcher_pkg_model.FetcherResponse": {
+            "description": "FetcherResponse represents the response after successfully creating a data extraction job.",
+            "type": "object",
+            "properties": {
+                "createdAt": {
+                    "type": "string"
+                },
+                "jobId": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_LerianStudio_fetcher_pkg_model.JobResponse": {
+            "description": "JobResponse represents the complete information about a data extraction job.",
+            "type": "object",
+            "properties": {
+                "completedAt": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "filters": {
+                    "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.NestedFilters"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "mappedFields": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "organizationId": {
+                    "type": "string"
+                },
+                "requestHash": {
+                    "type": "string"
+                },
+                "resultPath": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_LerianStudio_fetcher_pkg_model.NestedFilters": {
+            "type": "object",
+            "additionalProperties": {
+                "type": "object",
+                "additionalProperties": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model_job.FilterCondition"
+                    }
+                }
+            }
+        },
+        "github_com_LerianStudio_fetcher_pkg_model.SSLInput": {
+            "type": "object",
+            "properties": {
+                "ca": {
+                    "type": "string",
+                    "example": "-----BEGIN CERTIFICATE-----\n..."
+                },
+                "cert": {
+                    "type": "string"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "mode": {
+                    "type": "string",
+                    "example": "require"
+                }
+            }
+        },
+        "github_com_LerianStudio_fetcher_pkg_model.SSLResponse": {
+            "type": "object",
+            "properties": {
+                "mode": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_LerianStudio_fetcher_pkg_model.SSLUpdateInput": {
+            "type": "object",
+            "properties": {
+                "ca": {
+                    "type": "string",
+                    "example": "-----BEGIN CERTIFICATE-----\n..."
+                },
+                "cert": {
+                    "type": "string"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "mode": {
+                    "type": "string",
+                    "example": "require"
+                }
+            }
+        },
+        "github_com_LerianStudio_fetcher_pkg_model.SchemaValidationError": {
+            "type": "object",
+            "properties": {
+                "dataSourceId": {
+                    "type": "string"
+                },
+                "field": {
+                    "type": "string"
+                },
+                "table": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "model.SchemaValidationErrorResponse": {
             "type": "object",
             "properties": {
                 "code": {
                     "type": "string"
                 },
-                "entityType": {
-                    "type": "string"
+                "errors": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/model.SchemaValidationError"
+                    }
                 },
-                "err": {},
                 "message": {
                     "type": "string"
                 },
@@ -726,7 +1140,62 @@ const docTemplate = `{
                 }
             }
         },
-        "job.FilterCondition": {
+        "model.SchemaValidationRequest": {
+        "github_com_LerianStudio_fetcher_pkg_model.SchemaValidationRequest": {
+            "description": "Request body for schema validation containing mapped fields per datasource.",
+            "type": "object",
+            "required": [
+                "mappedFields"
+            ],
+            "properties": {
+                "mappedFields": {
+                    "description": "MappedFields maps datasource config names to their tables and fields\nKey: configName (e.g., \"midaz_onboarding\")\nValue: map of table names to field names",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "github_com_LerianStudio_fetcher_pkg_model.SchemaValidationResponse": {
+            "type": "object",
+            "properties": {
+                "errors": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.SchemaValidationError"
+                    }
+                },
+                "message": {
+                    "type": "string"
+                },
+                "status": {
+                    "description": "\"success\" or \"failure\"",
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_LerianStudio_fetcher_pkg_model.TableDetails": {
+            "type": "object",
+            "properties": {
+                "fields": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_LerianStudio_fetcher_pkg_model_job.FilterCondition": {
             "type": "object",
             "properties": {
                 "between": {
@@ -781,391 +1250,20 @@ const docTemplate = `{
                 }
             }
         },
-        "model.ConnectionInput": {
-            "type": "object",
-            "required": [
-                "configName",
-                "databaseName",
-                "host",
-                "password",
-                "port",
-                "type",
-                "userName"
-            ],
-            "properties": {
-                "configName": {
-                    "type": "string",
-                    "maxLength": 100,
-                    "minLength": 3,
-                    "example": "production-db"
-                },
-                "databaseName": {
-                    "type": "string",
-                    "example": "mydatabase"
-                },
-                "host": {
-                    "type": "string",
-                    "example": "db.example.com"
-                },
-                "metadata": {
-                    "type": "object",
-                    "additionalProperties": {}
-                },
-                "password": {
-                    "type": "string",
-                    "example": "secretpassword"
-                },
-                "port": {
-                    "type": "integer",
-                    "maximum": 65535,
-                    "minimum": 1,
-                    "example": 5432
-                },
-                "ssl": {
-                    "$ref": "#/definitions/model.SSLInput"
-                },
-                "type": {
-                    "type": "string",
-                    "enum": [
-                        "ORACLE",
-                        "SQL_SERVER",
-                        "POSTGRESQL",
-                        "MONGODB",
-                        "MYSQL"
-                    ],
-                    "example": "POSTGRESQL"
-                },
-                "userName": {
-                    "type": "string",
-                    "example": "dbuser"
-                }
-            }
-        },
-        "model.ConnectionResponse": {
-            "type": "object",
-            "properties": {
-                "configName": {
-                    "type": "string"
-                },
-                "createdAt": {
-                    "type": "string"
-                },
-                "databaseName": {
-                    "type": "string"
-                },
-                "host": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "metadata": {
-                    "type": "object",
-                    "additionalProperties": {}
-                },
-                "port": {
-                    "type": "integer"
-                },
-                "ssl": {
-                    "$ref": "#/definitions/model.SSLResponse"
-                },
-                "type": {
-                    "type": "string"
-                },
-                "updatedAt": {
-                    "type": "string"
-                },
-                "userName": {
-                    "type": "string"
-                }
-            }
-        },
-        "model.ConnectionUpdateInput": {
-            "type": "object",
-            "properties": {
-                "configName": {
-                    "type": "string",
-                    "maxLength": 100,
-                    "minLength": 3,
-                    "example": "production-db"
-                },
-                "databaseName": {
-                    "type": "string",
-                    "example": "mydatabase"
-                },
-                "host": {
-                    "type": "string",
-                    "example": "db.example.com"
-                },
-                "metadata": {
-                    "type": "object",
-                    "additionalProperties": {}
-                },
-                "password": {
-                    "type": "string",
-                    "example": "secretpassword"
-                },
-                "port": {
-                    "type": "integer",
-                    "maximum": 65535,
-                    "minimum": 1,
-                    "example": 5432
-                },
-                "ssl": {
-                    "$ref": "#/definitions/model.SSLUpdateInput"
-                },
-                "type": {
-                    "type": "string",
-                    "enum": [
-                        "ORACLE",
-                        "SQL_SERVER",
-                        "POSTGRESQL",
-                        "MONGODB",
-                        "MYSQL"
-                    ],
-                    "example": "POSTGRESQL"
-                },
-                "userName": {
-                    "type": "string",
-                    "example": "dbuser"
-                }
-            }
-        },
-        "model.DataRequest": {
-            "description": "DataRequest encapsulates field mappings and optional filters for data extraction.",
-            "type": "object",
-            "required": [
-                "mappedFields"
-            ],
-            "properties": {
-                "filters": {
-                    "$ref": "#/definitions/model.NestedFilters"
-                },
-                "mappedFields": {
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "object",
-                        "additionalProperties": {
-                            "type": "array",
-                            "items": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "model.FetcherRequest": {
-            "description": "FetcherRequest represents the request body for creating a new data extraction job.",
-            "type": "object",
-            "required": [
-                "dataRequest"
-            ],
-            "properties": {
-                "dataRequest": {
-                    "$ref": "#/definitions/model.DataRequest"
-                },
-                "metadata": {
-                    "type": "object",
-                    "additionalProperties": {}
-                }
-            }
-        },
-        "model.FetcherResponse": {
-            "description": "FetcherResponse represents the response after successfully creating a data extraction job.",
-            "type": "object",
-            "properties": {
-                "createdAt": {
-                    "type": "string"
-                },
-                "jobId": {
-                    "type": "string"
-                },
-                "message": {
-                    "type": "string"
-                },
-                "status": {
-                    "type": "string"
-                }
-            }
-        },
-        "model.JobResponse": {
-            "description": "JobResponse represents the complete information about a data extraction job.",
-            "type": "object",
-            "properties": {
-                "completedAt": {
-                    "type": "string"
-                },
-                "createdAt": {
-                    "type": "string"
-                },
-                "filters": {
-                    "$ref": "#/definitions/model.NestedFilters"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "mappedFields": {
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "object",
-                        "additionalProperties": {
-                            "type": "array",
-                            "items": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                },
-                "metadata": {
-                    "type": "object",
-                    "additionalProperties": {}
-                },
-                "organizationId": {
-                    "type": "string"
-                },
-                "requestHash": {
-                    "type": "string"
-                },
-                "resultPath": {
-                    "type": "string"
-                },
-                "status": {
-                    "type": "string"
-                }
-            }
-        },
-        "model.NestedFilters": {
-            "type": "object",
-            "additionalProperties": {
-                "type": "object",
-                "additionalProperties": {
-                    "type": "object",
-                    "additionalProperties": {
-                        "$ref": "#/definitions/job.FilterCondition"
-                    }
-                }
-            }
-        },
-        "model.SSLInput": {
-            "type": "object",
-            "properties": {
-                "ca": {
-                    "type": "string",
-                    "example": "-----BEGIN CERTIFICATE-----\n..."
-                },
-                "cert": {
-                    "type": "string"
-                },
-                "key": {
-                    "type": "string"
-                },
-                "mode": {
-                    "type": "string",
-                    "example": "require"
-                }
-            }
-        },
-        "model.SSLResponse": {
-            "type": "object",
-            "properties": {
-                "mode": {
-                    "type": "string"
-                }
-            }
-        },
-        "model.SSLUpdateInput": {
-            "type": "object",
-            "properties": {
-                "ca": {
-                    "type": "string",
-                    "example": "-----BEGIN CERTIFICATE-----\n..."
-                },
-                "cert": {
-                    "type": "string"
-                },
-                "key": {
-                    "type": "string"
-                },
-                "mode": {
-                    "type": "string",
-                    "example": "require"
-                }
-            }
-        },
-        "model.SchemaValidationError": {
-            "type": "object",
-            "properties": {
-                "dataSourceId": {
-                    "type": "string"
-                },
-                "field": {
-                    "type": "string"
-                },
-                "table": {
-                    "type": "string"
-                },
-                "type": {
-                    "type": "string"
-                }
-            }
-        },
-        "model.SchemaValidationErrorResponse": {
+        "pkg.HTTPError": {
             "type": "object",
             "properties": {
                 "code": {
                     "type": "string"
                 },
-                "errors": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/model.SchemaValidationError"
-                    }
+                "entityType": {
+                    "type": "string"
                 },
+                "err": {},
                 "message": {
                     "type": "string"
                 },
                 "title": {
-                    "type": "string"
-                }
-            }
-        },
-        "model.SchemaValidationRequest": {
-            "description": "Request body for schema validation containing mapped fields per datasource.",
-            "type": "object",
-            "required": [
-                "mappedFields"
-            ],
-            "properties": {
-                "mappedFields": {
-                    "description": "MappedFields maps datasource config names to their tables and fields\nKey: configName (e.g., \"midaz_onboarding\")\nValue: map of table names to field names",
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "object",
-                        "additionalProperties": {
-                            "type": "array",
-                            "items": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "model.SchemaValidationResponse": {
-            "type": "object",
-            "properties": {
-                "errors": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/model.SchemaValidationError"
-                    }
-                },
-                "message": {
-                    "type": "string"
-                },
-                "status": {
-                    "description": "\"success\" or \"failure\"",
                     "type": "string"
                 }
             }

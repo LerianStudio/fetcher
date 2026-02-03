@@ -25,6 +25,7 @@ type ConnectionHandler struct {
 	ListQuery           *query.ListConnections
 	TestQuery           *query.TestConnection
 	ValidateSchemaQuery *query.ValidateSchema
+	GetSchemaQuery      *query.GetConnectionSchema
 }
 
 func NewConnectionHandler(
@@ -35,6 +36,7 @@ func NewConnectionHandler(
 	listQuery *query.ListConnections,
 	testQuery *query.TestConnection,
 	validateSchemaQuery *query.ValidateSchema,
+	getSchemaQuery *query.GetConnectionSchema,
 ) *ConnectionHandler {
 	return &ConnectionHandler{
 		CreateCmd:           createCmd,
@@ -44,6 +46,7 @@ func NewConnectionHandler(
 		ListQuery:           listQuery,
 		TestQuery:           testQuery,
 		ValidateSchemaQuery: validateSchemaQuery,
+		GetSchemaQuery:      getSchemaQuery,
 	}
 }
 
@@ -541,6 +544,68 @@ func (h *ConnectionHandler) ValidateSchema(c *fiber.Ctx) error {
 			Errors:  resp.Errors,
 		})
 	}
+
+	return httpUtils.OK(c, resp)
+}
+
+// GetConnectionSchema retrieves the database schema for a connection.
+//
+//	@Summary		Get connection schema
+//	@Description	Get the database schema (tables and fields) for a connection.
+//	@Tags			Connections
+//	@Produce		json
+//	@Param			Authorization		header		string	false	"The authorization token in the 'Bearer access_token' format. Only required when auth plugin is enabled."
+//	@Param			X-Organization-Id	header		string	true	"Organization ID"
+//	@Param			id					path		string	true	"Connection ID"
+//	@Success		200					{object}	model.ConnectionSchemaResponse
+//	@Failure		400					{object}	pkg.HTTPError
+//	@Failure		404					{object}	pkg.HTTPError
+//	@Failure		500					{object}	pkg.HTTPError
+//	@Router			/v1/management/connections/{id}/schema [get]
+func (h *ConnectionHandler) GetConnectionSchema(c *fiber.Ctx) error {
+	ctx := c.UserContext()
+	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+
+	ctx, span := tracer.Start(ctx, "handler.get_connection_schema")
+	defer span.End()
+
+	c.SetUserContext(ctx)
+
+	orgID, err := httpUtils.GetOrganizationID(c)
+	if err != nil {
+		libOpentelemetry.HandleSpanError(&span, "missing or invalid org id", err)
+		return httpUtils.WithError(c, err)
+	}
+
+	span.SetAttributes(
+		attribute.String("app.request.request_id", reqID),
+		attribute.String("app.request.organization_id", orgID.String()),
+	)
+
+	id, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		libOpentelemetry.HandleSpanError(&span, "invalid connection id parameter", err)
+
+		return httpUtils.WithError(c, pkg.ValidationError{
+			EntityType: "connection",
+			Code:       constant.ErrInvalidPathParameter.Error(),
+			Title:      "Invalid Path Parameter",
+			Message:    "invalid connection id",
+			Err:        err,
+		})
+	}
+
+	span.SetAttributes(attribute.String("app.request.connection_id", id.String()))
+
+	resp, err := h.GetSchemaQuery.Execute(ctx, orgID, id)
+	if err != nil {
+		logger.Errorf("Failed to execute get connection schema query, Error: %s", err.Error())
+		libOpentelemetry.HandleSpanError(&span, "failed to get connection schema", err)
+
+		return httpUtils.WithError(c, err)
+	}
+
+	logger.Infof("connection schema retrieved id=%s org=%s tables=%d", id, orgID, len(resp.Tables))
 
 	return httpUtils.OK(c, resp)
 }

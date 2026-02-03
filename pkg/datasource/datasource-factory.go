@@ -424,3 +424,16 @@ func newDataSourceConfigSQLServer(ctx context.Context, base datasource.DataSourc
 		SQLServerRepository: repo,
 	}, nil
 }
+
+// DataSourceFactory is a function type for creating DataSource instances.
+// This allows for dependency injection and easier testing.
+type DataSourceFactory func(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor) (datasource.DataSource, error)
+
+// NewDataSourceFromConnectionWithLogger returns a factory function that creates DataSource
+// implementations with a pre-configured logger. This is useful for dependency injection
+// where the logger needs to be captured at initialization time.
+func NewDataSourceFromConnectionWithLogger(logger log.Logger) func(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor) (datasource.DataSource, error) {
+	return func(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor) (datasource.DataSource, error) {
+		return NewDataSourceFromConnection(ctx, conn, cryptor, logger)
+	}
+}
