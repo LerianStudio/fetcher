@@ -455,6 +455,7 @@ func (uc *UseCase) saveExternalDataToSeaweedFS(
 		}
 
 		documentHMAC = hmac
+
 		logger.Infof("Document HMAC computed successfully for job result")
 	}
 
