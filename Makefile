@@ -127,6 +127,11 @@ help:
 	@echo "  make test-chaos-quick        	   	   - Run quick chaos tests (latency only, ~20min)"
 	@echo "  make test-chaos-verbose      	   	   - Run chaos tests with verbose output"
 	@echo ""
+	@echo ""
+	@echo "Cryptographic Utility Commands:"
+	@echo "  make derive-key KEY=...          - Derive external HMAC key from master key"
+	@echo "  make generate-master-key         - Generate a new cryptographically secure master key"
+	@echo ""
 
 
 #-------------------------------------------------------
@@ -755,3 +760,35 @@ test-chaos-verbose: ## Run chaos tests with verbose output
 	@echo "Running chaos tests with verbose output..."
 	@go test -v -tags=chaos -timeout 45m -count=1 ./tests/chaos/e2e/...
 	@echo "[ok] Chaos tests completed successfully"
+
+#-------------------------------------------------------
+# Cryptographic Utility Commands
+#-------------------------------------------------------
+
+.PHONY: derive-key
+derive-key: ## Derive external HMAC key from master key
+	$(call print_title,Deriving external HMAC key)
+ifndef KEY
+	@echo "Error: KEY is required"
+	@echo ""
+	@echo "Usage: make derive-key KEY=\"YOUR_BASE64_MASTER_KEY\""
+	@echo ""
+	@echo "Example:"
+	@echo "  make derive-key KEY=\"dGhpcy1pcy1hLTMyLWJ5dGUtbWFzdGVyLWtleTEyMzQ=\""
+	@echo ""
+	@echo "See docs/security/verification-guide.md for more information."
+	@exit 1
+endif
+	@go run ./scripts/crypto/derive-key/main.go -key "$(KEY)"
+
+.PHONY: generate-master-key
+generate-master-key: ## Generate a new cryptographically secure master key
+	$(call print_title,Generating new master key)
+	@echo "Generating a cryptographically secure 32-byte master key..."
+	@KEY=$$(head -c 32 /dev/urandom | base64) && \
+	echo "" && \
+	echo "New Master Key (base64):" && \
+	echo "$$KEY" && \
+	echo "" && \
+	echo "IMPORTANT: Store this key securely. It cannot be recovered if lost." && \
+	echo "Add to your environment as APP_ENC_KEY."
