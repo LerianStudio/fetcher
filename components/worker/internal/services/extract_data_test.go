@@ -9,8 +9,8 @@ import (
 
 	"github.com/LerianStudio/fetcher/pkg/model"
 	modelJob "github.com/LerianStudio/fetcher/pkg/model/job"
-	"github.com/golang/mock/gomock"
 	"github.com/google/uuid"
+	"go.uber.org/mock/gomock"
 )
 
 // TestParseMessage_ValidMessage tests successful message parsing.
@@ -104,7 +104,7 @@ func TestParseMessage_InvalidJSONWithJobIDInHeaders(t *testing.T) {
 
 	// Expect job status update to failed due to parse error
 	mocks.jobRepo.EXPECT().
-		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any(), gomock.Any()).
+		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil)
 
 	result, err := uc.parseMessage(ctx, invalidBody, headers, nil, logger)
@@ -390,8 +390,8 @@ func TestUpdateJobWithErrors(t *testing.T) {
 			orgID := newTestOrgID()
 
 			mocks.jobRepo.EXPECT().
-				UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any(), gomock.Any()).
-				DoAndReturn(func(_ context.Context, _, _ uuid.UUID, _ model.JobStatus, _ string, metadata map[string]any) error {
+				UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any(), gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, _, _ uuid.UUID, _ model.JobStatus, _, _ string, metadata map[string]any) error {
 					if metadata["error"] != tt.errorMessage {
 						t.Errorf("expected error message %q in metadata, got %q", tt.errorMessage, metadata["error"])
 					}
@@ -867,7 +867,7 @@ func TestHandleErrorWithUpdate(t *testing.T) {
 			name: "successful update",
 			setupMocks: func(mocks *testMocks, jobID, orgID uuid.UUID) {
 				mocks.jobRepo.EXPECT().
-					UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any(), gomock.Any()).
+					UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any(), gomock.Any(), gomock.Any()).
 					Return(nil)
 				// handleErrorWithUpdate also publishes a notification
 				mocks.rabbitPublisher.EXPECT().
@@ -882,7 +882,7 @@ func TestHandleErrorWithUpdate(t *testing.T) {
 			name: "update fails",
 			setupMocks: func(mocks *testMocks, jobID, orgID uuid.UUID) {
 				mocks.jobRepo.EXPECT().
-					UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any(), gomock.Any()).
+					UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any(), gomock.Any(), gomock.Any()).
 					Return(errors.New("database error"))
 			},
 			testErr:      errors.New("test error"),
@@ -1000,7 +1000,7 @@ func TestParseMessage_UpdateStatusError(t *testing.T) {
 
 	// UpdateStatus fails
 	mocks.jobRepo.EXPECT().
-		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any(), gomock.Any()).
+		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(errors.New("update failed"))
 
 	result, err := uc.parseMessage(ctx, invalidBody, headers, nil, logger)
@@ -1249,7 +1249,7 @@ func TestExtractExternalData_JobRepositoryFindError(t *testing.T) {
 
 	// Expect job status to be updated to failed
 	mocks.jobRepo.EXPECT().
-		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any(), gomock.Any()).
+		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil)
 
 	// Expect failure notification
@@ -1466,8 +1466,8 @@ func TestUpdateJobWithErrors_EmptyErrorMessage(t *testing.T) {
 	orgID := newTestOrgID()
 
 	mocks.jobRepo.EXPECT().
-		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _, _ uuid.UUID, _ model.JobStatus, _ string, metadata map[string]any) error {
+		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _, _ uuid.UUID, _ model.JobStatus, _, _ string, metadata map[string]any) error {
 			if metadata["error"] != "" {
 				t.Errorf("expected empty error message in metadata, got %q", metadata["error"])
 			}
@@ -1893,7 +1893,7 @@ func TestExtractExternalData_ConnectionRepositoryError(t *testing.T) {
 
 	// Expect job status to be updated to failed
 	mocks.jobRepo.EXPECT().
-		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any(), gomock.Any()).
+		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil)
 
 	// Expect failure notification
@@ -1929,7 +1929,7 @@ func TestExtractExternalData_ParseErrorWithJobIDInHeaders(t *testing.T) {
 
 	// Expect job status update to failed
 	mocks.jobRepo.EXPECT().
-		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any(), gomock.Any()).
+		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil)
 
 	// Expect failure notification due to parse error

@@ -104,7 +104,7 @@ func (m *MockConnectionRepository) List(ctx context.Context, orgID uuid.UUID, pa
 type MockJobRepository struct {
 	FindByIDFunc     func(ctx context.Context, id, orgID uuid.UUID) (*model.Job, error)
 	CreateFunc       func(ctx context.Context, job *model.Job) error
-	UpdateStatusFunc func(ctx context.Context, id, orgID uuid.UUID, status model.JobStatus, resultPath string, metadata map[string]any) error
+	UpdateStatusFunc func(ctx context.Context, id, orgID uuid.UUID, status model.JobStatus, resultPath, resultHMAC string, metadata map[string]any) error
 }
 
 func (m *MockJobRepository) FindByID(ctx context.Context, id, orgID uuid.UUID) (*model.Job, error) {
@@ -123,9 +123,9 @@ func (m *MockJobRepository) Create(ctx context.Context, job *model.Job) error {
 	return nil
 }
 
-func (m *MockJobRepository) UpdateStatus(ctx context.Context, id, orgID uuid.UUID, status model.JobStatus, resultPath string, metadata map[string]any) error {
+func (m *MockJobRepository) UpdateStatus(ctx context.Context, id, orgID uuid.UUID, status model.JobStatus, resultPath, resultHMAC string, metadata map[string]any) error {
 	if m.UpdateStatusFunc != nil {
-		return m.UpdateStatusFunc(ctx, id, orgID, status, resultPath, metadata)
+		return m.UpdateStatusFunc(ctx, id, orgID, status, resultPath, resultHMAC, metadata)
 	}
 
 	return nil

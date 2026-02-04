@@ -13,10 +13,10 @@ import (
 
 	libCommons "github.com/LerianStudio/lib-commons/v2/commons"
 	libLog "github.com/LerianStudio/lib-commons/v2/commons/log"
-	"github.com/golang/mock/gomock"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"go.opentelemetry.io/otel"
+	"go.uber.org/mock/gomock"
 )
 
 // testContext creates a context with logger and tracer for testing.

@@ -22,6 +22,10 @@ type UseCase struct {
 	// Cryptor is used to decrypt connection passwords when creating data sources.
 	Cryptor crypto.Cryptor
 
+	// DocumentSigner is used to compute HMAC signatures for extracted data before encryption.
+	// External consumers can use this signature to verify data integrity.
+	DocumentSigner crypto.Signer
+
 	// FileTTL defines the Time To Live for file (e.g., "1m", "1h", "7d", "30d"). Empty means no TTL.
 	FileTTL string
 

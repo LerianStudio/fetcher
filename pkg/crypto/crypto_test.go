@@ -129,6 +129,120 @@ func TestNewAESGCMServiceFromEnv(t *testing.T) {
 	}
 }
 
+// TestNewAESGCMService tests the raw byte constructor.
+func TestNewAESGCMService(t *testing.T) {
+	tests := []struct {
+		name       string
+		key        []byte
+		keyVersion string
+		wantErr    bool
+		errContain string
+		wantVer    string
+	}{
+		{
+			name:       "valid 32 byte key with version",
+			key:        make([]byte, 32),
+			keyVersion: "v1",
+			wantErr:    false,
+			wantVer:    "v1",
+		},
+		{
+			name:       "valid key with empty version defaults to 1",
+			key:        make([]byte, 32),
+			keyVersion: "",
+			wantErr:    false,
+			wantVer:    "1",
+		},
+		{
+			name:       "key too short (16 bytes)",
+			key:        make([]byte, 16),
+			keyVersion: "v1",
+			wantErr:    true,
+			errContain: "invalid encryption key length",
+		},
+		{
+			name:       "key too long (64 bytes)",
+			key:        make([]byte, 64),
+			keyVersion: "v1",
+			wantErr:    true,
+			errContain: "invalid encryption key length",
+		},
+		{
+			name:       "empty key",
+			key:        []byte{},
+			keyVersion: "v1",
+			wantErr:    true,
+			errContain: "invalid encryption key length",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, err := NewAESGCMService(tt.key, tt.keyVersion)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				if tt.errContain != "" && !strings.Contains(err.Error(), tt.errContain) {
+					t.Fatalf("expected error to contain %q, got %q", tt.errContain, err.Error())
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if svc == nil {
+				t.Fatal("expected non-nil service")
+			}
+
+			if svc.KeyVersion() != tt.wantVer {
+				t.Fatalf("expected key version %q, got %q", tt.wantVer, svc.KeyVersion())
+			}
+		})
+	}
+}
+
+// TestNewAESGCMService_WithKeyDeriver tests integration with KeyDeriver.
+func TestNewAESGCMService_WithKeyDeriver(t *testing.T) {
+	// Create a key deriver with a test master key
+	masterKey := make([]byte, 32)
+	for i := range masterKey {
+		masterKey[i] = byte(i)
+	}
+
+	keyDeriver, err := NewHKDFKeyDeriver(masterKey)
+	if err != nil {
+		t.Fatalf("failed to create key deriver: %v", err)
+	}
+
+	// Create AESGCMService with derived credential key
+	svc, err := NewAESGCMService(keyDeriver.GetCredentialKey(), "v1")
+	if err != nil {
+		t.Fatalf("failed to create service: %v", err)
+	}
+
+	// Test encrypt/decrypt round trip
+	ctx := context.Background()
+	plaintext := "test secret data"
+
+	ciphertext, version, err := svc.Encrypt(ctx, plaintext)
+	if err != nil {
+		t.Fatalf("failed to encrypt: %v", err)
+	}
+
+	decrypted, err := svc.Decrypt(ctx, ciphertext, version)
+	if err != nil {
+		t.Fatalf("failed to decrypt: %v", err)
+	}
+
+	if decrypted != plaintext {
+		t.Fatalf("expected %q, got %q", plaintext, decrypted)
+	}
+}
+
 // TestEncrypt tests the Encrypt method with various inputs.
 func TestEncrypt(t *testing.T) {
 	validKey := generateValidKey()

@@ -5,8 +5,8 @@ import (
 
 	modelJob "github.com/LerianStudio/fetcher/pkg/model/job"
 	libCrypto "github.com/LerianStudio/lib-commons/v2/commons/crypto"
-	"github.com/golang/mock/gomock"
 	"github.com/google/uuid"
+	"go.uber.org/mock/gomock"
 )
 
 // TestIsEncryptedField tests the encrypted field detection function.

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 )
 
 // SignatureVersion represents the version of the signing algorithm.
@@ -27,6 +28,11 @@ type Signer interface {
 	// Sign creates an HMAC-SHA256 signature for the given payload.
 	// The payload should be: timestamp + "." + message_body
 	Sign(payload []byte) string
+
+	// SignReader creates an HMAC-SHA256 signature by streaming data from a reader.
+	// This is useful for signing large files without loading them entirely into memory.
+	// Memory usage is O(1) regardless of input size.
+	SignReader(r io.Reader) (string, error)
 
 	// Verify checks if the signature is valid for the given payload.
 	// Returns nil if valid, ErrInvalidSignature if invalid.
@@ -60,23 +66,25 @@ func NewHMACSigner(key []byte, version string) (*HMACSigner, error) {
 	}, nil
 }
 
-// NewHMACSignerFromCryptor creates a new HMAC signer using the same key as the Cryptor.
-// This allows reusing the encryption key for signing.
-func NewHMACSignerFromCryptor(cryptor Cryptor) (*HMACSigner, error) {
-	aesService, ok := cryptor.(*AESGCMService)
-	if !ok {
-		return nil, errors.New("cryptor must be *AESGCMService to extract key")
-	}
-
-	return NewHMACSigner(aesService.key, SignatureVersion)
-}
-
 // Sign creates an HMAC-SHA256 signature for the given payload.
 func (s *HMACSigner) Sign(payload []byte) string {
 	mac := hmac.New(sha256.New, s.key)
 	mac.Write(payload)
 
 	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// SignReader creates an HMAC-SHA256 signature by streaming data from a reader.
+// This is useful for signing large files without loading them entirely into memory.
+// Memory usage is O(1) regardless of input size (uses 32KB buffer).
+func (s *HMACSigner) SignReader(r io.Reader) (string, error) {
+	mac := hmac.New(sha256.New, s.key)
+
+	if _, err := io.Copy(mac, r); err != nil {
+		return "", fmt.Errorf("failed to read data for signing: %w", err)
+	}
+
+	return hex.EncodeToString(mac.Sum(nil)), nil
 }
 
 // Verify checks if the signature is valid for the given payload.

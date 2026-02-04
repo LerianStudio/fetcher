@@ -1,6 +1,7 @@
 package services
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -113,8 +114,8 @@ func (uc *UseCase) ExtractExternalData(ctx context.Context, body []byte, headers
 		return uc.handleErrorWithUpdate(ctx, message.JobID, message.OrganizationID, *message, &span, "Error saving external data to SeaweedFS", err, logger)
 	}
 
-	// Update job status to completed in MongoDB with the resultPath
-	if err := uc.JobRepository.UpdateStatus(ctx, message.JobID, message.OrganizationID, model.JobStatusCompleted, resultData.Path, nil); err != nil {
+	// Update job status to completed in MongoDB with the resultPath and resultHMAC
+	if err := uc.JobRepository.UpdateStatus(ctx, message.JobID, message.OrganizationID, model.JobStatusCompleted, resultData.Path, resultData.HMAC, nil); err != nil {
 		libOtel.HandleSpanError(&span, "Error updating job status to completed", err)
 		logger.Errorf("Failed to update job status to completed: %v", err)
 	}
@@ -291,7 +292,7 @@ func (uc *UseCase) updateJobWithErrors(ctx context.Context, jobID, orgID uuid.UU
 	metadata := make(map[string]any)
 	metadata["error"] = errorMessage
 
-	errUpdate := uc.JobRepository.UpdateStatus(ctx, jobID, orgID, model.JobStatusFailed, "", metadata)
+	errUpdate := uc.JobRepository.UpdateStatus(ctx, jobID, orgID, model.JobStatusFailed, "", "", metadata)
 	if errUpdate != nil {
 		return errUpdate
 	}
@@ -436,6 +437,27 @@ func (uc *UseCase) saveExternalDataToSeaweedFS(
 	sizeBytes := int64(len(jsonData))
 	rowCount := countTotalRows(result)
 
+	// Compute HMAC of plaintext data before encryption for external verification
+	var documentHMAC string
+
+	if uc.DocumentSigner == nil {
+		// Document signing is disabled (DocumentSigner not configured).
+		// This is expected when external HMAC verification is not required.
+		// To enable, configure the external HMAC key in worker bootstrap.
+		logger.Infof("Document signing skipped: DocumentSigner not configured (HMAC verification disabled)")
+	} else {
+		hmac, errHMAC := uc.DocumentSigner.SignReader(bytes.NewReader(jsonData))
+		if errHMAC != nil {
+			libOtel.HandleSpanError(span, "Error computing document HMAC", errHMAC)
+			logger.Errorf("Error computing document HMAC: %s", errHMAC.Error())
+
+			return nil, fmt.Errorf("computing document HMAC: %w", errHMAC)
+		}
+
+		documentHMAC = hmac
+		logger.Infof("Document HMAC computed successfully for job result")
+	}
+
 	encryptedData, err := uc.encryptDataForSeaweedFS(jsonData, logger)
 	if err != nil {
 		libOtel.HandleSpanError(span, "Error encrypting data for SeaweedFS", err)
@@ -462,6 +484,7 @@ func (uc *UseCase) saveExternalDataToSeaweedFS(
 		SizeBytes: sizeBytes,
 		RowCount:  rowCount,
 		Format:    "json",
+		HMAC:      documentHMAC,
 	}, nil
 }
 
