@@ -18,6 +18,7 @@ import (
 	libMongo "github.com/LerianStudio/lib-commons/v2/commons/mongo"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
 	"github.com/tryvium-travels/memongo"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.opentelemetry.io/otel/trace"
@@ -561,17 +562,11 @@ func TestJobMongoDBRepository_UpdateStatus(t *testing.T) {
 
 		resultHMAC := "hmac-sha256:abc123def456"
 		err := repo.UpdateStatus(context.Background(), created.ID, created.OrganizationID, model.JobStatusCompleted, "/external-data/test.json", resultHMAC, nil)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		require.NoError(t, err, "unexpected error updating status")
 
 		found, err := repo.FindByID(context.Background(), created.ID, created.OrganizationID)
-		if err != nil {
-			t.Fatalf("failed to find job: %v", err)
-		}
-		if found.ResultHMAC != resultHMAC {
-			t.Fatalf("expected result_hmac to be set, got %s", found.ResultHMAC)
-		}
+		require.NoError(t, err, "failed to find job")
+		require.Equal(t, resultHMAC, found.ResultHMAC, "expected result_hmac to be set")
 	})
 }
 

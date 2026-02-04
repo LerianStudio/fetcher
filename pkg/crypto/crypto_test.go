@@ -5,6 +5,8 @@ import (
 	"encoding/base64"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // generateValidKey creates a valid 32-byte key encoded in base64 for testing.
@@ -181,26 +183,16 @@ func TestNewAESGCMService(t *testing.T) {
 			svc, err := NewAESGCMService(tt.key, tt.keyVersion)
 
 			if tt.wantErr {
-				if err == nil {
-					t.Fatal("expected error, got nil")
-				}
-				if tt.errContain != "" && !strings.Contains(err.Error(), tt.errContain) {
-					t.Fatalf("expected error to contain %q, got %q", tt.errContain, err.Error())
+				require.Error(t, err, "expected error, got nil")
+				if tt.errContain != "" {
+					require.Contains(t, err.Error(), tt.errContain, "expected error to contain %q", tt.errContain)
 				}
 				return
 			}
 
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-
-			if svc == nil {
-				t.Fatal("expected non-nil service")
-			}
-
-			if svc.KeyVersion() != tt.wantVer {
-				t.Fatalf("expected key version %q, got %q", tt.wantVer, svc.KeyVersion())
-			}
+			require.NoError(t, err, "unexpected error")
+			require.NotNil(t, svc, "expected non-nil service")
+			require.Equal(t, tt.wantVer, svc.KeyVersion(), "expected key version %q", tt.wantVer)
 		})
 	}
 }
@@ -214,33 +206,24 @@ func TestNewAESGCMService_WithKeyDeriver(t *testing.T) {
 	}
 
 	keyDeriver, err := NewHKDFKeyDeriver(masterKey)
-	if err != nil {
-		t.Fatalf("failed to create key deriver: %v", err)
-	}
+	require.NoError(t, err, "failed to create key deriver")
 
 	// Create AESGCMService with derived credential key
 	svc, err := NewAESGCMService(keyDeriver.GetCredentialKey(), "v1")
-	if err != nil {
-		t.Fatalf("failed to create service: %v", err)
-	}
+	require.NoError(t, err, "failed to create service")
+	require.NotNil(t, svc, "expected non-nil service")
 
 	// Test encrypt/decrypt round trip
 	ctx := context.Background()
 	plaintext := "test secret data"
 
 	ciphertext, version, err := svc.Encrypt(ctx, plaintext)
-	if err != nil {
-		t.Fatalf("failed to encrypt: %v", err)
-	}
+	require.NoError(t, err, "failed to encrypt")
 
 	decrypted, err := svc.Decrypt(ctx, ciphertext, version)
-	if err != nil {
-		t.Fatalf("failed to decrypt: %v", err)
-	}
+	require.NoError(t, err, "failed to decrypt")
 
-	if decrypted != plaintext {
-		t.Fatalf("expected %q, got %q", plaintext, decrypted)
-	}
+	require.Equal(t, plaintext, decrypted, "decrypted text should match original plaintext")
 }
 
 // TestEncrypt tests the Encrypt method with various inputs.
