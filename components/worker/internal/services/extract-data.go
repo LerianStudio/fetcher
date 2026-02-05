@@ -260,6 +260,10 @@ func (uc *UseCase) handleErrorWithUpdate(
 	err error,
 	logger log.Logger,
 ) error {
+	if err == nil {
+		err = fmt.Errorf("operation failed: %s", errorMsg)
+	}
+
 	if errUpdate := uc.updateJobWithErrors(ctx, jobID, orgID, err.Error()); errUpdate != nil {
 		libOtel.HandleSpanError(span, "Error to update report status with error.", errUpdate)
 		logger.Errorf("Error update report status with error: %s", errUpdate.Error())
