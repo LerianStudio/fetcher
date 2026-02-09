@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/LerianStudio/fetcher/pkg"
-	"github.com/LerianStudio/fetcher/pkg/constant"
+	"github.com/LerianStudio/fetcher/pkg/model"
 	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 	productRepo "github.com/LerianStudio/fetcher/pkg/mongodb/product"
 
@@ -29,6 +29,18 @@ func TestDeleteProduct_Execute_Success(t *testing.T) {
 	ctx := testContext()
 	orgID := uuid.New()
 	productID := uuid.New()
+
+	existingProduct := &model.Product{
+		ID:             productID,
+		OrganizationID: orgID,
+		Code:           "test-product",
+		Name:           "Test Product",
+	}
+
+	// Mock: product exists
+	mockProductRepo.EXPECT().
+		FindByID(gomock.Any(), productID, orgID).
+		Return(existingProduct, nil)
 
 	// Mock: no connections assigned to this product
 	mockConnRepo.EXPECT().
@@ -60,19 +72,10 @@ func TestDeleteProduct_Execute_NotFoundError(t *testing.T) {
 	orgID := uuid.New()
 	productID := uuid.New()
 
-	// Mock: no connections (non-existent product returns count 0)
-	mockConnRepo.EXPECT().
-		CountByProduct(gomock.Any(), orgID, productID).
-		Return(int64(0), nil)
-
-	// Mock: delete returns not found (MatchedCount == 0 in repo)
-	notFoundErr := pkg.ValidateBusinessError(
-		constant.ErrEntityNotFound,
-		"product",
-	)
+	// Mock: product not found
 	mockProductRepo.EXPECT().
-		Delete(gomock.Any(), productID, orgID, gomock.Any()).
-		Return(notFoundErr)
+		FindByID(gomock.Any(), productID, orgID).
+		Return(nil, nil)
 
 	err := svc.Execute(ctx, orgID, productID)
 
@@ -100,6 +103,18 @@ func TestDeleteProduct_Execute_ProductHasConnections(t *testing.T) {
 	ctx := testContext()
 	orgID := uuid.New()
 	productID := uuid.New()
+
+	existingProduct := &model.Product{
+		ID:             productID,
+		OrganizationID: orgID,
+		Code:           "test-product",
+		Name:           "Test Product",
+	}
+
+	// Mock: product exists
+	mockProductRepo.EXPECT().
+		FindByID(gomock.Any(), productID, orgID).
+		Return(existingProduct, nil)
 
 	// Mock: product has assigned connections
 	mockConnRepo.EXPECT().
@@ -135,6 +150,18 @@ func TestDeleteProduct_Execute_CountByProductError(t *testing.T) {
 
 	dbError := errors.New("database connection failed")
 
+	existingProduct := &model.Product{
+		ID:             productID,
+		OrganizationID: orgID,
+		Code:           "test-product",
+		Name:           "Test Product",
+	}
+
+	// Mock: product exists
+	mockProductRepo.EXPECT().
+		FindByID(gomock.Any(), productID, orgID).
+		Return(existingProduct, nil)
+
 	// Mock: error during connection count
 	mockConnRepo.EXPECT().
 		CountByProduct(gomock.Any(), orgID, productID).
@@ -166,6 +193,18 @@ func TestDeleteProduct_Execute_DeleteError(t *testing.T) {
 	productID := uuid.New()
 
 	dbError := errors.New("failed to delete from database")
+
+	existingProduct := &model.Product{
+		ID:             productID,
+		OrganizationID: orgID,
+		Code:           "test-product",
+		Name:           "Test Product",
+	}
+
+	// Mock: product exists
+	mockProductRepo.EXPECT().
+		FindByID(gomock.Any(), productID, orgID).
+		Return(existingProduct, nil)
 
 	// Mock: no connections assigned
 	mockConnRepo.EXPECT().
@@ -222,6 +261,9 @@ func TestDeleteProduct_Execute_TableDriven(t *testing.T) {
 		{
 			name: "successful deletion",
 			setupMocks: func(prodMock *productRepo.MockRepository, connMock *connRepo.MockRepository, orgID, productID uuid.UUID) {
+				prodMock.EXPECT().
+					FindByID(gomock.Any(), productID, orgID).
+					Return(&model.Product{ID: productID, OrganizationID: orgID, Code: "test", Name: "Test"}, nil)
 				connMock.EXPECT().
 					CountByProduct(gomock.Any(), orgID, productID).
 					Return(int64(0), nil)
@@ -232,17 +274,11 @@ func TestDeleteProduct_Execute_TableDriven(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "product not found via Delete",
+			name: "product not found via FindByID",
 			setupMocks: func(prodMock *productRepo.MockRepository, connMock *connRepo.MockRepository, orgID, productID uuid.UUID) {
-				connMock.EXPECT().
-					CountByProduct(gomock.Any(), orgID, productID).
-					Return(int64(0), nil)
 				prodMock.EXPECT().
-					Delete(gomock.Any(), productID, orgID, gomock.Any()).
-					Return(pkg.ValidateBusinessError(
-						constant.ErrEntityNotFound,
-						"product",
-					))
+					FindByID(gomock.Any(), productID, orgID).
+					Return(nil, nil)
 			},
 			wantErr:        true,
 			wantStatusCode: http.StatusNotFound,
@@ -250,6 +286,9 @@ func TestDeleteProduct_Execute_TableDriven(t *testing.T) {
 		{
 			name: "product has connections",
 			setupMocks: func(prodMock *productRepo.MockRepository, connMock *connRepo.MockRepository, orgID, productID uuid.UUID) {
+				prodMock.EXPECT().
+					FindByID(gomock.Any(), productID, orgID).
+					Return(&model.Product{ID: productID, OrganizationID: orgID, Code: "test", Name: "Test"}, nil)
 				connMock.EXPECT().
 					CountByProduct(gomock.Any(), orgID, productID).
 					Return(int64(5), nil)
@@ -260,6 +299,9 @@ func TestDeleteProduct_Execute_TableDriven(t *testing.T) {
 		{
 			name: "CountByProduct database error",
 			setupMocks: func(prodMock *productRepo.MockRepository, connMock *connRepo.MockRepository, orgID, productID uuid.UUID) {
+				prodMock.EXPECT().
+					FindByID(gomock.Any(), productID, orgID).
+					Return(&model.Product{ID: productID, OrganizationID: orgID, Code: "test", Name: "Test"}, nil)
 				connMock.EXPECT().
 					CountByProduct(gomock.Any(), orgID, productID).
 					Return(int64(0), errors.New("database connection failed"))
@@ -270,6 +312,9 @@ func TestDeleteProduct_Execute_TableDriven(t *testing.T) {
 		{
 			name: "Delete database error",
 			setupMocks: func(prodMock *productRepo.MockRepository, connMock *connRepo.MockRepository, orgID, productID uuid.UUID) {
+				prodMock.EXPECT().
+					FindByID(gomock.Any(), productID, orgID).
+					Return(&model.Product{ID: productID, OrganizationID: orgID, Code: "test", Name: "Test"}, nil)
 				connMock.EXPECT().
 					CountByProduct(gomock.Any(), orgID, productID).
 					Return(int64(0), nil)
@@ -336,19 +381,10 @@ func TestDeleteProduct_Execute_DifferentOrganizations(t *testing.T) {
 	orgID := uuid.New()
 	productID := uuid.New()
 
-	// Mock: no connections (non-existent product in this org returns count 0)
-	mockConnRepo.EXPECT().
-		CountByProduct(gomock.Any(), orgID, productID).
-		Return(int64(0), nil)
-
-	// Mock: delete returns not found (product belongs to a different org)
-	notFoundErr := pkg.ValidateBusinessError(
-		constant.ErrEntityNotFound,
-		"product",
-	)
+	// Mock: product not found (belongs to a different org)
 	mockProductRepo.EXPECT().
-		Delete(gomock.Any(), productID, orgID, gomock.Any()).
-		Return(notFoundErr)
+		FindByID(gomock.Any(), productID, orgID).
+		Return(nil, nil)
 
 	err := svc.Execute(ctx, orgID, productID)
 
@@ -378,6 +414,18 @@ func TestDeleteProduct_Execute_DeletePassesCorrectTimestamp(t *testing.T) {
 	productID := uuid.New()
 
 	beforeExecution := time.Now().UTC()
+
+	existingProduct := &model.Product{
+		ID:             productID,
+		OrganizationID: orgID,
+		Code:           "test-product",
+		Name:           "Test Product",
+	}
+
+	// Mock: product exists
+	mockProductRepo.EXPECT().
+		FindByID(gomock.Any(), productID, orgID).
+		Return(existingProduct, nil)
 
 	// Mock: no connections assigned
 	mockConnRepo.EXPECT().
@@ -438,6 +486,18 @@ func TestDeleteProduct_Execute_ConnectionCountBoundary(t *testing.T) {
 			ctx := testContext()
 			orgID := uuid.New()
 			productID := uuid.New()
+
+			existingProduct := &model.Product{
+				ID:             productID,
+				OrganizationID: orgID,
+				Code:           "test-product",
+				Name:           "Test Product",
+			}
+
+			// Mock: product exists
+			mockProductRepo.EXPECT().
+				FindByID(gomock.Any(), productID, orgID).
+				Return(existingProduct, nil)
 
 			// Mock: connection count
 			mockConnRepo.EXPECT().
