@@ -22,8 +22,8 @@ type ListConnections struct {
 	productRepo productRepo.Repository
 }
 
-func NewListConnections(connectionRepo connRepo.Repository, productRepo productRepo.Repository) *ListConnections {
-	return &ListConnections{connRepo: connectionRepo, productRepo: productRepo}
+func NewListConnections(connectionRepo connRepo.Repository, prodRepo productRepo.Repository) *ListConnections {
+	return &ListConnections{connRepo: connectionRepo, productRepo: prodRepo}
 }
 
 func (s *ListConnections) Execute(ctx context.Context, organizationID uuid.UUID, productID *uuid.UUID, filters http.QueryHeader) ([]*model.Connection, int64, error) {

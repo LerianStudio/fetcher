@@ -23,10 +23,10 @@ type CreateConnection struct {
 	cryptor     crypto.Cryptor
 }
 
-func NewCreateConnection(connectionRepo connRepo.Repository, productRepo productRepo.Repository, cryptor crypto.Cryptor) *CreateConnection {
+func NewCreateConnection(connectionRepo connRepo.Repository, prodRepo productRepo.Repository, cryptor crypto.Cryptor) *CreateConnection {
 	return &CreateConnection{
 		connRepo:    connectionRepo,
-		productRepo: productRepo,
+		productRepo: prodRepo,
 		cryptor:     cryptor,
 	}
 }
@@ -76,6 +76,8 @@ func (s *CreateConnection) Execute(ctx context.Context, organizationID uuid.UUID
 		)
 	}
 
+	sslMode, sslCA, sslCert, sslKey := s.extractSSLFields(connInput)
+
 	connection, err := model.NewConnection(
 		ctx, s.cryptor,
 		organizationID,
@@ -87,34 +89,10 @@ func (s *CreateConnection) Execute(ctx context.Context, organizationID uuid.UUID
 		connInput.Username,
 		connInput.Password,
 		connInput.Metadata,
-		func() *string {
-			if connInput.SSL != nil && !connInput.SSL.IsEmpty() {
-				return &connInput.SSL.Mode
-			}
-
-			return nil
-		}(),
-		func() *string {
-			if connInput.SSL != nil && !connInput.SSL.IsEmpty() {
-				return &connInput.SSL.CA
-			}
-
-			return nil
-		}(),
-		func() *string {
-			if connInput.SSL != nil && !connInput.SSL.IsEmpty() && connInput.SSL.Cert != nil {
-				return connInput.SSL.Cert
-			}
-
-			return nil
-		}(),
-		func() *string {
-			if connInput.SSL != nil && !connInput.SSL.IsEmpty() && connInput.SSL.Key != nil {
-				return connInput.SSL.Key
-			}
-
-			return nil
-		}(),
+		sslMode,
+		sslCA,
+		sslCert,
+		sslKey,
 	)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to create connection model", err)
@@ -142,4 +120,24 @@ func (s *CreateConnection) Execute(ctx context.Context, organizationID uuid.UUID
 	}
 
 	return created, nil
+}
+
+// extractSSLFields extracts SSL configuration pointers from the connection input.
+func (s *CreateConnection) extractSSLFields(input model.ConnectionInput) (sslMode, sslCA, sslCert, sslKey *string) {
+	if input.SSL == nil || input.SSL.IsEmpty() {
+		return nil, nil, nil, nil
+	}
+
+	sslMode = &input.SSL.Mode
+	sslCA = &input.SSL.CA
+
+	if input.SSL.Cert != nil {
+		sslCert = input.SSL.Cert
+	}
+
+	if input.SSL.Key != nil {
+		sslKey = input.SSL.Key
+	}
+
+	return sslMode, sslCA, sslCert, sslKey
 }

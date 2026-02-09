@@ -22,8 +22,8 @@ type AssignConnection struct {
 	productRepo productRepo.Repository
 }
 
-func NewAssignConnection(connRepo connRepo.Repository, productRepo productRepo.Repository) *AssignConnection {
-	return &AssignConnection{connRepo: connRepo, productRepo: productRepo}
+func NewAssignConnection(connectionRepo connRepo.Repository, prodRepo productRepo.Repository) *AssignConnection {
+	return &AssignConnection{connRepo: connectionRepo, productRepo: prodRepo}
 }
 
 func (s *AssignConnection) Execute(ctx context.Context, organizationID, connectionID, productID uuid.UUID) (*model.Connection, error) {

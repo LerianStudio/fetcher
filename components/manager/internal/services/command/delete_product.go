@@ -21,8 +21,8 @@ type DeleteProduct struct {
 	connRepo    connRepo.Repository
 }
 
-func NewDeleteProduct(repo productRepo.Repository, connRepo connRepo.Repository) *DeleteProduct {
-	return &DeleteProduct{productRepo: repo, connRepo: connRepo}
+func NewDeleteProduct(repo productRepo.Repository, connectionRepo connRepo.Repository) *DeleteProduct {
+	return &DeleteProduct{productRepo: repo, connRepo: connectionRepo}
 }
 
 func (s *DeleteProduct) Execute(ctx context.Context, organizationID, productID uuid.UUID) error {
