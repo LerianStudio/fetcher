@@ -13,9 +13,9 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/model/datasource"
 	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 
-	"go.uber.org/mock/gomock"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+	"go.uber.org/mock/gomock"
 )
 
 // newSchemaConnectionFixture creates a valid Connection for testing GetConnectionSchema service.
