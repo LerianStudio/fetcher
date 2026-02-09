@@ -133,6 +133,7 @@ func readFromStdin() string {
 
 	// Read from stdin
 	reader := bufio.NewReader(os.Stdin)
+
 	line, err := reader.ReadString('\n')
 	if err != nil && line == "" {
 		return ""
