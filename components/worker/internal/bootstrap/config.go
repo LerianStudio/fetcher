@@ -114,21 +114,40 @@ func InitWorker() *Service {
 		Logger:                 logger,
 	}
 
-	// Init crypto service (same as manager) - moved before RabbitMQ for signer
-	cryptoService, errCrypto := crypto.NewAESGCMServiceFromEnv(cfg.AppEncryptionKey, cfg.AppEncryptionKeyVersion)
+	// Init key deriver for cryptographic key segregation
+	masterKey, err := crypto.DecodeMasterKey(cfg.AppEncryptionKey)
+	if err != nil {
+		logger.Fatalf("Failed to decode master encryption key: %v", err)
+	}
+
+	keyDeriver, err := crypto.NewHKDFKeyDeriver(masterKey)
+	if err != nil {
+		logger.Fatalf("Failed to initialize key deriver: %v", err)
+	}
+
+	logger.Info("Key derivation initialized successfully")
+
+	// Init crypto service with derived credential key
+	cryptoService, errCrypto := crypto.NewAESGCMService(keyDeriver.GetCredentialKey(), cfg.AppEncryptionKeyVersion)
 	if errCrypto != nil {
 		logger.Fatalf("Failed to initialize crypto service: %v", errCrypto)
 	}
 
-	// Init message signer for RabbitMQ
-	messageSigner, errSigner := crypto.NewHMACSignerFromCryptor(cryptoService)
+	// Init message signer for RabbitMQ with derived internal HMAC key
+	cryptoWithInternalHMAC, errSigner := crypto.NewHMACSigner(keyDeriver.GetInternalHMACKey(), crypto.SignatureVersion)
 	if errSigner != nil {
 		logger.Fatalf("Failed to initialize message signer: %v", errSigner)
 	}
 
+	// Init document signer for external verification with derived external HMAC key
+	cryptoWithExternalHMAC, errSigner := crypto.NewHMACSigner(keyDeriver.GetExternalHMACKey(), crypto.SignatureVersion)
+	if errSigner != nil {
+		logger.Fatalf("Failed to initialize document signer: %v", errSigner)
+	}
+
 	// Initialize RabbitMQ consumer and publisher with separate connections
-	consumerRoutes := rabbitmq.NewConsumerRoutes(consumerConnection, cfg.RabbitMQNumWorkers, logger, telemetry, messageSigner)
-	publisherRoutes := rabbitmq.NewPublisherRoutes(publisherConnection, logger, telemetry, messageSigner)
+	consumerRoutes := rabbitmq.NewConsumerRoutes(consumerConnection, cfg.RabbitMQNumWorkers, logger, telemetry, cryptoWithInternalHMAC)
+	publisherRoutes := rabbitmq.NewPublisherRoutes(publisherConnection, logger, telemetry, cryptoWithExternalHMAC)
 
 	// Config SeaweedFS connection
 	seaweedFSEndpoint := fmt.Sprintf("http://%s:%s", cfg.SeaweedFSHost, cfg.SeaweedFSFilerPort)
@@ -168,6 +187,7 @@ func InitWorker() *Service {
 		JobRepository:         jobRepository,
 		ConnectionRepository:  connectionRepository,
 		Cryptor:               cryptoService,
+		DocumentSigner:        cryptoWithExternalHMAC,
 		FileTTL:               cfg.SeaweedFSTTL,
 		RabbitMQPublisher:     publisherRoutes,
 		JobEventsExchange:     cfg.RabbitMQJobEventsExchange,

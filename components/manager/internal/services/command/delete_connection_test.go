@@ -11,9 +11,9 @@ import (
 	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 	jobRepo "github.com/LerianStudio/fetcher/pkg/mongodb/job"
 
-	"github.com/golang/mock/gomock"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+	"go.uber.org/mock/gomock"
 )
 
 // newExistingConnectionForDelete creates a valid existing Connection for testing deletions.

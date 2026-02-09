@@ -5,6 +5,8 @@ import (
 	"encoding/base64"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // generateValidKey creates a valid 32-byte key encoded in base64 for testing.
@@ -127,6 +129,101 @@ func TestNewAESGCMServiceFromEnv(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestNewAESGCMService tests the raw byte constructor.
+func TestNewAESGCMService(t *testing.T) {
+	tests := []struct {
+		name       string
+		key        []byte
+		keyVersion string
+		wantErr    bool
+		errContain string
+		wantVer    string
+	}{
+		{
+			name:       "valid 32 byte key with version",
+			key:        make([]byte, 32),
+			keyVersion: "v1",
+			wantErr:    false,
+			wantVer:    "v1",
+		},
+		{
+			name:       "valid key with empty version defaults to 1",
+			key:        make([]byte, 32),
+			keyVersion: "",
+			wantErr:    false,
+			wantVer:    "1",
+		},
+		{
+			name:       "key too short (16 bytes)",
+			key:        make([]byte, 16),
+			keyVersion: "v1",
+			wantErr:    true,
+			errContain: "invalid encryption key length",
+		},
+		{
+			name:       "key too long (64 bytes)",
+			key:        make([]byte, 64),
+			keyVersion: "v1",
+			wantErr:    true,
+			errContain: "invalid encryption key length",
+		},
+		{
+			name:       "empty key",
+			key:        []byte{},
+			keyVersion: "v1",
+			wantErr:    true,
+			errContain: "invalid encryption key length",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, err := NewAESGCMService(tt.key, tt.keyVersion)
+
+			if tt.wantErr {
+				require.Error(t, err, "expected error, got nil")
+				if tt.errContain != "" {
+					require.Contains(t, err.Error(), tt.errContain, "expected error to contain %q", tt.errContain)
+				}
+				return
+			}
+
+			require.NoError(t, err, "unexpected error")
+			require.NotNil(t, svc, "expected non-nil service")
+			require.Equal(t, tt.wantVer, svc.KeyVersion(), "expected key version %q", tt.wantVer)
+		})
+	}
+}
+
+// TestNewAESGCMService_WithKeyDeriver tests integration with KeyDeriver.
+func TestNewAESGCMService_WithKeyDeriver(t *testing.T) {
+	// Create a key deriver with a test master key
+	masterKey := make([]byte, 32)
+	for i := range masterKey {
+		masterKey[i] = byte(i)
+	}
+
+	keyDeriver, err := NewHKDFKeyDeriver(masterKey)
+	require.NoError(t, err, "failed to create key deriver")
+
+	// Create AESGCMService with derived credential key
+	svc, err := NewAESGCMService(keyDeriver.GetCredentialKey(), "v1")
+	require.NoError(t, err, "failed to create service")
+	require.NotNil(t, svc, "expected non-nil service")
+
+	// Test encrypt/decrypt round trip
+	ctx := context.Background()
+	plaintext := "test secret data"
+
+	ciphertext, version, err := svc.Encrypt(ctx, plaintext)
+	require.NoError(t, err, "failed to encrypt")
+
+	decrypted, err := svc.Decrypt(ctx, ciphertext, version)
+	require.NoError(t, err, "failed to decrypt")
+
+	require.Equal(t, plaintext, decrypted, "decrypted text should match original plaintext")
 }
 
 // TestEncrypt tests the Encrypt method with various inputs.

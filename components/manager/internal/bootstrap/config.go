@@ -139,14 +139,27 @@ func InitServers() *Service {
 		logger.Fatalf("Failed to ensure Job indexes: %v", errJobRepo)
 	}
 
-	// Init crypto
-	cryptoService, err := crypto.NewAESGCMServiceFromEnv(cfg.AppEncryptionKey, cfg.AppEncryptionKeyVersion)
+	// Init key deriver for cryptographic key segregation
+	masterKey, err := crypto.DecodeMasterKey(cfg.AppEncryptionKey)
+	if err != nil {
+		logger.Fatalf("Failed to decode master encryption key: %v", err)
+	}
+
+	keyDeriver, err := crypto.NewHKDFKeyDeriver(masterKey)
+	if err != nil {
+		logger.Fatalf("Failed to initialize key deriver: %v", err)
+	}
+
+	logger.Info("Key derivation initialized successfully")
+
+	// Init crypto service with derived credential key
+	cryptoService, err := crypto.NewAESGCMService(keyDeriver.GetCredentialKey(), cfg.AppEncryptionKeyVersion)
 	if err != nil {
 		logger.Fatalf("Failed to initialize crypto service: %v", err)
 	}
 
-	// Init message signer for RabbitMQ
-	messageSigner, err := crypto.NewHMACSignerFromCryptor(cryptoService)
+	// Init message signer for RabbitMQ with derived internal HMAC key
+	cryptoWithInternalHMAC, err := crypto.NewHMACSigner(keyDeriver.GetInternalHMACKey(), crypto.SignatureVersion)
 	if err != nil {
 		logger.Fatalf("Failed to initialize message signer: %v", err)
 	}
@@ -168,7 +181,7 @@ func InitServers() *Service {
 	}
 
 	rabbitMQOptions := rabbitmq.DefaultOptions()
-	rabbitMQOptions.Signer = messageSigner
+	rabbitMQOptions.Signer = cryptoWithInternalHMAC
 
 	rabbitMQAdapter := rabbitmq.NewRabbitMQAdapterWithOptions(rabbitMQConnection, rabbitMQOptions)
 

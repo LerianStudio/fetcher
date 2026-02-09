@@ -10,8 +10,8 @@ import (
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 
-	"github.com/golang/mock/gomock"
 	"github.com/google/uuid"
+	"go.uber.org/mock/gomock"
 )
 
 // TestDBType_IsValid tests the DBType.IsValid method.

@@ -12,11 +12,11 @@ import (
 	libCommons "github.com/LerianStudio/lib-commons/v2/commons"
 	libConstants "github.com/LerianStudio/lib-commons/v2/commons/constants"
 	libLog "github.com/LerianStudio/lib-commons/v2/commons/log"
-	"github.com/golang/mock/gomock"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
+	"go.uber.org/mock/gomock"
 )
 
 // -----------------------------------------------------------------------------

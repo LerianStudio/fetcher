@@ -17,13 +17,13 @@ import (
 	http "github.com/LerianStudio/fetcher/pkg/net/http"
 	libLog "github.com/LerianStudio/lib-commons/v2/commons/log"
 	libMongo "github.com/LerianStudio/lib-commons/v2/commons/mongo"
-	"github.com/golang/mock/gomock"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/tryvium-travels/memongo"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.opentelemetry.io/otel/trace"
+	"go.uber.org/mock/gomock"
 )
 
 var (

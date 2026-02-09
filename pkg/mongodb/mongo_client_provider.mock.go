@@ -8,8 +8,8 @@ import (
 	context "context"
 	reflect "reflect"
 
-	gomock "github.com/golang/mock/gomock"
 	mongo "go.mongodb.org/mongo-driver/mongo"
+	gomock "go.uber.org/mock/gomock"
 )
 
 // MockMongoClientProvider is a mock of MongoClientProvider interface.

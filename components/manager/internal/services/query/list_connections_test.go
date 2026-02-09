@@ -9,9 +9,9 @@ import (
 	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 	"github.com/LerianStudio/fetcher/pkg/net/http"
 
-	"github.com/golang/mock/gomock"
 	"github.com/google/uuid"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.uber.org/mock/gomock"
 )
 
 // newListTestConnection creates a test Connection with the given parameters for list tests.

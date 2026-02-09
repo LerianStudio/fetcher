@@ -12,10 +12,10 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/model"
 	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 
-	"github.com/golang/mock/gomock"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 )
 
 func TestValidateSchema_Success(t *testing.T) {
