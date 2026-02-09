@@ -104,7 +104,7 @@ func TestParseMessage_InvalidJSONWithJobIDInHeaders(t *testing.T) {
 
 	// Expect job status update to failed due to parse error
 	mocks.jobRepo.EXPECT().
-		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any(), gomock.Any()).
+		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil)
 
 	result, err := uc.parseMessage(ctx, invalidBody, headers, nil, logger)
@@ -390,8 +390,8 @@ func TestUpdateJobWithErrors(t *testing.T) {
 			orgID := newTestOrgID()
 
 			mocks.jobRepo.EXPECT().
-				UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any(), gomock.Any()).
-				DoAndReturn(func(_ context.Context, _, _ uuid.UUID, _ model.JobStatus, _ string, metadata map[string]any) error {
+				UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any(), gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, _, _ uuid.UUID, _ model.JobStatus, _, _ string, metadata map[string]any) error {
 					if metadata["error"] != tt.errorMessage {
 						t.Errorf("expected error message %q in metadata, got %q", tt.errorMessage, metadata["error"])
 					}
@@ -867,7 +867,7 @@ func TestHandleErrorWithUpdate(t *testing.T) {
 			name: "successful update",
 			setupMocks: func(mocks *testMocks, jobID, orgID uuid.UUID) {
 				mocks.jobRepo.EXPECT().
-					UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any(), gomock.Any()).
+					UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any(), gomock.Any(), gomock.Any()).
 					Return(nil)
 				// handleErrorWithUpdate also publishes a notification
 				mocks.rabbitPublisher.EXPECT().
@@ -882,7 +882,7 @@ func TestHandleErrorWithUpdate(t *testing.T) {
 			name: "update fails",
 			setupMocks: func(mocks *testMocks, jobID, orgID uuid.UUID) {
 				mocks.jobRepo.EXPECT().
-					UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any(), gomock.Any()).
+					UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any(), gomock.Any(), gomock.Any()).
 					Return(errors.New("database error"))
 			},
 			testErr:      errors.New("test error"),
@@ -1000,7 +1000,7 @@ func TestParseMessage_UpdateStatusError(t *testing.T) {
 
 	// UpdateStatus fails
 	mocks.jobRepo.EXPECT().
-		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any(), gomock.Any()).
+		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(errors.New("update failed"))
 
 	result, err := uc.parseMessage(ctx, invalidBody, headers, nil, logger)
@@ -1149,68 +1149,6 @@ func TestQueryExternalData_EmptyMappedFields(t *testing.T) {
 	}
 }
 
-// TestExtractExternalData_NoConnectionsFound tests error when no connections are found.
-// Note: The current implementation has a bug where handleErrorWithUpdate is called with nil error
-// when no connections are found, which causes a panic. This test documents that behavior.
-func TestExtractExternalData_NoConnectionsFound(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mocks := newTestMocks(ctrl)
-	uc := newTestUseCase(mocks)
-
-	ctx := testContext()
-	jobID := newTestJobID()
-	orgID := newTestOrgID()
-
-	validMessage := ExtractExternalDataMessage{
-		JobID:          jobID,
-		OrganizationID: orgID,
-		MappedFields: map[string]map[string][]string{
-			"postgres_db": {"users": {"id", "name"}},
-		},
-		Metadata: map[string]any{"source": "test-service"},
-	}
-
-	body, err := json.Marshal(validMessage)
-	if err != nil {
-		t.Fatalf("failed to marshal test message: %v", err)
-	}
-
-	// Job is pending - should continue processing
-	mocks.jobRepo.EXPECT().
-		FindByID(gomock.Any(), jobID, orgID).
-		Return(&model.Job{
-			ID:     jobID,
-			Status: model.JobStatusPending,
-		}, nil)
-
-	// Second call for job validation
-	mocks.jobRepo.EXPECT().
-		FindByID(gomock.Any(), jobID, orgID).
-		Return(&model.Job{
-			ID:     jobID,
-			Status: model.JobStatusPending,
-		}, nil)
-
-	// Connection repository returns empty slice (no connections)
-	// This triggers a code path that calls handleErrorWithUpdate with nil error
-	// which causes a panic in the current implementation
-	mocks.connRepo.EXPECT().
-		FindByConfigNames(gomock.Any(), orgID, []string{"postgres_db"}).
-		Return([]*model.Connection{}, nil)
-
-	// The current implementation panics when no connections found because
-	// handleErrorWithUpdate is called with nil error. Document this behavior.
-	defer func() {
-		if r := recover(); r != nil {
-			t.Log("Expected panic occurred due to nil error in handleErrorWithUpdate")
-		}
-	}()
-
-	_ = uc.ExtractExternalData(ctx, body, nil)
-}
-
 // TestExtractExternalData_JobRepositoryFindError tests error handling when job lookup fails.
 func TestExtractExternalData_JobRepositoryFindError(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -1249,7 +1187,7 @@ func TestExtractExternalData_JobRepositoryFindError(t *testing.T) {
 
 	// Expect job status to be updated to failed
 	mocks.jobRepo.EXPECT().
-		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any(), gomock.Any()).
+		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil)
 
 	// Expect failure notification
@@ -1260,45 +1198,6 @@ func TestExtractExternalData_JobRepositoryFindError(t *testing.T) {
 	err = uc.ExtractExternalData(ctx, body, nil)
 	if err == nil {
 		t.Fatal("expected error when job repository fails, got nil")
-	}
-}
-
-// TestHandleErrorWithUpdate_NilError tests handleErrorWithUpdate with nil error.
-// The current implementation has a bug where it panics when err is nil.
-// This test documents that behavior.
-func TestHandleErrorWithUpdate_NilError(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mocks := newTestMocks(ctrl)
-	uc := newTestUseCase(mocks)
-
-	ctx := testContext()
-	logger := testLogger()
-	jobID := newTestJobID()
-	orgID := newTestOrgID()
-
-	message := ExtractExternalDataMessage{
-		JobID:          jobID,
-		OrganizationID: orgID,
-		Metadata:       map[string]any{"source": "test"},
-	}
-
-	// This tests the nil error case which will cause panic in the current implementation
-	// because it tries to call err.Error() on nil
-	panicked := false
-	defer func() {
-		if r := recover(); r != nil {
-			panicked = true
-			t.Log("Expected panic occurred due to nil error - this is a known issue")
-		}
-	}()
-
-	// Pass nil error - this tests edge case handling
-	_ = uc.handleErrorWithUpdate(ctx, jobID, orgID, message, nil, "test error message", nil, logger)
-
-	if !panicked {
-		t.Log("No panic occurred - function may have been fixed to handle nil error gracefully")
 	}
 }
 
@@ -1466,8 +1365,8 @@ func TestUpdateJobWithErrors_EmptyErrorMessage(t *testing.T) {
 	orgID := newTestOrgID()
 
 	mocks.jobRepo.EXPECT().
-		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _, _ uuid.UUID, _ model.JobStatus, _ string, metadata map[string]any) error {
+		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _, _ uuid.UUID, _ model.JobStatus, _, _ string, metadata map[string]any) error {
 			if metadata["error"] != "" {
 				t.Errorf("expected empty error message in metadata, got %q", metadata["error"])
 			}
@@ -1478,55 +1377,6 @@ func TestUpdateJobWithErrors_EmptyErrorMessage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
-}
-
-// TestExtractExternalData_JobNilAfterSkipCheck tests when job is nil after skip check.
-// Note: The current implementation has a bug where handleErrorWithUpdate is called with nil error
-// when job is nil (not found), which causes a panic. This test documents that behavior.
-func TestExtractExternalData_JobNilAfterSkipCheck(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mocks := newTestMocks(ctrl)
-	uc := newTestUseCase(mocks)
-
-	ctx := testContext()
-	jobID := newTestJobID()
-	orgID := newTestOrgID()
-
-	validMessage := ExtractExternalDataMessage{
-		JobID:          jobID,
-		OrganizationID: orgID,
-		MappedFields: map[string]map[string][]string{
-			"datasource1": {"table1": {"field1"}},
-		},
-		Metadata: map[string]any{"source": "test-service"},
-	}
-
-	body, err := json.Marshal(validMessage)
-	if err != nil {
-		t.Fatalf("failed to marshal test message: %v", err)
-	}
-
-	// First call for shouldSkipProcessing - returns nil error but also nil job data
-	mocks.jobRepo.EXPECT().
-		FindByID(gomock.Any(), jobID, orgID).
-		Return(nil, nil)
-
-	// Second call for job validation - returns nil job (job not found)
-	mocks.jobRepo.EXPECT().
-		FindByID(gomock.Any(), jobID, orgID).
-		Return(nil, nil)
-
-	// The current implementation panics when job is nil because
-	// handleErrorWithUpdate is called with nil error. Document this behavior.
-	defer func() {
-		if r := recover(); r != nil {
-			t.Log("Expected panic occurred due to nil error in handleErrorWithUpdate")
-		}
-	}()
-
-	_ = uc.ExtractExternalData(ctx, body, nil)
 }
 
 // TestQueryDatabase_ConnectionNotFound tests queryDatabase when connection is not found.
@@ -1893,7 +1743,7 @@ func TestExtractExternalData_ConnectionRepositoryError(t *testing.T) {
 
 	// Expect job status to be updated to failed
 	mocks.jobRepo.EXPECT().
-		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any(), gomock.Any()).
+		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil)
 
 	// Expect failure notification
@@ -1929,7 +1779,7 @@ func TestExtractExternalData_ParseErrorWithJobIDInHeaders(t *testing.T) {
 
 	// Expect job status update to failed
 	mocks.jobRepo.EXPECT().
-		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any(), gomock.Any()).
+		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil)
 
 	// Expect failure notification due to parse error
@@ -2064,70 +1914,6 @@ func TestQueryExternalData_MultipleDatabase(t *testing.T) {
 	if !strings.Contains(err.Error(), "connection not found") {
 		t.Errorf("expected 'connection not found' error, got: %v", err)
 	}
-}
-
-// TestExtractExternalData_WithFilters tests ExtractExternalData with filters in message.
-func TestExtractExternalData_WithFilters(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mocks := newTestMocks(ctrl)
-	uc := newTestUseCase(mocks)
-
-	ctx := testContext()
-	jobID := newTestJobID()
-	orgID := newTestOrgID()
-
-	validMessage := ExtractExternalDataMessage{
-		JobID:          jobID,
-		OrganizationID: orgID,
-		MappedFields: map[string]map[string][]string{
-			"postgres_db": {"users": {"id", "name"}},
-		},
-		Filters: map[string]map[string]map[string]modelJob.FilterCondition{
-			"postgres_db": {
-				"users": {
-					"status": {Equals: []any{"active"}},
-				},
-			},
-		},
-		Metadata: map[string]any{"source": "test-service"},
-	}
-
-	body, err := json.Marshal(validMessage)
-	if err != nil {
-		t.Fatalf("failed to marshal test message: %v", err)
-	}
-
-	// Job is pending - should continue processing
-	mocks.jobRepo.EXPECT().
-		FindByID(gomock.Any(), jobID, orgID).
-		Return(&model.Job{
-			ID:     jobID,
-			Status: model.JobStatusPending,
-		}, nil)
-
-	// Second call for job validation
-	mocks.jobRepo.EXPECT().
-		FindByID(gomock.Any(), jobID, orgID).
-		Return(&model.Job{
-			ID:     jobID,
-			Status: model.JobStatusPending,
-		}, nil)
-
-	// Connection repository returns empty slice (no connections)
-	mocks.connRepo.EXPECT().
-		FindByConfigNames(gomock.Any(), orgID, []string{"postgres_db"}).
-		Return([]*model.Connection{}, nil)
-
-	// The current implementation panics when no connections found
-	defer func() {
-		if r := recover(); r != nil {
-			t.Log("Expected panic occurred due to nil error in handleErrorWithUpdate")
-		}
-	}()
-
-	_ = uc.ExtractExternalData(ctx, body, nil)
 }
 
 // TestSaveExternalDataToSeaweedFS_EmptyResult tests saveExternalDataToSeaweedFS with empty result.

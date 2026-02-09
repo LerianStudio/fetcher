@@ -2,6 +2,7 @@ package model
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -1967,4 +1968,189 @@ func strPtr(s string) *string {
 
 func intPtr(i int) *int {
 	return &i
+}
+
+// TestNewConnectionSchemaFrom tests the NewConnectionSchemaFrom function.
+func TestNewConnectionSchemaFrom(t *testing.T) {
+	t.Run("valid connection with tables", func(t *testing.T) {
+		conn := &Connection{
+			ID:                uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"),
+			OrganizationID:    uuid.MustParse("550e8400-e29b-41d4-a716-446655440001"),
+			ConfigName:        "Pix-BTG-Banco-Transacional",
+			DatabaseName:      "pix_btg",
+			Type:              TypePostgreSQL,
+			Host:              "localhost",
+			Port:              5432,
+			Username:          "testuser",
+			PasswordEncrypted: "encrypted",
+		}
+
+		tables := []TableDetails{
+			{Name: "public.account", Fields: []string{"id", "name", "balance"}},
+			{Name: "public.transaction", Fields: []string{"id", "account_id", "amount"}},
+		}
+
+		result := NewConnectionSchemaFrom(conn, tables)
+
+		if result == nil {
+			t.Fatal("expected non-nil result")
+		}
+		if result.ID != "550e8400-e29b-41d4-a716-446655440000" {
+			t.Fatalf("expected ID '550e8400-e29b-41d4-a716-446655440000', got %s", result.ID)
+		}
+		if result.ConfigName != "Pix-BTG-Banco-Transacional" {
+			t.Fatalf("expected ConfigName 'Pix-BTG-Banco-Transacional', got %s", result.ConfigName)
+		}
+		if result.DatabaseName != "pix_btg" {
+			t.Fatalf("expected DatabaseName 'pix_btg', got %s", result.DatabaseName)
+		}
+		if result.Type != "POSTGRESQL" {
+			t.Fatalf("expected Type 'POSTGRESQL', got %s", result.Type)
+		}
+		if len(result.Tables) != 2 {
+			t.Fatalf("expected 2 tables, got %d", len(result.Tables))
+		}
+		if result.Tables[0].Name != "public.account" {
+			t.Fatalf("expected first table name 'public.account', got %s", result.Tables[0].Name)
+		}
+		if len(result.Tables[0].Fields) != 3 {
+			t.Fatalf("expected 3 fields in first table, got %d", len(result.Tables[0].Fields))
+		}
+	})
+
+	t.Run("nil connection returns nil", func(t *testing.T) {
+		result := NewConnectionSchemaFrom(nil, []TableDetails{})
+		if result != nil {
+			t.Fatalf("expected nil, got %+v", result)
+		}
+	})
+
+	t.Run("empty tables", func(t *testing.T) {
+		conn := &Connection{
+			ID:                uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"),
+			OrganizationID:    uuid.MustParse("550e8400-e29b-41d4-a716-446655440001"),
+			ConfigName:        "test-connection",
+			DatabaseName:      "testdb",
+			Type:              TypeMySQL,
+			Host:              "localhost",
+			Port:              3306,
+			Username:          "testuser",
+			PasswordEncrypted: "encrypted",
+		}
+
+		result := NewConnectionSchemaFrom(conn, []TableDetails{})
+
+		if result == nil {
+			t.Fatal("expected non-nil result")
+		}
+		if len(result.Tables) != 0 {
+			t.Fatalf("expected 0 tables, got %d", len(result.Tables))
+		}
+	})
+
+	t.Run("all database types", func(t *testing.T) {
+		dbTypes := []struct {
+			dbType       DBType
+			expectedType string
+		}{
+			{TypePostgreSQL, "POSTGRESQL"},
+			{TypeMySQL, "MYSQL"},
+			{TypeMongoDB, "MONGODB"},
+			{TypeOracle, "ORACLE"},
+			{TypeSQLServer, "SQL_SERVER"},
+		}
+
+		for _, tt := range dbTypes {
+			conn := &Connection{
+				ID:                uuid.New(),
+				OrganizationID:    uuid.New(),
+				ConfigName:        "test-connection",
+				DatabaseName:      "testdb",
+				Type:              tt.dbType,
+				Host:              "localhost",
+				Port:              5432,
+				Username:          "testuser",
+				PasswordEncrypted: "encrypted",
+			}
+
+			result := NewConnectionSchemaFrom(conn, []TableDetails{})
+
+			if result.Type != tt.expectedType {
+				t.Fatalf("expected Type '%s', got %s", tt.expectedType, result.Type)
+			}
+		}
+	})
+}
+
+// TestConnectionSchemaResponse_JSON tests JSON marshaling of ConnectionSchemaResponse.
+func TestConnectionSchemaResponse_JSON(t *testing.T) {
+	t.Run("JSON field names are correct", func(t *testing.T) {
+		resp := ConnectionSchemaResponse{
+			ID:           "550e8400-e29b-41d4-a716-446655440000",
+			ConfigName:   "test-connection",
+			DatabaseName: "testdb",
+			Type:         "POSTGRESQL",
+			Tables: []TableDetails{
+				{Name: "public.users", Fields: []string{"id", "name"}},
+			},
+		}
+
+		// Use json.Marshal to verify field names
+		data, err := json.Marshal(resp)
+		if err != nil {
+			t.Fatalf("failed to marshal: %v", err)
+		}
+
+		jsonStr := string(data)
+
+		// Check JSON field names
+		expectedFields := []string{`"id":`, `"configName":`, `"databaseName":`, `"type":`, `"tables":`}
+		for _, field := range expectedFields {
+			if !contains(jsonStr, field) {
+				t.Fatalf("expected JSON to contain %s, got %s", field, jsonStr)
+			}
+		}
+	})
+}
+
+// TestTableDetails_JSON tests JSON marshaling of TableDetails.
+func TestTableDetails_JSON(t *testing.T) {
+	t.Run("JSON field names are correct", func(t *testing.T) {
+		table := TableDetails{
+			Name:   "public.account",
+			Fields: []string{"id", "name", "balance"},
+		}
+
+		data, err := json.Marshal(table)
+		if err != nil {
+			t.Fatalf("failed to marshal: %v", err)
+		}
+
+		jsonStr := string(data)
+
+		// Check JSON field names
+		if !contains(jsonStr, `"name":`) {
+			t.Fatalf("expected JSON to contain \"name\":, got %s", jsonStr)
+		}
+		if !contains(jsonStr, `"fields":`) {
+			t.Fatalf("expected JSON to contain \"fields\":, got %s", jsonStr)
+		}
+		if !contains(jsonStr, `"public.account"`) {
+			t.Fatalf("expected JSON to contain \"public.account\", got %s", jsonStr)
+		}
+	})
+}
+
+// contains checks if a string contains a substring
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsHelper(s, substr))
+}
+
+func containsHelper(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }

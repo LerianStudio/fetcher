@@ -65,6 +65,7 @@ func NewRoutes(
 	f.Post("/v1/management/connections/:id/assign", auth.Authorize(applicationName, connectionsResource, "post"), migrationHandler.AssignConnectionToProduct)
 	f.Get("/v1/management/connections/:id", auth.Authorize(applicationName, connectionsResource, "get"), connectionHandler.GetConnection)
 	f.Post("/v1/management/connections/:id/test", auth.Authorize(applicationName, connectionsResource, "post"), connectionHandler.TestConnection)
+	f.Get("/v1/management/connections/:id/schema", auth.Authorize(applicationName, connectionsResource, "get"), connectionHandler.GetConnectionSchema)
 	f.Patch("/v1/management/connections/:id", auth.Authorize(applicationName, connectionsResource, "patch"), connectionHandler.UpdateConnection)
 	f.Delete("/v1/management/connections/:id", auth.Authorize(applicationName, connectionsResource, "delete"), connectionHandler.DeleteConnection)
 

@@ -15,6 +15,7 @@ import (
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
+	datasourceFactory "github.com/LerianStudio/fetcher/pkg/datasource"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 	"github.com/LerianStudio/fetcher/pkg/mongodb/job"
@@ -151,14 +152,27 @@ func InitServers() *Service {
 		logger.Fatalf("Failed to ensure Product indexes: %v", errProdRepo)
 	}
 
-	// Init crypto
-	cryptoService, err := crypto.NewAESGCMServiceFromEnv(cfg.AppEncryptionKey, cfg.AppEncryptionKeyVersion)
+	// Init key deriver for cryptographic key segregation
+	masterKey, err := crypto.DecodeMasterKey(cfg.AppEncryptionKey)
+	if err != nil {
+		logger.Fatalf("Failed to decode master encryption key: %v", err)
+	}
+
+	keyDeriver, err := crypto.NewHKDFKeyDeriver(masterKey)
+	if err != nil {
+		logger.Fatalf("Failed to initialize key deriver: %v", err)
+	}
+
+	logger.Info("Key derivation initialized successfully")
+
+	// Init crypto service with derived credential key
+	cryptoService, err := crypto.NewAESGCMService(keyDeriver.GetCredentialKey(), cfg.AppEncryptionKeyVersion)
 	if err != nil {
 		logger.Fatalf("Failed to initialize crypto service: %v", err)
 	}
 
-	// Init message signer for RabbitMQ
-	messageSigner, err := crypto.NewHMACSignerFromCryptor(cryptoService)
+	// Init message signer for RabbitMQ with derived internal HMAC key
+	cryptoWithInternalHMAC, err := crypto.NewHMACSigner(keyDeriver.GetInternalHMACKey(), crypto.SignatureVersion)
 	if err != nil {
 		logger.Fatalf("Failed to initialize message signer: %v", err)
 	}
@@ -180,7 +194,7 @@ func InitServers() *Service {
 	}
 
 	rabbitMQOptions := rabbitmq.DefaultOptions()
-	rabbitMQOptions.Signer = messageSigner
+	rabbitMQOptions.Signer = cryptoWithInternalHMAC
 
 	rabbitMQAdapter := rabbitmq.NewRabbitMQAdapterWithOptions(rabbitMQConnection, rabbitMQOptions)
 
@@ -233,6 +247,11 @@ func InitServers() *Service {
 	listConnectionsQuery := connectionQuery.NewListConnections(connectionRepository, productRepository)
 	testConnectionQuery := connectionQuery.NewTestConnection(connectionRepository, cryptoService, connectionTestStore)
 	validateSchemaQuery := connectionQuery.NewValidateSchema(connectionRepository, cryptoService, schemaCache)
+	getConnectionSchemaQuery := connectionQuery.NewGetConnectionSchema(
+		connectionRepository,
+		cryptoService,
+		datasourceFactory.NewDataSourceFromConnectionWithLogger(logger),
+	)
 
 	connectionHandler := in2.NewConnectionHandler(
 		createConnectionCmd,
@@ -242,6 +261,7 @@ func InitServers() *Service {
 		listConnectionsQuery,
 		testConnectionQuery,
 		validateSchemaQuery,
+		getConnectionSchemaQuery,
 	)
 
 	// Init Product services and handler

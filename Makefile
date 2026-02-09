@@ -127,6 +127,11 @@ help:
 	@echo "  make test-chaos-quick        	   	   - Run quick chaos tests (latency only, ~20min)"
 	@echo "  make test-chaos-verbose      	   	   - Run chaos tests with verbose output"
 	@echo ""
+	@echo ""
+	@echo "Cryptographic Utility Commands:"
+	@echo "  make derive-key KEY=...          - Derive external HMAC key from master key"
+	@echo "  make generate-master-key         - Generate a new cryptographically secure master key"
+	@echo ""
 
 
 #-------------------------------------------------------
@@ -656,7 +661,7 @@ dev-setup:
 	fi
 	@if ! command -v mockgen >/dev/null 2>&1; then \
 		echo "Installing mockgen..."; \
-		go install github.com/golang/mock/mockgen@latest; \
+		go install go.uber.org/mock/mockgen@latest; \
 	fi
 	@if ! command -v gosec >/dev/null 2>&1; then \
 		echo "Installing gosec..."; \
@@ -755,3 +760,41 @@ test-chaos-verbose: ## Run chaos tests with verbose output
 	@echo "Running chaos tests with verbose output..."
 	@go test -v -tags=chaos -timeout 45m -count=1 ./tests/chaos/e2e/...
 	@echo "[ok] Chaos tests completed successfully"
+
+#-------------------------------------------------------
+# Cryptographic Utility Commands
+#-------------------------------------------------------
+
+.PHONY: derive-key
+derive-key: ## Derive external HMAC key from master key
+	$(call print_title,Deriving external HMAC key)
+ifndef KEY
+ifndef APP_ENC_KEY
+	@echo "Error: KEY or APP_ENC_KEY is required"
+	@echo ""
+	@echo "Usage:"
+	@echo "  make derive-key KEY=\"YOUR_BASE64_MASTER_KEY\""
+	@echo "  APP_ENC_KEY=\"YOUR_BASE64_MASTER_KEY\" make derive-key"
+	@echo ""
+	@echo "Example:"
+	@echo "  make derive-key KEY=\"dGhpcy1pcy1hLTMyLWJ5dGUtbWFzdGVyLWtleTEyMzQ=\""
+	@echo ""
+	@echo "See docs/security/verification-guide.md for more information."
+	@exit 1
+endif
+	@go run ./scripts/crypto/derive-key/main.go
+else
+	@APP_ENC_KEY="$(KEY)" go run ./scripts/crypto/derive-key/main.go
+endif
+
+.PHONY: generate-master-key
+generate-master-key: ## Generate a new cryptographically secure master key
+	$(call print_title,Generating new master key)
+	@echo "Generating a cryptographically secure 32-byte master key..."
+	@KEY=$$(head -c 32 /dev/urandom | base64) && \
+	echo "" && \
+	echo "New Master Key (base64):" && \
+	echo "$$KEY" && \
+	echo "" && \
+	echo "IMPORTANT: Store this key securely. It cannot be recovered if lost." && \
+	echo "Add to your environment as APP_ENC_KEY."

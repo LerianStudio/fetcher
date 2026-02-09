@@ -18,6 +18,7 @@ import (
 	libMongo "github.com/LerianStudio/lib-commons/v2/commons/mongo"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
 	"github.com/tryvium-travels/memongo"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.opentelemetry.io/otel/trace"
@@ -428,7 +429,7 @@ func TestJobMongoDBRepository_UpdateStatus(t *testing.T) {
 		repo := newJobRepository(t)
 		created := createJob(t, repo, jobFixture())
 
-		err := repo.UpdateStatus(context.Background(), created.ID, created.OrganizationID, model.JobStatusCompleted, "/external-data/test.json", nil)
+		err := repo.UpdateStatus(context.Background(), created.ID, created.OrganizationID, model.JobStatusCompleted, "/external-data/test.json", "", nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -453,7 +454,7 @@ func TestJobMongoDBRepository_UpdateStatus(t *testing.T) {
 		repo := newJobRepository(t)
 		created := createJob(t, repo, jobFixture())
 
-		err := repo.UpdateStatus(context.Background(), created.ID, created.OrganizationID, model.JobStatusFailed, "", nil)
+		err := repo.UpdateStatus(context.Background(), created.ID, created.OrganizationID, model.JobStatusFailed, "", "", nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -478,7 +479,7 @@ func TestJobMongoDBRepository_UpdateStatus(t *testing.T) {
 		job.CompletedAt = &now
 		created := createJob(t, repo, job)
 
-		err := repo.UpdateStatus(context.Background(), created.ID, created.OrganizationID, model.JobStatusProcessing, "", nil)
+		err := repo.UpdateStatus(context.Background(), created.ID, created.OrganizationID, model.JobStatusProcessing, "", "", nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -503,7 +504,7 @@ func TestJobMongoDBRepository_UpdateStatus(t *testing.T) {
 			"error_message": "something went wrong",
 			"retry_count":   3,
 		}
-		err := repo.UpdateStatus(context.Background(), created.ID, created.OrganizationID, model.JobStatusFailed, "", metadata)
+		err := repo.UpdateStatus(context.Background(), created.ID, created.OrganizationID, model.JobStatusFailed, "", "", metadata)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -521,7 +522,7 @@ func TestJobMongoDBRepository_UpdateStatus(t *testing.T) {
 		repo := newJobRepository(t)
 		created := createJob(t, repo, jobFixture())
 
-		err := repo.UpdateStatus(context.Background(), created.ID, created.OrganizationID, "invalid-status", "", nil)
+		err := repo.UpdateStatus(context.Background(), created.ID, created.OrganizationID, "invalid-status", "", "", nil)
 		if err == nil {
 			t.Fatalf("expected error for invalid status")
 		}
@@ -530,7 +531,7 @@ func TestJobMongoDBRepository_UpdateStatus(t *testing.T) {
 	t.Run("returns error for non-existent job", func(t *testing.T) {
 		repo := newJobRepository(t)
 
-		err := repo.UpdateStatus(context.Background(), uuid.New(), uuid.New(), model.JobStatusCompleted, "", nil)
+		err := repo.UpdateStatus(context.Background(), uuid.New(), uuid.New(), model.JobStatusCompleted, "", "", nil)
 		if err == nil {
 			t.Fatalf("expected error for non-existent job")
 		}
@@ -549,10 +550,23 @@ func TestJobMongoDBRepository_UpdateStatus(t *testing.T) {
 			connection: mockConn,
 			Database:   jobTestDatabaseName,
 		}
-		err := repo.UpdateStatus(context.Background(), uuid.New(), uuid.New(), model.JobStatusCompleted, "", nil)
+		err := repo.UpdateStatus(context.Background(), uuid.New(), uuid.New(), model.JobStatusCompleted, "", "", nil)
 		if err == nil || err.Error() != "db down" {
 			t.Fatalf("expected db error, got %v", err)
 		}
+	})
+
+	t.Run("updates result_hmac when provided", func(t *testing.T) {
+		repo := newJobRepository(t)
+		created := createJob(t, repo, jobFixture())
+
+		resultHMAC := "hmac-sha256:abc123def456"
+		err := repo.UpdateStatus(context.Background(), created.ID, created.OrganizationID, model.JobStatusCompleted, "/external-data/test.json", resultHMAC, nil)
+		require.NoError(t, err, "unexpected error updating status")
+
+		found, err := repo.FindByID(context.Background(), created.ID, created.OrganizationID)
+		require.NoError(t, err, "failed to find job")
+		require.Equal(t, resultHMAC, found.ResultHMAC, "expected result_hmac to be set")
 	})
 }
 

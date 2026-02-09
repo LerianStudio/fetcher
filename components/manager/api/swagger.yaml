@@ -102,6 +102,21 @@ definitions:
       userName:
         type: string
     type: object
+  github_com_LerianStudio_fetcher_pkg_model.ConnectionSchemaResponse:
+    properties:
+      configName:
+        type: string
+      databaseName:
+        type: string
+      id:
+        type: string
+      tables:
+        items:
+          $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.TableDetails'
+        type: array
+      type:
+        type: string
+    type: object
   github_com_LerianStudio_fetcher_pkg_model.ConnectionUpdateInput:
     properties:
       configName:
@@ -209,6 +224,8 @@ definitions:
       organizationId:
         type: string
       requestHash:
+        type: string
+      resultHmac:
         type: string
       resultPath:
         type: string
@@ -325,6 +342,19 @@ definitions:
       type:
         type: string
     type: object
+  github_com_LerianStudio_fetcher_pkg_model.SchemaValidationErrorResponse:
+    properties:
+      code:
+        type: string
+      errors:
+        items:
+          $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.SchemaValidationError'
+        type: array
+      message:
+        type: string
+      title:
+        type: string
+    type: object
   github_com_LerianStudio_fetcher_pkg_model.SchemaValidationRequest:
     description: Request body for schema validation containing mapped fields per datasource.
     properties:
@@ -353,6 +383,15 @@ definitions:
         type: string
       status:
         description: '"success" or "failure"'
+        type: string
+    type: object
+  github_com_LerianStudio_fetcher_pkg_model.TableDetails:
+    properties:
+      fields:
+        items:
+          type: string
+        type: array
+      name:
         type: string
     type: object
   github_com_LerianStudio_fetcher_pkg_model_job.FilterCondition:
@@ -882,6 +921,47 @@ paths:
       summary: Assign connection to product
       tags:
       - Migration
+  /v1/management/connections/{id}/schema:
+    get:
+      description: Get the database schema (tables and fields) for a connection.
+      parameters:
+      - description: The authorization token in the 'Bearer access_token' format.
+          Only required when auth plugin is enabled.
+        in: header
+        name: Authorization
+        type: string
+      - description: Organization ID
+        in: header
+        name: X-Organization-Id
+        required: true
+        type: string
+      - description: Connection ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.ConnectionSchemaResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+      summary: Get connection schema
+      tags:
+      - Connections
   /v1/management/connections/{id}/test:
     post:
       description: Test the configured connection by establishing and closing a connection.
@@ -997,7 +1077,8 @@ paths:
       consumes:
       - application/json
       description: Validate that tables and fields referenced in the request exist
-        in the configured datasources.
+        in the configured datasources. Returns 200 when validation passes, 422 when
+        validation fails with detailed error information.
       parameters:
       - description: The authorization token in the 'Bearer access_token' format.
           Only required when auth plugin is enabled.
@@ -1019,15 +1100,20 @@ paths:
       - application/json
       responses:
         "200":
-          description: OK
+          description: Validation successful - all tables and fields exist
           schema:
             $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.SchemaValidationResponse'
         "400":
-          description: Bad Request
+          description: Invalid request payload or missing headers
           schema:
             $ref: '#/definitions/pkg.HTTPError'
+        "422":
+          description: Validation failed - schema errors found (missing tables, fields,
+            or unreachable datasources)
+          schema:
+            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.SchemaValidationErrorResponse'
         "500":
-          description: Internal Server Error
+          description: Internal server error
           schema:
             $ref: '#/definitions/pkg.HTTPError'
       summary: Validate schema
