@@ -34,7 +34,7 @@ func NewFetcherHandler(createJobCmd *command.CreateFetcherJob, getJobQuery *quer
 // CreateJob handles POST /v1/fetcher requests to create a new data extraction job.
 //
 //	@Summary		Create fetcher job
-//	@Description	Create a new data extraction job. The request will be validated, deduplicated within a 5-minute window, and all referenced connections will be tested before job creation. The metadata.source field is required for job notification routing.
+//	@Description	Create a new data extraction job. The request will be validated, deduplicated within a 5-minute window, and all referenced connections will be tested before job creation. The metadata.source field is required for product isolation and datasource ownership validation.
 //	@Tags			Fetcher
 //	@Accept			json
 //	@Produce		json

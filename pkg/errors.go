@@ -379,6 +379,44 @@ func ValidateBusinessError(err error, entityType string, args ...any) error {
 			Message:    fmt.Sprintf("An entity of type %v with the same unique attributes already exists. Please use different values to avoid conflicts and review the data provided in the request.", entityType),
 		},
 
+		// Product related errors
+		constant.ErrProductHasConnections: ResponseErrorWithStatusCode{
+			StatusCode: http.StatusConflict,
+			Code:       constant.ErrProductHasConnections.Error(),
+			Title:      "Product Has Connections",
+			Message:    fmt.Sprintf("The %v cannot be deleted because it has associated connections. Remove or reassign all connections before deleting.", entityType),
+		},
+		constant.ErrConnectionNotAssigned: ValidationError{
+			EntityType: entityType,
+			Code:       constant.ErrConnectionNotAssigned.Error(),
+			Title:      "Connection Not Assigned",
+			Message: func() string {
+				if len(args) > 0 {
+					return fmt.Sprint(args...)
+				}
+
+				return "The connection is not assigned to any product."
+			}(),
+		},
+		constant.ErrConnectionAlreadyAssigned: ResponseErrorWithStatusCode{
+			StatusCode: http.StatusConflict,
+			Code:       constant.ErrConnectionAlreadyAssigned.Error(),
+			Title:      "Connection Already Assigned",
+			Message:    fmt.Sprintf("The %v is already assigned to a product and cannot be reassigned.", entityType),
+		},
+		constant.ErrProductMismatch: ValidationError{
+			EntityType: entityType,
+			Code:       constant.ErrProductMismatch.Error(),
+			Title:      "Product Mismatch",
+			Message: func() string {
+				if len(args) > 0 {
+					return fmt.Sprint(args...)
+				}
+
+				return "One or more datasources do not belong to the specified product."
+			}(),
+		},
+
 		// Job related errors
 		constant.ErrMissingDataSource: ValidationError{
 			EntityType: entityType,

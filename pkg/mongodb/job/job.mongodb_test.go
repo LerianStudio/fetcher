@@ -851,28 +851,28 @@ func TestJobMongoDBRepository_ExistsRunningByMappedFieldKey(t *testing.T) {
 func TestJobMongoDBRepository_isIndexConflictError(t *testing.T) {
 	t.Run("returns true for index options conflict (code 85)", func(t *testing.T) {
 		err := mongo.CommandError{Code: 85, Message: "Index options conflict"}
-		if !isIndexConflictError(err) {
+		if !mongodb.IsIndexConflictError(err) {
 			t.Fatalf("expected true for code 85")
 		}
 	})
 
 	t.Run("returns true for index key specs conflict (code 86)", func(t *testing.T) {
 		err := mongo.CommandError{Code: 86, Message: "Index key specs conflict"}
-		if !isIndexConflictError(err) {
+		if !mongodb.IsIndexConflictError(err) {
 			t.Fatalf("expected true for code 86")
 		}
 	})
 
 	t.Run("returns false for other command errors", func(t *testing.T) {
 		err := mongo.CommandError{Code: 11000, Message: "Duplicate key"}
-		if isIndexConflictError(err) {
+		if mongodb.IsIndexConflictError(err) {
 			t.Fatalf("expected false for code 11000")
 		}
 	})
 
 	t.Run("returns false for non-command errors", func(t *testing.T) {
 		err := errors.New("some other error")
-		if isIndexConflictError(err) {
+		if mongodb.IsIndexConflictError(err) {
 			t.Fatalf("expected false for non-command error")
 		}
 	})

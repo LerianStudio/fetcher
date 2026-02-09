@@ -158,6 +158,51 @@ func (mr *MockRepositoryMockRecorder) FindByConfigNames(ctx, organizationID, con
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FindByConfigNames", reflect.TypeOf((*MockRepository)(nil).FindByConfigNames), ctx, organizationID, configNames)
 }
 
+// ListUnassigned mocks base method.
+func (m *MockRepository) ListUnassigned(ctx context.Context, organizationID uuid.UUID, filters http.QueryHeader) ([]*model.Connection, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListUnassigned", ctx, organizationID, filters)
+	ret0, _ := ret[0].([]*model.Connection)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListUnassigned indicates an expected call of ListUnassigned.
+func (mr *MockRepositoryMockRecorder) ListUnassigned(ctx, organizationID, filters interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListUnassigned", reflect.TypeOf((*MockRepository)(nil).ListUnassigned), ctx, organizationID, filters)
+}
+
+// AssignProduct mocks base method.
+func (m *MockRepository) AssignProduct(ctx context.Context, connectionID, organizationID, productID uuid.UUID) (*model.Connection, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "AssignProduct", ctx, connectionID, organizationID, productID)
+	ret0, _ := ret[0].(*model.Connection)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// AssignProduct indicates an expected call of AssignProduct.
+func (mr *MockRepositoryMockRecorder) AssignProduct(ctx, connectionID, organizationID, productID interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AssignProduct", reflect.TypeOf((*MockRepository)(nil).AssignProduct), ctx, connectionID, organizationID, productID)
+}
+
+// CountByProduct mocks base method.
+func (m *MockRepository) CountByProduct(ctx context.Context, organizationID, productID uuid.UUID) (int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CountByProduct", ctx, organizationID, productID)
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CountByProduct indicates an expected call of CountByProduct.
+func (mr *MockRepositoryMockRecorder) CountByProduct(ctx, organizationID, productID interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountByProduct", reflect.TypeOf((*MockRepository)(nil).CountByProduct), ctx, organizationID, productID)
+}
+
 // MockmongoDatabaseProvider is a mock of mongoDatabaseProvider interface.
 type MockmongoDatabaseProvider struct {
 	ctrl     *gomock.Controller
