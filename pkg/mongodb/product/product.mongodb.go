@@ -290,7 +290,7 @@ func (pr *ProductMongoDBRepository) FindByID(ctx context.Context, productID, org
 	db, err := pr.connection.GetDB(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
-		return nil, pkg.ValidateInternalError(err, "product")
+		return nil, mongodb.MapMongoErrorToResponse(err, ctx)
 	}
 
 	var record ProductMongoDBModel
@@ -386,7 +386,7 @@ func (pr *ProductMongoDBRepository) List(ctx context.Context, organizationID uui
 	db, err := pr.connection.GetDB(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
-		return nil, 0, pkg.ValidateInternalError(err, "product")
+		return nil, 0, mongodb.MapMongoErrorToResponse(err, ctx)
 	}
 
 	queryFilter := pr.buildQueryFilter(organizationID, filters)

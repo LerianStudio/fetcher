@@ -316,7 +316,7 @@ func (cr *ConnectionMongoDBRepository) FindByID(ctx context.Context, connectionI
 	db, err := cr.connection.GetDB(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
-		return nil, pkg.ValidateInternalError(err, "connection")
+		return nil, mongodb.MapMongoErrorToResponse(err, ctx)
 	}
 
 	var record ConnectionMongoDBModel
@@ -423,7 +423,7 @@ func (cr *ConnectionMongoDBRepository) FindByOrganizationAndDatabaseName(ctx con
 	db, err := cr.connection.GetDB(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
-		return nil, pkg.ValidateInternalError(err, "connection")
+		return nil, mongodb.MapMongoErrorToResponse(err, ctx)
 	}
 
 	coll := db.Database(strings.ToLower(cr.Database)).Collection(strings.ToLower(constant.MongoCollectionConnection))
@@ -555,7 +555,7 @@ func (rm *ConnectionMongoDBRepository) List(ctx context.Context, organizationID 
 	db, err := rm.connection.GetDB(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
-		return nil, 0, pkg.ValidateInternalError(err, "connection")
+		return nil, 0, mongodb.MapMongoErrorToResponse(err, ctx)
 	}
 
 	queryFilter := rm.buildQueryFilter(organizationID, filters)
@@ -631,7 +631,7 @@ func (rm *ConnectionMongoDBRepository) ListUnassigned(ctx context.Context, organ
 	db, err := rm.connection.GetDB(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
-		return nil, 0, pkg.ValidateInternalError(err, "connection")
+		return nil, 0, mongodb.MapMongoErrorToResponse(err, ctx)
 	}
 
 	queryFilter := bson.M{

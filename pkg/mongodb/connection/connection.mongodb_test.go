@@ -17,13 +17,13 @@ import (
 	http "github.com/LerianStudio/fetcher/pkg/net/http"
 	libLog "github.com/LerianStudio/lib-commons/v2/commons/log"
 	libMongo "github.com/LerianStudio/lib-commons/v2/commons/mongo"
-	"github.com/golang/mock/gomock"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/tryvium-travels/memongo"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.opentelemetry.io/otel/trace"
+	"go.uber.org/mock/gomock"
 )
 
 var (
@@ -441,13 +441,13 @@ func TestConnectionMongoDBRepository_FindByID(t *testing.T) {
 		if _, err := repo.FindByID(context.Background(), uuid.New(), uuid.New()); err == nil {
 			t.Fatalf("expected db error")
 		} else {
+			// MapMongoErrorToResponse wraps unknown errors with constant.ErrInternalServer,
+			// not the original error, so we just verify an InternalServerError is returned
 			var internal pkg.InternalServerError
 			if !errors.As(err, &internal) {
-				t.Fatalf("expected internal server error, got %v", err)
+				t.Fatalf("expected internal server error, got %T: %v", err, err)
 			}
-			if internal.Err == nil || internal.Err.Error() != "db down" {
-				t.Fatalf("expected wrapped db error, got %v", internal.Err)
-			}
+			assert.Equal(t, constant.ErrInternalServer.Error(), internal.Code)
 		}
 	})
 }
@@ -555,13 +555,13 @@ func TestConnectionMongoDBRepository_FindByOrganizationAndDatabaseName(t *testin
 		if _, err := repo.FindByOrganizationAndDatabaseName(context.Background(), uuid.New(), "db"); err == nil {
 			t.Fatalf("expected db error")
 		} else {
+			// MapMongoErrorToResponse wraps unknown errors with constant.ErrInternalServer,
+			// not the original error, so we just verify an InternalServerError is returned
 			var internal pkg.InternalServerError
 			if !errors.As(err, &internal) {
-				t.Fatalf("expected internal server error, got %v", err)
+				t.Fatalf("expected internal server error, got %T: %v", err, err)
 			}
-			if internal.Err == nil || internal.Err.Error() != "db down" {
-				t.Fatalf("expected wrapped db error, got %v", internal.Err)
-			}
+			assert.Equal(t, constant.ErrInternalServer.Error(), internal.Code)
 		}
 	})
 }
@@ -889,13 +889,13 @@ func TestConnectionMongoDBRepository_List(t *testing.T) {
 		if _, _, err := repo.List(context.Background(), uuid.New(), http.QueryHeader{}); err == nil {
 			t.Fatalf("expected db error")
 		} else {
+			// MapMongoErrorToResponse wraps unknown errors with constant.ErrInternalServer,
+			// not the original error, so we just verify an InternalServerError is returned
 			var internal pkg.InternalServerError
 			if !errors.As(err, &internal) {
-				t.Fatalf("expected internal server error, got %v", err)
+				t.Fatalf("expected internal server error, got %T: %v", err, err)
 			}
-			if internal.Err == nil || internal.Err.Error() != "db down" {
-				t.Fatalf("expected wrapped db error, got %v", internal.Err)
-			}
+			assert.Equal(t, constant.ErrInternalServer.Error(), internal.Code)
 		}
 	})
 }
