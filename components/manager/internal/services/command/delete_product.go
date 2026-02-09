@@ -45,6 +45,7 @@ func (s *DeleteProduct) Execute(ctx context.Context, organizationID, productID u
 
 	if current == nil {
 		libOpentelemetry.HandleSpanError(&span, "Product not found", constant.ErrEntityNotFound)
+
 		return pkg.ValidateBusinessError(
 			constant.ErrEntityNotFound,
 			"product",
@@ -60,6 +61,7 @@ func (s *DeleteProduct) Execute(ctx context.Context, organizationID, productID u
 	if count > 0 {
 		logger.Infof("Delete blocked: product id=%s has %d active connections", productID, count)
 		libOpentelemetry.HandleSpanError(&span, "Product has active connections", constant.ErrProductHasConnections)
+
 		return pkg.ValidateBusinessError(
 			constant.ErrProductHasConnections,
 			"product",

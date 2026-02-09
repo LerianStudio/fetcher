@@ -59,6 +59,7 @@ func (s *CreateProduct) Execute(ctx context.Context, organizationID uuid.UUID, i
 
 	if existing != nil {
 		libOpentelemetry.HandleSpanError(&span, "Product with this code already exists", constant.ErrEntityConflict)
+
 		return nil, pkg.ValidateBusinessError(
 			constant.ErrEntityConflict,
 			"product",

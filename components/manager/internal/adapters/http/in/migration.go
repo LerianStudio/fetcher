@@ -111,7 +111,7 @@ func (h *MigrationHandler) ListUnassignedConnections(c *fiber.Ctx) error {
 //	@Param			Authorization		header		string							false	"The authorization token in the 'Bearer access_token' format. Only required when auth plugin is enabled."
 //	@Param			X-Organization-Id	header		string							true	"Organization ID"
 //	@Param			id					path		string							true	"Connection ID"
-//	@Param			body				body		model.AssignConnectionInput		true	"Assignment payload"
+//	@Param			body				model.AssignConnectionInput		true	"Assignment payload"
 //	@Success		200					{object}	model.ConnectionResponse
 //	@Failure		400					{object}	pkg.HTTPError
 //	@Failure		404					{object}	pkg.HTTPError
@@ -189,6 +189,7 @@ func (h *MigrationHandler) AssignConnectionToProduct(c *fiber.Ctx) error {
 	}
 
 	resp := model.NewConnectionResponseFrom(conn)
+
 	logger.Infof("connection assigned to product connection_id=%s product_id=%s org=%s", connectionID, productID, orgID)
 
 	return httpUtils.OK(c, resp)

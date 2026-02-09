@@ -108,6 +108,7 @@ func (s *CreateConnection) Execute(ctx context.Context, organizationID uuid.UUID
 
 	if existing != nil {
 		libOpentelemetry.HandleSpanError(&span, "Connection config name conflict", nil)
+
 		return nil, pkg.ValidateBusinessError(
 			constant.ErrEntityConflict,
 			"connection",

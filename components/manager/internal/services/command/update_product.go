@@ -48,6 +48,7 @@ func (s *UpdateProduct) Execute(ctx context.Context, organizationID, productID u
 
 	if current == nil {
 		libOpentelemetry.HandleSpanError(&span, "Product not found", constant.ErrEntityNotFound)
+
 		return nil, pkg.ValidateBusinessError(
 			constant.ErrEntityNotFound,
 			"product",
@@ -71,6 +72,7 @@ func (s *UpdateProduct) Execute(ctx context.Context, organizationID, productID u
 
 	if updated == nil {
 		libOpentelemetry.HandleSpanError(&span, "Product not found after update (race condition)", constant.ErrEntityNotFound)
+
 		return nil, pkg.ValidateBusinessError(
 			constant.ErrEntityNotFound,
 			"product",
