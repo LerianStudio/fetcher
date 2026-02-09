@@ -202,7 +202,9 @@ func (pr *ProductMongoDBRepository) Update(ctx context.Context, p *model.Product
 	opts := options.FindOneAndUpdate().SetReturnDocument(options.After)
 	if err := coll.FindOneAndUpdate(ctx, filter, update, opts).Decode(&record); err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
-			return nil, nil
+			libOpentelemetry.HandleSpanError(&span, "Product not found for update", err)
+
+			return nil, pkg.ValidateBusinessError(constant.ErrEntityNotFound, "product")
 		}
 
 		libOpentelemetry.HandleSpanError(&span, "Failed to update product", err)

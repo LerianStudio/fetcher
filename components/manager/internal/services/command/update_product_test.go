@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/LerianStudio/fetcher/pkg"
+	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	productMock "github.com/LerianStudio/fetcher/pkg/mongodb/product"
 
@@ -309,8 +310,9 @@ func TestUpdateProduct_Execute_UpdateRepoError(t *testing.T) {
 	}
 }
 
-// TestUpdateProduct_Execute_UpdateReturnsNil tests the race condition where Update returns (nil, nil).
-func TestUpdateProduct_Execute_UpdateReturnsNil(t *testing.T) {
+// TestUpdateProduct_Execute_UpdateReturnsNotFound tests that Update returning a not-found error
+// (e.g. product soft-deleted between read and write) is propagated correctly.
+func TestUpdateProduct_Execute_UpdateReturnsNotFound(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
@@ -327,15 +329,17 @@ func TestUpdateProduct_Execute_UpdateReturnsNil(t *testing.T) {
 		Name: &newName,
 	}
 
+	notFoundErr := pkg.ValidateBusinessError(constant.ErrEntityNotFound, "product")
+
 	// Mock: find existing product
 	mockRepo.EXPECT().
 		FindByID(gomock.Any(), productID, orgID).
 		Return(existing, nil)
 
-	// Mock: update returns nil (product soft-deleted between read and write)
+	// Mock: update returns not-found error (product soft-deleted between read and write)
 	mockRepo.EXPECT().
 		Update(gomock.Any(), gomock.Any()).
-		Return(nil, nil)
+		Return(nil, notFoundErr)
 
 	result, err := svc.Execute(ctx, orgID, productID, input)
 
@@ -344,7 +348,7 @@ func TestUpdateProduct_Execute_UpdateReturnsNil(t *testing.T) {
 	}
 
 	if err == nil {
-		t.Fatal("expected error for nil update result, got nil")
+		t.Fatal("expected error for not-found update result, got nil")
 	}
 
 	var respErr pkg.ResponseErrorWithStatusCode
@@ -535,14 +539,14 @@ func TestUpdateProduct_Execute_TableDriven(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "Update returns nil yields 404",
+			name: "Update returns not-found error yields 404",
 			setupMocks: func(repo *productMock.MockRepository, orgID, productID uuid.UUID, existing *model.Product) {
 				repo.EXPECT().
 					FindByID(gomock.Any(), productID, orgID).
 					Return(existing, nil)
 				repo.EXPECT().
 					Update(gomock.Any(), gomock.Any()).
-					Return(nil, nil)
+					Return(nil, pkg.ValidateBusinessError(constant.ErrEntityNotFound, "product"))
 			},
 			input: func() model.ProductUpdateInput {
 				name := "Valid Name"
