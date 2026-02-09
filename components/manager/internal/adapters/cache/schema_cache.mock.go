@@ -10,7 +10,7 @@ import (
 	time "time"
 
 	model "github.com/LerianStudio/fetcher/pkg/model"
-	gomock "github.com/golang/mock/gomock"
+	gomock "go.uber.org/mock/gomock"
 )
 
 // MockSchemaCacheRepository is a mock of SchemaCacheRepository interface.

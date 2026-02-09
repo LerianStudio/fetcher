@@ -9,8 +9,8 @@ import (
 	reflect "reflect"
 
 	model "github.com/LerianStudio/fetcher/pkg/model"
-	gomock "github.com/golang/mock/gomock"
 	uuid "github.com/google/uuid"
+	gomock "go.uber.org/mock/gomock"
 )
 
 // MockRepository is a mock of Repository interface.

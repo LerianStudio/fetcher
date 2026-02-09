@@ -9,8 +9,8 @@ import (
 	productMock "github.com/LerianStudio/fetcher/pkg/mongodb/product"
 	"github.com/LerianStudio/fetcher/pkg/net/http"
 
-	"github.com/golang/mock/gomock"
 	"github.com/google/uuid"
+	"go.uber.org/mock/gomock"
 )
 
 // newListTestProduct creates a test Product with the given parameters for list tests.

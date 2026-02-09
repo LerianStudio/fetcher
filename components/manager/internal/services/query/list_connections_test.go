@@ -13,10 +13,10 @@ import (
 	productMock "github.com/LerianStudio/fetcher/pkg/mongodb/product"
 	"github.com/LerianStudio/fetcher/pkg/net/http"
 
-	"github.com/golang/mock/gomock"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.uber.org/mock/gomock"
 )
 
 // newMockProductRepoForList creates a permissive product mock for list tests that don't test product filtering.

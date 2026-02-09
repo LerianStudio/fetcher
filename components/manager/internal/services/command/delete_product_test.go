@@ -11,9 +11,9 @@ import (
 	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 	productRepo "github.com/LerianStudio/fetcher/pkg/mongodb/product"
 
-	"github.com/golang/mock/gomock"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+	"go.uber.org/mock/gomock"
 )
 
 // TestDeleteProduct_Execute_Success tests successful product deletion when no connections are assigned.

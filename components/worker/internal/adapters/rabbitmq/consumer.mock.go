@@ -9,7 +9,7 @@ import (
 	reflect "reflect"
 	sync "sync"
 
-	gomock "github.com/golang/mock/gomock"
+	gomock "go.uber.org/mock/gomock"
 )
 
 // MockConsumerRepository is a mock of ConsumerRepository interface.

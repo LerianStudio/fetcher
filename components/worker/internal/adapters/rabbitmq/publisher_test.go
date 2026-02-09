@@ -7,8 +7,8 @@ import (
 
 	"github.com/LerianStudio/fetcher/pkg/rabbitmq"
 	"github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
-	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
+	"go.uber.org/mock/gomock"
 )
 
 func TestNewPublisherRoutes(t *testing.T) {

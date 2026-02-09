@@ -13,9 +13,9 @@ import (
 	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 	productMock "github.com/LerianStudio/fetcher/pkg/mongodb/product"
 
-	"github.com/golang/mock/gomock"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+	"go.uber.org/mock/gomock"
 )
 
 // newMockProductRepo creates a product mock with a permissive FindByID expectation.

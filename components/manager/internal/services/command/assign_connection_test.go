@@ -11,9 +11,9 @@ import (
 	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 	productMock "github.com/LerianStudio/fetcher/pkg/mongodb/product"
 
-	"github.com/golang/mock/gomock"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+	"go.uber.org/mock/gomock"
 )
 
 // newExistingConnectionForAssign creates a valid existing Connection without a ProductID (unassigned).

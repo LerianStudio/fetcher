@@ -17,8 +17,8 @@ import (
 	jobRepo "github.com/LerianStudio/fetcher/pkg/mongodb/job"
 	productMock "github.com/LerianStudio/fetcher/pkg/mongodb/product"
 
-	"github.com/golang/mock/gomock"
 	"github.com/google/uuid"
+	"go.uber.org/mock/gomock"
 )
 
 // newValidFetcherRequest creates a valid FetcherRequest for testing.

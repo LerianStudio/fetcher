@@ -11,9 +11,9 @@ import (
 
 	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/net/http"
-	"github.com/golang/mock/gomock"
 	"github.com/google/uuid"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.uber.org/mock/gomock"
 )
 
 // MockRepository is a mock of Repository interface.

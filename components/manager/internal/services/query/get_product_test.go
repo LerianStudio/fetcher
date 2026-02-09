@@ -10,9 +10,9 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/model"
 	productMock "github.com/LerianStudio/fetcher/pkg/mongodb/product"
 
-	"github.com/golang/mock/gomock"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+	"go.uber.org/mock/gomock"
 )
 
 // newExistingProduct creates a valid existing Product for testing.

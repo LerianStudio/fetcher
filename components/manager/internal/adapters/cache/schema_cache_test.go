@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"github.com/LerianStudio/fetcher/pkg/model"
-	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 )
 
 // mockGenericCache implements redis.Cache[model.DataSourceSchema] for testing.

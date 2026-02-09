@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	"github.com/LerianStudio/fetcher/pkg/model"
-	"github.com/golang/mock/gomock"
 	"github.com/google/uuid"
+	"go.uber.org/mock/gomock"
 )
 
 // TestExtractExternalData_ParseError_UpdatesJobAndPublishesNotification tests the full error flow
