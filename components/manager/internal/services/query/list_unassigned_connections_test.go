@@ -34,9 +34,9 @@ func TestListUnassignedConnections_Execute_Success(t *testing.T) {
 	// Mock: ListUnassigned returns connections
 	mockConnRepo.EXPECT().
 		ListUnassigned(gomock.Any(), orgID, filters).
-		Return(expectedList, nil)
+		Return(expectedList, int64(2), nil)
 
-	result, err := svc.Execute(ctx, orgID, filters)
+	result, _, err := svc.Execute(ctx, orgID, filters)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -76,9 +76,9 @@ func TestListUnassignedConnections_Execute_EmptyList(t *testing.T) {
 	// Mock: ListUnassigned returns nil (no connections found)
 	mockConnRepo.EXPECT().
 		ListUnassigned(gomock.Any(), orgID, filters).
-		Return(nil, nil)
+		Return(nil, int64(0), nil)
 
-	result, err := svc.Execute(ctx, orgID, filters)
+	result, _, err := svc.Execute(ctx, orgID, filters)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -112,9 +112,9 @@ func TestListUnassignedConnections_Execute_RepositoryError(t *testing.T) {
 	// Mock: ListUnassigned returns error
 	mockConnRepo.EXPECT().
 		ListUnassigned(gomock.Any(), orgID, filters).
-		Return(nil, dbError)
+		Return(nil, int64(0), dbError)
 
-	result, err := svc.Execute(ctx, orgID, filters)
+	result, _, err := svc.Execute(ctx, orgID, filters)
 
 	if result != nil {
 		t.Fatalf("expected nil result, got %+v", result)
@@ -169,7 +169,7 @@ func TestListUnassignedConnections_Execute_TableDriven(t *testing.T) {
 				}
 				mock.EXPECT().
 					ListUnassigned(gomock.Any(), orgID, filters).
-					Return(connections, nil)
+					Return(connections, int64(3), nil)
 			},
 			wantErr:         false,
 			wantResultCount: 3,
@@ -183,7 +183,7 @@ func TestListUnassignedConnections_Execute_TableDriven(t *testing.T) {
 			setupMocks: func(mock *connRepo.MockRepository, orgID uuid.UUID, filters http.QueryHeader) {
 				mock.EXPECT().
 					ListUnassigned(gomock.Any(), orgID, filters).
-					Return(nil, nil)
+					Return(nil, int64(0), nil)
 			},
 			wantErr:         false,
 			wantResultCount: 0,
@@ -197,7 +197,7 @@ func TestListUnassignedConnections_Execute_TableDriven(t *testing.T) {
 			setupMocks: func(mock *connRepo.MockRepository, orgID uuid.UUID, filters http.QueryHeader) {
 				mock.EXPECT().
 					ListUnassigned(gomock.Any(), orgID, filters).
-					Return(nil, errors.New("database error"))
+					Return(nil, int64(0), errors.New("database error"))
 			},
 			wantErr:         true,
 			wantResultCount: 0,
@@ -215,7 +215,7 @@ func TestListUnassignedConnections_Execute_TableDriven(t *testing.T) {
 				}
 				mock.EXPECT().
 					ListUnassigned(gomock.Any(), orgID, filters).
-					Return(connections, nil)
+					Return(connections, int64(2), nil)
 			},
 			wantErr:         false,
 			wantResultCount: 2,
@@ -229,7 +229,7 @@ func TestListUnassignedConnections_Execute_TableDriven(t *testing.T) {
 				}
 				mock.EXPECT().
 					ListUnassigned(gomock.Any(), orgID, filters).
-					Return(connections, nil)
+					Return(connections, int64(1), nil)
 			},
 			wantErr:         false,
 			wantResultCount: 1,
@@ -249,7 +249,7 @@ func TestListUnassignedConnections_Execute_TableDriven(t *testing.T) {
 
 			svc := NewListUnassignedConnections(mockConnRepo)
 
-			result, err := svc.Execute(ctx, orgID, tt.filters)
+			result, _, err := svc.Execute(ctx, orgID, tt.filters)
 
 			if tt.wantErr {
 				if err == nil {
@@ -297,9 +297,9 @@ func TestListUnassignedConnections_Execute_OrganizationIsolation(t *testing.T) {
 
 	mockConnRepo.EXPECT().
 		ListUnassigned(gomock.Any(), org1ID, filters).
-		Return(org1Connections, nil)
+		Return(org1Connections, int64(2), nil)
 
-	result1, err := svc.Execute(ctx, org1ID, filters)
+	result1, _, err := svc.Execute(ctx, org1ID, filters)
 	if err != nil {
 		t.Fatalf("unexpected error for org1: %v", err)
 	}
@@ -322,9 +322,9 @@ func TestListUnassignedConnections_Execute_OrganizationIsolation(t *testing.T) {
 
 	mockConnRepo.EXPECT().
 		ListUnassigned(gomock.Any(), org2ID, filters).
-		Return(org2Connections, nil)
+		Return(org2Connections, int64(1), nil)
 
-	result2, err := svc.Execute(ctx, org2ID, filters)
+	result2, _, err := svc.Execute(ctx, org2ID, filters)
 	if err != nil {
 		t.Fatalf("unexpected error for org2: %v", err)
 	}
@@ -346,7 +346,7 @@ func TestListUnassignedConnections_Execute_ErrorScenarios(t *testing.T) {
 			setupMock: func(mock *connRepo.MockRepository, orgID uuid.UUID, filters http.QueryHeader) {
 				mock.EXPECT().
 					ListUnassigned(gomock.Any(), orgID, filters).
-					Return(nil, errors.New("database connection failed"))
+					Return(nil, int64(0), errors.New("database connection failed"))
 			},
 			errorMsg: "database connection failed",
 		},
@@ -355,7 +355,7 @@ func TestListUnassignedConnections_Execute_ErrorScenarios(t *testing.T) {
 			setupMock: func(mock *connRepo.MockRepository, orgID uuid.UUID, filters http.QueryHeader) {
 				mock.EXPECT().
 					ListUnassigned(gomock.Any(), orgID, filters).
-					Return(nil, errors.New("context deadline exceeded"))
+					Return(nil, int64(0), errors.New("context deadline exceeded"))
 			},
 			errorMsg: "context deadline exceeded",
 		},
@@ -364,7 +364,7 @@ func TestListUnassignedConnections_Execute_ErrorScenarios(t *testing.T) {
 			setupMock: func(mock *connRepo.MockRepository, orgID uuid.UUID, filters http.QueryHeader) {
 				mock.EXPECT().
 					ListUnassigned(gomock.Any(), orgID, filters).
-					Return(nil, errors.New("permission denied"))
+					Return(nil, int64(0), errors.New("permission denied"))
 			},
 			errorMsg: "permission denied",
 		},
@@ -387,7 +387,7 @@ func TestListUnassignedConnections_Execute_ErrorScenarios(t *testing.T) {
 
 			tt.setupMock(mockConnRepo, orgID, filters)
 
-			result, err := svc.Execute(ctx, orgID, filters)
+			result, _, err := svc.Execute(ctx, orgID, filters)
 
 			if result != nil {
 				t.Fatalf("expected nil result, got %+v", result)

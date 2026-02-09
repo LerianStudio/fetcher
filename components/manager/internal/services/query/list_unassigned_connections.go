@@ -22,7 +22,7 @@ func NewListUnassignedConnections(connectionRepo connRepo.Repository) *ListUnass
 	return &ListUnassignedConnections{connRepo: connectionRepo}
 }
 
-func (s *ListUnassignedConnections) Execute(ctx context.Context, organizationID uuid.UUID, filters http.QueryHeader) ([]*model.Connection, error) {
+func (s *ListUnassignedConnections) Execute(ctx context.Context, organizationID uuid.UUID, filters http.QueryHeader) ([]*model.Connection, int64, error) {
 	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "service.list_unassigned_connections")
@@ -38,14 +38,14 @@ func (s *ListUnassignedConnections) Execute(ctx context.Context, organizationID 
 		libOpentelemetry.HandleSpanError(&span, "Failed to convert fetcher input to JSON string", err)
 	}
 
-	list, err := s.connRepo.ListUnassigned(ctx, organizationID, filters)
+	list, totalCount, err := s.connRepo.ListUnassigned(ctx, organizationID, filters)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	if list == nil {
-		return []*model.Connection{}, nil
+		return []*model.Connection{}, totalCount, nil
 	}
 
-	return list, nil
+	return list, totalCount, nil
 }

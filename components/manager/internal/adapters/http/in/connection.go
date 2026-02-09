@@ -187,7 +187,7 @@ func (h *ConnectionHandler) ListConnections(c *fiber.Ctx) error {
 		Page:  headerParams.Page,
 	}
 
-	conns, err := h.ListQuery.Execute(ctx, orgID, productID, *headerParams)
+	conns, totalCount, err := h.ListQuery.Execute(ctx, orgID, productID, *headerParams)
 	if err != nil {
 		logger.Errorf("Failed to execute list connections query, Error: %s", err.Error())
 		libOpentelemetry.HandleSpanError(&span, "failed to list connections", err)
@@ -203,7 +203,7 @@ func (h *ConnectionHandler) ListConnections(c *fiber.Ctx) error {
 	logger.Infof("connections listed org=%s count=%d", orgID, len(connResp))
 
 	pagination.SetItems(connResp)
-	pagination.SetTotal(len(connResp))
+	pagination.SetTotal(int(totalCount))
 
 	return httpUtils.OK(c, pagination)
 }

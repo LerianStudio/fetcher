@@ -22,7 +22,7 @@ func NewListProducts(repo productRepo.Repository) *ListProducts {
 	return &ListProducts{productRepo: repo}
 }
 
-func (s *ListProducts) Execute(ctx context.Context, organizationID uuid.UUID, filters http.QueryHeader) ([]*model.Product, error) {
+func (s *ListProducts) Execute(ctx context.Context, organizationID uuid.UUID, filters http.QueryHeader) ([]*model.Product, int64, error) {
 	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "service.list_products")
@@ -38,14 +38,14 @@ func (s *ListProducts) Execute(ctx context.Context, organizationID uuid.UUID, fi
 		libOpentelemetry.HandleSpanError(&span, "Failed to convert filters to JSON string", err)
 	}
 
-	list, err := s.productRepo.List(ctx, organizationID, filters)
+	list, totalCount, err := s.productRepo.List(ctx, organizationID, filters)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	if list == nil {
-		return []*model.Product{}, nil
+		return []*model.Product{}, totalCount, nil
 	}
 
-	return list, nil
+	return list, totalCount, nil
 }

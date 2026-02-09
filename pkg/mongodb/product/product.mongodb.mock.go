@@ -113,12 +113,13 @@ func (mr *MockRepositoryMockRecorder) FindByCode(ctx, code, organizationID inter
 }
 
 // List mocks base method.
-func (m *MockRepository) List(ctx context.Context, organizationID uuid.UUID, filters http.QueryHeader) ([]*model.Product, error) {
+func (m *MockRepository) List(ctx context.Context, organizationID uuid.UUID, filters http.QueryHeader) ([]*model.Product, int64, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "List", ctx, organizationID, filters)
 	ret0, _ := ret[0].([]*model.Product)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	ret1, _ := ret[1].(int64)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
 }
 
 // List indicates an expected call of List.

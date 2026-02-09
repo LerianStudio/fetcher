@@ -114,12 +114,13 @@ func (mr *MockRepositoryMockRecorder) FindByOrganizationAndName(ctx, organizatio
 }
 
 // List mocks base method.
-func (m *MockRepository) List(ctx context.Context, organizationID uuid.UUID, filters http.QueryHeader) ([]*model.Connection, error) {
+func (m *MockRepository) List(ctx context.Context, organizationID uuid.UUID, filters http.QueryHeader) ([]*model.Connection, int64, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "List", ctx, organizationID, filters)
 	ret0, _ := ret[0].([]*model.Connection)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	ret1, _ := ret[1].(int64)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
 }
 
 // List indicates an expected call of List.
@@ -159,12 +160,13 @@ func (mr *MockRepositoryMockRecorder) FindByConfigNames(ctx, organizationID, con
 }
 
 // ListUnassigned mocks base method.
-func (m *MockRepository) ListUnassigned(ctx context.Context, organizationID uuid.UUID, filters http.QueryHeader) ([]*model.Connection, error) {
+func (m *MockRepository) ListUnassigned(ctx context.Context, organizationID uuid.UUID, filters http.QueryHeader) ([]*model.Connection, int64, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "ListUnassigned", ctx, organizationID, filters)
 	ret0, _ := ret[0].([]*model.Connection)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	ret1, _ := ret[1].(int64)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
 }
 
 // ListUnassigned indicates an expected call of ListUnassigned.

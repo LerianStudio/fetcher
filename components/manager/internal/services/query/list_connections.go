@@ -26,7 +26,7 @@ func NewListConnections(connectionRepo connRepo.Repository, productRepo productR
 	return &ListConnections{connRepo: connectionRepo, productRepo: productRepo}
 }
 
-func (s *ListConnections) Execute(ctx context.Context, organizationID uuid.UUID, productID *uuid.UUID, filters http.QueryHeader) ([]*model.Connection, error) {
+func (s *ListConnections) Execute(ctx context.Context, organizationID uuid.UUID, productID *uuid.UUID, filters http.QueryHeader) ([]*model.Connection, int64, error) {
 	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "service.list_connections")
@@ -42,11 +42,11 @@ func (s *ListConnections) Execute(ctx context.Context, organizationID uuid.UUID,
 
 		prod, err := s.productRepo.FindByID(ctx, *productID, organizationID)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 
 		if prod == nil {
-			return nil, pkg.ValidateBusinessError(constant.ErrEntityNotFound, "product")
+			return nil, 0, pkg.ValidateBusinessError(constant.ErrEntityNotFound, "product")
 		}
 
 		filters.ProductID = productID
@@ -57,14 +57,14 @@ func (s *ListConnections) Execute(ctx context.Context, organizationID uuid.UUID,
 		libOpentelemetry.HandleSpanError(&span, "Failed to convert fetcher input to JSON string", err)
 	}
 
-	list, err := s.connRepo.List(ctx, organizationID, filters)
+	list, totalCount, err := s.connRepo.List(ctx, organizationID, filters)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	if list == nil {
-		return []*model.Connection{}, nil
+		return []*model.Connection{}, totalCount, nil
 	}
 
-	return list, nil
+	return list, totalCount, nil
 }

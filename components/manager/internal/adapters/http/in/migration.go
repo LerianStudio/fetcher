@@ -80,7 +80,7 @@ func (h *MigrationHandler) ListUnassignedConnections(c *fiber.Ctx) error {
 		Page:  headerParams.Page,
 	}
 
-	conns, err := h.ListUnassignedQry.Execute(ctx, orgID, *headerParams)
+	conns, totalCount, err := h.ListUnassignedQry.Execute(ctx, orgID, *headerParams)
 	if err != nil {
 		logger.Errorf("Failed to execute list unassigned connections query, Error: %s", err.Error())
 		libOpentelemetry.HandleSpanError(&span, "failed to list unassigned connections", err)
@@ -96,7 +96,7 @@ func (h *MigrationHandler) ListUnassignedConnections(c *fiber.Ctx) error {
 	logger.Infof("unassigned connections listed org=%s count=%d", orgID, len(connResp))
 
 	pagination.SetItems(connResp)
-	pagination.SetTotal(len(connResp))
+	pagination.SetTotal(int(totalCount))
 
 	return httpUtils.OK(c, pagination)
 }

@@ -49,9 +49,9 @@ func TestListProducts_Execute_Success(t *testing.T) {
 
 	mockProductRepo.EXPECT().
 		List(gomock.Any(), orgID, filters).
-		Return(expectedList, nil)
+		Return(expectedList, int64(2), nil)
 
-	result, err := svc.Execute(ctx, orgID, filters)
+	result, _, err := svc.Execute(ctx, orgID, filters)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -91,9 +91,9 @@ func TestListProducts_Execute_EmptyList(t *testing.T) {
 	// Mock: list returns nil (no products found)
 	mockProductRepo.EXPECT().
 		List(gomock.Any(), orgID, filters).
-		Return(nil, nil)
+		Return(nil, int64(0), nil)
 
-	result, err := svc.Execute(ctx, orgID, filters)
+	result, _, err := svc.Execute(ctx, orgID, filters)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -127,9 +127,9 @@ func TestListProducts_Execute_RepositoryError(t *testing.T) {
 	// Mock: list returns error
 	mockProductRepo.EXPECT().
 		List(gomock.Any(), orgID, filters).
-		Return(nil, dbError)
+		Return(nil, int64(0), dbError)
 
-	result, err := svc.Execute(ctx, orgID, filters)
+	result, _, err := svc.Execute(ctx, orgID, filters)
 
 	if result != nil {
 		t.Fatalf("expected nil result, got %+v", result)
@@ -184,7 +184,7 @@ func TestListProducts_Execute_TableDriven(t *testing.T) {
 				}
 				mock.EXPECT().
 					List(gomock.Any(), orgID, filters).
-					Return(products, nil)
+					Return(products, int64(3), nil)
 			},
 			wantErr:         false,
 			wantResultCount: 3,
@@ -198,7 +198,7 @@ func TestListProducts_Execute_TableDriven(t *testing.T) {
 			setupMocks: func(mock *productMock.MockRepository, orgID uuid.UUID, filters http.QueryHeader) {
 				mock.EXPECT().
 					List(gomock.Any(), orgID, filters).
-					Return(nil, nil)
+					Return(nil, int64(0), nil)
 			},
 			wantErr:         false,
 			wantResultCount: 0,
@@ -212,7 +212,7 @@ func TestListProducts_Execute_TableDriven(t *testing.T) {
 			setupMocks: func(mock *productMock.MockRepository, orgID uuid.UUID, filters http.QueryHeader) {
 				mock.EXPECT().
 					List(gomock.Any(), orgID, filters).
-					Return(nil, errors.New("database error"))
+					Return(nil, int64(0), errors.New("database error"))
 			},
 			wantErr:         true,
 			wantResultCount: 0,
@@ -230,7 +230,7 @@ func TestListProducts_Execute_TableDriven(t *testing.T) {
 				}
 				mock.EXPECT().
 					List(gomock.Any(), orgID, filters).
-					Return(products, nil)
+					Return(products, int64(2), nil)
 			},
 			wantErr:         false,
 			wantResultCount: 2,
@@ -247,7 +247,7 @@ func TestListProducts_Execute_TableDriven(t *testing.T) {
 				}
 				mock.EXPECT().
 					List(gomock.Any(), orgID, filters).
-					Return(products, nil)
+					Return(products, int64(1), nil)
 			},
 			wantErr:         false,
 			wantResultCount: 1,
@@ -261,7 +261,7 @@ func TestListProducts_Execute_TableDriven(t *testing.T) {
 				}
 				mock.EXPECT().
 					List(gomock.Any(), orgID, filters).
-					Return(products, nil)
+					Return(products, int64(1), nil)
 			},
 			wantErr:         false,
 			wantResultCount: 1,
@@ -281,7 +281,7 @@ func TestListProducts_Execute_TableDriven(t *testing.T) {
 
 			svc := NewListProducts(mockProductRepo)
 
-			result, err := svc.Execute(ctx, orgID, tt.filters)
+			result, _, err := svc.Execute(ctx, orgID, tt.filters)
 
 			if tt.wantErr {
 				if err == nil {
@@ -329,9 +329,9 @@ func TestListProducts_Execute_OrganizationIsolation(t *testing.T) {
 
 	mockProductRepo.EXPECT().
 		List(gomock.Any(), orgID, filters).
-		Return(orgProducts, nil)
+		Return(orgProducts, int64(2), nil)
 
-	result, err := svc.Execute(ctx, orgID, filters)
+	result, _, err := svc.Execute(ctx, orgID, filters)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -360,7 +360,7 @@ func TestListProducts_Execute_ErrorScenarios(t *testing.T) {
 			setupMock: func(mock *productMock.MockRepository, orgID uuid.UUID, filters http.QueryHeader) {
 				mock.EXPECT().
 					List(gomock.Any(), orgID, filters).
-					Return(nil, errors.New("database connection failed"))
+					Return(nil, int64(0), errors.New("database connection failed"))
 			},
 			errorMsg: "database connection failed",
 		},
@@ -369,7 +369,7 @@ func TestListProducts_Execute_ErrorScenarios(t *testing.T) {
 			setupMock: func(mock *productMock.MockRepository, orgID uuid.UUID, filters http.QueryHeader) {
 				mock.EXPECT().
 					List(gomock.Any(), orgID, filters).
-					Return(nil, errors.New("context deadline exceeded"))
+					Return(nil, int64(0), errors.New("context deadline exceeded"))
 			},
 			errorMsg: "context deadline exceeded",
 		},
@@ -378,7 +378,7 @@ func TestListProducts_Execute_ErrorScenarios(t *testing.T) {
 			setupMock: func(mock *productMock.MockRepository, orgID uuid.UUID, filters http.QueryHeader) {
 				mock.EXPECT().
 					List(gomock.Any(), orgID, filters).
-					Return(nil, errors.New("permission denied"))
+					Return(nil, int64(0), errors.New("permission denied"))
 			},
 			errorMsg: "permission denied",
 		},
@@ -401,7 +401,7 @@ func TestListProducts_Execute_ErrorScenarios(t *testing.T) {
 
 			tt.setupMock(mockProductRepo, orgID, filters)
 
-			result, err := svc.Execute(ctx, orgID, filters)
+			result, _, err := svc.Execute(ctx, orgID, filters)
 
 			if result != nil {
 				t.Fatalf("expected nil result, got %+v", result)

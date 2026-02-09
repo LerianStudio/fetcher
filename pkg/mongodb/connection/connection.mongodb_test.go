@@ -828,7 +828,7 @@ func TestConnectionMongoDBRepository_List(t *testing.T) {
 		createConnection(t, repo, otherOrg)
 
 		filters := http.QueryHeader{Limit: 1, Page: 1}
-		list, err := repo.List(context.Background(), org, filters)
+		list, _, err := repo.List(context.Background(), org, filters)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -864,7 +864,7 @@ func TestConnectionMongoDBRepository_List(t *testing.T) {
 			EndDate:   end,
 		}
 
-		list, err := repo.List(context.Background(), org, filters)
+		list, _, err := repo.List(context.Background(), org, filters)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -886,7 +886,7 @@ func TestConnectionMongoDBRepository_List(t *testing.T) {
 			connection: mockConn,
 			Database:   connectionTestDatabaseName,
 		}
-		if _, err := repo.List(context.Background(), uuid.New(), http.QueryHeader{}); err == nil {
+		if _, _, err := repo.List(context.Background(), uuid.New(), http.QueryHeader{}); err == nil {
 			t.Fatalf("expected db error")
 		} else {
 			var internal pkg.InternalServerError

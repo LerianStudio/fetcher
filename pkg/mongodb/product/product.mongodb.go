@@ -31,7 +31,7 @@ type Repository interface {
 	Delete(ctx context.Context, id, organizationID uuid.UUID, deletedAt time.Time) error
 	FindByID(ctx context.Context, id, organizationID uuid.UUID) (*model.Product, error)
 	FindByCode(ctx context.Context, code string, organizationID uuid.UUID) (*model.Product, error)
-	List(ctx context.Context, organizationID uuid.UUID, filters http.QueryHeader) ([]*model.Product, error)
+	List(ctx context.Context, organizationID uuid.UUID, filters http.QueryHeader) ([]*model.Product, int64, error)
 }
 
 // mongoDatabaseProvider defines the interface for obtaining a MongoDB client.
@@ -370,7 +370,7 @@ func (pr *ProductMongoDBRepository) FindByCode(ctx context.Context, code string,
 }
 
 // List returns a paginated set of products for the given organization.
-func (pr *ProductMongoDBRepository) List(ctx context.Context, organizationID uuid.UUID, filters http.QueryHeader) ([]*model.Product, error) {
+func (pr *ProductMongoDBRepository) List(ctx context.Context, organizationID uuid.UUID, filters http.QueryHeader) ([]*model.Product, int64, error) {
 	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "mongodb.list_products")
@@ -386,7 +386,7 @@ func (pr *ProductMongoDBRepository) List(ctx context.Context, organizationID uui
 	db, err := pr.connection.GetDB(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
-		return nil, pkg.ValidateInternalError(err, "product")
+		return nil, 0, pkg.ValidateInternalError(err, "product")
 	}
 
 	queryFilter := pr.buildQueryFilter(organizationID, filters)
@@ -399,10 +399,16 @@ func (pr *ProductMongoDBRepository) List(ctx context.Context, organizationID uui
 
 	coll := db.Database(strings.ToLower(pr.Database)).Collection(strings.ToLower(constant.MongoCollectionProduct))
 
+	totalCount, err := coll.CountDocuments(ctx, queryFilter)
+	if err != nil {
+		libOpentelemetry.HandleSpanError(&span, "Failed to count products", err)
+		return nil, 0, mongodb.MapMongoErrorToResponse(err, ctx)
+	}
+
 	cur, err := coll.Find(ctx, queryFilter, &opts)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to list products", err)
-		return nil, mongodb.MapMongoErrorToResponse(err, ctx)
+		return nil, 0, mongodb.MapMongoErrorToResponse(err, ctx)
 	}
 	defer cur.Close(ctx)
 
@@ -417,13 +423,13 @@ func (pr *ProductMongoDBRepository) List(ctx context.Context, organizationID uui
 		var record ProductMongoDBModel
 		if err := cur.Decode(&record); err != nil {
 			libOpentelemetry.HandleSpanError(&span, "Failed to decode product record", err)
-			return nil, mongodb.MapMongoErrorToResponse(err, ctx)
+			return nil, 0, mongodb.MapMongoErrorToResponse(err, ctx)
 		}
 
 		product, err := record.ToEntity()
 		if err != nil {
 			libOpentelemetry.HandleSpanError(&span, "Failed to convert record to domain", err)
-			return nil, pkg.ValidateInternalError(err, "product")
+			return nil, 0, pkg.ValidateInternalError(err, "product")
 		}
 
 		products = append(products, product)
@@ -431,10 +437,12 @@ func (pr *ProductMongoDBRepository) List(ctx context.Context, organizationID uui
 
 	if err := cur.Err(); err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to iterate over products", err)
-		return nil, mongodb.MapMongoErrorToResponse(err, ctx)
+		return nil, 0, mongodb.MapMongoErrorToResponse(err, ctx)
 	}
 
-	return products, nil
+	span.SetAttributes(attribute.Int64("app.response.total_count", totalCount))
+
+	return products, totalCount, nil
 }
 
 // buildQueryFilter builds the MongoDB query filter from filters.
