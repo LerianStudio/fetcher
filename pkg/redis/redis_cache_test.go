@@ -29,7 +29,10 @@ func setupMiniredis(t *testing.T) (*miniredis.Miniredis, *RedisConnection) {
 	require.NoError(t, err)
 
 	client := redis.NewClient(&redis.Options{
-		Addr: mr.Addr(),
+		Addr:         mr.Addr(),
+		DialTimeout:  100 * time.Millisecond, // Fast timeout for tests
+		ReadTimeout:  100 * time.Millisecond,
+		WriteTimeout: 100 * time.Millisecond,
 	})
 
 	conn := &RedisConnection{

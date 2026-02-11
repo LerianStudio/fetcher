@@ -1,6 +1,6 @@
 module github.com/LerianStudio/fetcher
 
-go 1.25.3
+go 1.25.6
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
@@ -16,6 +16,7 @@ require (
 	github.com/go-playground/locales v0.14.1
 	github.com/go-playground/universal-translator v0.18.1
 	github.com/go-playground/validator v9.31.0+incompatible
+	github.com/go-resty/resty/v2 v2.17.1
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/gofiber/fiber/v2 v2.52.11
 	github.com/google/uuid v1.6.0
@@ -39,6 +40,7 @@ require (
 	github.com/testcontainers/testcontainers-go/modules/redis v0.40.0
 	github.com/tryvium-travels/memongo v0.12.0
 	go.mongodb.org/mongo-driver v1.17.8
+	go.mongodb.org/mongo-driver/v2 v2.3.0
 	go.opentelemetry.io/otel v1.40.0
 	go.opentelemetry.io/otel/metric v1.40.0
 	go.opentelemetry.io/otel/trace v1.40.0

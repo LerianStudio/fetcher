@@ -18,3 +18,4 @@ github.com/LerianStudio/fetcher/pkg/model/datasource/postgres
 github.com/LerianStudio/fetcher/pkg/model/datasource/sqlserver
 github.com/LerianStudio/fetcher/pkg/datasource
 github.com/LerianStudio/fetcher/pkg/testutil
+github.com/LerianStudio/fetcher/pkg/itestkit

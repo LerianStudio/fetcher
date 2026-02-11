@@ -119,7 +119,7 @@ Lerian Fetcher is built as a cloud-native platform following Hexagonal Architect
 ### Prerequisites
 
 - Docker and Docker Compose
-- Go 1.25.3+ (for development)
+- Go 1.25.6+ (for development)
 - Make
 
 ### Quick Start

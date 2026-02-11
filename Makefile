@@ -56,6 +56,43 @@ endef
 DOCKER_CMD := $(shell if docker compose version >/dev/null 2>&1; then echo "docker compose"; else echo "docker-compose"; fi)
 export DOCKER_CMD
 
+# Coverage configuration
+# PKG: specific package to test (e.g., PKG=./components/manager/...)
+PKG ?=
+COVERAGE_DIR ?= $(ARTIFACTS_DIR)
+
+# Test configuration
+# RETRY_ON_FAIL: retry tests once on failure (useful for CI)
+RETRY_ON_FAIL ?= 0
+GOTESTSUM := $(shell command -v gotestsum 2>/dev/null)
+
+# macOS linker compatibility (fixes ld warnings on macOS)
+ifeq ($(shell uname),Darwin)
+    GO_TEST_LDFLAGS := -ldflags="-linkmode=external -extldflags=-ld_classic"
+else
+    GO_TEST_LDFLAGS :=
+endif
+
+# Benchmark configuration
+# BENCH: specific benchmark pattern (e.g., BENCH=BenchmarkCache)
+# BENCH_PKG: specific package to benchmark (e.g., BENCH_PKG=./pkg/redis/...)
+BENCH ?= .
+BENCH_PKG ?= ./...
+
+# E2E test configuration
+# GITHUB_TOKEN: GitHub token for building images with private dependencies
+# E2E_SKIP_BUILD: Skip Docker build, use pre-built images (default: true)
+# MANAGER_IMAGE: Docker image for Manager container (default: fetcher-manager:latest)
+# WORKER_IMAGE: Docker image for Worker container (default: fetcher-worker:latest)
+GITHUB_TOKEN ?=
+E2E_SKIP_BUILD ?= true
+MANAGER_IMAGE ?= fetcher-manager:latest
+WORKER_IMAGE ?= fetcher-worker:latest
+export GITHUB_TOKEN
+export E2E_SKIP_BUILD
+export MANAGER_IMAGE
+export WORKER_IMAGE
+
 #-------------------------------------------------------
 # Help Command
 #-------------------------------------------------------
@@ -68,11 +105,11 @@ help:
 	@echo ""
 	@echo ""
 	@echo "Core Commands:"
-	@echo "  make help                        	   - Display this help message"
-	@echo "  make test                        	   - Run unit tests on all components"
-	@echo "  make build                       	   - Build all components"
-	@echo "  make clean                       	   - Clean all build artifacts"
-	@echo "  make cover                       	   - Run test coverage"
+	@echo "  make help                              - Display this help message"
+	@echo "  make test-unit                         - Run unit tests on all components"
+	@echo "  make build                             - Build all components"
+	@echo "  make clean                             - Clean all build artifacts"
+	@echo "  make coverage-unit                     - Run unit tests with coverage (PKG=./path, RETRY_ON_FAIL=1)"
 	@echo ""
 	@echo ""
 	@echo "Code Quality Commands:"
@@ -115,17 +152,16 @@ help:
 	@echo ""
 	@echo ""
 	@echo "Test Suite Aliases:"
-	@echo "  make test-integration-container  	   - Run integration tests with all containers"
-	@echo "  make test-integration-infra      	   - Start infrastructure for debugging (fixed ports)"
-	@echo "  make test-integration-debug-manager   - Debug Manager in IDE, Worker in container"
-	@echo "  make test-integration-debug-worker    - Debug Worker in IDE, Manager in container"
-	@echo "  make test-integration-debug-full      - Debug both Manager and Worker in IDE"
-	@echo "  make test-integration-clean      	   - Clean up testcontainers and networks"
-	@echo "  make test-integration-check      	   - Check for port conflicts before starting"
-	@echo "  make test-fuzzy					   - Run fuzz tests on all components"
-	@echo "  make test-chaos              	   	   - Run chaos E2E tests (full suite, ~45min)"
-	@echo "  make test-chaos-quick        	   	   - Run quick chaos tests (latency only, ~20min)"
-	@echo "  make test-chaos-verbose      	   	   - Run chaos tests with verbose output"
+	@echo "  make test-all                         - Run all tests sequentially (unit, fuzzy, e2e, chaos) (~25m duration)"
+	@echo "  make test-unit                        - Run unit tests on all components (~1m duration)"
+	@echo "  make test-fuzzy                       - Run fuzz tests on all components (~3m duration)"
+	@echo "  make test-e2e                         - Run E2E tests (~2m duration)"
+	@echo "  make test-chaos                       - Run chaos tests (~20m duration)"
+	@echo "  make test-bench                       - Run benchmark tests (BENCH=pattern, BENCH_PKG=./path) (~1m duration)"
+	@echo ""
+	@echo ""
+	@echo "Coverage Commands:"
+	@echo "  make coverage-unit                    - Run unit tests with coverage (PKG=./path, RETRY_ON_FAIL=1) (~1m duration)"
 	@echo ""
 	@echo ""
 	@echo "Cryptographic Utility Commands:"
@@ -203,169 +239,218 @@ build:
 #-------------------------------------------------------
 
 .PHONY: test-unit
-test-unit:
+test-unit: ## Run unit tests on all components
 	$(call print_title,Running unit tests)
-	@PACKAGES=$$(go list ./... | grep -v -f ./scripts/coverage_ignore.txt 2>/dev/null || go list ./...); \
-	go test -v $$PACKAGES
-	@echo "[ok] Unit tests completed successfully"
-
-# =============================================================================
-# test-integration-container: Full Integration Tests
-# =============================================================================
-.PHONY: test-integration-container
-test-integration-container:
-	$(call print_title,Running integration tests with Testcontainers)
-	$(call check_command,docker,Install Docker from https://docs.docker.com/get-docker/)
-	@echo "Note: Integration tests require either:"
-	@echo "  - GITHUB_TOKEN set (to build from Dockerfile)"
-	@echo "  - MANAGER_IMAGE and WORKER_IMAGE set (to use pre-built images)"
-	@echo ""
-	@DOCKER_BUILDKIT=1 go test -tags=integration -v -timeout 30m -count=1 ./tests/integration/containers/...
-	@echo "[ok] Integration tests completed successfully"
-
-# =============================================================================
-# test-integration-infra: Start Infrastructure for Debug Sessions
-# =============================================================================
-.PHONY: test-integration-infra
-test-integration-infra: test-integration-check
-	$(call print_title,Starting integration test infrastructure with fixed ports)
-	$(call check_command,docker,Install Docker from https://docs.docker.com/get-docker/)
-	@echo "Starting infrastructure containers..."
-	@echo "This will use fixed ports for VS Code debugging."
-	@echo ""
-	@go run -tags=integration ./tests/integration/containers/cmd/start-infra/...
-
-# Helper function to determine test run pattern
-define get_test_run
-$(if $(TEST),-run "TestWorkerIntegrationSuite/$(TEST)",)
-endef
-
-# =============================================================================
-# test-integration-debug-manager: Debug Manager API in VS Code
-# =============================================================================
-.PHONY: test-integration-debug-manager
-test-integration-debug-manager:
-	$(call print_title,Running integration tests with Manager running locally)
-	$(call check_command,docker,Install Docker from https://docs.docker.com/get-docker/)
-	@echo "Mode: Manager Debug (Manager local, Worker container)"
-	@echo "Prerequisite: Manager must be running on localhost:4006"
-ifdef TEST
-	@echo "Running test: $(TEST)"
-else
-	@echo "Running: ALL tests"
-endif
-	@echo ""
-	@DOCKER_BUILDKIT=1 EXTERNAL_MANAGER_URL=http://localhost:4006 REUSE_INFRA=true \
-		go test -tags=integration -v -timeout 30m -count=1 $(call get_test_run) ./tests/integration/containers/...
-	@echo "[ok] Integration tests completed successfully"
-
-# =============================================================================
-# test-integration-debug-worker: Debug Worker in VS Code
-# =============================================================================
-.PHONY: test-integration-debug-worker
-test-integration-debug-worker:
-	$(call print_title,Running integration tests with Worker running locally)
-	$(call check_command,docker,Install Docker from https://docs.docker.com/get-docker/)
-	@echo "Mode: Worker Debug (Manager container, Worker local)"
-	@echo "Prerequisite: Worker must be running locally"
-ifdef TEST
-	@echo "Running test: $(TEST)"
-else
-	@echo "Running: ALL tests"
-endif
-	@echo ""
-	@DOCKER_BUILDKIT=1 SKIP_WORKER=true REUSE_INFRA=true \
-		go test -tags=integration -v -timeout 30m -count=1 $(call get_test_run) ./tests/integration/containers/...
-	@echo "[ok] Integration tests completed successfully"
-
-# =============================================================================
-# test-integration-debug-full: Debug Both Manager and Worker in VS Code
-# =============================================================================
-.PHONY: test-integration-debug-full
-test-integration-debug-full:
-	$(call print_title,Running integration tests with both Manager and Worker running locally)
-	$(call check_command,docker,Install Docker from https://docs.docker.com/get-docker/)
-	@echo "Mode: Full Debug (both Manager and Worker local)"
-	@echo "Prerequisites:"
-	@echo "  - Manager must be running on localhost:4006"
-	@echo "  - Worker must be running locally"
-ifdef TEST
-	@echo "Running test: $(TEST)"
-else
-	@echo "Running: ALL tests"
-endif
-	@echo ""
-	@DOCKER_BUILDKIT=1 EXTERNAL_MANAGER_URL=http://localhost:4006 SKIP_WORKER=true REUSE_INFRA=true \
-		go test -tags=integration -v -timeout 30m -count=1 $(call get_test_run) ./tests/integration/containers/...
-	@echo "[ok] Integration tests completed successfully"
-
-# =============================================================================
-# test-integration-clean: Clean Up Integration Test Resources
-# =============================================================================
-# Integration test fixed ports
-INTEGRATION_PORTS := 27017 27018 5672 8888 6379 5432 3306 1433 1521 4006
-
-.PHONY: test-integration-clean
-test-integration-clean:
-	$(call print_title,Cleaning up integration test resources)
-	@echo "Stopping testcontainers..."
-	@docker ps -q --filter "label=org.testcontainers=true" | xargs -r docker stop 2>/dev/null || true
-	@echo "Removing testcontainers..."
-	@docker ps -aq --filter "label=org.testcontainers=true" | xargs -r docker rm -f 2>/dev/null || true
-	@echo "Removing integration test network..."
-	@docker network rm fetcher-test-network 2>/dev/null || true
-	@echo "Removing config file..."
-	@rm -f /tmp/fetcher-test-infra.json
-	@echo "Pruning unused containers..."
-	@docker container prune -f 2>/dev/null || true
-	@echo "[ok] Integration test resources cleaned successfully"
-
-# =============================================================================
-# test-integration-check: Check for Port Conflicts Before Starting
-# =============================================================================
-.PHONY: test-integration-check
-test-integration-check:
-	$(call print_title,Checking for port conflicts)
-	@conflicts=0; \
-	for port in $(INTEGRATION_PORTS); do \
-		if command -v ss >/dev/null 2>&1; then \
-			if ss -tlnp 2>/dev/null | grep -q ":$$port "; then \
-				echo "[CONFLICT] Port $$port is in use"; \
-				conflicts=1; \
-			fi; \
-		elif command -v netstat >/dev/null 2>&1; then \
-			if netstat -tlnp 2>/dev/null | grep -q ":$$port "; then \
-				echo "[CONFLICT] Port $$port is in use"; \
-				conflicts=1; \
-			fi; \
-		elif command -v lsof >/dev/null 2>&1; then \
-			if lsof -i :$$port >/dev/null 2>&1; then \
-				echo "[CONFLICT] Port $$port is in use"; \
-				conflicts=1; \
-			fi; \
-		fi; \
-	done; \
-	if [ $$conflicts -eq 1 ]; then \
-		echo ""; \
-		echo "[warning] Some ports are in use. Run 'make test-integration-clean' to clean up."; \
-		echo "Or check what's using them: lsof -i :<port>"; \
-		exit 1; \
+	@start_time=$$(date +%s); \
+	PACKAGES=$$(go list ./... | grep -v -f ./scripts/coverage_ignore.txt 2>/dev/null || go list ./...); \
+	go test -v $$PACKAGES; \
+	test_exit_code=$$?; \
+	end_time=$$(date +%s); \
+	elapsed=$$((end_time - start_time)); \
+	minutes=$$((elapsed / 60)); \
+	seconds=$$((elapsed % 60)); \
+	echo ""; \
+	echo "=========================================="; \
+	echo "  UNIT TEST REPORT"; \
+	echo "=========================================="; \
+	echo "  Duration: $${minutes}m $${seconds}s"; \
+	if [ $$test_exit_code -eq 0 ]; then \
+	  echo "  Status:   PASS"; \
+	  echo "=========================================="; \
 	else \
-		echo "[ok] All integration test ports are available"; \
+	  echo "  Status:   FAIL"; \
+	  echo "=========================================="; \
+	  exit $$test_exit_code; \
 	fi
 
-.PHONY: cover
-cover:
-	$(call print_title,Generating test coverage report)
+.PHONY: test-all
+test-all: ## Run all tests sequentially (unit, fuzzy, e2e, chaos)
+	$(call print_title,Running all tests sequentially)
+	@mkdir -p $(ARTIFACTS_DIR); \
+	total_start=$$(date +%s); \
+	unit_status="SKIP"; unit_time=0; \
+	fuzzy_status="SKIP"; fuzzy_time=0; \
+	e2e_status="SKIP"; e2e_time=0; \
+	chaos_status="SKIP"; chaos_time=0; \
+	failed=""; \
+	echo ""; \
+	echo "=== [1/4] Running Unit Tests ==="; \
+	start=$$(date +%s); \
+	if $(MAKE) test-unit 2>&1 | tee $(ARTIFACTS_DIR)/test-unit.log; then \
+	  unit_status="PASS"; \
+	else \
+	  unit_status="FAIL"; \
+	  failed="$$failed unit"; \
+	fi; \
+	unit_time=$$(($$(date +%s) - start)); \
+	echo ""; \
+	echo "=== [2/4] Running Fuzz Tests ==="; \
+	start=$$(date +%s); \
+	if $(MAKE) test-fuzzy 2>&1 | tee $(ARTIFACTS_DIR)/test-fuzzy.log; then \
+	  fuzzy_status="PASS"; \
+	else \
+	  fuzzy_status="FAIL"; \
+	  failed="$$failed fuzzy"; \
+	fi; \
+	fuzzy_time=$$(($$(date +%s) - start)); \
+	echo ""; \
+	echo "=== [3/4] Running E2E Tests ==="; \
+	start=$$(date +%s); \
+	if $(MAKE) test-e2e 2>&1 | tee $(ARTIFACTS_DIR)/test-e2e.log; then \
+	  e2e_status="PASS"; \
+	else \
+	  e2e_status="FAIL"; \
+	  failed="$$failed e2e"; \
+	fi; \
+	e2e_time=$$(($$(date +%s) - start)); \
+	echo ""; \
+	echo "=== [4/4] Running Chaos Tests ==="; \
+	start=$$(date +%s); \
+	if $(MAKE) test-chaos 2>&1 | tee $(ARTIFACTS_DIR)/test-chaos.log; then \
+	  chaos_status="PASS"; \
+	else \
+	  chaos_status="FAIL"; \
+	  failed="$$failed chaos"; \
+	fi; \
+	chaos_time=$$(($$(date +%s) - start)); \
+	total_time=$$(($$(date +%s) - total_start)); \
+	total_min=$$((total_time / 60)); \
+	total_sec=$$((total_time % 60)); \
+	echo ""; \
+	echo ""; \
+	echo "=========================================================="; \
+	echo "                   FULL TEST REPORT                       "; \
+	echo "=========================================================="; \
+	echo ""; \
+	echo "  Test Suite        Status    Duration"; \
+	echo "  ----------------  --------  --------"; \
+	printf "  %-16s  %-8s  %4ds\n" "Unit" "$$unit_status" "$$unit_time"; \
+	printf "  %-16s  %-8s  %4ds\n" "Fuzzy" "$$fuzzy_status" "$$fuzzy_time"; \
+	printf "  %-16s  %-8s  %4ds\n" "E2E" "$$e2e_status" "$$e2e_time"; \
+	printf "  %-16s  %-8s  %4ds\n" "Chaos" "$$chaos_status" "$$chaos_time"; \
+	echo "  ----------------  --------  --------"; \
+	printf "  %-16s  %8s  %dm %ds\n" "TOTAL" "" "$$total_min" "$$total_sec"; \
+	echo ""; \
+	if [ -n "$$failed" ]; then \
+	  echo "  FAILED SUITES:$$failed"; \
+	  echo ""; \
+	  echo "  Failure Details:"; \
+	  echo "  ----------------"; \
+	  for suite in $$failed; do \
+	    echo ""; \
+	    echo "  [$${suite}] Last 20 lines:"; \
+	    tail -20 $(ARTIFACTS_DIR)/test-$${suite}.log 2>/dev/null | sed 's/^/    /' || echo "    (log not available)"; \
+	  done; \
+	  echo ""; \
+	  echo "  Full logs: $(ARTIFACTS_DIR)/test-*.log"; \
+	  echo ""; \
+	  echo "=========================================================="; \
+	  echo "  RESULT: FAILED                                          "; \
+	  echo "=========================================================="; \
+	  exit 1; \
+	else \
+	  echo "=========================================================="; \
+	  echo "  RESULT: ALL TESTS PASSED                                "; \
+	  echo "=========================================================="; \
+	fi
+
+# =============================================================================
+# E2E Testing Commands
+# =============================================================================
+
+# E2E tests
+# Run end-to-end tests with the full application stack.
+# All parameters are optional. Default images: fetcher-manager:latest, fetcher-worker:latest
+# Usage:
+#   make test-e2e                                         							  # Use default pre-built images
+#   make test-e2e E2E_SKIP_BUILD=false GITHUB_TOKEN=`cat .secrets/github_token.txt`   # Build images with private deps
+#   make test-e2e MANAGER_IMAGE=xxx WORKER_IMAGE=yyy      							  # Use custom images
+.PHONY: test-e2e
+test-e2e: ## Run E2E tests
+	$(call print_title,Running E2E tests)
+	$(call check_command,docker,Install Docker from https://docs.docker.com/get-docker/)
+	@start_time=$$(date +%s); \
+	go test -v -tags=e2e -timeout 30m -count=1 ./tests/e2e/...; \
+	test_exit_code=$$?; \
+	end_time=$$(date +%s); \
+	elapsed=$$((end_time - start_time)); \
+	minutes=$$((elapsed / 60)); \
+	seconds=$$((elapsed % 60)); \
+	echo ""; \
+	echo "=========================================="; \
+	echo "  E2E TEST REPORT"; \
+	echo "=========================================="; \
+	echo "  Duration: $${minutes}m $${seconds}s"; \
+	if [ $$test_exit_code -eq 0 ]; then \
+	  echo "  Status:   PASS"; \
+	  echo "=========================================="; \
+	else \
+	  echo "  Status:   FAIL"; \
+	  echo "=========================================="; \
+	  exit $$test_exit_code; \
+	fi
+
+# Unit tests with coverage (uses covermode=atomic)
+# Supports PKG parameter to filter packages (e.g., PKG=./components/manager/...)
+# Supports .ignorecoverunit file to exclude patterns from coverage stats
+# Supports GOTESTSUM for better test output (auto-detected)
+# Supports RETRY_ON_FAIL=1 for retry on failure
+.PHONY: coverage-unit
+coverage-unit: ## Run unit tests with coverage report
+	$(call print_title,Running unit tests with coverage)
 	$(call check_command,go,Install Go from https://golang.org/doc/install)
-	@sh ./scripts/coverage.sh $(ARTIFACTS_DIR)
-	@echo ""
-	@echo "Coverage Summary:"
-	@echo "----------------------------------------"
-	@go tool cover -func=$(ARTIFACTS_DIR)/coverage.out | grep total | awk '{print "Total coverage: " $$3}'
-	@echo "----------------------------------------"
-	@echo "Open $(ARTIFACTS_DIR)/coverage.html in your browser to view detailed coverage report"
+	@set -e; mkdir -p $(COVERAGE_DIR); \
+	if [ -n "$(PKG)" ]; then \
+	  echo "Using specified package: $(PKG)"; \
+	  pkgs=$$(go list $(PKG) 2>/dev/null | grep -v -f ./scripts/coverage_ignore.txt 2>/dev/null | tr '\n' ' ' || go list $(PKG)); \
+	else \
+	  pkgs=$$(go list ./... | grep -v -f ./scripts/coverage_ignore.txt 2>/dev/null || go list ./...); \
+	fi; \
+	if [ -z "$$pkgs" ]; then \
+	  echo "No packages found"; \
+	else \
+	  echo "Packages: $$pkgs"; \
+	  if [ -n "$(GOTESTSUM)" ]; then \
+	    echo "Running unit tests with gotestsum (coverage enabled)"; \
+	    gotestsum --format testname -- -v -race -count=1 $(GO_TEST_LDFLAGS) -covermode=atomic -coverprofile=$(COVERAGE_DIR)/coverage.out $$pkgs || { \
+	      if [ "$(RETRY_ON_FAIL)" = "1" ]; then \
+	        echo "Retrying unit tests once..."; \
+	        gotestsum --format testname -- -v -race -count=1 $(GO_TEST_LDFLAGS) -covermode=atomic -coverprofile=$(COVERAGE_DIR)/coverage.out $$pkgs; \
+	      else \
+	        exit 1; \
+	      fi; \
+	    }; \
+	  else \
+	    go test -v -race -count=1 $(GO_TEST_LDFLAGS) -covermode=atomic -coverprofile=$(COVERAGE_DIR)/coverage.out $$pkgs || { \
+	      if [ "$(RETRY_ON_FAIL)" = "1" ]; then \
+	        echo "Retrying unit tests once..."; \
+	        go test -v -race -count=1 $(GO_TEST_LDFLAGS) -covermode=atomic -coverprofile=$(COVERAGE_DIR)/coverage.out $$pkgs; \
+	      else \
+	        exit 1; \
+	      fi; \
+	    }; \
+	  fi; \
+	  if [ -f .ignorecoverunit ]; then \
+	    echo "Filtering coverage with .ignorecoverunit patterns..."; \
+	    patterns=$$(grep -v '^#' .ignorecoverunit | grep -v '^$$' | tr '\n' '|' | sed 's/|$$//'); \
+	    if [ -n "$$patterns" ]; then \
+	      regex_patterns=$$(echo "$$patterns" | sed 's/\./\\./g' | sed 's/\*/.*/g'); \
+	      head -1 $(COVERAGE_DIR)/coverage.out > $(COVERAGE_DIR)/coverage_filtered.out; \
+	      tail -n +2 $(COVERAGE_DIR)/coverage.out | grep -vE "$$regex_patterns" >> $(COVERAGE_DIR)/coverage_filtered.out || true; \
+	      mv $(COVERAGE_DIR)/coverage_filtered.out $(COVERAGE_DIR)/coverage.out; \
+	      echo "Excluded patterns: $$patterns"; \
+	    fi; \
+	  fi; \
+	  go tool cover -html=$(COVERAGE_DIR)/coverage.out -o $(COVERAGE_DIR)/coverage.html; \
+	  echo ""; \
+	  echo "Coverage Summary:"; \
+	  echo "----------------------------------------"; \
+	  go tool cover -func=$(COVERAGE_DIR)/coverage.out | grep total | awk '{print "Total coverage: " $$3}'; \
+	  echo "----------------------------------------"; \
+	  echo "Open $(COVERAGE_DIR)/coverage.html in your browser to view detailed coverage report"; \
+	fi
 	@echo "[ok] Coverage report generated successfully"
+
 
 #-------------------------------------------------------
 # Test Coverage Commands
@@ -690,8 +775,28 @@ FUZZ_TIME ?= 30s
 
 .PHONY: test-fuzzy fuzz-manager fuzz-worker fuzz-connection fuzz-fetcher fuzz-schema fuzz-message
 
-test-fuzzy: fuzz-manager fuzz-worker
-	@echo "[ok] All fuzz tests completed successfully"
+test-fuzzy: ## Run fuzz tests on all components
+	$(call print_title,Running fuzz tests)
+	@start_time=$$(date +%s); \
+	$(MAKE) fuzz-manager fuzz-worker; \
+	test_exit_code=$$?; \
+	end_time=$$(date +%s); \
+	elapsed=$$((end_time - start_time)); \
+	minutes=$$((elapsed / 60)); \
+	seconds=$$((elapsed % 60)); \
+	echo ""; \
+	echo "=========================================="; \
+	echo "  FUZZ TEST REPORT"; \
+	echo "=========================================="; \
+	echo "  Duration: $${minutes}m $${seconds}s"; \
+	if [ $$test_exit_code -eq 0 ]; then \
+	  echo "  Status:   PASS"; \
+	  echo "=========================================="; \
+	else \
+	  echo "  Status:   FAIL"; \
+	  echo "=========================================="; \
+	  exit $$test_exit_code; \
+	fi
 
 fuzz-manager: fuzz-connection fuzz-fetcher fuzz-schema
 	@echo "[ok] Manager fuzz tests completed"
@@ -737,28 +842,63 @@ fuzz-ci:
 # Chaos Testing Commands
 #-------------------------------------------------------
 
+# Chaos tests
+# Run chaos engineering tests with fault injection via Toxiproxy.
+# All parameters are optional. Default images: fetcher-manager:latest, fetcher-worker:latest
+# Usage:
+#   make test-chaos                                         						    # Use default pre-built images
+#   make test-chaos E2E_SKIP_BUILD=false GITHUB_TOKEN=`cat .secrets/github_token.txt`   # Build images with private deps
+#   make test-chaos MANAGER_IMAGE=xxx WORKER_IMAGE=yyy       						    # Use custom images
 .PHONY: test-chaos
-test-chaos: ## Run chaos E2E tests
-	$(call print_title,Running chaos E2E tests)
+test-chaos: ## Run chaos tests
+	$(call print_title,Running chaos tests)
 	$(call check_command,docker,Install Docker from https://docs.docker.com/get-docker/)
-	@echo "Running chaos E2E tests..."
-	@go test -v -tags=chaos -timeout 45m ./tests/chaos/...
-	@echo "[ok] Chaos tests completed successfully"
+	@start_time=$$(date +%s); \
+	go test -v -tags=chaos -timeout 45m -count=1 ./tests/chaos/...; \
+	test_exit_code=$$?; \
+	end_time=$$(date +%s); \
+	elapsed=$$((end_time - start_time)); \
+	minutes=$$((elapsed / 60)); \
+	seconds=$$((elapsed % 60)); \
+	echo ""; \
+	echo "=========================================="; \
+	echo "  CHAOS TEST REPORT"; \
+	echo "=========================================="; \
+	echo "  Duration: $${minutes}m $${seconds}s"; \
+	if [ $$test_exit_code -eq 0 ]; then \
+	  echo "  Status:   PASS"; \
+	  echo "=========================================="; \
+	else \
+	  echo "  Status:   FAIL"; \
+	  echo "=========================================="; \
+	  exit $$test_exit_code; \
+	fi
 
-.PHONY: test-chaos-quick
-test-chaos-quick: ## Run quick chaos tests (latency only)
-	$(call print_title,Running quick chaos tests)
-	$(call check_command,docker,Install Docker from https://docs.docker.com/get-docker/)
-	@echo "Running quick chaos tests..."
-	@go test -v -tags=chaos -timeout 20m -run "Latency" ./tests/chaos/e2e/...
-	@echo "[ok] Quick chaos tests completed successfully"
+#-------------------------------------------------------
+# Benchmark Testing Commands
+#-------------------------------------------------------
+
+# Benchmark tests
+# Run performance benchmarks for critical code paths.
+# Usage:
+#   make test-bench                          # Run all benchmarks
+#   make test-bench BENCH=BenchmarkCache     # Run specific benchmark pattern
+#   make test-bench BENCH_PKG=./pkg/redis/...  # Run benchmarks in specific package
+.PHONY: test-bench
+test-bench: ## Run benchmark tests
+	$(call print_title,Running benchmark tests)
+	$(call check_command,go,Install Go from https://golang.org/doc/install)
+	@echo "Benchmark pattern: $(BENCH)"
+	@echo "Package: $(BENCH_PKG)"
+	@go test -bench=$(BENCH) -benchmem -run=^$$ $(BENCH_PKG)
+	@echo "[ok] Benchmark tests completed"
 
 .PHONY: test-chaos-verbose
 test-chaos-verbose: ## Run chaos tests with verbose output
 	$(call print_title,Running chaos tests with verbose output)
 	$(call check_command,docker,Install Docker from https://docs.docker.com/get-docker/)
 	@echo "Running chaos tests with verbose output..."
-	@go test -v -tags=chaos -timeout 45m -count=1 ./tests/chaos/e2e/...
+	@go test -v -tags=chaos -timeout 45m -count=1 ./tests/chaos/...
 	@echo "[ok] Chaos tests completed successfully"
 
 #-------------------------------------------------------

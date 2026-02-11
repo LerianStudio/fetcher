@@ -18,7 +18,10 @@ func setupFallbackCache(t *testing.T) (*miniredis.Miniredis, *FallbackCache[test
 	require.NoError(t, err)
 
 	client := redis.NewClient(&redis.Options{
-		Addr: mr.Addr(),
+		Addr:         mr.Addr(),
+		DialTimeout:  100 * time.Millisecond, // Fast timeout for tests
+		ReadTimeout:  100 * time.Millisecond,
+		WriteTimeout: 100 * time.Millisecond,
 	})
 
 	conn := &RedisConnection{
@@ -136,7 +139,10 @@ func TestFallbackCache_Close_Idempotent(t *testing.T) {
 	defer mr.Close()
 
 	client := redis.NewClient(&redis.Options{
-		Addr: mr.Addr(),
+		Addr:         mr.Addr(),
+		DialTimeout:  100 * time.Millisecond,
+		ReadTimeout:  100 * time.Millisecond,
+		WriteTimeout: 100 * time.Millisecond,
 	})
 	defer client.Close()
 
@@ -188,7 +194,10 @@ func TestFallbackCache_DefaultTTL(t *testing.T) {
 	defer mr.Close()
 
 	client := redis.NewClient(&redis.Options{
-		Addr: mr.Addr(),
+		Addr:         mr.Addr(),
+		DialTimeout:  100 * time.Millisecond,
+		ReadTimeout:  100 * time.Millisecond,
+		WriteTimeout: 100 * time.Millisecond,
 	})
 	defer client.Close()
 
@@ -221,7 +230,10 @@ func TestFallbackCache_NegativeTTL(t *testing.T) {
 	defer mr.Close()
 
 	client := redis.NewClient(&redis.Options{
-		Addr: mr.Addr(),
+		Addr:         mr.Addr(),
+		DialTimeout:  100 * time.Millisecond,
+		ReadTimeout:  100 * time.Millisecond,
+		WriteTimeout: 100 * time.Millisecond,
 	})
 	defer client.Close()
 
@@ -343,7 +355,10 @@ func TestFallbackCache_UseRedisFlag_Switch(t *testing.T) {
 	defer mr.Close()
 
 	client := redis.NewClient(&redis.Options{
-		Addr: mr.Addr(),
+		Addr:         mr.Addr(),
+		DialTimeout:  100 * time.Millisecond,
+		ReadTimeout:  100 * time.Millisecond,
+		WriteTimeout: 100 * time.Millisecond,
 	})
 	defer client.Close()
 
@@ -440,7 +455,10 @@ func TestFallbackCache_Close_StopsHealthMonitor(t *testing.T) {
 	defer mr.Close()
 
 	client := redis.NewClient(&redis.Options{
-		Addr: mr.Addr(),
+		Addr:         mr.Addr(),
+		DialTimeout:  100 * time.Millisecond,
+		ReadTimeout:  100 * time.Millisecond,
+		WriteTimeout: 100 * time.Millisecond,
 	})
 
 	conn := &RedisConnection{

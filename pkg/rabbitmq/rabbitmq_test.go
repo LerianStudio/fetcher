@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	libCommons "github.com/LerianStudio/lib-commons/v2/commons"
 	libConstants "github.com/LerianStudio/lib-commons/v2/commons/constants"
@@ -1942,11 +1941,11 @@ func TestRabbitMQAdapter_ProducerDefault_SignsMessage(t *testing.T) {
 	require.Len(t, channel.published, 1)
 
 	headers := channel.published[0].message.Headers
-	assert.Equal(t, "test-signature", headers[constant.HeaderMessageSignature])
-	assert.Equal(t, "v1", headers[constant.HeaderSignatureVersion])
+	assert.Equal(t, "test-signature", headers[HeaderMessageSignature])
+	assert.Equal(t, "v1", headers[HeaderSignatureVersion])
 
 	// Verify timestamp is a valid number
-	timestampStr, ok := headers[constant.HeaderSignatureTimestamp].(string)
+	timestampStr, ok := headers[HeaderSignatureTimestamp].(string)
 	require.True(t, ok, "timestamp should be a string")
 	_, err = strconv.ParseInt(timestampStr, 10, 64)
 	assert.NoError(t, err, "timestamp should be a valid int64")
@@ -1985,9 +1984,9 @@ func TestRabbitMQAdapter_ProducerDefault_SkipsSigningWhenDisabled(t *testing.T) 
 	require.Len(t, channel.published, 1)
 
 	headers := channel.published[0].message.Headers
-	assert.Nil(t, headers[constant.HeaderMessageSignature], "signature header should not be present")
-	assert.Nil(t, headers[constant.HeaderSignatureTimestamp], "timestamp header should not be present")
-	assert.Nil(t, headers[constant.HeaderSignatureVersion], "version header should not be present")
+	assert.Nil(t, headers[HeaderMessageSignature], "signature header should not be present")
+	assert.Nil(t, headers[HeaderSignatureTimestamp], "timestamp header should not be present")
+	assert.Nil(t, headers[HeaderSignatureVersion], "version header should not be present")
 }
 
 func TestRabbitMQAdapter_ProducerDefault_SkipsSigningWhenNoSigner(t *testing.T) {
@@ -2017,7 +2016,7 @@ func TestRabbitMQAdapter_ProducerDefault_SkipsSigningWhenNoSigner(t *testing.T) 
 	require.Len(t, channel.published, 1)
 
 	headers := channel.published[0].message.Headers
-	assert.Nil(t, headers[constant.HeaderMessageSignature])
+	assert.Nil(t, headers[HeaderMessageSignature])
 }
 
 func TestRabbitMQAdapter_ConsumerLoop_VerifiesSignatureSuccessfully(t *testing.T) {
@@ -2038,9 +2037,9 @@ func TestRabbitMQAdapter_ConsumerLoop_VerifiesSignatureSuccessfully(t *testing.T
 	channel.deliveries <- amqp.Delivery{
 		Body: []byte(`{"data":"test"}`),
 		Headers: amqp.Table{
-			constant.HeaderMessageSignature:   "valid-signature",
-			constant.HeaderSignatureTimestamp: "1704067200",
-			constant.HeaderSignatureVersion:   "v1",
+			HeaderMessageSignature:   "valid-signature",
+			HeaderSignatureTimestamp: "1704067200",
+			HeaderSignatureVersion:   "v1",
 		},
 		Acknowledger: ack,
 	}
@@ -2157,9 +2156,9 @@ func TestRabbitMQAdapter_ConsumerLoop_NacksOnInvalidSignature(t *testing.T) {
 	channel.deliveries <- amqp.Delivery{
 		Body: []byte(`{"data":"test"}`),
 		Headers: amqp.Table{
-			constant.HeaderMessageSignature:   "invalid-signature",
-			constant.HeaderSignatureTimestamp: "1704067200",
-			constant.HeaderSignatureVersion:   "v1",
+			HeaderMessageSignature:   "invalid-signature",
+			HeaderSignatureTimestamp: "1704067200",
+			HeaderSignatureVersion:   "v1",
 		},
 		Acknowledger: ack,
 	}
@@ -2215,9 +2214,9 @@ func TestRabbitMQAdapter_ConsumerLoop_NacksOnVersionMismatch(t *testing.T) {
 	channel.deliveries <- amqp.Delivery{
 		Body: []byte(`{"data":"test"}`),
 		Headers: amqp.Table{
-			constant.HeaderMessageSignature:   "some-signature",
-			constant.HeaderSignatureTimestamp: "1704067200",
-			constant.HeaderSignatureVersion:   "v1", // Message has v1
+			HeaderMessageSignature:   "some-signature",
+			HeaderSignatureTimestamp: "1704067200",
+			HeaderSignatureVersion:   "v1", // Message has v1
 		},
 		Acknowledger: ack,
 	}
@@ -2335,15 +2334,15 @@ func TestVerifyMessageSignature_MissingSignatureHeader(t *testing.T) {
 	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
 
 	headers := map[string]any{
-		constant.HeaderSignatureTimestamp: "1704067200",
-		constant.HeaderSignatureVersion:   "v1",
+		HeaderSignatureTimestamp: "1704067200",
+		HeaderSignatureVersion:   "v1",
 	}
 
 	err := adapter.verifyMessageSignature([]byte(`{}`), headers, logger, nil)
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrMissingSignatureHeaders)
-	assert.Contains(t, err.Error(), constant.HeaderMessageSignature)
+	assert.Contains(t, err.Error(), HeaderMessageSignature)
 }
 
 func TestVerifyMessageSignature_MissingTimestampHeader(t *testing.T) {
@@ -2361,15 +2360,15 @@ func TestVerifyMessageSignature_MissingTimestampHeader(t *testing.T) {
 	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
 
 	headers := map[string]any{
-		constant.HeaderMessageSignature: "some-signature",
-		constant.HeaderSignatureVersion: "v1",
+		HeaderMessageSignature: "some-signature",
+		HeaderSignatureVersion: "v1",
 	}
 
 	err := adapter.verifyMessageSignature([]byte(`{}`), headers, logger, nil)
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrMissingSignatureHeaders)
-	assert.Contains(t, err.Error(), constant.HeaderSignatureTimestamp)
+	assert.Contains(t, err.Error(), HeaderSignatureTimestamp)
 }
 
 func TestVerifyMessageSignature_MissingVersionHeader(t *testing.T) {
@@ -2387,15 +2386,15 @@ func TestVerifyMessageSignature_MissingVersionHeader(t *testing.T) {
 	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
 
 	headers := map[string]any{
-		constant.HeaderMessageSignature:   "some-signature",
-		constant.HeaderSignatureTimestamp: "1704067200",
+		HeaderMessageSignature:   "some-signature",
+		HeaderSignatureTimestamp: "1704067200",
 	}
 
 	err := adapter.verifyMessageSignature([]byte(`{}`), headers, logger, nil)
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrMissingSignatureHeaders)
-	assert.Contains(t, err.Error(), constant.HeaderSignatureVersion)
+	assert.Contains(t, err.Error(), HeaderSignatureVersion)
 }
 
 func TestVerifyMessageSignature_InvalidTimestampFormat(t *testing.T) {
@@ -2413,9 +2412,9 @@ func TestVerifyMessageSignature_InvalidTimestampFormat(t *testing.T) {
 	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
 
 	headers := map[string]any{
-		constant.HeaderMessageSignature:   "some-signature",
-		constant.HeaderSignatureTimestamp: "not-a-number",
-		constant.HeaderSignatureVersion:   "v1",
+		HeaderMessageSignature:   "some-signature",
+		HeaderSignatureTimestamp: "not-a-number",
+		HeaderSignatureVersion:   "v1",
 	}
 
 	err := adapter.verifyMessageSignature([]byte(`{}`), headers, logger, nil)
@@ -2442,9 +2441,9 @@ func TestVerifyMessageSignature_TimestampAsInt64(t *testing.T) {
 	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
 
 	headers := map[string]any{
-		constant.HeaderMessageSignature:   "valid-signature",
-		constant.HeaderSignatureTimestamp: int64(1704067200),
-		constant.HeaderSignatureVersion:   "v1",
+		HeaderMessageSignature:   "valid-signature",
+		HeaderSignatureTimestamp: int64(1704067200),
+		HeaderSignatureVersion:   "v1",
 	}
 
 	err := adapter.verifyMessageSignature([]byte(`{}`), headers, logger, nil)
@@ -2469,9 +2468,9 @@ func TestVerifyMessageSignature_TimestampAsInt(t *testing.T) {
 	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
 
 	headers := map[string]any{
-		constant.HeaderMessageSignature:   "valid-signature",
-		constant.HeaderSignatureTimestamp: int(1704067200),
-		constant.HeaderSignatureVersion:   "v1",
+		HeaderMessageSignature:   "valid-signature",
+		HeaderSignatureTimestamp: int(1704067200),
+		HeaderSignatureVersion:   "v1",
 	}
 
 	err := adapter.verifyMessageSignature([]byte(`{}`), headers, logger, nil)
@@ -2494,9 +2493,9 @@ func TestVerifyMessageSignature_NonStringSignature(t *testing.T) {
 	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
 
 	headers := map[string]any{
-		constant.HeaderMessageSignature:   12345, // Non-string
-		constant.HeaderSignatureTimestamp: "1704067200",
-		constant.HeaderSignatureVersion:   "v1",
+		HeaderMessageSignature:   12345, // Non-string
+		HeaderSignatureTimestamp: "1704067200",
+		HeaderSignatureVersion:   "v1",
 	}
 
 	err := adapter.verifyMessageSignature([]byte(`{}`), headers, logger, nil)
@@ -2521,9 +2520,9 @@ func TestVerifyMessageSignature_NonStringVersion(t *testing.T) {
 	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
 
 	headers := map[string]any{
-		constant.HeaderMessageSignature:   "some-signature",
-		constant.HeaderSignatureTimestamp: "1704067200",
-		constant.HeaderSignatureVersion:   123, // Non-string
+		HeaderMessageSignature:   "some-signature",
+		HeaderSignatureTimestamp: "1704067200",
+		HeaderSignatureVersion:   123, // Non-string
 	}
 
 	err := adapter.verifyMessageSignature([]byte(`{}`), headers, logger, nil)
@@ -2548,9 +2547,9 @@ func TestVerifyMessageSignature_UnsupportedTimestampType(t *testing.T) {
 	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
 
 	headers := map[string]any{
-		constant.HeaderMessageSignature:   "some-signature",
-		constant.HeaderSignatureTimestamp: []byte("timestamp"), // Unsupported type
-		constant.HeaderSignatureVersion:   "v1",
+		HeaderMessageSignature:   "some-signature",
+		HeaderSignatureTimestamp: []byte("timestamp"), // Unsupported type
+		HeaderSignatureVersion:   "v1",
 	}
 
 	err := adapter.verifyMessageSignature([]byte(`{}`), headers, logger, nil)

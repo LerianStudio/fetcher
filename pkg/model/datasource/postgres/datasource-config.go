@@ -104,6 +104,41 @@ func (ds *DataSourceConfigPostgres) Query(ctx context.Context, tables map[string
 	return result, nil
 }
 
+// GetSchemaInfo returns the schema information for PostgreSQL.
+func (ds *DataSourceConfigPostgres) GetSchemaInfo(ctx context.Context, schemas []string) (*model.DataSourceSchema, error) {
+	_, tracer, _, _ := commons.NewTrackingFromContext(ctx) //nolint:dogsled // Only tracer needed for span creation
+
+	ctx, span := tracer.Start(ctx, "datasource.postgres.get_schema_info")
+	defer span.End()
+
+	span.SetAttributes(
+		attribute.String("app.datasource.config_name", ds.ConfigName),
+		attribute.String("app.datasource.type", "postgres"),
+	)
+
+	schemaResult, err := ds.PostgresRepository.GetDatabaseSchema(ctx, schemas)
+	if err != nil {
+		libOpentelemetry.HandleSpanError(&span, "failed to get database schema", err)
+		return nil, fmt.Errorf("failed to get PostgreSQL schema: %w", err)
+	}
+
+	// Use factory function from domain entity
+	schema := model.NewDataSourceSchema(ds.ConfigName)
+
+	for _, table := range schemaResult {
+		columns := make([]string, len(table.Columns))
+		for i, col := range table.Columns {
+			columns[i] = col.Name
+		}
+
+		schema.AddTable(table.TableName, columns)
+	}
+
+	span.SetAttributes(attribute.Int("app.schema.tables_count", len(schema.Tables)))
+
+	return schema, nil
+}
+
 // getTableFilters extracts filters for a specific table.
 // Supports matching with or without schema prefix for flexibility:
 // - Exact match: filters["public.transactions"] for table "public.transactions"
@@ -183,39 +218,4 @@ func containsSchema(schemas []string, target string) bool {
 	}
 
 	return false
-}
-
-// GetSchemaInfo returns the schema information for PostgreSQL.
-func (ds *DataSourceConfigPostgres) GetSchemaInfo(ctx context.Context, schemas []string) (*model.DataSourceSchema, error) {
-	_, tracer, _, _ := commons.NewTrackingFromContext(ctx) //nolint:dogsled // Only tracer needed for span creation
-
-	ctx, span := tracer.Start(ctx, "datasource.postgres.get_schema_info")
-	defer span.End()
-
-	span.SetAttributes(
-		attribute.String("app.datasource.config_name", ds.ConfigName),
-		attribute.String("app.datasource.type", "postgres"),
-	)
-
-	schemaResult, err := ds.PostgresRepository.GetDatabaseSchema(ctx, schemas)
-	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "failed to get database schema", err)
-		return nil, fmt.Errorf("failed to get PostgreSQL schema: %w", err)
-	}
-
-	// Use factory function from domain entity
-	schema := model.NewDataSourceSchema(ds.ConfigName)
-
-	for _, table := range schemaResult {
-		columns := make([]string, len(table.Columns))
-		for i, col := range table.Columns {
-			columns[i] = col.Name
-		}
-
-		schema.AddTable(table.TableName, columns)
-	}
-
-	span.SetAttributes(attribute.Int("app.schema.tables_count", len(schema.Tables)))
-
-	return schema, nil
 }

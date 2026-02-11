@@ -14,10 +14,11 @@ func TestNewCacheWithFallback_RedisUnavailable_ReturnsMemoryOnlyCache(t *testing
 
 	// Use invalid Redis config that will fail to connect
 	cfg := RedisConfig{
-		Host:     "invalid-host-that-does-not-exist",
-		Port:     "6379",
-		Password: "",
-		DB:       0,
+		Host:        "invalid-host-that-does-not-exist",
+		Port:        "6379",
+		Password:    "",
+		DB:          0,
+		DialTimeout: 100 * time.Millisecond, // Fast timeout for tests
 	}
 
 	ttl := 5 * time.Minute
@@ -42,10 +43,11 @@ func TestNewCacheWithFallback_ZeroTTL_UsesDefault(t *testing.T) {
 
 	// Use invalid Redis config that will fail to connect
 	cfg := RedisConfig{
-		Host:     "invalid-host-that-does-not-exist",
-		Port:     "6379",
-		Password: "",
-		DB:       0,
+		Host:        "invalid-host-that-does-not-exist",
+		Port:        "6379",
+		Password:    "",
+		DB:          0,
+		DialTimeout: 100 * time.Millisecond, // Fast timeout for tests
 	}
 
 	// Zero TTL should use default
@@ -90,10 +92,11 @@ func TestMustNewCacheWithFallback_RedisUnavailable_ReturnsMemoryOnlyCache(t *tes
 	logger := zap.InitializeLogger()
 
 	cfg := RedisConfig{
-		Host:     "invalid-host-that-does-not-exist",
-		Port:     "6379",
-		Password: "",
-		DB:       0,
+		Host:        "invalid-host-that-does-not-exist",
+		Port:        "6379",
+		Password:    "",
+		DB:          0,
+		DialTimeout: 100 * time.Millisecond, // Fast timeout for tests
 	}
 
 	ttl := 5 * time.Minute
@@ -115,10 +118,11 @@ func TestMustNewCacheWithFallback_ZeroTTL_UsesDefault(t *testing.T) {
 	logger := zap.InitializeLogger()
 
 	cfg := RedisConfig{
-		Host:     "invalid-host-that-does-not-exist",
-		Port:     "6379",
-		Password: "",
-		DB:       0,
+		Host:        "invalid-host-that-does-not-exist",
+		Port:        "6379",
+		Password:    "",
+		DB:          0,
+		DialTimeout: 100 * time.Millisecond, // Fast timeout for tests
 	}
 
 	// Zero TTL should use default
@@ -135,10 +139,11 @@ func TestNewCacheWithFallback_NegativeTTL_UsesDefault(t *testing.T) {
 	logger := zap.InitializeLogger()
 
 	cfg := RedisConfig{
-		Host:     "invalid-host-that-does-not-exist",
-		Port:     "6379",
-		Password: "",
-		DB:       0,
+		Host:        "invalid-host-that-does-not-exist",
+		Port:        "6379",
+		Password:    "",
+		DB:          0,
+		DialTimeout: 100 * time.Millisecond, // Fast timeout for tests
 	}
 
 	// Negative TTL should use default

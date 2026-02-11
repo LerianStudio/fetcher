@@ -8,8 +8,8 @@ import (
 	"strings"
 
 	"github.com/LerianStudio/fetcher/pkg/constant"
-	"github.com/LerianStudio/fetcher/pkg/model/datasource"
 	"github.com/LerianStudio/fetcher/pkg/model/job"
+	"github.com/LerianStudio/fetcher/pkg/schemautil"
 
 	libCommons "github.com/LerianStudio/lib-commons/v2/commons"
 	"github.com/LerianStudio/lib-commons/v2/commons/log"
@@ -19,10 +19,10 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 )
 
-// Repository defines an interface for querying data from a specified table and fields.
+// Datasource defines an interface for querying data from a specified table and fields.
 //
-//go:generate mockgen --destination=datasource.oracle.mock.go --package=oracle . Repository
-type Repository interface {
+//go:generate mockgen --destination=datasource.oracle.mock.go --package=oracle . Datasource
+type Datasource interface {
 	Query(ctx context.Context, schema []TableSchema, table string, fields []string, filter map[string][]any) ([]map[string]any, error)
 	QueryWithAdvancedFilters(ctx context.Context, schema []TableSchema, table string, fields []string, filter map[string]job.FilterCondition) ([]map[string]any, error)
 	GetDatabaseSchema(ctx context.Context, schemas []string) ([]TableSchema, error)
@@ -45,7 +45,8 @@ type ColumnInformation struct {
 
 // ExternalDataSource provides an interface for interacting with an Oracle database connection.
 type ExternalDataSource struct {
-	connection *Connection
+	connection   *Connection
+	cachedSchema string // Cached result of getCurrentSchema to avoid redundant queries
 }
 
 // NewDataSourceRepository creates a new ExternalDataSource instance using the provided oracle.Connection, initializing the database connection.
@@ -181,11 +182,17 @@ func (ds *ExternalDataSource) GetDatabaseSchema(ctx context.Context, schemas []s
 }
 
 // queryTables retrieves all table names from the database
+// Returns schema-qualified names (e.g., "HR.EMPLOYEES") for non-default schemas,
+// and simple names (e.g., "TRANSACTIONS") for tables in the current user's schema.
 func (ds *ExternalDataSource) queryTables(ctx context.Context, schemas []string) ([]string, error) {
 	var (
-		tableQuery string
-		args       []any
+		tableQuery    string
+		args          []any
+		defaultSchema string
 	)
+
+	// Get the current user (default schema) for Oracle
+	defaultSchema = ds.getCurrentSchema(ctx)
 
 	if len(schemas) == 0 {
 		tableQuery = `
@@ -217,7 +224,7 @@ func (ds *ExternalDataSource) queryTables(ctx context.Context, schemas []string)
 			args = nil
 		} else {
 			tableQuery = fmt.Sprintf(`
-                SELECT table_name
+                SELECT owner, table_name
                 FROM all_tables
                 WHERE owner IN (%s)
                 ORDER BY owner, table_name
@@ -233,10 +240,27 @@ func (ds *ExternalDataSource) queryTables(ctx context.Context, schemas []string)
 
 	var tables []string
 
+	// Check if we're querying all_tables (with owner) or user_tables (without owner)
+	cols, _ := rows.Columns()
+	hasOwner := len(cols) == 2
+
 	for rows.Next() {
 		var tableName string
-		if err := rows.Scan(&tableName); err != nil {
-			return nil, fmt.Errorf("error scanning table name: %w", err)
+
+		if hasOwner {
+			var owner string
+			if err := rows.Scan(&owner, &tableName); err != nil {
+				return nil, fmt.Errorf("error scanning table name: %w", err)
+			}
+
+			// Use schema-qualified name for non-default schemas
+			if !strings.EqualFold(owner, defaultSchema) {
+				tableName = owner + "." + tableName
+			}
+		} else {
+			if err := rows.Scan(&tableName); err != nil {
+				return nil, fmt.Errorf("error scanning table name: %w", err)
+			}
 		}
 
 		tables = append(tables, tableName)
@@ -249,12 +273,37 @@ func (ds *ExternalDataSource) queryTables(ctx context.Context, schemas []string)
 	return tables, nil
 }
 
+// getCurrentSchema returns the current user (schema owner) for Oracle.
+// The result is cached to avoid redundant database queries.
+func (ds *ExternalDataSource) getCurrentSchema(ctx context.Context) string {
+	// Return cached value if available
+	if ds.cachedSchema != "" {
+		return ds.cachedSchema
+	}
+
+	var schema string
+
+	err := ds.connection.ConnectionDB.QueryRowContext(ctx, "SELECT USER FROM DUAL").Scan(&schema)
+	if err != nil {
+		return ""
+	}
+
+	ds.cachedSchema = strings.ToUpper(schema)
+
+	return ds.cachedSchema
+}
+
 // queryPrimaryKeys retrieves primary key information for all tables
+// Returns a map with schema-qualified table names (e.g., "HR.EMPLOYEES") for non-default schemas.
 func (ds *ExternalDataSource) queryPrimaryKeys(ctx context.Context, schemas []string) (map[string]map[string]bool, error) {
 	var (
-		pkQuery string
-		args    []any
+		pkQuery       string
+		args          []any
+		defaultSchema string
 	)
+
+	// Get the current user (default schema) for Oracle
+	defaultSchema = ds.getCurrentSchema(ctx)
 
 	if len(schemas) == 0 {
 		pkQuery = `
@@ -294,7 +343,7 @@ func (ds *ExternalDataSource) queryPrimaryKeys(ctx context.Context, schemas []st
 			args = nil
 		} else {
 			pkQuery = fmt.Sprintf(`
-                SELECT acc.table_name, acc.column_name
+                SELECT acc.owner, acc.table_name, acc.column_name
                 FROM all_cons_columns acc
                 JOIN all_constraints ac
                   ON ac.owner = acc.owner
@@ -320,10 +369,27 @@ func (ds *ExternalDataSource) queryPrimaryKeys(ctx context.Context, schemas []st
 
 	primaryKeys := make(map[string]map[string]bool)
 
+	// Check if we're querying all_cons_columns (with owner) or user_cons_columns (without owner)
+	cols, _ := pkRows.Columns()
+	hasOwner := len(cols) == 3
+
 	for pkRows.Next() {
 		var tableName, columnName string
-		if err := pkRows.Scan(&tableName, &columnName); err != nil {
-			return nil, fmt.Errorf("error scanning primary key info: %w", err)
+
+		if hasOwner {
+			var owner string
+			if err := pkRows.Scan(&owner, &tableName, &columnName); err != nil {
+				return nil, fmt.Errorf("error scanning primary key info: %w", err)
+			}
+
+			// Use schema-qualified name for non-default schemas
+			if !strings.EqualFold(owner, defaultSchema) {
+				tableName = owner + "." + tableName
+			}
+		} else {
+			if err := pkRows.Scan(&tableName, &columnName); err != nil {
+				return nil, fmt.Errorf("error scanning primary key info: %w", err)
+			}
 		}
 
 		if primaryKeys[tableName] == nil {
@@ -357,6 +423,7 @@ func (ds *ExternalDataSource) buildSchema(ctx context.Context, tables []string, 
 }
 
 // buildTableSchema builds schema information for a single table
+// tableName can be schema-qualified (e.g., "HR.EMPLOYEES") or simple (e.g., "TRANSACTIONS")
 func (ds *ExternalDataSource) buildTableSchema(
 	ctx context.Context,
 	tableName string,
@@ -364,14 +431,34 @@ func (ds *ExternalDataSource) buildTableSchema(
 	logger log.Logger,
 	schemas []string,
 ) (TableSchema, error) {
-	tableName = strings.ToUpper(tableName)
+	// Parse the qualified table name to get owner (schema) and simple table name
+	defaultSchema := ds.getCurrentSchema(ctx)
+
+	ownerName, simpleTableName, err := parseQualifiedTableName(tableName, defaultSchema)
+	if err != nil {
+		return TableSchema{}, fmt.Errorf("error parsing table name %q: %w", tableName, err)
+	}
+
+	ownerName = strings.ToUpper(ownerName)
+	simpleTableName = strings.ToUpper(simpleTableName)
 
 	var (
 		columnQuery string
 		args        []any
 	)
 
-	if len(schemas) == 0 {
+	// If we have a specific owner from the qualified name, use it directly
+	if strings.Contains(tableName, ".") {
+		columnQuery = `
+            SELECT column_name, data_type,
+                   CASE WHEN nullable = 'Y' THEN 1 ELSE 0 END AS is_nullable
+            FROM all_tab_columns
+            WHERE table_name = :1
+              AND owner = :2
+            ORDER BY column_id
+        `
+		args = []any{simpleTableName, ownerName}
+	} else if len(schemas) == 0 {
 		columnQuery = `
             SELECT column_name, data_type,
                    CASE WHEN nullable = 'Y' THEN 1 ELSE 0 END AS is_nullable
@@ -379,11 +466,11 @@ func (ds *ExternalDataSource) buildTableSchema(
             WHERE table_name = :1
             ORDER BY column_id
         `
-		args = []any{tableName}
+		args = []any{simpleTableName}
 	} else {
 		placeholders := make([]string, 0, len(schemas))
 		args = make([]any, 0, 1+len(schemas))
-		args = append(args, tableName)
+		args = append(args, simpleTableName)
 
 		for i, s := range schemas {
 			s = strings.ToUpper(strings.TrimSpace(s))
@@ -403,7 +490,7 @@ func (ds *ExternalDataSource) buildTableSchema(
                 WHERE table_name = :1
                 ORDER BY column_id
             `
-			args = []any{tableName}
+			args = []any{simpleTableName}
 		} else {
 			columnQuery = fmt.Sprintf(`
                 SELECT column_name, data_type,
@@ -438,6 +525,25 @@ func (ds *ExternalDataSource) buildTableSchema(
 		TableName: tableName,
 		Columns:   columns,
 	}, nil
+}
+
+// parseQualifiedTableName splits a qualified table name into owner (schema) and table parts.
+// For "HR.EMPLOYEES" returns ("HR", "EMPLOYEES", nil).
+// For "TRANSACTIONS" returns (defaultSchema, "TRANSACTIONS", nil).
+func parseQualifiedTableName(qualifiedName, defaultSchema string) (owner, table string, err error) {
+	return schemautil.ParseQualifiedTableName(qualifiedName, defaultSchema)
+}
+
+// normalizeTableNameForLookup normalizes a table name for schema lookup.
+// The schema object stores tables as:
+// - "HR.EMPLOYEES" for non-default schemas (owners)
+// - "TRANSACTIONS" for default schema tables
+// This function handles input like:
+// - "HR.EMPLOYEES" -> "HR.EMPLOYEES" (non-default owner, keep as-is)
+// - "SYSTEM.TRANSACTIONS" -> "TRANSACTIONS" (if SYSTEM is default, strip prefix)
+// - "TRANSACTIONS" -> "TRANSACTIONS" (no prefix, keep as-is)
+func normalizeTableNameForLookup(tableName, defaultSchema string) string {
+	return schemautil.NormalizeTableNameForLookup(tableName, defaultSchema)
 }
 
 // scanColumns scans column information from query results
@@ -556,7 +662,11 @@ func (ds *ExternalDataSource) ValidateTableAndFields(ctx context.Context, tableN
 		attribute.String("app.request.request_id", reqId),
 	)
 
-	_, tableName = datasource.SplitSchemaTable(tableName)
+	// Normalize table name for lookup: schema-qualified names should match
+	// the schema object which stores tables as "HR.EMPLOYEES" for non-default
+	// schemas and "TRANSACTIONS" for default schema tables.
+	defaultSchema := ds.getCurrentSchema(ctx)
+	lookupName := normalizeTableNameForLookup(tableName, defaultSchema)
 
 	err := libOpentelemetry.SetSpanAttributesFromStruct(&span, "app.request.repository_filter", map[string]any{
 		"table":  tableName,
@@ -569,13 +679,13 @@ func (ds *ExternalDataSource) ValidateTableAndFields(ctx context.Context, tableN
 
 	logger.Infof("Validating table '%s' and fields %v", tableName, requestedFields)
 
-	// Check if table exists
+	// Check if table exists (case-insensitive for Oracle)
 	var tableFound bool
 
 	var tableColumns []ColumnInformation
 
 	for _, table := range schema {
-		if strings.EqualFold(table.TableName, tableName) {
+		if strings.EqualFold(table.TableName, lookupName) {
 			tableFound = true
 			tableColumns = table.Columns
 
@@ -638,9 +748,8 @@ func (ds *ExternalDataSource) ValidateTableAndFields(ctx context.Context, tableN
 // buildDynamicFilters applies filter criteria to the query builder based on valid columns.
 func buildDynamicFilters(queryBuilder squirrel.SelectBuilder, schema []TableSchema, table string, filter map[string][]any) squirrel.SelectBuilder {
 	// Find the table's column information
+	// Use case-insensitive comparison since Oracle table names are stored in uppercase
 	var tableColumns []ColumnInformation
-
-	_, table = datasource.SplitSchemaTable(table)
 
 	for _, t := range schema {
 		if strings.EqualFold(t.TableName, table) {
@@ -755,8 +864,7 @@ func (ds *ExternalDataSource) QueryWithAdvancedFilters(ctx context.Context, sche
 func (ds *ExternalDataSource) buildAdvancedFilters(queryBuilder squirrel.SelectBuilder, schema []TableSchema, table string, filter map[string]job.FilterCondition) (squirrel.SelectBuilder, error) {
 	var tableColumns []ColumnInformation
 
-	_, table = datasource.SplitSchemaTable(table)
-
+	// Use case-insensitive comparison since Oracle table names are stored in uppercase
 	for _, t := range schema {
 		if strings.EqualFold(t.TableName, table) {
 			tableColumns = t.Columns

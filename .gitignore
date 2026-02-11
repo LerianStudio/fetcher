@@ -41,6 +41,10 @@ scripts/node_modules
 .vscode
 .windsurf
 .claude
+.agent
+.docs
+*.http
+/docs/
 
 # ----------------------------------------
 # Git Worktrees

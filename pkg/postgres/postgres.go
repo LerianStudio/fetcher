@@ -2,7 +2,6 @@ package postgres
 
 import (
 	"database/sql"
-	"strings"
 
 	"github.com/LerianStudio/fetcher/pkg/constant"
 
@@ -66,22 +65,4 @@ func (pc *Connection) GetDB() (*sql.DB, error) {
 	}
 
 	return pc.ConnectionDB, nil
-}
-
-// ValidateFieldsInSchemaPostgres validate if all fields exist on postgres schema table
-func ValidateFieldsInSchemaPostgres(expectedFields []string, schema TableSchema, countIfTableExist *int32) (missing []string) {
-	columnSet := make(map[string]struct{}, len(schema.Columns))
-	for _, col := range schema.Columns {
-		columnSet[strings.ToLower(col.Name)] = struct{}{}
-	}
-
-	for _, field := range expectedFields {
-		*countIfTableExist++ // variable to count if a table exists on a schema list
-
-		if _, exists := columnSet[strings.ToLower(field)]; !exists {
-			missing = append(missing, field)
-		}
-	}
-
-	return
 }
