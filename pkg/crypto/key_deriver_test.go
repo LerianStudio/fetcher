@@ -124,7 +124,7 @@ func TestHKDFKeyDeriver_PreDerivedKeys(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("credential key matches manual derivation", func(t *testing.T) {
-		expected, err := deriver.DeriveKey(ContextCredentials, DefaultKeyLength)
+		expected, err := deriver.DeriveKey(ContextCredentialsLabel, DefaultKeyLength)
 		require.NoError(t, err)
 
 		assert.Equal(t, expected, deriver.GetCredentialKey())

@@ -2,12 +2,12 @@ package job
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"time"
 
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/model"
+	sharedMongo "github.com/LerianStudio/fetcher/pkg/mongodb"
 	"github.com/LerianStudio/lib-commons/v2/commons"
 	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
 	"go.mongodb.org/mongo-driver/bson"
@@ -20,17 +20,6 @@ const (
 	indexCreateTimeout = 60 * time.Second
 	indexDropTimeout   = 30 * time.Second
 )
-
-// isIndexConflictError checks if the error is a MongoDB index conflict error.
-// IndexOptionsConflict is code 85, IndexKeySpecsConflict is code 86.
-func isIndexConflictError(err error) bool {
-	var cmdErr mongo.CommandError
-	if errors.As(err, &cmdErr) {
-		return cmdErr.Code == 85 || cmdErr.Code == 86
-	}
-
-	return false
-}
 
 // EnsureIndexes creates MongoDB indexes tailored for the jobs collection workload.
 func (jr *JobMongoDBRepository) EnsureIndexes(ctx context.Context) error {
@@ -113,7 +102,7 @@ func (jr *JobMongoDBRepository) EnsureIndexes(ctx context.Context) error {
 
 	indexNames, err := coll.Indexes().CreateMany(ctx, indexes)
 	if err != nil {
-		if isIndexConflictError(err) {
+		if sharedMongo.IsIndexConflictError(err) {
 			logger.Infof("Indexes for %s already exist", constant.MongoCollectionJob)
 			return nil
 		}

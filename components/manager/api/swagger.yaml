@@ -15,6 +15,14 @@ definitions:
         example: 10
         type: integer
     type: object
+  github_com_LerianStudio_fetcher_pkg_model.AssignConnectionInput:
+    properties:
+      productId:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+    required:
+    - productId
+    type: object
   github_com_LerianStudio_fetcher_pkg_model.ConnectionInput:
     properties:
       configName:
@@ -39,6 +47,9 @@ definitions:
         maximum: 65535
         minimum: 1
         type: integer
+      productId:
+        example: 01926b5e-7a1a-7000-8000-000000000001
+        type: string
       ssl:
         $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.SSLInput'
       type:
@@ -59,6 +70,7 @@ definitions:
     - host
     - password
     - port
+    - productId
     - type
     - userName
     type: object
@@ -79,6 +91,8 @@ definitions:
         type: object
       port:
         type: integer
+      productId:
+        type: string
       ssl:
         $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.SSLResponse'
       type:
@@ -211,6 +225,8 @@ definitions:
         type: string
       requestHash:
         type: string
+      resultHmac:
+        type: string
       resultPath:
         type: string
       status:
@@ -223,6 +239,62 @@ definitions:
           $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model_job.FilterCondition'
         type: object
       type: object
+    type: object
+  github_com_LerianStudio_fetcher_pkg_model.ProductInput:
+    properties:
+      code:
+        example: reporter
+        maxLength: 50
+        minLength: 2
+        type: string
+      description:
+        example: Reporting product
+        maxLength: 500
+        type: string
+      metadata:
+        additionalProperties: {}
+        type: object
+      name:
+        example: Reporter
+        maxLength: 100
+        minLength: 1
+        type: string
+    required:
+    - code
+    - name
+    type: object
+  github_com_LerianStudio_fetcher_pkg_model.ProductResponse:
+    properties:
+      code:
+        type: string
+      createdAt:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      metadata:
+        additionalProperties: {}
+        type: object
+      name:
+        type: string
+      updatedAt:
+        type: string
+    type: object
+  github_com_LerianStudio_fetcher_pkg_model.ProductUpdateInput:
+    properties:
+      description:
+        example: Reporting product
+        maxLength: 500
+        type: string
+      metadata:
+        additionalProperties: {}
+        type: object
+      name:
+        example: Reporter
+        maxLength: 100
+        minLength: 1
+        type: string
     type: object
   github_com_LerianStudio_fetcher_pkg_model.SSLInput:
     properties:
@@ -420,8 +492,8 @@ paths:
       - application/json
       description: Create a new data extraction job. The request will be validated,
         deduplicated within a 5-minute window, and all referenced connections will
-        be tested before job creation. The metadata.source field is required for job
-        notification routing.
+        be tested before job creation. The metadata.source field is required for product
+        isolation and datasource ownership validation.
       parameters:
       - description: The authorization token in the 'Bearer access_token' format.
           Only required when auth plugin is enabled.
@@ -513,7 +585,8 @@ paths:
       - Fetcher
   /v1/management/connections:
     get:
-      description: List connections with pagination and filters.
+      description: List connections with pagination and filters. When X-Product-Id
+        is provided, returns only connections associated with that product.
       parameters:
       - description: The authorization token in the 'Bearer access_token' format.
           Only required when auth plugin is enabled.
@@ -524,6 +597,10 @@ paths:
         in: header
         name: X-Organization-Id
         required: true
+        type: string
+      - description: Product ID (UUID). When provided, filters connections by product.
+        in: header
+        name: X-Product-Id
         type: string
       - default: 1
         description: Page number (minimum 1)
@@ -607,8 +684,9 @@ paths:
     post:
       consumes:
       - application/json
-      description: Create a new database connection for the organization. ConfigName
-        must be unique per organization; password is encrypted and a UUID is generated
+      description: Create a new database connection for the organization. Optionally
+        associate it with a product via productId. ConfigName must be unique per organization
+        (and per product when assigned); password is encrypted and a UUID is generated
         on creation.
       parameters:
       - description: The authorization token in the 'Bearer access_token' format.
@@ -788,6 +866,61 @@ paths:
       summary: Update connection
       tags:
       - Connections
+  /v1/management/connections/{id}/assign:
+    post:
+      consumes:
+      - application/json
+      description: Associate an unassigned connection to a product. This is a one-time,
+        irreversible operation for migration purposes. The productId must be provided
+        in the request body.
+      parameters:
+      - description: The authorization token in the 'Bearer access_token' format.
+          Only required when auth plugin is enabled.
+        in: header
+        name: Authorization
+        type: string
+      - description: Organization ID
+        in: header
+        name: X-Organization-Id
+        required: true
+        type: string
+      - description: Connection ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Assignment payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.AssignConnectionInput'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.ConnectionResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+      summary: Assign connection to product
+      tags:
+      - Migration
   /v1/management/connections/{id}/schema:
     get:
       description: Get the database schema (tables and fields) for a connection.
@@ -875,6 +1008,70 @@ paths:
       summary: Test connection
       tags:
       - Connections
+  /v1/management/connections/unassigned:
+    get:
+      description: List connections that have no product assigned, useful for migration
+        purposes.
+      parameters:
+      - description: The authorization token in the 'Bearer access_token' format.
+          Only required when auth plugin is enabled.
+        in: header
+        name: Authorization
+        type: string
+      - description: Organization ID
+        in: header
+        name: X-Organization-Id
+        required: true
+        type: string
+      - default: 1
+        description: Page number (minimum 1)
+        in: query
+        name: page
+        type: integer
+      - default: 50
+        description: Page size (default 50, max 1000)
+        in: query
+        name: limit
+        type: integer
+      - default: desc
+        description: Sort order
+        enum:
+        - asc
+        - desc
+        in: query
+        name: sortOrder
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/Pagination'
+            - properties:
+                items:
+                  items:
+                    $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.ConnectionResponse'
+                  type: array
+                limit:
+                  type: integer
+                page:
+                  type: integer
+                total:
+                  type: integer
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+      summary: List unassigned connections
+      tags:
+      - Migration
   /v1/management/connections/validate-schema:
     post:
       consumes:
@@ -922,4 +1119,252 @@ paths:
       summary: Validate schema
       tags:
       - Connections
+  /v1/management/products:
+    get:
+      description: List products with pagination and filters.
+      parameters:
+      - description: The authorization token in the 'Bearer access_token' format.
+          Only required when auth plugin is enabled.
+        in: header
+        name: Authorization
+        type: string
+      - description: Organization ID
+        in: header
+        name: X-Organization-Id
+        required: true
+        type: string
+      - default: 1
+        description: Page number (minimum 1)
+        in: query
+        name: page
+        type: integer
+      - default: 50
+        description: Page size (default 50, max 1000)
+        in: query
+        name: limit
+        type: integer
+      - default: desc
+        description: Sort order
+        enum:
+        - asc
+        - desc
+        in: query
+        name: sortOrder
+        type: string
+      - description: Filter by start date (YYYY-MM-DD)
+        in: query
+        name: startDate
+        type: string
+      - description: Filter by end date (YYYY-MM-DD)
+        in: query
+        name: endDate
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/Pagination'
+            - properties:
+                items:
+                  items:
+                    $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.ProductResponse'
+                  type: array
+                limit:
+                  type: integer
+                page:
+                  type: integer
+                total:
+                  type: integer
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+      summary: List products
+      tags:
+      - Products
+    post:
+      consumes:
+      - application/json
+      description: Create a new product for the organization. Code must be unique
+        per organization and is immutable after creation.
+      parameters:
+      - description: The authorization token in the 'Bearer access_token' format.
+          Only required when auth plugin is enabled.
+        in: header
+        name: Authorization
+        type: string
+      - description: Organization ID
+        in: header
+        name: X-Organization-Id
+        required: true
+        type: string
+      - description: Product payload
+        in: body
+        name: product
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.ProductInput'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.ProductResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+      summary: Create product
+      tags:
+      - Products
+  /v1/management/products/{id}:
+    delete:
+      description: Soft delete a product. Returns 409 if the product has associated
+        connections.
+      parameters:
+      - description: The authorization token in the 'Bearer access_token' format.
+          Only required when auth plugin is enabled.
+        in: header
+        name: Authorization
+        type: string
+      - description: Organization ID
+        in: header
+        name: X-Organization-Id
+        required: true
+        type: string
+      - description: Product ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+      summary: Delete product
+      tags:
+      - Products
+    get:
+      description: Get product details by ID for the given organization.
+      parameters:
+      - description: The authorization token in the 'Bearer access_token' format.
+          Only required when auth plugin is enabled.
+        in: header
+        name: Authorization
+        type: string
+      - description: Organization ID
+        in: header
+        name: X-Organization-Id
+        required: true
+        type: string
+      - description: Product ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.ProductResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+      summary: Get product
+      tags:
+      - Products
+    patch:
+      consumes:
+      - application/json
+      description: Apply a partial update to a product. Code is immutable and cannot
+        be changed. Only include fields you want to change.
+      parameters:
+      - description: The authorization token in the 'Bearer access_token' format.
+          Only required when auth plugin is enabled.
+        in: header
+        name: Authorization
+        type: string
+      - description: Organization ID
+        in: header
+        name: X-Organization-Id
+        required: true
+        type: string
+      - description: Product ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Fields to update (only include fields you want to change)
+        in: body
+        name: product
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.ProductUpdateInput'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.ProductResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/pkg.HTTPError'
+      summary: Update product
+      tags:
+      - Products
 swagger: "2.0"

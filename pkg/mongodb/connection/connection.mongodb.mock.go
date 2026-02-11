@@ -135,12 +135,13 @@ func (mr *MockRepositoryMockRecorder) FindByOrganizationAndName(ctx, organizatio
 }
 
 // List mocks base method.
-func (m *MockRepository) List(ctx context.Context, organizationID uuid.UUID, filters http.QueryHeader) ([]*model.Connection, error) {
+func (m *MockRepository) List(ctx context.Context, organizationID uuid.UUID, filters http.QueryHeader) ([]*model.Connection, int64, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "List", ctx, organizationID, filters)
 	ret0, _ := ret[0].([]*model.Connection)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	ret1, _ := ret[1].(int64)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
 }
 
 // List indicates an expected call of List.
@@ -162,6 +163,52 @@ func (m *MockRepository) Update(ctx context.Context, conn *model.Connection) (*m
 func (mr *MockRepositoryMockRecorder) Update(ctx, conn any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Update", reflect.TypeOf((*MockRepository)(nil).Update), ctx, conn)
+}
+
+// ListUnassigned mocks base method.
+func (m *MockRepository) ListUnassigned(ctx context.Context, organizationID uuid.UUID, filters http.QueryHeader) ([]*model.Connection, int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListUnassigned", ctx, organizationID, filters)
+	ret0, _ := ret[0].([]*model.Connection)
+	ret1, _ := ret[1].(int64)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
+}
+
+// ListUnassigned indicates an expected call of ListUnassigned.
+func (mr *MockRepositoryMockRecorder) ListUnassigned(ctx, organizationID, filters any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListUnassigned", reflect.TypeOf((*MockRepository)(nil).ListUnassigned), ctx, organizationID, filters)
+}
+
+// AssignProduct mocks base method.
+func (m *MockRepository) AssignProduct(ctx context.Context, connectionID, organizationID, productID uuid.UUID) (*model.Connection, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "AssignProduct", ctx, connectionID, organizationID, productID)
+	ret0, _ := ret[0].(*model.Connection)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// AssignProduct indicates an expected call of AssignProduct.
+func (mr *MockRepositoryMockRecorder) AssignProduct(ctx, connectionID, organizationID, productID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AssignProduct", reflect.TypeOf((*MockRepository)(nil).AssignProduct), ctx, connectionID, organizationID, productID)
+}
+
+// CountByProduct mocks base method.
+func (m *MockRepository) CountByProduct(ctx context.Context, organizationID, productID uuid.UUID) (int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CountByProduct", ctx, organizationID, productID)
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CountByProduct indicates an expected call of CountByProduct.
+func (mr *MockRepositoryMockRecorder) CountByProduct(ctx, organizationID, productID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountByProduct", reflect.TypeOf((*MockRepository)(nil).CountByProduct), ctx, organizationID, productID)
 }
 
 // MockmongoDatabaseProvider is a mock of mongoDatabaseProvider interface.

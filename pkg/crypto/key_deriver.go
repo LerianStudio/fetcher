@@ -13,8 +13,10 @@ import (
 // Key derivation contexts for different purposes.
 // Each context produces cryptographically independent keys from the same master key.
 const (
-	// ContextCredentials is used to derive the key for encrypting database credentials.
-	ContextCredentials = "fetcher-credentials-v1"
+	// ContextCredentialsLabel is a non-secret context identifier used for key derivation domain separation.
+	// It is NOT a password, token, or credential.
+	// #nosec G101 -- not a hardcoded credential; this is a non-secret context string used for key derivation.
+	ContextCredentialsLabel = "fetcher-credentials-v1"
 
 	// ContextInternalHMAC is used to derive the key for signing internal messages (Manager↔Worker).
 	ContextInternalHMAC = "fetcher-internal-hmac-v1"
@@ -69,7 +71,7 @@ func NewHKDFKeyDeriver(masterKey []byte) (*HKDFKeyDeriver, error) {
 	// Pre-derive all standard keys
 	var err error
 
-	deriver.credentialKey, err = deriver.DeriveKey(ContextCredentials, DefaultKeyLength)
+	deriver.credentialKey, err = deriver.DeriveKey(ContextCredentialsLabel, DefaultKeyLength)
 	if err != nil {
 		return nil, fmt.Errorf("failed to derive credential key: %w", err)
 	}
@@ -116,6 +118,7 @@ func (d *HKDFKeyDeriver) DeriveKey(context string, length int) ([]byte, error) {
 func (d *HKDFKeyDeriver) GetCredentialKey() []byte {
 	keyCopy := make([]byte, len(d.credentialKey))
 	copy(keyCopy, d.credentialKey)
+
 	return keyCopy
 }
 
@@ -124,6 +127,7 @@ func (d *HKDFKeyDeriver) GetCredentialKey() []byte {
 func (d *HKDFKeyDeriver) GetInternalHMACKey() []byte {
 	keyCopy := make([]byte, len(d.internalHMACKey))
 	copy(keyCopy, d.internalHMACKey)
+
 	return keyCopy
 }
 
@@ -132,6 +136,7 @@ func (d *HKDFKeyDeriver) GetInternalHMACKey() []byte {
 func (d *HKDFKeyDeriver) GetExternalHMACKey() []byte {
 	keyCopy := make([]byte, len(d.externalHMACKey))
 	copy(keyCopy, d.externalHMACKey)
+
 	return keyCopy
 }
 

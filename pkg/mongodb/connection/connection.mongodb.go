@@ -33,7 +33,10 @@ type Repository interface {
 	FindByOrganizationAndName(ctx context.Context, organizationID uuid.UUID, configName string) (*model.Connection, error)
 	FindByOrganizationAndDatabaseName(ctx context.Context, organizationID uuid.UUID, databaseName string) (*model.Connection, error)
 	FindByConfigNames(ctx context.Context, organizationID uuid.UUID, configNames []string) ([]*model.Connection, error)
-	List(ctx context.Context, organizationID uuid.UUID, filters http.QueryHeader) ([]*model.Connection, error)
+	List(ctx context.Context, organizationID uuid.UUID, filters http.QueryHeader) ([]*model.Connection, int64, error)
+	ListUnassigned(ctx context.Context, organizationID uuid.UUID, filters http.QueryHeader) ([]*model.Connection, int64, error)
+	CountByProduct(ctx context.Context, organizationID, productID uuid.UUID) (int64, error)
+	AssignProduct(ctx context.Context, connectionID, organizationID, productID uuid.UUID) (*model.Connection, error)
 }
 
 // mongoDatabaseProvider defines the interface for obtaining a MongoDB client.
@@ -313,7 +316,7 @@ func (cr *ConnectionMongoDBRepository) FindByID(ctx context.Context, connectionI
 	db, err := cr.connection.GetDB(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
-		return nil, pkg.ValidateInternalError(err, "connection")
+		return nil, mongodb.MapMongoErrorToResponse(err, ctx)
 	}
 
 	var record ConnectionMongoDBModel
@@ -420,7 +423,7 @@ func (cr *ConnectionMongoDBRepository) FindByOrganizationAndDatabaseName(ctx con
 	db, err := cr.connection.GetDB(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
-		return nil, pkg.ValidateInternalError(err, "connection")
+		return nil, mongodb.MapMongoErrorToResponse(err, ctx)
 	}
 
 	coll := db.Database(strings.ToLower(cr.Database)).Collection(strings.ToLower(constant.MongoCollectionConnection))
@@ -536,7 +539,7 @@ func (cr *ConnectionMongoDBRepository) FindByConfigNames(ctx context.Context, or
 }
 
 // List returns a paginated set of connections for the given organization.
-func (rm *ConnectionMongoDBRepository) List(ctx context.Context, organizationID uuid.UUID, filters http.QueryHeader) ([]*model.Connection, error) {
+func (rm *ConnectionMongoDBRepository) List(ctx context.Context, organizationID uuid.UUID, filters http.QueryHeader) ([]*model.Connection, int64, error) {
 	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "mongodb.list_connections")
@@ -552,11 +555,11 @@ func (rm *ConnectionMongoDBRepository) List(ctx context.Context, organizationID 
 	db, err := rm.connection.GetDB(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
-		return nil, pkg.ValidateInternalError(err, "connection")
+		return nil, 0, mongodb.MapMongoErrorToResponse(err, ctx)
 	}
 
 	queryFilter := rm.buildQueryFilter(organizationID, filters)
-	opts := rm.buildPaginationOptions(filters)
+	opts := mongodb.BuildPaginationOptions(filters)
 
 	err = libOpentelemetry.SetSpanAttributesFromStruct(&span, "app.request.repository_filter", queryFilter)
 	if err != nil {
@@ -565,10 +568,16 @@ func (rm *ConnectionMongoDBRepository) List(ctx context.Context, organizationID 
 
 	coll := db.Database(strings.ToLower(rm.Database)).Collection(strings.ToLower(constant.MongoCollectionConnection))
 
+	totalCount, err := coll.CountDocuments(ctx, queryFilter)
+	if err != nil {
+		libOpentelemetry.HandleSpanError(&span, "Failed to count connections", err)
+		return nil, 0, mongodb.MapMongoErrorToResponse(err, ctx)
+	}
+
 	cur, err := coll.Find(ctx, queryFilter, &opts)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to list connections", err)
-		return nil, mongodb.MapMongoErrorToResponse(err, ctx)
+		return nil, 0, mongodb.MapMongoErrorToResponse(err, ctx)
 	}
 	defer cur.Close(ctx)
 
@@ -583,13 +592,13 @@ func (rm *ConnectionMongoDBRepository) List(ctx context.Context, organizationID 
 		var record ConnectionMongoDBModel
 		if err := cur.Decode(&record); err != nil {
 			libOpentelemetry.HandleSpanError(&span, "Failed to decode connection record", err)
-			return nil, mongodb.MapMongoErrorToResponse(err, ctx)
+			return nil, 0, mongodb.MapMongoErrorToResponse(err, ctx)
 		}
 
 		connection, err := record.ToEntity()
 		if err != nil {
 			libOpentelemetry.HandleSpanError(&span, "Failed to convert record to domain", err)
-			return nil, pkg.ValidateInternalError(err, "connection")
+			return nil, 0, pkg.ValidateInternalError(err, "connection")
 		}
 
 		connections = append(connections, connection)
@@ -597,10 +606,191 @@ func (rm *ConnectionMongoDBRepository) List(ctx context.Context, organizationID 
 
 	if err := cur.Err(); err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to iterate over connections", err)
+		return nil, 0, mongodb.MapMongoErrorToResponse(err, ctx)
+	}
+
+	span.SetAttributes(attribute.Int64("app.response.total_count", totalCount))
+
+	return connections, totalCount, nil
+}
+
+// ListUnassigned returns a paginated set of connections that have no product assigned for the given organization.
+func (rm *ConnectionMongoDBRepository) ListUnassigned(ctx context.Context, organizationID uuid.UUID, filters http.QueryHeader) ([]*model.Connection, int64, error) {
+	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+
+	ctx, span := tracer.Start(ctx, "mongodb.list_unassigned_connections")
+	defer span.End()
+
+	span.SetAttributes(attribute.String("app.request.request_id", reqID))
+
+	err := libOpentelemetry.SetSpanAttributesFromStruct(&span, "app.request.payload", filters)
+	if err != nil {
+		libOpentelemetry.HandleSpanError(&span, "Failed to convert filters to JSON string", err)
+	}
+
+	db, err := rm.connection.GetDB(ctx)
+	if err != nil {
+		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
+		return nil, 0, mongodb.MapMongoErrorToResponse(err, ctx)
+	}
+
+	queryFilter := bson.M{
+		"organization_id": organizationID,
+		"deleted_at":      bson.D{{Key: "$eq", Value: nil}},
+		"product_id":      bson.D{{Key: "$eq", Value: nil}},
+	}
+
+	mongodb.AddDateRangeFilter(queryFilter, filters)
+	opts := mongodb.BuildPaginationOptions(filters)
+
+	err = libOpentelemetry.SetSpanAttributesFromStruct(&span, "app.request.repository_filter", queryFilter)
+	if err != nil {
+		libOpentelemetry.HandleSpanError(&span, "Failed to convert filters to JSON string", err)
+	}
+
+	coll := db.Database(strings.ToLower(rm.Database)).Collection(strings.ToLower(constant.MongoCollectionConnection))
+
+	totalCount, err := coll.CountDocuments(ctx, queryFilter)
+	if err != nil {
+		libOpentelemetry.HandleSpanError(&span, "Failed to count unassigned connections", err)
+		return nil, 0, mongodb.MapMongoErrorToResponse(err, ctx)
+	}
+
+	cur, err := coll.Find(ctx, queryFilter, &opts)
+	if err != nil {
+		libOpentelemetry.HandleSpanError(&span, "Failed to list unassigned connections", err)
+		return nil, 0, mongodb.MapMongoErrorToResponse(err, ctx)
+	}
+	defer cur.Close(ctx)
+
+	if opts.Limit == nil {
+		limit := int64(50)
+		opts.Limit = &limit
+	}
+
+	connections := make([]*model.Connection, 0, int(*opts.Limit))
+
+	for cur.Next(ctx) {
+		var record ConnectionMongoDBModel
+		if err := cur.Decode(&record); err != nil {
+			libOpentelemetry.HandleSpanError(&span, "Failed to decode connection record", err)
+			return nil, 0, mongodb.MapMongoErrorToResponse(err, ctx)
+		}
+
+		connection, err := record.ToEntity()
+		if err != nil {
+			libOpentelemetry.HandleSpanError(&span, "Failed to convert record to domain", err)
+			return nil, 0, pkg.ValidateInternalError(err, "connection")
+		}
+
+		connections = append(connections, connection)
+	}
+
+	if err := cur.Err(); err != nil {
+		libOpentelemetry.HandleSpanError(&span, "Failed to iterate over connections", err)
+		return nil, 0, mongodb.MapMongoErrorToResponse(err, ctx)
+	}
+
+	span.SetAttributes(attribute.Int64("app.response.total_count", totalCount))
+
+	return connections, totalCount, nil
+}
+
+// AssignProduct associates a legacy (unassigned) connection to a product. Returns the updated connection.
+func (cr *ConnectionMongoDBRepository) AssignProduct(ctx context.Context, connectionID, organizationID, productID uuid.UUID) (*model.Connection, error) {
+	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+
+	ctx, span := tracer.Start(ctx, "mongodb.assign_connection_product")
+	defer span.End()
+
+	span.SetAttributes(
+		attribute.String("app.request.request_id", reqID),
+		attribute.String("app.request.connection_id", connectionID.String()),
+		attribute.String("app.request.organization_id", organizationID.String()),
+		attribute.String("app.request.product_id", productID.String()),
+	)
+
+	db, err := cr.connection.GetDB(ctx)
+	if err != nil {
+		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
 		return nil, mongodb.MapMongoErrorToResponse(err, ctx)
 	}
 
-	return connections, nil
+	coll := db.Database(strings.ToLower(cr.Database)).Collection(strings.ToLower(constant.MongoCollectionConnection))
+
+	filter := bson.M{
+		"_id":             connectionID,
+		"organization_id": organizationID,
+		"deleted_at":      bson.D{{Key: "$eq", Value: nil}},
+		"product_id":      bson.D{{Key: "$eq", Value: nil}},
+	}
+
+	now := time.Now().UTC()
+	update := bson.M{
+		"$set": bson.M{
+			"product_id": productID,
+			"updated_at": now,
+		},
+	}
+
+	var record ConnectionMongoDBModel
+
+	opts := options.FindOneAndUpdate().SetReturnDocument(options.After)
+	if err := coll.FindOneAndUpdate(ctx, filter, update, opts).Decode(&record); err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			return nil, nil
+		}
+
+		libOpentelemetry.HandleSpanError(&span, "Failed to assign product to connection", err)
+
+		return nil, mongodb.MapMongoErrorToResponse(err, ctx)
+	}
+
+	connection, err := record.ToEntity()
+	if err != nil {
+		libOpentelemetry.HandleSpanError(&span, "Failed to convert record to domain", err)
+		return nil, pkg.ValidateInternalError(err, "connection")
+	}
+
+	return connection, nil
+}
+
+// CountByProduct counts the number of active (non-deleted) connections associated with a product.
+func (cr *ConnectionMongoDBRepository) CountByProduct(ctx context.Context, organizationID, productID uuid.UUID) (int64, error) {
+	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+
+	ctx, span := tracer.Start(ctx, "mongodb.count_connections_by_product")
+	defer span.End()
+
+	span.SetAttributes(
+		attribute.String("app.request.request_id", reqID),
+		attribute.String("app.request.organization_id", organizationID.String()),
+		attribute.String("app.request.product_id", productID.String()),
+	)
+
+	db, err := cr.connection.GetDB(ctx)
+	if err != nil {
+		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
+		return 0, mongodb.MapMongoErrorToResponse(err, ctx)
+	}
+
+	coll := db.Database(strings.ToLower(cr.Database)).Collection(strings.ToLower(constant.MongoCollectionConnection))
+
+	filter := bson.M{
+		"organization_id": organizationID,
+		"product_id":      productID,
+		"deleted_at":      bson.D{{Key: "$eq", Value: nil}},
+	}
+
+	count, err := coll.CountDocuments(ctx, filter)
+	if err != nil {
+		libOpentelemetry.HandleSpanError(&span, "Failed to count connections by product", err)
+		return 0, mongodb.MapMongoErrorToResponse(err, ctx)
+	}
+
+	span.SetAttributes(attribute.Int64("app.response.count", count))
+
+	return count, nil
 }
 
 // buildQueryFilter builds the MongoDB query filter from filters
@@ -610,55 +800,17 @@ func (rm *ConnectionMongoDBRepository) buildQueryFilter(organizationID uuid.UUID
 		"deleted_at":      bson.D{{Key: "$eq", Value: nil}},
 	}
 
+	if filters.ProductID != nil {
+		queryFilter["product_id"] = *filters.ProductID
+	}
+
 	if filters.Metadata != nil && filters.UseMetadata {
 		for key, value := range *filters.Metadata {
 			queryFilter[key] = value
 		}
 	}
 
-	rm.addDateRangeFilter(queryFilter, filters)
+	mongodb.AddDateRangeFilter(queryFilter, filters)
 
 	return queryFilter
-}
-
-// addDateRangeFilter adds date range filters to the query filter
-func (rm *ConnectionMongoDBRepository) addDateRangeFilter(queryFilter bson.M, filters http.QueryHeader) {
-	if filters.StartDate.IsZero() && filters.EndDate.IsZero() {
-		return
-	}
-
-	createdAt := bson.M{}
-	if !filters.StartDate.IsZero() {
-		createdAt["$gte"] = filters.StartDate
-	}
-
-	if !filters.EndDate.IsZero() {
-		createdAt["$lte"] = filters.EndDate
-	}
-
-	queryFilter["created_at"] = createdAt
-}
-
-// buildPaginationOptions builds MongoDB pagination options
-func (rm *ConnectionMongoDBRepository) buildPaginationOptions(filters http.QueryHeader) options.FindOptions {
-	limit := int64(filters.Limit)
-	if limit < 0 {
-		limit = 0
-	}
-
-	page := filters.Page
-	if page < 1 {
-		page = 1
-	}
-
-	skip := int64(page*int(limit) - int(limit))
-	if skip < 0 {
-		skip = 0
-	}
-
-	return options.FindOptions{
-		Limit: &limit,
-		Skip:  &skip,
-		Sort:  bson.D{{Key: "created_at", Value: -1}},
-	}
 }
