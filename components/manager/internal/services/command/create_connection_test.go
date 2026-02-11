@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"testing"
 
@@ -10,15 +11,28 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
+	productMock "github.com/LerianStudio/fetcher/pkg/mongodb/product"
 
-	"github.com/golang/mock/gomock"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+	"go.uber.org/mock/gomock"
 )
+
+// newMockProductRepo creates a product mock with a permissive FindByID expectation.
+// Use this in tests that don't specifically test product validation.
+func newMockProductRepo(ctrl *gomock.Controller) *productMock.MockRepository {
+	mock := productMock.NewMockRepository(ctrl)
+	mock.EXPECT().
+		FindByID(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(&model.Product{ID: uuid.New(), OrganizationID: uuid.New()}, nil).
+		AnyTimes()
+	return mock
+}
 
 // newValidConnectionInput creates a valid ConnectionInput for testing.
 func newValidConnectionInput() model.ConnectionInput {
 	return model.ConnectionInput{
+		ProductID:    uuid.New().String(),
 		ConfigName:   "test-connection",
 		Type:         "POSTGRESQL",
 		Host:         "localhost",
@@ -40,7 +54,8 @@ func TestCreateConnection_Execute_Success(t *testing.T) {
 		Encrypt(gomock.Any(), gomock.Any()).
 		Return("encrypted-password", "v1", nil)
 
-	svc := NewCreateConnection(mockConnRepo, mockCrypto)
+	mockProductRepo := newMockProductRepo(ctrl)
+	svc := NewCreateConnection(mockConnRepo, mockProductRepo, mockCrypto)
 
 	ctx := testContext()
 	orgID := uuid.New()
@@ -86,6 +101,12 @@ func TestCreateConnection_Execute_Success(t *testing.T) {
 	if result.Port != input.Port {
 		t.Fatalf("expected Port %d, got %d", input.Port, result.Port)
 	}
+
+	expectedProductID, _ := uuid.Parse(input.ProductID)
+	if result.ProductID == nil {
+		t.Fatal("expected ProductID to be set, got nil")
+	}
+	assert.Equal(t, expectedProductID, *result.ProductID, "ProductID should match the input")
 }
 
 // TestCreateConnection_Execute_ConflictError tests that duplicate connection name returns conflict error.
@@ -99,7 +120,8 @@ func TestCreateConnection_Execute_ConflictError(t *testing.T) {
 		Encrypt(gomock.Any(), gomock.Any()).
 		Return("encrypted-password", "v1", nil)
 
-	svc := NewCreateConnection(mockConnRepo, mockCrypto)
+	mockProductRepo := newMockProductRepo(ctrl)
+	svc := NewCreateConnection(mockConnRepo, mockProductRepo, mockCrypto)
 
 	ctx := testContext()
 	orgID := uuid.New()
@@ -144,7 +166,8 @@ func TestCreateConnection_Execute_FindByOrganizationAndNameError(t *testing.T) {
 		Encrypt(gomock.Any(), gomock.Any()).
 		Return("encrypted-password", "v1", nil)
 
-	svc := NewCreateConnection(mockConnRepo, mockCrypto)
+	mockProductRepo := newMockProductRepo(ctrl)
+	svc := NewCreateConnection(mockConnRepo, mockProductRepo, mockCrypto)
 
 	ctx := testContext()
 	orgID := uuid.New()
@@ -183,7 +206,8 @@ func TestCreateConnection_Execute_CreateError(t *testing.T) {
 		Encrypt(gomock.Any(), gomock.Any()).
 		Return("encrypted-password", "v1", nil)
 
-	svc := NewCreateConnection(mockConnRepo, mockCrypto)
+	mockProductRepo := newMockProductRepo(ctrl)
+	svc := NewCreateConnection(mockConnRepo, mockProductRepo, mockCrypto)
 
 	ctx := testContext()
 	orgID := uuid.New()
@@ -229,7 +253,8 @@ func TestCreateConnection_Execute_EncryptionError(t *testing.T) {
 		Encrypt(gomock.Any(), gomock.Any()).
 		Return("", "", encryptionError)
 
-	svc := NewCreateConnection(mockConnRepo, mockCrypto)
+	mockProductRepo := newMockProductRepo(ctrl)
+	svc := NewCreateConnection(mockConnRepo, mockProductRepo, mockCrypto)
 
 	ctx := testContext()
 	orgID := uuid.New()
@@ -264,6 +289,7 @@ func TestCreateConnection_Execute_ValidationErrors(t *testing.T) {
 		{
 			name: "empty config name",
 			input: model.ConnectionInput{
+				ProductID:    uuid.New().String(),
 				ConfigName:   "",
 				Type:         "POSTGRESQL",
 				Host:         "localhost",
@@ -277,6 +303,7 @@ func TestCreateConnection_Execute_ValidationErrors(t *testing.T) {
 		{
 			name: "config name too short",
 			input: model.ConnectionInput{
+				ProductID:    uuid.New().String(),
 				ConfigName:   "ab",
 				Type:         "POSTGRESQL",
 				Host:         "localhost",
@@ -290,6 +317,7 @@ func TestCreateConnection_Execute_ValidationErrors(t *testing.T) {
 		{
 			name: "invalid config name with special characters",
 			input: model.ConnectionInput{
+				ProductID:    uuid.New().String(),
 				ConfigName:   "test@connection!",
 				Type:         "POSTGRESQL",
 				Host:         "localhost",
@@ -303,6 +331,7 @@ func TestCreateConnection_Execute_ValidationErrors(t *testing.T) {
 		{
 			name: "invalid database type",
 			input: model.ConnectionInput{
+				ProductID:    uuid.New().String(),
 				ConfigName:   "test-connection",
 				Type:         "INVALID_TYPE",
 				Host:         "localhost",
@@ -316,6 +345,7 @@ func TestCreateConnection_Execute_ValidationErrors(t *testing.T) {
 		{
 			name: "empty host",
 			input: model.ConnectionInput{
+				ProductID:    uuid.New().String(),
 				ConfigName:   "test-connection",
 				Type:         "POSTGRESQL",
 				Host:         "",
@@ -329,6 +359,7 @@ func TestCreateConnection_Execute_ValidationErrors(t *testing.T) {
 		{
 			name: "invalid port (zero)",
 			input: model.ConnectionInput{
+				ProductID:    uuid.New().String(),
 				ConfigName:   "test-connection",
 				Type:         "POSTGRESQL",
 				Host:         "localhost",
@@ -342,6 +373,7 @@ func TestCreateConnection_Execute_ValidationErrors(t *testing.T) {
 		{
 			name: "invalid port (negative)",
 			input: model.ConnectionInput{
+				ProductID:    uuid.New().String(),
 				ConfigName:   "test-connection",
 				Type:         "POSTGRESQL",
 				Host:         "localhost",
@@ -355,6 +387,7 @@ func TestCreateConnection_Execute_ValidationErrors(t *testing.T) {
 		{
 			name: "empty database name",
 			input: model.ConnectionInput{
+				ProductID:    uuid.New().String(),
 				ConfigName:   "test-connection",
 				Type:         "POSTGRESQL",
 				Host:         "localhost",
@@ -368,6 +401,7 @@ func TestCreateConnection_Execute_ValidationErrors(t *testing.T) {
 		{
 			name: "empty username",
 			input: model.ConnectionInput{
+				ProductID:    uuid.New().String(),
 				ConfigName:   "test-connection",
 				Type:         "POSTGRESQL",
 				Host:         "localhost",
@@ -381,6 +415,7 @@ func TestCreateConnection_Execute_ValidationErrors(t *testing.T) {
 		{
 			name: "empty password",
 			input: model.ConnectionInput{
+				ProductID:    uuid.New().String(),
 				ConfigName:   "test-connection",
 				Type:         "POSTGRESQL",
 				Host:         "localhost",
@@ -402,7 +437,8 @@ func TestCreateConnection_Execute_ValidationErrors(t *testing.T) {
 				Return("encrypted-password", "v1", nil).
 				AnyTimes()
 
-			svc := NewCreateConnection(mockConnRepo, mockCrypto)
+			mockProductRepo := newMockProductRepo(ctrl)
+			svc := NewCreateConnection(mockConnRepo, mockProductRepo, mockCrypto)
 
 			ctx := testContext()
 			orgID := uuid.New()
@@ -447,7 +483,8 @@ func TestCreateConnection_Execute_WithSSL(t *testing.T) {
 		Encrypt(gomock.Any(), gomock.Any()).
 		Return("encrypted-password", "v1", nil)
 
-	svc := NewCreateConnection(mockConnRepo, mockCrypto)
+	mockProductRepo := newMockProductRepo(ctrl)
+	svc := NewCreateConnection(mockConnRepo, mockProductRepo, mockCrypto)
 
 	ctx := testContext()
 	orgID := uuid.New()
@@ -455,6 +492,7 @@ func TestCreateConnection_Execute_WithSSL(t *testing.T) {
 	keyValue := "-----BEGIN PRIVATE KEY-----\ntest-key\n-----END PRIVATE KEY-----"
 
 	input := model.ConnectionInput{
+		ProductID:    uuid.New().String(),
 		ConfigName:   "ssl-connection",
 		Type:         "POSTGRESQL",
 		Host:         "secure.example.com",
@@ -558,12 +596,14 @@ func TestCreateConnection_Execute_AllDatabaseTypes(t *testing.T) {
 				Encrypt(gomock.Any(), gomock.Any()).
 				Return("encrypted-password", "v1", nil)
 
-			svc := NewCreateConnection(mockConnRepo, mockCrypto)
+			mockProductRepo := newMockProductRepo(ctrl)
+			svc := NewCreateConnection(mockConnRepo, mockProductRepo, mockCrypto)
 
 			ctx := testContext()
 			orgID := uuid.New()
 
 			input := model.ConnectionInput{
+				ProductID:    uuid.New().String(),
 				ConfigName:   "test-" + tt.dbType,
 				Type:         tt.dbType,
 				Host:         "localhost",
@@ -609,7 +649,8 @@ func TestNewCreateConnection(t *testing.T) {
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockCrypto := crypto.NewMockCryptor(ctrl)
 
-	svc := NewCreateConnection(mockConnRepo, mockCrypto)
+	mockProductRepo := newMockProductRepo(ctrl)
+	svc := NewCreateConnection(mockConnRepo, mockProductRepo, mockCrypto)
 
 	if svc == nil {
 		t.Fatal("expected non-nil service")
@@ -619,8 +660,127 @@ func TestNewCreateConnection(t *testing.T) {
 		t.Fatal("expected connRepo to be set")
 	}
 
+	if svc.productRepo == nil {
+		t.Fatal("expected productRepo to be set")
+	}
+
 	if svc.cryptor == nil {
 		t.Fatal("expected cryptor to be set")
+	}
+}
+
+// TestCreateConnection_Execute_InvalidProductID tests that an invalid (non-UUID) productId returns a field validation error.
+func TestCreateConnection_Execute_InvalidProductID(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockCrypto := crypto.NewMockCryptor(ctrl)
+	mockProductRepo := productMock.NewMockRepository(ctrl)
+
+	svc := NewCreateConnection(mockConnRepo, mockProductRepo, mockCrypto)
+
+	ctx := testContext()
+	orgID := uuid.New()
+
+	input := newValidConnectionInput()
+	input.ProductID = "not-a-uuid"
+
+	result, err := svc.Execute(ctx, orgID, input)
+
+	if result != nil {
+		t.Fatalf("expected nil result, got %+v", result)
+	}
+
+	if err == nil {
+		t.Fatal("expected error for invalid product ID, got nil")
+	}
+
+	var knownFieldsErr pkg.ValidationKnownFieldsError
+	if !errors.As(err, &knownFieldsErr) {
+		t.Fatalf("expected ValidationKnownFieldsError, got %T: %v", err, err)
+	}
+
+	if _, exists := knownFieldsErr.Fields["productId"]; !exists {
+		t.Fatalf("expected 'productId' in error fields, got %v", knownFieldsErr.Fields)
+	}
+}
+
+// TestCreateConnection_Execute_ProductNotFound tests that a non-existent product returns a 404 error.
+func TestCreateConnection_Execute_ProductNotFound(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockCrypto := crypto.NewMockCryptor(ctrl)
+	mockProductRepo := productMock.NewMockRepository(ctrl)
+
+	svc := NewCreateConnection(mockConnRepo, mockProductRepo, mockCrypto)
+
+	ctx := testContext()
+	orgID := uuid.New()
+	input := newValidConnectionInput()
+
+	productID, _ := uuid.Parse(input.ProductID)
+
+	// Mock: product not found (nil, nil)
+	mockProductRepo.EXPECT().
+		FindByID(gomock.Any(), productID, orgID).
+		Return(nil, nil)
+
+	result, err := svc.Execute(ctx, orgID, input)
+
+	if result != nil {
+		t.Fatalf("expected nil result, got %+v", result)
+	}
+
+	if err == nil {
+		t.Fatal("expected error for non-existent product, got nil")
+	}
+
+	var respErr pkg.ResponseErrorWithStatusCode
+	if !errors.As(err, &respErr) {
+		t.Fatalf("expected ResponseErrorWithStatusCode, got %T: %v", err, err)
+	}
+
+	assert.Equal(t, http.StatusNotFound, respErr.StatusCode)
+}
+
+// TestCreateConnection_Execute_ProductRepoError tests that a product repository error is propagated.
+func TestCreateConnection_Execute_ProductRepoError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockCrypto := crypto.NewMockCryptor(ctrl)
+	mockProductRepo := productMock.NewMockRepository(ctrl)
+
+	svc := NewCreateConnection(mockConnRepo, mockProductRepo, mockCrypto)
+
+	ctx := testContext()
+	orgID := uuid.New()
+	input := newValidConnectionInput()
+
+	productID, _ := uuid.Parse(input.ProductID)
+	dbError := fmt.Errorf("database error")
+
+	// Mock: product repo returns error
+	mockProductRepo.EXPECT().
+		FindByID(gomock.Any(), productID, orgID).
+		Return(nil, dbError)
+
+	result, err := svc.Execute(ctx, orgID, input)
+
+	if result != nil {
+		t.Fatalf("expected nil result, got %+v", result)
+	}
+
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+
+	if err.Error() != dbError.Error() {
+		t.Fatalf("expected error message %q, got %q", dbError.Error(), err.Error())
 	}
 }
 
@@ -687,12 +847,14 @@ func TestCreateConnection_Execute_ConfigNameEdgeCases(t *testing.T) {
 				Return("encrypted-password", "v1", nil).
 				AnyTimes()
 
-			svc := NewCreateConnection(mockConnRepo, mockCrypto)
+			mockProductRepo := newMockProductRepo(ctrl)
+			svc := NewCreateConnection(mockConnRepo, mockProductRepo, mockCrypto)
 
 			ctx := testContext()
 			orgID := uuid.New()
 
 			input := model.ConnectionInput{
+				ProductID:    uuid.New().String(),
 				ConfigName:   tt.configName,
 				Type:         "POSTGRESQL",
 				Host:         "localhost",

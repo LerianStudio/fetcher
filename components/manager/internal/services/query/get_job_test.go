@@ -10,11 +10,11 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/mongodb/job"
 
-	"github.com/golang/mock/gomock"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.uber.org/mock/gomock"
 )
 
 func TestGetJob_Execute(t *testing.T) {

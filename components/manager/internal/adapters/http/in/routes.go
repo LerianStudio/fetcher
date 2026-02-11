@@ -16,6 +16,7 @@ import (
 const (
 	applicationName     = "fetcher"
 	connectionsResource = "connections"
+	productsResource    = "products"
 	fetcherResource     = "fetcher"
 )
 
@@ -26,6 +27,8 @@ func NewRoutes(
 	auth *middlewareAuth.AuthClient,
 	licenseClient *libLicense.LicenseClient,
 	connectionHandler *ConnectionHandler,
+	productHandler *ProductHandler,
+	migrationHandler *MigrationHandler,
 	fetcherHandler *FetcherHandler,
 ) *fiber.App {
 	f := fiber.New(fiber.Config{
@@ -57,10 +60,21 @@ func NewRoutes(
 	f.Get("/v1/management/connections", auth.Authorize(applicationName, connectionsResource, "get"), connectionHandler.ListConnections)
 	// Schema Validation - must be before :id routes to avoid conflict
 	f.Post("/v1/management/connections/validate-schema", auth.Authorize(applicationName, connectionsResource, "post"), connectionHandler.ValidateSchema)
+	// Migration - must be before :id routes to avoid conflict
+	f.Get("/v1/management/connections/unassigned", auth.Authorize(applicationName, connectionsResource, "get"), migrationHandler.ListUnassignedConnections)
+	f.Post("/v1/management/connections/:id/assign", auth.Authorize(applicationName, connectionsResource, "post"), migrationHandler.AssignConnectionToProduct)
 	f.Get("/v1/management/connections/:id", auth.Authorize(applicationName, connectionsResource, "get"), connectionHandler.GetConnection)
 	f.Post("/v1/management/connections/:id/test", auth.Authorize(applicationName, connectionsResource, "post"), connectionHandler.TestConnection)
+	f.Get("/v1/management/connections/:id/schema", auth.Authorize(applicationName, connectionsResource, "get"), connectionHandler.GetConnectionSchema)
 	f.Patch("/v1/management/connections/:id", auth.Authorize(applicationName, connectionsResource, "patch"), connectionHandler.UpdateConnection)
 	f.Delete("/v1/management/connections/:id", auth.Authorize(applicationName, connectionsResource, "delete"), connectionHandler.DeleteConnection)
+
+	// Products
+	f.Post("/v1/management/products", auth.Authorize(applicationName, productsResource, "post"), productHandler.CreateProduct)
+	f.Get("/v1/management/products", auth.Authorize(applicationName, productsResource, "get"), productHandler.ListProducts)
+	f.Get("/v1/management/products/:id", auth.Authorize(applicationName, productsResource, "get"), productHandler.GetProduct)
+	f.Patch("/v1/management/products/:id", auth.Authorize(applicationName, productsResource, "patch"), productHandler.UpdateProduct)
+	f.Delete("/v1/management/products/:id", auth.Authorize(applicationName, productsResource, "delete"), productHandler.DeleteProduct)
 
 	// Fetcher
 	f.Post("/v1/fetcher", auth.Authorize(applicationName, fetcherResource, "post"), fetcherHandler.CreateJob)

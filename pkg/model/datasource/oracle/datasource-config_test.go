@@ -11,8 +11,8 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/testutil"
 	libConstant "github.com/LerianStudio/lib-commons/v2/commons/constants"
 	"github.com/LerianStudio/lib-commons/v2/commons/log"
-	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
+	"go.uber.org/mock/gomock"
 )
 
 func newMockLogger() log.Logger {

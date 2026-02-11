@@ -23,6 +23,7 @@ type QueryHeader struct {
 	StartDate   time.Time
 	EndDate     time.Time
 	UseMetadata bool
+	ProductID   *uuid.UUID
 }
 
 // Pagination entity from query parameter from get apis
@@ -140,8 +141,6 @@ func parseParameters(
 			}
 
 			*endDate = parsed
-		default:
-			metadata[key] = value
 		}
 	}
 
@@ -211,6 +210,28 @@ func GetOrganizationID(c *fiber.Ctx) (uuid.UUID, error) {
 	}
 
 	return orgID, nil
+}
+
+// GetProductID extracts and validates X-Product-Id header as UUID.
+// Returns nil and nil error if the header is not provided (optional header).
+func GetProductID(c *fiber.Ctx) (*uuid.UUID, error) {
+	productHeader := strings.TrimSpace(c.Get("X-Product-Id"))
+	if productHeader == "" {
+		return nil, nil
+	}
+
+	productID, err := uuid.Parse(productHeader)
+	if err != nil {
+		return nil, pkg.ValidationError{
+			EntityType: "request",
+			Code:       constant.ErrInvalidHeaderParameter.Error(),
+			Title:      "Invalid header",
+			Message:    "X-Product-Id header must be a valid UUID",
+			Err:        err,
+		}
+	}
+
+	return &productID, nil
 }
 
 // ParseIntDefault parses int with fallback.

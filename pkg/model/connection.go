@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/LerianStudio/fetcher/pkg"
+	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/datasource/sslmode"
 
@@ -17,6 +18,7 @@ import (
 type Connection struct {
 	ID                   uuid.UUID
 	OrganizationID       uuid.UUID
+	ProductID            *uuid.UUID
 	ConfigName           string
 	Type                 DBType
 	Host                 string
@@ -355,6 +357,27 @@ func (conn *Connection) SoftDelete(ts time.Time) {
 	conn.UpdatedAt = ts
 }
 
+// BelongsToProduct checks if the connection is associated with the given product.
+func (conn *Connection) BelongsToProduct(productID uuid.UUID) bool {
+	return conn.ProductID != nil && *conn.ProductID == productID
+}
+
+// AssignProduct associates a legacy (unassigned) connection to a product.
+// This is a one-time operation for migration purposes.
+func (conn *Connection) AssignProduct(productID uuid.UUID) error {
+	if conn.ProductID != nil {
+		return pkg.ValidateBusinessError(
+			constant.ErrConnectionAlreadyAssigned,
+			"connection",
+		)
+	}
+
+	conn.ProductID = &productID
+	conn.UpdatedAt = time.Now().UTC()
+
+	return nil
+}
+
 // GetPasswordDecrypted decrypts and returns the connection password.
 func (conn *Connection) GetPasswordDecrypted(ctx context.Context, cryptor crypto.Cryptor) (string, error) {
 	if cryptor == nil {
@@ -402,6 +425,7 @@ func (conn *Connection) ToMapWithMask() map[string]any {
 	return map[string]any{
 		"id":                     conn.ID,
 		"organization_id":        conn.OrganizationID,
+		"product_id":             conn.ProductID,
 		"config_name":            conn.ConfigName,
 		"type":                   string(conn.Type),
 		"host":                   conn.Host,
@@ -422,6 +446,7 @@ func (conn *Connection) ToMapWithMask() map[string]any {
 // Request, Response DTOs And Value Objects
 
 type ConnectionInput struct {
+	ProductID    string          `json:"productId" validate:"required" example:"01926b5e-7a1a-7000-8000-000000000001"`
 	ConfigName   string          `json:"configName" validate:"required" example:"production-db" minLength:"3" maxLength:"100"`
 	Type         string          `json:"type" validate:"required,oneof=ORACLE SQL_SERVER POSTGRESQL MONGODB MYSQL" example:"POSTGRESQL"`
 	Host         string          `json:"host" validate:"required,hostname|ip" example:"db.example.com"`
@@ -452,6 +477,7 @@ func (conn *ConnectionInput) ToMapWithMask() map[string]any {
 	}
 
 	return map[string]any{
+		"product_id":    conn.ProductID,
 		"config_name":   conn.ConfigName,
 		"type":          conn.Type,
 		"host":          conn.Host,
@@ -470,7 +496,8 @@ func (conn *ConnectionInput) IsEmpty() bool {
 		return true
 	}
 
-	return conn.ConfigName == "" &&
+	return conn.ProductID == "" &&
+		conn.ConfigName == "" &&
 		conn.Type == "" &&
 		conn.Host == "" &&
 		conn.Port == 0 &&
@@ -489,6 +516,11 @@ func (s *SSLInput) IsEmpty() bool {
 	}
 
 	return s.Mode == "" && s.CA == "" && s.Cert == nil && s.Key == nil
+}
+
+// AssignConnectionInput is the DTO for POST /connections/:id/assign requests.
+type AssignConnectionInput struct {
+	ProductID string `json:"productId" validate:"required" example:"550e8400-e29b-41d4-a716-446655440000"`
 }
 
 // ConnectionUpdateInput is the DTO for PATCH /connections/:id requests.
@@ -611,6 +643,7 @@ func (s *SSLUpdateInput) IsEmpty() bool {
 
 type ConnectionResponse struct {
 	ID           uuid.UUID       `json:"id"`
+	ProductID    *uuid.UUID      `json:"productId,omitempty"`
 	ConfigName   string          `json:"configName"`
 	Type         string          `json:"type"`
 	Host         string          `json:"host"`
@@ -641,6 +674,7 @@ func NewConnectionResponseFrom(conn *Connection) *ConnectionResponse {
 
 	resp := &ConnectionResponse{
 		ID:           conn.ID,
+		ProductID:    conn.ProductID,
 		ConfigName:   conn.ConfigName,
 		Type:         string(conn.Type),
 		Host:         conn.Host,
@@ -658,6 +692,43 @@ func NewConnectionResponseFrom(conn *Connection) *ConnectionResponse {
 	}
 
 	return resp
+}
+
+// ConnectionSchemaResponse is the response DTO for GET /v1/management/connections/{id}/schema.
+// It contains the connection details along with the list of tables/collections and their fields.
+type ConnectionSchemaResponse struct {
+	ID           string         `json:"id"`
+	ConfigName   string         `json:"configName"`
+	DatabaseName string         `json:"databaseName"`
+	Type         string         `json:"type"`
+	Tables       []TableDetails `json:"tables"`
+}
+
+// TableDetails contains information about a table or collection.
+// The Name field is the qualified name (e.g., "schema.table" for SQL databases
+// or "database.collection" for MongoDB).
+type TableDetails struct {
+	Name   string   `json:"name"`
+	Fields []string `json:"fields"`
+}
+
+// NewConnectionSchemaFrom creates a ConnectionSchemaResponse from a Connection and a list of tables.
+func NewConnectionSchemaFrom(conn *Connection, tables []TableDetails) *ConnectionSchemaResponse {
+	if conn == nil {
+		return nil
+	}
+
+	if tables == nil {
+		tables = []TableDetails{}
+	}
+
+	return &ConnectionSchemaResponse{
+		ID:           conn.ID.String(),
+		ConfigName:   conn.ConfigName,
+		DatabaseName: conn.DatabaseName,
+		Type:         string(conn.Type),
+		Tables:       tables,
+	}
 }
 
 type DBType string

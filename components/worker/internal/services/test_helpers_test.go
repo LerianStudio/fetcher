@@ -13,8 +13,8 @@ import (
 	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 	jobRepo "github.com/LerianStudio/fetcher/pkg/mongodb/job"
 	externalData "github.com/LerianStudio/fetcher/pkg/seaweedfs/external"
-	"github.com/golang/mock/gomock"
 	"github.com/google/uuid"
+	"go.uber.org/mock/gomock"
 )
 
 // testContext creates a context with logger and tracer for testing.

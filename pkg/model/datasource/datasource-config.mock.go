@@ -11,7 +11,7 @@ import (
 	model "github.com/LerianStudio/fetcher/pkg/model"
 	job "github.com/LerianStudio/fetcher/pkg/model/job"
 	log "github.com/LerianStudio/lib-commons/v2/commons/log"
-	gomock "github.com/golang/mock/gomock"
+	gomock "go.uber.org/mock/gomock"
 )
 
 // MockDataSource is a mock of DataSource interface.

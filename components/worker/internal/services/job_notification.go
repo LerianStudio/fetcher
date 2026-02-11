@@ -28,6 +28,10 @@ type JobResultData struct {
 
 	// Format is the output format (e.g., "json").
 	Format string `json:"format,omitempty"`
+
+	// HMAC is the HMAC-SHA256 signature of the result data (before encryption).
+	// Consumers can use this to verify data integrity using the external HMAC key.
+	HMAC string `json:"hmac,omitempty"`
 }
 
 // JobNotificationOptions contains optional data for job notifications.

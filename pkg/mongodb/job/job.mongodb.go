@@ -37,7 +37,7 @@ const (
 type Repository interface {
 	Create(ctx context.Context, job *model.Job) (*model.Job, error)
 	Update(ctx context.Context, job *model.Job) (*model.Job, error)
-	UpdateStatus(ctx context.Context, id, organizationID uuid.UUID, status model.JobStatus, resultPath string, metadata map[string]any) error
+	UpdateStatus(ctx context.Context, id, organizationID uuid.UUID, status model.JobStatus, resultPath, resultHMAC string, metadata map[string]any) error
 	FindByID(ctx context.Context, id, organizationID uuid.UUID) (*model.Job, error)
 	FindByRequestHashWithinWindow(ctx context.Context, organizationID uuid.UUID, requestHash string, windowMinutes int) (*model.Job, error)
 	List(ctx context.Context, filters *ListFilter) ([]*model.Job, error)
@@ -207,6 +207,7 @@ func (jr *JobMongoDBRepository) Update(ctx context.Context, job *model.Job) (*mo
 			"filters":       job.Filters,
 			"status":        job.Status,
 			"result_path":   job.ResultPath,
+			"result_hmac":   job.ResultHMAC,
 			"completed_at":  job.CompletedAt,
 		},
 	}
@@ -237,8 +238,8 @@ func (jr *JobMongoDBRepository) Update(ctx context.Context, job *model.Job) (*mo
 	return job, nil
 }
 
-// UpdateStatus updates only the status, resultPath and metadata of a job, automatically managing CompletedAt.
-func (jr *JobMongoDBRepository) UpdateStatus(ctx context.Context, id, organizationID uuid.UUID, status model.JobStatus, resultPath string, metadata map[string]any) error {
+// UpdateStatus updates only the status, resultPath, resultHMAC and metadata of a job, automatically managing CompletedAt.
+func (jr *JobMongoDBRepository) UpdateStatus(ctx context.Context, id, organizationID uuid.UUID, status model.JobStatus, resultPath, resultHMAC string, metadata map[string]any) error {
 	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "mongodb.update_job_status")
@@ -292,6 +293,11 @@ func (jr *JobMongoDBRepository) UpdateStatus(ctx context.Context, id, organizati
 	// Update resultPath if provided
 	if resultPath != "" {
 		update["$set"].(bson.M)["result_path"] = resultPath
+	}
+
+	// Update resultHMAC if provided
+	if resultHMAC != "" {
+		update["$set"].(bson.M)["result_hmac"] = resultHMAC
 	}
 
 	// Update metadata if provided

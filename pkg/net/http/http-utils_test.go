@@ -9,6 +9,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.mongodb.org/mongo-driver/bson"
 )
 
@@ -614,14 +615,14 @@ func TestQueryHeaderMetadata(t *testing.T) {
 
 	t.Run("custom metadata keys are captured", func(t *testing.T) {
 		params := map[string]string{
-			"customKey": "customValue",
+			"metadata.customKey": "customValue",
 		}
 
 		qh, err := ValidateParameters(params)
 		assert.NoError(t, err)
-		assert.NotNil(t, qh.Metadata)
+		require.NotNil(t, qh.Metadata)
 		assert.True(t, qh.UseMetadata)
-		assert.Contains(t, *qh.Metadata, "customKey")
+		assert.Contains(t, *qh.Metadata, "metadata.customKey")
 	})
 }
 
