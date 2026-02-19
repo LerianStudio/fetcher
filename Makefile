@@ -231,7 +231,8 @@ set-env:
 
 .PHONY: build
 build:
-	$(call print_title,Building component)
+	$(call print_title,Building all components)
+	@CGO_ENABLED=0 go build ./...
 	@echo "[ok] Build completed successfully"
 
 #-------------------------------------------------------
@@ -666,13 +667,20 @@ logs:
 
 .PHONY: logs-api
 logs-api:
-	$(call print_title,Showing logs for fetcher service)
-	@$(DOCKER_CMD) -f docker-compose.yml logs --tail=100 -f fetcher
+	$(call print_title,Showing logs for fetcher-manager service)
+	@cd $(MANAGER_DIR) && $(DOCKER_CMD) -f docker-compose.yml logs --tail=100 -f fetcher-manager
 
 .PHONY: ps
 ps:
 	$(call print_title,Listing container status)
-	@$(DOCKER_CMD) -f docker-compose.yml ps
+	@for dir in $(COMPONENTS); do \
+		component_name=$$(basename $$dir); \
+		if [ -f "$$dir/docker-compose.yml" ]; then \
+			echo "--- $$component_name ---"; \
+			(cd $$dir && $(DOCKER_CMD) -f docker-compose.yml ps) || true; \
+			echo ""; \
+		fi; \
+	done
 
 #-------------------------------------------------------
 # Documentation Commands

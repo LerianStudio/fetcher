@@ -44,7 +44,8 @@ scripts/node_modules
 .agent
 .docs
 *.http
-/docs/
+docs
+artifacts
 
 # ----------------------------------------
 # Git Worktrees
