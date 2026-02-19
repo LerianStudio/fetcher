@@ -14,7 +14,6 @@ import (
 
 	cacheAdapter "github.com/LerianStudio/fetcher/components/manager/internal/adapters/cache"
 	"github.com/LerianStudio/fetcher/pkg"
-	cacheRepo "github.com/LerianStudio/fetcher/pkg/ports/cache"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	datasourceFactory "github.com/LerianStudio/fetcher/pkg/datasource"
@@ -22,6 +21,7 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 	"github.com/LerianStudio/fetcher/pkg/mongodb/job"
 	"github.com/LerianStudio/fetcher/pkg/mongodb/product"
+	cacheRepo "github.com/LerianStudio/fetcher/pkg/ports/cache"
 	"github.com/LerianStudio/fetcher/pkg/rabbitmq"
 	"github.com/LerianStudio/fetcher/pkg/ratelimit"
 	redisCache "github.com/LerianStudio/fetcher/pkg/redis"

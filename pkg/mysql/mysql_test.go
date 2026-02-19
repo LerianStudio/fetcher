@@ -6,11 +6,11 @@ import (
 
 func TestValidateFieldsInSchemaMySQL_CaseInsensitivity(t *testing.T) {
 	tests := []struct {
-		name            string
-		expectedFields  []string
-		schema          TableSchema
-		wantMissing     []string
-		wantCount       int32
+		name           string
+		expectedFields []string
+		schema         TableSchema
+		wantMissing    []string
+		wantCount      int32
 	}{
 		{
 			name:           "all fields present exact case",

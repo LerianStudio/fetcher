@@ -410,11 +410,11 @@ func TestProduct_IsValid(t *testing.T) {
 // TestProduct_normalizeFields tests the Product.normalizeFields method.
 func TestProduct_normalizeFields(t *testing.T) {
 	tests := []struct {
-		name            string
-		product         Product
-		expectedCode    string
-		expectedName    string
-		expectedDesc    string
+		name         string
+		product      Product
+		expectedCode string
+		expectedName string
+		expectedDesc string
 	}{
 		{
 			name: "trims whitespace from all string fields",

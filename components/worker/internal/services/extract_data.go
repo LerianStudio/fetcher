@@ -11,8 +11,8 @@ import (
 
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/model"
-	portDS "github.com/LerianStudio/fetcher/pkg/ports/datasource"
 	modelJob "github.com/LerianStudio/fetcher/pkg/model/job"
+	portDS "github.com/LerianStudio/fetcher/pkg/ports/datasource"
 	libCommons "github.com/LerianStudio/lib-commons/v2/commons"
 	libCrypto "github.com/LerianStudio/lib-commons/v2/commons/crypto"
 	"github.com/LerianStudio/lib-commons/v2/commons/log"

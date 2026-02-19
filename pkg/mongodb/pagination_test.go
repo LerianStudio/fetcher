@@ -154,11 +154,11 @@ func TestAddDateRangeFilter(t *testing.T) {
 	earlier := now.Add(-24 * time.Hour)
 
 	tests := []struct {
-		name       string
-		filters    http.QueryHeader
-		wantGte    bool
-		wantLte    bool
-		wantNoKey  bool
+		name      string
+		filters   http.QueryHeader
+		wantGte   bool
+		wantLte   bool
+		wantNoKey bool
 	}{
 		{
 			name: "both dates zero adds no filter",

@@ -7,9 +7,9 @@ import (
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/model"
+	"github.com/LerianStudio/fetcher/pkg/net/http"
 	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
 	productRepo "github.com/LerianStudio/fetcher/pkg/ports/product"
-	"github.com/LerianStudio/fetcher/pkg/net/http"
 
 	"github.com/LerianStudio/lib-commons/v2/commons"
 	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"

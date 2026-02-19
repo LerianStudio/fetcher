@@ -93,7 +93,6 @@ func validFetcherRequestPayload() string {
 	}`
 }
 
-
 // ============================================================================
 // CreateJob Handler Tests - Validation (already use real handler)
 // ============================================================================

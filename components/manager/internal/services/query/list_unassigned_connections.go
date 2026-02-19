@@ -5,8 +5,8 @@ import (
 	"fmt"
 
 	"github.com/LerianStudio/fetcher/pkg/model"
-	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
 	"github.com/LerianStudio/fetcher/pkg/net/http"
+	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
 
 	"github.com/LerianStudio/lib-commons/v2/commons"
 	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"

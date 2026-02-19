@@ -6,12 +6,12 @@ import (
 	"strings"
 
 	"github.com/LerianStudio/fetcher/pkg"
-	cacheRepo "github.com/LerianStudio/fetcher/pkg/ports/cache"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/datasource"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	datasourceModel "github.com/LerianStudio/fetcher/pkg/model/datasource"
+	cacheRepo "github.com/LerianStudio/fetcher/pkg/ports/cache"
 	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
 	"github.com/LerianStudio/fetcher/pkg/schemautil"
 

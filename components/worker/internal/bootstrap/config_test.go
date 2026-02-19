@@ -58,11 +58,11 @@ func TestConfig_LoadFromEnvVars(t *testing.T) {
 		{
 			name: "loads RabbitMQ configuration",
 			envVars: map[string]string{
-				"RABBITMQ_URI":               "amqp",
-				"RABBITMQ_HOST":              "rabbit-host",
-				"RABBITMQ_PORT_AMQP":         "5672",
-				"RABBITMQ_DEFAULT_USER":      "guest",
-				"RABBITMQ_DEFAULT_PASS":      "guest",
+				"RABBITMQ_URI":                "amqp",
+				"RABBITMQ_HOST":               "rabbit-host",
+				"RABBITMQ_PORT_AMQP":          "5672",
+				"RABBITMQ_DEFAULT_USER":       "guest",
+				"RABBITMQ_DEFAULT_PASS":       "guest",
 				"RABBITMQ_FETCHER_WORK_QUEUE": "work-queue",
 			},
 			validate: func(t *testing.T, cfg *Config) {
@@ -107,9 +107,9 @@ func TestConfig_LoadFromEnvVars(t *testing.T) {
 		{
 			name: "loads boolean and int fields",
 			envVars: map[string]string{
-				"ENABLE_TELEMETRY":          "true",
+				"ENABLE_TELEMETRY":            "true",
 				"RABBITMQ_NUMBERS_OF_WORKERS": "5",
-				"MONGO_MAX_POOL_SIZE":       "50",
+				"MONGO_MAX_POOL_SIZE":         "50",
 			},
 			validate: func(t *testing.T, cfg *Config) {
 				t.Helper()
@@ -127,12 +127,12 @@ func TestConfig_LoadFromEnvVars(t *testing.T) {
 		{
 			name: "loads encryption keys",
 			envVars: map[string]string{
-				"APP_ENC_KEY":                            "master-key-123",
-				"APP_ENC_KEY_VERSION":                    "v1",
-				"CRYPTO_ENCRYPT_SECRET_KEY_SEAWEEDFS":    "seaweed-encrypt",
-				"CRYPTO_HASH_SECRET_KEY_SEAWEEDFS":       "seaweed-hash",
-				"CRYPTO_ENCRYPT_SECRET_KEY_PLUGIN_CRM":   "crm-encrypt",
-				"CRYPTO_HASH_SECRET_KEY_PLUGIN_CRM":      "crm-hash",
+				"APP_ENC_KEY":                          "master-key-123",
+				"APP_ENC_KEY_VERSION":                  "v1",
+				"CRYPTO_ENCRYPT_SECRET_KEY_SEAWEEDFS":  "seaweed-encrypt",
+				"CRYPTO_HASH_SECRET_KEY_SEAWEEDFS":     "seaweed-hash",
+				"CRYPTO_ENCRYPT_SECRET_KEY_PLUGIN_CRM": "crm-encrypt",
+				"CRYPTO_HASH_SECRET_KEY_PLUGIN_CRM":    "crm-hash",
 			},
 			validate: func(t *testing.T, cfg *Config) {
 				t.Helper()

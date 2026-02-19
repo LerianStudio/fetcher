@@ -183,9 +183,9 @@ func TestConfig_LoadFromEnvVars(t *testing.T) {
 
 func TestGetSchemaCacheTTL(t *testing.T) {
 	tests := []struct {
-		name    string
-		input   string
-		want    time.Duration
+		name  string
+		input string
+		want  time.Duration
 	}{
 		{
 			name:  "valid seconds",
