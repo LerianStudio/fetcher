@@ -40,9 +40,7 @@ type Builder struct {
 }
 
 func New(t *testing.T) *Builder {
-	if t != nil {
-		t.Helper()
-	}
+	t.Helper()
 
 	return &Builder{
 		t:                 t,
@@ -301,7 +299,7 @@ func (w waitHTTP) Configure(req *testcontainers.ContainerRequest) {
 	req.WaitingFor = wait.ForAll(
 		wait.ForListeningPort(port).WithStartupTimeout(w.timeout),
 		wait.ForHTTP(w.path).WithPort(port).WithStartupTimeout(w.timeout),
-	).WithStartupTimeout(w.timeout)
+	).WithDeadline(w.timeout)
 }
 
 type waitLog struct {

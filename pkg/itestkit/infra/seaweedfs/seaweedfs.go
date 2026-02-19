@@ -9,6 +9,7 @@ import (
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/network"
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/LerianStudio/fetcher/pkg/itestkit"
@@ -50,7 +51,7 @@ type SeaweedFSInfra struct {
 	volume   testcontainers.Container
 	filer    testcontainers.Container
 	endpoint *SeaweedFSEndpoint
-	network  testcontainers.Network
+	network  *testcontainers.DockerNetwork
 }
 
 // NewSeaweedFSInfra creates a new SeaweedFS infrastructure component.
@@ -84,19 +85,14 @@ func (s *SeaweedFSInfra) Start(ctx context.Context, env *itestkit.Env) error {
 	}
 
 	// Create a dedicated network for inter-container communication
-	networkName := fmt.Sprintf("seaweedfs-%s-%d", s.cfg.Name, time.Now().UnixNano())
-
-	network, err := testcontainers.GenericNetwork(ctx, testcontainers.GenericNetworkRequest{
-		NetworkRequest: testcontainers.NetworkRequest{
-			Name:   networkName,
-			Driver: "bridge",
-		},
-	})
+	nw, err := network.New(ctx, network.WithDriver("bridge"))
 	if err != nil {
 		return fmt.Errorf("create network: %w", err)
 	}
 
-	s.network = network
+	s.network = nw
+
+	networkName := nw.Name
 
 	masterAlias := fmt.Sprintf("seaweedfs-master-%s", s.cfg.Name)
 	volumeAlias := fmt.Sprintf("seaweedfs-volume-%s", s.cfg.Name)

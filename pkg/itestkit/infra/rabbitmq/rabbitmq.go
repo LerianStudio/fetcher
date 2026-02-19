@@ -79,7 +79,6 @@ func (r *RabbitInfra) Start(ctx context.Context, env *itestkit.Env) error {
 	alias := fmt.Sprintf("rabbitmq-%s", r.cfg.Name)
 
 	runOpts := []testcontainers.ContainerCustomizer{
-		testcontainers.WithImage(r.cfg.Image),
 		rmq.WithAdminUsername(r.cfg.Username),
 		rmq.WithAdminPassword(r.cfg.Password),
 	}
@@ -95,7 +94,7 @@ func (r *RabbitInfra) Start(ctx context.Context, env *itestkit.Env) error {
 
 	runOpts = append(runOpts, opts.runOpts...)
 
-	c, err := rmq.RunContainer(ctx, runOpts...)
+	c, err := rmq.Run(ctx, r.cfg.Image, runOpts...)
 	if err != nil {
 		return err
 	}
