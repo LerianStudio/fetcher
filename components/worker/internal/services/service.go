@@ -1,17 +1,21 @@
 package services
 
 import (
-	"github.com/LerianStudio/fetcher/components/worker/internal/adapters/rabbitmq"
+	"context"
+
 	"github.com/LerianStudio/fetcher/pkg/crypto"
-	"github.com/LerianStudio/fetcher/pkg/mongodb/connection"
-	"github.com/LerianStudio/fetcher/pkg/mongodb/job"
-	externalData "github.com/LerianStudio/fetcher/pkg/seaweedfs/external"
+	"github.com/LerianStudio/fetcher/pkg/model"
+	"github.com/LerianStudio/fetcher/pkg/model/datasource"
+	"github.com/LerianStudio/fetcher/pkg/ports/connection"
+	"github.com/LerianStudio/fetcher/pkg/ports/job"
+	"github.com/LerianStudio/fetcher/pkg/ports/publisher"
+	"github.com/LerianStudio/fetcher/pkg/ports/storage"
 )
 
 // UseCase is a struct that coordinates the handling of template files, report storage, external data sources, and report data.
 type UseCase struct {
 	// ExternalDataSeaweedFS is a repository used to retrieve external data from SeaweedFS storage.
-	ExternalDataSeaweedFS externalData.Repository
+	ExternalDataSeaweedFS storage.Repository
 
 	// JobRepository is a repository used to retrieve job data from MongoDB storage.
 	JobRepository job.Repository
@@ -30,8 +34,45 @@ type UseCase struct {
 	FileTTL string
 
 	// RabbitMQPublisher is used to publish job event notifications to RabbitMQ topic exchange.
-	RabbitMQPublisher rabbitmq.PublisherRepository
+	RabbitMQPublisher publisher.Repository
 
 	// JobEventsExchange is the name of the RabbitMQ topic exchange for job events.
 	JobEventsExchange string
+
+	// dataSourceFactory creates DataSource instances from connections.
+	dataSourceFactory func(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor) (datasource.DataSource, error)
+
+	// seaweedFSEncryptSecretKey is the encryption secret key for SeaweedFS data-at-rest.
+	seaweedFSEncryptSecretKey string
+
+	// seaweedFSHashSecretKey is the hash secret key for SeaweedFS data-at-rest.
+	seaweedFSHashSecretKey string
+
+	// crmEncryptSecretKey is the encryption secret key for plugin_crm datasource.
+	crmEncryptSecretKey string
+
+	// crmHashSecretKey is the hash secret key for plugin_crm datasource.
+	crmHashSecretKey string
+}
+
+// SetSeaweedFSSecrets configures the SeaweedFS encryption and hash secret keys.
+func (uc *UseCase) SetSeaweedFSSecrets(encryptKey, hashKey string) {
+	uc.seaweedFSEncryptSecretKey = encryptKey
+	uc.seaweedFSHashSecretKey = hashKey
+}
+
+// SetCRMSecrets configures the CRM plugin encryption and hash secret keys.
+func (uc *UseCase) SetCRMSecrets(encryptKey, hashKey string) {
+	uc.crmEncryptSecretKey = encryptKey
+	uc.crmHashSecretKey = hashKey
+}
+
+// SetDataSourceFactory configures the factory used to create DataSource instances.
+func (uc *UseCase) SetDataSourceFactory(factory func(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor) (datasource.DataSource, error)) {
+	uc.dataSourceFactory = factory
+}
+
+// CreateDataSource creates a DataSource from a connection using the injected factory.
+func (uc *UseCase) CreateDataSource(ctx context.Context, conn *model.Connection) (datasource.DataSource, error) {
+	return uc.dataSourceFactory(ctx, conn, uc.Cryptor)
 }

@@ -1059,44 +1059,38 @@ func TestEncryptDataForSeaweedFS(t *testing.T) {
 	defer ctrl.Finish()
 
 	mocks := newTestMocks(ctrl)
-	uc := newTestUseCase(mocks)
 	logger := testLogger()
 
 	tests := []struct {
-		name          string
-		data          []byte
-		envEncryptKey string
-		envHashKey    string
-		wantErr       bool
-		errContains   string
+		name        string
+		data        []byte
+		encryptKey  string
+		hashKey     string
+		wantErr     bool
+		errContains string
 	}{
 		{
-			name:          "missing encrypt secret key returns error",
-			data:          []byte(`{"test": "data"}`),
-			envEncryptKey: "",
-			envHashKey:    "",
-			wantErr:       true,
-			errContains:   "CRYPTO_ENCRYPT_SECRET_KEY_SEAWEEDFS environment variable not set",
+			name:        "missing encrypt secret key returns error",
+			data:        []byte(`{"test": "data"}`),
+			encryptKey:  "",
+			hashKey:     "",
+			wantErr:     true,
+			errContains: "SeaweedFS encrypt secret key not configured",
 		},
 		{
-			name:          "missing hash secret key returns error",
-			data:          []byte(`{"test": "data"}`),
-			envEncryptKey: "test-encrypt-key",
-			envHashKey:    "",
-			wantErr:       true,
-			errContains:   "CRYPTO_HASH_SECRET_KEY_SEAWEEDFS environment variable not set",
+			name:        "missing hash secret key returns error",
+			data:        []byte(`{"test": "data"}`),
+			encryptKey:  "test-encrypt-key",
+			hashKey:     "",
+			wantErr:     true,
+			errContains: "SeaweedFS hash secret key not configured",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Set env vars
-			if tt.envEncryptKey != "" {
-				t.Setenv("CRYPTO_ENCRYPT_SECRET_KEY_SEAWEEDFS", tt.envEncryptKey)
-			}
-			if tt.envHashKey != "" {
-				t.Setenv("CRYPTO_HASH_SECRET_KEY_SEAWEEDFS", tt.envHashKey)
-			}
+			uc := newTestUseCase(mocks)
+			uc.SetSeaweedFSSecrets(tt.encryptKey, tt.hashKey)
 
 			result, err := uc.encryptDataForSeaweedFS(tt.data, logger)
 
@@ -1554,9 +1548,11 @@ func TestSaveExternalDataToSeaweedFS_SeaweedFSPutError(t *testing.T) {
 	jobID := newTestJobID()
 	orgID := newTestOrgID()
 
-	// Set required environment variables for encryption
-	t.Setenv("CRYPTO_ENCRYPT_SECRET_KEY_SEAWEEDFS", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
-	t.Setenv("CRYPTO_HASH_SECRET_KEY_SEAWEEDFS", "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210")
+	// Set valid encryption keys on the UseCase
+	uc.SetSeaweedFSSecrets(
+		"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		"fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+	)
 
 	message := ExtractExternalDataMessage{
 		JobID:          jobID,
@@ -1597,9 +1593,11 @@ func TestSaveExternalDataToSeaweedFS_Success(t *testing.T) {
 	jobID := newTestJobID()
 	orgID := newTestOrgID()
 
-	// Set required environment variables for encryption
-	t.Setenv("CRYPTO_ENCRYPT_SECRET_KEY_SEAWEEDFS", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
-	t.Setenv("CRYPTO_HASH_SECRET_KEY_SEAWEEDFS", "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210")
+	// Set valid encryption keys on the UseCase
+	uc.SetSeaweedFSSecrets(
+		"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		"fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+	)
 
 	message := ExtractExternalDataMessage{
 		JobID:          jobID,
@@ -1837,8 +1835,7 @@ func TestEncryptDataForSeaweedFS_InvalidCipherInitialization(t *testing.T) {
 	logger := testLogger()
 
 	// Set invalid keys that will cause cipher initialization to fail
-	t.Setenv("CRYPTO_ENCRYPT_SECRET_KEY_SEAWEEDFS", "invalid-short-key")
-	t.Setenv("CRYPTO_HASH_SECRET_KEY_SEAWEEDFS", "invalid-short-key")
+	uc.SetSeaweedFSSecrets("invalid-short-key", "invalid-short-key")
 
 	data := []byte(`{"test": "data"}`)
 
@@ -1857,9 +1854,11 @@ func TestEncryptDataForSeaweedFS_Success(t *testing.T) {
 	uc := newTestUseCase(mocks)
 	logger := testLogger()
 
-	// Set valid 32-byte hex keys
-	t.Setenv("CRYPTO_ENCRYPT_SECRET_KEY_SEAWEEDFS", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
-	t.Setenv("CRYPTO_HASH_SECRET_KEY_SEAWEEDFS", "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210")
+	// Set valid 32-byte hex keys on the UseCase struct
+	uc.SetSeaweedFSSecrets(
+		"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		"fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+	)
 
 	data := []byte(`{"test": "data"}`)
 
@@ -1929,9 +1928,11 @@ func TestSaveExternalDataToSeaweedFS_EmptyResult(t *testing.T) {
 	jobID := newTestJobID()
 	orgID := newTestOrgID()
 
-	// Set required environment variables for encryption
-	t.Setenv("CRYPTO_ENCRYPT_SECRET_KEY_SEAWEEDFS", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
-	t.Setenv("CRYPTO_HASH_SECRET_KEY_SEAWEEDFS", "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210")
+	// Set valid encryption keys on the UseCase
+	uc.SetSeaweedFSSecrets(
+		"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		"fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+	)
 
 	message := ExtractExternalDataMessage{
 		JobID:          jobID,

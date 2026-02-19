@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/signal"
 	"sync"
@@ -16,6 +17,8 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 )
 
+const healthFilePath = "/tmp/health"
+
 // MultiQueueConsumer represents a multi-queue consumer.
 type MultiQueueConsumer struct {
 	consumerRoutes *rabbitmq.ConsumerRoutes
@@ -23,14 +26,14 @@ type MultiQueueConsumer struct {
 }
 
 // NewMultiQueueConsumer create a new instance of MultiQueueConsumer.
-func NewMultiQueueConsumer(routes *rabbitmq.ConsumerRoutes, useCase *services.UseCase) *MultiQueueConsumer {
+func NewMultiQueueConsumer(routes *rabbitmq.ConsumerRoutes, useCase *services.UseCase, queueName string) *MultiQueueConsumer {
 	consumer := &MultiQueueConsumer{
 		consumerRoutes: routes,
 		UseCase:        useCase,
 	}
 
 	// Registry handlers for each queue
-	routes.Register(os.Getenv("RABBITMQ_FETCHER_WORK_QUEUE"), consumer.handlerGenerateReport)
+	routes.Register(queueName, consumer.handlerGenerateReport)
 
 	return consumer
 }
@@ -58,8 +61,11 @@ func (mq *MultiQueueConsumer) Run(l *commons.Launcher) error {
 		cancel()
 	}()
 
+	// Write initial health file to indicate the worker is alive
+	touchHealthFile()
+
 	if err := mq.consumerRoutes.RunConsumers(ctx, wg); err != nil {
-		return err
+		return fmt.Errorf("failed to run consumers: %w", err)
 	}
 
 	wg.Wait()
@@ -70,7 +76,7 @@ func (mq *MultiQueueConsumer) Run(l *commons.Launcher) error {
 
 	if err := mq.consumerRoutes.Shutdown(shutdownCtx); err != nil {
 		mq.consumerRoutes.Errorf("Error during ConsumerRoutes shutdown: %v", err)
-		return err
+		return fmt.Errorf("failed to shutdown consumer routes: %w", err)
 	}
 
 	return nil
@@ -95,8 +101,16 @@ func (mq *MultiQueueConsumer) handlerGenerateReport(ctx context.Context, body []
 
 		logger.Errorf("Error generating report: %v", err)
 
-		return err
+		return fmt.Errorf("failed to generate report: %w", err)
 	}
 
+	// Update health file timestamp on successful processing
+	touchHealthFile()
+
 	return nil
+}
+
+// touchHealthFile writes the current Unix timestamp to the health file.
+func touchHealthFile() {
+	_ = os.WriteFile(healthFilePath, fmt.Appendf(nil, "%d", time.Now().Unix()), 0600)
 }

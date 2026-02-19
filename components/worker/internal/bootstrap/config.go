@@ -1,13 +1,16 @@
 package bootstrap
 
 import (
+	"context"
 	"fmt"
+	"log"
 	"net/url"
 
 	"github.com/LerianStudio/fetcher/components/worker/internal/adapters/rabbitmq"
 	"github.com/LerianStudio/fetcher/components/worker/internal/services"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
+	"github.com/LerianStudio/fetcher/pkg/datasource"
 	"github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 	mongoDB "github.com/LerianStudio/lib-commons/v2/commons/mongo"
 
@@ -62,14 +65,25 @@ type Config struct {
 	// Encryption
 	AppEncryptionKey        string `env:"APP_ENC_KEY"`
 	AppEncryptionKeyVersion string `env:"APP_ENC_KEY_VERSION"`
+	// SeaweedFS encryption keys
+	CryptoEncryptSecretKeySeaweedFS string `env:"CRYPTO_ENCRYPT_SECRET_KEY_SEAWEEDFS"`
+	CryptoHashSecretKeySeaweedFS    string `env:"CRYPTO_HASH_SECRET_KEY_SEAWEEDFS"`
+	// CRM plugin encryption keys
+	CryptoEncryptSecretKeyPluginCRM string `env:"CRYPTO_ENCRYPT_SECRET_KEY_PLUGIN_CRM"`
+	CryptoHashSecretKeyPluginCRM    string `env:"CRYPTO_HASH_SECRET_KEY_PLUGIN_CRM"`
 }
 
 // InitWorker initializes and configures the application's dependencies and returns the Service instance.
 func InitWorker() *Service {
 	cfg := &Config{}
 	if err := libCommons.SetConfigFromEnvVars(cfg); err != nil {
-		panic(err)
+		// log.Fatalf is used here because this runs before the structured logger
+		// (zap) is initialized. Returning an error is not possible since InitWorker
+		// is called from main() and the application cannot start without valid config.
+		log.Fatalf("Failed to load configuration from environment variables: %v", err)
 	}
+
+	ctx := context.Background()
 
 	logger := libZap.InitializeLogger()
 
@@ -172,12 +186,12 @@ func InitWorker() *Service {
 	externalDataSeaweedFSRepository := external.NewSimpleRepository(seaweedFSClient, constant.ExternalDataBucketName)
 
 	// Initialize MongoDB repositories
-	jobRepository, errJobRepo := job.NewJobMongoDBRepository(mongoConnection)
+	jobRepository, errJobRepo := job.NewJobMongoDBRepository(ctx, mongoConnection)
 	if errJobRepo != nil {
 		logger.Fatalf("Failed to initialize job repository: %v", errJobRepo)
 	}
 
-	connectionRepository, errConnectRepo := connection.NewConnectionMongoDBRepository(mongoConnection)
+	connectionRepository, errConnectRepo := connection.NewConnectionMongoDBRepository(ctx, mongoConnection)
 	if errConnectRepo != nil {
 		logger.Fatalf("Failed to initialize connection repository: %v", errConnectRepo)
 	}
@@ -192,6 +206,9 @@ func InitWorker() *Service {
 		RabbitMQPublisher:     publisherRoutes,
 		JobEventsExchange:     cfg.RabbitMQJobEventsExchange,
 	}
+	service.SetSeaweedFSSecrets(cfg.CryptoEncryptSecretKeySeaweedFS, cfg.CryptoHashSecretKeySeaweedFS)
+	service.SetCRMSecrets(cfg.CryptoEncryptSecretKeyPluginCRM, cfg.CryptoHashSecretKeyPluginCRM)
+	service.SetDataSourceFactory(datasource.NewDataSourceFromConnectionWithLogger(logger))
 
 	if cfg.SeaweedFSTTL != "" {
 		logger.Infof("Reports will expire after: %s", cfg.SeaweedFSTTL)
@@ -205,7 +222,7 @@ func InitWorker() *Service {
 		cfg.OrganizationIDs,
 		&logger,
 	)
-	multiQueueConsumer := NewMultiQueueConsumer(consumerRoutes, service)
+	multiQueueConsumer := NewMultiQueueConsumer(consumerRoutes, service, cfg.RabbitMQGenerateReportQueue)
 
 	return &Service{
 		MultiQueueConsumer: multiQueueConsumer,

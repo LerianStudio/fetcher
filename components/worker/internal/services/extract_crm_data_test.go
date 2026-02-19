@@ -847,47 +847,44 @@ func TestTransformPluginCRMAdvancedFilters(t *testing.T) {
 	defer ctrl.Finish()
 
 	mocks := newTestMocks(ctrl)
-	uc := newTestUseCase(mocks)
 	logger := testLogger()
 
 	tests := []struct {
-		name       string
-		filter     map[string]modelJob.FilterCondition
-		envHashKey string
-		wantNil    bool
-		wantErr    bool
-		errMsg     string
+		name    string
+		filter  map[string]modelJob.FilterCondition
+		hashKey string
+		wantNil bool
+		wantErr bool
+		errMsg  string
 	}{
 		{
-			name:       "nil filter returns nil",
-			filter:     nil,
-			envHashKey: "test-hash-key",
-			wantNil:    true,
-			wantErr:    false,
+			name:    "nil filter returns nil",
+			filter:  nil,
+			hashKey: "test-hash-key",
+			wantNil: true,
+			wantErr: false,
 		},
 		{
-			name:       "empty filter returns empty",
-			filter:     map[string]modelJob.FilterCondition{},
-			envHashKey: "test-hash-key",
-			wantNil:    false,
-			wantErr:    false,
+			name:    "empty filter returns empty",
+			filter:  map[string]modelJob.FilterCondition{},
+			hashKey: "test-hash-key",
+			wantNil: false,
+			wantErr: false,
 		},
 		{
-			name:       "missing env var returns error",
-			filter:     map[string]modelJob.FilterCondition{"document": {Equals: []any{"123"}}},
-			envHashKey: "",
-			wantNil:    false,
-			wantErr:    true,
-			errMsg:     "CRYPTO_HASH_SECRET_KEY_PLUGIN_CRM environment variable not set",
+			name:    "missing hash key returns error",
+			filter:  map[string]modelJob.FilterCondition{"document": {Equals: []any{"123"}}},
+			hashKey: "",
+			wantNil: false,
+			wantErr: true,
+			errMsg:  "CRM hash secret key not configured",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Set env var if provided
-			if tt.envHashKey != "" {
-				t.Setenv("CRYPTO_HASH_SECRET_KEY_PLUGIN_CRM", tt.envHashKey)
-			}
+			uc := newTestUseCase(mocks)
+			uc.SetCRMSecrets("test-crm-encrypt-key", tt.hashKey)
 
 			result, err := uc.transformPluginCRMAdvancedFilters(tt.filter, logger)
 
@@ -920,9 +917,6 @@ func TestTransformPluginCRMAdvancedFilters_FieldMappings(t *testing.T) {
 	mocks := newTestMocks(ctrl)
 	uc := newTestUseCase(mocks)
 	logger := testLogger()
-
-	// Set required env var
-	t.Setenv("CRYPTO_HASH_SECRET_KEY_PLUGIN_CRM", "test-hash-key-for-plugin-crm")
 
 	tests := []struct {
 		name            string
@@ -1020,9 +1014,6 @@ func TestTransformPluginCRMAdvancedFilters_AllConditionTypes(t *testing.T) {
 	mocks := newTestMocks(ctrl)
 	uc := newTestUseCase(mocks)
 	logger := testLogger()
-
-	// Set required env var
-	t.Setenv("CRYPTO_HASH_SECRET_KEY_PLUGIN_CRM", "test-hash-key-for-plugin-crm")
 
 	// Create a filter with all condition types for document field
 	filter := map[string]modelJob.FilterCondition{
@@ -1152,8 +1143,7 @@ func TestDecryptPluginCRMData_MissingHashSecretKey(t *testing.T) {
 	logger := testLogger()
 
 	// Set only the encrypt key, not the hash key
-	t.Setenv("CRYPTO_ENCRYPT_SECRET_KEY_PLUGIN_CRM", "test-encrypt-key")
-	// Explicitly unset hash key (if previously set)
+	uc.SetCRMSecrets("test-encrypt-key", "")
 
 	fields := []string{"document", "name"}
 	collectionResult := []map[string]any{
@@ -1165,7 +1155,7 @@ func TestDecryptPluginCRMData_MissingHashSecretKey(t *testing.T) {
 		t.Error("expected error when hash secret key is missing")
 	}
 
-	if err.Error() != "CRYPTO_HASH_SECRET_KEY_PLUGIN_CRM environment variable not set" {
+	if err.Error() != "CRM hash secret key not configured" {
 		t.Errorf("unexpected error message: %v", err)
 	}
 }
@@ -1180,8 +1170,7 @@ func TestDecryptPluginCRMData_MissingEncryptSecretKey(t *testing.T) {
 	logger := testLogger()
 
 	// Set only the hash key, not the encrypt key
-	t.Setenv("CRYPTO_HASH_SECRET_KEY_PLUGIN_CRM", "test-hash-key")
-	// Ensure encrypt key is not set
+	uc.SetCRMSecrets("", "test-hash-key")
 
 	fields := []string{"document", "name"}
 	collectionResult := []map[string]any{
@@ -1193,7 +1182,7 @@ func TestDecryptPluginCRMData_MissingEncryptSecretKey(t *testing.T) {
 		t.Error("expected error when encrypt secret key is missing")
 	}
 
-	if err.Error() != "CRYPTO_ENCRYPT_SECRET_KEY_PLUGIN_CRM environment variable not set" {
+	if err.Error() != "CRM encrypt secret key not configured" {
 		t.Errorf("unexpected error message: %v", err)
 	}
 }
@@ -1574,9 +1563,11 @@ func TestDecryptPluginCRMData_WithValidCrypto(t *testing.T) {
 	uc := newTestUseCase(mocks)
 	logger := testLogger()
 
-	// Set valid crypto keys
-	t.Setenv("CRYPTO_HASH_SECRET_KEY_PLUGIN_CRM", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
-	t.Setenv("CRYPTO_ENCRYPT_SECRET_KEY_PLUGIN_CRM", "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210")
+	// Set valid crypto keys on the UseCase
+	uc.SetCRMSecrets(
+		"fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+		"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+	)
 
 	// Fields that don't require decryption (non-encrypted fields)
 	fields := []string{"id", "status"}
@@ -1605,8 +1596,6 @@ func TestTransformPluginCRMAdvancedFilters_WithEncryptedFields(t *testing.T) {
 	mocks := newTestMocks(ctrl)
 	uc := newTestUseCase(mocks)
 	logger := testLogger()
-
-	t.Setenv("CRYPTO_HASH_SECRET_KEY_PLUGIN_CRM", "test-hash-key")
 
 	filter := map[string]modelJob.FilterCondition{
 		"document": {Equals: []any{"12345678900"}},
