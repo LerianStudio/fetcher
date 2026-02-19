@@ -161,12 +161,7 @@ func (h *ProductHandler) ListProducts(c *fiber.Ctx) error {
 		return httpUtils.WithError(c, err)
 	}
 
-	pagination := model.Pagination{
-		Limit: headerParams.Limit,
-		Page:  headerParams.Page,
-	}
-
-	products, totalCount, err := h.ListQuery.Execute(ctx, orgID, *headerParams)
+	pagination, err := h.ListQuery.Execute(ctx, orgID, *headerParams)
 	if err != nil {
 		logger.Errorf("Failed to execute list products query, Error: %s", err.Error())
 		libOpentelemetry.HandleSpanError(&span, "failed to list products", err)
@@ -174,15 +169,7 @@ func (h *ProductHandler) ListProducts(c *fiber.Ctx) error {
 		return httpUtils.WithError(c, err)
 	}
 
-	productResp := make([]*model.ProductResponse, 0, len(products))
-	for _, p := range products {
-		productResp = append(productResp, model.NewProductResponseFrom(p))
-	}
-
-	logger.Infof("products listed org=%s count=%d", orgID, len(productResp))
-
-	pagination.SetItems(productResp)
-	pagination.SetTotal(int(totalCount))
+	logger.Infof("products listed org=%s count=%d", orgID, pagination.Total)
 
 	return httpUtils.OK(c, pagination)
 }

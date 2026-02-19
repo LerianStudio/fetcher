@@ -2,12 +2,13 @@ package command
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/model"
 
-	productRepo "github.com/LerianStudio/fetcher/pkg/mongodb/product"
+	productRepo "github.com/LerianStudio/fetcher/pkg/ports/product"
 	"github.com/LerianStudio/lib-commons/v2/commons"
 	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
 
@@ -43,11 +44,11 @@ func (s *UpdateProduct) Execute(ctx context.Context, organizationID, productID u
 	current, err := s.productRepo.FindByID(ctx, productID, organizationID)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to find product by ID", err)
-		return nil, err
+		return nil, fmt.Errorf("failed to find product by id: %w", err)
 	}
 
 	if current == nil {
-		libOpentelemetry.HandleSpanError(&span, "Product not found", constant.ErrEntityNotFound)
+		libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "Product not found", constant.ErrEntityNotFound)
 
 		return nil, pkg.ValidateBusinessError(
 			constant.ErrEntityNotFound,
@@ -60,18 +61,18 @@ func (s *UpdateProduct) Execute(ctx context.Context, organizationID, productID u
 		input.Description,
 		input.Metadata,
 	); errPatch != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to apply patch to product", errPatch)
-		return nil, errPatch
+		libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "Failed to apply patch to product", errPatch)
+		return nil, fmt.Errorf("failed to apply product patch: %w", errPatch)
 	}
 
 	updated, err := s.productRepo.Update(ctx, current)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to update product in repository", err)
-		return nil, err
+		return nil, fmt.Errorf("failed to update product in repository: %w", err)
 	}
 
 	if updated == nil {
-		libOpentelemetry.HandleSpanError(&span, "Product not found after update (race condition)", constant.ErrEntityNotFound)
+		libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "Product not found after update (race condition)", constant.ErrEntityNotFound)
 
 		return nil, pkg.ValidateBusinessError(
 			constant.ErrEntityNotFound,

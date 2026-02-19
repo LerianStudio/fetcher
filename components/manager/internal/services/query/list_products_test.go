@@ -2,6 +2,7 @@ package query
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -51,7 +52,7 @@ func TestListProducts_Execute_Success(t *testing.T) {
 		List(gomock.Any(), orgID, filters).
 		Return(expectedList, int64(2), nil)
 
-	result, _, err := svc.Execute(ctx, orgID, filters)
+	result, err := svc.Execute(ctx, orgID, filters)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -60,16 +61,18 @@ func TestListProducts_Execute_Success(t *testing.T) {
 		t.Fatal("expected non-nil result")
 	}
 
-	if len(result) != len(expectedList) {
-		t.Fatalf("expected %d products, got %d", len(expectedList), len(result))
+	items := result.Items.([]*model.ProductResponse)
+
+	if len(items) != len(expectedList) {
+		t.Fatalf("expected %d products, got %d", len(expectedList), len(items))
 	}
 
-	if result[0].Code != "reporter" {
-		t.Fatalf("expected first product code 'reporter', got %s", result[0].Code)
+	if items[0].Code != "reporter" {
+		t.Fatalf("expected first product code 'reporter', got %s", items[0].Code)
 	}
 
-	if result[1].Code != "ledger" {
-		t.Fatalf("expected second product code 'ledger', got %s", result[1].Code)
+	if items[1].Code != "ledger" {
+		t.Fatalf("expected second product code 'ledger', got %s", items[1].Code)
 	}
 }
 
@@ -93,17 +96,17 @@ func TestListProducts_Execute_EmptyList(t *testing.T) {
 		List(gomock.Any(), orgID, filters).
 		Return(nil, int64(0), nil)
 
-	result, _, err := svc.Execute(ctx, orgID, filters)
+	result, err := svc.Execute(ctx, orgID, filters)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	if result == nil {
-		t.Fatal("expected non-nil result (empty slice)")
+		t.Fatal("expected non-nil result")
 	}
 
-	if len(result) != 0 {
-		t.Fatalf("expected empty slice, got %d products", len(result))
+	if result.Total != 0 {
+		t.Fatalf("expected total 0, got %d", result.Total)
 	}
 }
 
@@ -129,7 +132,7 @@ func TestListProducts_Execute_RepositoryError(t *testing.T) {
 		List(gomock.Any(), orgID, filters).
 		Return(nil, int64(0), dbError)
 
-	result, _, err := svc.Execute(ctx, orgID, filters)
+	result, err := svc.Execute(ctx, orgID, filters)
 
 	if result != nil {
 		t.Fatalf("expected nil result, got %+v", result)
@@ -281,7 +284,7 @@ func TestListProducts_Execute_TableDriven(t *testing.T) {
 
 			svc := NewListProducts(mockProductRepo)
 
-			result, _, err := svc.Execute(ctx, orgID, tt.filters)
+			result, err := svc.Execute(ctx, orgID, tt.filters)
 
 			if tt.wantErr {
 				if err == nil {
@@ -299,8 +302,10 @@ func TestListProducts_Execute_TableDriven(t *testing.T) {
 				t.Fatal("expected non-nil result")
 			}
 
-			if len(result) != tt.wantResultCount {
-				t.Fatalf("expected %d products, got %d", tt.wantResultCount, len(result))
+			items := result.Items.([]*model.ProductResponse)
+
+			if len(items) != tt.wantResultCount {
+				t.Fatalf("expected %d products, got %d", tt.wantResultCount, len(items))
 			}
 		})
 	}
@@ -331,19 +336,23 @@ func TestListProducts_Execute_OrganizationIsolation(t *testing.T) {
 		List(gomock.Any(), orgID, filters).
 		Return(orgProducts, int64(2), nil)
 
-	result, _, err := svc.Execute(ctx, orgID, filters)
+	result, err := svc.Execute(ctx, orgID, filters)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(result) != 2 {
-		t.Fatalf("expected 2 products, got %d", len(result))
+	items := result.Items.([]*model.ProductResponse)
+
+	if len(items) != 2 {
+		t.Fatalf("expected 2 products, got %d", len(items))
 	}
 
 	// Verify all returned products belong to the requested organization
-	for _, product := range result {
-		if product.OrganizationID != orgID {
-			t.Fatalf("expected organization ID %s, got %s", orgID, product.OrganizationID)
+	// Note: ProductResponse does not have OrganizationID, so we check the count matches
+	// the expected org-scoped result from the repository.
+	for _, product := range items {
+		if product.Code != "org1-product-1" && product.Code != "org1-product-2" {
+			t.Fatalf("unexpected product code: %s", product.Code)
 		}
 	}
 }
@@ -401,7 +410,7 @@ func TestListProducts_Execute_ErrorScenarios(t *testing.T) {
 
 			tt.setupMock(mockProductRepo, orgID, filters)
 
-			result, _, err := svc.Execute(ctx, orgID, filters)
+			result, err := svc.Execute(ctx, orgID, filters)
 
 			if result != nil {
 				t.Fatalf("expected nil result, got %+v", result)
@@ -411,8 +420,8 @@ func TestListProducts_Execute_ErrorScenarios(t *testing.T) {
 				t.Fatal("expected error, got nil")
 			}
 
-			if err.Error() != tt.errorMsg {
-				t.Fatalf("expected error message '%s', got '%s'", tt.errorMsg, err.Error())
+			if !strings.Contains(err.Error(), tt.errorMsg) {
+				t.Fatalf("expected error containing '%s', got '%s'", tt.errorMsg, err.Error())
 			}
 		})
 	}

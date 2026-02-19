@@ -2,13 +2,14 @@ package command
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/model"
 
-	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
-	productRepo "github.com/LerianStudio/fetcher/pkg/mongodb/product"
+	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
+	productRepo "github.com/LerianStudio/fetcher/pkg/ports/product"
 
 	"github.com/LerianStudio/lib-commons/v2/commons"
 	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
@@ -42,7 +43,7 @@ func (s *AssignConnection) Execute(ctx context.Context, organizationID, connecti
 	// Validate product exists
 	prod, err := s.productRepo.FindByID(ctx, productID, organizationID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to find product by id: %w", err)
 	}
 
 	if prod == nil {
@@ -52,7 +53,7 @@ func (s *AssignConnection) Execute(ctx context.Context, organizationID, connecti
 	// Validate connection exists
 	conn, err := s.connRepo.FindByID(ctx, connectionID, organizationID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to find connection by id: %w", err)
 	}
 
 	if conn == nil {
@@ -63,11 +64,11 @@ func (s *AssignConnection) Execute(ctx context.Context, organizationID, connecti
 	updated, err := s.connRepo.AssignProduct(ctx, connectionID, organizationID, productID)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to assign product to connection", err)
-		return nil, err
+		return nil, fmt.Errorf("failed to assign product to connection: %w", err)
 	}
 
 	if updated == nil {
-		libOpentelemetry.HandleSpanError(&span, "Connection already assigned to a product", constant.ErrConnectionAlreadyAssigned)
+		libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "Connection already assigned to a product", constant.ErrConnectionAlreadyAssigned)
 		return nil, pkg.ValidateBusinessError(constant.ErrConnectionAlreadyAssigned, "connection")
 	}
 

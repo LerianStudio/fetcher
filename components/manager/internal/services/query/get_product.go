@@ -2,11 +2,12 @@ package query
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/model"
-	productRepo "github.com/LerianStudio/fetcher/pkg/mongodb/product"
+	productRepo "github.com/LerianStudio/fetcher/pkg/ports/product"
 
 	"github.com/LerianStudio/lib-commons/v2/commons"
 
@@ -36,7 +37,7 @@ func (s *GetProduct) Execute(ctx context.Context, organizationID, productID uuid
 
 	current, err := s.productRepo.FindByID(ctx, productID, organizationID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to find product by id: %w", err)
 	}
 
 	if current == nil {

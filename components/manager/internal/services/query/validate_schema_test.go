@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"testing"
 
-	cacheRepo "github.com/LerianStudio/fetcher/components/manager/internal/adapters/cache"
 	"github.com/LerianStudio/fetcher/pkg"
+	cacheRepo "github.com/LerianStudio/fetcher/pkg/ports/cache"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/model"

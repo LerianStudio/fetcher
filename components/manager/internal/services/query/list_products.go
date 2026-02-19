@@ -2,9 +2,10 @@ package query
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/LerianStudio/fetcher/pkg/model"
-	productRepo "github.com/LerianStudio/fetcher/pkg/mongodb/product"
+	productRepo "github.com/LerianStudio/fetcher/pkg/ports/product"
 	"github.com/LerianStudio/fetcher/pkg/net/http"
 
 	"github.com/LerianStudio/lib-commons/v2/commons"
@@ -22,7 +23,7 @@ func NewListProducts(repo productRepo.Repository) *ListProducts {
 	return &ListProducts{productRepo: repo}
 }
 
-func (s *ListProducts) Execute(ctx context.Context, organizationID uuid.UUID, filters http.QueryHeader) ([]*model.Product, int64, error) {
+func (s *ListProducts) Execute(ctx context.Context, organizationID uuid.UUID, filters http.QueryHeader) (*model.Pagination, error) {
 	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "service.list_products")
@@ -40,12 +41,20 @@ func (s *ListProducts) Execute(ctx context.Context, organizationID uuid.UUID, fi
 
 	list, totalCount, err := s.productRepo.List(ctx, organizationID, filters)
 	if err != nil {
-		return nil, 0, err
+		return nil, fmt.Errorf("failed to list products: %w", err)
 	}
 
-	if list == nil {
-		return []*model.Product{}, totalCount, nil
+	productResp := make([]*model.ProductResponse, 0, len(list))
+	for _, p := range list {
+		productResp = append(productResp, model.NewProductResponseFrom(p))
 	}
 
-	return list, totalCount, nil
+	pagination := &model.Pagination{
+		Limit: filters.Limit,
+		Page:  filters.Page,
+	}
+	pagination.SetItems(productResp)
+	pagination.SetTotal(int(totalCount))
+
+	return pagination, nil
 }

@@ -2,12 +2,13 @@ package command
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/model"
 
-	productRepo "github.com/LerianStudio/fetcher/pkg/mongodb/product"
+	productRepo "github.com/LerianStudio/fetcher/pkg/ports/product"
 	"github.com/LerianStudio/lib-commons/v2/commons"
 	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
 
@@ -47,18 +48,18 @@ func (s *CreateProduct) Execute(ctx context.Context, organizationID uuid.UUID, i
 		input.Metadata,
 	)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to create product entity", err)
-		return nil, err
+		libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "Failed to create product entity", err)
+		return nil, fmt.Errorf("failed to create product entity: %w", err)
 	}
 
 	existing, errRepo := s.productRepo.FindByCode(ctx, product.Code, organizationID)
 	if errRepo != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to check existing product by code", errRepo)
-		return nil, errRepo
+		return nil, fmt.Errorf("failed to check existing product by code: %w", errRepo)
 	}
 
 	if existing != nil {
-		libOpentelemetry.HandleSpanError(&span, "Product with this code already exists", constant.ErrEntityConflict)
+		libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "Product with this code already exists", constant.ErrEntityConflict)
 
 		return nil, pkg.ValidateBusinessError(
 			constant.ErrEntityConflict,
@@ -69,7 +70,7 @@ func (s *CreateProduct) Execute(ctx context.Context, organizationID uuid.UUID, i
 	created, err := s.productRepo.Create(ctx, product)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to create product in repository", err)
-		return nil, err
+		return nil, fmt.Errorf("failed to create product in repository: %w", err)
 	}
 
 	logger.Infof("Created product id=%s code=%s org=%s", created.ID, created.Code, organizationID)

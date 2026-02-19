@@ -779,8 +779,8 @@ func TestCreateConnection_Execute_ProductRepoError(t *testing.T) {
 		t.Fatal("expected error, got nil")
 	}
 
-	if err.Error() != dbError.Error() {
-		t.Fatalf("expected error message %q, got %q", dbError.Error(), err.Error())
+	if !errors.Is(err, dbError) {
+		t.Fatalf("expected error wrapping %q, got %q", dbError.Error(), err.Error())
 	}
 }
 

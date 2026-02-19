@@ -2,13 +2,14 @@ package command
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/model"
-	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
-	"github.com/LerianStudio/fetcher/pkg/mongodb/job"
+	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
+	"github.com/LerianStudio/fetcher/pkg/ports/job"
 
 	"github.com/LerianStudio/lib-commons/v2/commons"
 	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
@@ -50,7 +51,7 @@ func (s *UpdateConnection) Execute(ctx context.Context, organizationID, connecti
 
 	current, err := s.connRepo.FindByID(ctx, connectionID, organizationID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to find connection by id: %w", err)
 	}
 
 	if current == nil {
@@ -62,7 +63,7 @@ func (s *UpdateConnection) Execute(ctx context.Context, organizationID, connecti
 
 	active, err := s.jobRepo.ExistsRunningByMappedFieldKey(ctx, organizationID, current.ConfigName)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to check for active jobs: %w", err)
 	}
 
 	if active {
@@ -109,12 +110,12 @@ func (s *UpdateConnection) Execute(ctx context.Context, organizationID, connecti
 			return nil
 		}(),
 	); errPatch != nil {
-		return nil, errPatch
+		return nil, fmt.Errorf("failed to apply connection patch: %w", errPatch)
 	}
 
 	updated, err := s.connRepo.Update(ctx, current)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to update connection: %w", err)
 	}
 
 	if updated == nil {

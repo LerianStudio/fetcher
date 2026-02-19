@@ -2,11 +2,12 @@ package query
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/model"
-	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
+	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
 
 	"github.com/LerianStudio/lib-commons/v2/commons"
 
@@ -36,7 +37,7 @@ func (s *GetConnection) Execute(ctx context.Context, organizationID, connectionI
 
 	current, err := s.connRepo.FindByID(ctx, connectionID, organizationID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to find connection by id: %w", err)
 	}
 
 	if current == nil {
