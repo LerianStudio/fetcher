@@ -46,29 +46,37 @@ func NewMySQLInfra(cfg MySQLConfig) *MySQLInfra {
 	if cfg.Image == "" {
 		cfg.Image = "mysql:8.0"
 	}
+
 	if cfg.Database == "" {
 		cfg.Database = "testdb"
 	}
+
 	if cfg.Username == "" {
 		cfg.Username = "testuser"
 	}
+
 	if cfg.Password == "" {
 		cfg.Password = "testpass"
 	}
+
 	if cfg.RootPassword == "" {
 		cfg.RootPassword = cfg.Password
 	}
+
 	if cfg.Name == "" {
 		cfg.Name = "default"
 	}
+
 	if cfg.ProxyName == "" {
 		cfg.ProxyName = "mysql-" + cfg.Name
 	}
+
 	return &MySQLInfra{cfg: cfg}
 }
 
 func (m *MySQLInfra) Start(ctx context.Context, env *itestkit.Env) error {
 	opts := defaultMySQLOptions()
+
 	for _, opt := range m.cfg.Options {
 		if opt != nil {
 			opt(opts)
@@ -100,12 +108,14 @@ func (m *MySQLInfra) Start(ctx context.Context, env *itestkit.Env) error {
 	if err != nil {
 		return err
 	}
+
 	m.container = c
 
 	host, err := c.Host(ctx)
 	if err != nil {
 		return err
 	}
+
 	port, err := c.MappedPort(ctx, "3306/tcp")
 	if err != nil {
 		return err
@@ -120,6 +130,7 @@ func (m *MySQLInfra) Start(ctx context.Context, env *itestkit.Env) error {
 		if err != nil {
 			return err
 		}
+
 		finalAddr = ref.ListenAddr
 		proxyListen = ref.ListenAddr
 	}
@@ -130,6 +141,7 @@ func (m *MySQLInfra) Start(ctx context.Context, env *itestkit.Env) error {
 		DSN:         fmt.Sprintf("%s:%s@tcp(%s)/%s?parseTime=true", m.cfg.Username, m.cfg.Password, finalAddr, m.cfg.Database),
 	}
 	m.endpoint = &endpoint
+
 	return nil
 }
 
@@ -137,6 +149,7 @@ func (m *MySQLInfra) Endpoint() (MySQLEndpoint, error) {
 	if m.endpoint == nil {
 		return MySQLEndpoint{}, fmt.Errorf("mysql endpoint not ready")
 	}
+
 	return *m.endpoint, nil
 }
 
@@ -145,6 +158,7 @@ func (m *MySQLInfra) DSN() (string, error) {
 	if err != nil {
 		return "", err
 	}
+
 	return endpoint.DSN, nil
 }
 
@@ -169,7 +183,9 @@ func (m *MySQLInfra) HostPort() (host string, port int, err error) {
 		if len(parts) != 2 {
 			return "", 0, fmt.Errorf("invalid proxy address: %s", endpoint.ProxyListen)
 		}
+
 		portNum, _ := strconv.Atoi(parts[1])
+
 		return parts[0], portNum, nil
 	}
 
@@ -196,6 +212,7 @@ func (m *MySQLInfra) Terminate(ctx context.Context) error {
 	if m.container != nil {
 		return m.container.Terminate(ctx)
 	}
+
 	return nil
 }
 
@@ -215,5 +232,6 @@ func NewMySQLInfraStub(cfg MySQLConfig, host string, port int) *MySQLInfra {
 	// Store the raw host for HostPort() to return without normalization
 	m.stubHost = host
 	m.stubPort = port
+
 	return m
 }

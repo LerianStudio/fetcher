@@ -3,10 +3,12 @@ package http
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/LerianStudio/fetcher/pkg"
 	libCommons "github.com/LerianStudio/lib-commons/commons"
@@ -72,22 +74,22 @@ func (d *decoderHandler) FiberHandlerFunc(c *fiber.Ctx) error {
 	bodyBytes := c.Body() // Get the body bytes
 
 	if err := json.Unmarshal(bodyBytes, s); err != nil {
-		return err
+		return fmt.Errorf("failed to unmarshal request body: %w", err)
 	}
 
 	marshaled, err := json.Marshal(s)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to marshal decoded struct: %w", err)
 	}
 
 	var originalMap, marshaledMap map[string]any
 
 	if err := json.Unmarshal(bodyBytes, &originalMap); err != nil {
-		return err
+		return fmt.Errorf("failed to unmarshal request body to map: %w", err)
 	}
 
 	if err := json.Unmarshal(marshaled, &marshaledMap); err != nil {
-		return err
+		return fmt.Errorf("failed to unmarshal marshaled struct to map: %w", err)
 	}
 
 	diffFields := findUnknownFields(originalMap, marshaledMap)
@@ -194,9 +196,29 @@ func compareSlices(original, marshaled []any) []any {
 	return diff
 }
 
+// cachedValidator and cachedTranslator are initialized once and reused across requests.
+var (
+	cachedValidator   *validator.Validate
+	cachedTranslator  ut.Translator
+	validatorInitOnce sync.Once
+	validatorInitErr  error
+)
+
+// getValidator returns the cached validator and translator, initializing them on first call.
+func getValidator() (*validator.Validate, ut.Translator, error) {
+	validatorInitOnce.Do(func() {
+		cachedValidator, cachedTranslator, validatorInitErr = newValidator()
+	})
+
+	return cachedValidator, cachedTranslator, validatorInitErr
+}
+
 // ValidateStruct validates a struct against defined validation rules, using the validator package.
 func ValidateStruct(s any) error {
-	v, trans := newValidator()
+	v, trans, err := getValidator()
+	if err != nil {
+		return fmt.Errorf("failed to initialize validator: %w", err)
+	}
 
 	k := reflect.ValueOf(s).Kind()
 	if k == reflect.Ptr {
@@ -207,7 +229,7 @@ func ValidateStruct(s any) error {
 		return nil
 	}
 
-	err := v.Struct(s)
+	err = v.Struct(s)
 	if err != nil {
 		for _, fieldError := range err.(validator.ValidationErrors) {
 			switch fieldError.Tag() {
@@ -261,13 +283,19 @@ func malformedRequestErr(err validator.ValidationErrors, trans ut.Translator) pk
 
 	var vErr pkg.ValidationKnownFieldsError
 
-	_ = errors.As(pkg.ValidateBadRequestFieldsError(requiredFields, invalidFieldsMap, "", make(map[string]any)), &vErr)
+	if !errors.As(pkg.ValidateBadRequestFieldsError(requiredFields, invalidFieldsMap, "", make(map[string]any)), &vErr) {
+		return pkg.ValidationKnownFieldsError{
+			Code:    "VALIDATION_ERROR",
+			Title:   "Validation Error",
+			Message: "request validation failed",
+		}
+	}
 
 	return vErr
 }
 
 //nolint:ireturn
-func newValidator() (*validator.Validate, ut.Translator) {
+func newValidator() (*validator.Validate, ut.Translator, error) {
 	locale := en.New()
 	uni := ut.New(locale, locale)
 
@@ -276,7 +304,7 @@ func newValidator() (*validator.Validate, ut.Translator) {
 	v := validator.New()
 
 	if err := en2.RegisterDefaultTranslations(v, trans); err != nil {
-		panic(err)
+		return nil, nil, fmt.Errorf("failed to register default translations: %w", err)
 	}
 
 	v.RegisterTagNameFunc(func(fld reflect.StructField) string {
@@ -340,7 +368,7 @@ func newValidator() (*validator.Validate, ut.Translator) {
 		return t
 	})
 
-	return v, trans
+	return v, trans, nil
 }
 
 // validateMetadataNestedValues checks if there are nested metadata structures
@@ -393,16 +421,17 @@ func validateMetadataValueMaxLength(fl validator.FieldLevel) bool {
 	return len(value) <= limit
 }
 
-// formatErrorFieldName formats metadata field error names for error messages
-func formatErrorFieldName(text string) string {
-	re, _ := regexp.Compile(`\.(.+)$`)
+// formatErrorFieldNameRegex is a pre-compiled regex for extracting field names from validator namespaces.
+var formatErrorFieldNameRegex = regexp.MustCompile(`\.(.+)$`)
 
-	matches := re.FindStringSubmatch(text)
+// formatErrorFieldName extracts the field name from a validator namespace string (e.g., "SomeStruct.field" -> "field").
+func formatErrorFieldName(text string) string {
+	matches := formatErrorFieldNameRegex.FindStringSubmatch(text)
 	if len(matches) > 1 {
 		return matches[1]
-	} else {
-		return text
 	}
+
+	return text
 }
 
 // parseMetadata For compliance with RFC7396 JSON Merge Patch

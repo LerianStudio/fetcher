@@ -33,6 +33,7 @@ func New(t *testing.T) *Builder {
 	if t != nil {
 		t.Helper()
 	}
+
 	return &Builder{
 		t:     t,
 		infra: make([]Infra, 0, 4),
@@ -46,6 +47,7 @@ func (b *Builder) WithInfra(infra Infra) *Builder {
 	if infra != nil {
 		b.infra = append(b.infra, infra)
 	}
+
 	return b
 }
 
@@ -54,8 +56,10 @@ func (b *Builder) WithInfras(infras ...Infra) *Builder {
 		if infra == nil {
 			continue
 		}
+
 		b.infra = append(b.infra, infra)
 	}
+
 	return b
 }
 
@@ -71,6 +75,7 @@ func (b *Builder) Build(ctx context.Context) (*Suite, error) {
 
 	// Create shared Docker network for container communication
 	networkName := fmt.Sprintf("itestkit-%d", time.Now().UnixNano())
+
 	network, err := testcontainers.GenericNetwork(ctx, testcontainers.GenericNetworkRequest{
 		NetworkRequest: testcontainers.NetworkRequest{
 			Name:   networkName,
@@ -82,12 +87,14 @@ func (b *Builder) Build(ctx context.Context) (*Suite, error) {
 	}
 
 	var chaos ChaosInterface
+
 	if b.chaosConf.Enabled {
 		tc, err := NewToxiproxyChaos(ctx, b.chaosConf, networkName)
 		if err != nil {
 			_ = network.Remove(ctx)
 			return nil, err
 		}
+
 		chaos = tc
 	}
 
@@ -126,12 +133,15 @@ func (s *Suite) Terminate(ctx context.Context) error {
 	for i := len(s.infra) - 1; i >= 0; i-- {
 		_ = s.infra[i].Terminate(ctx)
 	}
+
 	if s.chaos != nil {
 		_ = s.chaos.Close(ctx)
 	}
+
 	if s.network != nil {
 		_ = s.network.Remove(ctx)
 	}
+
 	return nil
 }
 
@@ -141,5 +151,6 @@ func (s *Suite) Network() string {
 	if s.env != nil {
 		return s.env.Network
 	}
+
 	return ""
 }

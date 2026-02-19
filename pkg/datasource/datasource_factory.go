@@ -13,18 +13,22 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/datasource/sslmode"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/model/datasource"
-	datsourceMongoConfig "github.com/LerianStudio/fetcher/pkg/model/datasource/mongodb"
-	datsourceMySQLConfig "github.com/LerianStudio/fetcher/pkg/model/datasource/mysql"
-	datsourceOracleConfig "github.com/LerianStudio/fetcher/pkg/model/datasource/oracle"
-	datsourcePostgresConfig "github.com/LerianStudio/fetcher/pkg/model/datasource/postgres"
-	datsourceSQLServerConfig "github.com/LerianStudio/fetcher/pkg/model/datasource/sqlserver"
+	datasourceMongoConfig "github.com/LerianStudio/fetcher/pkg/model/datasource/mongodb"
+	datasourceMySQLConfig "github.com/LerianStudio/fetcher/pkg/model/datasource/mysql"
+	datasourceOracleConfig "github.com/LerianStudio/fetcher/pkg/model/datasource/oracle"
+	datasourcePostgresConfig "github.com/LerianStudio/fetcher/pkg/model/datasource/postgres"
+	datasourceSQLServerConfig "github.com/LerianStudio/fetcher/pkg/model/datasource/sqlserver"
 	"github.com/LerianStudio/fetcher/pkg/mongodb"
 	"github.com/LerianStudio/fetcher/pkg/mysql"
 	"github.com/LerianStudio/fetcher/pkg/oracle"
 	"github.com/LerianStudio/fetcher/pkg/postgres"
 	"github.com/LerianStudio/fetcher/pkg/sqlserver"
+	libCommons "github.com/LerianStudio/lib-commons/v2/commons"
 	"github.com/LerianStudio/lib-commons/v2/commons/log"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
+
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.opentelemetry.io/otel/attribute"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
@@ -33,29 +37,56 @@ import (
 // into the appropriate DataSourceConfig implementation (MongoDB, PostgreSQL, Oracle, MySQL, or SQL Server).
 // The cryptor is required to decrypt the connection password before creating the data source.
 func NewDataSourceFromConnection(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor, logger log.Logger) (datasource.DataSource, error) {
+	_, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
+
+	ctx, span := tracer.Start(ctx, "factory.datasource.create")
+	defer span.End()
+
+	span.SetAttributes(attribute.String("app.request.request_id", reqID))
+
 	if conn == nil {
-		return nil, fmt.Errorf("connection cannot be nil")
+		err := fmt.Errorf("connection cannot be nil")
+		libOpentelemetry.HandleSpanError(&span, "nil connection", err)
+
+		return nil, err
 	}
 
+	span.SetAttributes(attribute.String("app.datasource.connection_type", string(conn.Type)))
+
 	if cryptor == nil {
-		return nil, fmt.Errorf("cryptor cannot be nil")
+		err := fmt.Errorf("cryptor cannot be nil")
+		libOpentelemetry.HandleSpanError(&span, "nil cryptor", err)
+
+		return nil, err
 	}
 
 	baseConfig := newDataSourceConfigFromConnection(conn)
+
+	var ds datasource.DataSource
+
+	var err error
+
 	switch conn.Type {
 	case model.TypeMongoDB:
-		return newDataSourceConfigMongoDB(ctx, baseConfig, conn, cryptor, logger)
+		ds, err = newDataSourceConfigMongoDB(ctx, baseConfig, conn, cryptor, logger)
 	case model.TypePostgreSQL:
-		return newDataSourceConfigPostgres(ctx, baseConfig, conn, cryptor, logger)
+		ds, err = newDataSourceConfigPostgres(ctx, baseConfig, conn, cryptor, logger)
 	case model.TypeOracle:
-		return newDataSourceConfigOracle(ctx, baseConfig, conn, cryptor, logger)
+		ds, err = newDataSourceConfigOracle(ctx, baseConfig, conn, cryptor, logger)
 	case model.TypeMySQL:
-		return newDataSourceConfigMySQL(ctx, baseConfig, conn, cryptor, logger)
+		ds, err = newDataSourceConfigMySQL(ctx, baseConfig, conn, cryptor, logger)
 	case model.TypeSQLServer:
-		return newDataSourceConfigSQLServer(ctx, baseConfig, conn, cryptor, logger)
+		ds, err = newDataSourceConfigSQLServer(ctx, baseConfig, conn, cryptor, logger)
 	default:
-		return nil, fmt.Errorf("unsupported database type: %s", conn.Type)
+		err = fmt.Errorf("unsupported database type: %s", conn.Type)
 	}
+
+	if err != nil {
+		libOpentelemetry.HandleSpanError(&span, "failed to create datasource", err)
+		return nil, err
+	}
+
+	return ds, nil
 }
 
 // newDataSourceConfigFromConnection creates a base DataSourceConfig from a Connection entity.
@@ -81,26 +112,35 @@ func newDataSourceConfigFromConnection(conn *model.Connection) datasource.DataSo
 }
 
 // newDataSourceConfigMongoDB creates a MongoDB-specific DataSourceConfig.
-func newDataSourceConfigMongoDB(ctx context.Context, base datasource.DataSourceConfig, conn *model.Connection, cryptor crypto.Cryptor, logger log.Logger) (*datsourceMongoConfig.DataSourceConfigMongoDB, error) {
+func newDataSourceConfigMongoDB(ctx context.Context, base datasource.DataSourceConfig, conn *model.Connection, cryptor crypto.Cryptor, logger log.Logger) (*datasourceMongoConfig.DataSourceConfigMongoDB, error) {
 	// Decrypt password before using it in connection string
 	password, err := conn.GetPasswordDecrypted(ctx, cryptor)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt password for MongoDB connection: %w", err)
 	}
 
-	optionsStr := "authSource=admin&directConnection=true"
-	mongoURI := fmt.Sprintf("%s://%s:%s@%s:%d/%s",
+	// Build MongoDB connection options from metadata, defaulting to authSource=admin
+	optionParts := []string{"authSource=admin"}
+
+	if conn.Metadata != nil {
+		if dc, ok := (*conn.Metadata)["directConnection"].(string); ok && dc == "true" {
+			optionParts = append(optionParts, "directConnection=true")
+		}
+
+		if authSrc, ok := (*conn.Metadata)["authSource"].(string); ok && authSrc != "" {
+			optionParts[0] = "authSource=" + authSrc
+		}
+	}
+
+	mongoURI := fmt.Sprintf("%s://%s:%s@%s:%d/%s?%s",
 		strings.ToLower(string(conn.Type)),
 		conn.Username,
 		url.QueryEscape(password),
 		conn.Host,
 		conn.Port,
 		conn.DatabaseName,
+		strings.Join(optionParts, "&"),
 	)
-
-	if optionsStr != "" {
-		mongoURI += "?" + optionsStr
-	}
 
 	// Validate SSL mode to prevent injection attacks
 	if conn.SSL != nil && conn.SSL.Mode != "" {
@@ -162,16 +202,16 @@ func newDataSourceConfigMongoDB(ctx context.Context, base datasource.DataSourceC
 		return nil, fmt.Errorf("failed to create MongoDB repository: %w", errRepo)
 	}
 
-	return &datsourceMongoConfig.DataSourceConfigMongoDB{
+	return &datasourceMongoConfig.DataSourceConfigMongoDB{
 		DataSourceConfig:  base,
 		MongoDBRepository: repo,
 		MongoURI:          mongoURI,
-		Options:           optionsStr,
+		Options:           strings.Join(optionParts, "&"),
 	}, nil
 }
 
 // newDataSourceConfigPostgres creates a PostgreSQL-specific DataSourceConfig.
-func newDataSourceConfigPostgres(ctx context.Context, base datasource.DataSourceConfig, conn *model.Connection, cryptor crypto.Cryptor, logger log.Logger) (*datsourcePostgresConfig.DataSourceConfigPostgres, error) {
+func newDataSourceConfigPostgres(ctx context.Context, base datasource.DataSourceConfig, conn *model.Connection, cryptor crypto.Cryptor, logger log.Logger) (*datasourcePostgresConfig.DataSourceConfigPostgres, error) {
 	// Decrypt password before using it in connection string
 	password, err := conn.GetPasswordDecrypted(ctx, cryptor)
 	if err != nil {
@@ -218,7 +258,7 @@ func newDataSourceConfigPostgres(ctx context.Context, base datasource.DataSource
 		return nil, fmt.Errorf("failed to create PostgreSQL repository: %w", errRepo)
 	}
 
-	return &datsourcePostgresConfig.DataSourceConfigPostgres{
+	return &datasourcePostgresConfig.DataSourceConfigPostgres{
 		DataSourceConfig:   base,
 		PostgresConnection: pgConnection,
 		PostgresRepository: repo,
@@ -226,7 +266,7 @@ func newDataSourceConfigPostgres(ctx context.Context, base datasource.DataSource
 }
 
 // newDataSourceConfigOracle creates an Oracle-specific DataSourceConfig.
-func newDataSourceConfigOracle(ctx context.Context, base datasource.DataSourceConfig, conn *model.Connection, cryptor crypto.Cryptor, logger log.Logger) (*datsourceOracleConfig.DataSourceConfigOracle, error) {
+func newDataSourceConfigOracle(ctx context.Context, base datasource.DataSourceConfig, conn *model.Connection, cryptor crypto.Cryptor, logger log.Logger) (*datasourceOracleConfig.DataSourceConfigOracle, error) {
 	// Decrypt password before using it in connection string
 	password, err := conn.GetPasswordDecrypted(ctx, cryptor)
 	if err != nil {
@@ -261,7 +301,7 @@ func newDataSourceConfigOracle(ctx context.Context, base datasource.DataSourceCo
 		serviceName,
 	)
 
-	logger.Infof("Attempting Oracle connection [%s] - Service: %s, Username: %s (will access schema: %s)",
+	logger.Debugf("Attempting Oracle connection [%s] - Service: %s, Username: %s (will access schema: %s)",
 		conn.ConfigName, serviceName, conn.Username, strings.ToUpper(conn.Username))
 	logger.Debugf("Oracle connection string: oracle://%s:***@%s:%d/%s", conn.Username, conn.Host, conn.Port, serviceName)
 
@@ -285,7 +325,7 @@ func newDataSourceConfigOracle(ctx context.Context, base datasource.DataSourceCo
 		return nil, fmt.Errorf("failed to create Oracle repository: %w", errRepo)
 	}
 
-	return &datsourceOracleConfig.DataSourceConfigOracle{
+	return &datasourceOracleConfig.DataSourceConfigOracle{
 		DataSourceConfig: base,
 		OracleConnection: oraConnection,
 		OracleRepository: repo,
@@ -293,7 +333,7 @@ func newDataSourceConfigOracle(ctx context.Context, base datasource.DataSourceCo
 }
 
 // newDataSourceConfigMySQL creates a MySQL-specific DataSourceConfig.
-func newDataSourceConfigMySQL(ctx context.Context, base datasource.DataSourceConfig, conn *model.Connection, cryptor crypto.Cryptor, logger log.Logger) (*datsourceMySQLConfig.DataSourceConfigMySQL, error) {
+func newDataSourceConfigMySQL(ctx context.Context, base datasource.DataSourceConfig, conn *model.Connection, cryptor crypto.Cryptor, logger log.Logger) (*datasourceMySQLConfig.DataSourceConfigMySQL, error) {
 	// Decrypt password before using it in connection string
 	password, err := conn.GetPasswordDecrypted(ctx, cryptor)
 	if err != nil {
@@ -340,7 +380,7 @@ func newDataSourceConfigMySQL(ctx context.Context, base datasource.DataSourceCon
 		return nil, fmt.Errorf("failed to create MySQL repository: %w", errRepo)
 	}
 
-	return &datsourceMySQLConfig.DataSourceConfigMySQL{
+	return &datasourceMySQLConfig.DataSourceConfigMySQL{
 		DataSourceConfig: base,
 		MySQLConnection:  mysqlConnection,
 		MySQLRepository:  repo,
@@ -348,7 +388,7 @@ func newDataSourceConfigMySQL(ctx context.Context, base datasource.DataSourceCon
 }
 
 // newDataSourceConfigSQLServer creates a SQL Server-specific DataSourceConfig.
-func newDataSourceConfigSQLServer(ctx context.Context, base datasource.DataSourceConfig, conn *model.Connection, cryptor crypto.Cryptor, logger log.Logger) (*datsourceSQLServerConfig.DataSourceConfigSQLServer, error) {
+func newDataSourceConfigSQLServer(ctx context.Context, base datasource.DataSourceConfig, conn *model.Connection, cryptor crypto.Cryptor, logger log.Logger) (*datasourceSQLServerConfig.DataSourceConfigSQLServer, error) {
 	// Decrypt password before using it in connection string
 	password, err := conn.GetPasswordDecrypted(ctx, cryptor)
 	if err != nil {
@@ -418,7 +458,7 @@ func newDataSourceConfigSQLServer(ctx context.Context, base datasource.DataSourc
 		return nil, fmt.Errorf("failed to create SQL Server repository: %w", errRepo)
 	}
 
-	return &datsourceSQLServerConfig.DataSourceConfigSQLServer{
+	return &datasourceSQLServerConfig.DataSourceConfigSQLServer{
 		DataSourceConfig:    base,
 		SQLServerConnection: sqlServerConnection,
 		SQLServerRepository: repo,

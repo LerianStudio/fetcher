@@ -30,7 +30,8 @@ func setupFallbackCache(t *testing.T) (*miniredis.Miniredis, *FallbackCache[test
 		Connected: true,
 	}
 
-	redisCache := NewRedisCache[testStruct](conn, time.Minute, "test:")
+	redisCache, err := NewRedisCache[testStruct](conn, time.Minute, "test:")
+	require.NoError(t, err)
 	fallback := NewFallbackCache[testStruct](redisCache, &mockLogger{}, time.Minute)
 
 	t.Cleanup(func() {
@@ -152,7 +153,8 @@ func TestFallbackCache_Close_Idempotent(t *testing.T) {
 		Connected: true,
 	}
 
-	redisCache := NewRedisCache[testStruct](conn, time.Minute, "test:")
+	redisCache, err := NewRedisCache[testStruct](conn, time.Minute, "test:")
+	require.NoError(t, err)
 	fallback := NewFallbackCache[testStruct](redisCache, &mockLogger{}, time.Minute)
 
 	// First close should succeed
@@ -207,7 +209,8 @@ func TestFallbackCache_DefaultTTL(t *testing.T) {
 		Connected: true,
 	}
 
-	redisCache := NewRedisCache[testStruct](conn, time.Minute, "test:")
+	redisCache, err := NewRedisCache[testStruct](conn, time.Minute, "test:")
+	require.NoError(t, err)
 
 	// Test that zero TTL uses default
 	fallback := NewFallbackCache[testStruct](redisCache, &mockLogger{}, 0)
@@ -243,7 +246,8 @@ func TestFallbackCache_NegativeTTL(t *testing.T) {
 		Connected: true,
 	}
 
-	redisCache := NewRedisCache[testStruct](conn, time.Minute, "test:")
+	redisCache, err := NewRedisCache[testStruct](conn, time.Minute, "test:")
+	require.NoError(t, err)
 
 	// Test that negative TTL uses default
 	fallback := NewFallbackCache[testStruct](redisCache, &mockLogger{}, -5*time.Minute)
@@ -368,7 +372,8 @@ func TestFallbackCache_UseRedisFlag_Switch(t *testing.T) {
 		Connected: true,
 	}
 
-	redisCache := NewRedisCache[testStruct](conn, time.Minute, "test:")
+	redisCache, err := NewRedisCache[testStruct](conn, time.Minute, "test:")
+	require.NoError(t, err)
 	cache := NewFallbackCache[testStruct](redisCache, &mockLogger{}, time.Minute)
 	defer cache.Close()
 
@@ -467,7 +472,8 @@ func TestFallbackCache_Close_StopsHealthMonitor(t *testing.T) {
 		Connected: true,
 	}
 
-	redisCache := NewRedisCache[testStruct](conn, time.Minute, "test:")
+	redisCache, err := NewRedisCache[testStruct](conn, time.Minute, "test:")
+	require.NoError(t, err)
 	cache := NewFallbackCache[testStruct](redisCache, &mockLogger{}, time.Minute)
 
 	// Close should stop the health monitor goroutine

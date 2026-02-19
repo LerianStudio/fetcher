@@ -28,9 +28,9 @@ type RedisCache[T any] struct {
 //   - conn: Redis connection
 //   - ttl: Default TTL for cache entries (uses DefaultCacheTTL if <= 0)
 //   - keyPrefix: Prefix for all cache keys (e.g., "fetcher:schema:")
-func NewRedisCache[T any](conn *RedisConnection, ttl time.Duration, keyPrefix string) *RedisCache[T] {
+func NewRedisCache[T any](conn *RedisConnection, ttl time.Duration, keyPrefix string) (*RedisCache[T], error) {
 	if conn == nil || conn.Client == nil {
-		panic("redis connection and client must not be nil")
+		return nil, fmt.Errorf("redis connection and client must not be nil")
 	}
 
 	if ttl <= 0 {
@@ -41,7 +41,7 @@ func NewRedisCache[T any](conn *RedisConnection, ttl time.Duration, keyPrefix st
 		client:    conn.Client,
 		ttl:       ttl,
 		keyPrefix: keyPrefix,
-	}
+	}, nil
 }
 
 // cacheKey generates the full Redis key.
@@ -200,5 +200,9 @@ func (c *RedisCache[T]) IsHealthy(ctx context.Context) bool {
 
 // Close closes the Redis connection.
 func (c *RedisCache[T]) Close() error {
-	return c.client.Close()
+	if err := c.client.Close(); err != nil {
+		return fmt.Errorf("failed to close Redis connection: %w", err)
+	}
+
+	return nil
 }

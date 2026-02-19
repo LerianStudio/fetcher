@@ -15,7 +15,7 @@ func TestValidateOracleMode(t *testing.T) {
 	}{
 		// Valid modes - from go-ora documentation
 		// The go-ora driver uses "ssl" and "ssl verify" URL parameters
-		{name: "empty string is valid (SSL disabled)", mode: "", wantError: false},
+		{name: "empty string is invalid (must use explicit mode)", mode: "", wantError: true},
 		{name: "disable is valid", mode: "disable", wantError: false},
 		{name: "false is valid", mode: "false", wantError: false},
 		{name: "true is valid (SSL enabled)", mode: "true", wantError: false},
@@ -59,6 +59,6 @@ func TestGetValidOracleModes(t *testing.T) {
 	modes := GetValidOracleModes()
 
 	// Verify all expected modes are present
-	expected := []string{"", "disable", "false", "true", "enable", "verify", "skip-verify"}
+	expected := []string{"disable", "false", "true", "enable", "verify", "skip-verify"}
 	assert.ElementsMatch(t, expected, modes, "Should return all valid Oracle SSL modes")
 }

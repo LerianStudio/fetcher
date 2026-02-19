@@ -53,7 +53,7 @@ func NewInMemoryCache[T any](ttl time.Duration, logger log.Logger) *InMemoryCach
 func (c *InMemoryCache[T]) Get(ctx context.Context, key string) (T, bool, error) {
 	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
-	_, span := tracer.Start(ctx, "cache.in_memory.get")
+	ctx, span := tracer.Start(ctx, "cache.in_memory.get")
 	defer span.End()
 
 	span.SetAttributes(
@@ -91,7 +91,7 @@ func (c *InMemoryCache[T]) Get(ctx context.Context, key string) (T, bool, error)
 func (c *InMemoryCache[T]) Set(ctx context.Context, key string, value T, ttl time.Duration) error {
 	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
-	_, span := tracer.Start(ctx, "cache.in_memory.set")
+	ctx, span := tracer.Start(ctx, "cache.in_memory.set")
 	defer span.End()
 
 	if ttl <= 0 {
@@ -121,7 +121,7 @@ func (c *InMemoryCache[T]) Set(ctx context.Context, key string, value T, ttl tim
 func (c *InMemoryCache[T]) Delete(ctx context.Context, key string) error {
 	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
-	_, span := tracer.Start(ctx, "cache.in_memory.delete")
+	ctx, span := tracer.Start(ctx, "cache.in_memory.delete")
 	defer span.End()
 
 	span.SetAttributes(
@@ -139,6 +139,15 @@ func (c *InMemoryCache[T]) Delete(ctx context.Context, key string) error {
 
 // Clear removes all cache entries.
 func (c *InMemoryCache[T]) Clear(ctx context.Context) error {
+	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+
+	ctx, span := tracer.Start(ctx, "cache.in_memory.clear")
+	defer span.End()
+
+	span.SetAttributes(
+		attribute.String("app.request.request_id", reqID),
+	)
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 

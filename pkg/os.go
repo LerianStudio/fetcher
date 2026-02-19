@@ -1,7 +1,7 @@
 package pkg
 
 import (
-	"fmt"
+	"log"
 	"os"
 	"reflect"
 	"strconv"
@@ -71,13 +71,13 @@ func InitLocalEnvConfig() *LocalEnvConfig {
 	if envName == "local" {
 		localEnvConfigOnce.Do(func() {
 			if err := godotenv.Load(); err != nil {
-				fmt.Println("Skipping \u001B[31m.env\u001B[0m file, using env", envName)
+				log.Printf("Skipping .env file, using env %s", envName)
 
 				localEnvConfig = &LocalEnvConfig{
 					Initialized: false,
 				}
 			} else {
-				fmt.Println("Env vars loaded from .env file on process", os.Getpid())
+				log.Printf("Env vars loaded from .env file on process %d", os.Getpid())
 
 				localEnvConfig = &LocalEnvConfig{
 					Initialized: true,
@@ -125,9 +125,14 @@ func SetConfigFromEnvVars(s any) error {
 }
 
 // EnsureConfigFromEnvVars ensures that an interface will be settled using SetConfigFromEnvVars anyway.
+//
+// This function intentionally panics on error as a fail-fast mechanism for missing
+// required configuration at startup. It should only be called during application
+// initialization (main/init), never at runtime. A panic here prevents the application
+// from starting in an invalid or partially configured state.
 func EnsureConfigFromEnvVars(s any) any {
 	if err := SetConfigFromEnvVars(s); err != nil {
-		panic(err)
+		panic(err) // Intentional: fail-fast on missing required config at startup
 	}
 
 	return s

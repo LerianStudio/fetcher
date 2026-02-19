@@ -58,20 +58,25 @@ func NewSeaweedFSInfra(cfg SeaweedFSConfig) *SeaweedFSInfra {
 	if cfg.Image == "" {
 		cfg.Image = defaultImage
 	}
+
 	if cfg.Name == "" {
 		cfg.Name = "default"
 	}
+
 	if cfg.StartupTimeout == 0 {
 		cfg.StartupTimeout = defaultStartupTimeout
 	}
+
 	if cfg.ProxyName == "" {
 		cfg.ProxyName = "seaweed-" + cfg.Name
 	}
+
 	return &SeaweedFSInfra{cfg: cfg}
 }
 
 func (s *SeaweedFSInfra) Start(ctx context.Context, env *itestkit.Env) error {
 	opts := defaultSeaweedFSOptions()
+
 	for _, opt := range s.cfg.Options {
 		if opt != nil {
 			opt(opts)
@@ -80,6 +85,7 @@ func (s *SeaweedFSInfra) Start(ctx context.Context, env *itestkit.Env) error {
 
 	// Create a dedicated network for inter-container communication
 	networkName := fmt.Sprintf("seaweedfs-%s-%d", s.cfg.Name, time.Now().UnixNano())
+
 	network, err := testcontainers.GenericNetwork(ctx, testcontainers.GenericNetworkRequest{
 		NetworkRequest: testcontainers.NetworkRequest{
 			Name:   networkName,
@@ -89,6 +95,7 @@ func (s *SeaweedFSInfra) Start(ctx context.Context, env *itestkit.Env) error {
 	if err != nil {
 		return fmt.Errorf("create network: %w", err)
 	}
+
 	s.network = network
 
 	masterAlias := fmt.Sprintf("seaweedfs-master-%s", s.cfg.Name)
@@ -114,6 +121,7 @@ func (s *SeaweedFSInfra) Start(ctx context.Context, env *itestkit.Env) error {
 	if err != nil {
 		return fmt.Errorf("start master: %w", err)
 	}
+
 	s.master = master
 
 	// Start Volume
@@ -136,6 +144,7 @@ func (s *SeaweedFSInfra) Start(ctx context.Context, env *itestkit.Env) error {
 		_ = master.Terminate(ctx)
 		return fmt.Errorf("start volume: %w", err)
 	}
+
 	s.volume = volume
 
 	// Start Filer
@@ -162,8 +171,10 @@ func (s *SeaweedFSInfra) Start(ctx context.Context, env *itestkit.Env) error {
 	if err != nil {
 		_ = volume.Terminate(ctx)
 		_ = master.Terminate(ctx)
+
 		return fmt.Errorf("start filer: %w", err)
 	}
+
 	s.filer = filer
 
 	// Get filer endpoint
@@ -171,6 +182,7 @@ func (s *SeaweedFSInfra) Start(ctx context.Context, env *itestkit.Env) error {
 	if err != nil {
 		return fmt.Errorf("get filer host: %w", err)
 	}
+
 	port, err := filer.MappedPort(ctx, "8888/tcp")
 	if err != nil {
 		return fmt.Errorf("get filer port: %w", err)
@@ -185,10 +197,12 @@ func (s *SeaweedFSInfra) Start(ctx context.Context, env *itestkit.Env) error {
 		// For the Toxiproxy container to reach the SeaweedFS container,
 		// we need to use host.docker.internal which resolves to the Docker host
 		proxyUpstream := fmt.Sprintf("host.docker.internal:%s", port.Port())
+
 		ref, err := env.Chaos.CreateProxy(ctx, s.cfg.ProxyName, proxyUpstream)
 		if err != nil {
 			return fmt.Errorf("create seaweedfs proxy: %w", err)
 		}
+
 		finalAddr = ref.ListenAddr
 		proxyListen = ref.ListenAddr
 	}
@@ -215,6 +229,7 @@ func (s *SeaweedFSInfra) Endpoint() (SeaweedFSEndpoint, error) {
 	if s.endpoint == nil {
 		return SeaweedFSEndpoint{}, fmt.Errorf("seaweedfs endpoint not ready")
 	}
+
 	return *s.endpoint, nil
 }
 
@@ -224,6 +239,7 @@ func (s *SeaweedFSInfra) URL() (string, error) {
 	if err != nil {
 		return "", err
 	}
+
 	return endpoint.URL, nil
 }
 
@@ -253,16 +269,19 @@ func (s *SeaweedFSInfra) Terminate(ctx context.Context) error {
 			errs = append(errs, err)
 		}
 	}
+
 	if s.volume != nil {
 		if err := s.volume.Terminate(ctx); err != nil {
 			errs = append(errs, err)
 		}
 	}
+
 	if s.master != nil {
 		if err := s.master.Terminate(ctx); err != nil {
 			errs = append(errs, err)
 		}
 	}
+
 	if s.network != nil {
 		if err := s.network.Remove(ctx); err != nil {
 			errs = append(errs, err)
@@ -272,6 +291,7 @@ func (s *SeaweedFSInfra) Terminate(ctx context.Context) error {
 	if len(errs) > 0 {
 		return fmt.Errorf("errors terminating seaweedfs: %v", errs)
 	}
+
 	return nil
 }
 

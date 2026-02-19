@@ -19,6 +19,7 @@ func MatchAll(matchers ...Matcher) Matcher {
 				return false
 			}
 		}
+
 		return true
 	}
 }
@@ -29,11 +30,13 @@ func MatchAny(matchers ...Matcher) Matcher {
 		if len(matchers) == 0 {
 			return true
 		}
+
 		for _, m := range matchers {
 			if m(msg) {
 				return true
 			}
 		}
+
 		return false
 	}
 }
@@ -76,6 +79,7 @@ func MatchRoutingKeyPrefix(prefix string) Matcher {
 // MatchRoutingKeyPattern returns a matcher that checks the routing key against a regex.
 func MatchRoutingKeyPattern(pattern string) Matcher {
 	re := regexp.MustCompile(pattern)
+
 	return func(msg Message) bool {
 		return re.MatchString(msg.RoutingKey)
 	}
@@ -87,10 +91,12 @@ func MatchHeader(key string, value any) Matcher {
 		if msg.Headers == nil {
 			return false
 		}
+
 		v, ok := msg.Headers[key]
 		if !ok {
 			return false
 		}
+
 		return v == value
 	}
 }
@@ -101,7 +107,9 @@ func MatchHeaderExists(key string) Matcher {
 		if msg.Headers == nil {
 			return false
 		}
+
 		_, ok := msg.Headers[key]
+
 		return ok
 	}
 }
@@ -130,6 +138,7 @@ func MatchBodyContains(substr string) Matcher {
 // MatchBodyPattern returns a matcher that checks the body against a regex.
 func MatchBodyPattern(pattern string) Matcher {
 	re := regexp.MustCompile(pattern)
+
 	return func(msg Message) bool {
 		return re.Match(msg.Body)
 	}
@@ -146,6 +155,7 @@ func MatchJSONField(path string, expectedValue any) Matcher {
 		}
 
 		value := getNestedValue(data, path)
+
 		return compareValues(value, expectedValue)
 	}
 }
@@ -165,6 +175,7 @@ func MatchJSONFieldExists(path string) Matcher {
 // MatchJSONFieldPattern returns a matcher that checks a JSON field against a regex.
 func MatchJSONFieldPattern(path string, pattern string) Matcher {
 	re := regexp.MustCompile(pattern)
+
 	return func(msg Message) bool {
 		var data map[string]any
 		if err := json.Unmarshal(msg.Body, &data); err != nil {
@@ -219,9 +230,11 @@ func hasNestedValue(data map[string]any, path string) bool {
 			if !exists {
 				return false
 			}
+
 			if i == len(parts)-1 {
 				return true
 			}
+
 			current = v
 		} else {
 			return false
@@ -236,6 +249,7 @@ func compareValues(actual, expected any) bool {
 	if actual == nil && expected == nil {
 		return true
 	}
+
 	if actual == nil || expected == nil {
 		return false
 	}

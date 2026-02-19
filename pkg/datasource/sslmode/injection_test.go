@@ -126,7 +126,7 @@ func TestInjectionAttackVectors(t *testing.T) {
 // TestValidModesAccepted ensures valid modes are still accepted after security hardening
 func TestValidModesAccepted(t *testing.T) {
 	t.Run("MySQL valid modes accepted", func(t *testing.T) {
-		validModes := []string{"", "false", "true", "skip-verify", "preferred"}
+		validModes := []string{"false", "true", "skip-verify", "preferred"}
 		for _, mode := range validModes {
 			t.Run("mode_"+mode, func(t *testing.T) {
 				err := ValidateMySQLMode(mode)
@@ -136,7 +136,7 @@ func TestValidModesAccepted(t *testing.T) {
 	})
 
 	t.Run("Oracle valid modes accepted", func(t *testing.T) {
-		validModes := []string{"", "disable", "false", "true", "enable", "verify", "skip-verify"}
+		validModes := []string{"disable", "false", "true", "enable", "verify", "skip-verify"}
 		for _, mode := range validModes {
 			t.Run("mode_"+mode, func(t *testing.T) {
 				err := ValidateOracleMode(mode)

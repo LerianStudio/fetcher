@@ -69,6 +69,7 @@ func buildImageWithSecrets(ctx context.Context, cfg BuildConfig) (string, error)
 
 	// Process secrets and create cleanup function
 	var tempFiles []string
+
 	defer func() {
 		for _, f := range tempFiles {
 			_ = os.Remove(f)
@@ -105,8 +106,10 @@ func buildImageWithSecrets(ctx context.Context, cfg BuildConfig) (string, error)
 			if _, err := tmpFile.WriteString(value); err != nil {
 				tmpFile.Close()
 				os.Remove(tmpFile.Name())
+
 				return "", fmt.Errorf("e2ekit: failed to write secret %q to temp file: %w", secret.ID, err)
 			}
+
 			tmpFile.Close()
 
 			srcPath = tmpFile.Name()
@@ -124,6 +127,7 @@ func buildImageWithSecrets(ctx context.Context, cfg BuildConfig) (string, error)
 
 	// Execute docker build with BuildKit enabled
 	cmd := exec.CommandContext(ctx, "docker", args...)
+
 	cmd.Env = append(os.Environ(), "DOCKER_BUILDKIT=1")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -139,6 +143,7 @@ func buildImageWithSecrets(ctx context.Context, cfg BuildConfig) (string, error)
 func generateImageTag() string {
 	b := make([]byte, 8)
 	_, _ = rand.Read(b)
+
 	return fmt.Sprintf("e2ekit-build-%s", hex.EncodeToString(b))
 }
 

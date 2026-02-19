@@ -35,6 +35,7 @@ type ConsumerBuilder[T any] struct {
 // NewConsumer creates a new ConsumerBuilder for type T.
 func NewConsumer[T any](t *testing.T, backend QueueConsumer) *ConsumerBuilder[T] {
 	t.Helper()
+
 	return &ConsumerBuilder[T]{
 		t:           t,
 		backend:     backend,
@@ -50,6 +51,7 @@ func (b *ConsumerBuilder[T]) WithMatcher(m Matcher) *ConsumerBuilder[T] {
 	if m != nil {
 		b.matcher = m
 	}
+
 	return b
 }
 
@@ -58,6 +60,7 @@ func (b *ConsumerBuilder[T]) WithUnmarshaler(u Unmarshaler) *ConsumerBuilder[T] 
 	if u != nil {
 		b.unmarshaler = u
 	}
+
 	return b
 }
 
@@ -66,6 +69,7 @@ func (b *ConsumerBuilder[T]) WithTimeout(d time.Duration) *ConsumerBuilder[T] {
 	if d > 0 {
 		b.timeout = d
 	}
+
 	return b
 }
 
@@ -78,6 +82,7 @@ func (b *ConsumerBuilder[T]) WithDebugLog(enabled bool) *ConsumerBuilder[T] {
 // Build creates the Consumer. Call Close() when done.
 func (b *ConsumerBuilder[T]) Build() *Consumer[T] {
 	b.t.Helper()
+
 	return &Consumer[T]{
 		t:           b.t,
 		backend:     b.backend,
@@ -146,6 +151,7 @@ func (c *Consumer[T]) WaitForMessages(ctx context.Context, n int) (WaitResult[T]
 			if result.TimedOut && len(result.Messages) == 0 {
 				return result, fmt.Errorf("timeout waiting for messages: wanted %d, got %d", n, len(result.Messages))
 			}
+
 			return result, nil
 
 		case msg, ok := <-msgs:
@@ -154,6 +160,7 @@ func (c *Consumer[T]) WaitForMessages(ctx context.Context, n int) (WaitResult[T]
 				if len(result.Messages) < n {
 					return result, fmt.Errorf("channel closed: wanted %d messages, got %d", n, len(result.Messages))
 				}
+
 				return result, nil
 			}
 
@@ -163,6 +170,7 @@ func (c *Consumer[T]) WaitForMessages(ctx context.Context, n int) (WaitResult[T]
 			if !c.matcher(msg) {
 				result.Unmatched = append(result.Unmatched, msg)
 				c.logMessage(msg, "unmatched")
+
 				continue
 			}
 
@@ -170,6 +178,7 @@ func (c *Consumer[T]) WaitForMessages(ctx context.Context, n int) (WaitResult[T]
 			if err := c.unmarshaler(msg.Body, &payload); err != nil {
 				result.Errors = append(result.Errors, fmt.Errorf("unmarshal error: %w", err))
 				c.logMessage(msg, "parse error: "+err.Error())
+
 				continue
 			}
 
@@ -178,6 +187,7 @@ func (c *Consumer[T]) WaitForMessages(ctx context.Context, n int) (WaitResult[T]
 				Payload: payload,
 			}
 			result.Messages = append(result.Messages, parsed)
+
 			c.logMessage(msg, "matched")
 
 			if len(result.Messages) >= n {
@@ -213,6 +223,7 @@ func (c *Consumer[T]) CaptureAll(ctx context.Context, duration time.Duration) (W
 		case <-ctx.Done():
 			result.Duration = time.Since(start)
 			result.TimedOut = false // Expected timeout
+
 			return result, nil
 
 		case msg, ok := <-msgs:
@@ -286,7 +297,9 @@ func (c *Consumer[T]) DrainQueue(ctx context.Context, maxDuration time.Duration)
 			if !ok {
 				return count, nil
 			}
+
 			count++
+
 			c.logMessage(msg, "drained")
 			// Reset drain timeout
 			drainTimeout = time.After(100 * time.Millisecond)
@@ -305,6 +318,7 @@ func (c *Consumer[T]) GetCaptured() []Message {
 
 	result := make([]Message, len(c.captured))
 	copy(result, c.captured)
+
 	return result
 }
 
@@ -312,6 +326,7 @@ func (c *Consumer[T]) GetCaptured() []Message {
 func (c *Consumer[T]) ClearCaptured() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
 	c.captured = make([]Message, 0)
 }
 
@@ -319,6 +334,7 @@ func (c *Consumer[T]) ClearCaptured() {
 func (c *Consumer[T]) captureMessage(msg Message) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
 	c.captured = append(c.captured, msg)
 }
 
@@ -337,6 +353,7 @@ func truncateBody(body []byte, maxLen int) string {
 	if len(body) <= maxLen {
 		return string(body)
 	}
+
 	return string(body[:maxLen]) + "..."
 }
 
