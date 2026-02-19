@@ -197,6 +197,8 @@ func (e *AppEnv) WorkerEnv() map[string]string {
 //
 // Returns the running application with its base URL for API calls.
 func StartManager(t *testing.T, ctx context.Context, env *AppEnv, cfg AppStartConfig) (*e2ekit.RunningApp, error) {
+	t.Helper()
+
 	builder := e2ekit.New(t).
 		WithContext(ctx).
 		ExposePort(ManagerAPIPort).
@@ -243,6 +245,8 @@ func StartManager(t *testing.T, ctx context.Context, env *AppEnv, cfg AppStartCo
 //
 // Returns the running application container.
 func StartWorker(t *testing.T, ctx context.Context, env *AppEnv, cfg AppStartConfig) (*e2ekit.RunningApp, error) {
+	t.Helper()
+
 	builder := e2ekit.New(t).
 		WithContext(ctx).
 		WithEnv(env.WorkerEnv()).

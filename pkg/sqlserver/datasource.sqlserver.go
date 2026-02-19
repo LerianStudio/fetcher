@@ -384,7 +384,7 @@ func (ds *ExternalDataSource) queryPrimaryKeys(ctx context.Context, schemas []st
 
 // buildSchema builds the complete schema information for all tables
 func (ds *ExternalDataSource) buildSchema(ctx context.Context, tables []string, primaryKeys map[string]map[string]bool, logger log.Logger, schemas []string) ([]TableSchema, error) {
-	_, tracer, _, _ := libCommons.NewTrackingFromContext(ctx)
+	_, tracer, _, _ := libCommons.NewTrackingFromContext(ctx) //nolint:dogsled // NewTrackingFromContext returns 4 values, only tracer needed here
 
 	ctx, span := tracer.Start(ctx, "sqlserver.schema.build")
 	defer span.End()
@@ -637,7 +637,7 @@ func parseJSONField(value any, logger log.Logger) any {
 func (ds *ExternalDataSource) ValidateTableAndFields(ctx context.Context, tableName string, requestedFields []string, schema []TableSchema) ([]string, error) {
 	logger, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
 
-	ctx, span := tracer.Start(ctx, "sqlserver.data_source.validate_table_and_fields")
+	_, span := tracer.Start(ctx, "sqlserver.data_source.validate_table_and_fields")
 	defer span.End()
 
 	span.SetAttributes(

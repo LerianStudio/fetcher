@@ -1069,7 +1069,7 @@ func (prmq *RabbitMQAdapter) processDelivery(
 	msgCtx = libOpentelemetry.ExtractTraceContextFromQueueHeaders(msgCtx, d.Headers)
 
 	// Create tracer from context and start span
-	_, msgTracer, _, _ := libCommons.NewTrackingFromContext(msgCtx)
+	_, msgTracer, _, _ := libCommons.NewTrackingFromContext(msgCtx) //nolint:dogsled // NewTrackingFromContext returns 4 values, only tracer needed here
 
 	hctx, hspan := msgTracer.Start(msgCtx, "rabbitmq.consumer.handle_message")
 	defer hspan.End()

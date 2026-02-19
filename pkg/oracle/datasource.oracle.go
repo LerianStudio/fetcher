@@ -440,7 +440,7 @@ func (ds *ExternalDataSource) queryPrimaryKeys(ctx context.Context, schemas []st
 
 // buildSchema builds the complete schema information for all tables
 func (ds *ExternalDataSource) buildSchema(ctx context.Context, tables []string, primaryKeys map[string]map[string]bool, logger log.Logger, schemas []string) ([]TableSchema, error) {
-	_, tracer, _, _ := libCommons.NewTrackingFromContext(ctx)
+	_, tracer, _, _ := libCommons.NewTrackingFromContext(ctx) //nolint:dogsled // NewTrackingFromContext returns 4 values, only tracer needed here
 
 	ctx, span := tracer.Start(ctx, "oracle.schema.build")
 	defer span.End()
