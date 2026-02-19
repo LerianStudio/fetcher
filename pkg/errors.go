@@ -310,8 +310,28 @@ func ValidateBadRequestFieldsError(requiredFields, knownInvalidFields map[string
 // ValidateBusinessError validates the error and returns the appropriate business error code, title, and message.
 // error: The appropriate business error with code, title, and message.
 func ValidateBusinessError(err error, entityType string, args ...any) error {
+	if result := validateCommonErrors(err, entityType, args...); result != nil {
+		return result
+	}
+
+	if result := validateEntityErrors(err, entityType); result != nil {
+		return result
+	}
+
+	if result := validateProductErrors(err, entityType, args...); result != nil {
+		return result
+	}
+
+	if result := validateJobAndConnectionErrors(err, entityType, args...); result != nil {
+		return result
+	}
+
+	return err
+}
+
+// validateCommonErrors handles common validation errors (query params, dates, pagination, metadata, etc.).
+func validateCommonErrors(err error, entityType string, args ...any) error {
 	switch err {
-	// Common errors
 	case constant.ErrInvalidQueryParameter:
 		return ValidationError{
 			EntityType: entityType,
@@ -401,8 +421,14 @@ func ValidateBusinessError(err error, entityType string, args ...any) error {
 			Title:      "Invalid SSL Mode",
 			Message:    fmt.Sprintf("Invalid SSL mode. The provided SSL mode '%s' is not supported. Please use a valid SSL mode for this database type.", args...),
 		}
+	default:
+		return nil
+	}
+}
 
-	// Entity related errors
+// validateEntityErrors handles entity-related errors (not found, conflict).
+func validateEntityErrors(err error, entityType string) error {
+	switch err {
 	case constant.ErrEntityNotFound:
 		return ResponseErrorWithStatusCode{
 			StatusCode: http.StatusNotFound,
@@ -417,8 +443,14 @@ func ValidateBusinessError(err error, entityType string, args ...any) error {
 			Title:      "Conflict",
 			Message:    fmt.Sprintf("An entity of type %v with the same unique attributes already exists. Please use different values to avoid conflicts and review the data provided in the request.", entityType),
 		}
+	default:
+		return nil
+	}
+}
 
-	// Product related errors
+// validateProductErrors handles product-related errors (has connections, not assigned, already assigned, mismatch).
+func validateProductErrors(err error, entityType string, args ...any) error {
+	switch err {
 	case constant.ErrProductHasConnections:
 		return ResponseErrorWithStatusCode{
 			StatusCode: http.StatusConflict,
@@ -457,8 +489,14 @@ func ValidateBusinessError(err error, entityType string, args ...any) error {
 			Title:      "Product Mismatch",
 			Message:    msg,
 		}
+	default:
+		return nil
+	}
+}
 
-	// Job related errors
+// validateJobAndConnectionErrors handles job, connection, and schema validation errors.
+func validateJobAndConnectionErrors(err error, entityType string, args ...any) error {
+	switch err {
 	case constant.ErrMissingDataSource:
 		return ValidationError{
 			EntityType: entityType,
@@ -478,8 +516,6 @@ func ValidateBusinessError(err error, entityType string, args ...any) error {
 			Title:      "Job In Progress",
 			Message:    msg,
 		}
-
-	// Connection related errors
 	case constant.ErrConnectionDown:
 		msg := "The database connection is not available. Please check the connection configuration and try again."
 		if len(args) > 0 {
@@ -492,8 +528,6 @@ func ValidateBusinessError(err error, entityType string, args ...any) error {
 			Title:      "Connection Down",
 			Message:    msg,
 		}
-
-	// Schema validation errors
 	case constant.ErrSchemaValidationFailed:
 		msg := "Schema validation found inconsistencies."
 		if len(args) > 0 {
@@ -518,8 +552,7 @@ func ValidateBusinessError(err error, entityType string, args ...any) error {
 			Title:      "Validation Limit Exceeded",
 			Message:    msg,
 		}
-
 	default:
-		return err
+		return nil
 	}
 }

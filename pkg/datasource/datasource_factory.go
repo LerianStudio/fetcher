@@ -28,8 +28,8 @@ import (
 	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
 
 	"go.mongodb.org/mongo-driver/mongo"
-	"go.opentelemetry.io/otel/attribute"
 	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // NewDataSourceFromConnection creates a DataSource implementation based on the connection type.
@@ -119,18 +119,7 @@ func newDataSourceConfigMongoDB(ctx context.Context, base datasource.DataSourceC
 		return nil, fmt.Errorf("failed to decrypt password for MongoDB connection: %w", err)
 	}
 
-	// Build MongoDB connection options from metadata, defaulting to authSource=admin
-	optionParts := []string{"authSource=admin"}
-
-	if conn.Metadata != nil {
-		if dc, ok := (*conn.Metadata)["directConnection"].(string); ok && dc == "true" {
-			optionParts = append(optionParts, "directConnection=true")
-		}
-
-		if authSrc, ok := (*conn.Metadata)["authSource"].(string); ok && authSrc != "" {
-			optionParts[0] = "authSource=" + authSrc
-		}
-	}
+	optionParts := buildMongoDBOptions(conn)
 
 	mongoURI := fmt.Sprintf("%s://%s:%s@%s:%d/%s?%s",
 		strings.ToLower(string(conn.Type)),
@@ -149,7 +138,49 @@ func newDataSourceConfigMongoDB(ctx context.Context, base datasource.DataSourceC
 		}
 	}
 
+	mongoURI = appendMongoDBSSLParams(mongoURI, conn)
+
+	// Test connection with timeout
+	if err := testMongoDBConnection(ctx, mongoURI, conn.ConfigName, logger); err != nil {
+		return nil, err
+	}
+
+	// Create repository
+	repo, errRepo := mongodb.NewDataSourceRepository(mongoURI, conn.DatabaseName, logger)
+	if errRepo != nil {
+		return nil, fmt.Errorf("failed to create MongoDB repository: %w", errRepo)
+	}
+
+	return &datasourceMongoConfig.DataSourceConfigMongoDB{
+		DataSourceConfig:  base,
+		MongoDBRepository: repo,
+		MongoURI:          mongoURI,
+		Options:           strings.Join(optionParts, "&"),
+	}, nil
+}
+
+// buildMongoDBOptions builds the connection options from metadata, defaulting to authSource=admin.
+func buildMongoDBOptions(conn *model.Connection) []string {
+	optionParts := []string{"authSource=admin"}
+
+	if conn.Metadata != nil {
+		if dc, ok := (*conn.Metadata)["directConnection"].(string); ok && dc == "true" {
+			optionParts = append(optionParts, "directConnection=true")
+		}
+
+		if authSrc, ok := (*conn.Metadata)["authSource"].(string); ok && authSrc != "" {
+			optionParts[0] = "authSource=" + authSrc
+		}
+	}
+
+	return optionParts
+}
+
+// appendMongoDBSSLParams appends TLS/SSL query parameters to the MongoDB URI
+// based on the connection's SSL configuration.
+func appendMongoDBSSLParams(mongoURI string, conn *model.Connection) string {
 	var params []string
+
 	if conn.SSL != nil && conn.SSL.Mode != "" && conn.SSL.Mode != "false" && conn.SSL.Mode != "disable" {
 		// Enable TLS for MongoDB connection
 		params = append(params, "tls=true")
@@ -168,7 +199,12 @@ func newDataSourceConfigMongoDB(ctx context.Context, base datasource.DataSourceC
 		}
 	}
 
-	// Test connection with timeout
+	return mongoURI
+}
+
+// testMongoDBConnection verifies connectivity to a MongoDB instance by performing
+// a connect and ping operation, then immediately disconnects.
+func testMongoDBConnection(ctx context.Context, mongoURI, configName string, logger log.Logger) error {
 	testCtx, cancel := context.WithTimeout(ctx, constant.ConnectionTimeout)
 	defer cancel()
 
@@ -182,32 +218,21 @@ func newDataSourceConfigMongoDB(ctx context.Context, base datasource.DataSourceC
 
 	client, errConnect := mongo.Connect(testCtx, clientOpts)
 	if errConnect != nil {
-		logger.Errorf("Failed to connect to MongoDB [%s]: %v", conn.ConfigName, errConnect)
-		return nil, fmt.Errorf("failed to connect to MongoDB: %w", errConnect)
+		logger.Errorf("Failed to connect to MongoDB [%s]: %v", configName, errConnect)
+		return fmt.Errorf("failed to connect to MongoDB: %w", errConnect)
 	}
 
 	if errPing := client.Ping(testCtx, nil); errPing != nil {
 		_ = client.Disconnect(testCtx)
 
-		logger.Errorf("Failed to ping MongoDB [%s]: %v", conn.ConfigName, errPing)
+		logger.Errorf("Failed to ping MongoDB [%s]: %v", configName, errPing)
 
-		return nil, fmt.Errorf("failed to ping MongoDB: %w", errPing)
+		return fmt.Errorf("failed to ping MongoDB: %w", errPing)
 	}
 
 	_ = client.Disconnect(testCtx)
 
-	// Create repository
-	repo, errRepo := mongodb.NewDataSourceRepository(mongoURI, conn.DatabaseName, logger)
-	if errRepo != nil {
-		return nil, fmt.Errorf("failed to create MongoDB repository: %w", errRepo)
-	}
-
-	return &datasourceMongoConfig.DataSourceConfigMongoDB{
-		DataSourceConfig:  base,
-		MongoDBRepository: repo,
-		MongoURI:          mongoURI,
-		Options:           strings.Join(optionParts, "&"),
-	}, nil
+	return nil
 }
 
 // newDataSourceConfigPostgres creates a PostgreSQL-specific DataSourceConfig.
