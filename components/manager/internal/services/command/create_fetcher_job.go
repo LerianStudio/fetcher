@@ -168,39 +168,8 @@ func (s *CreateFetcherJob) Execute(ctx context.Context, organizationID uuid.UUID
 	}
 
 	// Validate required metadata.source field
-	if request.Metadata == nil {
-		libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "Missing required metadata", nil)
-
-		return nil, pkg.ValidationError{
-			EntityType: "fetcher",
-			Code:       constant.ErrMissingFieldsInRequest.Error(),
-			Title:      "Missing Required Field",
-			Message:    "metadata is required and must contain 'source' field",
-		}
-	}
-
-	source, hasSource := request.Metadata["source"]
-	if !hasSource || source == nil {
-		libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "Missing required metadata.source", nil)
-
-		return nil, pkg.ValidationError{
-			EntityType: "fetcher",
-			Code:       constant.ErrMissingFieldsInRequest.Error(),
-			Title:      "Missing Required Field",
-			Message:    "metadata.source is required for job notification routing",
-		}
-	}
-
-	sourceStr, ok := source.(string)
-	if !ok || sourceStr == "" {
-		libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "Invalid metadata.source type or empty value", nil)
-
-		return nil, pkg.ValidationError{
-			EntityType: "fetcher",
-			Code:       constant.ErrMissingFieldsInRequest.Error(),
-			Title:      "Invalid Field Value",
-			Message:    "metadata.source must be a non-empty string",
-		}
+	if err := validateMetadataSource(&span, request.Metadata); err != nil {
+		return nil, err
 	}
 
 	// Validate filter references against mappedFields
@@ -328,6 +297,47 @@ func (s *CreateFetcherJob) Execute(ctx context.Context, organizationID uuid.UUID
 		IsDuplicate:  false,
 		IsNewCreated: true,
 	}, nil
+}
+
+// validateMetadataSource validates that the request metadata contains a valid source field.
+// Returns an error if metadata is nil, source is missing, or source is not a non-empty string.
+func validateMetadataSource(span *trace.Span, metadata map[string]any) error {
+	if metadata == nil {
+		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Missing required metadata", nil)
+
+		return pkg.ValidationError{
+			EntityType: "fetcher",
+			Code:       constant.ErrMissingFieldsInRequest.Error(),
+			Title:      "Missing Required Field",
+			Message:    "metadata is required and must contain 'source' field",
+		}
+	}
+
+	source, hasSource := metadata["source"]
+	if !hasSource || source == nil {
+		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Missing required metadata.source", nil)
+
+		return pkg.ValidationError{
+			EntityType: "fetcher",
+			Code:       constant.ErrMissingFieldsInRequest.Error(),
+			Title:      "Missing Required Field",
+			Message:    "metadata.source is required for job notification routing",
+		}
+	}
+
+	sourceStr, ok := source.(string)
+	if !ok || sourceStr == "" {
+		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Invalid metadata.source type or empty value", nil)
+
+		return pkg.ValidationError{
+			EntityType: "fetcher",
+			Code:       constant.ErrMissingFieldsInRequest.Error(),
+			Title:      "Invalid Field Value",
+			Message:    "metadata.source must be a non-empty string",
+		}
+	}
+
+	return nil
 }
 
 // validateProductOwnership validates that all connections belong to the product
