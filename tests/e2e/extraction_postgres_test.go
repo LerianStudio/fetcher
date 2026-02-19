@@ -4,21 +4,15 @@ package extraction
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/LerianStudio/fetcher/pkg/model"
 	e2eshared "github.com/LerianStudio/fetcher/tests/shared"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-)
-
-const (
-	// testTimeout is the maximum duration for the entire test execution.
-	testTimeout = 2 * time.Minute
-
-	// jobCompletionTimeout is how long to wait for the job completion event.
-	jobCompletionTimeout = 90 * time.Second
 )
 
 // TestPostgresExtraction_TransactionsTable verifies the complete data extraction flow:
@@ -34,17 +28,21 @@ const (
 func TestPostgresExtraction_TransactionsTable(t *testing.T) {
 	t.Parallel()
 
-	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), e2eshared.DefaultTestTimeout)
 	defer cancel()
 
 	// Step 1: Get PostgreSQL connection details
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
-	// Step 2: Create connection to source database
+	// Step 2: Create product and connection to source database
+	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+
+	connName := fmt.Sprintf("e2e-pg-extract-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
-		ConfigName:   "e2e-postgres-source",
-		Type:         "POSTGRESQL",
+		ProductID:    product.ID,
+		ConfigName:   connName,
+		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,
 		Port:         pgPort,
 		DatabaseName: "testdb",
@@ -63,17 +61,20 @@ func TestPostgresExtraction_TransactionsTable(t *testing.T) {
 		}
 	})
 
+	err = apiClient.WaitForConnectionAvailable(ctx, conn.ID, 10*time.Second)
+	require.NoError(t, err, "wait for connection to be available")
+
 	// Step 3: Submit fetcher job
 	fetcherReq := model.FetcherRequest{
 		DataRequest: model.DataRequest{
 			MappedFields: map[string]map[string][]string{
-				"e2e-postgres-source": {
+				connName: {
 					"transactions": {"id", "account_id", "amount", "currency", "type", "created_at"},
 				},
 			},
 		},
 		Metadata: map[string]any{
-			"source": "reporter",
+			"source": product.Code,
 			"test":   "postgres-extraction-e2e",
 		},
 	}
@@ -87,7 +88,7 @@ func TestPostgresExtraction_TransactionsTable(t *testing.T) {
 
 	// Step 4: Wait for job completion using API polling
 	// This approach is more reliable than RabbitMQ message consumption when tests run in parallel
-	jobResult := e2eshared.AssertJobCompleted(t, apiClient, jobID, jobCompletionTimeout)
+	jobResult := e2eshared.AssertJobCompleted(t, apiClient, jobID, e2eshared.DefaultJobTimeout)
 
 	assert.Equal(t, "completed", jobResult.Status, "job status should be completed")
 	assert.NotEmpty(t, jobResult.ResultPath, "result path should be set")

@@ -34,6 +34,7 @@ func isFixedPortEnabled() bool {
 	if val := os.Getenv("FIXED_PORT"); val != "" {
 		return strings.EqualFold(val, "true")
 	}
+
 	return false
 }
 

@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/LerianStudio/fetcher/pkg/itestkit/addons/queuekit"
 	"github.com/LerianStudio/fetcher/pkg/model"
@@ -35,9 +36,12 @@ func TestSQLServerExtraction_Table_Success(t *testing.T) {
 	mssqlHost, mssqlPort, err := mssqlInfra.HostPort()
 	require.NoError(t, err, "get mssql host/port")
 
-	// Step 2: Create connection to source database
+	// Step 2: Create product and connection to source database
+	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+
 	uniqueName := fmt.Sprintf("e2e-mssql-extract-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
+		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypeSQLServer,
 		Host:         mssqlHost,
@@ -56,6 +60,9 @@ func TestSQLServerExtraction_Table_Success(t *testing.T) {
 		_ = apiClient.DeleteConnection(context.Background(), conn.ID)
 	})
 
+	err = apiClient.WaitForConnectionAvailable(ctx, conn.ID, 10*time.Second)
+	require.NoError(t, err, "wait for connection to be available")
+
 	// Step 3: Submit fetcher job
 	fetcherReq := model.FetcherRequest{
 		DataRequest: model.DataRequest{
@@ -66,7 +73,7 @@ func TestSQLServerExtraction_Table_Success(t *testing.T) {
 			},
 		},
 		Metadata: map[string]any{
-			"source": "reporter",
+			"source": product.Code,
 			"test":   "sqlserver-extraction-e2e",
 		},
 	}
@@ -139,9 +146,12 @@ func TestSQLServerExtraction_MultiSchema_Success(t *testing.T) {
 	mssqlHost, mssqlPort, err := mssqlInfra.HostPort()
 	require.NoError(t, err, "get mssql host/port")
 
-	// Create connection
+	// Create product and connection
+	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+
 	uniqueName := fmt.Sprintf("e2e-mssql-multi-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
+		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypeSQLServer,
 		Host:         mssqlHost,
@@ -157,6 +167,9 @@ func TestSQLServerExtraction_MultiSchema_Success(t *testing.T) {
 	t.Cleanup(func() {
 		_ = apiClient.DeleteConnection(context.Background(), conn.ID)
 	})
+
+	err = apiClient.WaitForConnectionAvailable(ctx, conn.ID, 10*time.Second)
+	require.NoError(t, err, "wait for connection to be available")
 
 	// Submit fetcher job with multiple schema-qualified tables
 	fetcherReq := model.FetcherRequest{
@@ -204,9 +217,12 @@ func TestSQLServerExtraction_WithDateFilters_Success(t *testing.T) {
 	mssqlHost, mssqlPort, err := mssqlInfra.HostPort()
 	require.NoError(t, err, "get mssql host/port")
 
-	// Create connection
+	// Create product and connection
+	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+
 	uniqueName := fmt.Sprintf("e2e-mssql-date-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
+		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypeSQLServer,
 		Host:         mssqlHost,
@@ -222,6 +238,9 @@ func TestSQLServerExtraction_WithDateFilters_Success(t *testing.T) {
 	t.Cleanup(func() {
 		_ = apiClient.DeleteConnection(context.Background(), conn.ID)
 	})
+
+	err = apiClient.WaitForConnectionAvailable(ctx, conn.ID, 10*time.Second)
+	require.NoError(t, err, "wait for connection to be available")
 
 	// Submit fetcher job with date range filter (Q3 2024: July-September)
 	fetcherReq := model.FetcherRequest{
