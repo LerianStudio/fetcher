@@ -104,6 +104,7 @@ func BuildAppEnv(network string, mongo *mongodb.MongoDBInfra, rabbit *rabbitmq.R
 // The returned map can be passed directly to e2ekit.Builder.WithEnv().
 func (e *AppEnv) ManagerEnv() map[string]string {
 	portStr := strconv.Itoa(ManagerAPIPort)
+
 	return map[string]string{
 		"ENV_NAME":                    "test",
 		"SERVER_PORT":                 portStr,
@@ -184,6 +185,8 @@ func (e *AppEnv) WorkerEnv() map[string]string {
 //
 // Returns the running application with its base URL for API calls.
 func StartManager(t *testing.T, ctx context.Context, env *AppEnv, cfg AppStartConfig) (*e2ekit.RunningApp, error) {
+	t.Helper()
+
 	builder := e2ekit.New(t).
 		WithContext(ctx).
 		ExposePort(ManagerAPIPort).
@@ -230,6 +233,8 @@ func StartManager(t *testing.T, ctx context.Context, env *AppEnv, cfg AppStartCo
 //
 // Returns the running application container.
 func StartWorker(t *testing.T, ctx context.Context, env *AppEnv, cfg AppStartConfig) (*e2ekit.RunningApp, error) {
+	t.Helper()
+
 	builder := e2ekit.New(t).
 		WithContext(ctx).
 		WithEnv(env.WorkerEnv()).

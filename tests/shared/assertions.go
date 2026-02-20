@@ -28,8 +28,10 @@ func AssertJobCompleted(t *testing.T, client *ManagerClient, jobID string, timeo
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
-	var lastJob *model.JobResponse
-	var lastErr error
+	var (
+		lastJob *model.JobResponse
+		lastErr error
+	)
 
 	for {
 		select {
@@ -37,10 +39,13 @@ func AssertJobCompleted(t *testing.T, client *ManagerClient, jobID string, timeo
 			if lastErr != nil {
 				t.Fatalf("job %s did not complete within %v: last error: %v", jobID, timeout, lastErr)
 			}
+
 			if lastJob != nil {
 				t.Fatalf("job %s did not complete within %v: last status: %s", jobID, timeout, lastJob.Status)
 			}
+
 			t.Fatalf("job %s did not complete within %v", jobID, timeout)
+
 			return nil
 
 		case <-ticker.C:
@@ -49,6 +54,7 @@ func AssertJobCompleted(t *testing.T, client *ManagerClient, jobID string, timeo
 				lastErr = err
 				continue
 			}
+
 			lastJob = job
 			lastErr = nil
 
@@ -138,7 +144,7 @@ func AssertValidUUID(t *testing.T, value string) {
 
 // RequireNoError is a convenience wrapper around require.NoError that properly marks itself as a helper.
 // It fails the test immediately if err is not nil.
-func RequireNoError(t *testing.T, err error, msgAndArgs ...interface{}) {
+func RequireNoError(t *testing.T, err error, msgAndArgs ...any) {
 	t.Helper()
 	require.NoError(t, err, msgAndArgs...)
 }
