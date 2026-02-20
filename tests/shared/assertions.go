@@ -205,30 +205,3 @@ func RequireNoError(t *testing.T, err error, msgAndArgs ...any) {
 	t.Helper()
 	require.NoError(t, err, msgAndArgs...)
 }
-
-// AssertProductExists verifies that a product exists and returns it.
-func AssertProductExists(t *testing.T, client *ManagerClient, productID string) *ProductResponse {
-	t.Helper()
-
-	ctx, cancel := context.WithTimeout(context.Background(), DefaultConnectTimeout)
-	defer cancel()
-
-	product, err := client.GetProduct(ctx, productID)
-	require.NoError(t, err, "product should exist")
-	require.NotNil(t, product, "product should not be nil")
-	assert.Equal(t, productID, product.ID, "product ID should match")
-
-	return product
-}
-
-// AssertProductNotFound verifies that a product does not exist (was deleted or never created).
-func AssertProductNotFound(t *testing.T, client *ManagerClient, productID string) {
-	t.Helper()
-
-	ctx, cancel := context.WithTimeout(context.Background(), DefaultConnectTimeout)
-	defer cancel()
-
-	resp, err := client.GetProductRaw(ctx, productID)
-	require.NoError(t, err, "request should succeed")
-	assert.Equal(t, 404, resp.StatusCode(), "product should not exist")
-}

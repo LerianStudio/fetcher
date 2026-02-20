@@ -20,7 +20,6 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 	"github.com/LerianStudio/fetcher/pkg/mongodb/job"
-	"github.com/LerianStudio/fetcher/pkg/mongodb/product"
 	cacheRepo "github.com/LerianStudio/fetcher/pkg/ports/cache"
 	"github.com/LerianStudio/fetcher/pkg/rabbitmq"
 	"github.com/LerianStudio/fetcher/pkg/ratelimit"
@@ -145,18 +144,6 @@ func InitServers() *Service {
 		logger.Fatalf("Failed to ensure Job indexes: %v", errJobRepo)
 	}
 
-	// Init Product repository
-	productRepository, err := product.NewProductMongoDBRepository(ctx, mongoConnection)
-	if err != nil {
-		logger.Fatalf("Failed to create Product MongoDB repository: %v", err)
-	}
-
-	logger.Info("Ensuring MongoDB indexes exist for products...")
-
-	if errProdRepo := productRepository.EnsureIndexes(ctx); errProdRepo != nil {
-		logger.Fatalf("Failed to ensure Product indexes: %v", errProdRepo)
-	}
-
 	// Init key deriver for cryptographic key segregation
 	masterKey, err := crypto.DecodeMasterKey(cfg.AppEncryptionKey)
 	if err != nil {
@@ -245,11 +232,11 @@ func InitServers() *Service {
 	schemaCache = cacheAdapter.NewSchemaCache(genericCache, schemaCacheTTL)
 
 	// Init services and handlers
-	createConnectionCmd := connectionCommand.NewCreateConnection(connectionRepository, productRepository, cryptoService)
+	createConnectionCmd := connectionCommand.NewCreateConnection(connectionRepository, cryptoService)
 	updateConnectionCmd := connectionCommand.NewUpdateConnection(connectionRepository, jobRepository, cryptoService)
 	deleteConnectionCmd := connectionCommand.NewDeleteConnection(connectionRepository, jobRepository)
 	getConnectionQuery := connectionQuery.NewGetConnection(connectionRepository)
-	listConnectionsQuery := connectionQuery.NewListConnections(connectionRepository, productRepository)
+	listConnectionsQuery := connectionQuery.NewListConnections(connectionRepository)
 	testConnectionQuery := connectionQuery.NewTestConnection(connectionRepository, cryptoService, connectionTestStore, datasourceFactory.NewDataSourceFromConnectionWithLogger(logger))
 	validateSchemaQuery := connectionQuery.NewValidateSchema(connectionRepository, cryptoService, schemaCache)
 	getConnectionSchemaQuery := connectionQuery.NewGetConnectionSchema(
@@ -269,23 +256,8 @@ func InitServers() *Service {
 		getConnectionSchemaQuery,
 	)
 
-	// Init Product services and handler
-	createProductCmd := connectionCommand.NewCreateProduct(productRepository)
-	updateProductCmd := connectionCommand.NewUpdateProduct(productRepository)
-	deleteProductCmd := connectionCommand.NewDeleteProduct(productRepository, connectionRepository)
-	getProductQuery := connectionQuery.NewGetProduct(productRepository)
-	listProductsQuery := connectionQuery.NewListProducts(productRepository)
-
-	productHandler := in2.NewProductHandler(
-		createProductCmd,
-		updateProductCmd,
-		deleteProductCmd,
-		getProductQuery,
-		listProductsQuery,
-	)
-
 	// Init Migration services and handler
-	assignConnectionCmd := connectionCommand.NewAssignConnection(connectionRepository, productRepository)
+	assignConnectionCmd := connectionCommand.NewAssignConnection(connectionRepository)
 	listUnassignedQuery := connectionQuery.NewListUnassignedConnections(connectionRepository)
 
 	migrationHandler := in2.NewMigrationHandler(assignConnectionCmd, listUnassignedQuery)
@@ -294,7 +266,6 @@ func InitServers() *Service {
 	createFetcherJobCmd := connectionCommand.NewCreateFetcherJob(
 		connectionRepository,
 		jobRepository,
-		productRepository,
 		cryptoService,
 		rabbitMQAdapter,
 		cfg.RabbitMQGenerateReportQueue,
@@ -305,7 +276,7 @@ func InitServers() *Service {
 	fetcherHandler := in2.NewFetcherHandler(createFetcherJobCmd, getJobQuery)
 
 	// Init HTTP server
-	httpApp := in2.NewRoutes(logger, telemetry, authClient, licenseClient, connectionHandler, productHandler, migrationHandler, fetcherHandler)
+	httpApp := in2.NewRoutes(logger, telemetry, authClient, licenseClient, connectionHandler, migrationHandler, fetcherHandler)
 	serverAPI := NewServer(cfg, httpApp, logger, telemetry, licenseClient)
 
 	return &Service{

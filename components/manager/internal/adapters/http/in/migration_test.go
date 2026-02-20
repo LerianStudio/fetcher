@@ -5,15 +5,13 @@ import (
 	"encoding/json"
 	"io"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/LerianStudio/fetcher/components/manager/internal/services/command"
 	"github.com/LerianStudio/fetcher/components/manager/internal/services/query"
 	"github.com/LerianStudio/fetcher/pkg/model"
-	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
-	productRepo "github.com/LerianStudio/fetcher/pkg/mongodb/product"
+	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
 
 	libCommons "github.com/LerianStudio/lib-commons/v2/commons"
 	libLog "github.com/LerianStudio/lib-commons/v2/commons/log"
@@ -162,29 +160,25 @@ func TestMigrationHandler_AssignConnectionToProduct_Success(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockProductRepo := productRepo.NewMockRepository(ctrl)
 
 	orgID := uuid.New()
 	connID := uuid.New()
-	productID := uuid.New()
 	testConn := createTestConnectionForMigration(connID, orgID)
-	testConn.ProductID = &productID
-	testProduct := createTestProduct(productID, orgID)
+	testConn.ProductName = "reporter"
 
-	mockProductRepo.EXPECT().FindByID(gomock.Any(), productID, orgID).Return(testProduct, nil)
 	mockConnRepo.EXPECT().FindByID(gomock.Any(), connID, orgID).Return(testConn, nil)
-	mockConnRepo.EXPECT().AssignProduct(gomock.Any(), connID, orgID, productID).Return(testConn, nil)
+	mockConnRepo.EXPECT().AssignProductName(gomock.Any(), connID, orgID, "reporter").Return(testConn, nil)
 
-	assignCmd := command.NewAssignConnection(mockConnRepo, mockProductRepo)
+	assignCmd := command.NewAssignConnection(mockConnRepo)
 	handler := &MigrationHandler{AssignCmd: assignCmd}
 
 	app := setupMigrationTestApp()
 	app.Post("/v1/management/connections/:id/assign", handler.AssignConnectionToProduct)
 
-	body := `{"productId": "` + productID.String() + `"}`
-	req := httptest.NewRequest("POST", "/v1/management/connections/"+connID.String()+"/assign", strings.NewReader(body))
+	req := httptest.NewRequest("POST", "/v1/management/connections/"+connID.String()+"/assign", nil)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Organization-Id", orgID.String())
+	req.Header.Set("X-Product-Name", "reporter")
 
 	resp, err := app.Test(req)
 	require.NoError(t, err)
@@ -199,9 +193,9 @@ func TestMigrationHandler_AssignConnectionToProduct_MissingOrgHeader(t *testing.
 	app := setupMigrationTestApp()
 	app.Post("/v1/management/connections/:id/assign", handler.AssignConnectionToProduct)
 
-	body := `{"productId": "` + uuid.New().String() + `"}`
-	req := httptest.NewRequest("POST", "/v1/management/connections/"+uuid.New().String()+"/assign", strings.NewReader(body))
+	req := httptest.NewRequest("POST", "/v1/management/connections/"+uuid.New().String()+"/assign", nil)
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Product-Name", "reporter")
 	// No org header
 
 	resp, err := app.Test(req)
@@ -217,10 +211,10 @@ func TestMigrationHandler_AssignConnectionToProduct_InvalidConnectionID(t *testi
 	app := setupMigrationTestApp()
 	app.Post("/v1/management/connections/:id/assign", handler.AssignConnectionToProduct)
 
-	body := `{"productId": "` + uuid.New().String() + `"}`
-	req := httptest.NewRequest("POST", "/v1/management/connections/not-a-uuid/assign", strings.NewReader(body))
+	req := httptest.NewRequest("POST", "/v1/management/connections/not-a-uuid/assign", nil)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Organization-Id", uuid.New().String())
+	req.Header.Set("X-Product-Name", "reporter")
 
 	resp, err := app.Test(req)
 	require.NoError(t, err)
@@ -229,15 +223,16 @@ func TestMigrationHandler_AssignConnectionToProduct_InvalidConnectionID(t *testi
 	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
 }
 
-func TestMigrationHandler_AssignConnectionToProduct_InvalidJSON(t *testing.T) {
+func TestMigrationHandler_AssignConnectionToProduct_MissingProductName(t *testing.T) {
 	handler := &MigrationHandler{AssignCmd: nil}
 
 	app := setupMigrationTestApp()
 	app.Post("/v1/management/connections/:id/assign", handler.AssignConnectionToProduct)
 
-	req := httptest.NewRequest("POST", "/v1/management/connections/"+uuid.New().String()+"/assign", strings.NewReader(`{invalid`))
+	req := httptest.NewRequest("POST", "/v1/management/connections/"+uuid.New().String()+"/assign", nil)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Organization-Id", uuid.New().String())
+	// No X-Product-Name header
 
 	resp, err := app.Test(req)
 	require.NoError(t, err)
@@ -246,47 +241,27 @@ func TestMigrationHandler_AssignConnectionToProduct_InvalidJSON(t *testing.T) {
 	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
 }
 
-func TestMigrationHandler_AssignConnectionToProduct_InvalidProductID(t *testing.T) {
-	handler := &MigrationHandler{AssignCmd: nil}
-
-	app := setupMigrationTestApp()
-	app.Post("/v1/management/connections/:id/assign", handler.AssignConnectionToProduct)
-
-	body := `{"productId": "not-a-uuid"}`
-	req := httptest.NewRequest("POST", "/v1/management/connections/"+uuid.New().String()+"/assign", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Organization-Id", uuid.New().String())
-
-	resp, err := app.Test(req)
-	require.NoError(t, err)
-	defer resp.Body.Close()
-
-	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
-}
-
-func TestMigrationHandler_AssignConnectionToProduct_ProductNotFound(t *testing.T) {
+func TestMigrationHandler_AssignConnectionToProduct_ConnectionNotFound(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockProductRepo := productRepo.NewMockRepository(ctrl)
 
 	orgID := uuid.New()
 	connID := uuid.New()
-	productID := uuid.New()
 
-	mockProductRepo.EXPECT().FindByID(gomock.Any(), productID, orgID).Return(nil, nil)
+	mockConnRepo.EXPECT().FindByID(gomock.Any(), connID, orgID).Return(nil, nil)
 
-	assignCmd := command.NewAssignConnection(mockConnRepo, mockProductRepo)
+	assignCmd := command.NewAssignConnection(mockConnRepo)
 	handler := &MigrationHandler{AssignCmd: assignCmd}
 
 	app := setupMigrationTestApp()
 	app.Post("/v1/management/connections/:id/assign", handler.AssignConnectionToProduct)
 
-	body := `{"productId": "` + productID.String() + `"}`
-	req := httptest.NewRequest("POST", "/v1/management/connections/"+connID.String()+"/assign", strings.NewReader(body))
+	req := httptest.NewRequest("POST", "/v1/management/connections/"+connID.String()+"/assign", nil)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Organization-Id", orgID.String())
+	req.Header.Set("X-Product-Name", "reporter")
 
 	resp, err := app.Test(req)
 	require.NoError(t, err)

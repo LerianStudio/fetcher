@@ -14,7 +14,6 @@ import (
 	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
 	jobRepo "github.com/LerianStudio/fetcher/pkg/ports/job"
 	"github.com/LerianStudio/fetcher/pkg/ports/messaging"
-	productRepo "github.com/LerianStudio/fetcher/pkg/ports/product"
 
 	"github.com/LerianStudio/lib-commons/v2/commons"
 	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
@@ -51,7 +50,6 @@ type ConnectionTester interface {
 type CreateFetcherJob struct {
 	connRepo         connRepo.Repository
 	jobRepo          jobRepo.Repository
-	productRepo      productRepo.Repository
 	cryptor          crypto.Cryptor
 	rabbitMQ         messaging.MessagePublisher
 	connectionTester ConnectionTester
@@ -65,20 +63,18 @@ type CreateFetcherJob struct {
 func NewCreateFetcherJob(
 	connectionRepo connRepo.Repository,
 	jobRepository jobRepo.Repository,
-	productRepository productRepo.Repository,
 	cryptor crypto.Cryptor,
 	rabbitMQ messaging.MessagePublisher,
 	queueName string,
 	factory datasource.DataSourceFactory,
 ) *CreateFetcherJob {
 	svc := &CreateFetcherJob{
-		connRepo:    connectionRepo,
-		jobRepo:     jobRepository,
-		productRepo: productRepository,
-		cryptor:     cryptor,
-		rabbitMQ:    rabbitMQ,
-		queueName:   queueName,
-		dsFactory:   factory,
+		connRepo:  connectionRepo,
+		jobRepo:   jobRepository,
+		cryptor:   cryptor,
+		rabbitMQ:  rabbitMQ,
+		queueName: queueName,
+		dsFactory: factory,
 	}
 	// Use default connection tester that tests real connections
 	svc.connectionTester = svc
@@ -93,7 +89,6 @@ func NewCreateFetcherJob(
 func NewCreateFetcherJobWithTester(
 	connectionRepo connRepo.Repository,
 	jobRepository jobRepo.Repository,
-	productRepository productRepo.Repository,
 	cryptor crypto.Cryptor,
 	rabbitMQ messaging.MessagePublisher,
 	tester ConnectionTester,
@@ -103,7 +98,6 @@ func NewCreateFetcherJobWithTester(
 	svc := &CreateFetcherJob{
 		connRepo:         connectionRepo,
 		jobRepo:          jobRepository,
-		productRepo:      productRepository,
 		cryptor:          cryptor,
 		rabbitMQ:         rabbitMQ,
 		connectionTester: tester,
@@ -247,8 +241,8 @@ func (s *CreateFetcherJob) Execute(ctx context.Context, organizationID uuid.UUID
 		}
 	}
 
-	// Validate product ownership when metadata.source is provided and productRepo is available
-	if source, ok := request.Metadata["source"].(string); ok && source != "" && s.productRepo != nil {
+	// Validate product ownership when metadata.source is provided
+	if source, ok := request.Metadata["source"].(string); ok && source != "" {
 		if err := s.validateProductOwnership(ctx, &span, source, organizationID, connections); err != nil {
 			return nil, fmt.Errorf("failed to validate product ownership: %w", err)
 		}
@@ -341,31 +335,11 @@ func validateMetadataSource(span *trace.Span, metadata map[string]any) error {
 }
 
 // validateProductOwnership validates that all connections belong to the product
-// identified by the given source code. It resolves the product by code, then checks
-// that every connection is assigned to that product.
-func (s *CreateFetcherJob) validateProductOwnership(ctx context.Context, span *trace.Span, source string, organizationID uuid.UUID, connections []*model.Connection) error {
-	product, errProd := s.productRepo.FindByCode(ctx, source, organizationID)
-	if errProd != nil {
-		libOpentelemetry.HandleSpanError(span, "Failed to resolve product by code", errProd)
-		return pkg.ValidateInternalError(errProd, "fetcher")
-	}
-
-	if product == nil {
-		err := fmt.Errorf("product not found for source code: %s", source)
-		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Product not found", err)
-
-		return pkg.ValidationError{
-			EntityType: "fetcher",
-			Code:       constant.ErrEntityNotFound.Error(),
-			Title:      "Product Not Found",
-			Message:    fmt.Sprintf("No product found with code '%s'", source),
-		}
-	}
-
-	(*span).SetAttributes(attribute.String("app.request.resolved_product_id", product.ID.String()))
-
+// identified by the given source name. It checks that every connection's ProductName
+// matches the expected source string.
+func (s *CreateFetcherJob) validateProductOwnership(_ context.Context, span *trace.Span, source string, _ uuid.UUID, connections []*model.Connection) error {
 	for _, conn := range connections {
-		if conn.ProductID == nil {
+		if conn.ProductName == "" {
 			err := fmt.Errorf("connection '%s' has no product assigned", conn.ConfigName)
 			libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Unassigned connection", err)
 
@@ -377,8 +351,8 @@ func (s *CreateFetcherJob) validateProductOwnership(ctx context.Context, span *t
 			}
 		}
 
-		if *conn.ProductID != product.ID {
-			err := fmt.Errorf("connection '%s' belongs to product '%s', not '%s'", conn.ConfigName, conn.ProductID, product.ID)
+		if conn.ProductName != source {
+			err := fmt.Errorf("connection '%s' belongs to product '%s', not '%s'", conn.ConfigName, conn.ProductName, source)
 			libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Product mismatch", err)
 
 			return pkg.ValidationError{

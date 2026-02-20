@@ -53,12 +53,13 @@ func NewConnectionHandler(
 // CreateConnection is a method that creates a database connection.
 //
 //	@Summary		Create connection
-//	@Description	Create a new database connection for the organization. Optionally associate it with a product via productId. ConfigName must be unique per organization (and per product when assigned); password is encrypted and a UUID is generated on creation.
+//	@Description	Create a new database connection for the organization. The X-Product-Name header is required and identifies the product for this connection. ConfigName must be unique per organization (and per product when assigned); password is encrypted and a UUID is generated on creation.
 //	@Tags			Connections
 //	@Accept			json
 //	@Produce		json
 //	@Param			Authorization		header		string					false	"The authorization token in the 'Bearer access_token' format. Only required when auth plugin is enabled."
 //	@Param			X-Organization-Id	header		string					true	"Organization ID"
+//	@Param			X-Product-Name		header		string					true	"Product name (required, non-empty)"
 //	@Param			connection			body		model.ConnectionInput	true	"Connection payload"
 //	@Success		201					{object}	map[string]string		"Created connection identifier"
 //	@Failure		400					{object}	pkg.HTTPError
@@ -80,9 +81,16 @@ func (h *ConnectionHandler) CreateConnection(c *fiber.Ctx) error {
 		return httpUtils.WithError(c, err)
 	}
 
+	productName, err := httpUtils.GetRequiredProductName(c)
+	if err != nil {
+		libOpentelemetry.HandleSpanError(&span, "missing or invalid product name", err)
+		return httpUtils.WithError(c, err)
+	}
+
 	span.SetAttributes(
 		attribute.String("app.request.request_id", reqID),
 		attribute.String("app.request.organization_id", orgID.String()),
+		attribute.String("app.request.product_name", productName),
 	)
 
 	var request model.ConnectionInput
@@ -111,7 +119,7 @@ func (h *ConnectionHandler) CreateConnection(c *fiber.Ctx) error {
 		return httpUtils.WithError(c, err)
 	}
 
-	conn, err := h.CreateCmd.Execute(ctx, orgID, request)
+	conn, err := h.CreateCmd.Execute(ctx, orgID, request, productName)
 	if err != nil {
 		logger.Errorf("Failed to execute create connection command, Error: %s", err.Error())
 		libOpentelemetry.HandleSpanError(&span, "failed to create connection", err)
@@ -128,12 +136,12 @@ func (h *ConnectionHandler) CreateConnection(c *fiber.Ctx) error {
 // ListConnections is a method that retrieves connections with optional pagination and filters.
 //
 //	@Summary		List connections
-//	@Description	List connections with pagination and filters. When X-Product-Id is provided, returns only connections associated with that product.
+//	@Description	List connections with pagination and filters. When X-Product-Name is provided, returns only connections associated with that product.
 //	@Tags			Connections
 //	@Produce		json
 //	@Param			Authorization		header		string	false	"The authorization token in the 'Bearer access_token' format. Only required when auth plugin is enabled."
 //	@Param			X-Organization-Id	header		string	true	"Organization ID"
-//	@Param			X-Product-Id		header		string	false	"Product ID (UUID). When provided, filters connections by product."
+//	@Param			X-Product-Name		header		string	false	"Product name. When provided, filters connections by product."
 //	@Param			page				query		int		false	"Page number (minimum 1)"	default(1)
 //	@Param			limit				query		int		false	"Page size (default 50, max 1000)"	default(50)
 //	@Param			sortOrder			query		string	false	"Sort order"											Enums(asc, desc)	default(desc)
@@ -162,9 +170,9 @@ func (h *ConnectionHandler) ListConnections(c *fiber.Ctx) error {
 		return httpUtils.WithError(c, err)
 	}
 
-	productID, err := httpUtils.GetProductID(c)
+	productName, err := httpUtils.GetProductName(c)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "invalid product id", err)
+		libOpentelemetry.HandleSpanError(&span, "invalid product name", err)
 		return httpUtils.WithError(c, err)
 	}
 
@@ -173,8 +181,8 @@ func (h *ConnectionHandler) ListConnections(c *fiber.Ctx) error {
 		attribute.String("app.request.organization_id", orgID.String()),
 	)
 
-	if productID != nil {
-		span.SetAttributes(attribute.String("app.request.product_id", productID.String()))
+	if productName != "" {
+		span.SetAttributes(attribute.String("app.request.product_name", productName))
 	}
 
 	headerParams, err := httpUtils.ValidateParameters(c.Queries())
@@ -185,7 +193,7 @@ func (h *ConnectionHandler) ListConnections(c *fiber.Ctx) error {
 		return httpUtils.WithError(c, err)
 	}
 
-	pagination, err := h.ListQuery.Execute(ctx, orgID, productID, *headerParams)
+	pagination, err := h.ListQuery.Execute(ctx, orgID, productName, *headerParams)
 	if err != nil {
 		logger.Errorf("Failed to execute list connections query, Error: %s", err.Error())
 		libOpentelemetry.HandleSpanError(&span, "failed to list connections", err)

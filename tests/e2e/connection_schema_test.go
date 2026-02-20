@@ -32,11 +32,10 @@ func TestGetConnectionSchema_PostgreSQL_Success(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	productName := e2eshared.GenerateProductName()
 
 	uniqueName := fmt.Sprintf("e2e-schema-pg-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
-		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,
@@ -46,7 +45,7 @@ func TestGetConnectionSchema_PostgreSQL_Success(t *testing.T) {
 		Password:     "testpass",
 	}
 
-	conn, err := apiClient.CreateConnection(ctx, connInput)
+	conn, err := apiClient.CreateConnection(ctx, productName, connInput)
 	require.NoError(t, err, "create connection")
 
 	t.Cleanup(func() {
@@ -135,11 +134,10 @@ func TestGetConnectionSchema_MySQL_Success(t *testing.T) {
 	mysqlHost, mysqlPort, err := mysqlInfra.HostPort()
 	require.NoError(t, err, "get mysql host/port")
 
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	productName := e2eshared.GenerateProductName()
 
 	uniqueName := fmt.Sprintf("e2e-schema-mysql-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
-		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypeMySQL,
 		Host:         mysqlHost,
@@ -149,7 +147,7 @@ func TestGetConnectionSchema_MySQL_Success(t *testing.T) {
 		Password:     "testpass",
 	}
 
-	conn, err := apiClient.CreateConnection(ctx, connInput)
+	conn, err := apiClient.CreateConnection(ctx, productName, connInput)
 	require.NoError(t, err, "create connection")
 
 	t.Cleanup(func() {
@@ -194,11 +192,10 @@ func TestGetConnectionSchema_Oracle_Success(t *testing.T) {
 	oracleHost, oraclePort, err := oracleInfra.HostPort()
 	require.NoError(t, err, "get oracle host/port")
 
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	productName := e2eshared.GenerateProductName()
 
 	uniqueName := fmt.Sprintf("e2e-schema-oracle-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
-		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypeOracle,
 		Host:         oracleHost,
@@ -208,7 +205,7 @@ func TestGetConnectionSchema_Oracle_Success(t *testing.T) {
 		Password:     "testpass",
 	}
 
-	conn, err := apiClient.CreateConnection(ctx, connInput)
+	conn, err := apiClient.CreateConnection(ctx, productName, connInput)
 	require.NoError(t, err, "create connection")
 
 	t.Cleanup(func() {
@@ -252,11 +249,10 @@ func TestGetConnectionSchema_SQLServer_Success(t *testing.T) {
 	mssqlHost, mssqlPort, err := mssqlInfra.HostPort()
 	require.NoError(t, err, "get mssql host/port")
 
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	productName := e2eshared.GenerateProductName()
 
 	uniqueName := fmt.Sprintf("e2e-schema-mssql-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
-		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypeSQLServer,
 		Host:         mssqlHost,
@@ -266,7 +262,7 @@ func TestGetConnectionSchema_SQLServer_Success(t *testing.T) {
 		Password:     "TestPass123!",
 	}
 
-	conn, err := apiClient.CreateConnection(ctx, connInput)
+	conn, err := apiClient.CreateConnection(ctx, productName, connInput)
 	require.NoError(t, err, "create connection")
 
 	t.Cleanup(func() {
@@ -308,11 +304,10 @@ func TestGetConnectionSchema_MongoDB_Success(t *testing.T) {
 	mongoHost, mongoPort, err := mongodbSourceInfra.HostPort()
 	require.NoError(t, err, "get mongodb host/port")
 
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	productName := e2eshared.GenerateProductName()
 
 	uniqueName := fmt.Sprintf("e2e-schema-mongo-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
-		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypeMongoDB,
 		Host:         mongoHost,
@@ -325,7 +320,7 @@ func TestGetConnectionSchema_MongoDB_Success(t *testing.T) {
 		},
 	}
 
-	conn, err := apiClient.CreateConnection(ctx, connInput)
+	conn, err := apiClient.CreateConnection(ctx, productName, connInput)
 	require.NoError(t, err, "create connection")
 
 	t.Cleanup(func() {

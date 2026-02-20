@@ -36,12 +36,11 @@ func TestOracleExtraction_Table_Success(t *testing.T) {
 	oracleHost, oraclePort, err := oracleInfra.HostPort()
 	require.NoError(t, err, "get oracle host/port")
 
-	// Step 2: Create product and connection to source database
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	// Step 2: Generate product name and create connection to source database
+	productName := e2eshared.GenerateProductName()
 
 	uniqueName := fmt.Sprintf("e2e-oracle-extract-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
-		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypeOracle,
 		Host:         oracleHost,
@@ -54,7 +53,7 @@ func TestOracleExtraction_Table_Success(t *testing.T) {
 		},
 	}
 
-	conn, err := apiClient.CreateConnection(ctx, connInput)
+	conn, err := apiClient.CreateConnection(ctx, productName, connInput)
 	require.NoError(t, err, "create connection")
 	require.NotEmpty(t, conn.ID, "connection ID should be set")
 	t.Logf("Created Oracle connection: id=%s, host=%s:%d", conn.ID, conn.Host, conn.Port)
@@ -76,7 +75,7 @@ func TestOracleExtraction_Table_Success(t *testing.T) {
 			},
 		},
 		Metadata: map[string]any{
-			"source": product.Code,
+			"source": productName,
 			"test":   "oracle-extraction-e2e",
 		},
 	}
@@ -149,12 +148,11 @@ func TestOracleExtraction_MultiSchema_Success(t *testing.T) {
 	oracleHost, oraclePort, err := oracleInfra.HostPort()
 	require.NoError(t, err, "get oracle host/port")
 
-	// Create product and connection
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	// Generate product name and create connection
+	productName := e2eshared.GenerateProductName()
 
 	uniqueName := fmt.Sprintf("e2e-oracle-multi-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
-		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypeOracle,
 		Host:         oracleHost,
@@ -164,7 +162,7 @@ func TestOracleExtraction_MultiSchema_Success(t *testing.T) {
 		Password:     "testpass",
 	}
 
-	conn, err := apiClient.CreateConnection(ctx, connInput)
+	conn, err := apiClient.CreateConnection(ctx, productName, connInput)
 	require.NoError(t, err, "create connection")
 
 	t.Cleanup(func() {
@@ -185,7 +183,8 @@ func TestOracleExtraction_MultiSchema_Success(t *testing.T) {
 			},
 		},
 		Metadata: map[string]any{
-			"test": "oracle-multi-schema",
+			"source": productName,
+			"test":   "oracle-multi-schema",
 		},
 	}
 

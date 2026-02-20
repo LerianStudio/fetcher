@@ -6,8 +6,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
-	"time"
 
 	e2eshared "github.com/LerianStudio/fetcher/tests/shared"
 	"github.com/google/uuid"
@@ -15,9 +15,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestCreateConnection_WithProductID_Success verifies that a connection can be
-// created with a valid product ID and all fields are returned correctly.
-func TestCreateConnection_WithProductID_Success(t *testing.T) {
+// TestCreateConnection_WithProductName_Success verifies that a connection can be
+// created with a valid product name header and all fields are returned correctly.
+func TestCreateConnection_WithProductName_Success(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithTimeout(context.Background(), e2eshared.DefaultTestTimeout)
@@ -26,11 +26,10 @@ func TestCreateConnection_WithProductID_Success(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	productName := e2eshared.GenerateProductName()
 
 	uniqueName := fmt.Sprintf("e2e-create-product-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
-		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,
@@ -43,7 +42,7 @@ func TestCreateConnection_WithProductID_Success(t *testing.T) {
 		},
 	}
 
-	conn, err := apiClient.CreateConnection(ctx, connInput)
+	conn, err := apiClient.CreateConnection(ctx, productName, connInput)
 	require.NoError(t, err, "create connection")
 
 	t.Cleanup(func() {
@@ -57,16 +56,16 @@ func TestCreateConnection_WithProductID_Success(t *testing.T) {
 	assert.Equal(t, pgPort, conn.Port, "port should match")
 	assert.Equal(t, "testdb", conn.DatabaseName, "database name should match")
 	assert.Equal(t, "testuser", conn.Username, "username should match")
-	assert.Equal(t, product.ID, conn.ProductID, "product ID should match")
+	assert.Equal(t, productName, conn.ProductName, "product name should match")
 	assert.NotEmpty(t, conn.CreatedAt, "created_at should be set")
 
 	e2eshared.AssertValidUUID(t, conn.ID)
-	t.Logf("Created connection with product: id=%s, productId=%s, name=%s", conn.ID, conn.ProductID, conn.ConfigName)
+	t.Logf("Created connection with product: id=%s, productName=%s, name=%s", conn.ID, conn.ProductName, conn.ConfigName)
 }
 
-// TestCreateConnection_WithInvalidProductID_BadRequest verifies that creating a connection
-// with an invalid (non-UUID) product ID returns a 400 Bad Request error.
-func TestCreateConnection_WithInvalidProductID_BadRequest(t *testing.T) {
+// TestCreateConnection_WithoutProductName_BadRequest verifies that creating a connection
+// without the X-Product-Name header returns a 400 Bad Request error.
+func TestCreateConnection_WithoutProductName_BadRequest(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithTimeout(context.Background(), e2eshared.DefaultTestTimeout)
@@ -75,9 +74,8 @@ func TestCreateConnection_WithInvalidProductID_BadRequest(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
-	uniqueName := fmt.Sprintf("e2e-invalid-product-%s", uuid.New().String()[:8])
+	uniqueName := fmt.Sprintf("e2e-no-product-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
-		ProductID:    "not-a-uuid",
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,
@@ -87,41 +85,11 @@ func TestCreateConnection_WithInvalidProductID_BadRequest(t *testing.T) {
 		Password:     "testpass",
 	}
 
-	resp, err := apiClient.CreateConnectionRaw(ctx, connInput)
+	resp, err := apiClient.CreateConnectionRaw(ctx, "", connInput)
 	require.NoError(t, err, "request should succeed")
 
-	assert.Equal(t, 400, resp.StatusCode(), "should return 400 Bad Request for invalid product ID")
-	t.Logf("Invalid product ID correctly rejected with status %d", resp.StatusCode())
-}
-
-// TestCreateConnection_WithNonexistentProductID_NotFound verifies that creating a connection
-// with a valid UUID that does not correspond to any existing product returns a 404 Not Found error.
-func TestCreateConnection_WithNonexistentProductID_NotFound(t *testing.T) {
-	t.Parallel()
-
-	ctx, cancel := context.WithTimeout(context.Background(), e2eshared.DefaultTestTimeout)
-	defer cancel()
-
-	pgHost, pgPort, err := postgresInfra.HostPort()
-	require.NoError(t, err, "get postgres host/port")
-
-	uniqueName := fmt.Sprintf("e2e-nonexistent-product-%s", uuid.New().String()[:8])
-	connInput := e2eshared.ConnectionInput{
-		ProductID:    uuid.New().String(),
-		ConfigName:   uniqueName,
-		Type:         e2eshared.DBTypePostgreSQL,
-		Host:         pgHost,
-		Port:         pgPort,
-		DatabaseName: "testdb",
-		Username:     "testuser",
-		Password:     "testpass",
-	}
-
-	resp, err := apiClient.CreateConnectionRaw(ctx, connInput)
-	require.NoError(t, err, "request should succeed")
-
-	assert.Equal(t, 404, resp.StatusCode(), "should return 404 Not Found for non-existent product ID")
-	t.Logf("Non-existent product ID correctly rejected with status %d", resp.StatusCode())
+	assert.Equal(t, 400, resp.StatusCode(), "should return 400 Bad Request for missing product name")
+	t.Logf("Missing product name correctly rejected with status %d", resp.StatusCode())
 }
 
 // TestCreateConnection_PostgreSQL_Success verifies that a PostgreSQL connection
@@ -135,11 +103,10 @@ func TestCreateConnection_PostgreSQL_Success(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	productName := e2eshared.GenerateProductName()
 
 	uniqueName := fmt.Sprintf("e2e-pg-create-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
-		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,
@@ -152,7 +119,7 @@ func TestCreateConnection_PostgreSQL_Success(t *testing.T) {
 		},
 	}
 
-	conn, err := apiClient.CreateConnection(ctx, connInput)
+	conn, err := apiClient.CreateConnection(ctx, productName, connInput)
 	require.NoError(t, err, "create connection")
 
 	t.Cleanup(func() {
@@ -187,11 +154,10 @@ func TestCreateConnection_MySQL_Success(t *testing.T) {
 	mysqlHost, mysqlPort, err := mysqlInfra.HostPort()
 	require.NoError(t, err, "get mysql host/port")
 
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	productName := e2eshared.GenerateProductName()
 
 	uniqueName := fmt.Sprintf("e2e-mysql-create-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
-		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypeMySQL,
 		Host:         mysqlHost,
@@ -204,7 +170,7 @@ func TestCreateConnection_MySQL_Success(t *testing.T) {
 		},
 	}
 
-	conn, err := apiClient.CreateConnection(ctx, connInput)
+	conn, err := apiClient.CreateConnection(ctx, productName, connInput)
 	require.NoError(t, err, "create connection")
 
 	t.Cleanup(func() {
@@ -226,13 +192,12 @@ func TestCreateConnection_MongoDB_Success(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), e2eshared.DefaultTestTimeout)
 	defer cancel()
 
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	productName := e2eshared.GenerateProductName()
 
 	// MongoDB uses the core infrastructure for app storage, not source database
 	// For E2E, we test creating a connection config pointing to a hypothetical MongoDB
 	uniqueName := fmt.Sprintf("e2e-mongo-create-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
-		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypeMongoDB,
 		Host:         "localhost",
@@ -245,7 +210,7 @@ func TestCreateConnection_MongoDB_Success(t *testing.T) {
 		},
 	}
 
-	conn, err := apiClient.CreateConnection(ctx, connInput)
+	conn, err := apiClient.CreateConnection(ctx, productName, connInput)
 	require.NoError(t, err, "create connection")
 
 	t.Cleanup(func() {
@@ -274,11 +239,10 @@ func TestCreateConnection_Oracle_Success(t *testing.T) {
 	oracleHost, oraclePort, err := oracleInfra.HostPort()
 	require.NoError(t, err, "get oracle host/port")
 
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	productName := e2eshared.GenerateProductName()
 
 	uniqueName := fmt.Sprintf("e2e-oracle-create-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
-		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypeOracle,
 		Host:         oracleHost,
@@ -291,7 +255,7 @@ func TestCreateConnection_Oracle_Success(t *testing.T) {
 		},
 	}
 
-	conn, err := apiClient.CreateConnection(ctx, connInput)
+	conn, err := apiClient.CreateConnection(ctx, productName, connInput)
 	require.NoError(t, err, "create connection")
 
 	t.Cleanup(func() {
@@ -320,11 +284,10 @@ func TestCreateConnection_SQLServer_Success(t *testing.T) {
 	mssqlHost, mssqlPort, err := mssqlInfra.HostPort()
 	require.NoError(t, err, "get mssql host/port")
 
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	productName := e2eshared.GenerateProductName()
 
 	uniqueName := fmt.Sprintf("e2e-mssql-create-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
-		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypeSQLServer,
 		Host:         mssqlHost,
@@ -337,7 +300,7 @@ func TestCreateConnection_SQLServer_Success(t *testing.T) {
 		},
 	}
 
-	conn, err := apiClient.CreateConnection(ctx, connInput)
+	conn, err := apiClient.CreateConnection(ctx, productName, connInput)
 	require.NoError(t, err, "create connection")
 
 	t.Cleanup(func() {
@@ -362,13 +325,12 @@ func TestCreateConnection_DuplicateConfigName_Conflict(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	productName := e2eshared.GenerateProductName()
 
 	uniqueName := fmt.Sprintf("e2e-duplicate-%s", uuid.New().String()[:8])
 
 	// Create first connection
 	connInput := e2eshared.ConnectionInput{
-		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,
@@ -378,7 +340,7 @@ func TestCreateConnection_DuplicateConfigName_Conflict(t *testing.T) {
 		Password:     "testpass",
 	}
 
-	conn1, err := apiClient.CreateConnection(ctx, connInput)
+	conn1, err := apiClient.CreateConnection(ctx, productName, connInput)
 	require.NoError(t, err, "create first connection")
 
 	t.Cleanup(func() {
@@ -386,7 +348,7 @@ func TestCreateConnection_DuplicateConfigName_Conflict(t *testing.T) {
 	})
 
 	// Try to create second connection with same name
-	resp, err := apiClient.CreateConnectionRaw(ctx, connInput)
+	resp, err := apiClient.CreateConnectionRaw(ctx, productName, connInput)
 	require.NoError(t, err, "request should succeed")
 
 	assert.Equal(t, 409, resp.StatusCode(), "should return 409 Conflict")
@@ -405,11 +367,10 @@ func TestCreateConnection_ConcurrentDuplicateName(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	productName := e2eshared.GenerateProductName()
 
 	sharedName := fmt.Sprintf("e2e-concurrent-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
-		ProductID:    product.ID,
 		ConfigName:   sharedName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,
@@ -429,7 +390,7 @@ func TestCreateConnection_ConcurrentDuplicateName(t *testing.T) {
 	// Launch two concurrent creation requests
 	for i := 0; i < 2; i++ {
 		go func() {
-			resp, reqErr := apiClient.CreateConnectionRaw(ctx, connInput)
+			resp, reqErr := apiClient.CreateConnectionRaw(ctx, productName, connInput)
 			if reqErr != nil {
 				results <- result{statusCode: -1}
 				return
@@ -487,10 +448,7 @@ func TestCreateConnection_ConcurrentDuplicateName(t *testing.T) {
 func TestCreateConnection_MissingRequiredFields_BadRequest(t *testing.T) {
 	t.Parallel()
 
-	ctx, cancel := context.WithTimeout(context.Background(), e2eshared.DefaultTestTimeout)
-	defer cancel()
-
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	productName := e2eshared.GenerateProductName()
 
 	testCases := []struct {
 		name     string
@@ -500,7 +458,6 @@ func TestCreateConnection_MissingRequiredFields_BadRequest(t *testing.T) {
 		{
 			name: "missing_config_name",
 			input: e2eshared.ConnectionInput{
-				ProductID:    product.ID,
 				Type:         e2eshared.DBTypePostgreSQL,
 				Host:         "localhost",
 				Port:         5432,
@@ -513,8 +470,7 @@ func TestCreateConnection_MissingRequiredFields_BadRequest(t *testing.T) {
 		{
 			name: "missing_type",
 			input: e2eshared.ConnectionInput{
-				ProductID:    product.ID,
-				ConfigName:   fmt.Sprintf("e2e-missing-type-%d", time.Now().UnixNano()),
+				ConfigName:   fmt.Sprintf("e2e-missing-type-%s", uuid.New().String()[:8]),
 				Host:         "localhost",
 				Port:         5432,
 				DatabaseName: "testdb",
@@ -526,8 +482,7 @@ func TestCreateConnection_MissingRequiredFields_BadRequest(t *testing.T) {
 		{
 			name: "missing_host",
 			input: e2eshared.ConnectionInput{
-				ProductID:    product.ID,
-				ConfigName:   fmt.Sprintf("e2e-missing-host-%d", time.Now().UnixNano()),
+				ConfigName:   fmt.Sprintf("e2e-missing-host-%s", uuid.New().String()[:8]),
 				Type:         e2eshared.DBTypePostgreSQL,
 				Port:         5432,
 				DatabaseName: "testdb",
@@ -547,11 +502,99 @@ func TestCreateConnection_MissingRequiredFields_BadRequest(t *testing.T) {
 			subCtx, subCancel := context.WithTimeout(context.Background(), e2eshared.DefaultTestTimeout)
 			defer subCancel()
 
-			resp, err := apiClient.CreateConnectionRaw(subCtx, tc.input)
+			resp, err := apiClient.CreateConnectionRaw(subCtx, productName, tc.input)
 			require.NoError(t, err, "request should succeed")
 
 			assert.Equal(t, 400, resp.StatusCode(), "should return 400 Bad Request")
 			t.Logf("Missing field correctly rejected with status %d", resp.StatusCode())
 		})
 	}
+}
+
+// TestCreateConnection_InvalidProductNameHeader verifies that creating a connection
+// with an invalid X-Product-Name header returns a 400 Bad Request error.
+func TestCreateConnection_InvalidProductNameHeader(t *testing.T) {
+	t.Parallel()
+
+	pgHost, pgPort, err := postgresInfra.HostPort()
+	require.NoError(t, err, "get postgres host/port")
+
+	tests := []struct {
+		name        string
+		productName string
+		expectCode  int
+	}{
+		{
+			name:        "whitespace_only",
+			productName: "   ",
+			expectCode:  400,
+		},
+		{
+			name:        "special_characters",
+			productName: "product@name!",
+			expectCode:  400,
+		},
+		{
+			name:        "too_long_101_chars",
+			productName: strings.Repeat("a", 101),
+			expectCode:  400,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctx, cancel := context.WithTimeout(context.Background(), e2eshared.DefaultTestTimeout)
+			defer cancel()
+
+			connInput := e2eshared.ConnectionInput{
+				ConfigName:   fmt.Sprintf("e2e-header-val-%s", uuid.New().String()[:8]),
+				Type:         e2eshared.DBTypePostgreSQL,
+				Host:         pgHost,
+				Port:         pgPort,
+				DatabaseName: "testdb",
+				Username:     "testuser",
+				Password:     "testpass",
+			}
+
+			resp, err := apiClient.CreateConnectionRaw(ctx, tt.productName, connInput)
+			require.NoError(t, err, "request should succeed")
+
+			assert.Equal(t, tt.expectCode, resp.StatusCode(),
+				"product name %q should return %d", tt.name, tt.expectCode)
+		})
+	}
+}
+
+// TestCreateConnection_ProductNameMaxLength_Success verifies that a product name
+// at the maximum allowed length (100 characters) is accepted.
+func TestCreateConnection_ProductNameMaxLength_Success(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), e2eshared.DefaultTestTimeout)
+	defer cancel()
+
+	pgHost, pgPort, err := postgresInfra.HostPort()
+	require.NoError(t, err, "get postgres host/port")
+
+	productName := strings.Repeat("a", 100)
+	connInput := e2eshared.ConnectionInput{
+		ConfigName:   fmt.Sprintf("e2e-maxlen-%s", uuid.New().String()[:8]),
+		Type:         e2eshared.DBTypePostgreSQL,
+		Host:         pgHost,
+		Port:         pgPort,
+		DatabaseName: "testdb",
+		Username:     "testuser",
+		Password:     "testpass",
+	}
+
+	conn, err := apiClient.CreateConnection(ctx, productName, connInput)
+	require.NoError(t, err, "100-char product name should be accepted")
+
+	t.Cleanup(func() {
+		_ = apiClient.DeleteConnection(context.Background(), conn.ID)
+	})
+
+	assert.Equal(t, productName, conn.ProductName, "product name should match")
 }

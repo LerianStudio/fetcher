@@ -8,8 +8,8 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/LerianStudio/fetcher/pkg/crypto"
-	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 	jobRepo "github.com/LerianStudio/fetcher/pkg/mongodb/job"
+	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
 	publisherPort "github.com/LerianStudio/fetcher/pkg/ports/publisher"
 	storagePort "github.com/LerianStudio/fetcher/pkg/ports/storage"
 	"github.com/LerianStudio/fetcher/pkg/testutil"

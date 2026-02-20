@@ -29,8 +29,10 @@ type Builder struct {
 	chaosConf ChaosConfig
 }
 
-func New(t *testing.T) *Builder {
-	t.Helper()
+func New(t *testing.T) *Builder { //nolint:thelper // t can be nil when called from TestMain
+	if t != nil {
+		t.Helper()
+	}
 
 	return &Builder{
 		t:     t,

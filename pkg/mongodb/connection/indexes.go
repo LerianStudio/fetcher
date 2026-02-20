@@ -76,7 +76,7 @@ func (cr *ConnectionMongoDBRepository) EnsureIndexes(ctx context.Context) error 
 		{
 			Keys: bson.D{
 				{Key: "organization_id", Value: 1},
-				{Key: "product_id", Value: 1},
+				{Key: "product_name", Value: 1},
 				{Key: "config_name", Value: 1},
 			},
 			Options: options.Index().
@@ -84,13 +84,13 @@ func (cr *ConnectionMongoDBRepository) EnsureIndexes(ctx context.Context) error 
 				SetUnique(true).
 				SetPartialFilterExpression(bson.D{
 					{Key: "deleted_at", Value: nil},
-					{Key: "product_id", Value: bson.D{{Key: "$type", Value: "binData"}}},
+					{Key: "product_name", Value: bson.D{{Key: "$gt", Value: ""}}},
 				}),
 		},
 		{
 			Keys: bson.D{
 				{Key: "organization_id", Value: 1},
-				{Key: "product_id", Value: 1},
+				{Key: "product_name", Value: 1},
 				{Key: "created_at", Value: -1},
 			},
 			Options: options.Index().
@@ -100,13 +100,13 @@ func (cr *ConnectionMongoDBRepository) EnsureIndexes(ctx context.Context) error 
 		{
 			Keys: bson.D{
 				{Key: "organization_id", Value: 1},
-				{Key: "product_id", Value: 1},
+				{Key: "product_name", Value: 1},
 			},
 			Options: options.Index().
 				SetName("idx_connection_unassigned").
 				SetPartialFilterExpression(bson.D{
 					{Key: "deleted_at", Value: nil},
-					{Key: "product_id", Value: nil},
+					{Key: "product_name", Value: ""},
 				}),
 		},
 	}

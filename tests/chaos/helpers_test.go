@@ -270,7 +270,7 @@ func createTestConnection(t *testing.T, ctx context.Context, prefix string) *e2e
 	t.Logf("PostgreSQL address for connection: %s:%d", pgHost, pgPort)
 
 	uniqueName := fmt.Sprintf("chaos-%s-%s", prefix, uuid.New().String()[:8])
-	conn, err := apiClient.CreateConnection(ctx, e2eshared.ConnectionInput{
+	conn, err := apiClient.CreateConnection(ctx, "fetcher", e2eshared.ConnectionInput{
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,
@@ -284,7 +284,7 @@ func createTestConnection(t *testing.T, ctx context.Context, prefix string) *e2e
 		// Try with explicit Docker gateway as fallback
 		gatewayIP := itestkit.HostGatewayIP()
 		t.Logf("Retrying with Docker gateway IP: %s:%d", gatewayIP, pgPort)
-		conn, err = apiClient.CreateConnection(ctx, e2eshared.ConnectionInput{
+		conn, err = apiClient.CreateConnection(ctx, "fetcher", e2eshared.ConnectionInput{
 			ConfigName:   uniqueName,
 			Type:         e2eshared.DBTypePostgreSQL,
 			Host:         gatewayIP,

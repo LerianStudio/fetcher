@@ -785,6 +785,235 @@ func TestQueryHeaderToOffsetPaginationFields(t *testing.T) {
 	})
 }
 
+func TestValidateProductName(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{
+			name:    "valid alphanumeric only",
+			input:   "myproduct",
+			wantErr: false,
+		},
+		{
+			name:    "valid with hyphens",
+			input:   "my-product",
+			wantErr: false,
+		},
+		{
+			name:    "valid with underscores",
+			input:   "my_product",
+			wantErr: false,
+		},
+		{
+			name:    "valid single char",
+			input:   "a",
+			wantErr: false,
+		},
+		{
+			name:    "valid exactly 100 chars",
+			input:   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			wantErr: false,
+		},
+		{
+			name:    "invalid exceeds 100 chars",
+			input:   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			wantErr: true,
+		},
+		{
+			name:    "invalid spaces",
+			input:   "my product",
+			wantErr: true,
+		},
+		{
+			name:    "invalid special chars",
+			input:   "prod@name!",
+			wantErr: true,
+		},
+		{
+			name:    "invalid dots",
+			input:   "my.product",
+			wantErr: true,
+		},
+		{
+			name:    "invalid unicode chars",
+			input:   "produc\u00e7\u00e3o",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateProductName(tt.input)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestGetProductName(t *testing.T) {
+	tests := []struct {
+		name      string
+		headerVal string
+		setHeader bool
+		wantVal   string
+		wantErr   bool
+	}{
+		{
+			name:      "header absent returns empty without error",
+			setHeader: false,
+			wantVal:   "",
+			wantErr:   false,
+		},
+		{
+			name:      "header with valid value returns lowercase",
+			headerVal: "myproduct",
+			setHeader: true,
+			wantVal:   "myproduct",
+			wantErr:   false,
+		},
+		{
+			name:      "header with UPPERCASE returns lowercase",
+			headerVal: "MYPRODUCT",
+			setHeader: true,
+			wantVal:   "myproduct",
+			wantErr:   false,
+		},
+		{
+			name:      "header with MixedCase returns lowercase",
+			headerVal: "My-Product",
+			setHeader: true,
+			wantVal:   "my-product",
+			wantErr:   false,
+		},
+		{
+			name:      "header whitespace-only treated as absent by HTTP layer",
+			headerVal: "   ",
+			setHeader: true,
+			wantVal:   "",
+			wantErr:   false, // fasthttp trims header values, so whitespace-only becomes empty
+		},
+		{
+			name:      "header with invalid chars returns error",
+			headerVal: "prod@name!",
+			setHeader: true,
+			wantVal:   "",
+			wantErr:   true,
+		},
+		{
+			name:      "header exceeding 100 chars returns error",
+			headerVal: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			setHeader: true,
+			wantVal:   "",
+			wantErr:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := fiber.New()
+			app.Get("/test", func(c *fiber.Ctx) error {
+				got, err := GetProductName(c)
+				if tt.wantErr {
+					assert.Error(t, err)
+					assert.Empty(t, got)
+				} else {
+					assert.NoError(t, err)
+					assert.Equal(t, tt.wantVal, got)
+				}
+				return nil
+			})
+
+			req := httptest.NewRequest("GET", "/test", nil)
+			if tt.setHeader {
+				req.Header.Set("X-Product-Name", tt.headerVal)
+			}
+			_, err := app.Test(req)
+			assert.NoError(t, err)
+		})
+	}
+}
+
+func TestGetRequiredProductName(t *testing.T) {
+	tests := []struct {
+		name      string
+		headerVal string
+		setHeader bool
+		wantVal   string
+		wantErr   bool
+	}{
+		{
+			name:      "header absent returns error",
+			setHeader: false,
+			wantVal:   "",
+			wantErr:   true,
+		},
+		{
+			name:      "header empty returns error",
+			headerVal: "",
+			setHeader: true,
+			wantVal:   "",
+			wantErr:   true,
+		},
+		{
+			name:      "header whitespace-only returns error",
+			headerVal: "   ",
+			setHeader: true,
+			wantVal:   "",
+			wantErr:   true,
+		},
+		{
+			name:      "header with valid value returns lowercase",
+			headerVal: "myproduct",
+			setHeader: true,
+			wantVal:   "myproduct",
+			wantErr:   false,
+		},
+		{
+			name:      "header with MixedCase returns lowercase",
+			headerVal: "My-Product",
+			setHeader: true,
+			wantVal:   "my-product",
+			wantErr:   false,
+		},
+		{
+			name:      "header with invalid chars returns error",
+			headerVal: "prod@name!",
+			setHeader: true,
+			wantVal:   "",
+			wantErr:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := fiber.New()
+			app.Get("/test", func(c *fiber.Ctx) error {
+				got, err := GetRequiredProductName(c)
+				if tt.wantErr {
+					assert.Error(t, err)
+					assert.Empty(t, got)
+				} else {
+					assert.NoError(t, err)
+					assert.Equal(t, tt.wantVal, got)
+				}
+				return nil
+			})
+
+			req := httptest.NewRequest("GET", "/test", nil)
+			if tt.setHeader {
+				req.Header.Set("X-Product-Name", tt.headerVal)
+			}
+			_, err := app.Test(req)
+			assert.NoError(t, err)
+		})
+	}
+}
+
 func TestValidateParametersNonMetadataKeys(t *testing.T) {
 	os.Setenv("MAX_PAGINATION_LIMIT", "100")
 	os.Setenv("MAX_PAGINATION_MONTH_DATE_RANGE", "3")

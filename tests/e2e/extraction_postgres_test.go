@@ -35,12 +35,11 @@ func TestPostgresExtraction_TransactionsTable(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
-	// Step 2: Create product and connection to source database
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	// Step 2: Generate product name and create connection to source database
+	productName := e2eshared.GenerateProductName()
 
 	connName := fmt.Sprintf("e2e-pg-extract-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
-		ProductID:    product.ID,
 		ConfigName:   connName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,
@@ -50,7 +49,7 @@ func TestPostgresExtraction_TransactionsTable(t *testing.T) {
 		Password:     "testpass",
 	}
 
-	conn, err := apiClient.CreateConnection(ctx, connInput)
+	conn, err := apiClient.CreateConnection(ctx, productName, connInput)
 	require.NoError(t, err, "create connection")
 	require.NotEmpty(t, conn.ID, "connection ID should be set")
 	t.Logf("Created connection: id=%s, host=%s:%d", conn.ID, conn.Host, conn.Port)
@@ -74,7 +73,7 @@ func TestPostgresExtraction_TransactionsTable(t *testing.T) {
 			},
 		},
 		Metadata: map[string]any{
-			"source": product.Code,
+			"source": productName,
 			"test":   "postgres-extraction-e2e",
 		},
 	}

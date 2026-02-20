@@ -371,6 +371,7 @@ test-e2e: ## Run E2E tests
 	$(call print_title,Running E2E tests)
 	$(call check_command,docker,Install Docker from https://docs.docker.com/get-docker/)
 	@start_time=$$(date +%s); \
+	go clean -testcache; \
 	go test -v -tags=e2e -timeout 30m -count=1 ./tests/e2e/...; \
 	test_exit_code=$$?; \
 	end_time=$$(date +%s); \

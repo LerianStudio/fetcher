@@ -18,7 +18,7 @@ import (
 type Connection struct {
 	ID                   uuid.UUID
 	OrganizationID       uuid.UUID
-	ProductID            *uuid.UUID
+	ProductName          string
 	ConfigName           string
 	Type                 DBType
 	Host                 string
@@ -46,6 +46,7 @@ func NewConnection(
 	ctx context.Context,
 	cryptor crypto.Cryptor,
 	organizationID uuid.UUID,
+	productName string,
 	configName string,
 	typ string,
 	host string,
@@ -103,6 +104,7 @@ func NewConnection(
 	connection := Connection{
 		ID:                   id,
 		OrganizationID:       organizationID,
+		ProductName:          productName,
 		ConfigName:           configName,
 		Type:                 dbType,
 		Host:                 host,
@@ -141,6 +143,7 @@ func (conn *Connection) IsValid() error {
 
 // normalizeFields trims whitespace from string fields
 func (conn *Connection) normalizeFields() {
+	conn.ProductName = strings.TrimSpace(conn.ProductName)
 	conn.ConfigName = strings.TrimSpace(conn.ConfigName)
 	conn.Host = strings.TrimSpace(conn.Host)
 	conn.DatabaseName = strings.TrimSpace(conn.DatabaseName)
@@ -153,6 +156,10 @@ func (conn *Connection) validateRequiredFields() map[string]string {
 
 	if conn.OrganizationID == uuid.Nil {
 		requiredFields["organization_id"] = "organization ID is required"
+	}
+
+	if conn.ProductName == "" {
+		requiredFields["product_name"] = "product name is required"
 	}
 
 	if conn.ConfigName == "" {
@@ -357,22 +364,17 @@ func (conn *Connection) SoftDelete(ts time.Time) {
 	conn.UpdatedAt = ts
 }
 
-// BelongsToProduct checks if the connection is associated with the given product.
-func (conn *Connection) BelongsToProduct(productID uuid.UUID) bool {
-	return conn.ProductID != nil && *conn.ProductID == productID
-}
-
-// AssignProduct associates a legacy (unassigned) connection to a product.
+// AssignProductName associates a legacy (unassigned) connection to a product name.
 // This is a one-time operation for migration purposes.
-func (conn *Connection) AssignProduct(productID uuid.UUID) error {
-	if conn.ProductID != nil {
+func (conn *Connection) AssignProductName(productName string) error {
+	if conn.ProductName != "" {
 		return pkg.ValidateBusinessError(
 			constant.ErrConnectionAlreadyAssigned,
 			"connection",
 		)
 	}
 
-	conn.ProductID = &productID
+	conn.ProductName = productName
 	conn.UpdatedAt = time.Now().UTC()
 
 	return nil
@@ -425,7 +427,7 @@ func (conn *Connection) ToMapWithMask() map[string]any {
 	return map[string]any{
 		"id":                     conn.ID,
 		"organization_id":        conn.OrganizationID,
-		"product_id":             conn.ProductID,
+		"product_name":           conn.ProductName,
 		"config_name":            conn.ConfigName,
 		"type":                   string(conn.Type),
 		"host":                   conn.Host,
@@ -446,7 +448,6 @@ func (conn *Connection) ToMapWithMask() map[string]any {
 // Request, Response DTOs And Value Objects
 
 type ConnectionInput struct {
-	ProductID    string          `json:"productId" validate:"required" example:"01926b5e-7a1a-7000-8000-000000000001"`
 	ConfigName   string          `json:"configName" validate:"required" example:"production-db" minLength:"3" maxLength:"100"`
 	Type         string          `json:"type" validate:"required,oneof=ORACLE SQL_SERVER POSTGRESQL MONGODB MYSQL" example:"POSTGRESQL"`
 	Host         string          `json:"host" validate:"required,hostname|ip" example:"db.example.com"`
@@ -477,7 +478,6 @@ func (conn *ConnectionInput) ToMapWithMask() map[string]any {
 	}
 
 	return map[string]any{
-		"product_id":    conn.ProductID,
 		"config_name":   conn.ConfigName,
 		"type":          conn.Type,
 		"host":          conn.Host,
@@ -496,8 +496,7 @@ func (conn *ConnectionInput) IsEmpty() bool {
 		return true
 	}
 
-	return conn.ProductID == "" &&
-		conn.ConfigName == "" &&
+	return conn.ConfigName == "" &&
 		conn.Type == "" &&
 		conn.Host == "" &&
 		conn.Port == 0 &&
@@ -516,11 +515,6 @@ func (s *SSLInput) IsEmpty() bool {
 	}
 
 	return s.Mode == "" && s.CA == "" && s.Cert == nil && s.Key == nil
-}
-
-// AssignConnectionInput is the DTO for POST /connections/:id/assign requests.
-type AssignConnectionInput struct {
-	ProductID string `json:"productId" validate:"required" example:"550e8400-e29b-41d4-a716-446655440000"`
 }
 
 // ConnectionUpdateInput is the DTO for PATCH /connections/:id requests.
@@ -643,7 +637,7 @@ func (s *SSLUpdateInput) IsEmpty() bool {
 
 type ConnectionResponse struct {
 	ID           uuid.UUID       `json:"id"`
-	ProductID    *uuid.UUID      `json:"productId,omitempty"`
+	ProductName  string          `json:"productName,omitempty"`
 	ConfigName   string          `json:"configName"`
 	Type         string          `json:"type"`
 	Host         string          `json:"host"`
@@ -674,7 +668,7 @@ func NewConnectionResponseFrom(conn *Connection) *ConnectionResponse {
 
 	resp := &ConnectionResponse{
 		ID:           conn.ID,
-		ProductID:    conn.ProductID,
+		ProductName:  conn.ProductName,
 		ConfigName:   conn.ConfigName,
 		Type:         string(conn.Type),
 		Host:         conn.Host,

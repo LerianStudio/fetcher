@@ -15,9 +15,8 @@ import (
 	"github.com/LerianStudio/fetcher/components/manager/internal/services/query"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/model/datasource"
-	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 	jobRepo "github.com/LerianStudio/fetcher/pkg/mongodb/job"
-	productRepo "github.com/LerianStudio/fetcher/pkg/mongodb/product"
+	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
 
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 
@@ -62,6 +61,7 @@ func createTestConnection(id, orgID uuid.UUID) *model.Connection {
 	return &model.Connection{
 		ID:                   id,
 		OrganizationID:       orgID,
+		ProductName:          "test-product",
 		ConfigName:           "test-connection",
 		Type:                 model.TypePostgreSQL,
 		Host:                 "localhost",
@@ -78,21 +78,6 @@ func createTestConnection(id, orgID uuid.UUID) *model.Connection {
 // validConnectionInput returns a valid ConnectionInput for tests.
 func validConnectionInput() string {
 	return `{
-		"productId": "01926b5e-7a1a-7000-8000-000000000001",
-		"configName": "test-connection",
-		"type": "POSTGRESQL",
-		"host": "localhost",
-		"port": 5432,
-		"databaseName": "testdb",
-		"username": "testuser",
-		"password": "secretpassword"
-	}`
-}
-
-// validConnectionInputWithProductID returns a valid ConnectionInput with a specific product ID.
-func validConnectionInputWithProductID(productID uuid.UUID) string {
-	return `{
-		"productId": "` + productID.String() + `",
 		"configName": "test-connection",
 		"type": "POSTGRESQL",
 		"host": "localhost",
@@ -112,41 +97,30 @@ func TestConnectionHandler_CreateConnection_Success(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockProdRepo := productRepo.NewMockRepository(ctrl)
 	mockCryptor := crypto.NewMockCryptor(ctrl)
 
 	connID := uuid.New()
 	orgID := uuid.New()
-	productID := uuid.MustParse("01926b5e-7a1a-7000-8000-000000000001")
 	testConn := createTestConnection(connID, orgID)
-	testConn.ProductID = &productID
-
-	testProduct := &model.Product{
-		ID:             productID,
-		OrganizationID: orgID,
-		Code:           "test-product",
-		Name:           "Test Product",
-	}
 
 	// Mock expectations for CreateConnection service:
-	// 1. Validate product exists
-	mockProdRepo.EXPECT().FindByID(gomock.Any(), productID, orgID).Return(testProduct, nil)
-	// 2. Encrypt password (called by model.NewConnection)
+	// 1. Encrypt password (called by model.NewConnection)
 	mockCryptor.EXPECT().Encrypt(gomock.Any(), "secretpassword").Return("encrypted-password", "v1", nil)
-	// 3. Check for duplicate config name
+	// 2. Check for duplicate config name
 	mockConnRepo.EXPECT().FindByOrganizationAndName(gomock.Any(), orgID, "test-connection").Return(nil, nil)
-	// 4. Create connection
+	// 3. Create connection
 	mockConnRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(testConn, nil)
 
-	createCmd := command.NewCreateConnection(mockConnRepo, mockProdRepo, mockCryptor)
+	createCmd := command.NewCreateConnection(mockConnRepo, mockCryptor)
 	handler := &ConnectionHandler{CreateCmd: createCmd}
 
 	app := setupConnectionTestApp()
 	app.Post("/v1/management/connections", handler.CreateConnection)
 
-	req := httptest.NewRequest("POST", "/v1/management/connections", strings.NewReader(validConnectionInputWithProductID(productID)))
+	req := httptest.NewRequest("POST", "/v1/management/connections", strings.NewReader(validConnectionInput()))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Organization-Id", orgID.String())
+	req.Header.Set("X-Product-Name", "test-product")
 
 	resp, err := app.Test(req)
 	require.NoError(t, err)
@@ -253,39 +227,89 @@ func TestConnectionHandler_CreateConnection_MissingOrgHeader(t *testing.T) {
 	}
 }
 
+func TestConnectionHandler_CreateConnection_MissingProductNameHeader(t *testing.T) {
+	app := setupConnectionTestApp()
+
+	handler := &ConnectionHandler{CreateCmd: nil}
+	app.Post("/v1/management/connections", handler.CreateConnection)
+
+	orgID := uuid.New()
+
+	tests := []struct {
+		name          string
+		productHeader string
+		setHeader     bool
+		wantCode      int
+	}{
+		{
+			name:          "missing X-Product-Name header",
+			productHeader: "",
+			setHeader:     false,
+			wantCode:      fiber.StatusBadRequest,
+		},
+		{
+			name:          "empty X-Product-Name header",
+			productHeader: "",
+			setHeader:     true,
+			wantCode:      fiber.StatusBadRequest,
+		},
+		{
+			name:          "whitespace only X-Product-Name header",
+			productHeader: "   ",
+			setHeader:     true,
+			wantCode:      fiber.StatusBadRequest,
+		},
+		{
+			name:          "invalid characters in X-Product-Name header",
+			productHeader: "my product!",
+			setHeader:     true,
+			wantCode:      fiber.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("POST", "/v1/management/connections", strings.NewReader(validConnectionInput()))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("X-Organization-Id", orgID.String())
+
+			if tt.setHeader {
+				req.Header.Set("X-Product-Name", tt.productHeader)
+			}
+
+			resp, err := app.Test(req)
+			require.NoError(t, err)
+			defer resp.Body.Close()
+
+			assert.Equal(t, tt.wantCode, resp.StatusCode)
+		})
+	}
+}
+
 func TestConnectionHandler_CreateConnection_Conflict(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockProdRepo := productRepo.NewMockRepository(ctrl)
 	mockCryptor := crypto.NewMockCryptor(ctrl)
 
 	orgID := uuid.New()
-	productID := uuid.MustParse("01926b5e-7a1a-7000-8000-000000000001")
 	existingConn := createTestConnection(uuid.New(), orgID)
 
-	testProduct := &model.Product{
-		ID:             productID,
-		OrganizationID: orgID,
-		Code:           "test-product",
-		Name:           "Test Product",
-	}
-
-	// Service will validate product, encrypt, then find existing connection -> conflict
-	mockProdRepo.EXPECT().FindByID(gomock.Any(), productID, orgID).Return(testProduct, nil)
+	// Service will encrypt, then find existing connection -> conflict
 	mockCryptor.EXPECT().Encrypt(gomock.Any(), "secretpassword").Return("encrypted-password", "v1", nil)
 	mockConnRepo.EXPECT().FindByOrganizationAndName(gomock.Any(), orgID, "test-connection").Return(existingConn, nil)
 
-	createCmd := command.NewCreateConnection(mockConnRepo, mockProdRepo, mockCryptor)
+	createCmd := command.NewCreateConnection(mockConnRepo, mockCryptor)
 	handler := &ConnectionHandler{CreateCmd: createCmd}
 
 	app := setupConnectionTestApp()
 	app.Post("/v1/management/connections", handler.CreateConnection)
 
-	req := httptest.NewRequest("POST", "/v1/management/connections", strings.NewReader(validConnectionInputWithProductID(productID)))
+	req := httptest.NewRequest("POST", "/v1/management/connections", strings.NewReader(validConnectionInput()))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Organization-Id", orgID.String())
+	req.Header.Set("X-Product-Name", "test-product")
 
 	resp, err := app.Test(req)
 	require.NoError(t, err)
@@ -299,34 +323,25 @@ func TestConnectionHandler_CreateConnection_InternalError(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockProdRepo := productRepo.NewMockRepository(ctrl)
 	mockCryptor := crypto.NewMockCryptor(ctrl)
 
 	orgID := uuid.New()
-	productID := uuid.MustParse("01926b5e-7a1a-7000-8000-000000000001")
 
-	testProduct := &model.Product{
-		ID:             productID,
-		OrganizationID: orgID,
-		Code:           "test-product",
-		Name:           "Test Product",
-	}
-
-	// Service will validate product, encrypt, check dupe, then fail on create
-	mockProdRepo.EXPECT().FindByID(gomock.Any(), productID, orgID).Return(testProduct, nil)
+	// Service will encrypt, check dupe, then fail on create
 	mockCryptor.EXPECT().Encrypt(gomock.Any(), "secretpassword").Return("encrypted-password", "v1", nil)
 	mockConnRepo.EXPECT().FindByOrganizationAndName(gomock.Any(), orgID, "test-connection").Return(nil, nil)
 	mockConnRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil, assert.AnError)
 
-	createCmd := command.NewCreateConnection(mockConnRepo, mockProdRepo, mockCryptor)
+	createCmd := command.NewCreateConnection(mockConnRepo, mockCryptor)
 	handler := &ConnectionHandler{CreateCmd: createCmd}
 
 	app := setupConnectionTestApp()
 	app.Post("/v1/management/connections", handler.CreateConnection)
 
-	req := httptest.NewRequest("POST", "/v1/management/connections", strings.NewReader(validConnectionInputWithProductID(productID)))
+	req := httptest.NewRequest("POST", "/v1/management/connections", strings.NewReader(validConnectionInput()))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Organization-Id", orgID.String())
+	req.Header.Set("X-Product-Name", "test-product")
 
 	resp, err := app.Test(req)
 	require.NoError(t, err)
@@ -454,8 +469,6 @@ func TestConnectionHandler_ListConnections_Success(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockProdRepo := productRepo.NewMockRepository(ctrl)
-
 	connID1 := uuid.New()
 	connID2 := uuid.New()
 	orgID := uuid.New()
@@ -467,10 +480,10 @@ func TestConnectionHandler_ListConnections_Success(t *testing.T) {
 
 	conns := []*model.Connection{conn1, conn2}
 
-	// ListConnections service: no productID header -> calls connRepo.List directly
+	// ListConnections service: no productName header -> calls connRepo.List directly
 	mockConnRepo.EXPECT().List(gomock.Any(), orgID, gomock.Any()).Return(conns, int64(2), nil)
 
-	listQuery := query.NewListConnections(mockConnRepo, mockProdRepo)
+	listQuery := query.NewListConnections(mockConnRepo)
 	handler := &ConnectionHandler{ListQuery: listQuery}
 
 	app := setupConnectionTestApp()
@@ -499,14 +512,12 @@ func TestConnectionHandler_ListConnections_EmptyList(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockProdRepo := productRepo.NewMockRepository(ctrl)
-
 	orgID := uuid.New()
 
 	// Service returns nil list, which gets converted to empty slice
 	mockConnRepo.EXPECT().List(gomock.Any(), orgID, gomock.Any()).Return(nil, int64(0), nil)
 
-	listQuery := query.NewListConnections(mockConnRepo, mockProdRepo)
+	listQuery := query.NewListConnections(mockConnRepo)
 	handler := &ConnectionHandler{ListQuery: listQuery}
 
 	app := setupConnectionTestApp()
@@ -535,13 +546,11 @@ func TestConnectionHandler_ListConnections_InvalidPaginationParams(t *testing.T)
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockProdRepo := productRepo.NewMockRepository(ctrl)
-
 	orgID := uuid.New()
 
 	// The handler validates query params before calling the service,
 	// so no mock expectations needed for invalid params
-	listQuery := query.NewListConnections(mockConnRepo, mockProdRepo)
+	listQuery := query.NewListConnections(mockConnRepo)
 	handler := &ConnectionHandler{ListQuery: listQuery}
 
 	app := setupConnectionTestApp()
@@ -564,6 +573,87 @@ func TestConnectionHandler_ListConnections_InvalidPaginationParams(t *testing.T)
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest("GET", "/v1/management/connections?"+tt.queryStr, nil)
 			req.Header.Set("X-Organization-Id", orgID.String())
+
+			resp, err := app.Test(req)
+			require.NoError(t, err)
+			defer resp.Body.Close()
+
+			assert.Equal(t, tt.wantCode, resp.StatusCode)
+		})
+	}
+}
+
+func TestConnectionHandler_ListConnections_WithProductNameFilter(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	connID1 := uuid.New()
+	connID2 := uuid.New()
+	orgID := uuid.New()
+
+	conn1 := createTestConnection(connID1, orgID)
+	conn1.ConfigName = "product-conn-1"
+	conn1.ProductName = "my-product"
+	conn2 := createTestConnection(connID2, orgID)
+	conn2.ConfigName = "product-conn-2"
+	conn2.ProductName = "my-product"
+
+	conns := []*model.Connection{conn1, conn2}
+
+	// ListConnections service: with productName header -> filters.ProductName is set
+	mockConnRepo.EXPECT().List(gomock.Any(), orgID, gomock.Any()).Return(conns, int64(2), nil)
+
+	listQuery := query.NewListConnections(mockConnRepo)
+	handler := &ConnectionHandler{ListQuery: listQuery}
+
+	app := setupConnectionTestApp()
+	app.Get("/v1/management/connections", handler.ListConnections)
+
+	req := httptest.NewRequest("GET", "/v1/management/connections?limit=10&page=1", nil)
+	req.Header.Set("X-Organization-Id", orgID.String())
+	req.Header.Set("X-Product-Name", "my-product")
+
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var body map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&body)
+	require.NoError(t, err)
+
+	items, ok := body["items"].([]interface{})
+	require.True(t, ok)
+	assert.Equal(t, 2, len(items))
+}
+
+func TestConnectionHandler_ListConnections_InvalidProductNameHeader(t *testing.T) {
+	app := setupConnectionTestApp()
+
+	handler := &ConnectionHandler{ListQuery: nil}
+	app.Get("/v1/management/connections", handler.ListConnections)
+
+	orgID := uuid.New()
+
+	tests := []struct {
+		name          string
+		productHeader string
+		wantCode      int
+	}{
+		{
+			name:          "invalid characters in product name",
+			productHeader: "invalid name!@#",
+			wantCode:      fiber.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/v1/management/connections", nil)
+			req.Header.Set("X-Organization-Id", orgID.String())
+			req.Header.Set("X-Product-Name", tt.productHeader)
 
 			resp, err := app.Test(req)
 			require.NoError(t, err)
