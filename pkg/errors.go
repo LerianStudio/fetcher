@@ -337,7 +337,7 @@ func validateCommonErrors(err error, entityType string, args ...any) error {
 			EntityType: entityType,
 			Code:       constant.ErrInvalidQueryParameter.Error(),
 			Title:      "Invalid Query Parameter",
-			Message:    fmt.Sprintf("One or more query parameters are in an incorrect format. Please check the following parameters '%v' and ensure they meet the required format before trying again.", args),
+			Message:    fmt.Sprintf("One or more query parameters are in an incorrect format. Please check the following parameters '%v' and ensure they meet the required format before trying again.", args...),
 		}
 	case constant.ErrInvalidDateFormat:
 		return ValidationError{
@@ -393,14 +393,14 @@ func validateCommonErrors(err error, entityType string, args ...any) error {
 			EntityType: entityType,
 			Code:       constant.ErrInvalidHeaderParameter.Error(),
 			Title:      "Invalid header",
-			Message:    fmt.Sprintf("One or more header values are missing or incorrectly formatted. Please verify required headers %v.", args),
+			Message:    fmt.Sprintf("One or more header values are missing or incorrectly formatted. Please verify required headers %v.", args...),
 		}
 	case constant.ErrInvalidPathParameter:
 		return ValidationError{
 			EntityType: entityType,
 			Code:       constant.ErrInvalidPathParameter.Error(),
 			Title:      "Invalid Path Parameter",
-			Message:    fmt.Sprintf("Path parameters is in an incorrect format. Please check the following parameter %v and ensure they meet the required format before trying again.", args),
+			Message:    fmt.Sprintf("Path parameters is in an incorrect format. Please check the following parameter %v and ensure they meet the required format before trying again.", args...),
 		}
 	case constant.ErrInvalidDataRequest:
 		msg := "The request contains invalid data. Please check the request payload and try again."
@@ -502,7 +502,7 @@ func validateJobAndConnectionErrors(err error, entityType string, args ...any) e
 			EntityType: entityType,
 			Code:       constant.ErrMissingDataSource.Error(),
 			Title:      "Missing Data Source Table",
-			Message:    fmt.Sprintf("The data source %v is missing. Please check the value passed.", args),
+			Message:    fmt.Sprintf("The data source %v is missing. Please check the value passed.", args...),
 		}
 	case constant.ErrJobInProgress:
 		msg := "The operation cannot be completed because there are active jobs for this connection."

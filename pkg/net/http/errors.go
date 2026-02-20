@@ -54,10 +54,20 @@ func WithError(c *fiber.Ctx, err error) error {
 		return JSONResponseErrorWithStatusCode(c, responseErrWithStatus)
 	}
 
-	var iErr pkg.InternalServerError
-	if errors.As(pkg.ValidateInternalError(err, ""), &iErr) {
-		return InternalServerError(c, iErr.Code, iErr.Title, iErr.Message)
+	internalErr := pkg.ValidateInternalError(err, "")
+	switch e := internalErr.(type) {
+	case pkg.InternalServerError:
+		return InternalServerError(c, e.Code, e.Title, e.Message)
+	case pkg.ValidationError:
+		return BadRequest(c, pkg.ValidationKnownFieldsError{
+			Code:    e.Code,
+			Title:   e.Title,
+			Message: e.Message,
+		})
+	case pkg.ResponseErrorWithStatusCode:
+		return JSONResponseErrorWithStatusCode(c, e)
+	default:
+		return InternalServerError(c, "INTERNAL_ERROR", "Internal Server Error",
+			"The server encountered an unexpected error. Please try again later or contact support.")
 	}
-
-	return InternalServerError(c, "INTERNAL_ERROR", "Internal Server Error", err.Error())
 }
