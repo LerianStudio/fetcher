@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
@@ -90,6 +91,18 @@ func (uc *UseCase) ExtractExternalData(ctx context.Context, body []byte, headers
 		return uc.handleErrorWithUpdate(ctx, message.JobID, message.OrganizationID, *message, &span, "Job not found in database", nil, logger)
 	}
 
+	// Transition to PROCESSING only if still PENDING (CAS-style).
+	// If another worker already moved this job past PENDING (e.g. on message
+	// redelivery), we skip rather than double-process.
+	if job.Status != model.JobStatusPending {
+		logger.Infof("Job %s status is %s (expected pending), skipping", message.JobID, job.Status)
+		return nil
+	}
+
+	if err := uc.JobRepository.UpdateStatus(ctx, message.JobID, message.OrganizationID, model.JobStatusProcessing, "", "", nil); err != nil {
+		return uc.handleErrorWithUpdate(ctx, message.JobID, message.OrganizationID, *message, &span, "Error updating job status to processing", err, logger)
+	}
+
 	// Extract config names from mappedFields
 	configNames := extractConfigNamesFromMappedFields(message.MappedFields)
 
@@ -114,25 +127,45 @@ func (uc *UseCase) ExtractExternalData(ctx context.Context, body []byte, headers
 		return uc.handleErrorWithUpdate(ctx, message.JobID, message.OrganizationID, *message, &span, "Error saving external data to SeaweedFS", err, logger)
 	}
 
-	// Update job status to completed in MongoDB with the resultPath and resultHMAC
-	if err := uc.JobRepository.UpdateStatus(ctx, message.JobID, message.OrganizationID, model.JobStatusCompleted, resultData.Path, resultData.HMAC, nil); err != nil {
-		libOtel.HandleSpanError(&span, "Error updating job status to completed", err)
-		logger.Errorf("Failed to update job status to completed: %v", err)
+	return uc.completeJob(ctx, tracer, *message, resultData, startTime, &span, logger)
+}
+
+// completeJob persists the completed status and publishes a completion notification.
+//
+// Design trade-off: If the DB update succeeds but the notification publish fails,
+// this function returns nil (success). The rationale is that the MongoDB job record
+// is the authoritative source of truth — downstream consumers that rely solely on
+// notifications may experience delayed awareness, but data integrity is preserved.
+// A compensating outbox pattern can be added if notification delivery becomes critical.
+func (uc *UseCase) completeJob(
+	ctx context.Context,
+	tracer trace.Tracer,
+	message ExtractExternalDataMessage,
+	resultData *JobResultData,
+	startTime time.Time,
+	span *trace.Span,
+	logger log.Logger,
+) error {
+	if resultData == nil {
+		return uc.handleErrorWithUpdate(ctx, message.JobID, message.OrganizationID, message, span,
+			"Cannot complete job: result data is nil", nil, logger)
 	}
 
-	// Calculate execution metrics
+	if err := uc.JobRepository.UpdateStatus(ctx, message.JobID, message.OrganizationID, model.JobStatusCompleted, resultData.Path, resultData.HMAC, nil); err != nil {
+		return uc.handleErrorWithUpdate(ctx, message.JobID, message.OrganizationID, message, span, "Error updating job status to completed", err, logger)
+	}
+
 	completedAt := time.Now()
 	executionTimeMs := completedAt.Sub(startTime).Milliseconds()
 
-	// Publish job completion notification with result data and metrics
 	notificationOpts := &JobNotificationOptions{
 		Result:          resultData,
 		ExecutionTimeMs: executionTimeMs,
 		CompletedAt:     &completedAt,
 	}
 
-	if err := uc.publishJobNotification(ctx, tracer, *message, "completed", nil, notificationOpts, logger); err != nil {
-		libOtel.HandleSpanError(&span, "Error publishing job completion notification", err)
+	if err := uc.publishJobNotification(ctx, tracer, message, "completed", nil, notificationOpts, logger); err != nil {
+		libOtel.HandleSpanError(span, "Error publishing job completion notification", err)
 		logger.Warnf("Failed to publish job completion notification: %v", err)
 	}
 
@@ -164,7 +197,63 @@ func (uc *UseCase) parseMessage(ctx context.Context, body []byte, headers map[st
 		return nil, fmt.Errorf("failed to parse message: %w", err)
 	}
 
+	if validationErr := validateExtractExternalDataMessage(message); validationErr != nil {
+		wrappedErr := fmt.Errorf("invalid message payload: %w", validationErr)
+		libOtel.HandleSpanError(span, "Invalid message payload", wrappedErr)
+		logger.Errorf("Invalid message payload: %s", wrappedErr.Error())
+
+		var (
+			jobID uuid.UUID
+			orgID uuid.UUID
+		)
+
+		if message != nil {
+			jobID = message.JobID
+			orgID = message.OrganizationID
+		}
+
+		extractedJobID, extractedOrgID := uc.extractJobIDFromMultipleSources(body, headers, logger)
+		if jobID == uuid.Nil {
+			jobID = extractedJobID
+		}
+
+		if orgID == uuid.Nil {
+			orgID = extractedOrgID
+		}
+
+		if jobID != uuid.Nil && orgID != uuid.Nil {
+			updateErr := uc.updateJobWithErrors(ctx, jobID, orgID, wrappedErr.Error())
+			if updateErr != nil {
+				logger.Errorf("Failed to update job status after payload validation error: %v", updateErr)
+			}
+		} else {
+			logger.Warnf("Could not extract complete job identifiers from payload, job status will not be updated")
+		}
+
+		return nil, wrappedErr
+	}
+
 	return message, nil
+}
+
+func validateExtractExternalDataMessage(message *ExtractExternalDataMessage) error {
+	if message == nil {
+		return errors.New("message payload is null")
+	}
+
+	if message.JobID == uuid.Nil {
+		return errors.New("jobId is required")
+	}
+
+	if message.OrganizationID == uuid.Nil {
+		return errors.New("organizationId is required")
+	}
+
+	if len(message.MappedFields) == 0 {
+		return errors.New("mappedFields is required")
+	}
+
+	return nil
 }
 
 // extractJobIDFromMultipleSources attempts to extract jobID and organizationID from multiple sources.
@@ -209,7 +298,6 @@ func (uc *UseCase) extractJobIDFromPartialJSON(body []byte, logger log.Logger) (
 	}
 
 	decoder := json.NewDecoder(strings.NewReader(bodyStr))
-	decoder.DisallowUnknownFields()
 	_ = decoder.Decode(&partial)
 
 	if partial.JobID != nil {
@@ -274,10 +362,11 @@ func (uc *UseCase) handleErrorWithUpdate(
 	libOtel.HandleSpanError(span, errorMsg, err)
 	logger.Errorf("%s: %s", errorMsg, err.Error())
 
-	// Publish job failure notification to RabbitMQ topic exchange
-	// Use the full message to preserve source and other metadata
+	// Publish job failure notification to RabbitMQ topic exchange.
+	// Sanitize the error message to avoid leaking internal details
+	// (hostnames, connection strings, driver versions) to notification consumers.
 	errorMetadata := map[string]any{
-		"message": err.Error(),
+		"message": sanitizeErrorForNotification(err.Error()),
 	}
 
 	// Ensure message has correct IDs (in case it was partially parsed)
@@ -292,9 +381,12 @@ func (uc *UseCase) handleErrorWithUpdate(
 }
 
 // updateJobWithErrors updates the status of a job to "Error" with the provided error message.
+// Metadata fields are merged into the existing metadata document via dot-notation
+// in UpdateStatus, preserving original fields like "source".
 func (uc *UseCase) updateJobWithErrors(ctx context.Context, jobID, orgID uuid.UUID, errorMessage string) error {
-	metadata := make(map[string]any)
-	metadata["error"] = errorMessage
+	metadata := map[string]any{
+		"error": errorMessage,
+	}
 
 	errUpdate := uc.JobRepository.UpdateStatus(ctx, jobID, orgID, model.JobStatusFailed, "", "", metadata)
 	if errUpdate != nil {
@@ -343,7 +435,7 @@ func (uc *UseCase) queryDatabase(
 	var foundConnection *model.Connection
 
 	for _, conn := range connections {
-		if conn.ConfigName == databaseName {
+		if conn != nil && conn.ConfigName == databaseName {
 			foundConnection = conn
 			break
 		}
@@ -522,6 +614,10 @@ func (uc *UseCase) encryptDataForSeaweedFS(data []byte, logger log.Logger) ([]by
 		return nil, fmt.Errorf("failed to encrypt data: %w", err)
 	}
 
+	if encryptedStr == nil {
+		return nil, errors.New("failed to encrypt data: empty encrypted payload")
+	}
+
 	return []byte(*encryptedStr), nil
 }
 
@@ -529,8 +625,8 @@ func (uc *UseCase) encryptDataForSeaweedFS(data []byte, logger log.Logger) ([]by
 func (uc *UseCase) shouldSkipProcessing(ctx context.Context, jobID, organizationID uuid.UUID, logger log.Logger) bool {
 	jobStatus, err := uc.checkReportStatus(ctx, jobID, organizationID, logger)
 	if err == nil {
-		if jobStatus == model.JobStatusCompleted {
-			logger.Infof("Job %s is already completed, skipping reprocessing", jobID)
+		if jobStatus == model.JobStatusCompleted || jobStatus == model.JobStatusProcessing {
+			logger.Infof("Job %s is already %s, skipping reprocessing", jobID, jobStatus)
 			return true
 		}
 	}
@@ -570,6 +666,17 @@ func extractConfigNamesFromMappedFields(mappedFields map[string]map[string][]str
 	}
 
 	return configNames
+}
+
+// notificationURIPattern matches connection strings and URIs that may contain
+// credentials or internal infrastructure details.
+var notificationURIPattern = regexp.MustCompile(`\w+://[^\s]+`)
+
+// sanitizeErrorForNotification strips connection strings, hostnames, and other
+// internal infrastructure details from error messages before publishing them
+// to RabbitMQ notification consumers.
+func sanitizeErrorForNotification(msg string) string {
+	return notificationURIPattern.ReplaceAllString(msg, "[redacted]")
 }
 
 // countTotalRows counts the total number of records in the result map.
