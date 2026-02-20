@@ -92,9 +92,12 @@ func (uc *UseCase) ExtractExternalData(ctx context.Context, body []byte, headers
 		return uc.handleErrorWithUpdate(ctx, message.JobID, message.OrganizationID, *message, &span, "Job not found in database", nil, logger)
 	}
 
-	// Transition to PROCESSING only if still PENDING (CAS-style).
-	// If another worker already moved this job past PENDING (e.g. on message
-	// redelivery), we skip rather than double-process.
+	// Best-effort CAS: skip if another worker already moved this job past PENDING
+	// (e.g. on message redelivery). Note: there is a narrow TOCTOU gap between this
+	// read and the UpdateStatus below — true atomic transition would require a
+	// conditional MongoDB update (filter on status=PENDING). In practice the window
+	// is O(microseconds) and downstream processing is idempotent (same SeaweedFS
+	// path), so duplicate work is the worst-case consequence, not data corruption.
 	if job.Status != model.JobStatusPending {
 		logger.Infof("Job %s status is %s (expected pending), skipping", message.JobID, job.Status)
 		return nil
@@ -252,6 +255,12 @@ func validateExtractExternalDataMessage(message *ExtractExternalDataMessage) err
 
 	if len(message.MappedFields) == 0 {
 		return errors.New("mappedFields is required")
+	}
+
+	for db, tables := range message.MappedFields {
+		if len(tables) == 0 {
+			return fmt.Errorf("mappedFields[%q] has no tables", db)
+		}
 	}
 
 	return nil

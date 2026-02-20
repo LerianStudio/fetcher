@@ -421,6 +421,18 @@ func TestPublishJobNotification_RoutingKeyGeneration(t *testing.T) {
 			metadata:           map[string]any{"source": strings.Repeat("A", 80)},
 			expectedRoutingKey: "job.completed." + strings.Repeat("a", 64),
 		},
+		{
+			name:               "source with only invalid characters",
+			status:             "completed",
+			metadata:           map[string]any{"source": "!@#$%^&*()"},
+			expectedRoutingKey: "job.completed.unknown",
+		},
+		{
+			name:               "source exactly at max length",
+			status:             "completed",
+			metadata:           map[string]any{"source": strings.Repeat("a", 64)},
+			expectedRoutingKey: "job.completed." + strings.Repeat("a", 64),
+		},
 	}
 
 	for _, tt := range tests {

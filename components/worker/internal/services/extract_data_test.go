@@ -2493,30 +2493,17 @@ func TestCompleteJob_NilResultData(t *testing.T) {
 	}
 }
 
-// TestEncryptDataForSeaweedFS_NilEncryptorResult verifies the guard when crypto.Encrypt
-// returns (nil, nil) — a classic Go trap.
-func TestEncryptDataForSeaweedFS_NilEncryptorResult(t *testing.T) {
+// TestEncryptDataForSeaweedFS_InvalidKeyLength verifies that cipher initialization
+// fails with invalid (too short) encryption keys.
+// newTestUseCase sets seaweedFSEncryptSecretKey to "test-seaweedfs-encrypt-key" (28 bytes)
+// which is not a valid AES key length (16, 24, or 32 bytes), triggering the cipher init error.
+func TestEncryptDataForSeaweedFS_InvalidKeyLength(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
 	mocks := newTestMocks(ctrl)
 	uc := newTestUseCase(mocks)
 	logger := testLogger()
-
-	t.Setenv("CRYPTO_ENCRYPT_SECRET_KEY_SEAWEEDFS", "0123456789abcdef0123456789abcdef")
-	t.Setenv("CRYPTO_HASH_SECRET_KEY_SEAWEEDFS", "fedcba9876543210fedcba9876543210")
-
-	// The encryptDataForSeaweedFS function creates its own Crypto instance internally,
-	// so we can't mock it through the UseCase's Cryptor field. Instead we test the
-	// guard indirectly: the function initializes a cipher and encrypts; if the env keys
-	// are invalid hex, the cipher init fails. The nil guard at line 594 protects against
-	// the Encrypt returning (nil, nil) edge case. We verify the error path here.
-	_ = uc
-	_ = logger
-
-	// Test the function with data that will cause the cipher to fail (keys too short)
-	t.Setenv("CRYPTO_ENCRYPT_SECRET_KEY_SEAWEEDFS", "short")
-	t.Setenv("CRYPTO_HASH_SECRET_KEY_SEAWEEDFS", "short")
 
 	_, err := uc.encryptDataForSeaweedFS([]byte(`{"test": "data"}`), logger)
 	if err == nil {
@@ -2655,5 +2642,76 @@ func TestExtractExternalData_NonPendingJobSkipsProcessing(t *testing.T) {
 	err = uc.ExtractExternalData(ctx, body, nil)
 	if err != nil {
 		t.Fatalf("expected nil (skip), got error: %v", err)
+	}
+}
+
+// TestValidateExtractExternalDataMessage_EmptyTables verifies that mappedFields
+// entries with present database keys but empty table maps are rejected.
+// This catches the silent no-op where a db entry exists but has no tables to query.
+func TestValidateExtractExternalDataMessage_EmptyTables(t *testing.T) {
+	tests := []struct {
+		name        string
+		message     *ExtractExternalDataMessage
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name: "db entry with empty tables map is rejected",
+			message: &ExtractExternalDataMessage{
+				JobID:          newTestJobID(),
+				OrganizationID: newTestOrgID(),
+				MappedFields: map[string]map[string][]string{
+					"mydb": {}, // empty inner map
+				},
+			},
+			wantErr:     true,
+			errContains: `mappedFields["mydb"] has no tables`,
+		},
+		{
+			name: "one valid db and one empty db is rejected",
+			message: &ExtractExternalDataMessage{
+				JobID:          newTestJobID(),
+				OrganizationID: newTestOrgID(),
+				MappedFields: map[string]map[string][]string{
+					"gooddb":  {"users": {"id", "name"}},
+					"emptydb": {},
+				},
+			},
+			wantErr:     true,
+			errContains: `mappedFields["emptydb"] has no tables`,
+		},
+		{
+			name: "all dbs with tables is accepted",
+			message: &ExtractExternalDataMessage{
+				JobID:          newTestJobID(),
+				OrganizationID: newTestOrgID(),
+				MappedFields: map[string]map[string][]string{
+					"db1": {"t1": {"col1"}},
+					"db2": {"t2": {"col2"}},
+				},
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateExtractExternalDataMessage(tt.message)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+
+				if !strings.Contains(err.Error(), tt.errContains) {
+					t.Fatalf("expected error containing %q, got: %v", tt.errContains, err)
+				}
+
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("expected no error, got: %v", err)
+			}
+		})
 	}
 }

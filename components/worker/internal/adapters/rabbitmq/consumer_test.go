@@ -154,8 +154,13 @@ func TestIsNonDevelopmentEnvironment(t *testing.T) {
 		{name: "production", envName: "production", expected: true},
 		{name: "empty defaults to strict", envName: "", expected: true},
 		{name: "dev", envName: "dev", expected: false},
+		{name: "development", envName: "development", expected: false},
 		{name: "local", envName: "local", expected: false},
 		{name: "test", envName: "test", expected: false},
+		{name: "testing", envName: "testing", expected: false},
+		{name: "DEV uppercase", envName: "DEV", expected: false},
+		{name: "Production mixed case", envName: "Production", expected: true},
+		{name: "staging is non-dev", envName: "staging", expected: true},
 	}
 
 	for _, tt := range tests {
