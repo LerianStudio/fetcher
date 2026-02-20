@@ -300,6 +300,13 @@ func (jr *JobMongoDBRepository) UpdateStatus(ctx context.Context, id, organizati
 	// without replacing the entire metadata document. This preserves existing
 	// metadata fields (e.g. "source") when adding error information.
 	for k, v := range metadata {
+		if strings.Contains(k, ".") || strings.HasPrefix(k, "$") {
+			err := fmt.Errorf("invalid metadata key %q: must not contain '.' or start with '$'", k)
+			libOpentelemetry.HandleSpanError(&span, "Invalid metadata key", err)
+
+			return err
+		}
+
 		update["$set"].(bson.M)["metadata."+k] = v
 	}
 
@@ -464,7 +471,7 @@ func (jr *JobMongoDBRepository) FindActiveByRequestHash(ctx context.Context, org
 	db, err := jr.connection.GetDB(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
-		return nil, err
+		return nil, fmt.Errorf("failed to get database connection: %w", err)
 	}
 
 	coll := db.Database(strings.ToLower(jr.Database)).Collection(strings.ToLower(constant.MongoCollectionJob))
@@ -491,7 +498,7 @@ func (jr *JobMongoDBRepository) FindActiveByRequestHash(ctx context.Context, org
 
 		libOpentelemetry.HandleSpanError(&span, "Failed to find active job by request hash", err)
 
-		return nil, err
+		return nil, fmt.Errorf("failed to find active job by request hash: %w", err)
 	}
 
 	job, err := record.ToEntity()

@@ -182,7 +182,10 @@ func (r *RedisInfra) HostPort() (host string, port int, err error) {
 			return "", 0, fmt.Errorf("invalid proxy address: %s: %w", endpoint.ProxyListen, err)
 		}
 
-		portNum, _ := strconv.Atoi(portStr)
+		portNum, parseErr := strconv.Atoi(portStr)
+		if parseErr != nil {
+			return "", 0, fmt.Errorf("invalid proxy port %q: %w", portStr, parseErr)
+		}
 
 		return hostStr, portNum, nil
 	}
