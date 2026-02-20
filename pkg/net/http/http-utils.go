@@ -141,6 +141,29 @@ func parseParameters(
 			}
 
 			*endDate = parsed
+		default:
+			// Capture unrecognized keys as metadata filters so callers
+			// can pass domain-level filters (e.g. status, category)
+			// without requiring the "metadata." prefix.
+			//
+			// Security: reject keys that start with "$" to prevent MongoDB
+			// operator injection (e.g. $where, $ne, $regex). Also reject
+			// keys starting with underscore (internal fields like _id).
+			if strings.HasPrefix(key, "$") || strings.HasPrefix(key, "_") {
+				return pkg.ValidateBusinessError(constant.ErrInvalidQueryParameter, key)
+			}
+
+			// Cap key/value length to prevent abuse via oversized filter payloads.
+			const (
+				maxFilterKeyLen   = 64
+				maxFilterValueLen = 256
+			)
+
+			if len(key) > maxFilterKeyLen || len(value) > maxFilterValueLen {
+				return pkg.ValidateBusinessError(constant.ErrInvalidQueryParameter, key)
+			}
+
+			metadata[key] = value
 		}
 	}
 

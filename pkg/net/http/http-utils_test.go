@@ -3,6 +3,7 @@ package http
 import (
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -807,4 +808,70 @@ func TestValidateParametersNonMetadataKeys(t *testing.T) {
 		assert.Contains(t, *qh.Metadata, "status")
 		assert.Contains(t, *qh.Metadata, "category")
 	})
+}
+
+func TestParseParameters_RejectsUnsafeKeys(t *testing.T) {
+	tests := []struct {
+		name    string
+		params  map[string]string
+		wantErr bool
+		checkFn func(t *testing.T, metadata bson.M)
+	}{
+		{
+			name:    "key starting with $ is rejected",
+			params:  map[string]string{"$where": "1"},
+			wantErr: true,
+		},
+		{
+			name:    "key starting with _ is rejected",
+			params:  map[string]string{"_id": "abc"},
+			wantErr: true,
+		},
+		{
+			name:    "key exceeding 64 chars is rejected",
+			params:  map[string]string{strings.Repeat("a", 65): "value"},
+			wantErr: true,
+		},
+		{
+			name:    "value exceeding 256 chars is rejected",
+			params:  map[string]string{"status": strings.Repeat("x", 257)},
+			wantErr: true,
+		},
+		{
+			name:    "valid unknown key is captured as metadata filter",
+			params:  map[string]string{"status": "active"},
+			wantErr: false,
+			checkFn: func(t *testing.T, metadata bson.M) {
+				assert.Contains(t, metadata, "status")
+				assert.Equal(t, "active", metadata["status"])
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			metadata := bson.M{}
+			var (
+				startDate time.Time
+				endDate   time.Time
+				cursor    string
+				limit     = 10
+				page      = 1
+				sortOrder = "desc"
+			)
+
+			err := parseParameters(tt.params, metadata, &startDate, &endDate, &cursor, &limit, &page, &sortOrder)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+
+			assert.NoError(t, err)
+
+			if tt.checkFn != nil {
+				tt.checkFn(t, metadata)
+			}
+		})
+	}
 }
