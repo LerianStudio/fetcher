@@ -3,6 +3,7 @@ package http
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"regexp"
 	"strconv"
@@ -196,8 +197,6 @@ func compareSlices(original, marshaled []any) []any {
 
 // ValidateStruct validates a struct against defined validation rules, using the validator package.
 func ValidateStruct(s any) error {
-	v, trans := newValidator()
-
 	k := reflect.ValueOf(s).Kind()
 	if k == reflect.Ptr {
 		k = reflect.ValueOf(s).Elem().Kind()
@@ -207,7 +206,12 @@ func ValidateStruct(s any) error {
 		return nil
 	}
 
-	err := v.Struct(s)
+	v, trans, err := newValidator()
+	if err != nil {
+		return fmt.Errorf("initialize request validator: %w", err)
+	}
+
+	err = v.Struct(s)
 	if err != nil {
 		for _, fieldError := range err.(validator.ValidationErrors) {
 			switch fieldError.Tag() {
@@ -267,7 +271,7 @@ func malformedRequestErr(err validator.ValidationErrors, trans ut.Translator) pk
 }
 
 //nolint:ireturn
-func newValidator() (*validator.Validate, ut.Translator) {
+func newValidator() (*validator.Validate, ut.Translator, error) {
 	locale := en.New()
 	uni := ut.New(locale, locale)
 
@@ -276,7 +280,7 @@ func newValidator() (*validator.Validate, ut.Translator) {
 	v := validator.New()
 
 	if err := en2.RegisterDefaultTranslations(v, trans); err != nil {
-		panic(err)
+		return nil, nil, fmt.Errorf("register default translations: %w", err)
 	}
 
 	v.RegisterTagNameFunc(func(fld reflect.StructField) string {
@@ -340,7 +344,7 @@ func newValidator() (*validator.Validate, ut.Translator) {
 		return t
 	})
 
-	return v, trans
+	return v, trans, nil
 }
 
 // validateMetadataNestedValues checks if there are nested metadata structures

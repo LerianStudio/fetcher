@@ -124,11 +124,11 @@ func SetConfigFromEnvVars(s any) error {
 	return nil
 }
 
-// EnsureConfigFromEnvVars ensures that an interface will be settled using SetConfigFromEnvVars anyway.
-func EnsureConfigFromEnvVars(s any) any {
+// EnsureConfigFromEnvVars populates the config struct from env vars and returns explicit errors.
+func EnsureConfigFromEnvVars(s any) (any, error) {
 	if err := SetConfigFromEnvVars(s); err != nil {
-		panic(err)
+		return nil, err
 	}
 
-	return s
+	return s, nil
 }
