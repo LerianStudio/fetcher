@@ -196,7 +196,7 @@ func (e *AppEnv) WorkerEnv() map[string]string {
 //   - cfg: Container start configuration
 //
 // Returns the running application with its base URL for API calls.
-func StartManager(t *testing.T, ctx context.Context, env *AppEnv, cfg AppStartConfig) (*e2ekit.RunningApp, error) {
+func StartManager(t *testing.T, ctx context.Context, env *AppEnv, cfg AppStartConfig) (*e2ekit.RunningApp, error) { //nolint:thelper // t can be nil when called from TestMain
 	if t != nil {
 		t.Helper()
 	}
@@ -246,7 +246,7 @@ func StartManager(t *testing.T, ctx context.Context, env *AppEnv, cfg AppStartCo
 //   - cfg: Container start configuration
 //
 // Returns the running application container.
-func StartWorker(t *testing.T, ctx context.Context, env *AppEnv, cfg AppStartConfig) (*e2ekit.RunningApp, error) {
+func StartWorker(t *testing.T, ctx context.Context, env *AppEnv, cfg AppStartConfig) (*e2ekit.RunningApp, error) { //nolint:thelper // t can be nil when called from TestMain
 	if t != nil {
 		t.Helper()
 	}
