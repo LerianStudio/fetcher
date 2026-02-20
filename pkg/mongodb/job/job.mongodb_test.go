@@ -701,6 +701,95 @@ func TestJobMongoDBRepository_FindByRequestHashWithinWindow(t *testing.T) {
 	})
 }
 
+func TestJobMongoDBRepository_FindActiveByRequestHash(t *testing.T) {
+	t.Run("finds most recent active job", func(t *testing.T) {
+		repo := newJobRepository(t)
+		org := uuid.New()
+		hash := "active-hash-123"
+
+		older := jobFixture()
+		older.OrganizationID = org
+		older.RequestHash = hash
+		older.Status = model.JobStatusPending
+		older.CreatedAt = time.Now().UTC().Add(-2 * time.Minute)
+		createJob(t, repo, older)
+
+		newer := jobFixture()
+		newer.OrganizationID = org
+		newer.RequestHash = hash
+		newer.Status = model.JobStatusProcessing
+		newer.CreatedAt = time.Now().UTC().Add(-1 * time.Minute)
+		createdNewer := createJob(t, repo, newer)
+
+		found, err := repo.FindActiveByRequestHash(context.Background(), org, hash)
+		require.NoError(t, err)
+		require.NotNil(t, found)
+		require.Equal(t, createdNewer.ID, found.ID)
+	})
+
+	t.Run("returns nil when only terminal jobs exist", func(t *testing.T) {
+		repo := newJobRepository(t)
+		org := uuid.New()
+		hash := "terminal-hash-123"
+
+		failedJob := jobFixture()
+		failedJob.OrganizationID = org
+		failedJob.RequestHash = hash
+		failedJob.Status = model.JobStatusFailed
+		now := time.Now().UTC()
+		failedJob.CompletedAt = &now
+		createJob(t, repo, failedJob)
+
+		found, err := repo.FindActiveByRequestHash(context.Background(), org, hash)
+		require.NoError(t, err)
+		require.Nil(t, found)
+	})
+}
+
+func TestEnsureIndexes_RemediatesDuplicateActiveJobs(t *testing.T) {
+	repo := newJobRepository(t)
+	org := uuid.New()
+	hash := "dup-active-hash-123"
+
+	older := jobFixture()
+	older.OrganizationID = org
+	older.RequestHash = hash
+	older.Status = model.JobStatusPending
+	older.CreatedAt = time.Now().UTC().Add(-2 * time.Minute)
+	createdOlder := createJob(t, repo, older)
+
+	newer := jobFixture()
+	newer.OrganizationID = org
+	newer.RequestHash = hash
+	newer.Status = model.JobStatusProcessing
+	newer.CreatedAt = time.Now().UTC().Add(-1 * time.Minute)
+	createdNewer := createJob(t, repo, newer)
+
+	require.NoError(t, repo.EnsureIndexes(context.Background()))
+
+	updatedOlder, err := repo.FindByID(context.Background(), createdOlder.ID, org)
+	require.NoError(t, err)
+	require.NotNil(t, updatedOlder)
+	require.Equal(t, model.JobStatusFailed, updatedOlder.Status)
+	require.NotNil(t, updatedOlder.CompletedAt)
+
+	// Verify the newer (surviving) job is still in its original active status
+	updatedNewer, err := repo.FindByID(context.Background(), createdNewer.ID, org)
+	require.NoError(t, err)
+	require.NotNil(t, updatedNewer)
+	require.Equal(t, model.JobStatusProcessing, updatedNewer.Status, "newer job should survive remediation in its original status")
+
+	duplicateAttempt := jobFixture()
+	duplicateAttempt.OrganizationID = org
+	duplicateAttempt.RequestHash = hash
+	duplicateAttempt.Status = model.JobStatusPending
+	duplicateAttempt.CreatedAt = time.Now().UTC()
+
+	_, createErr := repo.Create(context.Background(), duplicateAttempt)
+	require.Error(t, createErr)
+	require.True(t, mongo.IsDuplicateKeyError(createErr), "expected duplicate key after unique active index creation")
+}
+
 func TestJobMongoDBRepository_ExistsRunningByMappedFieldKey(t *testing.T) {
 	t.Run("returns true when pending job exists with key", func(t *testing.T) {
 		repo := newJobRepository(t)

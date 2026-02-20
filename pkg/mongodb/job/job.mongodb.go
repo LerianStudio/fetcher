@@ -40,6 +40,7 @@ type Repository interface {
 	UpdateStatus(ctx context.Context, id, organizationID uuid.UUID, status model.JobStatus, resultPath, resultHMAC string, metadata map[string]any) error
 	FindByID(ctx context.Context, id, organizationID uuid.UUID) (*model.Job, error)
 	FindByRequestHashWithinWindow(ctx context.Context, organizationID uuid.UUID, requestHash string, windowMinutes int) (*model.Job, error)
+	FindActiveByRequestHash(ctx context.Context, organizationID uuid.UUID, requestHash string) (*model.Job, error)
 	List(ctx context.Context, filters *ListFilter) ([]*model.Job, error)
 	ExistsRunningByMappedFieldKey(ctx context.Context, organizationID uuid.UUID, keyPattern string) (bool, error)
 }
@@ -300,9 +301,11 @@ func (jr *JobMongoDBRepository) UpdateStatus(ctx context.Context, id, organizati
 		update["$set"].(bson.M)["result_hmac"] = resultHMAC
 	}
 
-	// Update metadata if provided
-	if metadata != nil {
-		update["$set"].(bson.M)["metadata"] = metadata
+	// Merge metadata fields using dot-notation so individual keys are set
+	// without replacing the entire metadata document. This preserves existing
+	// metadata fields (e.g. "source") when adding error information.
+	for k, v := range metadata {
+		update["$set"].(bson.M)["metadata."+k] = v
 	}
 
 	ctx, spanUpdate := tracer.Start(ctx, "mongodb.update_job_status.update_one")
@@ -430,6 +433,68 @@ func (jr *JobMongoDBRepository) FindByRequestHashWithinWindow(ctx context.Contex
 		}
 
 		libOpentelemetry.HandleSpanError(&span, "Failed to find job by request hash", err)
+
+		return nil, err
+	}
+
+	job, err := record.ToEntity()
+	if err != nil {
+		libOpentelemetry.HandleSpanError(&span, "Failed to convert MongoDB model to entity", err)
+		return nil, pkg.ValidateInternalError(err, "job")
+	}
+
+	return job, nil
+}
+
+// FindActiveByRequestHash finds the most recent active job (pending or processing)
+// for a request hash in an organization. Returns nil without error when no active
+// matching job exists.
+func (jr *JobMongoDBRepository) FindActiveByRequestHash(ctx context.Context, organizationID uuid.UUID, requestHash string) (*model.Job, error) {
+	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+
+	ctx, span := tracer.Start(ctx, "mongodb.find_active_job_by_request_hash")
+	defer span.End()
+
+	attributes := []attribute.KeyValue{
+		attribute.String("app.request.request_id", reqID),
+		attribute.String("app.request.organization_id", organizationID.String()),
+		attribute.String("app.request.request_hash", requestHash),
+	}
+	span.SetAttributes(attributes...)
+
+	if requestHash == "" {
+		return nil, nil
+	}
+
+	db, err := jr.connection.GetDB(ctx)
+	if err != nil {
+		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
+		return nil, err
+	}
+
+	coll := db.Database(strings.ToLower(jr.Database)).Collection(strings.ToLower(constant.MongoCollectionJob))
+
+	filter := bson.M{
+		"organization_id": organizationID,
+		"request_hash":    requestHash,
+		"status": bson.M{
+			"$in": bson.A{model.JobStatusPending, model.JobStatusProcessing},
+		},
+	}
+
+	if err := setSpanAttributesFromStruct(&span, "app.request.repository_filter", filter); err != nil {
+		libOpentelemetry.HandleSpanError(&span, "Failed to convert filter to JSON", err)
+	}
+
+	opts := options.FindOne().SetSort(bson.D{{Key: "created_at", Value: -1}})
+
+	var record JobMongoDBModel
+	if err := coll.FindOne(ctx, filter, opts).Decode(&record); err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			return nil, nil
+		}
+
+		libOpentelemetry.HandleSpanError(&span, "Failed to find active job by request hash", err)
 
 		return nil, err
 	}

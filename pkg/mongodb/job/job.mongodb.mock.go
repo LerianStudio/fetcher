@@ -72,6 +72,21 @@ func (mr *MockRepositoryMockRecorder) ExistsRunningByMappedFieldKey(ctx, organiz
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExistsRunningByMappedFieldKey", reflect.TypeOf((*MockRepository)(nil).ExistsRunningByMappedFieldKey), ctx, organizationID, keyPattern)
 }
 
+// FindActiveByRequestHash mocks base method.
+func (m *MockRepository) FindActiveByRequestHash(ctx context.Context, organizationID uuid.UUID, requestHash string) (*model.Job, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "FindActiveByRequestHash", ctx, organizationID, requestHash)
+	ret0, _ := ret[0].(*model.Job)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// FindActiveByRequestHash indicates an expected call of FindActiveByRequestHash.
+func (mr *MockRepositoryMockRecorder) FindActiveByRequestHash(ctx, organizationID, requestHash any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FindActiveByRequestHash", reflect.TypeOf((*MockRepository)(nil).FindActiveByRequestHash), ctx, organizationID, requestHash)
+}
+
 // FindByID mocks base method.
 func (m *MockRepository) FindByID(ctx context.Context, id, organizationID uuid.UUID) (*model.Job, error) {
 	m.ctrl.T.Helper()
