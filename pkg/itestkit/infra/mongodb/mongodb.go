@@ -44,17 +44,21 @@ func NewMongoDBInfra(cfg MongoDBConfig) *MongoDBInfra {
 	if cfg.Image == "" {
 		cfg.Image = "mongo:7"
 	}
+
 	if cfg.Name == "" {
 		cfg.Name = "default"
 	}
+
 	if cfg.ProxyName == "" {
 		cfg.ProxyName = "mongo-" + cfg.Name
 	}
+
 	return &MongoDBInfra{cfg: cfg}
 }
 
 func (m *MongoDBInfra) Start(ctx context.Context, env *itestkit.Env) error {
 	opts := defaultMongoDBOptions()
+
 	for _, opt := range m.cfg.Options {
 		if opt != nil {
 			opt(opts)
@@ -90,12 +94,14 @@ func (m *MongoDBInfra) Start(ctx context.Context, env *itestkit.Env) error {
 	if err != nil {
 		return err
 	}
+
 	m.container = c
 
 	host, err := c.Host(ctx)
 	if err != nil {
 		return err
 	}
+
 	port, err := c.MappedPort(ctx, "27017/tcp")
 	if err != nil {
 		return err
@@ -114,10 +120,12 @@ func (m *MongoDBInfra) Start(ctx context.Context, env *itestkit.Env) error {
 			// Fallback to host.docker.internal for backward compatibility
 			proxyUpstream = fmt.Sprintf("host.docker.internal:%s", port.Port())
 		}
+
 		ref, err := env.Chaos.CreateProxy(ctx, m.cfg.ProxyName, proxyUpstream)
 		if err != nil {
 			return err
 		}
+
 		finalAddr = ref.ListenAddr
 		proxyListen = ref.ListenAddr
 	}
@@ -135,6 +143,7 @@ func (m *MongoDBInfra) Start(ctx context.Context, env *itestkit.Env) error {
 		URI:         uri,
 	}
 	m.endpoint = &endpoint
+
 	return nil
 }
 
@@ -142,6 +151,7 @@ func (m *MongoDBInfra) Endpoint() (MongoDBEndpoint, error) {
 	if m.endpoint == nil {
 		return MongoDBEndpoint{}, fmt.Errorf("mongodb endpoint not ready")
 	}
+
 	return *m.endpoint, nil
 }
 
@@ -150,6 +160,7 @@ func (m *MongoDBInfra) URI() (string, error) {
 	if err != nil {
 		return "", err
 	}
+
 	return endpoint.URI, nil
 }
 
@@ -174,7 +185,9 @@ func (m *MongoDBInfra) HostPort() (host string, port int, err error) {
 		if err != nil {
 			return "", 0, fmt.Errorf("invalid proxy address: %s: %w", endpoint.ProxyListen, err)
 		}
+
 		portNum, _ := strconv.Atoi(portStr)
+
 		return hostStr, portNum, nil
 	}
 
@@ -201,6 +214,7 @@ func (m *MongoDBInfra) Terminate(ctx context.Context) error {
 	if m.container != nil {
 		return m.container.Terminate(ctx)
 	}
+
 	return nil
 }
 
@@ -213,12 +227,14 @@ func (m *MongoDBInfra) InfraName() string { return m.cfg.Name }
 func NewMongoDBInfraStub(cfg MongoDBConfig, host string, port int) *MongoDBInfra {
 	m := NewMongoDBInfra(cfg)
 	upstream := fmt.Sprintf("%s:%d", host, port)
+
 	var uri string
 	if cfg.Username != "" && cfg.Password != "" {
 		uri = fmt.Sprintf("mongodb://%s:%s@%s", cfg.Username, cfg.Password, upstream)
 	} else {
 		uri = fmt.Sprintf("mongodb://%s", upstream)
 	}
+
 	m.endpoint = &MongoDBEndpoint{
 		Upstream: upstream,
 		URI:      uri,
@@ -226,5 +242,6 @@ func NewMongoDBInfraStub(cfg MongoDBConfig, host string, port int) *MongoDBInfra
 	// Store the raw host for HostPort() to return without normalization
 	m.stubHost = host
 	m.stubPort = port
+
 	return m
 }

@@ -11,10 +11,10 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/datasource"
 	"github.com/LerianStudio/fetcher/pkg/model"
-	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
-	jobRepo "github.com/LerianStudio/fetcher/pkg/mongodb/job"
-	productRepo "github.com/LerianStudio/fetcher/pkg/mongodb/product"
-	"github.com/LerianStudio/fetcher/pkg/rabbitmq"
+	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
+	jobRepo "github.com/LerianStudio/fetcher/pkg/ports/job"
+	"github.com/LerianStudio/fetcher/pkg/ports/messaging"
+	productRepo "github.com/LerianStudio/fetcher/pkg/ports/product"
 
 	"github.com/LerianStudio/lib-commons/v2/commons"
 	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
@@ -53,8 +53,9 @@ type CreateFetcherJob struct {
 	jobRepo          jobRepo.Repository
 	productRepo      productRepo.Repository
 	cryptor          crypto.Cryptor
-	rabbitMQ         *rabbitmq.RabbitMQAdapter
+	rabbitMQ         messaging.MessagePublisher
 	connectionTester ConnectionTester
+	dsFactory        datasource.DataSourceFactory
 	queueName        string
 }
 
@@ -66,8 +67,9 @@ func NewCreateFetcherJob(
 	jobRepository jobRepo.Repository,
 	productRepository productRepo.Repository,
 	cryptor crypto.Cryptor,
-	rabbitMQ *rabbitmq.RabbitMQAdapter,
+	rabbitMQ messaging.MessagePublisher,
 	queueName string,
+	factory datasource.DataSourceFactory,
 ) *CreateFetcherJob {
 	svc := &CreateFetcherJob{
 		connRepo:    connectionRepo,
@@ -76,6 +78,7 @@ func NewCreateFetcherJob(
 		cryptor:     cryptor,
 		rabbitMQ:    rabbitMQ,
 		queueName:   queueName,
+		dsFactory:   factory,
 	}
 	// Use default connection tester that tests real connections
 	svc.connectionTester = svc
@@ -92,9 +95,10 @@ func NewCreateFetcherJobWithTester(
 	jobRepository jobRepo.Repository,
 	productRepository productRepo.Repository,
 	cryptor crypto.Cryptor,
-	rabbitMQ *rabbitmq.RabbitMQAdapter,
+	rabbitMQ messaging.MessagePublisher,
 	tester ConnectionTester,
 	queueName string,
+	factory datasource.DataSourceFactory,
 ) *CreateFetcherJob {
 	svc := &CreateFetcherJob{
 		connRepo:         connectionRepo,
@@ -104,6 +108,7 @@ func NewCreateFetcherJobWithTester(
 		rabbitMQ:         rabbitMQ,
 		connectionTester: tester,
 		queueName:        queueName,
+		dsFactory:        factory,
 	}
 	if tester == nil {
 		svc.connectionTester = svc
@@ -158,14 +163,19 @@ func (s *CreateFetcherJob) Execute(ctx context.Context, organizationID uuid.UUID
 
 	// Validate the job entity
 	if errValidation := newJob.IsValid(); errValidation != nil {
-		libOpentelemetry.HandleSpanError(&span, "Invalid request payload", errValidation)
+		libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "Invalid request payload", errValidation)
 		return nil, errValidation
+	}
+
+	// Validate required metadata.source field
+	if err := validateMetadataSource(&span, request.Metadata); err != nil {
+		return nil, err
 	}
 
 	// Validate filter references against mappedFields
 	if len(newJob.Filters) > 0 {
 		if errFilters := model.ValidateFilterReferences(newJob.Filters, newJob.MappedFields); errFilters != nil {
-			libOpentelemetry.HandleSpanError(&span, "Invalid filter references", errFilters)
+			libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "Invalid filter references", errFilters)
 
 			return nil, pkg.ValidationError{
 				EntityType: "fetcher",
@@ -207,7 +217,7 @@ func (s *CreateFetcherJob) Execute(ctx context.Context, organizationID uuid.UUID
 
 	// No connections found
 	if len(connections) == 0 {
-		libOpentelemetry.HandleSpanError(&span, "No connections found for the provided datasources", nil)
+		libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "No connections found for the provided datasources", nil)
 
 		return nil, pkg.ValidationError{
 			EntityType: "fetcher",
@@ -226,7 +236,7 @@ func (s *CreateFetcherJob) Execute(ctx context.Context, organizationID uuid.UUID
 	for _, dsName := range newJob.GetDatasourceNames() {
 		if _, found := connMap[dsName]; !found {
 			err := fmt.Errorf("connection not found for datasource: %s", dsName)
-			libOpentelemetry.HandleSpanError(&span, "Connection not found", err)
+			libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "Connection not found", err)
 
 			return nil, pkg.ValidationError{
 				EntityType: "fetcher",
@@ -240,14 +250,14 @@ func (s *CreateFetcherJob) Execute(ctx context.Context, organizationID uuid.UUID
 	// Validate product ownership when metadata.source is provided and productRepo is available
 	if source, ok := request.Metadata["source"].(string); ok && source != "" && s.productRepo != nil {
 		if err := s.validateProductOwnership(ctx, &span, source, organizationID, connections); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to validate product ownership: %w", err)
 		}
 	}
 
 	// Test each connection to verify they are UP
 	for _, conn := range connections {
 		if err := s.connectionTester.TestConnection(ctx, conn); err != nil {
-			libOpentelemetry.HandleSpanError(&span, fmt.Sprintf("Connection test failed for %s", conn.ConfigName), err)
+			libOpentelemetry.HandleSpanBusinessErrorEvent(&span, fmt.Sprintf("Connection test failed for %s", conn.ConfigName), err)
 
 			return nil, pkg.ValidationError{
 				EntityType: "fetcher",
@@ -289,6 +299,47 @@ func (s *CreateFetcherJob) Execute(ctx context.Context, organizationID uuid.UUID
 	}, nil
 }
 
+// validateMetadataSource validates that the request metadata contains a valid source field.
+// Returns an error if metadata is nil, source is missing, or source is not a non-empty string.
+func validateMetadataSource(span *trace.Span, metadata map[string]any) error {
+	if metadata == nil {
+		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Missing required metadata", nil)
+
+		return pkg.ValidationError{
+			EntityType: "fetcher",
+			Code:       constant.ErrMissingFieldsInRequest.Error(),
+			Title:      "Missing Required Field",
+			Message:    "metadata is required and must contain 'source' field",
+		}
+	}
+
+	source, hasSource := metadata["source"]
+	if !hasSource || source == nil {
+		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Missing required metadata.source", nil)
+
+		return pkg.ValidationError{
+			EntityType: "fetcher",
+			Code:       constant.ErrMissingFieldsInRequest.Error(),
+			Title:      "Missing Required Field",
+			Message:    "metadata.source is required for job notification routing",
+		}
+	}
+
+	sourceStr, ok := source.(string)
+	if !ok || sourceStr == "" {
+		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Invalid metadata.source type or empty value", nil)
+
+		return pkg.ValidationError{
+			EntityType: "fetcher",
+			Code:       constant.ErrMissingFieldsInRequest.Error(),
+			Title:      "Invalid Field Value",
+			Message:    "metadata.source must be a non-empty string",
+		}
+	}
+
+	return nil
+}
+
 // validateProductOwnership validates that all connections belong to the product
 // identified by the given source code. It resolves the product by code, then checks
 // that every connection is assigned to that product.
@@ -301,7 +352,7 @@ func (s *CreateFetcherJob) validateProductOwnership(ctx context.Context, span *t
 
 	if product == nil {
 		err := fmt.Errorf("product not found for source code: %s", source)
-		libOpentelemetry.HandleSpanError(span, "Product not found", err)
+		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Product not found", err)
 
 		return pkg.ValidationError{
 			EntityType: "fetcher",
@@ -316,7 +367,7 @@ func (s *CreateFetcherJob) validateProductOwnership(ctx context.Context, span *t
 	for _, conn := range connections {
 		if conn.ProductID == nil {
 			err := fmt.Errorf("connection '%s' has no product assigned", conn.ConfigName)
-			libOpentelemetry.HandleSpanError(span, "Unassigned connection", err)
+			libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Unassigned connection", err)
 
 			return pkg.ValidationError{
 				EntityType: "fetcher",
@@ -328,7 +379,7 @@ func (s *CreateFetcherJob) validateProductOwnership(ctx context.Context, span *t
 
 		if *conn.ProductID != product.ID {
 			err := fmt.Errorf("connection '%s' belongs to product '%s', not '%s'", conn.ConfigName, conn.ProductID, product.ID)
-			libOpentelemetry.HandleSpanError(span, "Product mismatch", err)
+			libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Product mismatch", err)
 
 			return pkg.ValidationError{
 				EntityType: "fetcher",
@@ -345,13 +396,27 @@ func (s *CreateFetcherJob) validateProductOwnership(ctx context.Context, span *t
 // TestConnection tests if a connection is available.
 // This method implements the ConnectionTester interface.
 func (s *CreateFetcherJob) TestConnection(ctx context.Context, conn *model.Connection) error {
-	logger := commons.NewLoggerFromContext(ctx)
+	if s.dsFactory == nil {
+		return nil
+	}
+
+	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+
+	ctx, span := tracer.Start(ctx, "service.test_connection")
+	defer span.End()
+
+	span.SetAttributes(
+		attribute.String("app.request.request_id", reqID),
+		attribute.String("app.request.config_name", conn.ConfigName),
+		attribute.String("app.request.connection_type", string(conn.Type)),
+	)
 
 	testCtx, cancel := context.WithTimeout(ctx, ConnectionTestTimeout)
 	defer cancel()
 
-	ds, err := datasource.NewDataSourceFromConnection(testCtx, conn, s.cryptor, logger)
+	ds, err := s.dsFactory(testCtx, conn, s.cryptor)
 	if err != nil {
+		libOpentelemetry.HandleSpanError(&span, "Connection test failed", err)
 		return fmt.Errorf("connection test failed: %w", err)
 	}
 

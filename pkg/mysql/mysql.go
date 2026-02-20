@@ -2,6 +2,7 @@ package mysql
 
 import (
 	"database/sql"
+	"fmt"
 	"strings"
 
 	"github.com/LerianStudio/fetcher/pkg/constant"
@@ -28,7 +29,7 @@ func (c *Connection) Connect() error {
 	db, err := sql.Open("mysql", c.ConnectionString)
 	if err != nil {
 		c.Logger.Errorf("Error opening connection: %v", err)
-		return err
+		return fmt.Errorf("failed to open MySQL connection: %w", err)
 	}
 
 	if err := db.Ping(); err != nil {
@@ -39,7 +40,7 @@ func (c *Connection) Connect() error {
 
 		c.Logger.Errorf("Error pinging MySQL: %v", err)
 
-		return err
+		return fmt.Errorf("failed to ping MySQL: %w", err)
 	}
 
 	db.SetMaxOpenConns(c.MaxOpenConnections)
@@ -60,7 +61,7 @@ func (c *Connection) Connect() error {
 func (mc *Connection) GetDB() (*sql.DB, error) {
 	if mc.ConnectionDB == nil {
 		if err := mc.Connect(); err != nil {
-			mc.Logger.Infof("ERRCONECT %s", err)
+			mc.Logger.Errorf("ERR_CONNECT: failed to connect to MySQL: %v", err)
 			return nil, err
 		}
 	}

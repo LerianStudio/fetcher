@@ -39,9 +39,12 @@ func TestPostgreSQLMultiSchemaExtraction(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
-	// Step 2: Create connection to source database
+	// Step 2: Create product and connection to source database
+	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+
 	uniqueName := fmt.Sprintf("e2e-multischema-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
+		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,
@@ -82,7 +85,7 @@ func TestPostgreSQLMultiSchemaExtraction(t *testing.T) {
 			},
 		},
 		Metadata: map[string]any{
-			"source": "reporter",
+			"source": product.Code,
 			"test":   "multi-schema-extraction-e2e",
 		},
 	}
@@ -124,9 +127,12 @@ func TestPostgreSQLMultiSchemaWithFilters(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
-	// Step 2: Create connection
+	// Step 2: Create product and connection
+	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+
 	uniqueName := fmt.Sprintf("e2e-multischema-filter-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
+		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,
@@ -182,7 +188,7 @@ func TestPostgreSQLMultiSchemaWithFilters(t *testing.T) {
 			},
 		},
 		Metadata: map[string]any{
-			"source": "reporter",
+			"source": product.Code,
 			"test":   "multi-schema-filtered-extraction-e2e",
 		},
 	}
@@ -216,9 +222,12 @@ func TestPostgreSQLMultiSchemaValidation(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
-	// Step 2: Create connection
+	// Step 2: Create product and connection
+	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+
 	uniqueName := fmt.Sprintf("e2e-multischema-valid-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
+		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,
@@ -234,6 +243,9 @@ func TestPostgreSQLMultiSchemaValidation(t *testing.T) {
 	t.Cleanup(func() {
 		_ = apiClient.DeleteConnection(context.Background(), conn.ID)
 	})
+
+	err = apiClient.WaitForConnectionAvailable(ctx, conn.ID, 10*time.Second)
+	require.NoError(t, err, "wait for connection to be available")
 
 	// Step 3: Validate schema with multi-schema tables
 	validationReq := e2eshared.SchemaValidationRequest{
@@ -267,9 +279,12 @@ func TestPostgreSQLMultiSchemaValidation_InvalidSchema(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
-	// Step 2: Create connection
+	// Step 2: Create product and connection
+	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+
 	uniqueName := fmt.Sprintf("e2e-invalidschema-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
+		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,
@@ -286,6 +301,9 @@ func TestPostgreSQLMultiSchemaValidation_InvalidSchema(t *testing.T) {
 		_ = apiClient.DeleteConnection(context.Background(), conn.ID)
 	})
 
+	err = apiClient.WaitForConnectionAvailable(ctx, conn.ID, 10*time.Second)
+	require.NoError(t, err, "wait for connection to be available")
+
 	// Step 3: Validate schema with invalid schema name
 	validationReq := e2eshared.SchemaValidationRequest{
 		MappedFields: map[string]map[string][]string{
@@ -296,13 +314,14 @@ func TestPostgreSQLMultiSchemaValidation_InvalidSchema(t *testing.T) {
 		},
 	}
 
-	result, err := apiClient.ValidateSchema(ctx, validationReq)
+	resp, err := apiClient.ValidateSchemaRaw(ctx, validationReq)
 	require.NoError(t, err, "validate schema request should succeed")
 
-	// Validation should fail due to non-existent schema
-	assert.Equal(t, "failure", result.Status, "schema validation should fail")
-	assert.NotEmpty(t, result.Errors, "should have validation errors")
+	// API returns 422 Unprocessable Entity for schema validation failures
+	assert.Equal(t, 422, resp.StatusCode(), "should return 422 for invalid schema")
 
-	t.Logf("Invalid schema correctly rejected: status=%s, errors=%d",
-		result.Status, len(result.Errors))
+	body := string(resp.Body())
+	assert.Contains(t, body, "nonexistent_schema.some_table", "error should reference the invalid table")
+
+	t.Logf("Invalid schema correctly rejected with 422: %s", body)
 }

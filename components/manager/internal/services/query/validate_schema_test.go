@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"testing"
 
-	cacheRepo "github.com/LerianStudio/fetcher/components/manager/internal/adapters/cache"
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
+	cacheRepo "github.com/LerianStudio/fetcher/pkg/ports/cache"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"

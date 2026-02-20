@@ -4,16 +4,20 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/LerianStudio/fetcher/pkg"
-	"github.com/LerianStudio/fetcher/pkg/constant"
+	"github.com/LerianStudio/fetcher/components/manager/internal/services/command"
+	"github.com/LerianStudio/fetcher/components/manager/internal/services/query"
 	"github.com/LerianStudio/fetcher/pkg/model"
-	httpUtils "github.com/LerianStudio/fetcher/pkg/net/http"
+	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
+	jobRepo "github.com/LerianStudio/fetcher/pkg/mongodb/job"
+	productRepo "github.com/LerianStudio/fetcher/pkg/mongodb/product"
+
+	"github.com/LerianStudio/fetcher/pkg/crypto"
+	"github.com/LerianStudio/fetcher/pkg/ports/messaging"
 
 	libCommons "github.com/LerianStudio/lib-commons/v2/commons"
 	libLog "github.com/LerianStudio/lib-commons/v2/commons/log"
@@ -22,6 +26,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
+	"go.uber.org/mock/gomock"
 )
 
 // setupTestApp creates a Fiber app with test context middleware.
@@ -49,7 +54,49 @@ func setupTestApp() *fiber.App {
 	return app
 }
 
-// TestFetcherHandler_CreateJob_InvalidJSON tests that invalid JSON returns 400.
+// createTestJob creates a test job with default values.
+func createTestJob(id, orgID uuid.UUID) *model.Job {
+	now := time.Now().UTC()
+	return &model.Job{
+		ID:             id,
+		OrganizationID: orgID,
+		MappedFields: map[string]map[string][]string{
+			"ds1": {
+				"table1": {"field1", "field2"},
+			},
+		},
+		Metadata: map[string]any{
+			"source":        "test-product",
+			"correlationId": "test-123",
+		},
+		Status:      model.JobStatusPending,
+		RequestHash: "test-hash-123",
+		CreatedAt:   now,
+	}
+}
+
+// validFetcherRequestPayload returns a valid FetcherRequest JSON payload.
+// The handler requires metadata.source to be present.
+func validFetcherRequestPayload() string {
+	return `{
+		"dataRequest": {
+			"mappedFields": {
+				"ds1": {
+					"table1": ["field1", "field2"]
+				}
+			}
+		},
+		"metadata": {
+			"source": "test-product",
+			"correlationId": "test-123"
+		}
+	}`
+}
+
+// ============================================================================
+// CreateJob Handler Tests - Validation (already use real handler)
+// ============================================================================
+
 func TestFetcherHandler_CreateJob_InvalidJSON(t *testing.T) {
 	app := setupTestApp()
 
@@ -87,20 +134,14 @@ func TestFetcherHandler_CreateJob_InvalidJSON(t *testing.T) {
 			req.Header.Set("X-Organization-Id", uuid.New().String())
 
 			resp, err := app.Test(req)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
+			require.NoError(t, err)
 			defer resp.Body.Close()
 
-			if resp.StatusCode != tt.wantCode {
-				body, _ := io.ReadAll(resp.Body)
-				t.Fatalf("expected status %d, got %d. Body: %s", tt.wantCode, resp.StatusCode, string(body))
-			}
+			assert.Equal(t, tt.wantCode, resp.StatusCode)
 		})
 	}
 }
 
-// TestFetcherHandler_CreateJob_MissingOrgHeader tests that missing or invalid X-Organization-Id returns 400.
 func TestFetcherHandler_CreateJob_MissingOrgHeader(t *testing.T) {
 	app := setupTestApp()
 
@@ -145,20 +186,14 @@ func TestFetcherHandler_CreateJob_MissingOrgHeader(t *testing.T) {
 			}
 
 			resp, err := app.Test(req)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
+			require.NoError(t, err)
 			defer resp.Body.Close()
 
-			if resp.StatusCode != tt.wantCode {
-				body, _ := io.ReadAll(resp.Body)
-				t.Fatalf("expected status %d, got %d. Body: %s", tt.wantCode, resp.StatusCode, string(body))
-			}
+			assert.Equal(t, tt.wantCode, resp.StatusCode)
 		})
 	}
 }
 
-// TestFetcherHandler_CreateJob_ContentTypeValidation tests content type handling.
 func TestFetcherHandler_CreateJob_ContentTypeValidation(t *testing.T) {
 	app := setupTestApp()
 
@@ -192,132 +227,70 @@ func TestFetcherHandler_CreateJob_ContentTypeValidation(t *testing.T) {
 			req.Header.Set("X-Organization-Id", uuid.New().String())
 
 			resp, err := app.Test(req)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
+			require.NoError(t, err)
 			defer resp.Body.Close()
 
-			if resp.StatusCode != tt.wantCode {
-				body, _ := io.ReadAll(resp.Body)
-				t.Fatalf("expected status %d, got %d. Body: %s", tt.wantCode, resp.StatusCode, string(body))
-			}
+			assert.Equal(t, tt.wantCode, resp.StatusCode)
 		})
 	}
 }
 
-// createLargePayload generates a valid JSON payload of approximately the specified size.
-func createLargePayload(targetSize int) []byte {
-	// Build a JSON structure with enough data to exceed targetSize
-	var sb strings.Builder
-	sb.WriteString(`{"dataRequest":{"mappedFields":{`)
-
-	// Add datasources until we reach target size
-	datasourceNum := 0
-	for sb.Len() < targetSize-100 { // Leave room for closing braces
-		if datasourceNum > 0 {
-			sb.WriteString(",")
-		}
-		sb.WriteString(`"datasource`)
-		sb.WriteString(strings.Repeat("x", 50)) // Pad datasource name
-		sb.WriteString(`_`)
-		sb.WriteString(string(rune('0' + (datasourceNum % 10))))
-		sb.WriteString(`":{"table1":["field1","field2","field3","field4","field5","field6","field7","field8","field9","field10"]}`)
-		datasourceNum++
-	}
-
-	sb.WriteString(`}},"metadata":{"padding":"`)
-	// Add padding to reach exact size
-	remaining := targetSize - sb.Len() - 5 // Account for closing characters
-	if remaining > 0 {
-		sb.WriteString(strings.Repeat("x", remaining))
-	}
-	sb.WriteString(`"}}`)
-
-	return []byte(sb.String())
-}
-
-// createTestJob creates a test job with default values.
-func createTestJob(id, orgID uuid.UUID) *model.Job {
-	now := time.Now().UTC()
-	return &model.Job{
-		ID:             id,
-		OrganizationID: orgID,
-		MappedFields: map[string]map[string][]string{
-			"ds1": {
-				"table1": {"field1", "field2"},
-			},
-		},
-		Status:      model.JobStatusPending,
-		RequestHash: "test-hash-123",
-		CreatedAt:   now,
-	}
-}
-
-// validFetcherRequestPayload returns a valid FetcherRequest JSON payload.
-func validFetcherRequestPayload() string {
-	return `{
-		"dataRequest": {
-			"mappedFields": {
-				"ds1": {
-					"table1": ["field1", "field2"]
-				}
-			}
-		},
-		"metadata": {
-			"correlationId": "test-123"
-		}
-	}`
-}
-
 // ============================================================================
-// CreateJob Handler Tests - Success Cases
+// CreateJob Handler Tests - Success Cases (refactored to use real handler + mocks)
 // ============================================================================
 
 func TestFetcherHandler_CreateJob_Success_NewJob(t *testing.T) {
-	app := setupTestApp()
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
 
-	jobID := uuid.New()
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockJobRepo := jobRepo.NewMockRepository(ctrl)
+	mockProdRepo := productRepo.NewMockRepository(ctrl)
+	mockCryptor := crypto.NewMockCryptor(ctrl)
+	mockRabbitMQ := messaging.NewMockMessagePublisher(ctrl)
+	mockTester := command.NewMockConnectionTester(ctrl)
+
 	orgID := uuid.New()
-	testJob := createTestJob(jobID, orgID)
+	productID := uuid.New()
+	testProduct := &model.Product{
+		ID:             productID,
+		OrganizationID: orgID,
+		Code:           "test-product",
+		Name:           "Test Product",
+	}
 
-	app.Post("/v1/fetcher", func(c *fiber.Ctx) error {
-		ctx := c.UserContext()
-		libCommons.NewTrackingFromContext(ctx)
+	testConn := &model.Connection{
+		ID:             uuid.New(),
+		OrganizationID: orgID,
+		ProductID:      &productID,
+		ConfigName:     "ds1",
+		Type:           model.TypePostgreSQL,
+	}
 
-		orgIDHeader, err := httpUtils.GetOrganizationID(c)
-		if err != nil {
-			return httpUtils.WithError(c, err)
-		}
+	// CreateFetcherJob service flow:
+	// 1. ComputeRequestHash + NewJob + IsValid -> no mocks needed (pure model)
+	// 2. Check for duplicate within deduplication window
+	mockJobRepo.EXPECT().FindByRequestHashWithinWindow(gomock.Any(), orgID, gomock.Any(), command.DeduplicationWindowMinutes).Return(nil, nil)
+	// 3. Find connections by datasource names
+	mockConnRepo.EXPECT().FindByConfigNames(gomock.Any(), orgID, gomock.Any()).Return([]*model.Connection{testConn}, nil)
+	// 4. Validate product ownership (metadata.source = "test-product")
+	mockProdRepo.EXPECT().FindByCode(gomock.Any(), "test-product", orgID).Return(testProduct, nil)
+	// 5. Test each connection
+	mockTester.EXPECT().TestConnection(gomock.Any(), testConn).Return(nil)
+	// 6. Create the job in the repository
+	mockJobRepo.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, j *model.Job) (*model.Job, error) {
+			return j, nil
+		},
+	)
+	// 7. Publish to RabbitMQ queue
+	mockRabbitMQ.EXPECT().ProducerDefault(gomock.Any(), "", gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 
-		var request model.FetcherRequest
-		if errParser := c.BodyParser(&request); errParser != nil {
-			return httpUtils.WithError(c, pkg.ValidationError{
-				EntityType: "fetcher",
-				Code:       constant.ErrBadRequest.Error(),
-				Title:      "Invalid payload",
-				Message:    "unable to parse request body",
-				Err:        errParser,
-			})
-		}
+	createCmd := command.NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, mockProdRepo, mockCryptor, mockRabbitMQ, mockTester, "test-queue", nil)
+	handler := &FetcherHandler{CreateJobCmd: createCmd}
 
-		// Simulate successful job creation
-		if orgIDHeader == orgID {
-			response := model.FetcherResponse{
-				JobID:     testJob.ID,
-				Status:    string(testJob.Status),
-				CreatedAt: testJob.CreatedAt,
-				Message:   "Job created and queued for processing",
-			}
-			return httpUtils.Accepted(c, response)
-		}
-
-		return httpUtils.WithError(c, pkg.InternalServerError{
-			EntityType: "fetcher",
-			Code:       constant.ErrInternalServer.Error(),
-			Title:      "Internal Error",
-			Message:    "unexpected org id",
-		})
-	})
+	app := setupTestApp()
+	app.Post("/v1/fetcher", handler.CreateJob)
 
 	req := httptest.NewRequest("POST", "/v1/fetcher", strings.NewReader(validFetcherRequestPayload()))
 	req.Header.Set("Content-Type", "application/json")
@@ -332,47 +305,34 @@ func TestFetcherHandler_CreateJob_Success_NewJob(t *testing.T) {
 	var body model.FetcherResponse
 	err = json.NewDecoder(resp.Body).Decode(&body)
 	require.NoError(t, err)
-	assert.Equal(t, jobID, body.JobID)
+	assert.NotEmpty(t, body.JobID)
 	assert.Equal(t, "pending", body.Status)
 	assert.Equal(t, "Job created and queued for processing", body.Message)
 }
 
 func TestFetcherHandler_CreateJob_Success_DuplicateJob(t *testing.T) {
-	app := setupTestApp()
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
 
-	jobID := uuid.New()
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockJobRepo := jobRepo.NewMockRepository(ctrl)
+	mockProdRepo := productRepo.NewMockRepository(ctrl)
+	mockCryptor := crypto.NewMockCryptor(ctrl)
+	mockRabbitMQ := messaging.NewMockMessagePublisher(ctrl)
+	mockTester := command.NewMockConnectionTester(ctrl)
+
 	orgID := uuid.New()
-	testJob := createTestJob(jobID, orgID)
+	jobID := uuid.New()
+	existingJob := createTestJob(jobID, orgID)
 
-	app.Post("/v1/fetcher", func(c *fiber.Ctx) error {
-		ctx := c.UserContext()
-		libCommons.NewTrackingFromContext(ctx)
+	// Service finds existing job within dedup window -> returns duplicate
+	mockJobRepo.EXPECT().FindByRequestHashWithinWindow(gomock.Any(), orgID, gomock.Any(), command.DeduplicationWindowMinutes).Return(existingJob, nil)
 
-		_, err := httpUtils.GetOrganizationID(c)
-		if err != nil {
-			return httpUtils.WithError(c, err)
-		}
+	createCmd := command.NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, mockProdRepo, mockCryptor, mockRabbitMQ, mockTester, "test-queue", nil)
+	handler := &FetcherHandler{CreateJobCmd: createCmd}
 
-		var request model.FetcherRequest
-		if errParser := c.BodyParser(&request); errParser != nil {
-			return httpUtils.WithError(c, pkg.ValidationError{
-				EntityType: "fetcher",
-				Code:       constant.ErrBadRequest.Error(),
-				Title:      "Invalid payload",
-				Message:    "unable to parse request body",
-				Err:        errParser,
-			})
-		}
-
-		// Simulate duplicate detection
-		response := model.FetcherResponse{
-			JobID:     testJob.ID,
-			Status:    string(testJob.Status),
-			CreatedAt: testJob.CreatedAt,
-			Message:   "Duplicate request detected - returning existing job",
-		}
-		return httpUtils.OK(c, response)
-	})
+	app := setupTestApp()
+	app.Post("/v1/fetcher", handler.CreateJob)
 
 	req := httptest.NewRequest("POST", "/v1/fetcher", strings.NewReader(validFetcherRequestPayload()))
 	req.Header.Set("Content-Type", "application/json")
@@ -392,41 +352,32 @@ func TestFetcherHandler_CreateJob_Success_DuplicateJob(t *testing.T) {
 }
 
 // ============================================================================
-// CreateJob Handler Tests - Error Cases
+// CreateJob Handler Tests - Error Cases (refactored to use real handler + mocks)
 // ============================================================================
 
 func TestFetcherHandler_CreateJob_Conflict(t *testing.T) {
-	app := setupTestApp()
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockJobRepo := jobRepo.NewMockRepository(ctrl)
+	mockProdRepo := productRepo.NewMockRepository(ctrl)
+	mockCryptor := crypto.NewMockCryptor(ctrl)
+	mockRabbitMQ := messaging.NewMockMessagePublisher(ctrl)
+	mockTester := command.NewMockConnectionTester(ctrl)
+
 	orgID := uuid.New()
 
-	app.Post("/v1/fetcher", func(c *fiber.Ctx) error {
-		ctx := c.UserContext()
-		libCommons.NewTrackingFromContext(ctx)
+	// No duplicate found
+	mockJobRepo.EXPECT().FindByRequestHashWithinWindow(gomock.Any(), orgID, gomock.Any(), command.DeduplicationWindowMinutes).Return(nil, nil)
+	// No connections found for the datasource -> returns "No Connections Found" error
+	mockConnRepo.EXPECT().FindByConfigNames(gomock.Any(), orgID, gomock.Any()).Return(nil, nil)
 
-		_, err := httpUtils.GetOrganizationID(c)
-		if err != nil {
-			return httpUtils.WithError(c, err)
-		}
+	createCmd := command.NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, mockProdRepo, mockCryptor, mockRabbitMQ, mockTester, "test-queue", nil)
+	handler := &FetcherHandler{CreateJobCmd: createCmd}
 
-		var request model.FetcherRequest
-		if errParser := c.BodyParser(&request); errParser != nil {
-			return httpUtils.WithError(c, pkg.ValidationError{
-				EntityType: "fetcher",
-				Code:       constant.ErrBadRequest.Error(),
-				Title:      "Invalid payload",
-				Message:    "unable to parse request body",
-				Err:        errParser,
-			})
-		}
-
-		// Simulate conflict error
-		return httpUtils.WithError(c, pkg.ResponseErrorWithStatusCode{
-			StatusCode: http.StatusConflict,
-			Code:       constant.ErrEntityConflict.Error(),
-			Title:      "Conflict",
-			Message:    "connection config not found",
-		})
-	})
+	app := setupTestApp()
+	app.Post("/v1/fetcher", handler.CreateJob)
 
 	req := httptest.NewRequest("POST", "/v1/fetcher", strings.NewReader(validFetcherRequestPayload()))
 	req.Header.Set("Content-Type", "application/json")
@@ -436,41 +387,34 @@ func TestFetcherHandler_CreateJob_Conflict(t *testing.T) {
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
-	assert.Equal(t, fiber.StatusConflict, resp.StatusCode)
+	// When no connections are found, the service returns a ValidationError
+	// which maps to 400 Bad Request. The original test used an inline
+	// closure returning 409 Conflict, but the real service path returns 400
+	// for "missing data source" validation errors.
+	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
 }
 
 func TestFetcherHandler_CreateJob_InternalError(t *testing.T) {
-	app := setupTestApp()
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockJobRepo := jobRepo.NewMockRepository(ctrl)
+	mockProdRepo := productRepo.NewMockRepository(ctrl)
+	mockCryptor := crypto.NewMockCryptor(ctrl)
+	mockRabbitMQ := messaging.NewMockMessagePublisher(ctrl)
+	mockTester := command.NewMockConnectionTester(ctrl)
+
 	orgID := uuid.New()
 
-	app.Post("/v1/fetcher", func(c *fiber.Ctx) error {
-		ctx := c.UserContext()
-		libCommons.NewTrackingFromContext(ctx)
+	// FindByRequestHashWithinWindow returns an error -> internal server error
+	mockJobRepo.EXPECT().FindByRequestHashWithinWindow(gomock.Any(), orgID, gomock.Any(), command.DeduplicationWindowMinutes).Return(nil, assert.AnError)
 
-		_, err := httpUtils.GetOrganizationID(c)
-		if err != nil {
-			return httpUtils.WithError(c, err)
-		}
+	createCmd := command.NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, mockProdRepo, mockCryptor, mockRabbitMQ, mockTester, "test-queue", nil)
+	handler := &FetcherHandler{CreateJobCmd: createCmd}
 
-		var request model.FetcherRequest
-		if errParser := c.BodyParser(&request); errParser != nil {
-			return httpUtils.WithError(c, pkg.ValidationError{
-				EntityType: "fetcher",
-				Code:       constant.ErrBadRequest.Error(),
-				Title:      "Invalid payload",
-				Message:    "unable to parse request body",
-				Err:        errParser,
-			})
-		}
-
-		// Simulate internal error
-		return httpUtils.WithError(c, pkg.InternalServerError{
-			EntityType: "fetcher",
-			Code:       constant.ErrInternalServer.Error(),
-			Title:      "Internal Server Error",
-			Message:    "database connection failed",
-		})
-	})
+	app := setupTestApp()
+	app.Post("/v1/fetcher", handler.CreateJob)
 
 	req := httptest.NewRequest("POST", "/v1/fetcher", strings.NewReader(validFetcherRequestPayload()))
 	req.Header.Set("Content-Type", "application/json")
@@ -484,48 +428,26 @@ func TestFetcherHandler_CreateJob_InternalError(t *testing.T) {
 }
 
 // ============================================================================
-// GetJob Handler Tests
+// GetJob Handler Tests (refactored to use real handler + mocks)
 // ============================================================================
 
 func TestFetcherHandler_GetJob_Success(t *testing.T) {
-	app := setupTestApp()
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 
 	jobID := uuid.New()
 	orgID := uuid.New()
 	testJob := createTestJob(jobID, orgID)
 
-	app.Get("/v1/fetcher/:id", func(c *fiber.Ctx) error {
-		ctx := c.UserContext()
-		libCommons.NewTrackingFromContext(ctx)
+	mockJobRepo.EXPECT().FindByID(gomock.Any(), jobID, orgID).Return(testJob, nil)
 
-		_, err := httpUtils.GetOrganizationID(c)
-		if err != nil {
-			return httpUtils.WithError(c, err)
-		}
+	getJobQuery := query.NewGetJob(mockJobRepo)
+	handler := &FetcherHandler{GetJobQuery: getJobQuery}
 
-		id, err := uuid.Parse(c.Params("id"))
-		if err != nil {
-			return httpUtils.WithError(c, pkg.ValidationError{
-				EntityType: "job",
-				Code:       constant.ErrInvalidPathParameter.Error(),
-				Title:      "Invalid Path Parameter",
-				Message:    "invalid job id",
-				Err:        err,
-			})
-		}
-
-		if id == jobID {
-			resp := model.NewJobResponseFrom(testJob)
-			return httpUtils.OK(c, resp)
-		}
-
-		return httpUtils.WithError(c, pkg.ResponseErrorWithStatusCode{
-			StatusCode: http.StatusNotFound,
-			Code:       constant.ErrEntityNotFound.Error(),
-			Title:      "Entity Not Found",
-			Message:    "job not found",
-		})
-	})
+	app := setupTestApp()
+	app.Get("/v1/fetcher/:id", handler.GetJob)
 
 	req := httptest.NewRequest("GET", "/v1/fetcher/"+jobID.String(), nil)
 	req.Header.Set("X-Organization-Id", orgID.String())
@@ -544,38 +466,24 @@ func TestFetcherHandler_GetJob_Success(t *testing.T) {
 }
 
 func TestFetcherHandler_GetJob_NotFound(t *testing.T) {
-	app := setupTestApp()
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockJobRepo := jobRepo.NewMockRepository(ctrl)
+
+	jobID := uuid.New()
 	orgID := uuid.New()
 
-	app.Get("/v1/fetcher/:id", func(c *fiber.Ctx) error {
-		ctx := c.UserContext()
-		libCommons.NewTrackingFromContext(ctx)
+	// Service returns nil -> not found
+	mockJobRepo.EXPECT().FindByID(gomock.Any(), jobID, orgID).Return(nil, nil)
 
-		_, err := httpUtils.GetOrganizationID(c)
-		if err != nil {
-			return httpUtils.WithError(c, err)
-		}
+	getJobQuery := query.NewGetJob(mockJobRepo)
+	handler := &FetcherHandler{GetJobQuery: getJobQuery}
 
-		_, err = uuid.Parse(c.Params("id"))
-		if err != nil {
-			return httpUtils.WithError(c, pkg.ValidationError{
-				EntityType: "job",
-				Code:       constant.ErrInvalidPathParameter.Error(),
-				Title:      "Invalid Path Parameter",
-				Message:    "invalid job id",
-				Err:        err,
-			})
-		}
+	app := setupTestApp()
+	app.Get("/v1/fetcher/:id", handler.GetJob)
 
-		return httpUtils.WithError(c, pkg.ResponseErrorWithStatusCode{
-			StatusCode: http.StatusNotFound,
-			Code:       constant.ErrEntityNotFound.Error(),
-			Title:      "Entity Not Found",
-			Message:    "job not found",
-		})
-	})
-
-	req := httptest.NewRequest("GET", "/v1/fetcher/"+uuid.New().String(), nil)
+	req := httptest.NewRequest("GET", "/v1/fetcher/"+jobID.String(), nil)
 	req.Header.Set("X-Organization-Id", orgID.String())
 
 	resp, err := app.Test(req)
@@ -644,38 +552,22 @@ func TestFetcherHandler_GetJob_MissingOrgHeader(t *testing.T) {
 }
 
 func TestFetcherHandler_GetJob_InternalError(t *testing.T) {
-	app := setupTestApp()
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockJobRepo := jobRepo.NewMockRepository(ctrl)
+
 	jobID := uuid.New()
 	orgID := uuid.New()
 
-	app.Get("/v1/fetcher/:id", func(c *fiber.Ctx) error {
-		ctx := c.UserContext()
-		libCommons.NewTrackingFromContext(ctx)
+	// Repository returns an error -> internal server error
+	mockJobRepo.EXPECT().FindByID(gomock.Any(), jobID, orgID).Return(nil, assert.AnError)
 
-		_, err := httpUtils.GetOrganizationID(c)
-		if err != nil {
-			return httpUtils.WithError(c, err)
-		}
+	getJobQuery := query.NewGetJob(mockJobRepo)
+	handler := &FetcherHandler{GetJobQuery: getJobQuery}
 
-		_, err = uuid.Parse(c.Params("id"))
-		if err != nil {
-			return httpUtils.WithError(c, pkg.ValidationError{
-				EntityType: "job",
-				Code:       constant.ErrInvalidPathParameter.Error(),
-				Title:      "Invalid Path Parameter",
-				Message:    "invalid job id",
-				Err:        err,
-			})
-		}
-
-		// Simulate internal error
-		return httpUtils.WithError(c, pkg.InternalServerError{
-			EntityType: "job",
-			Code:       constant.ErrInternalServer.Error(),
-			Title:      "Internal Server Error",
-			Message:    "database error",
-		})
-	})
+	app := setupTestApp()
+	app.Get("/v1/fetcher/:id", handler.GetJob)
 
 	req := httptest.NewRequest("GET", "/v1/fetcher/"+jobID.String(), nil)
 	req.Header.Set("X-Organization-Id", orgID.String())
@@ -728,53 +620,53 @@ func TestFetcherHandler_CreateJob_HandlerDirectly_InvalidJSON(t *testing.T) {
 }
 
 // ============================================================================
-// Edge Case Tests
+// Edge Case Tests (refactored to use real handler + mocks)
 // ============================================================================
 
 func TestFetcherHandler_CreateJob_WithMetadata(t *testing.T) {
-	app := setupTestApp()
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
 
-	jobID := uuid.New()
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockJobRepo := jobRepo.NewMockRepository(ctrl)
+	mockProdRepo := productRepo.NewMockRepository(ctrl)
+	mockCryptor := crypto.NewMockCryptor(ctrl)
+	mockRabbitMQ := messaging.NewMockMessagePublisher(ctrl)
+	mockTester := command.NewMockConnectionTester(ctrl)
+
 	orgID := uuid.New()
+	productID := uuid.New()
+	testProduct := &model.Product{
+		ID:             productID,
+		OrganizationID: orgID,
+		Code:           "test",
+		Name:           "Test Product",
+	}
 
-	app.Post("/v1/fetcher", func(c *fiber.Ctx) error {
-		ctx := c.UserContext()
-		libCommons.NewTrackingFromContext(ctx)
+	testConn := &model.Connection{
+		ID:             uuid.New(),
+		OrganizationID: orgID,
+		ProductID:      &productID,
+		ConfigName:     "ds1",
+		Type:           model.TypePostgreSQL,
+	}
 
-		_, err := httpUtils.GetOrganizationID(c)
-		if err != nil {
-			return httpUtils.WithError(c, err)
-		}
+	mockJobRepo.EXPECT().FindByRequestHashWithinWindow(gomock.Any(), orgID, gomock.Any(), command.DeduplicationWindowMinutes).Return(nil, nil)
+	mockConnRepo.EXPECT().FindByConfigNames(gomock.Any(), orgID, gomock.Any()).Return([]*model.Connection{testConn}, nil)
+	mockProdRepo.EXPECT().FindByCode(gomock.Any(), "test", orgID).Return(testProduct, nil)
+	mockTester.EXPECT().TestConnection(gomock.Any(), testConn).Return(nil)
+	mockJobRepo.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, j *model.Job) (*model.Job, error) {
+			return j, nil
+		},
+	)
+	mockRabbitMQ.EXPECT().ProducerDefault(gomock.Any(), "", gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 
-		var request model.FetcherRequest
-		if errParser := c.BodyParser(&request); errParser != nil {
-			return httpUtils.WithError(c, pkg.ValidationError{
-				EntityType: "fetcher",
-				Code:       constant.ErrBadRequest.Error(),
-				Title:      "Invalid payload",
-				Message:    "unable to parse request body",
-				Err:        errParser,
-			})
-		}
+	createCmd := command.NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, mockProdRepo, mockCryptor, mockRabbitMQ, mockTester, "test-queue", nil)
+	handler := &FetcherHandler{CreateJobCmd: createCmd}
 
-		// Verify metadata was parsed
-		if request.Metadata == nil {
-			return httpUtils.WithError(c, pkg.ValidationError{
-				EntityType: "fetcher",
-				Code:       constant.ErrBadRequest.Error(),
-				Title:      "Invalid payload",
-				Message:    "metadata was expected but not found",
-			})
-		}
-
-		response := model.FetcherResponse{
-			JobID:     jobID,
-			Status:    "pending",
-			CreatedAt: time.Now().UTC(),
-			Message:   "Job created and queued for processing",
-		}
-		return httpUtils.Accepted(c, response)
-	})
+	app := setupTestApp()
+	app.Post("/v1/fetcher", handler.CreateJob)
 
 	payload := `{
 		"dataRequest": {
@@ -801,49 +693,49 @@ func TestFetcherHandler_CreateJob_WithMetadata(t *testing.T) {
 }
 
 func TestFetcherHandler_CreateJob_WithFilters(t *testing.T) {
-	app := setupTestApp()
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
 
-	jobID := uuid.New()
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockJobRepo := jobRepo.NewMockRepository(ctrl)
+	mockProdRepo := productRepo.NewMockRepository(ctrl)
+	mockCryptor := crypto.NewMockCryptor(ctrl)
+	mockRabbitMQ := messaging.NewMockMessagePublisher(ctrl)
+	mockTester := command.NewMockConnectionTester(ctrl)
+
 	orgID := uuid.New()
+	productID := uuid.New()
+	testProduct := &model.Product{
+		ID:             productID,
+		OrganizationID: orgID,
+		Code:           "test-product",
+		Name:           "Test Product",
+	}
 
-	app.Post("/v1/fetcher", func(c *fiber.Ctx) error {
-		ctx := c.UserContext()
-		libCommons.NewTrackingFromContext(ctx)
+	testConn := &model.Connection{
+		ID:             uuid.New(),
+		OrganizationID: orgID,
+		ProductID:      &productID,
+		ConfigName:     "ds1",
+		Type:           model.TypePostgreSQL,
+	}
 
-		_, err := httpUtils.GetOrganizationID(c)
-		if err != nil {
-			return httpUtils.WithError(c, err)
-		}
+	mockJobRepo.EXPECT().FindByRequestHashWithinWindow(gomock.Any(), orgID, gomock.Any(), command.DeduplicationWindowMinutes).Return(nil, nil)
+	mockConnRepo.EXPECT().FindByConfigNames(gomock.Any(), orgID, gomock.Any()).Return([]*model.Connection{testConn}, nil)
+	mockProdRepo.EXPECT().FindByCode(gomock.Any(), "test-product", orgID).Return(testProduct, nil)
+	mockTester.EXPECT().TestConnection(gomock.Any(), testConn).Return(nil)
+	mockJobRepo.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, j *model.Job) (*model.Job, error) {
+			return j, nil
+		},
+	)
+	mockRabbitMQ.EXPECT().ProducerDefault(gomock.Any(), "", gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 
-		var request model.FetcherRequest
-		if errParser := c.BodyParser(&request); errParser != nil {
-			return httpUtils.WithError(c, pkg.ValidationError{
-				EntityType: "fetcher",
-				Code:       constant.ErrBadRequest.Error(),
-				Title:      "Invalid payload",
-				Message:    "unable to parse request body",
-				Err:        errParser,
-			})
-		}
+	createCmd := command.NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, mockProdRepo, mockCryptor, mockRabbitMQ, mockTester, "test-queue", nil)
+	handler := &FetcherHandler{CreateJobCmd: createCmd}
 
-		// Verify filters were parsed (nested format is a map)
-		if request.DataRequest.Filters == nil || len(request.DataRequest.Filters) == 0 {
-			return httpUtils.WithError(c, pkg.ValidationError{
-				EntityType: "fetcher",
-				Code:       constant.ErrBadRequest.Error(),
-				Title:      "Invalid payload",
-				Message:    "filters were expected but not found",
-			})
-		}
-
-		response := model.FetcherResponse{
-			JobID:     jobID,
-			Status:    "pending",
-			CreatedAt: time.Now().UTC(),
-			Message:   "Job created and queued for processing",
-		}
-		return httpUtils.Accepted(c, response)
-	})
+	app := setupTestApp()
+	app.Post("/v1/fetcher", handler.CreateJob)
 
 	payload := `{
 		"dataRequest": {
@@ -857,6 +749,9 @@ func TestFetcherHandler_CreateJob_WithFilters(t *testing.T) {
 					}
 				}
 			}
+		},
+		"metadata": {
+			"source": "test-product"
 		}
 	}`
 
@@ -872,7 +767,10 @@ func TestFetcherHandler_CreateJob_WithFilters(t *testing.T) {
 }
 
 func TestFetcherHandler_GetJob_CompletedJob(t *testing.T) {
-	app := setupTestApp()
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 
 	jobID := uuid.New()
 	orgID := uuid.New()
@@ -882,29 +780,13 @@ func TestFetcherHandler_GetJob_CompletedJob(t *testing.T) {
 	testJob.CompletedAt = &completedAt
 	testJob.ResultPath = "s3://bucket/results/job-123.json"
 
-	app.Get("/v1/fetcher/:id", func(c *fiber.Ctx) error {
-		ctx := c.UserContext()
-		libCommons.NewTrackingFromContext(ctx)
+	mockJobRepo.EXPECT().FindByID(gomock.Any(), jobID, orgID).Return(testJob, nil)
 
-		_, err := httpUtils.GetOrganizationID(c)
-		if err != nil {
-			return httpUtils.WithError(c, err)
-		}
+	getJobQuery := query.NewGetJob(mockJobRepo)
+	handler := &FetcherHandler{GetJobQuery: getJobQuery}
 
-		_, err = uuid.Parse(c.Params("id"))
-		if err != nil {
-			return httpUtils.WithError(c, pkg.ValidationError{
-				EntityType: "job",
-				Code:       constant.ErrInvalidPathParameter.Error(),
-				Title:      "Invalid Path Parameter",
-				Message:    "invalid job id",
-				Err:        err,
-			})
-		}
-
-		resp := model.NewJobResponseFrom(testJob)
-		return httpUtils.OK(c, resp)
-	})
+	app := setupTestApp()
+	app.Get("/v1/fetcher/:id", handler.GetJob)
 
 	req := httptest.NewRequest("GET", "/v1/fetcher/"+jobID.String(), nil)
 	req.Header.Set("X-Organization-Id", orgID.String())
@@ -924,7 +806,10 @@ func TestFetcherHandler_GetJob_CompletedJob(t *testing.T) {
 }
 
 func TestFetcherHandler_GetJob_FailedJob(t *testing.T) {
-	app := setupTestApp()
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 
 	jobID := uuid.New()
 	orgID := uuid.New()
@@ -936,29 +821,13 @@ func TestFetcherHandler_GetJob_FailedJob(t *testing.T) {
 		"error": "connection timeout",
 	}
 
-	app.Get("/v1/fetcher/:id", func(c *fiber.Ctx) error {
-		ctx := c.UserContext()
-		libCommons.NewTrackingFromContext(ctx)
+	mockJobRepo.EXPECT().FindByID(gomock.Any(), jobID, orgID).Return(testJob, nil)
 
-		_, err := httpUtils.GetOrganizationID(c)
-		if err != nil {
-			return httpUtils.WithError(c, err)
-		}
+	getJobQuery := query.NewGetJob(mockJobRepo)
+	handler := &FetcherHandler{GetJobQuery: getJobQuery}
 
-		_, err = uuid.Parse(c.Params("id"))
-		if err != nil {
-			return httpUtils.WithError(c, pkg.ValidationError{
-				EntityType: "job",
-				Code:       constant.ErrInvalidPathParameter.Error(),
-				Title:      "Invalid Path Parameter",
-				Message:    "invalid job id",
-				Err:        err,
-			})
-		}
-
-		resp := model.NewJobResponseFrom(testJob)
-		return httpUtils.OK(c, resp)
-	})
+	app := setupTestApp()
+	app.Get("/v1/fetcher/:id", handler.GetJob)
 
 	req := httptest.NewRequest("GET", "/v1/fetcher/"+jobID.String(), nil)
 	req.Header.Set("X-Organization-Id", orgID.String())

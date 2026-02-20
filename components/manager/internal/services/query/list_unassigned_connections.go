@@ -2,10 +2,11 @@ package query
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/LerianStudio/fetcher/pkg/model"
-	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 	"github.com/LerianStudio/fetcher/pkg/net/http"
+	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
 
 	"github.com/LerianStudio/lib-commons/v2/commons"
 	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
@@ -22,7 +23,7 @@ func NewListUnassignedConnections(connectionRepo connRepo.Repository) *ListUnass
 	return &ListUnassignedConnections{connRepo: connectionRepo}
 }
 
-func (s *ListUnassignedConnections) Execute(ctx context.Context, organizationID uuid.UUID, filters http.QueryHeader) ([]*model.Connection, int64, error) {
+func (s *ListUnassignedConnections) Execute(ctx context.Context, organizationID uuid.UUID, filters http.QueryHeader) (*model.Pagination, error) {
 	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "service.list_unassigned_connections")
@@ -40,12 +41,20 @@ func (s *ListUnassignedConnections) Execute(ctx context.Context, organizationID 
 
 	list, totalCount, err := s.connRepo.ListUnassigned(ctx, organizationID, filters)
 	if err != nil {
-		return nil, 0, err
+		return nil, fmt.Errorf("failed to list unassigned connections: %w", err)
 	}
 
-	if list == nil {
-		return []*model.Connection{}, totalCount, nil
+	connResp := make([]*model.ConnectionResponse, 0, len(list))
+	for _, conn := range list {
+		connResp = append(connResp, model.NewConnectionResponseFrom(conn))
 	}
 
-	return list, totalCount, nil
+	pagination := &model.Pagination{
+		Limit: filters.Limit,
+		Page:  filters.Page,
+	}
+	pagination.SetItems(connResp)
+	pagination.SetTotal(int(totalCount))
+
+	return pagination, nil
 }

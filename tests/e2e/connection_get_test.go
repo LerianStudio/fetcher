@@ -24,8 +24,11 @@ func TestGetConnection_Exists_Success(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
+	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+
 	uniqueName := fmt.Sprintf("e2e-get-exists-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
+		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,
@@ -91,9 +94,6 @@ func TestGetConnection_NotFound_404(t *testing.T) {
 func TestGetConnection_InvalidID_BadRequest(t *testing.T) {
 	t.Parallel()
 
-	ctx, cancel := context.WithTimeout(context.Background(), e2eshared.DefaultTestTimeout)
-	defer cancel()
-
 	invalidIDs := []string{
 		"not-a-uuid",
 		"12345",
@@ -107,6 +107,11 @@ func TestGetConnection_InvalidID_BadRequest(t *testing.T) {
 		}
 
 		t.Run(invalidID, func(t *testing.T) {
+			t.Parallel()
+
+			ctx, cancel := context.WithTimeout(context.Background(), e2eshared.DefaultTestTimeout)
+			defer cancel()
+
 			resp, err := apiClient.GetConnectionRaw(ctx, invalidID)
 			require.NoError(t, err, "request should succeed")
 

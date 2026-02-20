@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/network"
 )
 
 type Suite struct {
@@ -14,7 +14,7 @@ type Suite struct {
 	infra   []Infra
 	chaos   ChaosInterface
 	env     *Env
-	network testcontainers.Network
+	network *testcontainers.DockerNetwork
 }
 
 type Env struct {
@@ -30,9 +30,8 @@ type Builder struct {
 }
 
 func New(t *testing.T) *Builder {
-	if t != nil {
-		t.Helper()
-	}
+	t.Helper()
+
 	return &Builder{
 		t:     t,
 		infra: make([]Infra, 0, 4),
@@ -46,6 +45,7 @@ func (b *Builder) WithInfra(infra Infra) *Builder {
 	if infra != nil {
 		b.infra = append(b.infra, infra)
 	}
+
 	return b
 }
 
@@ -54,8 +54,10 @@ func (b *Builder) WithInfras(infras ...Infra) *Builder {
 		if infra == nil {
 			continue
 		}
+
 		b.infra = append(b.infra, infra)
 	}
+
 	return b
 }
 
@@ -70,24 +72,22 @@ func (b *Builder) Build(ctx context.Context) (*Suite, error) {
 	}
 
 	// Create shared Docker network for container communication
-	networkName := fmt.Sprintf("itestkit-%d", time.Now().UnixNano())
-	network, err := testcontainers.GenericNetwork(ctx, testcontainers.GenericNetworkRequest{
-		NetworkRequest: testcontainers.NetworkRequest{
-			Name:   networkName,
-			Driver: "bridge",
-		},
-	})
+	nw, err := network.New(ctx, network.WithDriver("bridge"))
 	if err != nil {
 		return nil, fmt.Errorf("create network: %w", err)
 	}
 
+	networkName := nw.Name
+
 	var chaos ChaosInterface
+
 	if b.chaosConf.Enabled {
 		tc, err := NewToxiproxyChaos(ctx, b.chaosConf, networkName)
 		if err != nil {
-			_ = network.Remove(ctx)
+			_ = nw.Remove(ctx)
 			return nil, err
 		}
+
 		chaos = tc
 	}
 
@@ -95,7 +95,7 @@ func (b *Builder) Build(ctx context.Context) (*Suite, error) {
 		t:       b.t,
 		infra:   b.infra,
 		chaos:   chaos,
-		network: network,
+		network: nw,
 		env: &Env{
 			Containers: map[string]ContainerEndpoint{},
 			Chaos:      chaos,
@@ -126,12 +126,15 @@ func (s *Suite) Terminate(ctx context.Context) error {
 	for i := len(s.infra) - 1; i >= 0; i-- {
 		_ = s.infra[i].Terminate(ctx)
 	}
+
 	if s.chaos != nil {
 		_ = s.chaos.Close(ctx)
 	}
+
 	if s.network != nil {
 		_ = s.network.Remove(ctx)
 	}
+
 	return nil
 }
 
@@ -141,5 +144,6 @@ func (s *Suite) Network() string {
 	if s.env != nil {
 		return s.env.Network
 	}
+
 	return ""
 }

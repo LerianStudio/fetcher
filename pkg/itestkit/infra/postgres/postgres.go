@@ -45,26 +45,33 @@ func NewPostgresInfra(cfg PostgresConfig) *PostgresInfra {
 	if cfg.Image == "" {
 		cfg.Image = "postgres:16-alpine"
 	}
+
 	if cfg.Database == "" {
 		cfg.Database = "app"
 	}
+
 	if cfg.Username == "" {
 		cfg.Username = "app"
 	}
+
 	if cfg.Password == "" {
 		cfg.Password = "app"
 	}
+
 	if cfg.Name == "" {
 		cfg.Name = "default"
 	}
+
 	if cfg.ProxyName == "" {
 		cfg.ProxyName = "pg-" + cfg.Name
 	}
+
 	return &PostgresInfra{cfg: cfg}
 }
 
 func (p *PostgresInfra) Start(ctx context.Context, env *itestkit.Env) error {
 	opts := defaultPostgresOptions()
+
 	for _, opt := range p.cfg.Options {
 		if opt != nil {
 			opt(opts)
@@ -96,12 +103,14 @@ func (p *PostgresInfra) Start(ctx context.Context, env *itestkit.Env) error {
 	if err != nil {
 		return err
 	}
+
 	p.container = c
 
 	host, err := c.Host(ctx)
 	if err != nil {
 		return err
 	}
+
 	port, err := c.MappedPort(ctx, "5432/tcp")
 	if err != nil {
 		return err
@@ -120,10 +129,12 @@ func (p *PostgresInfra) Start(ctx context.Context, env *itestkit.Env) error {
 			// Fallback to host.docker.internal for backward compatibility
 			proxyUpstream = fmt.Sprintf("host.docker.internal:%s", port.Port())
 		}
+
 		ref, err := env.Chaos.CreateProxy(ctx, p.cfg.ProxyName, proxyUpstream)
 		if err != nil {
 			return err
 		}
+
 		finalAddr = ref.ListenAddr
 		proxyListen = ref.ListenAddr
 	}
@@ -134,6 +145,7 @@ func (p *PostgresInfra) Start(ctx context.Context, env *itestkit.Env) error {
 		DSN:         fmt.Sprintf("postgres://%s:%s@%s/%s?sslmode=disable", p.cfg.Username, p.cfg.Password, finalAddr, p.cfg.Database),
 	}
 	p.endpoint = &endpoint
+
 	return nil
 }
 
@@ -141,6 +153,7 @@ func (p *PostgresInfra) Endpoint() (PostgresEndpoint, error) {
 	if p.endpoint == nil {
 		return PostgresEndpoint{}, fmt.Errorf("postgres endpoint not ready")
 	}
+
 	return *p.endpoint, nil
 }
 
@@ -149,6 +162,7 @@ func (p *PostgresInfra) DSN() (string, error) {
 	if err != nil {
 		return "", err
 	}
+
 	return endpoint.DSN, nil
 }
 
@@ -173,7 +187,9 @@ func (p *PostgresInfra) HostPort() (host string, port int, err error) {
 		if err != nil {
 			return "", 0, fmt.Errorf("invalid proxy address: %s: %w", endpoint.ProxyListen, err)
 		}
+
 		portNum, _ := strconv.Atoi(portStr)
+
 		return hostStr, portNum, nil
 	}
 
@@ -200,6 +216,7 @@ func (p *PostgresInfra) Terminate(ctx context.Context) error {
 	if p.container != nil {
 		return p.container.Terminate(ctx)
 	}
+
 	return nil
 }
 
@@ -220,5 +237,6 @@ func NewPostgresInfraStub(cfg PostgresConfig, host string, port int) *PostgresIn
 	// Store the raw host for HostPort() to return without normalization
 	p.stubHost = host
 	p.stubPort = port
+
 	return p
 }

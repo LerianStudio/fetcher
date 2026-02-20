@@ -42,26 +42,33 @@ func NewRabbitInfra(cfg RabbitConfig) *RabbitInfra {
 	if cfg.Image == "" {
 		cfg.Image = "rabbitmq:3.13-management-alpine"
 	}
+
 	if cfg.Username == "" {
 		cfg.Username = "guest"
 	}
+
 	if cfg.Password == "" {
 		cfg.Password = "guest"
 	}
+
 	if cfg.VHost == "" {
 		cfg.VHost = "/"
 	}
+
 	if cfg.Name == "" {
 		cfg.Name = "default"
 	}
+
 	if cfg.ProxyName == "" {
 		cfg.ProxyName = "amqp-" + cfg.Name
 	}
+
 	return &RabbitInfra{cfg: cfg}
 }
 
 func (r *RabbitInfra) Start(ctx context.Context, env *itestkit.Env) error {
 	opts := defaultRabbitOptions()
+
 	for _, opt := range r.cfg.Options {
 		if opt != nil {
 			opt(opts)
@@ -72,7 +79,6 @@ func (r *RabbitInfra) Start(ctx context.Context, env *itestkit.Env) error {
 	alias := fmt.Sprintf("rabbitmq-%s", r.cfg.Name)
 
 	runOpts := []testcontainers.ContainerCustomizer{
-		testcontainers.WithImage(r.cfg.Image),
 		rmq.WithAdminUsername(r.cfg.Username),
 		rmq.WithAdminPassword(r.cfg.Password),
 	}
@@ -88,16 +94,18 @@ func (r *RabbitInfra) Start(ctx context.Context, env *itestkit.Env) error {
 
 	runOpts = append(runOpts, opts.runOpts...)
 
-	c, err := rmq.RunContainer(ctx, runOpts...)
+	c, err := rmq.Run(ctx, r.cfg.Image, runOpts...)
 	if err != nil {
 		return err
 	}
+
 	r.container = c
 
 	host, err := c.Host(ctx)
 	if err != nil {
 		return err
 	}
+
 	amqpPort, err := c.MappedPort(ctx, "5672/tcp")
 	if err != nil {
 		return err
@@ -116,10 +124,12 @@ func (r *RabbitInfra) Start(ctx context.Context, env *itestkit.Env) error {
 			// Fallback to host.docker.internal for backward compatibility
 			proxyUpstream = fmt.Sprintf("host.docker.internal:%s", amqpPort.Port())
 		}
+
 		ref, err := env.Chaos.CreateProxy(ctx, r.cfg.ProxyName, proxyUpstream)
 		if err != nil {
 			return err
 		}
+
 		finalAddr = ref.ListenAddr
 		proxyListen = ref.ListenAddr
 	}
@@ -130,6 +140,7 @@ func (r *RabbitInfra) Start(ctx context.Context, env *itestkit.Env) error {
 		AMQPURL:     fmt.Sprintf("amqp://%s:%s@%s%s", r.cfg.Username, r.cfg.Password, finalAddr, r.cfg.VHost),
 	}
 	r.endpoint = &endpoint
+
 	return nil
 }
 
@@ -137,6 +148,7 @@ func (r *RabbitInfra) Endpoint() (RabbitEndpoint, error) {
 	if r.endpoint == nil {
 		return RabbitEndpoint{}, fmt.Errorf("rabbitmq endpoint not ready")
 	}
+
 	return *r.endpoint, nil
 }
 
@@ -145,6 +157,7 @@ func (r *RabbitInfra) AMQPURL() (string, error) {
 	if err != nil {
 		return "", err
 	}
+
 	return endpoint.AMQPURL, nil
 }
 
@@ -164,7 +177,9 @@ func (r *RabbitInfra) HostPort() (host string, port int, err error) {
 		if err != nil {
 			return "", 0, fmt.Errorf("invalid proxy address: %s: %w", endpoint.ProxyListen, err)
 		}
+
 		portNum, _ := strconv.Atoi(portStr)
+
 		return hostStr, portNum, nil
 	}
 
@@ -191,6 +206,7 @@ func (r *RabbitInfra) Terminate(ctx context.Context) error {
 	if r.container != nil {
 		return r.container.Terminate(ctx)
 	}
+
 	return nil
 }
 

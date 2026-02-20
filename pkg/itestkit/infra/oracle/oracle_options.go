@@ -33,6 +33,7 @@ func WithOracleInitScript(hostPath, containerFileName string) OracleOption {
 		if containerFileName == "" {
 			containerFileName = "init.sql"
 		}
+
 		o.runOpts = append(o.runOpts,
 			testcontainers.WithFiles(
 				testcontainers.ContainerFile{
@@ -55,6 +56,7 @@ func WithOracleFixedPort(hostPort string) OracleOption {
 				if hc.PortBindings == nil {
 					hc.PortBindings = nat.PortMap{}
 				}
+
 				hc.PortBindings["1521/tcp"] = []nat.PortBinding{
 					{HostIP: "0.0.0.0", HostPort: hostPort},
 				}

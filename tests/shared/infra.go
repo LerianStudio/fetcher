@@ -34,6 +34,7 @@ func isFixedPortEnabled() bool {
 	if val := os.Getenv("FIXED_PORT"); val != "" {
 		return strings.EqualFold(val, "true")
 	}
+
 	return false
 }
 
@@ -84,7 +85,7 @@ func NewCoreInfra() *CoreInfra {
 // The path is resolved relative to this source file to ensure correct resolution
 // regardless of the working directory.
 func definitionsPath() string {
-	_, file, _, _ := runtime.Caller(0)
+	_, file, _, _ := runtime.Caller(0) //nolint:dogsled // runtime.Caller returns 4 values, only file needed here
 	return filepath.Join(filepath.Dir(file), "testdata", "definitions.json")
 }
 

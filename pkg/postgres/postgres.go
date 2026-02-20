@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"database/sql"
+	"fmt"
 
 	"github.com/LerianStudio/fetcher/pkg/constant"
 
@@ -27,7 +28,7 @@ func (c *Connection) Connect() error {
 	db, err := sql.Open("pgx", c.ConnectionString)
 	if err != nil {
 		c.Logger.Errorf("Error opening connection: %v", err)
-		return err
+		return fmt.Errorf("failed to open PostgreSQL connection: %w", err)
 	}
 
 	if err := db.Ping(); err != nil {
@@ -38,7 +39,7 @@ func (c *Connection) Connect() error {
 
 		c.Logger.Errorf("Error pinging PostgreSQL: %v", err)
 
-		return err
+		return fmt.Errorf("failed to ping PostgreSQL: %w", err)
 	}
 
 	db.SetMaxOpenConns(c.MaxOpenConnections)
@@ -59,7 +60,7 @@ func (c *Connection) Connect() error {
 func (pc *Connection) GetDB() (*sql.DB, error) {
 	if pc.ConnectionDB == nil {
 		if err := pc.Connect(); err != nil {
-			pc.Logger.Infof("ERRCONECT %s", err)
+			pc.Logger.Errorf("ERR_CONNECT: failed to connect to PostgreSQL: %v", err)
 			return nil, err
 		}
 	}

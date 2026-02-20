@@ -65,6 +65,7 @@ func (r *Reporter) WriteReport(w io.Writer) error {
 		for category, count := range errorCounts {
 			lines = append(lines, fmt.Sprintf("     %-18s %d", string(category)+":", count))
 		}
+
 		lines = append(lines, "")
 	}
 
@@ -74,19 +75,23 @@ func (r *Reporter) WriteReport(w io.Writer) error {
 	)
 
 	_, err := io.WriteString(w, strings.Join(lines, "\n"))
+
 	return err
 }
 
 // String returns the report as a string.
 func (r *Reporter) String() string {
 	var sb strings.Builder
+
 	_ = r.WriteReport(&sb)
+
 	return sb.String()
 }
 
 // CompactSummary returns a one-line summary suitable for logs.
 func (r *Reporter) CompactSummary() string {
 	s := r.snapshot
+
 	return fmt.Sprintf(
 		"requests=%d success_rate=%.2f%% p99=%v throughput=%.2f/s chaos_duration=%v",
 		s.GetTotalRequests(),

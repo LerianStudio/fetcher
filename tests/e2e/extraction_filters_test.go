@@ -6,8 +6,8 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
-	"github.com/LerianStudio/fetcher/pkg/itestkit/addons/queuekit"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/model/job"
 	e2eshared "github.com/LerianStudio/fetcher/tests/shared"
@@ -91,9 +91,12 @@ func TestExtraction_AllFilterOperators(t *testing.T) {
 			pgHost, pgPort, err := postgresInfra.HostPort()
 			require.NoError(t, err, "get postgres host/port")
 
-			// Create connection
+			// Create product and connection
+			product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+
 			uniqueName := fmt.Sprintf("e2e-filter-%s-%s", tc.name, uuid.New().String()[:8])
 			conn, err := apiClient.CreateConnection(ctx, e2eshared.ConnectionInput{
+				ProductID:    product.ID,
 				ConfigName:   uniqueName,
 				Type:         e2eshared.DBTypePostgreSQL,
 				Host:         pgHost,
@@ -107,6 +110,9 @@ func TestExtraction_AllFilterOperators(t *testing.T) {
 			t.Cleanup(func() {
 				_ = apiClient.DeleteConnection(context.Background(), conn.ID)
 			})
+
+			err = apiClient.WaitForConnectionAvailable(ctx, conn.ID, 10*time.Second)
+			require.NoError(t, err, "wait for connection to be available")
 
 			// Submit job with filter
 			fetcherReq := model.FetcherRequest{
@@ -125,7 +131,7 @@ func TestExtraction_AllFilterOperators(t *testing.T) {
 					},
 				},
 				Metadata: map[string]any{
-					"source":     "reporter",
+					"source":     product.Code,
 					"test":       fmt.Sprintf("filter-operator-%s", tc.name),
 					"filterDesc": tc.desc,
 				},
@@ -162,9 +168,12 @@ func TestExtraction_SelectiveFilters(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
-	// Create connection
+	// Create product and connection
+	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+
 	uniqueName := fmt.Sprintf("e2e-selective-filter-%s", uuid.New().String()[:8])
 	conn, err := apiClient.CreateConnection(ctx, e2eshared.ConnectionInput{
+		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,
@@ -178,6 +187,9 @@ func TestExtraction_SelectiveFilters(t *testing.T) {
 	t.Cleanup(func() {
 		_ = apiClient.DeleteConnection(context.Background(), conn.ID)
 	})
+
+	err = apiClient.WaitForConnectionAvailable(ctx, conn.ID, 10*time.Second)
+	require.NoError(t, err, "wait for connection to be available")
 
 	// Submit job: transactions filtered, accounts not filtered
 	fetcherReq := model.FetcherRequest{
@@ -200,7 +212,7 @@ func TestExtraction_SelectiveFilters(t *testing.T) {
 			},
 		},
 		Metadata: map[string]any{
-			"source": "reporter",
+			"source": product.Code,
 			"test":   "selective-filters-e2e",
 		},
 	}
@@ -211,35 +223,8 @@ func TestExtraction_SelectiveFilters(t *testing.T) {
 	jobID := fetcherResp.JobID.String()
 	t.Logf("Created selective filter job: %s", jobID)
 
-	// Wait for completion
-	backend, err := queuekit.NewAMQPConsumerBuilder(amqpURL).
-		FromQueue(e2eshared.NotificationsQueue).
-		WithAutoAck(true).
-		Build()
-	require.NoError(t, err, "create AMQP consumer")
-	defer backend.Close()
-
-	consumer := queuekit.NewConsumer[e2eshared.JobNotification](t, backend).
-		WithMatcher(queuekit.MatchJSONField("jobId", jobID)).
-		WithTimeout(e2eshared.DefaultJobTimeout).
-		Build()
-	defer consumer.Close()
-
-	msg, err := consumer.WaitForMessage(ctx)
-	if err != nil {
-		jobResult, _ := apiClient.GetJob(ctx, jobID)
-		t.Logf("Job status: %s", jobResult.Status)
-		require.NoError(t, err, "wait for completion")
-	}
-
-	queuekit.AssertMessage(t, msg).
-		PayloadSatisfies("completed", func(n e2eshared.JobNotification) bool {
-			return n.Status == "completed"
-		})
-
-	// Verify job completed
-	jobResult, err := apiClient.GetJob(ctx, jobID)
-	require.NoError(t, err, "get job status")
+	// Wait for completion via polling
+	jobResult := e2eshared.AssertJobCompleted(t, apiClient, jobID, e2eshared.DefaultJobTimeout)
 
 	assert.Equal(t, e2eshared.JobStatusCompleted, jobResult.Status)
 	assert.NotEmpty(t, jobResult.ResultPath)
@@ -259,9 +244,12 @@ func TestExtraction_DateRangeFilter(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
-	// Create connection
+	// Create product and connection
+	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+
 	uniqueName := fmt.Sprintf("e2e-daterange-%s", uuid.New().String()[:8])
 	conn, err := apiClient.CreateConnection(ctx, e2eshared.ConnectionInput{
+		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,
@@ -275,6 +263,9 @@ func TestExtraction_DateRangeFilter(t *testing.T) {
 	t.Cleanup(func() {
 		_ = apiClient.DeleteConnection(context.Background(), conn.ID)
 	})
+
+	err = apiClient.WaitForConnectionAvailable(ctx, conn.ID, 10*time.Second)
+	require.NoError(t, err, "wait for connection to be available")
 
 	// Submit job filtering January 2024 transactions only
 	fetcherReq := model.FetcherRequest{
@@ -296,7 +287,7 @@ func TestExtraction_DateRangeFilter(t *testing.T) {
 			},
 		},
 		Metadata: map[string]any{
-			"source": "reporter",
+			"source": product.Code,
 			"test":   "date-range-filter-e2e",
 		},
 	}
@@ -328,9 +319,12 @@ func TestExtraction_CombinedFilters(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
-	// Create connection
+	// Create product and connection
+	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+
 	uniqueName := fmt.Sprintf("e2e-combined-%s", uuid.New().String()[:8])
 	conn, err := apiClient.CreateConnection(ctx, e2eshared.ConnectionInput{
+		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,
@@ -344,6 +338,9 @@ func TestExtraction_CombinedFilters(t *testing.T) {
 	t.Cleanup(func() {
 		_ = apiClient.DeleteConnection(context.Background(), conn.ID)
 	})
+
+	err = apiClient.WaitForConnectionAvailable(ctx, conn.ID, 10*time.Second)
+	require.NoError(t, err, "wait for connection to be available")
 
 	// Submit job with multiple filter conditions:
 	// - status = 'completed' AND
@@ -373,7 +370,7 @@ func TestExtraction_CombinedFilters(t *testing.T) {
 			},
 		},
 		Metadata: map[string]any{
-			"source": "reporter",
+			"source": product.Code,
 			"test":   "combined-filters-e2e",
 		},
 	}
@@ -404,9 +401,12 @@ func TestExtraction_AccountIdFilter(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
-	// Create connection
+	// Create product and connection
+	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+
 	uniqueName := fmt.Sprintf("e2e-accountid-%s", uuid.New().String()[:8])
 	conn, err := apiClient.CreateConnection(ctx, e2eshared.ConnectionInput{
+		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,
@@ -420,6 +420,9 @@ func TestExtraction_AccountIdFilter(t *testing.T) {
 	t.Cleanup(func() {
 		_ = apiClient.DeleteConnection(context.Background(), conn.ID)
 	})
+
+	err = apiClient.WaitForConnectionAvailable(ctx, conn.ID, 10*time.Second)
+	require.NoError(t, err, "wait for connection to be available")
 
 	// Submit job filtering by specific account ID
 	fetcherReq := model.FetcherRequest{
@@ -440,7 +443,7 @@ func TestExtraction_AccountIdFilter(t *testing.T) {
 			},
 		},
 		Metadata: map[string]any{
-			"source":    "reporter",
+			"source":    product.Code,
 			"test":      "account-id-filter-e2e",
 			"accountId": e2eshared.TestAccount1ID,
 		},

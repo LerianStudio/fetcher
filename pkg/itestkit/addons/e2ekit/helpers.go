@@ -33,19 +33,23 @@ func ProjectRoot() string {
 		// Use runtime.Caller(0) to get this file's location, then walk up to find go.mod.
 		// This works because this file is inside the project (pkg/itestkit/addons/e2ekit/).
 		_, file, _, _ := runtime.Caller(0)
+
 		dir := filepath.Dir(file)
 		for {
 			if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
 				projectRootPath = dir
 				return
 			}
+
 			parent := filepath.Dir(dir)
 			if parent == dir {
 				break
 			}
+
 			dir = parent
 		}
 	})
+
 	return projectRootPath
 }
 
@@ -64,12 +68,15 @@ func ProjectRootFrom(startPath string) string {
 		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
 			return dir
 		}
+
 		parent := filepath.Dir(dir)
 		if parent == dir {
 			break
 		}
+
 		dir = parent
 	}
+
 	return ""
 }
 

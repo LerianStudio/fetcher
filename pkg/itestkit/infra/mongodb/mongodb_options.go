@@ -41,6 +41,7 @@ func WithMongoDBFixedPort(hostPort string) MongoDBOption {
 				if hc.PortBindings == nil {
 					hc.PortBindings = nat.PortMap{}
 				}
+
 				hc.PortBindings[nat.Port("27017/tcp")] = []nat.PortBinding{
 					{HostIP: "0.0.0.0", HostPort: hostPort},
 				}

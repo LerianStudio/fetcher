@@ -24,9 +24,12 @@ func TestDeleteConnection_Success(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
+	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+
 	// Create connection
 	uniqueName := fmt.Sprintf("e2e-delete-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
+		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,
@@ -77,9 +80,12 @@ func TestDeleteConnection_Idempotent(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
+	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+
 	// Create connection
 	uniqueName := fmt.Sprintf("e2e-delete-idempotent-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
+		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,

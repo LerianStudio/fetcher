@@ -14,7 +14,7 @@ func TestValidateMongoDBMode(t *testing.T) {
 		wantError bool
 	}{
 		// Valid modes - from MongoDB Go driver documentation
-		{name: "empty string is valid (uses driver defaults)", mode: "", wantError: false},
+		{name: "empty string is invalid (must use explicit mode)", mode: "", wantError: true},
 		{name: "disable is valid", mode: "disable", wantError: false},
 		{name: "false is valid", mode: "false", wantError: false},
 		{name: "true is valid", mode: "true", wantError: false},
@@ -58,6 +58,6 @@ func TestGetValidMongoDBModes(t *testing.T) {
 	modes := GetValidMongoDBModes()
 
 	// Verify all expected modes are present
-	expected := []string{"", "disable", "false", "true", "enable", "insecure"}
+	expected := []string{"disable", "false", "true", "enable", "insecure"}
 	assert.ElementsMatch(t, expected, modes, "Should return all valid MongoDB TLS modes")
 }

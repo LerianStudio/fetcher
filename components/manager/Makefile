@@ -26,11 +26,11 @@ DOCKER_CMD := $(shell \
 info:
 	@echo "                                                                                                                                       "
 	@echo "                                                                                                                                       "
-	@echo "To run a specific command inside the audit container using make, you can execute:                                                     "
+	@echo "To run a specific command inside the manager container using make, you can execute:                                                     "
 	@echo "                                                                                                                                       "
-	@echo "make audit COMMAND=\"any\"                                                                                                            "
+	@echo "make COMMAND=\"any\"                                                                                                            "
 	@echo "                                                                                                                                       "
-	@echo "This command will run the specified command inside the audit container. Replace \"any\" with the desired command you want to execute. "
+	@echo "This command will run the specified command inside the manager container. Replace \"any\" with the desired command you want to execute. "
 	@echo "                                                                                                                         "
 	@echo "## Docker commands:"
 	@echo "                                                                                                                         "
@@ -42,7 +42,7 @@ info:
 	@echo "  COMMAND=\"destroy\"                              Stops and removes containers, networks, and volumes (including named volumes) defined in docker-compose.yml."
 	@echo "  COMMAND=\"restart\"                              Stops and removes containers, networks, and volumes, then starts all services in detached mode."
 	@echo "  COMMAND=\"logs\"                                 Shows the last 100 lines of logs and follows live log output for services defined in docker-compose.yml."
-	@echo "  COMMAND=\"logs-api\"                             Shows the last 100 lines of logs and follows live log output for the audit service defined in docker-compose.yml."
+	@echo "  COMMAND=\"logs-api\"                             Shows the last 100 lines of logs and follows live log output for the manager service defined in docker-compose.yml."
 	@echo "  COMMAND=\"ps\"                                   Lists the status of containers defined in docker-compose.yml."
 	@echo "                                                                                                                         "
 	@echo "## App commands:"
@@ -93,12 +93,19 @@ generate-docs:
 .PHONY: setup-git-hooks
 setup-git-hooks:
 	@echo "$(BLUE)Setting up git hooks...$(NC)"
-	./make.sh "setupGitHooks"
+	git config core.hooksPath .githooks
+	@echo "$(BLUE)Git hooks installed successfully$(NC)"
 
 .PHONY: check-hooks
 check-hooks:
 	@echo "$(BLUE)Checking git hooks status...$(NC)"
-	./make.sh "checkHooks"
+	@hooks_path=$$(git config core.hooksPath); \
+	if [ "$$hooks_path" = ".githooks" ]; then \
+		echo "Git hooks are properly configured"; \
+	else \
+		echo "Git hooks are NOT configured. Run 'make setup-git-hooks'"; \
+		exit 1; \
+	fi
 
 .PHONY: lint
 lint:

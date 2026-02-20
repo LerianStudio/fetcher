@@ -67,6 +67,7 @@ func HostGatewayIP() string {
 		// Ultimate fallback
 		hostGatewayIP = "host.docker.internal"
 	})
+
 	return hostGatewayIP
 }
 

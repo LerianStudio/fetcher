@@ -2,14 +2,15 @@ package command
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/model"
 
-	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
-	productRepo "github.com/LerianStudio/fetcher/pkg/mongodb/product"
+	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
+	productRepo "github.com/LerianStudio/fetcher/pkg/ports/product"
 	"github.com/LerianStudio/lib-commons/v2/commons"
 	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
 
@@ -50,7 +51,7 @@ func (s *CreateConnection) Execute(ctx context.Context, organizationID uuid.UUID
 	// Parse and validate productId
 	productID, err := uuid.Parse(connInput.ProductID)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "invalid product id", err)
+		libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "invalid product id", err)
 
 		return nil, pkg.ValidateBadRequestFieldsError(
 			map[string]string{"productId": "productId is required and must be a valid UUID"},
@@ -66,7 +67,7 @@ func (s *CreateConnection) Execute(ctx context.Context, organizationID uuid.UUID
 	product, err := s.productRepo.FindByID(ctx, productID, organizationID)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "failed to validate product", err)
-		return nil, err
+		return nil, fmt.Errorf("failed to find product by id: %w", err)
 	}
 
 	if product == nil {
@@ -95,19 +96,20 @@ func (s *CreateConnection) Execute(ctx context.Context, organizationID uuid.UUID
 		sslKey,
 	)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to create connection model", err)
-		return nil, err
+		libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "Failed to create connection model", err)
+		return nil, fmt.Errorf("failed to create connection model: %w", err)
 	}
 
 	connection.ProductID = &productID
 
 	existing, errRepo := s.connRepo.FindByOrganizationAndName(ctx, connection.OrganizationID, connection.ConfigName)
 	if errRepo != nil {
-		return nil, errRepo
+		libOpentelemetry.HandleSpanError(&span, "Failed to check existing connection", errRepo)
+		return nil, fmt.Errorf("failed to check for existing connection: %w", errRepo)
 	}
 
 	if existing != nil {
-		libOpentelemetry.HandleSpanError(&span, "Connection config name conflict", nil)
+		libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "Connection config name conflict", nil)
 
 		return nil, pkg.ValidateBusinessError(
 			constant.ErrEntityConflict,
@@ -117,7 +119,7 @@ func (s *CreateConnection) Execute(ctx context.Context, organizationID uuid.UUID
 
 	created, err := s.connRepo.Create(ctx, connection)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create connection: %w", err)
 	}
 
 	return created, nil

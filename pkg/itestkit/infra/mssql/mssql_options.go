@@ -38,6 +38,7 @@ func WithMSSQLFixedPort(hostPort string) MSSQLOption {
 				if hc.PortBindings == nil {
 					hc.PortBindings = nat.PortMap{}
 				}
+
 				hc.PortBindings["1433/tcp"] = []nat.PortBinding{
 					{HostIP: "0.0.0.0", HostPort: hostPort},
 				}

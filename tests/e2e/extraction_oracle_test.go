@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/LerianStudio/fetcher/pkg/itestkit/addons/queuekit"
 	"github.com/LerianStudio/fetcher/pkg/model"
@@ -35,9 +36,12 @@ func TestOracleExtraction_Table_Success(t *testing.T) {
 	oracleHost, oraclePort, err := oracleInfra.HostPort()
 	require.NoError(t, err, "get oracle host/port")
 
-	// Step 2: Create connection to source database
+	// Step 2: Create product and connection to source database
+	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+
 	uniqueName := fmt.Sprintf("e2e-oracle-extract-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
+		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypeOracle,
 		Host:         oracleHost,
@@ -59,6 +63,9 @@ func TestOracleExtraction_Table_Success(t *testing.T) {
 		_ = apiClient.DeleteConnection(context.Background(), conn.ID)
 	})
 
+	err = apiClient.WaitForConnectionAvailable(ctx, conn.ID, 10*time.Second)
+	require.NoError(t, err, "wait for connection to be available")
+
 	// Step 3: Submit fetcher job
 	fetcherReq := model.FetcherRequest{
 		DataRequest: model.DataRequest{
@@ -69,7 +76,7 @@ func TestOracleExtraction_Table_Success(t *testing.T) {
 			},
 		},
 		Metadata: map[string]any{
-			"source": "reporter",
+			"source": product.Code,
 			"test":   "oracle-extraction-e2e",
 		},
 	}
@@ -142,9 +149,12 @@ func TestOracleExtraction_MultiSchema_Success(t *testing.T) {
 	oracleHost, oraclePort, err := oracleInfra.HostPort()
 	require.NoError(t, err, "get oracle host/port")
 
-	// Create connection
+	// Create product and connection
+	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+
 	uniqueName := fmt.Sprintf("e2e-oracle-multi-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
+		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypeOracle,
 		Host:         oracleHost,
@@ -160,6 +170,9 @@ func TestOracleExtraction_MultiSchema_Success(t *testing.T) {
 	t.Cleanup(func() {
 		_ = apiClient.DeleteConnection(context.Background(), conn.ID)
 	})
+
+	err = apiClient.WaitForConnectionAvailable(ctx, conn.ID, 10*time.Second)
+	require.NoError(t, err, "wait for connection to be available")
 
 	// Submit fetcher job with multiple tables including schema-prefixed tables
 	fetcherReq := model.FetcherRequest{

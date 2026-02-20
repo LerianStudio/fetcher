@@ -33,6 +33,7 @@ func WithMySQLInitScript(hostPath, containerFileName string) MySQLOption {
 		if containerFileName == "" {
 			containerFileName = "init.sql"
 		}
+
 		o.runOpts = append(o.runOpts,
 			testcontainers.WithFiles(
 				testcontainers.ContainerFile{
@@ -55,6 +56,7 @@ func WithMySQLFixedPort(hostPort string) MySQLOption {
 				if hc.PortBindings == nil {
 					hc.PortBindings = nat.PortMap{}
 				}
+
 				hc.PortBindings["3306/tcp"] = []nat.PortBinding{
 					{HostIP: "0.0.0.0", HostPort: hostPort},
 				}

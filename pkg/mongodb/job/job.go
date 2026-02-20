@@ -4,8 +4,8 @@ import (
 	"errors"
 	"time"
 
-	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/model"
+	portsJob "github.com/LerianStudio/fetcher/pkg/ports/job"
 
 	"github.com/google/uuid"
 )
@@ -73,16 +73,5 @@ func (jm *JobMongoDBModel) FromEntity(job *model.Job) error {
 	return nil
 }
 
-// ListFilter controls pagination and filtering for job listings.
-type ListFilter struct {
-	OrganizationID uuid.UUID
-	Status         model.JobStatus
-	Statuses       []model.JobStatus
-	CreatedFrom    *time.Time
-	CreatedTo      *time.Time
-	CompletedFrom  *time.Time
-	CompletedTo    *time.Time
-	Limit          int
-	Page           int
-	SortOrder      constant.Order
-}
+// ListFilter is an alias for the domain filter type defined in pkg/ports/job.
+type ListFilter = portsJob.ListFilter

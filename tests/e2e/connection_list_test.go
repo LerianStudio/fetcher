@@ -14,25 +14,23 @@ import (
 )
 
 // TestListConnections_Empty_Success verifies that listing connections
-// returns an empty result when no connections exist for the organization.
+// returns an empty result when no connections exist for the product.
 func TestListConnections_Empty_Success(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithTimeout(context.Background(), e2eshared.DefaultTestTimeout)
 	defer cancel()
 
-	// Use a filter that should return no results
-	params := e2eshared.ListConnectionsParams{
-		Host: fmt.Sprintf("nonexistent-host-%s", uuid.New().String()),
-	}
+	// Create a product with no connections — listing by product returns empty
+	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
 
-	result, err := apiClient.ListConnections(ctx, params)
+	result, err := apiClient.ListConnectionsWithProduct(ctx, product.ID, e2eshared.ListConnectionsParams{})
 	require.NoError(t, err, "list connections should succeed")
 
 	assert.NotNil(t, result, "result should not be nil")
-	assert.Empty(t, result.Items, "items should be empty for non-matching filter")
+	assert.Empty(t, result.Items, "items should be empty for product with no connections")
 
-	t.Logf("List with non-matching filter returned %d items", len(result.Items))
+	t.Logf("List with empty product returned %d items", len(result.Items))
 }
 
 // TestListConnections_WithResults_Success verifies that listing connections
@@ -46,12 +44,15 @@ func TestListConnections_WithResults_Success(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
+	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+
 	// Create multiple connections with unique prefix
 	prefix := fmt.Sprintf("e2e-list-%s", uuid.New().String()[:8])
 	createdIDs := make([]string, 0, 3)
 
 	for i := 0; i < 3; i++ {
 		connInput := e2eshared.ConnectionInput{
+			ProductID:    product.ID,
 			ConfigName:   fmt.Sprintf("%s-%d", prefix, i),
 			Type:         e2eshared.DBTypePostgreSQL,
 			Host:         pgHost,
@@ -72,12 +73,12 @@ func TestListConnections_WithResults_Success(t *testing.T) {
 		}
 	})
 
-	// List all connections
-	result, err := apiClient.ListConnections(ctx, e2eshared.ListConnectionsParams{})
+	// List connections scoped to this test's product
+	result, err := apiClient.ListConnectionsWithProduct(ctx, product.ID, e2eshared.ListConnectionsParams{})
 	require.NoError(t, err, "list connections should succeed")
 
 	assert.NotNil(t, result, "result should not be nil")
-	assert.GreaterOrEqual(t, len(result.Items), 3, "should have at least 3 connections")
+	assert.Equal(t, 3, len(result.Items), "should have exactly 3 connections for this product")
 
 	// Verify our created connections are in the list
 	foundCount := 0
@@ -95,7 +96,7 @@ func TestListConnections_WithResults_Success(t *testing.T) {
 }
 
 // TestListConnections_FilterByType_Success verifies that listing connections
-// with a type filter returns only matching connections.
+// scoped to a product returns connections with the expected type.
 func TestListConnections_FilterByType_Success(t *testing.T) {
 	t.Parallel()
 
@@ -105,9 +106,12 @@ func TestListConnections_FilterByType_Success(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
+	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+
 	// Create a PostgreSQL connection
 	uniqueName := fmt.Sprintf("e2e-filter-type-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
+		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,
@@ -124,49 +128,142 @@ func TestListConnections_FilterByType_Success(t *testing.T) {
 		_ = apiClient.DeleteConnection(context.Background(), conn.ID)
 	})
 
-	// Filter by PostgreSQL type
-	params := e2eshared.ListConnectionsParams{
-		Type: e2eshared.DBTypePostgreSQL,
-	}
-
-	result, err := apiClient.ListConnections(ctx, params)
-	require.NoError(t, err, "list connections with type filter should succeed")
+	// List connections scoped to product, then verify types client-side
+	result, err := apiClient.ListConnectionsWithProduct(ctx, product.ID, e2eshared.ListConnectionsParams{})
+	require.NoError(t, err, "list connections should succeed")
 
 	assert.NotNil(t, result, "result should not be nil")
-	assert.NotEmpty(t, result.Items, "should have at least one PostgreSQL connection")
+	assert.NotEmpty(t, result.Items, "should have at least one connection")
 
 	// Verify all returned connections are PostgreSQL
 	for _, item := range result.Items {
 		assert.Equal(t, e2eshared.DBTypePostgreSQL, item.Type, "all items should be PostgreSQL")
 	}
 
-	t.Logf("Type filter returned %d PostgreSQL connections", len(result.Items))
+	t.Logf("Product-scoped list returned %d PostgreSQL connections", len(result.Items))
+}
+
+// TestListConnections_CombinedFilters_Success verifies that connections created under
+// a single product with different types and hosts can be distinguished client-side.
+func TestListConnections_CombinedFilters_Success(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), e2eshared.DefaultTestTimeout)
+	defer cancel()
+
+	pgHost, pgPort, err := postgresInfra.HostPort()
+	require.NoError(t, err, "get postgres host/port")
+
+	// Use a unique host to distinguish connections within the product
+	uniqueHost := fmt.Sprintf("combined-filter-%s.local", uuid.New().String()[:8])
+
+	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+
+	// Create 2 PostgreSQL connections with the unique host
+	pgConnIDs := make([]string, 0, 2)
+	for i := 0; i < 2; i++ {
+		connInput := e2eshared.ConnectionInput{
+			ProductID:    product.ID,
+			ConfigName:   fmt.Sprintf("e2e-combined-pg-%s-%d", uuid.New().String()[:8], i),
+			Type:         e2eshared.DBTypePostgreSQL,
+			Host:         uniqueHost,
+			Port:         pgPort,
+			DatabaseName: "testdb",
+			Username:     "testuser",
+			Password:     "testpass",
+		}
+
+		conn, createErr := apiClient.CreateConnection(ctx, connInput)
+		require.NoError(t, createErr, "create PG connection %d", i)
+		pgConnIDs = append(pgConnIDs, conn.ID)
+	}
+
+	// Create 1 MongoDB connection with the same unique host (different type)
+	mongoConn, err := apiClient.CreateConnection(ctx, e2eshared.ConnectionInput{
+		ProductID:    product.ID,
+		ConfigName:   fmt.Sprintf("e2e-combined-mongo-%s", uuid.New().String()[:8]),
+		Type:         e2eshared.DBTypeMongoDB,
+		Host:         uniqueHost,
+		Port:         27017,
+		DatabaseName: "testdb",
+		Username:     "testuser",
+		Password:     "testpass",
+	})
+	require.NoError(t, err, "create MongoDB connection")
+
+	// Create 1 PostgreSQL connection with a different host (same type)
+	otherHostConn, err := apiClient.CreateConnection(ctx, e2eshared.ConnectionInput{
+		ProductID:    product.ID,
+		ConfigName:   fmt.Sprintf("e2e-combined-other-%s", uuid.New().String()[:8]),
+		Type:         e2eshared.DBTypePostgreSQL,
+		Host:         pgHost,
+		Port:         pgPort,
+		DatabaseName: "testdb",
+		Username:     "testuser",
+		Password:     "testpass",
+	})
+	require.NoError(t, err, "create other-host connection")
+
+	t.Cleanup(func() {
+		for _, id := range pgConnIDs {
+			_ = apiClient.DeleteConnection(context.Background(), id)
+		}
+		_ = apiClient.DeleteConnection(context.Background(), mongoConn.ID)
+		_ = apiClient.DeleteConnection(context.Background(), otherHostConn.ID)
+	})
+
+	// List all connections for this product
+	allResult, err := apiClient.ListConnectionsWithProduct(ctx, product.ID, e2eshared.ListConnectionsParams{})
+	require.NoError(t, err, "list all connections for product")
+
+	assert.Equal(t, 4, len(allResult.Items),
+		"product should have 4 total connections")
+
+	// Client-side filter: count PostgreSQL connections with uniqueHost
+	pgUniqueHostCount := 0
+	for _, item := range allResult.Items {
+		if item.Type == e2eshared.DBTypePostgreSQL && item.Host == uniqueHost {
+			pgUniqueHostCount++
+		}
+	}
+	assert.Equal(t, 2, pgUniqueHostCount,
+		"should have exactly 2 PostgreSQL connections with unique host")
+
+	// Verify MongoDB connection is also present
+	mongoCount := 0
+	for _, item := range allResult.Items {
+		if item.Type == e2eshared.DBTypeMongoDB {
+			mongoCount++
+		}
+	}
+	assert.Equal(t, 1, mongoCount, "should have exactly 1 MongoDB connection")
+
+	t.Logf("Product has %d total connections: %d PG/uniqueHost, %d MongoDB",
+		len(allResult.Items), pgUniqueHostCount, mongoCount)
 }
 
 // TestListConnections_Pagination_Success verifies that pagination works correctly
 // for listing connections.
-// This test uses a unique host filter to isolate its connections from other parallel tests,
-// preventing race conditions that could cause flaky pagination results.
+// This test uses product-based isolation to ensure deterministic pagination results
+// independent of other parallel tests.
 func TestListConnections_Pagination_Success(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithTimeout(context.Background(), e2eshared.DefaultTestTimeout)
 	defer cancel()
 
-	// Use a unique host to isolate this test from other parallel tests.
-	// This prevents race conditions where other tests create/delete connections
-	// between fetching page 1 and page 2.
-	uniqueHost := fmt.Sprintf("pagination-test-%s.local", uuid.New().String()[:8])
+	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
 
-	// Create multiple connections with unique host
+	// Create 5 connections under this product
 	prefix := fmt.Sprintf("e2e-page-%s", uuid.New().String()[:8])
 	createdIDs := make([]string, 0, 5)
 
 	for i := 0; i < 5; i++ {
 		connInput := e2eshared.ConnectionInput{
+			ProductID:    product.ID,
 			ConfigName:   fmt.Sprintf("%s-%d", prefix, i),
 			Type:         e2eshared.DBTypePostgreSQL,
-			Host:         uniqueHost,
+			Host:         "pagination-test.local",
 			Port:         5432,
 			DatabaseName: "testdb",
 			Username:     "testuser",
@@ -184,27 +281,21 @@ func TestListConnections_Pagination_Success(t *testing.T) {
 		}
 	})
 
-	// Get first page with limit 2, filtered by unique host
-	page1Params := e2eshared.ListConnectionsParams{
+	// Get first page with limit 2, scoped by product
+	page1, err := apiClient.ListConnectionsWithProduct(ctx, product.ID, e2eshared.ListConnectionsParams{
 		Page:  1,
 		Limit: 2,
-		Host:  uniqueHost,
-	}
-
-	page1, err := apiClient.ListConnections(ctx, page1Params)
+	})
 	require.NoError(t, err, "list page 1 should succeed")
 
 	assert.NotNil(t, page1, "page 1 result should not be nil")
 	assert.Equal(t, 2, len(page1.Items), "page 1 should have exactly 2 items")
 
 	// Get second page
-	page2Params := e2eshared.ListConnectionsParams{
+	page2, err := apiClient.ListConnectionsWithProduct(ctx, product.ID, e2eshared.ListConnectionsParams{
 		Page:  2,
 		Limit: 2,
-		Host:  uniqueHost,
-	}
-
-	page2, err := apiClient.ListConnections(ctx, page2Params)
+	})
 	require.NoError(t, err, "list page 2 should succeed")
 
 	assert.NotNil(t, page2, "page 2 result should not be nil")
@@ -221,13 +312,10 @@ func TestListConnections_Pagination_Success(t *testing.T) {
 	}
 
 	// Get third page (should have 1 item)
-	page3Params := e2eshared.ListConnectionsParams{
+	page3, err := apiClient.ListConnectionsWithProduct(ctx, product.ID, e2eshared.ListConnectionsParams{
 		Page:  3,
 		Limit: 2,
-		Host:  uniqueHost,
-	}
-
-	page3, err := apiClient.ListConnections(ctx, page3Params)
+	})
 	require.NoError(t, err, "list page 3 should succeed")
 	assert.Equal(t, 1, len(page3.Items), "page 3 should have exactly 1 item")
 

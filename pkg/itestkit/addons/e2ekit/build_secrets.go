@@ -69,6 +69,7 @@ func buildImageWithSecrets(ctx context.Context, cfg BuildConfig) (string, error)
 
 	// Process secrets and create cleanup function
 	var tempFiles []string
+
 	defer func() {
 		for _, f := range tempFiles {
 			_ = os.Remove(f)
@@ -76,44 +77,13 @@ func buildImageWithSecrets(ctx context.Context, cfg BuildConfig) (string, error)
 	}()
 
 	for _, secret := range cfg.Secrets {
-		if secret.ID == "" {
-			return "", fmt.Errorf("e2ekit: BuildSecret.ID is required")
+		srcPath, tmpPath, err := resolveSecretSource(secret)
+		if err != nil {
+			return "", err
 		}
 
-		var srcPath string
-
-		switch {
-		case secret.Src != "" && secret.Env != "":
-			return "", fmt.Errorf("e2ekit: BuildSecret %q has both Src and Env set; use only one", secret.ID)
-
-		case secret.Src != "":
-			// Use file path directly
-			srcPath = secret.Src
-
-		case secret.Env != "":
-			// Read from environment and create temp file
-			value := os.Getenv(secret.Env)
-			if value == "" {
-				return "", fmt.Errorf("e2ekit: environment variable %q for secret %q is empty or not set", secret.Env, secret.ID)
-			}
-
-			tmpFile, err := os.CreateTemp("", fmt.Sprintf("e2ekit-secret-%s-*", secret.ID))
-			if err != nil {
-				return "", fmt.Errorf("e2ekit: failed to create temp file for secret %q: %w", secret.ID, err)
-			}
-
-			if _, err := tmpFile.WriteString(value); err != nil {
-				tmpFile.Close()
-				os.Remove(tmpFile.Name())
-				return "", fmt.Errorf("e2ekit: failed to write secret %q to temp file: %w", secret.ID, err)
-			}
-			tmpFile.Close()
-
-			srcPath = tmpFile.Name()
-			tempFiles = append(tempFiles, srcPath)
-
-		default:
-			return "", fmt.Errorf("e2ekit: BuildSecret %q has neither Src nor Env set", secret.ID)
+		if tmpPath != "" {
+			tempFiles = append(tempFiles, tmpPath)
 		}
 
 		args = append(args, "--secret", fmt.Sprintf("id=%s,src=%s", secret.ID, srcPath))
@@ -124,6 +94,7 @@ func buildImageWithSecrets(ctx context.Context, cfg BuildConfig) (string, error)
 
 	// Execute docker build with BuildKit enabled
 	cmd := exec.CommandContext(ctx, "docker", args...)
+
 	cmd.Env = append(os.Environ(), "DOCKER_BUILDKIT=1")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -135,10 +106,66 @@ func buildImageWithSecrets(ctx context.Context, cfg BuildConfig) (string, error)
 	return tag, nil
 }
 
+// resolveSecretSource determines the file path for a build secret.
+// It returns the source path for docker --secret, any temp file path that needs cleanup, and an error.
+func resolveSecretSource(secret BuildSecret) (srcPath, tmpPath string, err error) {
+	if secret.ID == "" {
+		return "", "", fmt.Errorf("e2ekit: BuildSecret.ID is required")
+	}
+
+	switch {
+	case secret.Src != "" && secret.Env != "":
+		return "", "", fmt.Errorf("e2ekit: BuildSecret %q has both Src and Env set; use only one", secret.ID)
+
+	case secret.Src != "":
+		return secret.Src, "", nil
+
+	case secret.Env != "":
+		path, err := createSecretTempFile(secret)
+		if err != nil {
+			return "", "", err
+		}
+
+		return path, path, nil
+
+	default:
+		return "", "", fmt.Errorf("e2ekit: BuildSecret %q has neither Src nor Env set", secret.ID)
+	}
+}
+
+// createSecretTempFile creates a temporary file containing the secret value from an environment variable.
+func createSecretTempFile(secret BuildSecret) (string, error) {
+	value := os.Getenv(secret.Env)
+	if value == "" {
+		return "", fmt.Errorf("e2ekit: environment variable %q for secret %q is empty or not set", secret.Env, secret.ID)
+	}
+
+	tmpFile, err := os.CreateTemp("", fmt.Sprintf("e2ekit-secret-%s-*", secret.ID))
+	if err != nil {
+		return "", fmt.Errorf("e2ekit: failed to create temp file for secret %q: %w", secret.ID, err)
+	}
+
+	if _, err := tmpFile.WriteString(value); err != nil {
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpFile.Name())
+
+		return "", fmt.Errorf("e2ekit: failed to write secret %q to temp file: %w", secret.ID, err)
+	}
+
+	if err := tmpFile.Close(); err != nil {
+		_ = os.Remove(tmpFile.Name())
+
+		return "", fmt.Errorf("e2ekit: failed to close temp file for secret %q: %w", secret.ID, err)
+	}
+
+	return tmpFile.Name(), nil
+}
+
 // generateImageTag creates a unique image tag for builds.
 func generateImageTag() string {
 	b := make([]byte, 8)
 	_, _ = rand.Read(b)
+
 	return fmt.Sprintf("e2ekit-build-%s", hex.EncodeToString(b))
 }
 

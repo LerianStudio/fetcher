@@ -41,17 +41,21 @@ func NewRedisInfra(cfg RedisConfig) *RedisInfra {
 	if cfg.Image == "" {
 		cfg.Image = "redis:7-alpine"
 	}
+
 	if cfg.Name == "" {
 		cfg.Name = "default"
 	}
+
 	if cfg.ProxyName == "" {
 		cfg.ProxyName = "redis-" + cfg.Name
 	}
+
 	return &RedisInfra{cfg: cfg}
 }
 
 func (r *RedisInfra) Start(ctx context.Context, env *itestkit.Env) error {
 	opts := defaultRedisOptions()
+
 	for _, opt := range r.cfg.Options {
 		if opt != nil {
 			opt(opts)
@@ -80,12 +84,14 @@ func (r *RedisInfra) Start(ctx context.Context, env *itestkit.Env) error {
 	if err != nil {
 		return err
 	}
+
 	r.container = c
 
 	host, err := c.Host(ctx)
 	if err != nil {
 		return err
 	}
+
 	port, err := c.MappedPort(ctx, "6379/tcp")
 	if err != nil {
 		return err
@@ -104,10 +110,12 @@ func (r *RedisInfra) Start(ctx context.Context, env *itestkit.Env) error {
 			// Fallback to host.docker.internal for backward compatibility
 			proxyUpstream = fmt.Sprintf("host.docker.internal:%s", port.Port())
 		}
+
 		ref, err := env.Chaos.CreateProxy(ctx, r.cfg.ProxyName, proxyUpstream)
 		if err != nil {
 			return err
 		}
+
 		finalAddr = ref.ListenAddr
 		proxyListen = ref.ListenAddr
 	}
@@ -123,6 +131,7 @@ func (r *RedisInfra) Start(ctx context.Context, env *itestkit.Env) error {
 		URL:         url,
 	}
 	r.endpoint = &endpoint
+
 	return nil
 }
 
@@ -130,6 +139,7 @@ func (r *RedisInfra) Endpoint() (RedisEndpoint, error) {
 	if r.endpoint == nil {
 		return RedisEndpoint{}, fmt.Errorf("redis endpoint not ready")
 	}
+
 	return *r.endpoint, nil
 }
 
@@ -138,6 +148,7 @@ func (r *RedisInfra) URL() (string, error) {
 	if err != nil {
 		return "", err
 	}
+
 	return endpoint.URL, nil
 }
 
@@ -146,9 +157,11 @@ func (r *RedisInfra) Addr() (string, error) {
 	if err != nil {
 		return "", err
 	}
+
 	if endpoint.ProxyListen != "" {
 		return endpoint.ProxyListen, nil
 	}
+
 	return endpoint.Upstream, nil
 }
 
@@ -168,7 +181,9 @@ func (r *RedisInfra) HostPort() (host string, port int, err error) {
 		if err != nil {
 			return "", 0, fmt.Errorf("invalid proxy address: %s: %w", endpoint.ProxyListen, err)
 		}
+
 		portNum, _ := strconv.Atoi(portStr)
+
 		return hostStr, portNum, nil
 	}
 
@@ -195,6 +210,7 @@ func (r *RedisInfra) Terminate(ctx context.Context) error {
 	if r.container != nil {
 		return r.container.Terminate(ctx)
 	}
+
 	return nil
 }
 

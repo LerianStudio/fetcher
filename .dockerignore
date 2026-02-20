@@ -1,0 +1,44 @@
+# Version control
+.git
+.gitignore
+.githooks
+
+# Environment files
+.env
+.env.*
+.secrets
+
+# Documentation
+docs/
+*.md
+
+# CI/CD
+.github/
+
+# IDE and editor files
+.idea/
+.vscode/
+.windsurf/
+.claude/
+.agent/
+
+# Test files
+tests/
+
+# Build artifacts
+*.out
+*.test
+coverage.txt
+reports/
+
+# OS files
+.DS_Store
+
+# Worktrees
+.worktrees/
+
+# Scripts
+scripts/
+
+# MCP config
+.mcp.json
