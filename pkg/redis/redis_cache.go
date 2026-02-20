@@ -222,7 +222,7 @@ func (c *RedisCache[T]) Clear(ctx context.Context) error {
 
 // IsHealthy checks if Redis is operational.
 func (c *RedisCache[T]) IsHealthy(ctx context.Context) bool {
-	if c == nil || c.client == nil {
+	if c == nil || c.client == nil || c.initErr != nil {
 		return false
 	}
 
