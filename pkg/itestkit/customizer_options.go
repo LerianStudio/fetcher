@@ -20,6 +20,7 @@ func CEnvs(env map[string]string) Customizer {
 	for k, v := range env {
 		cp[k] = v
 	}
+
 	return testcontainers.WithEnv(cp)
 }
 
@@ -27,7 +28,7 @@ func CCmd(cmd ...string) Customizer { return testcontainers.WithCmd(cmd...) }
 
 func CExposedPorts(ports ...string) Customizer {
 	return CustomizerFunc(func(r *testcontainers.GenericContainerRequest) error {
-		r.ContainerRequest.ExposedPorts = uniqueAppendMany(r.ContainerRequest.ExposedPorts, ports...)
+		r.ExposedPorts = uniqueAppendMany(r.ExposedPorts, ports...)
 		return nil
 	})
 }
@@ -59,10 +60,11 @@ func CInitScriptDirEntryPoint(hostPath, containerInitDir string, mode int64) Cus
 
 func CHostDockerInternal() Customizer {
 	return CustomizerFunc(func(r *testcontainers.GenericContainerRequest) error {
-		r.ContainerRequest.ExtraHosts = uniqueAppendMany(
-			r.ContainerRequest.ExtraHosts,
+		r.ExtraHosts = uniqueAppendMany(
+			r.ExtraHosts,
 			"host.docker.internal:host-gateway",
 		)
+
 		return nil
 	})
 }
@@ -74,6 +76,7 @@ func CAll(customizers ...Customizer) []Customizer {
 			out = append(out, c)
 		}
 	}
+
 	return out
 }
 
@@ -82,6 +85,7 @@ func CEnvFromOS(key string) Customizer {
 	if !ok {
 		return CustomizerFunc(func(*testcontainers.GenericContainerRequest) error { return nil })
 	}
+
 	return CEnv(key, val)
 }
 
@@ -93,7 +97,7 @@ func CName(name string) Customizer { return testcontainers.WithName(name) }
 
 func CNetworks(networks ...string) Customizer {
 	return CustomizerFunc(func(r *testcontainers.GenericContainerRequest) error {
-		r.ContainerRequest.Networks = uniqueAppendMany(r.ContainerRequest.Networks, networks...)
+		r.Networks = uniqueAppendMany(r.Networks, networks...)
 		return nil
 	})
 }
@@ -103,11 +107,14 @@ func CNetworkAliases(network string, aliases ...string) Customizer {
 		if network == "" || len(aliases) == 0 {
 			return nil
 		}
-		if r.ContainerRequest.NetworkAliases == nil {
-			r.ContainerRequest.NetworkAliases = map[string][]string{}
+
+		if r.NetworkAliases == nil {
+			r.NetworkAliases = map[string][]string{}
 		}
-		existing := r.ContainerRequest.NetworkAliases[network]
-		r.ContainerRequest.NetworkAliases[network] = uniqueAppendMany(existing, aliases...)
+
+		existing := r.NetworkAliases[network]
+		r.NetworkAliases[network] = uniqueAppendMany(existing, aliases...)
+
 		return nil
 	})
 }
@@ -115,7 +122,8 @@ func CNetworkAliases(network string, aliases ...string) Customizer {
 func CBindMount(hostPath, containerPath, mode string) Customizer {
 	return CustomizerFunc(func(r *testcontainers.GenericContainerRequest) error {
 		bind := fmt.Sprintf("%s:%s:%s", hostPath, containerPath, mode)
-		r.ContainerRequest.Binds = uniqueAppendMany(r.ContainerRequest.Binds, bind)
+		r.Binds = uniqueAppendMany(r.Binds, bind)
+
 		return nil
 	})
 }
@@ -125,15 +133,19 @@ func uniqueAppendMany(list []string, vals ...string) []string {
 	for _, v := range list {
 		exists[v] = struct{}{}
 	}
+
 	for _, v := range vals {
 		if v == "" {
 			continue
 		}
+
 		if _, ok := exists[v]; ok {
 			continue
 		}
+
 		exists[v] = struct{}{}
 		list = append(list, v)
 	}
+
 	return list
 }

@@ -57,6 +57,7 @@ func NewAMQPConsumer(config AMQPConfig) (*AMQPConsumer, error) {
 	if config.URL == "" {
 		return nil, fmt.Errorf("AMQP URL is required")
 	}
+
 	if config.Queue == "" {
 		return nil, fmt.Errorf("queue name is required")
 	}
@@ -98,6 +99,7 @@ func (c *AMQPConsumer) connect() error {
 	if err := ch.Qos(c.config.PrefetchCount, 0, false); err != nil {
 		_ = ch.Close()
 		_ = conn.Close()
+
 		return fmt.Errorf("failed to set QoS: %w", err)
 	}
 
@@ -114,6 +116,7 @@ func (c *AMQPConsumer) connect() error {
 		if err != nil {
 			_ = ch.Close()
 			_ = conn.Close()
+
 			return fmt.Errorf("failed to declare queue: %w", err)
 		}
 	}
@@ -130,12 +133,14 @@ func (c *AMQPConsumer) connect() error {
 		if err != nil {
 			_ = ch.Close()
 			_ = conn.Close()
+
 			return fmt.Errorf("failed to bind queue: %w", err)
 		}
 	}
 
 	c.conn = conn
 	c.channel = ch
+
 	return nil
 }
 
@@ -198,22 +203,27 @@ func (c *AMQPConsumer) Close() error {
 	c.closed = true
 
 	var errs []error
+
 	if c.channel != nil {
 		if err := c.channel.Close(); err != nil {
 			errs = append(errs, err)
 		}
+
 		c.channel = nil
 	}
+
 	if c.conn != nil {
 		if err := c.conn.Close(); err != nil {
 			errs = append(errs, err)
 		}
+
 		c.conn = nil
 	}
 
 	if len(errs) > 0 {
 		return errs[0]
 	}
+
 	return nil
 }
 
@@ -282,6 +292,7 @@ func (p *AMQPPublisher) connect() error {
 
 	p.conn = conn
 	p.channel = ch
+
 	return nil
 }
 
@@ -335,22 +346,27 @@ func (p *AMQPPublisher) Close() error {
 	p.closed = true
 
 	var errs []error
+
 	if p.channel != nil {
 		if err := p.channel.Close(); err != nil {
 			errs = append(errs, err)
 		}
+
 		p.channel = nil
 	}
+
 	if p.conn != nil {
 		if err := p.conn.Close(); err != nil {
 			errs = append(errs, err)
 		}
+
 		p.conn = nil
 	}
 
 	if len(errs) > 0 {
 		return errs[0]
 	}
+
 	return nil
 }
 
@@ -384,6 +400,7 @@ func (b *AMQPConsumerBuilder) FromQueue(queue string) *AMQPConsumerBuilder {
 func (b *AMQPConsumerBuilder) BindTo(exchange, bindingKey string) *AMQPConsumerBuilder {
 	b.config.Exchange = exchange
 	b.config.BindingKey = bindingKey
+
 	return b
 }
 
@@ -404,6 +421,7 @@ func (b *AMQPConsumerBuilder) WithPrefetch(count int) *AMQPConsumerBuilder {
 	if count > 0 {
 		b.config.PrefetchCount = count
 	}
+
 	return b
 }
 
@@ -412,6 +430,7 @@ func (b *AMQPConsumerBuilder) WithQueueDeclare(durable, autoDelete bool) *AMQPCo
 	b.config.DeclareQueue = true
 	b.config.QueueDurable = durable
 	b.config.QueueAutoDelete = autoDelete
+
 	return b
 }
 

@@ -47,6 +47,7 @@ func (w WaitListeningPort) Apply(req *testcontainers.ContainerRequest) {
 	if w.Timeout == 0 {
 		w.Timeout = 30 * time.Second
 	}
+
 	req.WaitingFor = wait.ForListeningPort(nat.Port(w.Port)).WithStartupTimeout(w.Timeout)
 }
 
@@ -54,7 +55,9 @@ func (b *Builder) WithContainerCustomize(spec ContainerSpec) *Builder {
 	if spec.Name == "" {
 		spec.Name = "default"
 	}
+
 	b.infra = append(b.infra, NewGenericContainerInfra(spec))
+
 	return b
 }
 
@@ -94,6 +97,7 @@ func (g *genericContainerInfra) Start(ctx context.Context, env *Env) error {
 		if c == nil {
 			continue
 		}
+
 		if err := c.Customize(&gr); err != nil {
 			return fmt.Errorf("customizer failed for container %q: %w", g.spec.Name, err)
 		}
@@ -103,6 +107,7 @@ func (g *genericContainerInfra) Start(ctx context.Context, env *Env) error {
 	if err != nil {
 		return err
 	}
+
 	g.c = cn
 
 	host, err := cn.Host(ctx)
@@ -123,6 +128,7 @@ func (g *genericContainerInfra) Start(ctx context.Context, env *Env) error {
 		if err != nil {
 			return err
 		}
+
 		ep.Ports[p] = mp.Port()
 		ep.Upstreams[p] = fmt.Sprintf("%s:%s", host, mp.Port())
 	}
@@ -132,6 +138,7 @@ func (g *genericContainerInfra) Start(ctx context.Context, env *Env) error {
 		if prefix == "" {
 			prefix = "container"
 		}
+
 		for _, p := range g.spec.ExposedPorts {
 			proxyName := fmt.Sprintf("%s-%s-%s", prefix, g.spec.Name, portKey(p))
 			upstream := ep.Upstreams[p]
@@ -140,11 +147,13 @@ func (g *genericContainerInfra) Start(ctx context.Context, env *Env) error {
 			if err != nil {
 				return err
 			}
+
 			ep.Proxies[p] = ref
 		}
 	}
 
 	env.Containers[g.spec.Name] = ep
+
 	return nil
 }
 
@@ -152,6 +161,7 @@ func (g *genericContainerInfra) Terminate(ctx context.Context) error {
 	if g.c != nil {
 		return g.c.Terminate(ctx)
 	}
+
 	return nil
 }
 
@@ -161,5 +171,6 @@ func portKey(p string) string {
 			return p[:i]
 		}
 	}
+
 	return p
 }

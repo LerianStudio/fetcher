@@ -43,6 +43,7 @@ func WithRabbitFixedPort(hostPort string) RabbitOption {
 				if hc.PortBindings == nil {
 					hc.PortBindings = nat.PortMap{}
 				}
+
 				hc.PortBindings[nat.Port("5672/tcp")] = []nat.PortBinding{
 					{HostIP: "0.0.0.0", HostPort: hostPort},
 				}
@@ -85,7 +86,9 @@ func (r *configReader) Read(p []byte) (n int, err error) {
 	if r.offset >= len(r.content) {
 		return 0, io.EOF
 	}
+
 	n = copy(p, r.content[r.offset:])
 	r.offset += n
+
 	return n, nil
 }

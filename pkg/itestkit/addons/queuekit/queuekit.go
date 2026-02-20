@@ -132,6 +132,7 @@ func applyPublishOptions(opts []PublishOption) PublishOptions {
 	for _, opt := range opts {
 		opt(&po)
 	}
+
 	return po
 }
 
@@ -159,6 +160,7 @@ func (r WaitResult[T]) First() (ParsedMessage[T], bool) {
 		var zero ParsedMessage[T]
 		return zero, false
 	}
+
 	return r.Messages[0], true
 }
 

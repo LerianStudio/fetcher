@@ -39,6 +39,7 @@ func WithPGInitFile(hostPath string, containerFileName string) PostgresOption {
 		if containerFileName == "" {
 			containerFileName = "init.sql"
 		}
+
 		o.runOpts = append(o.runOpts,
 			testcontainers.WithFiles(
 				testcontainers.ContainerFile{
@@ -61,6 +62,7 @@ func WithPGFixedPort(hostPort string) PostgresOption {
 				if hc.PortBindings == nil {
 					hc.PortBindings = nat.PortMap{}
 				}
+
 				hc.PortBindings["5432/tcp"] = []nat.PortBinding{
 					{HostIP: "0.0.0.0", HostPort: hostPort},
 				}

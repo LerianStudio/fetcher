@@ -41,6 +41,7 @@ func WithRedisFixedPort(hostPort string) RedisOption {
 				if hc.PortBindings == nil {
 					hc.PortBindings = nat.PortMap{}
 				}
+
 				hc.PortBindings[nat.Port("6379/tcp")] = []nat.PortBinding{
 					{HostIP: "0.0.0.0", HostPort: hostPort},
 				}
