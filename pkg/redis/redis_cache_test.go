@@ -282,23 +282,39 @@ func TestRedisCache_Set_UsesDefaultTTL(t *testing.T) {
 	assert.LessOrEqual(t, ttl, 10*time.Minute)
 }
 
-func TestRedisCache_NewRedisCache_NilConnection_Panics(t *testing.T) {
-	t.Run("nil connection panics", func(t *testing.T) {
-		assert.Panics(t, func() {
-			NewRedisCache[testStruct](nil, time.Minute, "test:")
-		})
+func TestRedisCache_NewRedisCache_NilConnection_ReturnsUnhealthyCache(t *testing.T) {
+	t.Run("nil connection returns non-panicking cache", func(t *testing.T) {
+		cache := NewRedisCache[testStruct](nil, time.Minute, "test:")
+		require.NotNil(t, cache)
+		assert.False(t, cache.IsHealthy(context.Background()))
+
+		_, found, err := cache.Get(context.Background(), "key")
+		assert.False(t, found)
+		assert.Error(t, err)
+		assert.ErrorIs(t, err, ErrRedisCacheNotInitialized)
 	})
 
-	t.Run("connection with nil client panics", func(t *testing.T) {
+	t.Run("connection with nil client returns non-panicking cache", func(t *testing.T) {
 		conn := &RedisConnection{
 			Client:    nil,
 			Logger:    &testutil.MockLogger{},
 			Connected: false,
 		}
-		assert.Panics(t, func() {
-			NewRedisCache[testStruct](conn, time.Minute, "test:")
-		})
+		cache := NewRedisCache[testStruct](conn, time.Minute, "test:")
+		require.NotNil(t, cache)
+		assert.False(t, cache.IsHealthy(context.Background()))
+
+		err := cache.Set(context.Background(), "key", testStruct{ID: "1"}, 0)
+		assert.Error(t, err)
+		assert.ErrorIs(t, err, ErrRedisCacheNotInitialized)
 	})
+}
+
+func TestRedisCache_NewRedisCacheSafe_ReturnsErrorOnInvalidConnection(t *testing.T) {
+	cache, err := NewRedisCacheSafe[testStruct](nil, time.Minute, "test:")
+	assert.Nil(t, cache)
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, ErrRedisCacheNotInitialized)
 }
 
 func TestRedisCache_Close(t *testing.T) {
