@@ -849,11 +849,51 @@ func TestParseParameters_RejectsUnsafeKeys(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name:    "key with exactly 64 chars is accepted",
+			params:  map[string]string{strings.Repeat("a", 64): "value"},
+			wantErr: false,
+			checkFn: func(t *testing.T, metadata map[string]string) {
+				assert.Empty(t, metadata, "non-metadata-prefixed keys should be ignored regardless of length")
+			},
+		},
+		{
+			name:    "value with exactly 256 chars is accepted",
+			params:  map[string]string{"status": strings.Repeat("x", 256)},
+			wantErr: false,
+			checkFn: func(t *testing.T, metadata map[string]string) {
+				assert.Empty(t, metadata, "non-metadata-prefixed keys should be ignored")
+			},
+		},
+		{
+			name:    "key containing $ mid-string is accepted",
+			params:  map[string]string{"foo$bar": "value"},
+			wantErr: false,
+			checkFn: func(t *testing.T, metadata map[string]string) {
+				assert.Empty(t, metadata, "non-metadata-prefixed keys should be ignored")
+			},
+		},
+		{
 			name:    "valid unknown key is silently ignored",
 			params:  map[string]string{"status": "active"},
 			wantErr: false,
 			checkFn: func(t *testing.T, metadata map[string]string) {
 				assert.Empty(t, metadata, "unknown keys without metadata. prefix should be ignored")
+			},
+		},
+		{
+			name:    "metadata-prefixed key at 64 chars is captured",
+			params:  map[string]string{"metadata." + strings.Repeat("a", 55): "value"}, // "metadata." (9) + 55 = 64 total
+			wantErr: false,
+			checkFn: func(t *testing.T, metadata map[string]string) {
+				assert.Len(t, metadata, 1, "metadata-prefixed key should be captured regardless of length")
+			},
+		},
+		{
+			name:    "metadata-prefixed value at 256 chars is captured",
+			params:  map[string]string{"metadata.longval": strings.Repeat("v", 256)},
+			wantErr: false,
+			checkFn: func(t *testing.T, metadata map[string]string) {
+				assert.Len(t, metadata, 1, "metadata-prefixed keys bypass the value length check")
 			},
 		},
 	}
