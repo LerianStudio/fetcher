@@ -6,9 +6,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/rabbitmq"
 	"github.com/LerianStudio/lib-commons/v2/commons/log"
 	"github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
+	libRabbitmq "github.com/LerianStudio/lib-commons/v2/commons/rabbitmq"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/mock/gomock"
 )
@@ -90,6 +92,77 @@ func TestNewConsumerRoutes(t *testing.T) {
 		cr := NewConsumerRoutesWithAdapter(mockAdapter, 10, logger, telemetry)
 		assert.Equal(t, 10, cr.numWorkers)
 	})
+
+	t.Run("nil telemetry does not panic", func(t *testing.T) {
+		cr := NewConsumerRoutesWithAdapter(mockAdapter, 1, logger, nil)
+		assert.NotNil(t, cr)
+	})
+
+	t.Run("non-dev env with nil signer returns error", func(t *testing.T) {
+		conn := &libRabbitmq.RabbitMQConnection{
+			ConnectionStringSource: "invalid-uri",
+			Logger:                 logger,
+		}
+
+		cr, err := NewConsumerRoutes(conn, 1, logger, telemetry, nil, "production")
+		assert.Error(t, err)
+		assert.Nil(t, cr)
+	})
+
+	t.Run("dev env with nil signer is allowed", func(t *testing.T) {
+		conn := &libRabbitmq.RabbitMQConnection{
+			ConnectionStringSource: "invalid-uri",
+			Logger:                 logger,
+		}
+
+		cr, err := NewConsumerRoutes(conn, 1, logger, telemetry, nil, "dev")
+		assert.NoError(t, err)
+		assert.NotNil(t, cr)
+	})
+
+	t.Run("non-dev env with signer succeeds", func(t *testing.T) {
+		conn := &libRabbitmq.RabbitMQConnection{
+			ConnectionStringSource: "invalid-uri",
+			Logger:                 logger,
+		}
+
+		signer := crypto.NewMockSigner(ctrl)
+
+		cr, err := NewConsumerRoutes(conn, 1, logger, telemetry, signer, "production")
+		assert.NoError(t, err)
+		assert.NotNil(t, cr)
+	})
+
+	t.Run("empty env name defaults to strict (fail-closed)", func(t *testing.T) {
+		conn := &libRabbitmq.RabbitMQConnection{
+			ConnectionStringSource: "invalid-uri",
+			Logger:                 logger,
+		}
+
+		cr, err := NewConsumerRoutes(conn, 1, logger, telemetry, nil, "")
+		assert.Error(t, err)
+		assert.Nil(t, cr)
+	})
+}
+
+func TestIsNonDevelopmentEnvironment(t *testing.T) {
+	tests := []struct {
+		name     string
+		envName  string
+		expected bool
+	}{
+		{name: "production", envName: "production", expected: true},
+		{name: "empty defaults to strict", envName: "", expected: true},
+		{name: "dev", envName: "dev", expected: false},
+		{name: "local", envName: "local", expected: false},
+		{name: "test", envName: "test", expected: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, isNonDevelopmentEnvironment(tt.envName))
+		})
+	}
 }
 
 func TestConsumerRoutes_Register(t *testing.T) {

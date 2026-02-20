@@ -38,10 +38,15 @@ func NewPublisherRoutes(conn *libRabbitmq.RabbitMQConnection, logger log.Logger,
 
 // NewPublisherRoutesWithAdapter creates a new instance of PublisherRoutes using a specific RabbitMQ adapter.
 func NewPublisherRoutesWithAdapter(adapter rabbitmq.Adapter, logger log.Logger, telemetry *opentelemetry.Telemetry) *PublisherRoutes {
+	telemetryValue := opentelemetry.Telemetry{}
+	if telemetry != nil {
+		telemetryValue = *telemetry
+	}
+
 	pr := &PublisherRoutes{
 		adapter:   adapter,
 		Logger:    logger,
-		Telemetry: *telemetry,
+		Telemetry: telemetryValue,
 	}
 
 	return pr
