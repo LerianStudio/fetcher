@@ -2,6 +2,8 @@ package http
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -986,6 +988,46 @@ func TestValidateMetadataKeyMaxLengthDefaultLimit(t *testing.T) {
 		input := &KeyDefaultLimitTest{Key: "shortkey"}
 		err := ValidateStruct(input)
 		assert.NoError(t, err)
+	})
+}
+
+// TestErrValidatorInit_SentinelBehavior verifies the ErrValidatorInit sentinel error
+// wrapping works correctly so that FiberHandlerFunc can map it to HTTP 500.
+//
+// NOTE: We cannot trigger the actual validator-init-failure path through ValidateStruct
+// because getValidator() uses sync.Once — once it succeeds (which it does in every test
+// process), there is no way to make it fail again without refactoring the init pattern.
+// Instead we verify:
+//  1. The wrapping format used in ValidateStruct preserves errors.Is identity.
+//  2. An unrelated validation error does NOT match ErrValidatorInit.
+func TestErrValidatorInit_SentinelBehavior(t *testing.T) {
+	t.Run("wrapped ErrValidatorInit is detectable via errors.Is", func(t *testing.T) {
+		// This replicates the wrapping at with_body.go:228
+		inner := errors.New("failed to register default translations: something broke")
+		wrapped := fmt.Errorf("%w: %v", ErrValidatorInit, inner)
+
+		assert.True(t, errors.Is(wrapped, ErrValidatorInit),
+			"errors.Is must detect ErrValidatorInit through fmt.Errorf %%w wrapping")
+		assert.Contains(t, wrapped.Error(), "validator initialization failed")
+		assert.Contains(t, wrapped.Error(), "something broke")
+	})
+
+	t.Run("inner error is NOT unwrappable via errors.Is (uses %%v)", func(t *testing.T) {
+		inner := errors.New("specific init detail")
+		wrapped := fmt.Errorf("%w: %v", ErrValidatorInit, inner)
+
+		// The inner error was formatted with %v, so it should NOT be unwrappable
+		assert.False(t, errors.Is(wrapped, inner),
+			"inner error must not be unwrappable — %v intentionally prevents this")
+	})
+
+	t.Run("normal validation error is NOT ErrValidatorInit", func(t *testing.T) {
+		// Trigger a real validation error (missing required field)
+		input := &TestStruct{Email: "john@example.com", Age: 30} // Name is required
+		err := ValidateStruct(input)
+		assert.Error(t, err)
+		assert.False(t, errors.Is(err, ErrValidatorInit),
+			"regular validation errors must not match ErrValidatorInit")
 	})
 }
 
