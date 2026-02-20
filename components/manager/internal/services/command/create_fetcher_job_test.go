@@ -18,6 +18,7 @@ import (
 	productMock "github.com/LerianStudio/fetcher/pkg/mongodb/product"
 
 	"github.com/google/uuid"
+	"go.mongodb.org/mongo-driver/mongo"
 	"go.uber.org/mock/gomock"
 )
 
@@ -559,12 +560,6 @@ func TestCreateFetcherJob_Execute_DuplicateWithDifferentStatuses(t *testing.T) {
 			wantDup:    true,
 			wantStatus: string(model.JobStatusCompleted),
 		},
-		{
-			name:       "failed job is returned as duplicate",
-			status:     model.JobStatusFailed,
-			wantDup:    true,
-			wantStatus: string(model.JobStatusFailed),
-		},
 	}
 
 	for _, tt := range tests {
@@ -611,6 +606,239 @@ func TestCreateFetcherJob_Execute_DuplicateWithDifferentStatuses(t *testing.T) {
 				t.Fatalf("expected status %s, got %s", tt.wantStatus, result.Job.Status)
 			}
 		})
+	}
+}
+
+// TestCreateFetcherJob_Execute_FailedJobWithinWindow_AllowsRetry ensures failed jobs do not block valid retries.
+func TestCreateFetcherJob_Execute_FailedJobWithinWindow_AllowsRetry(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockJobRepo := jobRepo.NewMockRepository(ctrl)
+	mockConnTester := NewMockConnectionTester(ctrl)
+
+	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, nil, nil, nil, mockConnTester, "")
+
+	ctx := testContext()
+	orgID := uuid.New()
+	request := newValidFetcherRequest()
+	conn := &model.Connection{ID: uuid.New(), ConfigName: "datasource1", Type: model.TypePostgreSQL}
+
+	existingFailedJob := &model.Job{
+		ID:             uuid.New(),
+		OrganizationID: orgID,
+		Status:         model.JobStatusFailed,
+		CreatedAt:      time.Now().UTC().Add(-1 * time.Minute),
+	}
+
+	mockJobRepo.EXPECT().
+		FindByRequestHashWithinWindow(gomock.Any(), orgID, gomock.Any(), DeduplicationWindowMinutes).
+		Return(existingFailedJob, nil)
+
+	mockConnRepo.EXPECT().
+		FindByConfigNames(gomock.Any(), orgID, []string{"datasource1"}).
+		Return([]*model.Connection{conn}, nil)
+
+	mockConnTester.EXPECT().
+		TestConnection(gomock.Any(), conn).
+		Return(nil)
+
+	mockJobRepo.EXPECT().
+		Create(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, created *model.Job) (*model.Job, error) {
+			return created, nil
+		})
+
+	result, err := svc.Execute(ctx, orgID, request)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+
+	if result.IsDuplicate {
+		t.Fatal("expected IsDuplicate to be false for failed previous job")
+	}
+
+	if !result.IsNewCreated {
+		t.Fatal("expected IsNewCreated to be true")
+	}
+}
+
+// TestCreateFetcherJob_Execute_DuplicateKeyOnCreate_ReturnsExistingJob validates race-safe fallback on unique key conflict.
+func TestCreateFetcherJob_Execute_DuplicateKeyOnCreate_ReturnsExistingJob(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockJobRepo := jobRepo.NewMockRepository(ctrl)
+	mockConnTester := NewMockConnectionTester(ctrl)
+
+	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, nil, nil, nil, mockConnTester, "")
+
+	ctx := testContext()
+	orgID := uuid.New()
+	request := newValidFetcherRequest()
+	conn := &model.Connection{ID: uuid.New(), ConfigName: "datasource1", Type: model.TypePostgreSQL}
+
+	existingJob := &model.Job{
+		ID:             uuid.New(),
+		OrganizationID: orgID,
+		Status:         model.JobStatusPending,
+		CreatedAt:      time.Now().UTC(),
+	}
+
+	gomock.InOrder(
+		mockJobRepo.EXPECT().
+			FindByRequestHashWithinWindow(gomock.Any(), orgID, gomock.Any(), DeduplicationWindowMinutes).
+			Return(nil, nil),
+		mockConnRepo.EXPECT().
+			FindByConfigNames(gomock.Any(), orgID, []string{"datasource1"}).
+			Return([]*model.Connection{conn}, nil),
+		mockConnTester.EXPECT().
+			TestConnection(gomock.Any(), conn).
+			Return(nil),
+		mockJobRepo.EXPECT().
+			Create(gomock.Any(), gomock.Any()).
+			Return(nil, mongo.WriteException{WriteErrors: []mongo.WriteError{{Code: 11000, Message: "duplicate key"}}}),
+		mockJobRepo.EXPECT().
+			FindActiveByRequestHash(gomock.Any(), orgID, gomock.Any()).
+			Return(existingJob, nil),
+	)
+
+	result, err := svc.Execute(ctx, orgID, request)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+
+	if !result.IsDuplicate {
+		t.Fatal("expected IsDuplicate to be true")
+	}
+
+	if result.IsNewCreated {
+		t.Fatal("expected IsNewCreated to be false")
+	}
+
+	if result.Job.ID != existingJob.ID {
+		t.Fatalf("expected existing job ID %s, got %s", existingJob.ID, result.Job.ID)
+	}
+}
+
+// TestCreateFetcherJob_Execute_DuplicateKeyOnCreate_ActiveLookupMissAndRetryFailure validates deterministic
+// error mapping when duplicate-key recovery cannot find an active job and retry create also fails.
+func TestCreateFetcherJob_Execute_DuplicateKeyOnCreate_ActiveLookupMissAndRetryFailure(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockJobRepo := jobRepo.NewMockRepository(ctrl)
+	mockConnTester := NewMockConnectionTester(ctrl)
+
+	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, nil, nil, nil, mockConnTester, "")
+
+	ctx := testContext()
+	orgID := uuid.New()
+	request := newValidFetcherRequest()
+	conn := &model.Connection{ID: uuid.New(), ConfigName: "datasource1", Type: model.TypePostgreSQL}
+
+	gomock.InOrder(
+		mockJobRepo.EXPECT().
+			FindByRequestHashWithinWindow(gomock.Any(), orgID, gomock.Any(), DeduplicationWindowMinutes).
+			Return(nil, nil),
+		mockConnRepo.EXPECT().
+			FindByConfigNames(gomock.Any(), orgID, []string{"datasource1"}).
+			Return([]*model.Connection{conn}, nil),
+		mockConnTester.EXPECT().
+			TestConnection(gomock.Any(), conn).
+			Return(nil),
+		mockJobRepo.EXPECT().
+			Create(gomock.Any(), gomock.Any()).
+			Return(nil, mongo.WriteException{WriteErrors: []mongo.WriteError{{Code: 11000, Message: "duplicate key"}}}),
+		mockJobRepo.EXPECT().
+			FindActiveByRequestHash(gomock.Any(), orgID, gomock.Any()).
+			Return(nil, nil),
+		mockJobRepo.EXPECT().
+			Create(gomock.Any(), gomock.Any()).
+			Return(nil, errors.New("create failed after duplicate recovery")),
+	)
+
+	result, err := svc.Execute(ctx, orgID, request)
+	if result != nil {
+		t.Fatalf("expected nil result, got %+v", result)
+	}
+
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+
+	var internalErr pkg.InternalServerError
+	if !errors.As(err, &internalErr) {
+		t.Fatalf("expected InternalServerError, got %T: %v", err, err)
+	}
+}
+
+// TestCreateFetcherJob_Execute_DuplicateKeyOnCreate_ActiveLookupMissAndRetrySuccess validates
+// the bounded retry path when duplicate conflict disappears before retry create.
+func TestCreateFetcherJob_Execute_DuplicateKeyOnCreate_ActiveLookupMissAndRetrySuccess(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockJobRepo := jobRepo.NewMockRepository(ctrl)
+	mockConnTester := NewMockConnectionTester(ctrl)
+
+	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, nil, nil, nil, mockConnTester, "")
+
+	ctx := testContext()
+	orgID := uuid.New()
+	request := newValidFetcherRequest()
+	conn := &model.Connection{ID: uuid.New(), ConfigName: "datasource1", Type: model.TypePostgreSQL}
+
+	gomock.InOrder(
+		mockJobRepo.EXPECT().
+			FindByRequestHashWithinWindow(gomock.Any(), orgID, gomock.Any(), DeduplicationWindowMinutes).
+			Return(nil, nil),
+		mockConnRepo.EXPECT().
+			FindByConfigNames(gomock.Any(), orgID, []string{"datasource1"}).
+			Return([]*model.Connection{conn}, nil),
+		mockConnTester.EXPECT().
+			TestConnection(gomock.Any(), conn).
+			Return(nil),
+		mockJobRepo.EXPECT().
+			Create(gomock.Any(), gomock.Any()).
+			Return(nil, mongo.WriteException{WriteErrors: []mongo.WriteError{{Code: 11000, Message: "duplicate key"}}}),
+		mockJobRepo.EXPECT().
+			FindActiveByRequestHash(gomock.Any(), orgID, gomock.Any()).
+			Return(nil, nil),
+		mockJobRepo.EXPECT().
+			Create(gomock.Any(), gomock.Any()).
+			DoAndReturn(func(_ context.Context, created *model.Job) (*model.Job, error) {
+				return created, nil
+			}),
+	)
+
+	result, err := svc.Execute(ctx, orgID, request)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+
+	if result.IsDuplicate {
+		t.Fatal("expected IsDuplicate to be false")
+	}
+
+	if !result.IsNewCreated {
+		t.Fatal("expected IsNewCreated to be true")
 	}
 }
 
@@ -1105,6 +1333,135 @@ func TestCreateFetcherJob_Execute_ProductMismatch(t *testing.T) {
 
 	if !strings.Contains(validationErr.Message, "datasource1") {
 		t.Fatalf("expected error message to mention datasource1, got: %s", validationErr.Message)
+	}
+}
+
+// TestCreateFetcherJob_Execute_DuplicateKeyOnCreate_FindActiveReturnsError validates error
+// propagation when FindActiveByRequestHash returns a DB error during duplicate key recovery.
+func TestCreateFetcherJob_Execute_DuplicateKeyOnCreate_FindActiveReturnsError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockJobRepo := jobRepo.NewMockRepository(ctrl)
+	mockConnTester := NewMockConnectionTester(ctrl)
+
+	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, nil, nil, nil, mockConnTester, "")
+
+	ctx := testContext()
+	orgID := uuid.New()
+	request := newValidFetcherRequest()
+	conn := &model.Connection{ID: uuid.New(), ConfigName: "datasource1", Type: model.TypePostgreSQL}
+
+	gomock.InOrder(
+		mockJobRepo.EXPECT().
+			FindByRequestHashWithinWindow(gomock.Any(), orgID, gomock.Any(), DeduplicationWindowMinutes).
+			Return(nil, nil),
+		mockConnRepo.EXPECT().
+			FindByConfigNames(gomock.Any(), orgID, []string{"datasource1"}).
+			Return([]*model.Connection{conn}, nil),
+		mockConnTester.EXPECT().
+			TestConnection(gomock.Any(), conn).
+			Return(nil),
+		mockJobRepo.EXPECT().
+			Create(gomock.Any(), gomock.Any()).
+			Return(nil, mongo.WriteException{WriteErrors: []mongo.WriteError{{Code: 11000, Message: "duplicate key"}}}),
+		mockJobRepo.EXPECT().
+			FindActiveByRequestHash(gomock.Any(), orgID, gomock.Any()).
+			Return(nil, errors.New("mongodb connection lost")),
+	)
+
+	result, err := svc.Execute(ctx, orgID, request)
+
+	if result != nil {
+		t.Fatalf("expected nil result, got %+v", result)
+	}
+
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+
+	var internalErr pkg.InternalServerError
+	if !errors.As(err, &internalErr) {
+		t.Fatalf("expected InternalServerError, got %T: %v", err, err)
+	}
+}
+
+// TestCreateFetcherJob_Execute_DuplicateKeyOnCreate_RetryAlsoHitsDupKey_SecondRecoveryFindsJob validates
+// the full retry chain: first create hits dup key, active lookup misses, retry create also hits dup key,
+// and the second recovery finds the active job.
+func TestCreateFetcherJob_Execute_DuplicateKeyOnCreate_RetryAlsoHitsDupKey_SecondRecoveryFindsJob(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockJobRepo := jobRepo.NewMockRepository(ctrl)
+	mockConnTester := NewMockConnectionTester(ctrl)
+
+	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, nil, nil, nil, mockConnTester, "")
+
+	ctx := testContext()
+	orgID := uuid.New()
+	request := newValidFetcherRequest()
+	conn := &model.Connection{ID: uuid.New(), ConfigName: "datasource1", Type: model.TypePostgreSQL}
+
+	existingJob := &model.Job{
+		ID:             uuid.New(),
+		OrganizationID: orgID,
+		Status:         model.JobStatusPending,
+		CreatedAt:      time.Now().UTC(),
+	}
+
+	gomock.InOrder(
+		// 1. Dedup window check returns no match
+		mockJobRepo.EXPECT().
+			FindByRequestHashWithinWindow(gomock.Any(), orgID, gomock.Any(), DeduplicationWindowMinutes).
+			Return(nil, nil),
+		// 2. Connection lookup
+		mockConnRepo.EXPECT().
+			FindByConfigNames(gomock.Any(), orgID, []string{"datasource1"}).
+			Return([]*model.Connection{conn}, nil),
+		// 3. Connection test
+		mockConnTester.EXPECT().
+			TestConnection(gomock.Any(), conn).
+			Return(nil),
+		// 4. First Create → duplicate key error
+		mockJobRepo.EXPECT().
+			Create(gomock.Any(), gomock.Any()).
+			Return(nil, mongo.WriteException{WriteErrors: []mongo.WriteError{{Code: 11000, Message: "duplicate key"}}}),
+		// 5. First FindActiveByRequestHash → miss (nil, nil)
+		mockJobRepo.EXPECT().
+			FindActiveByRequestHash(gomock.Any(), orgID, gomock.Any()).
+			Return(nil, nil),
+		// 6. Retry Create → also duplicate key error
+		mockJobRepo.EXPECT().
+			Create(gomock.Any(), gomock.Any()).
+			Return(nil, mongo.WriteException{WriteErrors: []mongo.WriteError{{Code: 11000, Message: "duplicate key"}}}),
+		// 7. Second FindActiveByRequestHash → finds the active job
+		mockJobRepo.EXPECT().
+			FindActiveByRequestHash(gomock.Any(), orgID, gomock.Any()).
+			Return(existingJob, nil),
+	)
+
+	result, err := svc.Execute(ctx, orgID, request)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+
+	if !result.IsDuplicate {
+		t.Fatal("expected IsDuplicate to be true")
+	}
+
+	if result.IsNewCreated {
+		t.Fatal("expected IsNewCreated to be false")
+	}
+
+	if result.Job.ID != existingJob.ID {
+		t.Fatalf("expected existing job ID %s, got %s", existingJob.ID, result.Job.ID)
 	}
 }
 
