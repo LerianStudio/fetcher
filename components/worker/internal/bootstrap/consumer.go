@@ -62,7 +62,9 @@ func (mq *MultiQueueConsumer) Run(l *commons.Launcher) error {
 	}()
 
 	// Write initial health file to indicate the worker is alive
-	touchHealthFile()
+	if err := touchHealthFile(); err != nil {
+		return fmt.Errorf("failed to write initial health file: %w", err)
+	}
 
 	if err := mq.consumerRoutes.RunConsumers(ctx, wg); err != nil {
 		return fmt.Errorf("failed to run consumers: %w", err)
@@ -105,12 +107,14 @@ func (mq *MultiQueueConsumer) handlerGenerateReport(ctx context.Context, body []
 	}
 
 	// Update health file timestamp on successful processing
-	touchHealthFile()
+	if err := touchHealthFile(); err != nil {
+		logger.Warnf("Failed to update health file: %v", err)
+	}
 
 	return nil
 }
 
 // touchHealthFile writes the current Unix timestamp to the health file.
-func touchHealthFile() {
-	_ = os.WriteFile(healthFilePath, fmt.Appendf(nil, "%d", time.Now().Unix()), 0600)
+func touchHealthFile() error {
+	return os.WriteFile(healthFilePath, fmt.Appendf(nil, "%d", time.Now().Unix()), 0600)
 }
