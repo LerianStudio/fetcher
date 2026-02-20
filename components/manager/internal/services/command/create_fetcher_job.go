@@ -396,6 +396,10 @@ func (s *CreateFetcherJob) validateProductOwnership(ctx context.Context, span *t
 // TestConnection tests if a connection is available.
 // This method implements the ConnectionTester interface.
 func (s *CreateFetcherJob) TestConnection(ctx context.Context, conn *model.Connection) error {
+	if s.dsFactory == nil {
+		return nil
+	}
+
 	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "service.test_connection")
