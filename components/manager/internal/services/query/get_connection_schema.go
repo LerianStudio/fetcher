@@ -2,6 +2,7 @@ package query
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"sort"
 	"strings"
@@ -11,7 +12,7 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/datasource"
 	"github.com/LerianStudio/fetcher/pkg/model"
-	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
+	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
 
 	"github.com/LerianStudio/lib-commons/v2/commons"
 	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
@@ -57,7 +58,7 @@ func (s *GetConnectionSchema) Execute(ctx context.Context, organizationID, conne
 	conn, err := s.connRepo.FindByID(ctx, connectionID, organizationID)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "failed to find connection", err)
-		return nil, err
+		return nil, fmt.Errorf("failed to find connection by id: %w", err)
 	}
 
 	if conn == nil {

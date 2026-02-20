@@ -29,10 +29,8 @@ type Builder struct {
 	chaosConf ChaosConfig
 }
 
-func New(t *testing.T) *Builder { //nolint:thelper // t can be nil when used outside test functions
-	if t != nil {
-		t.Helper()
-	}
+func New(t *testing.T) *Builder {
+	t.Helper()
 
 	return &Builder{
 		t:     t,
@@ -74,7 +72,7 @@ func (b *Builder) Build(ctx context.Context) (*Suite, error) {
 	}
 
 	// Create shared Docker network for container communication
-	nw, err := network.New(ctx)
+	nw, err := network.New(ctx, network.WithDriver("bridge"))
 	if err != nil {
 		return nil, fmt.Errorf("create network: %w", err)
 	}

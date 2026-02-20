@@ -1,10 +1,10 @@
-# Reporter Makefile
+# Worker Makefile
 ifneq ("$(wildcard .env.local)","")
 	include .env.local
 	export
 endif
 
-service_name := reporter-worker
+service_name := fetcher-worker
 bin_dir := ./.bin
 
 BLUE := \033[36m
@@ -26,11 +26,11 @@ DOCKER_CMD := $(shell \
 info:
 	@echo "                                                                                                                                       "
 	@echo "                                                                                                                                       "
-	@echo "To run a specific command inside the audit container using make, you can execute:                                                     "
+	@echo "To run a specific command inside the worker container using make, you can execute:                                                     "
 	@echo "                                                                                                                                       "
-	@echo "make audit COMMAND=\"any\"                                                                                                            "
+	@echo "make COMMAND=\"any\"                                                                                                            "
 	@echo "                                                                                                                                       "
-	@echo "This command will run the specified command inside the audit container. Replace \"any\" with the desired command you want to execute. "
+	@echo "This command will run the specified command inside the worker container. Replace \"any\" with the desired command you want to execute. "
 	@echo "                                                                                                                         "
 	@echo "## Docker commands:"
 	@echo "                                                                                                                         "
@@ -42,7 +42,7 @@ info:
 	@echo "  COMMAND=\"destroy\"                              Stops and removes containers, networks, and volumes (including named volumes) defined in docker-compose.yml."
 	@echo "  COMMAND=\"restart\"                              Stops and removes containers, networks, and volumes, then starts all services in detached mode."
 	@echo "  COMMAND=\"logs\"                                 Shows the last 100 lines of logs and follows live log output for services defined in docker-compose.yml."
-	@echo "  COMMAND=\"logs-api\"                             Shows the last 100 lines of logs and follows live log output for the audit service defined in docker-compose.yml."
+	@echo "  COMMAND=\"logs-api\"                             Shows the last 100 lines of logs and follows live log output for the worker service defined in docker-compose.yml."
 	@echo "  COMMAND=\"ps\"                                   Lists the status of containers defined in docker-compose.yml."
 	@echo "                                                                                                                         "
 	@echo "## App commands:"

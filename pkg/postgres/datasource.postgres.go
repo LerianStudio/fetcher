@@ -20,8 +20,8 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 )
 
-// DefaultSchema is the default PostgreSQL schema name
-const DefaultSchema = "public"
+// DefaultSchema is the default PostgreSQL schema name.
+const DefaultSchema = schemautil.DefaultSchemaPostgreSQL
 
 // Datasource defines an interface for querying data from a PostgreSQL database.
 //
@@ -180,7 +180,7 @@ func (ds *ExternalDataSource) CloseConnection() error {
 		err := ds.connection.ConnectionDB.Close()
 		if err != nil {
 			ds.connection.Logger.Errorf("Error closing PostgreSQL connection: %v", err)
-			return err
+			return fmt.Errorf("failed to close PostgreSQL connection: %w", err)
 		}
 
 		ds.connection.Connected = false
@@ -223,13 +223,13 @@ func (ds *ExternalDataSource) CloseConnection() error {
 //	    fmt.Printf("User: %s\n", row["name"])
 //	}
 func (ds *ExternalDataSource) Query(ctx context.Context, schema []TableSchema, table string, fields []string, filter map[string][]any) ([]map[string]any, error) {
-	logger, tracer, reqId, _ := libCommons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
 
-	_, span := tracer.Start(ctx, "postgres.data_source.query")
+	ctx, span := tracer.Start(ctx, "postgres.data_source.query")
 	defer span.End()
 
 	span.SetAttributes(
-		attribute.String("app.request.request_id", reqId),
+		attribute.String("app.request.request_id", reqID),
 	)
 
 	err := libOpentelemetry.SetSpanAttributesFromStruct(&span, "app.request.repository_filter", map[string]any{
@@ -257,6 +257,7 @@ func (ds *ExternalDataSource) Query(ctx context.Context, schema []TableSchema, t
 
 	query, args, err := queryBuilder.ToSql()
 	if err != nil {
+		libOpentelemetry.HandleSpanError(&span, "Failed to generate SQL", err)
 		return nil, fmt.Errorf("error generating SQL: %w", err)
 	}
 
@@ -269,8 +270,11 @@ func (ds *ExternalDataSource) Query(ctx context.Context, schema []TableSchema, t
 	rows, err := ds.connection.ConnectionDB.QueryContext(queryCtx, query, args...)
 	if err != nil {
 		if queryCtx.Err() == context.DeadlineExceeded {
+			libOpentelemetry.HandleSpanError(&span, "Query execution timeout", err)
 			return nil, fmt.Errorf("query execution timeout after %v: %w", constant.QueryTimeoutMedium, err)
 		}
+
+		libOpentelemetry.HandleSpanError(&span, "Failed to execute query", err)
 
 		return nil, fmt.Errorf("error executing query: %w", err)
 	}
@@ -306,13 +310,13 @@ func (ds *ExternalDataSource) Query(ctx context.Context, schema []TableSchema, t
 //	    fmt.Printf("Table: %s, Columns: %d\n", ts.TableName, len(ts.Columns))
 //	}
 func (ds *ExternalDataSource) GetDatabaseSchema(ctx context.Context, schemas []string) ([]TableSchema, error) {
-	logger, tracer, reqId, _ := libCommons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
 
-	_, span := tracer.Start(ctx, "postgres.data_source.get_database_schema")
+	ctx, span := tracer.Start(ctx, "postgres.data_source.get_database_schema")
 	defer span.End()
 
 	span.SetAttributes(
-		attribute.String("app.request.request_id", reqId),
+		attribute.String("app.request.request_id", reqID),
 	)
 
 	logger.Info("Retrieving database schema information")
@@ -322,17 +326,20 @@ func (ds *ExternalDataSource) GetDatabaseSchema(ctx context.Context, schemas []s
 
 	tables, err := ds.queryTables(schemaCtx, schemas)
 	if err != nil {
-		return nil, err
+		libOpentelemetry.HandleSpanError(&span, "Failed to query tables", err)
+		return nil, fmt.Errorf("failed to query tables: %w", err)
 	}
 
 	primaryKeys, err := ds.queryPrimaryKeys(schemaCtx, schemas)
 	if err != nil {
-		return nil, err
+		libOpentelemetry.HandleSpanError(&span, "Failed to query primary keys", err)
+		return nil, fmt.Errorf("failed to query primary keys: %w", err)
 	}
 
 	schema, err := ds.buildSchema(schemaCtx, tables, primaryKeys, logger)
 	if err != nil {
-		return nil, err
+		libOpentelemetry.HandleSpanError(&span, "Failed to build schema", err)
+		return nil, fmt.Errorf("failed to build schema: %w", err)
 	}
 
 	logger.Infof("Retrieved schema for %d tables", len(schema))
@@ -360,6 +367,13 @@ func (ds *ExternalDataSource) GetDatabaseSchema(ctx context.Context, schemas []s
 //	tables, err := ds.queryTables(ctx, []string{"public", "accounting"})
 //	// tables = ["users", "transactions", "accounting.invoices", "accounting.payments"]
 func (ds *ExternalDataSource) queryTables(ctx context.Context, schemas []string) ([]string, error) {
+	_, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
+
+	ctx, span := tracer.Start(ctx, "postgres.schema.query_tables")
+	defer span.End()
+
+	span.SetAttributes(attribute.String("app.request.request_id", reqID))
+
 	if len(schemas) == 0 {
 		schemas = []string{DefaultSchema}
 	}
@@ -374,6 +388,7 @@ func (ds *ExternalDataSource) queryTables(ctx context.Context, schemas []string)
 
 	rows, err := ds.connection.ConnectionDB.QueryContext(ctx, tableQuery, pq.Array(schemas))
 	if err != nil {
+		libOpentelemetry.HandleSpanError(&span, "Failed to query tables", err)
 		return nil, fmt.Errorf("error querying tables: %w", err)
 	}
 	defer rows.Close()
@@ -383,6 +398,7 @@ func (ds *ExternalDataSource) queryTables(ctx context.Context, schemas []string)
 	for rows.Next() {
 		var schemaName, tableName string
 		if err := rows.Scan(&schemaName, &tableName); err != nil {
+			libOpentelemetry.HandleSpanError(&span, "Failed to scan table name", err)
 			return nil, fmt.Errorf("error scanning table name: %w", err)
 		}
 
@@ -396,6 +412,7 @@ func (ds *ExternalDataSource) queryTables(ctx context.Context, schemas []string)
 	}
 
 	if err := rows.Err(); err != nil {
+		libOpentelemetry.HandleSpanError(&span, "Rows iteration error", err)
 		return nil, fmt.Errorf("rows error: %w", err)
 	}
 
@@ -424,6 +441,13 @@ func (ds *ExternalDataSource) queryTables(ctx context.Context, schemas []string)
 //	// primaryKeys["order_items"]["order_id"] = true
 //	// primaryKeys["order_items"]["product_id"] = true
 func (ds *ExternalDataSource) queryPrimaryKeys(ctx context.Context, schemas []string) (map[string]map[string]bool, error) {
+	_, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
+
+	ctx, span := tracer.Start(ctx, "postgres.schema.query_primary_keys")
+	defer span.End()
+
+	span.SetAttributes(attribute.String("app.request.request_id", reqID))
+
 	if len(schemas) == 0 {
 		schemas = []string{DefaultSchema}
 	}
@@ -442,11 +466,15 @@ func (ds *ExternalDataSource) queryPrimaryKeys(ctx context.Context, schemas []st
 	pkRows, err := ds.connection.ConnectionDB.QueryContext(ctx, pkQuery, pq.Array(schemas))
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
+			libOpentelemetry.HandleSpanError(&span, "Schema discovery timeout while querying primary keys", err)
+
 			return nil, fmt.Errorf(
 				"schema discovery timeout after %v while querying primary keys: %w",
 				constant.SchemaDiscoveryTimeout, err,
 			)
 		}
+
+		libOpentelemetry.HandleSpanError(&span, "Failed to query primary keys", err)
 
 		return nil, fmt.Errorf("error querying primary keys: %w", err)
 	}
@@ -457,6 +485,7 @@ func (ds *ExternalDataSource) queryPrimaryKeys(ctx context.Context, schemas []st
 	for pkRows.Next() {
 		var schemaName, tableName, columnName string
 		if err := pkRows.Scan(&schemaName, &tableName, &columnName); err != nil {
+			libOpentelemetry.HandleSpanError(&span, "Failed to scan primary key info", err)
 			return nil, fmt.Errorf("error scanning primary key info: %w", err)
 		}
 
@@ -474,6 +503,7 @@ func (ds *ExternalDataSource) queryPrimaryKeys(ctx context.Context, schemas []st
 	}
 
 	if err := pkRows.Err(); err != nil {
+		libOpentelemetry.HandleSpanError(&span, "Rows iteration error", err)
 		return nil, fmt.Errorf("rows error: %w", err)
 	}
 
@@ -501,12 +531,18 @@ func (ds *ExternalDataSource) queryPrimaryKeys(ctx context.Context, schemas []st
 //	primaryKeys := map[string]map[string]bool{"users": {"id": true}}
 //	schema, err := ds.buildSchema(ctx, tables, primaryKeys, logger)
 func (ds *ExternalDataSource) buildSchema(ctx context.Context, tables []string, primaryKeys map[string]map[string]bool, logger log.Logger) ([]TableSchema, error) {
+	_, tracer, _, _ := libCommons.NewTrackingFromContext(ctx) //nolint:dogsled // NewTrackingFromContext returns 4 values, only tracer needed here
+
+	ctx, span := tracer.Start(ctx, "postgres.schema.build")
+	defer span.End()
+
 	schema := make([]TableSchema, 0, len(tables))
 
 	for _, tableName := range tables {
 		tableSchema, err := ds.buildTableSchema(ctx, tableName, primaryKeys, logger)
 		if err != nil {
-			return nil, err
+			libOpentelemetry.HandleSpanError(&span, "Failed to build table schema", err)
+			return nil, fmt.Errorf("failed to build table schema for %s: %w", tableName, err)
 		}
 
 		schema = append(schema, tableSchema)
@@ -564,7 +600,7 @@ func (ds *ExternalDataSource) buildTableSchema(ctx context.Context, tableName st
 
 	columns, err := ds.scanColumns(colRows, tableName, primaryKeys, logger)
 	if err != nil {
-		return TableSchema{}, err
+		return TableSchema{}, fmt.Errorf("failed to scan columns for table %s: %w", tableName, err)
 	}
 
 	return TableSchema{
@@ -706,7 +742,7 @@ func scanRows(rows *sql.Rows, logger log.Logger) ([]map[string]any, error) {
 
 	for rows.Next() {
 		if err := rows.Scan(pointers...); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("error scanning row: %w", err)
 		}
 
 		rowMap := createRowMap(columns, values, logger)
@@ -825,13 +861,13 @@ func parseJSONBField(value any, logger log.Logger) any {
 //	fields, err := ds.ValidateTableAndFields(ctx, "users", []string{"*"}, schema)
 //	// fields = ["id", "name", "email", "created_at", ...]
 func (ds *ExternalDataSource) ValidateTableAndFields(ctx context.Context, tableName string, requestedFields []string, schema []TableSchema) ([]string, error) {
-	logger, tracer, reqId, _ := libCommons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
 
 	_, span := tracer.Start(ctx, "postgres.data_source.validate_table_and_fields")
 	defer span.End()
 
 	span.SetAttributes(
-		attribute.String("app.request.request_id", reqId),
+		attribute.String("app.request.request_id", reqID),
 	)
 
 	// Normalize table name for lookup: schema-qualified names should match
@@ -865,7 +901,10 @@ func (ds *ExternalDataSource) ValidateTableAndFields(ctx context.Context, tableN
 	}
 
 	if !tableFound {
-		return nil, fmt.Errorf("table '%s' does not exist in the database", tableName)
+		err := fmt.Errorf("table '%s' does not exist in the database", tableName)
+		libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "Table not found in schema", err)
+
+		return nil, err
 	}
 
 	// Create a map of valid column names for efficient lookup
@@ -898,11 +937,17 @@ func (ds *ExternalDataSource) ValidateTableAndFields(ctx context.Context, tableN
 	}
 
 	if len(invalidFields) > 0 {
-		return nil, fmt.Errorf("invalid fields for table '%s': %v", tableName, invalidFields)
+		err := fmt.Errorf("invalid fields for table '%s': %v", tableName, invalidFields)
+		libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "Invalid fields requested", err)
+
+		return nil, err
 	}
 
 	if len(validFields) == 0 {
-		return nil, fmt.Errorf("no valid fields specified for table '%s'", tableName)
+		err := fmt.Errorf("no valid fields specified for table '%s'", tableName)
+		libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "No valid fields specified", err)
+
+		return nil, err
 	}
 
 	logger.Infof("Successfully validated table '%s' and fields %v", tableName, validFields)
@@ -1021,13 +1066,13 @@ func applyFilter(queryBuilder squirrel.SelectBuilder, fieldName string, values [
 //	}
 //	results, err := ds.QueryWithAdvancedFilters(ctx, schema, "orders", []string{"*"}, filter)
 func (ds *ExternalDataSource) QueryWithAdvancedFilters(ctx context.Context, schema []TableSchema, table string, fields []string, filter map[string]job.FilterCondition) ([]map[string]any, error) {
-	logger, tracer, reqId, _ := libCommons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
 
-	_, span := tracer.Start(ctx, "postgres.data_source.query_with_advanced_filters")
+	ctx, span := tracer.Start(ctx, "postgres.data_source.query_with_advanced_filters")
 	defer span.End()
 
 	span.SetAttributes(
-		attribute.String("app.request.request_id", reqId),
+		attribute.String("app.request.request_id", reqID),
 	)
 
 	err := libOpentelemetry.SetSpanAttributesFromStruct(&span, "app.request.repository_filter", map[string]any{
@@ -1053,11 +1098,13 @@ func (ds *ExternalDataSource) QueryWithAdvancedFilters(ctx context.Context, sche
 	// Apply advanced filters
 	queryBuilder, err = ds.buildAdvancedFilters(queryBuilder, schema, table, filter)
 	if err != nil {
+		libOpentelemetry.HandleSpanError(&span, "Failed to build advanced filters", err)
 		return nil, fmt.Errorf("error building advanced filters: %w", err)
 	}
 
 	query, args, err := queryBuilder.ToSql()
 	if err != nil {
+		libOpentelemetry.HandleSpanError(&span, "Failed to generate SQL", err)
 		return nil, fmt.Errorf("error generating SQL: %w", err)
 	}
 
@@ -1070,8 +1117,11 @@ func (ds *ExternalDataSource) QueryWithAdvancedFilters(ctx context.Context, sche
 	rows, err := ds.connection.ConnectionDB.QueryContext(queryCtx, query, args...)
 	if err != nil {
 		if queryCtx.Err() == context.DeadlineExceeded {
+			libOpentelemetry.HandleSpanError(&span, "Advanced filter query execution timeout", err)
 			return nil, fmt.Errorf("advanced filter query timeout after %v: %w", constant.QueryTimeoutSlow, err)
 		}
+
+		libOpentelemetry.HandleSpanError(&span, "Failed to execute query", err)
 
 		return nil, fmt.Errorf("error executing query: %w", err)
 	}

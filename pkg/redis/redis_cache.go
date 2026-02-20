@@ -33,21 +33,8 @@ type RedisCache[T any] struct {
 //   - conn: Redis connection
 //   - ttl: Default TTL for cache entries (uses DefaultCacheTTL if <= 0)
 //   - keyPrefix: Prefix for all cache keys (e.g., "fetcher:schema:")
-func NewRedisCache[T any](conn *RedisConnection, ttl time.Duration, keyPrefix string) *RedisCache[T] {
-	cache, err := NewRedisCacheSafe[T](conn, ttl, keyPrefix)
-	if err != nil {
-		if ttl <= 0 {
-			ttl = DefaultCacheTTL
-		}
-
-		return &RedisCache[T]{
-			ttl:       ttl,
-			keyPrefix: keyPrefix,
-			initErr:   err,
-		}
-	}
-
-	return cache
+func NewRedisCache[T any](conn *RedisConnection, ttl time.Duration, keyPrefix string) (*RedisCache[T], error) {
+	return NewRedisCacheSafe[T](conn, ttl, keyPrefix)
 }
 
 // NewRedisCacheSafe creates a new generic Redis cache with explicit initialization errors.
@@ -252,7 +239,11 @@ func (c *RedisCache[T]) Close() error {
 		return nil
 	}
 
-	return c.client.Close()
+	if err := c.client.Close(); err != nil {
+		return fmt.Errorf("failed to close Redis connection: %w", err)
+	}
+
+	return nil
 }
 
 func (c *RedisCache[T]) ensureClient() error {

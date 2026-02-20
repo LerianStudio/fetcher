@@ -12,6 +12,7 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/mongodb"
 	"github.com/LerianStudio/fetcher/pkg/net/http"
+	portsConnection "github.com/LerianStudio/fetcher/pkg/ports/connection"
 
 	"github.com/LerianStudio/lib-commons/v2/commons"
 	libMongo "github.com/LerianStudio/lib-commons/v2/commons/mongo"
@@ -24,22 +25,12 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 )
 
-// Repository defines the domain port for connections.
-type Repository interface {
-	Create(ctx context.Context, conn *model.Connection) (*model.Connection, error)
-	Update(ctx context.Context, conn *model.Connection) (*model.Connection, error)
-	Delete(ctx context.Context, id, organizationID uuid.UUID, deletedAt time.Time) error
-	FindByID(ctx context.Context, id, organizationID uuid.UUID) (*model.Connection, error)
-	FindByOrganizationAndName(ctx context.Context, organizationID uuid.UUID, configName string) (*model.Connection, error)
-	FindByOrganizationAndDatabaseName(ctx context.Context, organizationID uuid.UUID, databaseName string) (*model.Connection, error)
-	FindByConfigNames(ctx context.Context, organizationID uuid.UUID, configNames []string) ([]*model.Connection, error)
-	List(ctx context.Context, organizationID uuid.UUID, filters http.QueryHeader) ([]*model.Connection, int64, error)
-	ListUnassigned(ctx context.Context, organizationID uuid.UUID, filters http.QueryHeader) ([]*model.Connection, int64, error)
-	CountByProduct(ctx context.Context, organizationID, productID uuid.UUID) (int64, error)
-	AssignProduct(ctx context.Context, connectionID, organizationID, productID uuid.UUID) (*model.Connection, error)
-}
+// Repository is an alias for the domain port interface defined in pkg/ports/connection.
+type Repository = portsConnection.Repository
 
 // mongoDatabaseProvider defines the interface for obtaining a MongoDB client.
+//
+//go:generate mockgen --destination=mock_db_provider_test.go --package=connection . mongoDatabaseProvider
 type mongoDatabaseProvider interface {
 	GetDB(ctx context.Context) (*mongo.Client, error)
 }
@@ -60,6 +51,9 @@ type RepositoryConfig struct {
 }
 
 // ConnectionMongoDBRepository implements Repository backed by MongoDB.
+// NOTE: Span names in this file use the pattern "mongodb.verb_entity" (e.g., "mongodb.create_connection").
+// The preferred convention is "mongodb.entity.operation" (e.g., "mongodb.connection.create").
+// This inconsistency is tracked for a future rename when dashboards and alerts can be updated.
 type ConnectionMongoDBRepository struct {
 	connection mongoDatabaseProvider
 	Database   string
@@ -68,7 +62,7 @@ type ConnectionMongoDBRepository struct {
 
 // NewConnectionMongoDBRepository provisions a repository using the given client.
 // Accepts an optional RepositoryConfig; if nil, defaults are used.
-func NewConnectionMongoDBRepository(mc *libMongo.MongoConnection, cfg ...RepositoryConfig) (*ConnectionMongoDBRepository, error) {
+func NewConnectionMongoDBRepository(ctx context.Context, mc *libMongo.MongoConnection, cfg ...RepositoryConfig) (*ConnectionMongoDBRepository, error) {
 	config := RepositoryConfig{
 		InitTimeout: DefaultInitTimeout,
 	}
@@ -85,7 +79,7 @@ func NewConnectionMongoDBRepository(mc *libMongo.MongoConnection, cfg ...Reposit
 		config:     config,
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), config.InitTimeout)
+	ctx, cancel := context.WithTimeout(ctx, config.InitTimeout)
 	defer cancel()
 
 	if _, err := repo.connection.GetDB(ctx); err != nil {
@@ -131,7 +125,7 @@ func (cr *ConnectionMongoDBRepository) Create(ctx context.Context, conn *model.C
 	if _, err := coll.InsertOne(ctx, record); err != nil {
 		if mongo.IsDuplicateKeyError(err) {
 			err := fmt.Errorf("connection with config_name '%s' already exists for organization '%s'", conn.ConfigName, conn.OrganizationID.String())
-			libOpentelemetry.HandleSpanError(&span, "Duplicate connection", err)
+			libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "Duplicate connection", err)
 
 			return nil, pkg.ValidateBusinessError(
 				constant.ErrEntityConflict,
@@ -225,7 +219,7 @@ func (cr *ConnectionMongoDBRepository) Update(ctx context.Context, conn *model.C
 
 		if mongo.IsDuplicateKeyError(err) {
 			err := fmt.Errorf("connection with config_name '%s' already exists for organization '%s'", conn.ConfigName, conn.OrganizationID.String())
-			libOpentelemetry.HandleSpanError(&span, "Duplicate connection", err)
+			libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "Duplicate connection", err)
 
 			return nil, pkg.ValidateBusinessError(
 				constant.ErrEntityConflict,
@@ -288,7 +282,7 @@ func (cr *ConnectionMongoDBRepository) Delete(ctx context.Context, connectionID,
 	}
 
 	if res.MatchedCount == 0 {
-		libOpentelemetry.HandleSpanError(&span, "Connection not found for delete", mongo.ErrNoDocuments)
+		libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "Connection not found for delete", mongo.ErrNoDocuments)
 
 		return pkg.ValidateBusinessError(
 			constant.ErrEntityNotFound,
@@ -804,8 +798,8 @@ func (rm *ConnectionMongoDBRepository) buildQueryFilter(organizationID uuid.UUID
 		queryFilter["product_id"] = *filters.ProductID
 	}
 
-	if filters.Metadata != nil && filters.UseMetadata {
-		for key, value := range *filters.Metadata {
+	if len(filters.Metadata) > 0 && filters.UseMetadata {
+		for key, value := range filters.Metadata {
 			queryFilter[key] = value
 		}
 	}

@@ -1,7 +1,7 @@
 package pkg
 
 import (
-	"fmt"
+	"log"
 	"os"
 	"reflect"
 	"strconv"
@@ -71,13 +71,13 @@ func InitLocalEnvConfig() *LocalEnvConfig {
 	if envName == "local" {
 		localEnvConfigOnce.Do(func() {
 			if err := godotenv.Load(); err != nil {
-				fmt.Println("Skipping \u001B[31m.env\u001B[0m file, using env", envName)
+				log.Printf("Skipping .env file, using env %s", envName)
 
 				localEnvConfig = &LocalEnvConfig{
 					Initialized: false,
 				}
 			} else {
-				fmt.Println("Env vars loaded from .env file on process", os.Getpid())
+				log.Printf("Env vars loaded from .env file on process %d", os.Getpid())
 
 				localEnvConfig = &LocalEnvConfig{
 					Initialized: true,

@@ -6,22 +6,21 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"regexp"
 	"strings"
 	"time"
 
 	"github.com/LerianStudio/fetcher/pkg/constant"
-	"github.com/LerianStudio/fetcher/pkg/datasource"
 	"github.com/LerianStudio/fetcher/pkg/model"
-	datasourceMongoConfig "github.com/LerianStudio/fetcher/pkg/model/datasource/mongodb"
 	modelJob "github.com/LerianStudio/fetcher/pkg/model/job"
+	portDS "github.com/LerianStudio/fetcher/pkg/ports/datasource"
 	libCommons "github.com/LerianStudio/lib-commons/v2/commons"
 	libCrypto "github.com/LerianStudio/lib-commons/v2/commons/crypto"
 	"github.com/LerianStudio/lib-commons/v2/commons/log"
 	libOtel "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -51,10 +50,12 @@ type ExtractExternalDataMessage struct {
 func (uc *UseCase) ExtractExternalData(ctx context.Context, body []byte, headers map[string]any) error {
 	startTime := time.Now() // Track execution start time
 
-	logger, tracer, _, _ := libCommons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "service.extract_external_data")
 	defer span.End()
+
+	span.SetAttributes(attribute.String("app.request.request_id", reqID))
 
 	message, err := uc.parseMessage(ctx, body, headers, &span, logger)
 	if err != nil {
@@ -356,7 +357,7 @@ func (uc *UseCase) handleErrorWithUpdate(
 		libOtel.HandleSpanError(span, "Error to update report status with error.", errUpdate)
 		logger.Errorf("Error update report status with error: %s", errUpdate.Error())
 
-		return errUpdate
+		return fmt.Errorf("failed to update job status: %w", errUpdate)
 	}
 
 	libOtel.HandleSpanError(span, errorMsg, err)
@@ -390,7 +391,7 @@ func (uc *UseCase) updateJobWithErrors(ctx context.Context, jobID, orgID uuid.UU
 
 	errUpdate := uc.JobRepository.UpdateStatus(ctx, jobID, orgID, model.JobStatusFailed, "", "", metadata)
 	if errUpdate != nil {
-		return errUpdate
+		return fmt.Errorf("failed to update job status to failed: %w", errUpdate)
 	}
 
 	return nil
@@ -398,14 +399,16 @@ func (uc *UseCase) updateJobWithErrors(ctx context.Context, jobID, orgID uuid.UU
 
 // queryExternalData retrieves data from external data sources specified in the message and populates the result map.
 func (uc *UseCase) queryExternalData(ctx context.Context, message ExtractExternalDataMessage, connections []*model.Connection, result map[string]map[string][]map[string]any) error {
-	logger, tracer, _, _ := libCommons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "service.extract_external_data.query_external_data")
 	defer span.End()
 
+	span.SetAttributes(attribute.String("app.request.request_id", reqID))
+
 	for databaseName, tables := range message.MappedFields {
 		if err := uc.queryDatabase(ctx, databaseName, tables, connections, message.Filters, message.OrganizationID, result, logger, tracer); err != nil {
-			return err
+			return fmt.Errorf("failed to query database %s: %w", databaseName, err)
 		}
 	}
 
@@ -443,13 +446,13 @@ func (uc *UseCase) queryDatabase(
 
 	if foundConnection == nil {
 		err := fmt.Errorf("connection not found for database: %s", databaseName)
-		libOtel.HandleSpanError(&dbSpan, "Connection not found", err)
+		libOtel.HandleSpanBusinessErrorEvent(&dbSpan, "Connection not found", err)
 
 		return err
 	}
 
-	// Create DataSource using factory pattern
-	dataSource, err := datasource.NewDataSourceFromConnection(ctx, foundConnection, uc.Cryptor, logger)
+	// Create DataSource using injected factory
+	dataSource, err := uc.CreateDataSource(ctx, foundConnection)
 	if err != nil {
 		libOtel.HandleSpanError(&dbSpan, "Error creating data source", err)
 		return fmt.Errorf("failed to create data source for %s: %w", databaseName, err)
@@ -476,13 +479,14 @@ func (uc *UseCase) queryDatabase(
 	databaseFilters := allFilters[databaseName]
 
 	if foundConnection.Type == model.TypeMongoDB && databaseName == "plugin_crm" {
-		// MongoDB plugin_crm requires special handling (decryption, collection name transformation)
-		mongoDS, ok := dataSource.(*datasourceMongoConfig.DataSourceConfigMongoDB)
+		// MongoDB plugin_crm requires special handling (decryption, collection name transformation).
+		// Use interface-based assertion to avoid coupling to concrete MongoDB type.
+		crmDS, ok := dataSource.(portDS.CRMQueryable)
 		if !ok {
-			return fmt.Errorf("invalid MongoDB data source type")
+			return fmt.Errorf("data source for plugin_crm does not support CRM queries")
 		}
 
-		return uc.QueryPluginCRM(ctx, mongoDS, databaseName, tables, databaseFilters, organizationID, result, logger)
+		return uc.QueryPluginCRM(ctx, crmDS, databaseName, tables, databaseFilters, organizationID, result, logger)
 	}
 
 	queryResult, errQuery := dataSource.Query(ctx, tables, databaseFilters, logger)
@@ -587,19 +591,17 @@ func (uc *UseCase) saveExternalDataToSeaweedFS(
 
 // encryptDataForSeaweedFS encrypts the data using the crypto library before saving to SeaweedFS.
 func (uc *UseCase) encryptDataForSeaweedFS(data []byte, logger log.Logger) ([]byte, error) {
-	encryptSecretKey := os.Getenv("CRYPTO_ENCRYPT_SECRET_KEY_SEAWEEDFS")
-	if encryptSecretKey == "" {
-		return nil, fmt.Errorf("CRYPTO_ENCRYPT_SECRET_KEY_SEAWEEDFS environment variable not set")
+	if uc.seaweedFSEncryptSecretKey == "" {
+		return nil, fmt.Errorf("SeaweedFS encrypt secret key not configured")
 	}
 
-	hashSecretKey := os.Getenv("CRYPTO_HASH_SECRET_KEY_SEAWEEDFS")
-	if hashSecretKey == "" {
-		return nil, fmt.Errorf("CRYPTO_HASH_SECRET_KEY_SEAWEEDFS environment variable not set")
+	if uc.seaweedFSHashSecretKey == "" {
+		return nil, fmt.Errorf("SeaweedFS hash secret key not configured")
 	}
 
 	crypto := &libCrypto.Crypto{
-		HashSecretKey:    hashSecretKey,
-		EncryptSecretKey: encryptSecretKey,
+		HashSecretKey:    uc.seaweedFSHashSecretKey,
+		EncryptSecretKey: uc.seaweedFSEncryptSecretKey,
 		Logger:           logger,
 	}
 
@@ -639,7 +641,7 @@ func (uc *UseCase) checkReportStatus(ctx context.Context, jobID, organizationID 
 	jobData, err := uc.JobRepository.FindByID(ctx, jobID, organizationID)
 	if err != nil {
 		logger.Debugf("Could not check job status for %s (may be first attempt): %v", jobID, err)
-		return "", err
+		return "", fmt.Errorf("failed to check job status: %w", err)
 	}
 
 	if jobData == nil {

@@ -12,6 +12,7 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/mongodb"
 	"github.com/LerianStudio/fetcher/pkg/net/http"
+	portsProduct "github.com/LerianStudio/fetcher/pkg/ports/product"
 
 	"github.com/LerianStudio/lib-commons/v2/commons"
 	libMongo "github.com/LerianStudio/lib-commons/v2/commons/mongo"
@@ -24,17 +25,12 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 )
 
-// Repository defines the domain port for products.
-type Repository interface {
-	Create(ctx context.Context, product *model.Product) (*model.Product, error)
-	Update(ctx context.Context, product *model.Product) (*model.Product, error)
-	Delete(ctx context.Context, id, organizationID uuid.UUID, deletedAt time.Time) error
-	FindByID(ctx context.Context, id, organizationID uuid.UUID) (*model.Product, error)
-	FindByCode(ctx context.Context, code string, organizationID uuid.UUID) (*model.Product, error)
-	List(ctx context.Context, organizationID uuid.UUID, filters http.QueryHeader) ([]*model.Product, int64, error)
-}
+// Repository is an alias for the domain port interface defined in pkg/ports/product.
+type Repository = portsProduct.Repository
 
 // mongoDatabaseProvider defines the interface for obtaining a MongoDB client.
+//
+//go:generate mockgen --destination=mock_db_provider_test.go --package=product . mongoDatabaseProvider
 type mongoDatabaseProvider interface {
 	GetDB(ctx context.Context) (*mongo.Client, error)
 }
@@ -53,6 +49,9 @@ type RepositoryConfig struct {
 }
 
 // ProductMongoDBRepository implements Repository backed by MongoDB.
+// NOTE: Span names in this file use the pattern "mongodb.verb_entity" (e.g., "mongodb.create_product").
+// The preferred convention is "mongodb.entity.operation" (e.g., "mongodb.product.create").
+// This inconsistency is tracked for a future rename when dashboards and alerts can be updated.
 type ProductMongoDBRepository struct {
 	connection mongoDatabaseProvider
 	Database   string
@@ -60,7 +59,7 @@ type ProductMongoDBRepository struct {
 }
 
 // NewProductMongoDBRepository provisions a repository using the given client.
-func NewProductMongoDBRepository(mc *libMongo.MongoConnection, cfg ...RepositoryConfig) (*ProductMongoDBRepository, error) {
+func NewProductMongoDBRepository(ctx context.Context, mc *libMongo.MongoConnection, cfg ...RepositoryConfig) (*ProductMongoDBRepository, error) {
 	config := RepositoryConfig{
 		InitTimeout: DefaultInitTimeout,
 	}
@@ -77,7 +76,7 @@ func NewProductMongoDBRepository(mc *libMongo.MongoConnection, cfg ...Repository
 		config:     config,
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), config.InitTimeout)
+	ctx, cancel := context.WithTimeout(ctx, config.InitTimeout)
 	defer cancel()
 
 	if _, err := repo.connection.GetDB(ctx); err != nil {
@@ -128,7 +127,7 @@ func (pr *ProductMongoDBRepository) Create(ctx context.Context, p *model.Product
 	if _, err := coll.InsertOne(ctx, record); err != nil {
 		if mongo.IsDuplicateKeyError(err) {
 			err := fmt.Errorf("product with code '%s' already exists for organization '%s'", p.Code, p.OrganizationID.String())
-			libOpentelemetry.HandleSpanError(&span, "Duplicate product", err)
+			libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "Duplicate product", err)
 
 			return nil, pkg.ValidateBusinessError(
 				constant.ErrEntityConflict,
@@ -202,7 +201,7 @@ func (pr *ProductMongoDBRepository) Update(ctx context.Context, p *model.Product
 	opts := options.FindOneAndUpdate().SetReturnDocument(options.After)
 	if err := coll.FindOneAndUpdate(ctx, filter, update, opts).Decode(&record); err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
-			libOpentelemetry.HandleSpanError(&span, "Product not found for update", err)
+			libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "Product not found for update", err)
 
 			return nil, pkg.ValidateBusinessError(constant.ErrEntityNotFound, "product")
 		}
@@ -262,7 +261,7 @@ func (pr *ProductMongoDBRepository) Delete(ctx context.Context, productID, organ
 	}
 
 	if res.MatchedCount == 0 {
-		libOpentelemetry.HandleSpanError(&span, "Product not found for delete", mongo.ErrNoDocuments)
+		libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "Product not found for delete", mongo.ErrNoDocuments)
 
 		return pkg.ValidateBusinessError(
 			constant.ErrEntityNotFound,
@@ -452,8 +451,8 @@ func (pr *ProductMongoDBRepository) buildQueryFilter(organizationID uuid.UUID, f
 		"deleted_at":      bson.D{{Key: "$eq", Value: nil}},
 	}
 
-	if filters.Metadata != nil && filters.UseMetadata {
-		for key, value := range *filters.Metadata {
+	if len(filters.Metadata) > 0 && filters.UseMetadata {
+		for key, value := range filters.Metadata {
 			queryFilter[key] = value
 		}
 	}

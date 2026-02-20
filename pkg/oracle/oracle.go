@@ -2,6 +2,7 @@ package oracle
 
 import (
 	"database/sql"
+	"fmt"
 	"strings"
 
 	"github.com/LerianStudio/fetcher/pkg/constant"
@@ -36,7 +37,7 @@ func (c *Connection) Connect() error {
 	db, err := sql.Open("oracle", c.ConnectionString)
 	if err != nil {
 		c.Logger.Errorf("Error opening connection: %v", err)
-		return err
+		return fmt.Errorf("failed to open Oracle connection: %w", err)
 	}
 
 	if err := db.Ping(); err != nil {
@@ -47,7 +48,7 @@ func (c *Connection) Connect() error {
 
 		c.Logger.Errorf("Error pinging Oracle: %v", err)
 
-		return err
+		return fmt.Errorf("failed to ping Oracle: %w", err)
 	}
 
 	db.SetMaxOpenConns(c.MaxOpenConnections)
@@ -68,7 +69,7 @@ func (c *Connection) Connect() error {
 func (oc *Connection) GetDB() (*sql.DB, error) {
 	if oc.ConnectionDB == nil {
 		if err := oc.Connect(); err != nil {
-			oc.Logger.Infof("ERRCONECT %s", err)
+			oc.Logger.Errorf("ERR_CONNECT: failed to connect to Oracle: %v", err)
 			return nil, err
 		}
 	}

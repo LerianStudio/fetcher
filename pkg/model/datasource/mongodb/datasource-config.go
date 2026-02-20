@@ -95,6 +95,18 @@ func getCollectionFilters(databaseFilters map[string]map[string]job.FilterCondit
 	return databaseFilters[collectionName]
 }
 
+// QueryCollection queries a single collection with the specified fields and optional filter.
+// This method implements the CRMQueryable interface (pkg/ports/datasource).
+func (ds *DataSourceConfigMongoDB) QueryCollection(ctx context.Context, collection string, fields []string, filter map[string][]any) ([]map[string]any, error) {
+	return ds.MongoDBRepository.Query(ctx, collection, fields, filter)
+}
+
+// QueryCollectionWithAdvancedFilters queries a single collection using advanced FilterCondition filters.
+// This method implements the CRMQueryable interface (pkg/ports/datasource).
+func (ds *DataSourceConfigMongoDB) QueryCollectionWithAdvancedFilters(ctx context.Context, collection string, fields []string, filters map[string]job.FilterCondition) ([]map[string]any, error) {
+	return ds.MongoDBRepository.QueryWithAdvancedFilters(ctx, collection, fields, filters)
+}
+
 // GetSchemaInfo returns the schema information for MongoDB.
 func (ds *DataSourceConfigMongoDB) GetSchemaInfo(ctx context.Context, schemas []string) (*model.DataSourceSchema, error) {
 	_, tracer, _, _ := commons.NewTrackingFromContext(ctx) //nolint:dogsled // Only tracer needed for span creation

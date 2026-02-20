@@ -11,7 +11,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mongodb.org/mongo-driver/bson"
 )
 
 func TestToOffsetPagination(t *testing.T) {
@@ -106,7 +105,7 @@ func TestValidateParameters(t *testing.T) {
 			check: func(t *testing.T, qh *QueryHeader) {
 				assert.True(t, qh.UseMetadata)
 				assert.NotNil(t, qh.Metadata)
-				assert.Len(t, *qh.Metadata, 2)
+				assert.Len(t, qh.Metadata, 2)
 			},
 		},
 		{
@@ -623,7 +622,7 @@ func TestQueryHeaderMetadata(t *testing.T) {
 		assert.NoError(t, err)
 		require.NotNil(t, qh.Metadata)
 		assert.True(t, qh.UseMetadata)
-		assert.Contains(t, *qh.Metadata, "metadata.customKey")
+		assert.Contains(t, qh.Metadata, "metadata.customKey")
 	})
 }
 
@@ -649,9 +648,9 @@ func TestPaginationStruct(t *testing.T) {
 
 func TestQueryHeaderStruct(t *testing.T) {
 	t.Run("query header with all fields", func(t *testing.T) {
-		metadata := bson.M{"key": "value"}
+		metadata := map[string]string{"key": "value"}
 		qh := QueryHeader{
-			Metadata:    &metadata,
+			Metadata:    metadata,
 			Limit:       50,
 			Page:        2,
 			Cursor:      "cursor",
@@ -795,7 +794,7 @@ func TestValidateParametersNonMetadataKeys(t *testing.T) {
 		os.Unsetenv("MAX_PAGINATION_MONTH_DATE_RANGE")
 	}()
 
-	t.Run("keys without metadata prefix are captured as metadata", func(t *testing.T) {
+	t.Run("keys without metadata prefix are ignored", func(t *testing.T) {
 		params := map[string]string{
 			"status":   "active",
 			"category": "finance",
@@ -803,10 +802,22 @@ func TestValidateParametersNonMetadataKeys(t *testing.T) {
 
 		qh, err := ValidateParameters(params)
 		assert.NoError(t, err)
+		assert.False(t, qh.UseMetadata)
+		assert.Nil(t, qh.Metadata)
+	})
+
+	t.Run("keys with metadata prefix are captured as metadata", func(t *testing.T) {
+		params := map[string]string{
+			"metadata.status":   "active",
+			"metadata.category": "finance",
+		}
+
+		qh, err := ValidateParameters(params)
+		assert.NoError(t, err)
 		assert.True(t, qh.UseMetadata)
 		assert.NotNil(t, qh.Metadata)
-		assert.Contains(t, *qh.Metadata, "status")
-		assert.Contains(t, *qh.Metadata, "category")
+		assert.Contains(t, qh.Metadata, "metadata.status")
+		assert.Contains(t, qh.Metadata, "metadata.category")
 	})
 }
 
@@ -815,7 +826,7 @@ func TestParseParameters_RejectsUnsafeKeys(t *testing.T) {
 		name    string
 		params  map[string]string
 		wantErr bool
-		checkFn func(t *testing.T, metadata bson.M)
+		checkFn func(t *testing.T, metadata map[string]string)
 	}{
 		{
 			name:    "key starting with $ is rejected",
@@ -838,19 +849,18 @@ func TestParseParameters_RejectsUnsafeKeys(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:    "valid unknown key is captured as metadata filter",
+			name:    "valid unknown key is silently ignored",
 			params:  map[string]string{"status": "active"},
 			wantErr: false,
-			checkFn: func(t *testing.T, metadata bson.M) {
-				assert.Contains(t, metadata, "status")
-				assert.Equal(t, "active", metadata["status"])
+			checkFn: func(t *testing.T, metadata map[string]string) {
+				assert.Empty(t, metadata, "unknown keys without metadata. prefix should be ignored")
 			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			metadata := bson.M{}
+			metadata := map[string]string{}
 			var (
 				startDate time.Time
 				endDate   time.Time

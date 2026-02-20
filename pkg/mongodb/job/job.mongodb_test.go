@@ -57,7 +57,7 @@ func TestMain(m *testing.M) {
 func newJobRepository(t *testing.T) *JobMongoDBRepository {
 	t.Helper()
 	clearJobsCollection(t)
-	repo, err := NewJobMongoDBRepository(jobTestMongoConn)
+	repo, err := NewJobMongoDBRepository(context.Background(), jobTestMongoConn)
 	if err != nil {
 		t.Fatalf("failed to create repository: %v", err)
 	}
@@ -195,8 +195,12 @@ func TestJobMongoDBRepository_Create(t *testing.T) {
 			connection: mockConn,
 			Database:   jobTestDatabaseName,
 		}
-		if _, err := repo.Create(context.Background(), jobFixture()); err == nil || err.Error() != "db down" {
-			t.Fatalf("expected db error, got %v", err)
+		_, err := repo.Create(context.Background(), jobFixture())
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "db down") {
+			t.Fatalf("expected error containing 'db down', got %v", err)
 		}
 	})
 }
@@ -284,8 +288,12 @@ func TestJobMongoDBRepository_Update(t *testing.T) {
 		}
 		job := jobFixture()
 		job.ID = uuid.New()
-		if _, err := repo.Update(context.Background(), job); err == nil || err.Error() != "db down" {
-			t.Fatalf("expected db error, got %v", err)
+		_, err := repo.Update(context.Background(), job)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "db down") {
+			t.Fatalf("expected error containing 'db down', got %v", err)
 		}
 	})
 }
@@ -327,8 +335,12 @@ func TestJobMongoDBRepository_FindByID(t *testing.T) {
 			connection: mockConn,
 			Database:   jobTestDatabaseName,
 		}
-		if _, err := repo.FindByID(context.Background(), uuid.New(), uuid.New()); err == nil || err.Error() != "db down" {
-			t.Fatalf("expected db error, got %v", err)
+		_, err := repo.FindByID(context.Background(), uuid.New(), uuid.New())
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "db down") {
+			t.Fatalf("expected error containing 'db down', got %v", err)
 		}
 	})
 }
@@ -409,8 +421,12 @@ func TestJobMongoDBRepository_List(t *testing.T) {
 			connection: mockConn,
 			Database:   jobTestDatabaseName,
 		}
-		if _, err := repo.List(context.Background(), &ListFilter{OrganizationID: uuid.New()}); err == nil || err.Error() != "db down" {
-			t.Fatalf("expected db error, got %v", err)
+		_, err := repo.List(context.Background(), &ListFilter{OrganizationID: uuid.New()})
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "db down") {
+			t.Fatalf("expected error containing 'db down', got %v", err)
 		}
 	})
 
@@ -551,8 +567,11 @@ func TestJobMongoDBRepository_UpdateStatus(t *testing.T) {
 			Database:   jobTestDatabaseName,
 		}
 		err := repo.UpdateStatus(context.Background(), uuid.New(), uuid.New(), model.JobStatusCompleted, "", "", nil)
-		if err == nil || err.Error() != "db down" {
-			t.Fatalf("expected db error, got %v", err)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "db down") {
+			t.Fatalf("expected error containing 'db down', got %v", err)
 		}
 	})
 
@@ -695,8 +714,12 @@ func TestJobMongoDBRepository_FindByRequestHashWithinWindow(t *testing.T) {
 			connection: mockConn,
 			Database:   jobTestDatabaseName,
 		}
-		if _, err := repo.FindByRequestHashWithinWindow(context.Background(), uuid.New(), "hash", 60); err == nil || err.Error() != "db down" {
-			t.Fatalf("expected db error, got %v", err)
+		_, err := repo.FindByRequestHashWithinWindow(context.Background(), uuid.New(), "hash", 60)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "db down") {
+			t.Fatalf("expected error containing 'db down', got %v", err)
 		}
 	})
 }
@@ -998,7 +1021,7 @@ func TestJobMongoDBRepository_DropIndexes(t *testing.T) {
 	}
 }
 
-func TestEnsureIndexesHandlesConflicts(t *testing.T) {
+func TestEnsureIndexes_HandlesConflicts(t *testing.T) {
 	repo := newJobRepository(t)
 	if err := repo.EnsureIndexes(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1008,7 +1031,7 @@ func TestEnsureIndexesHandlesConflicts(t *testing.T) {
 	}
 }
 
-func TestEnsureIndexesDatabaseError(t *testing.T) {
+func TestEnsureIndexes_DatabaseError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
@@ -1026,7 +1049,7 @@ func TestEnsureIndexesDatabaseError(t *testing.T) {
 	}
 }
 
-func TestDropIndexesDatabaseError(t *testing.T) {
+func TestDropIndexes_DatabaseError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
@@ -1044,8 +1067,8 @@ func TestDropIndexesDatabaseError(t *testing.T) {
 	}
 }
 
-func TestRepositoryConstructorValidatesDB(t *testing.T) {
-	repo, err := NewJobMongoDBRepository(jobTestMongoConn)
+func TestNewJobMongoDBRepository_ValidatesDB(t *testing.T) {
+	repo, err := NewJobMongoDBRepository(context.Background(), jobTestMongoConn)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1054,7 +1077,7 @@ func TestRepositoryConstructorValidatesDB(t *testing.T) {
 	}
 }
 
-func TestListCompletedRangeFilter(t *testing.T) {
+func TestList_CompletedRangeFilter(t *testing.T) {
 	repo := newJobRepository(t)
 	org := uuid.New()
 
@@ -1077,7 +1100,7 @@ func TestListCompletedRangeFilter(t *testing.T) {
 	}
 }
 
-func TestListUsesDescendingByDefault(t *testing.T) {
+func TestList_UsesDescendingByDefault(t *testing.T) {
 	repo := newJobRepository(t)
 	org := uuid.New()
 
@@ -1102,7 +1125,7 @@ func TestListUsesDescendingByDefault(t *testing.T) {
 	}
 }
 
-func TestListPartialFilters(t *testing.T) {
+func TestList_PartialFilters(t *testing.T) {
 	repo := newJobRepository(t)
 	org := uuid.New()
 
@@ -1121,7 +1144,7 @@ func TestListPartialFilters(t *testing.T) {
 	}
 }
 
-func TestCreateSetsDefaults(t *testing.T) {
+func TestCreate_SetsDefaults(t *testing.T) {
 	repo := newJobRepository(t)
 	job := jobFixture()
 	// Status must be valid - repository no longer sets defaults
@@ -1141,7 +1164,7 @@ func TestCreateSetsDefaults(t *testing.T) {
 	}
 }
 
-func TestUpdateWithoutCompletedAtWhenFailed(t *testing.T) {
+func TestUpdate_WithoutCompletedAtWhenFailed(t *testing.T) {
 	repo := newJobRepository(t)
 	job := jobFixture()
 	created := createJob(t, repo, job)
@@ -1159,7 +1182,7 @@ func TestUpdateWithoutCompletedAtWhenFailed(t *testing.T) {
 	}
 }
 
-func TestListWithPaginationSecondPageEmpty(t *testing.T) {
+func TestList_PaginationSecondPageEmpty(t *testing.T) {
 	repo := newJobRepository(t)
 	org := uuid.New()
 	for i := 0; i < 2; i++ {

@@ -10,12 +10,11 @@ import (
 	libCommons "github.com/LerianStudio/lib-commons/commons"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
-	"go.mongodb.org/mongo-driver/bson"
 )
 
 // QueryHeader entity from query parameter from get apis
 type QueryHeader struct {
-	Metadata    *bson.M
+	Metadata    map[string]string
 	Limit       int
 	Page        int
 	Cursor      string
@@ -49,7 +48,7 @@ func (qh *QueryHeader) ToOffsetPagination() Pagination {
 // ValidateParameters validate and return struct of default parameters
 func ValidateParameters(params map[string]string) (*QueryHeader, error) {
 	var (
-		metadata    = bson.M{}
+		metadata    = make(map[string]string)
 		startDate   time.Time
 		endDate     time.Time
 		cursor      string
@@ -63,9 +62,9 @@ func ValidateParameters(params map[string]string) (*QueryHeader, error) {
 		return nil, err
 	}
 
-	var metadataPtr *bson.M
+	var metadataResult map[string]string
 	if len(metadata) > 0 {
-		metadataPtr = &metadata
+		metadataResult = metadata
 		useMetadata = true
 	}
 
@@ -80,7 +79,7 @@ func ValidateParameters(params map[string]string) (*QueryHeader, error) {
 	}
 
 	query := &QueryHeader{
-		Metadata:    metadataPtr,
+		Metadata:    metadataResult,
 		Limit:       limit,
 		Page:        page,
 		Cursor:      cursor,
@@ -95,7 +94,7 @@ func ValidateParameters(params map[string]string) (*QueryHeader, error) {
 
 func parseParameters(
 	params map[string]string,
-	metadata bson.M,
+	metadata map[string]string,
 	startDate, endDate *time.Time,
 	cursor *string,
 	limit, page *int,
@@ -142,18 +141,14 @@ func parseParameters(
 
 			*endDate = parsed
 		default:
-			// Capture unrecognized keys as metadata filters so callers
-			// can pass domain-level filters (e.g. status, category)
-			// without requiring the "metadata." prefix.
-			//
-			// Security: reject keys that start with "$" to prevent MongoDB
-			// operator injection (e.g. $where, $ne, $regex). Also reject
-			// keys starting with underscore (internal fields like _id).
+			// Reject keys that start with "$" to prevent MongoDB operator
+			// injection (e.g. $where, $ne, $regex). Also reject keys starting
+			// with underscore (internal fields like _id).
 			if strings.HasPrefix(key, "$") || strings.HasPrefix(key, "_") {
 				return pkg.ValidateBusinessError(constant.ErrInvalidQueryParameter, key)
 			}
 
-			// Cap key/value length to prevent abuse via oversized filter payloads.
+			// Cap key/value length to prevent abuse via oversized query payloads.
 			const (
 				maxFilterKeyLen   = 64
 				maxFilterValueLen = 256
@@ -163,7 +158,8 @@ func parseParameters(
 				return pkg.ValidateBusinessError(constant.ErrInvalidQueryParameter, key)
 			}
 
-			metadata[key] = value
+			// Unknown keys that pass safety checks are silently ignored.
+			// Only keys with the "metadata." prefix are captured as filters.
 		}
 	}
 

@@ -85,7 +85,7 @@ func (s *SeaweedFSInfra) Start(ctx context.Context, env *itestkit.Env) error {
 	}
 
 	// Create a dedicated network for inter-container communication
-	nw, err := network.New(ctx)
+	nw, err := network.New(ctx, network.WithDriver("bridge"))
 	if err != nil {
 		return fmt.Errorf("create network: %w", err)
 	}

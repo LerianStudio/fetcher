@@ -11,7 +11,7 @@ import (
 	connectionCommand "github.com/LerianStudio/fetcher/components/manager/internal/services/command"
 	connectionQuery "github.com/LerianStudio/fetcher/components/manager/internal/services/query"
 
-	cacheRepo "github.com/LerianStudio/fetcher/components/manager/internal/adapters/cache"
+	cacheAdapter "github.com/LerianStudio/fetcher/components/manager/internal/adapters/cache"
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
@@ -20,6 +20,7 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 	"github.com/LerianStudio/fetcher/pkg/mongodb/job"
 	"github.com/LerianStudio/fetcher/pkg/mongodb/product"
+	cacheRepo "github.com/LerianStudio/fetcher/pkg/ports/cache"
 	"github.com/LerianStudio/fetcher/pkg/rabbitmq"
 	"github.com/LerianStudio/fetcher/pkg/ratelimit"
 	redisCache "github.com/LerianStudio/fetcher/pkg/redis"
@@ -117,7 +118,7 @@ func InitServers() (*Service, error) {
 		Logger:                 logger,
 	}
 
-	connectionRepository, err := connection.NewConnectionMongoDBRepository(mongoConnection)
+	connectionRepository, err := connection.NewConnectionMongoDBRepository(ctx, mongoConnection)
 	if err != nil {
 		return nil, fmt.Errorf("create connection repository: %w", err)
 	}
@@ -129,7 +130,7 @@ func InitServers() (*Service, error) {
 	}
 
 	// Init Job repository
-	jobRepository, err := job.NewJobMongoDBRepository(mongoConnection)
+	jobRepository, err := job.NewJobMongoDBRepository(ctx, mongoConnection)
 	if err != nil {
 		return nil, fmt.Errorf("create job repository: %w", err)
 	}
@@ -141,7 +142,7 @@ func InitServers() (*Service, error) {
 	}
 
 	// Init Product repository
-	productRepository, err := product.NewProductMongoDBRepository(mongoConnection)
+	productRepository, err := product.NewProductMongoDBRepository(ctx, mongoConnection)
 	if err != nil {
 		return nil, fmt.Errorf("create product repository: %w", err)
 	}
@@ -237,7 +238,7 @@ func InitServers() (*Service, error) {
 		return nil, fmt.Errorf("initialize schema cache: %w", errCache)
 	}
 
-	schemaCache = cacheRepo.NewSchemaCache(genericCache, schemaCacheTTL)
+	schemaCache = cacheAdapter.NewSchemaCache(genericCache, schemaCacheTTL)
 
 	// Init services and handlers
 	createConnectionCmd := connectionCommand.NewCreateConnection(connectionRepository, productRepository, cryptoService)
@@ -245,7 +246,7 @@ func InitServers() (*Service, error) {
 	deleteConnectionCmd := connectionCommand.NewDeleteConnection(connectionRepository, jobRepository)
 	getConnectionQuery := connectionQuery.NewGetConnection(connectionRepository)
 	listConnectionsQuery := connectionQuery.NewListConnections(connectionRepository, productRepository)
-	testConnectionQuery := connectionQuery.NewTestConnection(connectionRepository, cryptoService, connectionTestStore)
+	testConnectionQuery := connectionQuery.NewTestConnection(connectionRepository, cryptoService, connectionTestStore, datasourceFactory.NewDataSourceFromConnectionWithLogger(logger))
 	validateSchemaQuery := connectionQuery.NewValidateSchema(connectionRepository, cryptoService, schemaCache)
 	getConnectionSchemaQuery := connectionQuery.NewGetConnectionSchema(
 		connectionRepository,
@@ -293,6 +294,7 @@ func InitServers() (*Service, error) {
 		cryptoService,
 		rabbitMQAdapter,
 		cfg.RabbitMQGenerateReportQueue,
+		datasourceFactory.NewDataSourceFromConnectionWithLogger(logger),
 	)
 
 	getJobQuery := connectionQuery.NewGetJob(jobRepository)

@@ -4,11 +4,10 @@ package services
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 
-	datasourceMongoConfig "github.com/LerianStudio/fetcher/pkg/model/datasource/mongodb"
 	modelJob "github.com/LerianStudio/fetcher/pkg/model/job"
+	portDS "github.com/LerianStudio/fetcher/pkg/ports/datasource"
 	libCommons "github.com/LerianStudio/lib-commons/v2/commons"
 	libCrypto "github.com/LerianStudio/lib-commons/v2/commons/crypto"
 	"github.com/LerianStudio/lib-commons/v2/commons/log"
@@ -20,7 +19,7 @@ import (
 // QueryPluginCRM handles querying MongoDB plugin_crm database with special processing.
 func (uc *UseCase) QueryPluginCRM(
 	ctx context.Context,
-	dataSource *datasourceMongoConfig.DataSourceConfigMongoDB,
+	dataSource portDS.CRMQueryable,
 	databaseName string,
 	collections map[string][]string,
 	databaseFilters map[string]map[string]modelJob.FilterCondition,
@@ -30,7 +29,7 @@ func (uc *UseCase) QueryPluginCRM(
 ) error {
 	_, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
 
-	_, span := tracer.Start(ctx, "service.extract_external_data.query_plugin_crm")
+	ctx, span := tracer.Start(ctx, "service.extract_external_data.query_plugin_crm")
 	defer span.End()
 
 	span.SetAttributes(
@@ -44,7 +43,7 @@ func (uc *UseCase) QueryPluginCRM(
 
 		if err := uc.processPluginCRMCollection(ctx, dataSource, collection, fields, collectionFilters, organizationID, result, logger); err != nil {
 			libOtel.HandleSpanError(&span, "Error processing plugin_crm collection", err)
-			return err
+			return fmt.Errorf("failed to process plugin_crm collection %s: %w", collection, err)
 		}
 	}
 
@@ -54,7 +53,7 @@ func (uc *UseCase) QueryPluginCRM(
 // processPluginCRMCollection handles plugin_crm specific collection processing.
 func (uc *UseCase) processPluginCRMCollection(
 	ctx context.Context,
-	dataSource *datasourceMongoConfig.DataSourceConfigMongoDB,
+	dataSource portDS.CRMQueryable,
 	collection string,
 	fields []string,
 	collectionFilters map[string]modelJob.FilterCondition,
@@ -69,7 +68,7 @@ func (uc *UseCase) processPluginCRMCollection(
 
 	collectionResult, err := uc.queryPluginCRMCollectionWithFilters(ctx, dataSource, newCollection, fields, collectionFilters, logger)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to process plugin_crm collection %s: %w", collection, err)
 	}
 
 	if result["plugin_crm"] == nil {
@@ -92,7 +91,7 @@ func (uc *UseCase) processPluginCRMCollection(
 // queryPluginCRMCollectionWithFilters queries a MongoDB collection with plugin_crm specific filter transformation.
 func (uc *UseCase) queryPluginCRMCollectionWithFilters(
 	ctx context.Context,
-	dataSource *datasourceMongoConfig.DataSourceConfigMongoDB,
+	dataSource portDS.CRMQueryable,
 	collection string,
 	fields []string,
 	collectionFilters map[string]modelJob.FilterCondition,
@@ -109,14 +108,14 @@ func (uc *UseCase) queryPluginCRMCollectionWithFilters(
 			return nil, fmt.Errorf("error transforming advanced filters for collection %s: %w", collection, err)
 		}
 
-		queryResult, errQueryResult = dataSource.MongoDBRepository.QueryWithAdvancedFilters(ctx, collection, fields, transformedFilter)
+		queryResult, errQueryResult = dataSource.QueryCollectionWithAdvancedFilters(ctx, collection, fields, transformedFilter)
 	} else {
-		queryResult, errQueryResult = dataSource.MongoDBRepository.Query(ctx, collection, fields, nil)
+		queryResult, errQueryResult = dataSource.QueryCollection(ctx, collection, fields, nil)
 	}
 
 	if errQueryResult != nil {
 		logger.Errorf("Error querying collection %s: %s", collection, errQueryResult.Error())
-		return nil, errQueryResult
+		return nil, fmt.Errorf("failed to query collection %s: %w", collection, errQueryResult)
 	}
 
 	return queryResult, nil
@@ -128,13 +127,12 @@ func (uc *UseCase) transformPluginCRMAdvancedFilters(filter map[string]modelJob.
 		return nil, nil
 	}
 
-	hashSecretKey := os.Getenv("CRYPTO_HASH_SECRET_KEY_PLUGIN_CRM")
-	if hashSecretKey == "" {
-		return nil, fmt.Errorf("CRYPTO_HASH_SECRET_KEY_PLUGIN_CRM environment variable not set")
+	if uc.crmHashSecretKey == "" {
+		return nil, fmt.Errorf("CRM hash secret key not configured")
 	}
 
 	crypto := &libCrypto.Crypto{
-		HashSecretKey: hashSecretKey,
+		HashSecretKey: uc.crmHashSecretKey,
 		Logger:        logger,
 	}
 
@@ -238,20 +236,17 @@ func (uc *UseCase) decryptPluginCRMData(logger log.Logger, collectionResult []ma
 	}
 
 	// Initialize crypto instance
-	hashSecretKey := os.Getenv("CRYPTO_HASH_SECRET_KEY_PLUGIN_CRM")
-
-	encryptSecretKey := os.Getenv("CRYPTO_ENCRYPT_SECRET_KEY_PLUGIN_CRM")
-	if encryptSecretKey == "" {
-		return nil, fmt.Errorf("CRYPTO_ENCRYPT_SECRET_KEY_PLUGIN_CRM environment variable not set")
+	if uc.crmEncryptSecretKey == "" {
+		return nil, fmt.Errorf("CRM encrypt secret key not configured")
 	}
 
-	if hashSecretKey == "" {
-		return nil, fmt.Errorf("CRYPTO_HASH_SECRET_KEY_PLUGIN_CRM environment variable not set")
+	if uc.crmHashSecretKey == "" {
+		return nil, fmt.Errorf("CRM hash secret key not configured")
 	}
 
 	crypto := &libCrypto.Crypto{
-		HashSecretKey:    hashSecretKey,
-		EncryptSecretKey: encryptSecretKey,
+		HashSecretKey:    uc.crmHashSecretKey,
+		EncryptSecretKey: uc.crmEncryptSecretKey,
 		Logger:           logger,
 	}
 
@@ -291,11 +286,11 @@ func (uc *UseCase) decryptRecord(record map[string]any, crypto *libCrypto.Crypto
 	}
 
 	if err := uc.decryptTopLevelFields(decryptedRecord, crypto); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to decrypt top-level fields: %w", err)
 	}
 
 	if err := uc.decryptNestedFields(decryptedRecord, crypto); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to decrypt nested fields: %w", err)
 	}
 
 	return decryptedRecord, nil
@@ -317,19 +312,19 @@ func (uc *UseCase) decryptTopLevelFields(record map[string]any, crypto *libCrypt
 // decryptNestedFields decrypts nested encrypted fields in the record.
 func (uc *UseCase) decryptNestedFields(record map[string]any, crypto *libCrypto.Crypto) error {
 	if err := uc.decryptContactFields(record, crypto); err != nil {
-		return err
+		return fmt.Errorf("failed to decrypt contact fields: %w", err)
 	}
 
 	if err := uc.decryptBankingDetailsFields(record, crypto); err != nil {
-		return err
+		return fmt.Errorf("failed to decrypt banking details fields: %w", err)
 	}
 
 	if err := uc.decryptLegalPersonFields(record, crypto); err != nil {
-		return err
+		return fmt.Errorf("failed to decrypt legal person fields: %w", err)
 	}
 
 	if err := uc.decryptNaturalPersonFields(record, crypto); err != nil {
-		return err
+		return fmt.Errorf("failed to decrypt natural person fields: %w", err)
 	}
 
 	return nil
@@ -434,7 +429,7 @@ func (uc *UseCase) decryptFieldValue(container map[string]any, fieldName string,
 
 	decryptedValue, err := crypto.Decrypt(&strValue)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to decrypt value: %w", err)
 	}
 
 	container[fieldName] = *decryptedValue

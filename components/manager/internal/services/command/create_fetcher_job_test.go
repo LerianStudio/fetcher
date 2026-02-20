@@ -12,6 +12,7 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/model"
+	"github.com/LerianStudio/fetcher/pkg/model/datasource"
 	"github.com/LerianStudio/fetcher/pkg/model/job"
 	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 	jobRepo "github.com/LerianStudio/fetcher/pkg/mongodb/job"
@@ -32,7 +33,7 @@ func newValidFetcherRequest() model.FetcherRequest {
 				},
 			},
 		},
-		Metadata: map[string]any{"key": "value"},
+		Metadata: map[string]any{"source": "test-product", "key": "value"},
 	}
 }
 
@@ -59,7 +60,7 @@ func TestCreateFetcherJob_Execute_ValidationError(t *testing.T) {
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 
-	svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, nil, nil, "")
+	svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, nil, nil, "", nil)
 
 	tests := []struct {
 		name    string
@@ -96,6 +97,42 @@ func TestCreateFetcherJob_Execute_ValidationError(t *testing.T) {
 				},
 			},
 			wantErr: "datasource must have at least one table with fields",
+		},
+		{
+			name: "nil metadata",
+			request: model.FetcherRequest{
+				DataRequest: model.DataRequest{
+					MappedFields: map[string]map[string][]string{
+						"ds1": {"table1": {"field1"}},
+					},
+				},
+				Metadata: nil,
+			},
+			wantErr: "metadata is required and must contain 'source' field",
+		},
+		{
+			name: "metadata without source",
+			request: model.FetcherRequest{
+				DataRequest: model.DataRequest{
+					MappedFields: map[string]map[string][]string{
+						"ds1": {"table1": {"field1"}},
+					},
+				},
+				Metadata: map[string]any{"key": "value"},
+			},
+			wantErr: "metadata.source is required for job notification routing",
+		},
+		{
+			name: "metadata with empty source",
+			request: model.FetcherRequest{
+				DataRequest: model.DataRequest{
+					MappedFields: map[string]map[string][]string{
+						"ds1": {"table1": {"field1"}},
+					},
+				},
+				Metadata: map[string]any{"source": ""},
+			},
+			wantErr: "metadata.source must be a non-empty string",
 		},
 	}
 
@@ -134,7 +171,7 @@ func TestCreateFetcherJob_Execute_DuplicateWithinWindow(t *testing.T) {
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 
-	svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, nil, nil, "")
+	svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, nil, nil, "", nil)
 
 	ctx := testContext()
 	orgID := uuid.New()
@@ -184,7 +221,7 @@ func TestCreateFetcherJob_Execute_NoConnectionsFound(t *testing.T) {
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 
-	svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, nil, nil, "")
+	svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, nil, nil, "", nil)
 
 	ctx := testContext()
 	orgID := uuid.New()
@@ -229,7 +266,7 @@ func TestCreateFetcherJob_Execute_TooManyDatasources(t *testing.T) {
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 
-	svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, nil, nil, "")
+	svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, nil, nil, "", nil)
 
 	ctx := testContext()
 	orgID := uuid.New()
@@ -279,7 +316,7 @@ func TestCreateFetcherJob_Execute_FindByRequestHashError(t *testing.T) {
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 
-	svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, nil, nil, "")
+	svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, nil, nil, "", nil)
 
 	ctx := testContext()
 	orgID := uuid.New()
@@ -316,7 +353,7 @@ func TestCreateFetcherJob_Execute_FindByConfigNamesError(t *testing.T) {
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 
-	svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, nil, nil, "")
+	svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, nil, nil, "", nil)
 
 	ctx := testContext()
 	orgID := uuid.New()
@@ -383,7 +420,7 @@ func TestCreateFetcherJob_QueueNameConfiguration(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, nil, nil, tt.inputQueueName)
+			svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, nil, nil, tt.inputQueueName, nil)
 
 			if svc.queueName != tt.expectedQueueName {
 				t.Fatalf("expected queueName %q, got %q", tt.expectedQueueName, svc.queueName)
@@ -400,7 +437,7 @@ func TestNewCreateFetcherJob(t *testing.T) {
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 
-	svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, nil, nil, "")
+	svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, nil, nil, "", nil)
 
 	if svc == nil {
 		t.Fatal("expected non-nil service")
@@ -424,7 +461,7 @@ func TestCreateFetcherJob_Execute_PartialConnectionsFound(t *testing.T) {
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 
-	svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, nil, nil, "")
+	svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, nil, nil, "", nil)
 
 	ctx := testContext()
 	orgID := uuid.New()
@@ -438,6 +475,7 @@ func TestCreateFetcherJob_Execute_PartialConnectionsFound(t *testing.T) {
 				"missing_db":  {"orders": {"id", "total"}},
 			},
 		},
+		Metadata: map[string]any{"source": "test-product"},
 	}
 
 	// Mock: no duplicate found
@@ -484,7 +522,16 @@ func TestCreateFetcherJob_Execute_JobCreateError(t *testing.T) {
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 	mockCryptor := crypto.NewMockCryptor(ctrl)
 
-	svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, mockCryptor, nil, "")
+	// Provide a factory that simulates decryption during connection creation
+	testFactory := func(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor) (datasource.DataSource, error) {
+		_, err := cryptor.Decrypt(ctx, conn.PasswordEncrypted, conn.EncryptionKeyVersion)
+		if err != nil {
+			return nil, fmt.Errorf("decryption failed: %w", err)
+		}
+		return nil, fmt.Errorf("connection failed")
+	}
+
+	svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, mockCryptor, nil, "", testFactory)
 
 	ctx := testContext()
 	orgID := uuid.New()
@@ -570,7 +617,7 @@ func TestCreateFetcherJob_Execute_DuplicateWithDifferentStatuses(t *testing.T) {
 			mockConnRepo := connRepo.NewMockRepository(ctrl)
 			mockJobRepo := jobRepo.NewMockRepository(ctrl)
 
-			svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, nil, nil, "")
+			svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, nil, nil, "", nil)
 
 			ctx := testContext()
 			orgID := uuid.New()
@@ -618,7 +665,7 @@ func TestCreateFetcherJob_Execute_FailedJobWithinWindow_AllowsRetry(t *testing.T
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 	mockConnTester := NewMockConnectionTester(ctrl)
 
-	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, nil, nil, nil, mockConnTester, "")
+	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, nil, nil, nil, mockConnTester, "", nil)
 
 	ctx := testContext()
 	orgID := uuid.New()
@@ -677,7 +724,7 @@ func TestCreateFetcherJob_Execute_DuplicateKeyOnCreate_ReturnsExistingJob(t *tes
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 	mockConnTester := NewMockConnectionTester(ctrl)
 
-	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, nil, nil, nil, mockConnTester, "")
+	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, nil, nil, nil, mockConnTester, "", nil)
 
 	ctx := testContext()
 	orgID := uuid.New()
@@ -741,7 +788,7 @@ func TestCreateFetcherJob_Execute_DuplicateKeyOnCreate_ActiveLookupMissAndRetryF
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 	mockConnTester := NewMockConnectionTester(ctrl)
 
-	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, nil, nil, nil, mockConnTester, "")
+	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, nil, nil, nil, mockConnTester, "", nil)
 
 	ctx := testContext()
 	orgID := uuid.New()
@@ -794,7 +841,7 @@ func TestCreateFetcherJob_Execute_DuplicateKeyOnCreate_ActiveLookupMissAndRetryS
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 	mockConnTester := NewMockConnectionTester(ctrl)
 
-	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, nil, nil, nil, mockConnTester, "")
+	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, nil, nil, nil, mockConnTester, "", nil)
 
 	ctx := testContext()
 	orgID := uuid.New()
@@ -851,7 +898,7 @@ func TestCreateFetcherJob_Execute_MultipleConnectionsSuccess_WithoutProductRepo(
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 	mockConnTester := NewMockConnectionTester(ctrl)
 
-	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, nil, nil, nil, mockConnTester, "")
+	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, nil, nil, nil, mockConnTester, "", nil)
 
 	ctx := testContext()
 	orgID := uuid.New()
@@ -930,7 +977,7 @@ func TestCreateFetcherJob_Execute_FiltersWithMultipleDatasources(t *testing.T) {
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 	mockConnTester := NewMockConnectionTester(ctrl)
 
-	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, nil, nil, nil, mockConnTester, "")
+	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, nil, nil, nil, mockConnTester, "", nil)
 
 	ctx := testContext()
 	orgID := uuid.New()
@@ -951,6 +998,7 @@ func TestCreateFetcherJob_Execute_FiltersWithMultipleDatasources(t *testing.T) {
 				},
 			},
 		},
+		Metadata: map[string]any{"source": "test-product"},
 	}
 
 	// Create connection
@@ -1022,7 +1070,7 @@ func TestCreateFetcherJob_Execute_InvalidFilterReferences(t *testing.T) {
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 
-	svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, nil, nil, "")
+	svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, nil, nil, "", nil)
 
 	tests := []struct {
 		name    string
@@ -1044,6 +1092,7 @@ func TestCreateFetcherJob_Execute_InvalidFilterReferences(t *testing.T) {
 						},
 					},
 				},
+				Metadata: map[string]any{"source": "test-product"},
 			},
 			wantErr: "datasource 'unknown_db' not found",
 		},
@@ -1087,7 +1136,7 @@ func TestCreateFetcherJob_Execute_ProductNotFound(t *testing.T) {
 	mockProductRepo := productMock.NewMockRepository(ctrl)
 	mockConnTester := NewMockConnectionTester(ctrl)
 
-	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, mockProductRepo, nil, nil, mockConnTester, "")
+	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, mockProductRepo, nil, nil, mockConnTester, "", nil)
 
 	ctx := testContext()
 	orgID := uuid.New()
@@ -1149,7 +1198,7 @@ func TestCreateFetcherJob_Execute_ProductRepoError(t *testing.T) {
 	mockProductRepo := productMock.NewMockRepository(ctrl)
 	mockConnTester := NewMockConnectionTester(ctrl)
 
-	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, mockProductRepo, nil, nil, mockConnTester, "")
+	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, mockProductRepo, nil, nil, mockConnTester, "", nil)
 
 	ctx := testContext()
 	orgID := uuid.New()
@@ -1209,7 +1258,7 @@ func TestCreateFetcherJob_Execute_ConnectionNotAssigned(t *testing.T) {
 	mockProductRepo := productMock.NewMockRepository(ctrl)
 	mockConnTester := NewMockConnectionTester(ctrl)
 
-	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, mockProductRepo, nil, nil, mockConnTester, "")
+	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, mockProductRepo, nil, nil, mockConnTester, "", nil)
 
 	ctx := testContext()
 	orgID := uuid.New()
@@ -1278,7 +1327,7 @@ func TestCreateFetcherJob_Execute_ProductMismatch(t *testing.T) {
 	mockProductRepo := productMock.NewMockRepository(ctrl)
 	mockConnTester := NewMockConnectionTester(ctrl)
 
-	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, mockProductRepo, nil, nil, mockConnTester, "")
+	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, mockProductRepo, nil, nil, mockConnTester, "", nil)
 
 	ctx := testContext()
 	orgID := uuid.New()
@@ -1346,7 +1395,7 @@ func TestCreateFetcherJob_Execute_DuplicateKeyOnCreate_FindActiveReturnsError(t 
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 	mockConnTester := NewMockConnectionTester(ctrl)
 
-	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, nil, nil, nil, mockConnTester, "")
+	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, nil, nil, nil, mockConnTester, "", nil)
 
 	ctx := testContext()
 	orgID := uuid.New()
@@ -1398,7 +1447,7 @@ func TestCreateFetcherJob_Execute_DuplicateKeyOnCreate_RetryAlsoHitsDupKey_Secon
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 	mockConnTester := NewMockConnectionTester(ctrl)
 
-	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, nil, nil, nil, mockConnTester, "")
+	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, nil, nil, nil, mockConnTester, "", nil)
 
 	ctx := testContext()
 	orgID := uuid.New()
@@ -1476,7 +1525,7 @@ func TestCreateFetcherJob_Execute_ProductValidationSuccess(t *testing.T) {
 	mockProductRepo := productMock.NewMockRepository(ctrl)
 	mockConnTester := NewMockConnectionTester(ctrl)
 
-	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, mockProductRepo, nil, nil, mockConnTester, "")
+	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, mockProductRepo, nil, nil, mockConnTester, "", nil)
 
 	ctx := testContext()
 	orgID := uuid.New()

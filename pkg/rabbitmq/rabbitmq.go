@@ -19,7 +19,6 @@ import (
 	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
 	libRabbitmq "github.com/LerianStudio/lib-commons/v2/commons/rabbitmq"
 
-	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -45,7 +44,18 @@ const (
 	DefaultMaxRetryDelay = 2 * time.Second
 
 	// DefaultConsumerReconnectDelay is the default delay between consumer reconnection attempts.
+	// Deprecated: Use DefaultConsumerBaseRetryDelay instead.
 	DefaultConsumerReconnectDelay = 500 * time.Millisecond
+
+	// DefaultConsumerBaseRetryDelay is the base delay for consumer loop exponential backoff.
+	DefaultConsumerBaseRetryDelay = 1 * time.Second
+
+	// DefaultConsumerMaxRetryDelay is the maximum delay for consumer loop exponential backoff.
+	DefaultConsumerMaxRetryDelay = 60 * time.Second
+
+	// DefaultConsumerPermanentErrorDelay is the delay for permanent errors (e.g., 404, 403).
+	// Uses a longer base to avoid hammering the broker for errors that won't resolve.
+	DefaultConsumerPermanentErrorDelay = 30 * time.Second
 
 	// DefaultCircuitBreakerThreshold is the default number of consecutive failures before opening the circuit.
 	DefaultCircuitBreakerThreshold = 5
@@ -68,6 +78,16 @@ const (
 
 	// HeaderSignatureVersion contains the version of the signature algorithm (e.g., "v1")
 	HeaderSignatureVersion = "signature-version"
+)
+
+// AMQP error codes for error classification.
+// Permanent errors indicate configuration or permission issues that
+// will not resolve by retrying with the same parameters.
+const (
+	amqpNotFound           = 404 // Queue/exchange does not exist
+	amqpAccessRefused      = 403 // Authentication or authorization failure
+	amqpResourceLocked     = 405 // Resource locked by another connection
+	amqpPreconditionFailed = 406 // Queue/exchange properties mismatch
 )
 
 // CircuitState represents the state of the circuit breaker.
@@ -111,7 +131,18 @@ type AdapterOptions struct {
 	MaxRetryDelay time.Duration
 
 	// ConsumerReconnectDelay is the delay between consumer reconnection attempts.
+	// Deprecated: Use ConsumerBaseRetryDelay instead.
 	ConsumerReconnectDelay time.Duration
+
+	// ConsumerBaseRetryDelay is the base delay for consumer loop exponential backoff.
+	ConsumerBaseRetryDelay time.Duration
+
+	// ConsumerMaxRetryDelay is the maximum delay for consumer loop exponential backoff.
+	ConsumerMaxRetryDelay time.Duration
+
+	// ConsumerPermanentErrorDelay is the fixed delay applied when a permanent AMQP error
+	// (404, 403) is detected. These errors won't resolve without configuration changes.
+	ConsumerPermanentErrorDelay time.Duration
 
 	// CircuitBreakerThreshold is the number of consecutive failures before opening the circuit.
 	CircuitBreakerThreshold int
@@ -151,6 +182,9 @@ func DefaultOptions() AdapterOptions {
 		BaseRetryDelay:              DefaultBaseRetryDelay,
 		MaxRetryDelay:               DefaultMaxRetryDelay,
 		ConsumerReconnectDelay:      DefaultConsumerReconnectDelay,
+		ConsumerBaseRetryDelay:      DefaultConsumerBaseRetryDelay,
+		ConsumerMaxRetryDelay:       DefaultConsumerMaxRetryDelay,
+		ConsumerPermanentErrorDelay: DefaultConsumerPermanentErrorDelay,
 		CircuitBreakerThreshold:     DefaultCircuitBreakerThreshold,
 		CircuitBreakerCooldown:      DefaultCircuitBreakerCooldown,
 		ShutdownTimeout:             DefaultShutdownTimeout,
@@ -320,6 +354,23 @@ var ErrSignatureVerifierNotConfigured = errors.New("signature verification enabl
 
 // ErrSignatureExpired is returned when the message signature timestamp is too old.
 var ErrSignatureExpired = errors.New("message signature has expired")
+
+// isPermanentAMQPError returns true if the error is a non-recoverable AMQP error
+// such as queue not found (404) or access refused (403). These errors indicate
+// configuration or permission issues that will not resolve by retrying.
+func isPermanentAMQPError(err error) bool {
+	var amqpErr *amqp.Error
+	if !errors.As(err, &amqpErr) {
+		return false
+	}
+
+	switch amqpErr.Code {
+	case amqpNotFound, amqpAccessRefused, amqpResourceLocked, amqpPreconditionFailed:
+		return true
+	default:
+		return false
+	}
+}
 
 // RabbitMQAdapter provides resilient publish and consumer operations over RabbitMQ.
 type RabbitMQAdapter struct {
@@ -558,10 +609,7 @@ func (prmq *RabbitMQAdapter) startChannelWatcher(logger libLog.Logger, channel a
 // calculateBackoff calculates exponential backoff with jitter.
 // It returns a delay based on the attempt number, bounded by maxDelay,
 // with random jitter (0-25%) added to prevent thundering herd.
-func (prmq *RabbitMQAdapter) calculateBackoff(attempt int) time.Duration {
-	baseDelay := prmq.options.BaseRetryDelay
-	maxDelay := prmq.options.MaxRetryDelay
-
+func calculateBackoff(attempt int, baseDelay, maxDelay time.Duration) time.Duration {
 	// Ensure non-negative shift amount (attempt starts at 1 in practice)
 	shiftAmount := max(attempt-1, 0)
 	// Calculate exponential backoff: baseDelay * 2^(attempt-1)
@@ -611,7 +659,7 @@ func (prmq *RabbitMQAdapter) ensureChannel(span *trace.Span, logger libLog.Logge
 
 		prmq.circuitBreaker.recordFailure()
 
-		backoff := prmq.calculateBackoff(attempt)
+		backoff := calculateBackoff(attempt, prmq.options.BaseRetryDelay, prmq.options.MaxRetryDelay)
 		time.Sleep(backoff)
 	}
 
@@ -625,7 +673,7 @@ func (prmq *RabbitMQAdapter) ensureChannel(span *trace.Span, logger libLog.Logge
 		return nil, fmt.Errorf("rabbitmq establish connection after %d attempts: %w", prmq.options.MaxRetryAttempts, lastErr)
 	}
 
-	logger.Info("RabbitMQ connection established on-demand")
+	logger.Info("RabbitMQ channel re-established on existing connection")
 
 	return prmq.channel, nil
 }
@@ -653,7 +701,7 @@ func (prmq *RabbitMQAdapter) ProducerDefault(ctx context.Context, exchange, key 
 		return ErrCircuitOpen
 	}
 
-	_, spanProducer := tracer.Start(ctx, "rabbitmq.producer.publish_message")
+	ctx, spanProducer := tracer.Start(ctx, "adapter.rabbitmq.produce")
 	defer spanProducer.End()
 
 	spanProducer.SetAttributes(
@@ -787,6 +835,8 @@ func (prmq *RabbitMQAdapter) ConsumerLoop(ctx context.Context, queue string, con
 		concurrency = 1
 	}
 
+	var consecutiveErrors int
+
 	for {
 		if ctx.Err() != nil {
 			logger.Warnf("Context canceled while running consumer loop: %v", ctx.Err())
@@ -800,6 +850,7 @@ func (prmq *RabbitMQAdapter) ConsumerLoop(ctx context.Context, queue string, con
 
 		cycleErr := prmq.runConsumerCycle(ctx, tracer, logger, queue, reqID, concurrency, handler)
 		if cycleErr == nil {
+			consecutiveErrors = 0
 			continue
 		}
 
@@ -807,13 +858,36 @@ func (prmq *RabbitMQAdapter) ConsumerLoop(ctx context.Context, queue string, con
 			return nil
 		}
 
+		consecutiveErrors++
+
 		if errors.Is(cycleErr, errDeliveriesClosed) {
 			logger.Warn("Deliveries channel closed, attempting to reconnect")
 		} else {
-			logger.Warnf("Consumer cycle finished with error: %v", cycleErr)
+			logger.Warnf("Consumer cycle finished with error (attempt %d): %v", consecutiveErrors, cycleErr)
 		}
 
-		time.Sleep(prmq.options.ConsumerReconnectDelay)
+		// Calculate backoff based on error type
+		var backoff time.Duration
+
+		switch {
+		case errors.Is(cycleErr, ErrCircuitOpen):
+			backoff = prmq.options.CircuitBreakerCooldown
+			logger.Warnf("Circuit breaker is open, waiting %v before retry", backoff)
+		case isPermanentAMQPError(cycleErr):
+			backoff = prmq.options.ConsumerPermanentErrorDelay
+			logger.Errorf("Permanent AMQP error detected (attempt %d), using extended backoff of %v: %v",
+				consecutiveErrors, backoff, cycleErr)
+		default:
+			backoff = calculateBackoff(consecutiveErrors,
+				prmq.options.ConsumerBaseRetryDelay,
+				prmq.options.ConsumerMaxRetryDelay)
+		}
+
+		select {
+		case <-time.After(backoff):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 }
 
@@ -826,13 +900,19 @@ func (prmq *RabbitMQAdapter) runConsumerCycle(
 	concurrency int,
 	handler func(ctx context.Context, body []byte, headers map[string]any) error,
 ) error {
-	ctxSpan, span := tracer.Start(ctx, "rabbitmq.consumer.connection_cycle")
+	ctxSpan, span := tracer.Start(ctx, "adapter.rabbitmq.consumer_connection_cycle")
 
 	span.SetAttributes(
 		attribute.String("app.request.request_id", reqID),
 		attribute.String("app.request.queue", queue),
 	)
 	defer span.End()
+
+	// Check circuit breaker before attempting to connect
+	if !prmq.circuitBreaker.canExecute() {
+		logger.Warnf("Circuit breaker is open, skipping consumer cycle")
+		return ErrCircuitOpen
+	}
 
 	channel, err := prmq.ensureChannel(&span, logger)
 	if err != nil {
@@ -845,6 +925,7 @@ func (prmq *RabbitMQAdapter) runConsumerCycle(
 	if errCh := channel.Qos(concurrency, 0, false); errCh != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to set RabbitMQ QoS", errCh)
 		logger.Errorf("Failed to set RabbitMQ QoS: %v", errCh)
+		prmq.circuitBreaker.recordFailure()
 		prmq.invalidateChannel(logger)
 
 		return fmt.Errorf("rabbitmq set qos: %w", errCh)
@@ -864,6 +945,7 @@ func (prmq *RabbitMQAdapter) runConsumerCycle(
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to start RabbitMQ consumer", err)
 		logger.Errorf("Failed to start RabbitMQ consumer: %v", err)
+		prmq.circuitBreaker.recordFailure()
 		prmq.invalidateChannel(logger)
 
 		return fmt.Errorf("rabbitmq start consumer: %w", err)
@@ -990,14 +1072,14 @@ func (prmq *RabbitMQAdapter) processDelivery(
 	msgCtx = libOpentelemetry.ExtractTraceContextFromQueueHeaders(msgCtx, d.Headers)
 
 	// Create tracer from context and start span
-	msgTracer := pkg.NewTracerFromContext(msgCtx)
+	_, msgTracer, _, _ := libCommons.NewTrackingFromContext(msgCtx) //nolint:dogsled // NewTrackingFromContext returns 4 values, only tracer needed here
 
 	hctx, hspan := msgTracer.Start(msgCtx, "rabbitmq.consumer.handle_message")
 	defer hspan.End()
 
 	// Add messaging semantic conventions (M12)
 	hspan.SetAttributes(
-		attribute.String("app.request.rabbitmq.consumer.request_id", requestIDStr),
+		attribute.String("app.request.request_id", requestIDStr),
 		attribute.String("messaging.system", "rabbitmq"),
 		attribute.String("messaging.destination.name", queue),
 		attribute.String("messaging.operation", "process"),
