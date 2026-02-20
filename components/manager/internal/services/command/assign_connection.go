@@ -43,20 +43,24 @@ func (s *AssignConnection) Execute(ctx context.Context, organizationID, connecti
 	// Validate product exists
 	prod, err := s.productRepo.FindByID(ctx, productID, organizationID)
 	if err != nil {
+		libOpentelemetry.HandleSpanError(&span, "Failed to find product by ID", err)
 		return nil, fmt.Errorf("failed to find product by id: %w", err)
 	}
 
 	if prod == nil {
+		libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "Product not found", constant.ErrEntityNotFound)
 		return nil, pkg.ValidateBusinessError(constant.ErrEntityNotFound, "product")
 	}
 
 	// Validate connection exists
 	conn, err := s.connRepo.FindByID(ctx, connectionID, organizationID)
 	if err != nil {
+		libOpentelemetry.HandleSpanError(&span, "Failed to find connection by ID", err)
 		return nil, fmt.Errorf("failed to find connection by id: %w", err)
 	}
 
 	if conn == nil {
+		libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "Connection not found", constant.ErrEntityNotFound)
 		return nil, pkg.ValidateBusinessError(constant.ErrEntityNotFound, "connection")
 	}
 

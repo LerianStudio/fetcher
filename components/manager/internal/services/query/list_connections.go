@@ -43,10 +43,12 @@ func (s *ListConnections) Execute(ctx context.Context, organizationID uuid.UUID,
 
 		prod, err := s.productRepo.FindByID(ctx, *productID, organizationID)
 		if err != nil {
+			libOpentelemetry.HandleSpanError(&span, "Failed to find product by ID", err)
 			return nil, fmt.Errorf("failed to find product by id: %w", err)
 		}
 
 		if prod == nil {
+			libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "Product not found", constant.ErrEntityNotFound)
 			return nil, pkg.ValidateBusinessError(constant.ErrEntityNotFound, "product")
 		}
 
@@ -60,6 +62,7 @@ func (s *ListConnections) Execute(ctx context.Context, organizationID uuid.UUID,
 
 	list, totalCount, err := s.connRepo.List(ctx, organizationID, filters)
 	if err != nil {
+		libOpentelemetry.HandleSpanError(&span, "Failed to list connections", err)
 		return nil, fmt.Errorf("failed to list connections: %w", err)
 	}
 

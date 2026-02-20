@@ -10,6 +10,7 @@ import (
 	productRepo "github.com/LerianStudio/fetcher/pkg/ports/product"
 
 	"github.com/LerianStudio/lib-commons/v2/commons"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
@@ -37,6 +38,7 @@ func (s *GetProduct) Execute(ctx context.Context, organizationID, productID uuid
 
 	current, err := s.productRepo.FindByID(ctx, productID, organizationID)
 	if err != nil {
+		libOpentelemetry.HandleSpanError(&span, "Failed to find product by ID", err)
 		return nil, fmt.Errorf("failed to find product by id: %w", err)
 	}
 

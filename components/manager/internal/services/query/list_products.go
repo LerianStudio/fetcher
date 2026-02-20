@@ -41,6 +41,7 @@ func (s *ListProducts) Execute(ctx context.Context, organizationID uuid.UUID, fi
 
 	list, totalCount, err := s.productRepo.List(ctx, organizationID, filters)
 	if err != nil {
+		libOpentelemetry.HandleSpanError(&span, "Failed to list products", err)
 		return nil, fmt.Errorf("failed to list products: %w", err)
 	}
 
