@@ -93,11 +93,15 @@ func InitLocalEnvConfig() *LocalEnvConfig {
 // Constraints: s any - must be an initialized pointer
 // Supported types: String, Boolean, Int, Int8, Int16, Int32 and Int64.
 func SetConfigFromEnvVars(s any) error {
+	if s == nil {
+		return errors.New("s must be a non-nil pointer")
+	}
+
 	v := reflect.ValueOf(s)
 
 	t := v.Type()
-	if t.Kind() != reflect.Ptr {
-		return errors.New("s must be an pointer")
+	if t.Kind() != reflect.Ptr || v.IsNil() {
+		return errors.New("s must be a non-nil pointer")
 	}
 
 	e := t.Elem()
