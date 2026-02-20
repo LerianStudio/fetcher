@@ -2315,6 +2315,58 @@ func TestRabbitMQAdapter_ConsumerLoop_SkipsVerificationWhenDisabled(t *testing.T
 	}, time.Second, 10*time.Millisecond)
 }
 
+func TestRabbitMQAdapter_ConsumerLoop_NacksWhenVerificationEnabledWithoutSigner(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(testContextWithHeader("req-no-signer-verify"))
+	defer cancel()
+
+	channel := newTestAMQPChannel()
+	ack := &testAcknowledger{}
+	channel.deliveries <- amqp.Delivery{
+		Body: []byte(`{"data":"test"}`),
+		Headers: amqp.Table{
+			HeaderMessageSignature:   "some-signature",
+			HeaderSignatureTimestamp: "1704067200",
+			HeaderSignatureVersion:   "v1",
+		},
+		Acknowledger: ack,
+	}
+
+	conn := &testRabbitConnection{channel: channel}
+
+	opts := DefaultOptions()
+	opts.Signer = nil
+	opts.EnableSignatureVerification = true
+
+	adapter := &RabbitMQAdapter{
+		conn:           conn,
+		options:        opts,
+		circuitBreaker: newCircuitBreaker(opts.CircuitBreakerThreshold, opts.CircuitBreakerCooldown),
+	}
+
+	t.Cleanup(func() {
+		_ = adapter.Shutdown(testContextWithHeader("cleanup"))
+	})
+
+	handler := func(ctx context.Context, body []byte, headers map[string]any) error {
+		t.Fatal("handler should not be called when signer is not configured")
+		return nil
+	}
+
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+	}()
+
+	err := adapter.ConsumerLoop(ctx, "queue-no-signer-verify", 1, handler)
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		return ack.nacks == 1 && ack.acks == 0
+	}, time.Second, 10*time.Millisecond)
+}
+
 // -----------------------------------------------------------------------------
 // Unit Tests: verifyMessageSignature
 // -----------------------------------------------------------------------------
