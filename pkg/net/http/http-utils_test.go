@@ -889,11 +889,11 @@ func TestParseParameters_RejectsUnsafeKeys(t *testing.T) {
 			},
 		},
 		{
-			name:    "metadata-prefixed value at 256 chars is captured",
-			params:  map[string]string{"metadata.longval": strings.Repeat("v", 256)},
+			name:    "metadata-prefixed value >256 chars is captured",
+			params:  map[string]string{"metadata.longval": strings.Repeat("v", 257)},
 			wantErr: false,
 			checkFn: func(t *testing.T, metadata map[string]string) {
-				assert.Len(t, metadata, 1, "metadata-prefixed keys bypass the value length check")
+				assert.Len(t, metadata, 1, "metadata-prefixed keys bypass the 256-char value length limit")
 			},
 		},
 	}
