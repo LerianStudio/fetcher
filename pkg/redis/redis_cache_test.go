@@ -517,6 +517,14 @@ func TestRedisCache_EnsureClient_WithInitErr(t *testing.T) {
 	setErr := cache.Set(ctx, "key", testStruct{}, 0)
 	assert.Error(t, setErr)
 	assert.Contains(t, setErr.Error(), "init failed")
+
+	delErr := cache.Delete(ctx, "key")
+	assert.Error(t, delErr)
+	assert.Contains(t, delErr.Error(), "init failed")
+
+	clearErr := cache.Clear(ctx)
+	assert.Error(t, clearErr)
+	assert.Contains(t, clearErr.Error(), "init failed")
 }
 
 func TestRedisCache_GetSet_MultipleTypes(t *testing.T) {
