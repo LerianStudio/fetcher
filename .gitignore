@@ -43,7 +43,6 @@ scripts/node_modules
 .claude
 .agent
 .docs
-docs
 artifacts
 
 # ----------------------------------------
