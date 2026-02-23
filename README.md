@@ -189,23 +189,6 @@ make derive-key KEY="<your-base64-master-key>"
 
 This outputs a hex-encoded HMAC key that consumers use to verify HMAC-SHA256 signatures on extracted data. See [docs/security/verification-guide.md](docs/security/verification-guide.md) for the full verification protocol.
 
-### Development Commands
-
-| Command | Description |
-|---------|-------------|
-| `make help` | Display all available commands |
-| `make dev-setup` | Complete development environment setup |
-| `make set-env` | Copy .env.example to .env for all components |
-| `make up` | Start all services (infra first, then backends) |
-| `make down` | Stop all services |
-| `make rebuild-up` | Rebuild and restart all services |
-| `make test` | Run all tests |
-| `make lint` | Run golangci-lint with auto-fix |
-| `make sec` | Run gosec security analysis |
-| `make generate-master-key` | Generate a new cryptographic master key |
-| `make derive-key KEY=...` | Derive external HMAC key from master key |
-| `make generate-docs` | Generate Swagger documentation |
-
 ## About Lerian
 
 Fetcher is developed by Lerian, a tech company founded in 2024, led by a team with a track record in developing ledger and core banking solutions. For any inquiries or support, please reach out to us at [contact@lerian.studio](mailto:contact@lerian.studio) or simply open a Discussion in our [GitHub repository](https://github.com/LerianStudio/fetcher/discussions).

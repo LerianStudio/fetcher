@@ -147,8 +147,6 @@ help:
 	@echo ""
 	@echo "Documentation Commands:"
 	@echo "  make generate-docs               - Generate Swagger documentation"
-	@echo "  make generate-docs-all           - Generate Swagger documentation for all services"
-	@echo "  make validate-api-docs           - Validate API documentation"
 	@echo ""
 	@echo ""
 	@echo "Test Suite Aliases:"
@@ -703,39 +701,6 @@ generate-docs:
 		cd $(ROOT_DIR)/scripts && npm install > /dev/null; \
 	fi
 	@echo "[ok] Swagger API documentation generated successfully"
-
-.PHONY: generate-docs-all
-generate-docs-all:
-	$(call print_title,Generating Swagger documentation for all services)
-	$(call check_command,swag,go install github.com/swaggo/swag/cmd/swag@latest)
-	@echo "Verifying API documentation coverage..."
-	@sh ./scripts/verify-api-docs.sh 2>/dev/null || echo "Warning: Some API endpoints may not be properly documented. Continuing with documentation generation..."
-	@echo "Generating documentation for plugin component..."
-	$(MAKE) generate-docs 2>&1 | grep -v "warning: "
-	@echo "[ok] Swagger documentation generated successfully"
-
-.PHONY: verify-api-docs
-verify-api-docs:
-	$(call print_title,Verifying API documentation coverage)
-	@if [ -f "./scripts/package.json" ]; then \
-		echo "Installing npm dependencies..."; \
-		cd ./scripts && npm install; \
-	fi
-	@sh ./scripts/verify-api-docs.sh
-	@echo "[ok] API documentation verification completed"
-
-.PHONY: validate-api-docs
-validate-api-docs: generate-docs
-	$(call print_title,Validating API documentation)
-	@if [ -f "scripts/validate-api-docs.js" ] && [ -f "$(ROOT_DIR)/scripts/package.json" ]; then \
-		echo "Validating API documentation structure..."; \
-		cd $(ROOT_DIR)/scripts && node $(ROOT_DIR)/scripts/validate-api-docs.js; \
-		echo "Validating API implementations..."; \
-		cd $(ROOT_DIR)/scripts && node $(ROOT_DIR)/scripts/validate-api-implementations.js; \
-		echo "[ok] API documentation validation completed"; \
-	else \
-		echo "Validation scripts not found. Skipping validation."; \
-	fi
 
 #-------------------------------------------------------
 # Developer Helper Commands
