@@ -57,6 +57,7 @@ func (s *UpdateConnection) Execute(ctx context.Context, organizationID, connecti
 
 	if current == nil {
 		libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "Connection not found", constant.ErrEntityNotFound)
+
 		return nil, pkg.ValidateBusinessError(
 			constant.ErrEntityNotFound,
 			"connection",
@@ -71,6 +72,7 @@ func (s *UpdateConnection) Execute(ctx context.Context, organizationID, connecti
 
 	if active {
 		libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "Connection has active jobs", constant.ErrJobInProgress)
+
 		return nil, pkg.ValidateBusinessError(
 			constant.ErrJobInProgress,
 			"connection",
@@ -93,24 +95,28 @@ func (s *UpdateConnection) Execute(ctx context.Context, organizationID, connecti
 			if connInput.SSL != nil {
 				return connInput.SSL.Mode
 			}
+
 			return nil
 		}(),
 		func() *string {
 			if connInput.SSL != nil {
 				return connInput.SSL.CA
 			}
+
 			return nil
 		}(),
 		func() *string {
 			if connInput.SSL != nil && connInput.SSL.Cert != nil {
 				return connInput.SSL.Cert
 			}
+
 			return nil
 		}(),
 		func() *string {
 			if connInput.SSL != nil && connInput.SSL.Key != nil {
 				return connInput.SSL.Key
 			}
+
 			return nil
 		}(),
 	); errPatch != nil {
@@ -126,6 +132,7 @@ func (s *UpdateConnection) Execute(ctx context.Context, organizationID, connecti
 
 	if updated == nil {
 		libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "Updated connection not found", constant.ErrEntityNotFound)
+
 		return nil, pkg.ValidateBusinessError(
 			constant.ErrEntityNotFound,
 			"connection",

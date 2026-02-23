@@ -3,6 +3,7 @@ package redis
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -16,11 +17,15 @@ import (
 // DefaultCacheTTL is the default TTL for cached entries (5 minutes).
 const DefaultCacheTTL = 5 * time.Minute
 
+// ErrRedisCacheNotInitialized is returned when Redis cache is created without a valid client.
+var ErrRedisCacheNotInitialized = errors.New("redis cache is not initialized")
+
 // RedisCache is a generic Redis implementation of Cache.
 type RedisCache[T any] struct {
 	client    *redis.Client
 	ttl       time.Duration
 	keyPrefix string
+	initErr   error
 }
 
 // NewRedisCache creates a new generic Redis cache.
@@ -29,8 +34,13 @@ type RedisCache[T any] struct {
 //   - ttl: Default TTL for cache entries (uses DefaultCacheTTL if <= 0)
 //   - keyPrefix: Prefix for all cache keys (e.g., "fetcher:schema:")
 func NewRedisCache[T any](conn *RedisConnection, ttl time.Duration, keyPrefix string) (*RedisCache[T], error) {
+	return NewRedisCacheSafe[T](conn, ttl, keyPrefix)
+}
+
+// NewRedisCacheSafe creates a new generic Redis cache with explicit initialization errors.
+func NewRedisCacheSafe[T any](conn *RedisConnection, ttl time.Duration, keyPrefix string) (*RedisCache[T], error) {
 	if conn == nil || conn.Client == nil {
-		return nil, fmt.Errorf("redis connection and client must not be nil")
+		return nil, fmt.Errorf("%w: redis connection and client must not be nil", ErrRedisCacheNotInitialized)
 	}
 
 	if ttl <= 0 {
@@ -51,6 +61,11 @@ func (c *RedisCache[T]) cacheKey(key string) string {
 
 // Get retrieves a cached value by key.
 func (c *RedisCache[T]) Get(ctx context.Context, key string) (T, bool, error) {
+	if err := c.ensureClient(); err != nil {
+		var zero T
+		return zero, false, err
+	}
+
 	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "cache.redis.get")
@@ -98,6 +113,10 @@ func (c *RedisCache[T]) Get(ctx context.Context, key string) (T, bool, error) {
 
 // Set stores a value in the cache.
 func (c *RedisCache[T]) Set(ctx context.Context, key string, value T, ttl time.Duration) error {
+	if err := c.ensureClient(); err != nil {
+		return err
+	}
+
 	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "cache.redis.set")
@@ -136,6 +155,10 @@ func (c *RedisCache[T]) Set(ctx context.Context, key string, value T, ttl time.D
 
 // Delete removes a value from the cache.
 func (c *RedisCache[T]) Delete(ctx context.Context, key string) error {
+	if err := c.ensureClient(); err != nil {
+		return err
+	}
+
 	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "cache.redis.delete")
@@ -161,6 +184,10 @@ func (c *RedisCache[T]) Delete(ctx context.Context, key string) error {
 
 // Clear removes all cache entries with the configured prefix.
 func (c *RedisCache[T]) Clear(ctx context.Context) error {
+	if err := c.ensureClient(); err != nil {
+		return err
+	}
+
 	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "cache.redis.clear")
@@ -195,13 +222,41 @@ func (c *RedisCache[T]) Clear(ctx context.Context) error {
 
 // IsHealthy checks if Redis is operational.
 func (c *RedisCache[T]) IsHealthy(ctx context.Context) bool {
+	if c == nil || c.client == nil || c.initErr != nil {
+		return false
+	}
+
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	return c.client.Ping(ctx).Err() == nil
 }
 
 // Close closes the Redis connection.
 func (c *RedisCache[T]) Close() error {
+	if c == nil || c.client == nil {
+		return nil
+	}
+
 	if err := c.client.Close(); err != nil {
 		return fmt.Errorf("failed to close Redis connection: %w", err)
+	}
+
+	return nil
+}
+
+func (c *RedisCache[T]) ensureClient() error {
+	if c == nil {
+		return fmt.Errorf("%w: cache reference is nil", ErrRedisCacheNotInitialized)
+	}
+
+	if c.initErr != nil {
+		return c.initErr
+	}
+
+	if c.client == nil {
+		return fmt.Errorf("%w: redis client is nil", ErrRedisCacheNotInitialized)
 	}
 
 	return nil

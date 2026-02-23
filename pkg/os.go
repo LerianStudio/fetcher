@@ -93,11 +93,15 @@ func InitLocalEnvConfig() *LocalEnvConfig {
 // Constraints: s any - must be an initialized pointer
 // Supported types: String, Boolean, Int, Int8, Int16, Int32 and Int64.
 func SetConfigFromEnvVars(s any) error {
+	if s == nil {
+		return errors.New("s must be a non-nil pointer")
+	}
+
 	v := reflect.ValueOf(s)
 
 	t := v.Type()
-	if t.Kind() != reflect.Ptr {
-		return errors.New("s must be an pointer")
+	if t.Kind() != reflect.Ptr || v.IsNil() {
+		return errors.New("s must be a non-nil pointer")
 	}
 
 	e := t.Elem()
@@ -124,16 +128,11 @@ func SetConfigFromEnvVars(s any) error {
 	return nil
 }
 
-// EnsureConfigFromEnvVars ensures that an interface will be settled using SetConfigFromEnvVars anyway.
-//
-// This function intentionally panics on error as a fail-fast mechanism for missing
-// required configuration at startup. It should only be called during application
-// initialization (main/init), never at runtime. A panic here prevents the application
-// from starting in an invalid or partially configured state.
-func EnsureConfigFromEnvVars(s any) any {
+// EnsureConfigFromEnvVars populates the config struct from env vars and returns explicit errors.
+func EnsureConfigFromEnvVars(s any) (any, error) {
 	if err := SetConfigFromEnvVars(s); err != nil {
-		panic(err) // Intentional: fail-fast on missing required config at startup
+		return nil, err
 	}
 
-	return s
+	return s, nil
 }

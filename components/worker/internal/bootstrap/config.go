@@ -3,7 +3,6 @@ package bootstrap
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/url"
 
 	"github.com/LerianStudio/fetcher/components/worker/internal/adapters/rabbitmq"
@@ -74,13 +73,10 @@ type Config struct {
 }
 
 // InitWorker initializes and configures the application's dependencies and returns the Service instance.
-func InitWorker() *Service {
+func InitWorker() (*Service, error) {
 	cfg := &Config{}
 	if err := libCommons.SetConfigFromEnvVars(cfg); err != nil {
-		// log.Fatalf is used here because this runs before the structured logger
-		// (zap) is initialized. Returning an error is not possible since InitWorker
-		// is called from main() and the application cannot start without valid config.
-		log.Fatalf("Failed to load configuration from environment variables: %v", err)
+		return nil, fmt.Errorf("load environment configuration: %w", err)
 	}
 
 	ctx := context.Background()
@@ -131,12 +127,12 @@ func InitWorker() *Service {
 	// Init key deriver for cryptographic key segregation
 	masterKey, err := crypto.DecodeMasterKey(cfg.AppEncryptionKey)
 	if err != nil {
-		logger.Fatalf("Failed to decode master encryption key: %v", err)
+		return nil, fmt.Errorf("decode master encryption key: %w", err)
 	}
 
 	keyDeriver, err := crypto.NewHKDFKeyDeriver(masterKey)
 	if err != nil {
-		logger.Fatalf("Failed to initialize key deriver: %v", err)
+		return nil, fmt.Errorf("initialize key deriver: %w", err)
 	}
 
 	logger.Info("Key derivation initialized successfully")
@@ -144,23 +140,27 @@ func InitWorker() *Service {
 	// Init crypto service with derived credential key
 	cryptoService, errCrypto := crypto.NewAESGCMService(keyDeriver.GetCredentialKey(), cfg.AppEncryptionKeyVersion)
 	if errCrypto != nil {
-		logger.Fatalf("Failed to initialize crypto service: %v", errCrypto)
+		return nil, fmt.Errorf("initialize crypto service: %w", errCrypto)
 	}
 
 	// Init message signer for RabbitMQ with derived internal HMAC key
 	cryptoWithInternalHMAC, errSigner := crypto.NewHMACSigner(keyDeriver.GetInternalHMACKey(), crypto.SignatureVersion)
 	if errSigner != nil {
-		logger.Fatalf("Failed to initialize message signer: %v", errSigner)
+		return nil, fmt.Errorf("initialize internal message signer: %w", errSigner)
 	}
 
 	// Init document signer for external verification with derived external HMAC key
 	cryptoWithExternalHMAC, errSigner := crypto.NewHMACSigner(keyDeriver.GetExternalHMACKey(), crypto.SignatureVersion)
 	if errSigner != nil {
-		logger.Fatalf("Failed to initialize document signer: %v", errSigner)
+		return nil, fmt.Errorf("initialize external document signer: %w", errSigner)
 	}
 
 	// Initialize RabbitMQ consumer and publisher with separate connections
-	consumerRoutes := rabbitmq.NewConsumerRoutes(consumerConnection, cfg.RabbitMQNumWorkers, logger, telemetry, cryptoWithInternalHMAC)
+	consumerRoutes, errRoutes := rabbitmq.NewConsumerRoutes(consumerConnection, cfg.RabbitMQNumWorkers, logger, telemetry, cryptoWithInternalHMAC, cfg.EnvName)
+	if errRoutes != nil {
+		return nil, fmt.Errorf("initialize consumer routes: %w", errRoutes)
+	}
+
 	publisherRoutes := rabbitmq.NewPublisherRoutes(publisherConnection, logger, telemetry, cryptoWithExternalHMAC)
 
 	// Config SeaweedFS connection
@@ -188,12 +188,12 @@ func InitWorker() *Service {
 	// Initialize MongoDB repositories
 	jobRepository, errJobRepo := job.NewJobMongoDBRepository(ctx, mongoConnection)
 	if errJobRepo != nil {
-		logger.Fatalf("Failed to initialize job repository: %v", errJobRepo)
+		return nil, fmt.Errorf("initialize job repository: %w", errJobRepo)
 	}
 
 	connectionRepository, errConnectRepo := connection.NewConnectionMongoDBRepository(ctx, mongoConnection)
 	if errConnectRepo != nil {
-		logger.Fatalf("Failed to initialize connection repository: %v", errConnectRepo)
+		return nil, fmt.Errorf("initialize connection repository: %w", errConnectRepo)
 	}
 
 	service := &services.UseCase{
@@ -228,5 +228,5 @@ func InitWorker() *Service {
 		MultiQueueConsumer: multiQueueConsumer,
 		Logger:             logger,
 		licenseShutdown:    licenseClient.GetLicenseManagerShutdown(),
-	}
+	}, nil
 }

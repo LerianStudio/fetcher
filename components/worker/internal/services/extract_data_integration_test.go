@@ -98,6 +98,44 @@ func TestExtractExternalData_SkipsCompletedJob(t *testing.T) {
 	}
 }
 
+// TestExtractExternalData_SkipsProcessingJob tests that in-flight jobs are skipped on redelivery.
+func TestExtractExternalData_SkipsProcessingJob(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+
+	ctx := testContext()
+	jobID := newTestJobID()
+	orgID := newTestOrgID()
+
+	validMessage := ExtractExternalDataMessage{
+		JobID:          jobID,
+		OrganizationID: orgID,
+		MappedFields: map[string]map[string][]string{
+			"datasource1": {"table1": {"field1"}},
+		},
+	}
+
+	body, err := json.Marshal(validMessage)
+	if err != nil {
+		t.Fatalf("failed to marshal test message: %v", err)
+	}
+
+	mocks.jobRepo.EXPECT().
+		FindByID(gomock.Any(), jobID, orgID).
+		Return(&model.Job{
+			ID:     jobID,
+			Status: model.JobStatusProcessing,
+		}, nil)
+
+	err = uc.ExtractExternalData(ctx, body, nil)
+	if err != nil {
+		t.Fatalf("expected no error for in-flight job redelivery (should skip), got: %v", err)
+	}
+}
+
 // TestExtractExternalData_ConnectionNotFound tests error handling when connection is not found.
 func TestExtractExternalData_ConnectionNotFound(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -144,6 +182,11 @@ func TestExtractExternalData_ConnectionNotFound(t *testing.T) {
 	mocks.connRepo.EXPECT().
 		FindByConfigNames(gomock.Any(), orgID, []string{"postgres_db"}).
 		Return(nil, errors.New("connection not found"))
+
+	// Expect job transition to processing before extraction
+	mocks.jobRepo.EXPECT().
+		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusProcessing, "", "", nil).
+		Return(nil)
 
 	// Expect job status to be updated to failed
 	mocks.jobRepo.EXPECT().

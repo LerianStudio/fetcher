@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -407,6 +408,30 @@ func TestPublishJobNotification_RoutingKeyGeneration(t *testing.T) {
 			status:             "failed",
 			metadata:           map[string]any{},
 			expectedRoutingKey: "job.failed.unknown",
+		},
+		{
+			name:               "completed with unsafe source chars",
+			status:             "completed",
+			metadata:           map[string]any{"source": "..Tenant/Prod@EU "},
+			expectedRoutingKey: "job.completed.tenant-prod-eu",
+		},
+		{
+			name:               "completed with oversized source",
+			status:             "completed",
+			metadata:           map[string]any{"source": strings.Repeat("A", 80)},
+			expectedRoutingKey: "job.completed." + strings.Repeat("a", 64),
+		},
+		{
+			name:               "source with only invalid characters",
+			status:             "completed",
+			metadata:           map[string]any{"source": "!@#$%^&*()"},
+			expectedRoutingKey: "job.completed.unknown",
+		},
+		{
+			name:               "source exactly at max length",
+			status:             "completed",
+			metadata:           map[string]any{"source": strings.Repeat("a", 64)},
+			expectedRoutingKey: "job.completed." + strings.Repeat("a", 64),
 		},
 	}
 

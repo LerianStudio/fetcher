@@ -3,7 +3,6 @@ package bootstrap
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/url"
 	"strconv"
 	"time"
@@ -85,13 +84,10 @@ type Config struct {
 }
 
 // InitServers initiate http and grpc servers.
-func InitServers() *Service {
+func InitServers() (*Service, error) {
 	cfg := &Config{}
 	if err := pkg.SetConfigFromEnvVars(cfg); err != nil {
-		// log.Fatalf is used here because this runs before the structured logger
-		// (zap) is initialized. Returning an error is not possible since InitServers
-		// is called from main() and the application cannot start without valid config.
-		log.Fatalf("Failed to load configuration from environment variables: %v", err)
+		return nil, fmt.Errorf("load environment configuration: %w", err)
 	}
 
 	ctx := context.Background()
@@ -124,48 +120,48 @@ func InitServers() *Service {
 
 	connectionRepository, err := connection.NewConnectionMongoDBRepository(ctx, mongoConnection)
 	if err != nil {
-		logger.Fatalf("Failed to create MongoDB repository: %v", err)
+		return nil, fmt.Errorf("create connection repository: %w", err)
 	}
 
 	logger.Info("Ensuring MongoDB indexes exist for connections...")
 
 	if errConnRepo := connectionRepository.EnsureIndexes(ctx); errConnRepo != nil {
-		logger.Fatalf("Failed to ensure MongoDB indexes: %v", errConnRepo)
+		return nil, fmt.Errorf("ensure connection indexes: %w", errConnRepo)
 	}
 
 	// Init Job repository
 	jobRepository, err := job.NewJobMongoDBRepository(ctx, mongoConnection)
 	if err != nil {
-		logger.Fatalf("Failed to create Job MongoDB repository: %v", err)
+		return nil, fmt.Errorf("create job repository: %w", err)
 	}
 
 	logger.Info("Ensuring MongoDB indexes exist for jobs...")
 
 	if errJobRepo := jobRepository.EnsureIndexes(ctx); errJobRepo != nil {
-		logger.Fatalf("Failed to ensure Job indexes: %v", errJobRepo)
+		return nil, fmt.Errorf("ensure job indexes: %w", errJobRepo)
 	}
 
 	// Init Product repository
 	productRepository, err := product.NewProductMongoDBRepository(ctx, mongoConnection)
 	if err != nil {
-		logger.Fatalf("Failed to create Product MongoDB repository: %v", err)
+		return nil, fmt.Errorf("create product repository: %w", err)
 	}
 
 	logger.Info("Ensuring MongoDB indexes exist for products...")
 
 	if errProdRepo := productRepository.EnsureIndexes(ctx); errProdRepo != nil {
-		logger.Fatalf("Failed to ensure Product indexes: %v", errProdRepo)
+		return nil, fmt.Errorf("ensure product indexes: %w", errProdRepo)
 	}
 
 	// Init key deriver for cryptographic key segregation
 	masterKey, err := crypto.DecodeMasterKey(cfg.AppEncryptionKey)
 	if err != nil {
-		logger.Fatalf("Failed to decode master encryption key: %v", err)
+		return nil, fmt.Errorf("decode master encryption key: %w", err)
 	}
 
 	keyDeriver, err := crypto.NewHKDFKeyDeriver(masterKey)
 	if err != nil {
-		logger.Fatalf("Failed to initialize key deriver: %v", err)
+		return nil, fmt.Errorf("initialize key deriver: %w", err)
 	}
 
 	logger.Info("Key derivation initialized successfully")
@@ -173,13 +169,13 @@ func InitServers() *Service {
 	// Init crypto service with derived credential key
 	cryptoService, err := crypto.NewAESGCMService(keyDeriver.GetCredentialKey(), cfg.AppEncryptionKeyVersion)
 	if err != nil {
-		logger.Fatalf("Failed to initialize crypto service: %v", err)
+		return nil, fmt.Errorf("initialize crypto service: %w", err)
 	}
 
 	// Init message signer for RabbitMQ with derived internal HMAC key
 	cryptoWithInternalHMAC, err := crypto.NewHMACSigner(keyDeriver.GetInternalHMACKey(), crypto.SignatureVersion)
 	if err != nil {
-		logger.Fatalf("Failed to initialize message signer: %v", err)
+		return nil, fmt.Errorf("initialize internal message signer: %w", err)
 	}
 
 	// Init RabbitMQ
@@ -239,7 +235,7 @@ func InitServers() *Service {
 	)
 	if errCache != nil {
 		// This should never happen as NewCacheWithFallback handles Redis failures gracefully
-		logger.Fatalf("Failed to initialize cache: %v", errCache)
+		return nil, fmt.Errorf("initialize schema cache: %w", errCache)
 	}
 
 	schemaCache = cacheAdapter.NewSchemaCache(genericCache, schemaCacheTTL)
@@ -311,7 +307,7 @@ func InitServers() *Service {
 	return &Service{
 		Server: serverAPI,
 		Logger: logger,
-	}
+	}, nil
 }
 
 // getSchemaCacheTTL parses the TTL from string and returns a time.Duration.

@@ -100,6 +100,10 @@ func (d *decoderHandler) FiberHandlerFunc(c *fiber.Ctx) error {
 	}
 
 	if err := ValidateStruct(s); err != nil {
+		if errors.Is(err, ErrValidatorInit) {
+			return fiber.NewError(fiber.StatusInternalServerError, "request validator initialization failed")
+		}
+
 		return BadRequest(c, err)
 	}
 
@@ -213,11 +217,15 @@ func getValidator() (*validator.Validate, ut.Translator, error) {
 	return cachedValidator, cachedTranslator, validatorInitErr
 }
 
+// ErrValidatorInit is returned when the request validator cannot be initialized.
+// Callers should map this to a 5xx response (server-side failure), not 400.
+var ErrValidatorInit = errors.New("validator initialization failed")
+
 // ValidateStruct validates a struct against defined validation rules, using the validator package.
 func ValidateStruct(s any) error {
 	v, trans, err := getValidator()
 	if err != nil {
-		return fmt.Errorf("failed to initialize validator: %w", err)
+		return fmt.Errorf("%w: %v", ErrValidatorInit, err)
 	}
 
 	k := reflect.ValueOf(s).Kind()

@@ -3,6 +3,7 @@ package http
 import (
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -818,4 +819,109 @@ func TestValidateParametersNonMetadataKeys(t *testing.T) {
 		assert.Contains(t, qh.Metadata, "metadata.status")
 		assert.Contains(t, qh.Metadata, "metadata.category")
 	})
+}
+
+func TestParseParameters_RejectsUnsafeKeys(t *testing.T) {
+	tests := []struct {
+		name    string
+		params  map[string]string
+		wantErr bool
+		checkFn func(t *testing.T, metadata map[string]string)
+	}{
+		{
+			name:    "key starting with $ is rejected",
+			params:  map[string]string{"$where": "1"},
+			wantErr: true,
+		},
+		{
+			name:    "key starting with _ is rejected",
+			params:  map[string]string{"_id": "abc"},
+			wantErr: true,
+		},
+		{
+			name:    "key exceeding 64 chars is rejected",
+			params:  map[string]string{strings.Repeat("a", 65): "value"},
+			wantErr: true,
+		},
+		{
+			name:    "value exceeding 256 chars is rejected",
+			params:  map[string]string{"status": strings.Repeat("x", 257)},
+			wantErr: true,
+		},
+		{
+			name:    "key with exactly 64 chars is accepted",
+			params:  map[string]string{strings.Repeat("a", 64): "value"},
+			wantErr: false,
+			checkFn: func(t *testing.T, metadata map[string]string) {
+				assert.Empty(t, metadata, "non-metadata-prefixed keys should be ignored regardless of length")
+			},
+		},
+		{
+			name:    "value with exactly 256 chars is accepted",
+			params:  map[string]string{"status": strings.Repeat("x", 256)},
+			wantErr: false,
+			checkFn: func(t *testing.T, metadata map[string]string) {
+				assert.Empty(t, metadata, "non-metadata-prefixed keys should be ignored")
+			},
+		},
+		{
+			name:    "key containing $ mid-string is accepted",
+			params:  map[string]string{"foo$bar": "value"},
+			wantErr: false,
+			checkFn: func(t *testing.T, metadata map[string]string) {
+				assert.Empty(t, metadata, "non-metadata-prefixed keys should be ignored")
+			},
+		},
+		{
+			name:    "valid unknown key is silently ignored",
+			params:  map[string]string{"status": "active"},
+			wantErr: false,
+			checkFn: func(t *testing.T, metadata map[string]string) {
+				assert.Empty(t, metadata, "unknown keys without metadata. prefix should be ignored")
+			},
+		},
+		{
+			name:    "metadata-prefixed key at 64 chars is captured",
+			params:  map[string]string{"metadata." + strings.Repeat("a", 55): "value"}, // "metadata." (9) + 55 = 64 total
+			wantErr: false,
+			checkFn: func(t *testing.T, metadata map[string]string) {
+				assert.Len(t, metadata, 1, "metadata-prefixed key should be captured regardless of length")
+			},
+		},
+		{
+			name:    "metadata-prefixed value >256 chars is captured",
+			params:  map[string]string{"metadata.longval": strings.Repeat("v", 257)},
+			wantErr: false,
+			checkFn: func(t *testing.T, metadata map[string]string) {
+				assert.Len(t, metadata, 1, "metadata-prefixed keys bypass the 256-char value length limit")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			metadata := map[string]string{}
+			var (
+				startDate time.Time
+				endDate   time.Time
+				cursor    string
+				limit     = 10
+				page      = 1
+				sortOrder = "desc"
+			)
+
+			err := parseParameters(tt.params, metadata, &startDate, &endDate, &cursor, &limit, &page, &sortOrder)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+
+			assert.NoError(t, err)
+
+			if tt.checkFn != nil {
+				tt.checkFn(t, metadata)
+			}
+		})
+	}
 }

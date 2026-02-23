@@ -255,7 +255,7 @@ func (a *ChaosAssertions) Summary() string {
 		}
 	}
 
-	sb.WriteString(fmt.Sprintf("Assertions: %d/%d passed\n", passed, len(a.results)))
+	fmt.Fprintf(&sb, "Assertions: %d/%d passed\n", passed, len(a.results))
 	sb.WriteString(strings.Repeat("-", 50) + "\n")
 
 	for _, r := range a.results {
@@ -264,8 +264,8 @@ func (a *ChaosAssertions) Summary() string {
 			status = "FAIL"
 		}
 
-		sb.WriteString(fmt.Sprintf("[%s] %s: %s (expected %s, got %s)\n",
-			status, r.Name, r.Message, r.Expected, r.Actual))
+		fmt.Fprintf(&sb, "[%s] %s: %s (expected %s, got %s)\n",
+			status, r.Name, r.Message, r.Expected, r.Actual)
 	}
 
 	return sb.String()
