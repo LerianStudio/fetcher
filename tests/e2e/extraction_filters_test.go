@@ -24,10 +24,11 @@ func TestExtraction_AllFilterOperators(t *testing.T) {
 	t.Parallel()
 
 	testCases := []struct {
-		name   string
-		filter job.FilterCondition
-		field  string
-		desc   string
+		name         string
+		filter       job.FilterCondition
+		field        string
+		desc         string
+		expectedRows int
 	}{
 		{
 			name:  "equals_single",
@@ -35,7 +36,8 @@ func TestExtraction_AllFilterOperators(t *testing.T) {
 			filter: job.FilterCondition{
 				Equals: []any{"completed"},
 			},
-			desc: "status = 'completed'",
+			desc:         "status = 'completed'",
+			expectedRows: 24,
 		},
 		{
 			name:  "equals_multiple_OR",
@@ -43,7 +45,8 @@ func TestExtraction_AllFilterOperators(t *testing.T) {
 			filter: job.FilterCondition{
 				Equals: []any{"salary", "groceries"},
 			},
-			desc: "category IN ('salary', 'groceries')",
+			desc:         "category IN ('salary', 'groceries')",
+			expectedRows: 13,
 		},
 		{
 			name:  "greater_than",
@@ -51,7 +54,8 @@ func TestExtraction_AllFilterOperators(t *testing.T) {
 			filter: job.FilterCondition{
 				GreaterThan: []any{1000},
 			},
-			desc: "amount > 1000",
+			desc:         "amount > 1000",
+			expectedRows: 8,
 		},
 		{
 			name:  "greater_or_equal",
@@ -59,7 +63,8 @@ func TestExtraction_AllFilterOperators(t *testing.T) {
 			filter: job.FilterCondition{
 				GreaterOrEqual: []any{1500},
 			},
-			desc: "amount >= 1500",
+			desc:         "amount >= 1500",
+			expectedRows: 8,
 		},
 		{
 			name:  "less_than",
@@ -67,7 +72,8 @@ func TestExtraction_AllFilterOperators(t *testing.T) {
 			filter: job.FilterCondition{
 				LessThan: []any{100},
 			},
-			desc: "amount < 100",
+			desc:         "amount < 100",
+			expectedRows: 7,
 		},
 		{
 			name:  "less_or_equal",
@@ -75,7 +81,8 @@ func TestExtraction_AllFilterOperators(t *testing.T) {
 			filter: job.FilterCondition{
 				LessOrEqual: []any{89.99},
 			},
-			desc: "amount <= 89.99",
+			desc:         "amount <= 89.99",
+			expectedRows: 5,
 		},
 	}
 
@@ -146,7 +153,16 @@ func TestExtraction_AllFilterOperators(t *testing.T) {
 			jobResult := e2eshared.AssertJobCompleted(t, apiClient, jobID, e2eshared.DefaultJobTimeout)
 			assert.NotEmpty(t, jobResult.ResultPath, "should have result path")
 
-			t.Logf("Filter %s completed successfully", tc.desc)
+			// Download result and verify row count matches filter
+			seaweedURL, err := coreInfra.SeaweedFS.URL()
+			require.NoError(t, err, "get seaweedfs url")
+
+			resultData := e2eshared.DownloadAndDecryptResult(t, ctx, seaweedURL, jobResult.ResultPath)
+			rowCount := e2eshared.CountResultRows(resultData)
+			assert.Equal(t, tc.expectedRows, rowCount,
+				"filter %s should return exactly %d rows, got %d", tc.desc, tc.expectedRows, rowCount)
+
+			t.Logf("Filter %s completed successfully (%d rows)", tc.desc, rowCount)
 		})
 	}
 }

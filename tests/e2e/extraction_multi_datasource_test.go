@@ -324,7 +324,27 @@ func TestMultiDatasourceExtraction_WithFilters(t *testing.T) {
 	assert.Equal(t, e2eshared.JobStatusCompleted, jobResult.Status)
 	assert.NotEmpty(t, jobResult.ResultPath)
 
-	t.Logf("Multi-datasource filtered extraction completed: status=%s", jobResult.Status)
+	// Step 6: Download result and verify per-datasource row counts
+	seaweedURL, err := coreInfra.SeaweedFS.URL()
+	require.NoError(t, err, "get seaweedfs url")
+
+	resultData := e2eshared.DownloadAndDecryptResult(t, ctx, seaweedURL, jobResult.ResultPath)
+
+	pgData := resultData[pgConnName]
+	require.NotNil(t, pgData, "result should contain PostgreSQL datasource %s", pgConnName)
+	assert.Len(t, pgData["transactions"], 9,
+		"PostgreSQL transactions with category='salary' should return 9 rows")
+
+	mysqlData := resultData[mysqlConnName]
+	require.NotNil(t, mysqlData, "result should contain MySQL datasource %s", mysqlConnName)
+	assert.Len(t, mysqlData["transactions"], 15,
+		"MySQL transactions with amount > 100 should return 15 rows")
+
+	totalRows := e2eshared.CountResultRows(resultData)
+	assert.Equal(t, 24, totalRows, "total rows across both datasources should be 24")
+
+	t.Logf("Multi-datasource filtered extraction completed: status=%s, pgRows=%d, mysqlRows=%d, totalRows=%d",
+		jobResult.Status, len(pgData["transactions"]), len(mysqlData["transactions"]), totalRows)
 }
 
 // TestMultiDatasourceValidation verifies that schema validation works

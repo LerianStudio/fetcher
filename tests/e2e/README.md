@@ -10,8 +10,8 @@ End-to-end tests for the Fetcher application using the `itestkit` framework. The
 - [Test Architecture](#test-architecture)
 - [Project Structure](#project-structure)
 - [Important Patterns](#important-patterns)
-  - [Product-Based Isolation](#product-based-isolation)
-  - [Metadata with Product Code](#metadata-with-product-code)
+  - [Product Name Isolation](#product-name-isolation)
+  - [Metadata with Product Name](#metadata-with-product-name)
   - [Job Completion Polling](#job-completion-polling)
   - [Resource Cleanup](#resource-cleanup)
 - [Creating New Tests](#creating-new-tests)
@@ -20,8 +20,6 @@ End-to-end tests for the Fetcher application using the `itestkit` framework. The
 - [Troubleshooting](#troubleshooting)
 - [Best Practices](#best-practices)
 - [Test Catalog](#test-catalog)
-  - [Product CRUD](#product-crud)
-  - [Product Lifecycle](#product-lifecycle)
   - [Connection Management](#connection-management)
   - [Connection Validation](#connection-validation)
   - [Data Extraction - PostgreSQL](#data-extraction---postgresql)
@@ -51,13 +49,19 @@ go test -v -tags e2e ./tests/e2e -timeout 10m
 
 # Run with fixed ports (useful for debugging)
 FIXED_PORT=true go test -v -tags e2e ./tests/e2e -timeout 10m
+
+# Infrastructure-only mode (start infra, then debug Manager/Worker in IDE)
+FIXED_PORT=true E2E_INFRA_ONLY=true go test -v -tags e2e ./tests/e2e -timeout 30m
+
+# Reuse existing infrastructure (after infra-only mode)
+E2E_REUSE_INFRA=true E2E_MANAGER_URL=http://localhost:4006 go test -v -tags e2e ./tests/e2e -timeout 10m
 ```
 
 ## Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `FIXED_PORT` | `false` | Use fixed ports for infrastructure (27017, 5672, 6379, 8333) |
+| `FIXED_PORT` | `false` | Use fixed ports for infrastructure (MongoDB 5709, RabbitMQ 3008, Redis 5707, SeaweedFS 8889) |
 | `MANAGER_IMAGE` | `fetcher-manager:latest` | Docker image for Manager |
 | `WORKER_IMAGE` | `fetcher-worker:latest` | Docker image for Worker |
 | `E2E_SKIP_BUILD` | `true` | Skip Docker build, use pre-built images |
@@ -65,6 +69,12 @@ FIXED_PORT=true go test -v -tags e2e ./tests/e2e -timeout 10m
 | `E2E_ENABLE_MYSQL` | `false` | Enable MySQL infrastructure for multi-datasource tests |
 | `E2E_ENABLE_ORACLE` | `false` | Enable Oracle infrastructure for Oracle-specific tests |
 | `E2E_ENABLE_MSSQL` | `false` | Enable SQL Server infrastructure for MSSQL-specific tests |
+| `E2E_ENABLE_MONGODB` | `false` | Enable MongoDB source infrastructure for MongoDB extraction tests |
+| `E2E_INFRA_ONLY` | `false` | Start infrastructure only and block (for debugging Manager/Worker in IDE) |
+| `E2E_REUSE_INFRA` | `false` | Skip container creation, connect to already-running infrastructure |
+| `E2E_SKIP_MANAGER` | `false` | Skip Manager container, use external Manager at `E2E_MANAGER_URL` |
+| `E2E_SKIP_WORKER` | `false` | Skip Worker container (for debugging Worker locally) |
+| `E2E_MANAGER_URL` | `""` | URL of external Manager (default: `http://localhost:4006` when `E2E_SKIP_MANAGER=true`) |
 | `E2E_DEBUG_LOG` | `false` | Enable debug logging for HTTP requests/responses |
 
 ## Prerequisites
@@ -104,10 +114,11 @@ The E2E tests spin up a complete test environment using [testcontainers-go](http
 │  ┌────────────┐       ┌──────────┐                              │
 │  │ PostgreSQL │       │  Redis   │  (Cache/Locking)             │
 │  │   MySQL    │       └──────────┘                              │
-│  │   Oracle   │                                                  │
-│  │   MSSQL    │       ┌───────────┐                             │
-│  └────────────┘       │ SeaweedFS │  (Result storage)           │
-│   (Source DBs)        └───────────┘                             │
+│  │  MongoDB   │                                                  │
+│  │   Oracle   │       ┌───────────┐                             │
+│  │   MSSQL    │       │ SeaweedFS │  (Result storage)           │
+│  └────────────┘       └───────────┘                             │
+│   (Source DBs)                                                   │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -122,7 +133,7 @@ tests/e2e/
 ├── connection_delete_test.go           # Connection deletion and idempotency
 ├── connection_get_test.go              # Connection retrieval
 ├── connection_list_test.go             # Connection listing with product isolation
-├── connection_product_filter_test.go   # Connection filtering by product
+├── connection_product_filter_test.go   # Connection filtering by product name
 ├── connection_schema_test.go           # Database schema introspection
 ├── connection_test_test.go             # Connection health testing
 ├── connection_update_test.go           # Connection updates (PATCH)
@@ -138,41 +149,58 @@ tests/e2e/
 ├── extraction_postgres_test.go         # PostgreSQL extraction
 ├── extraction_sqlserver_test.go        # SQL Server extraction
 ├── job_status_test.go                  # Job lifecycle and status tracking
-├── product_create_test.go              # Product creation and validation
-├── product_delete_test.go              # Product deletion
-├── product_get_test.go                 # Product retrieval
-├── product_lifecycle_test.go           # Full CRUD lifecycle with connections
-├── product_list_test.go                # Product listing and pagination
-├── product_update_test.go              # Product updates (PATCH)
 ├── schema_validation_test.go           # Schema validation endpoint
 └── README.md                           # This file
 
 tests/shared/
-├── assertions.go    # AssertJobCompleted, AssertAPIError, AssertValidUUID
-├── client.go        # ManagerClient API wrapper
-└── helpers.go       # CreateTestProduct, CreateTestProductAndConnection
+├── apps.go               # StartManager, StartWorker, AppEnv, NewClientFromApp
+├── assertions.go          # AssertJobCompleted, AssertJobFailed, AssertAPIError, AssertValidUUID
+├── client.go              # ManagerClient API wrapper (connections, jobs, schema, assignment)
+├── constants.go           # DB types, credentials, timeouts, test account IDs
+├── helpers.go             # GenerateProductName, CreateTestConnection
+├── infra.go               # CoreInfra (MongoDB, RabbitMQ, Redis, SeaweedFS)
+├── testdata/
+│   └── definitions.json   # RabbitMQ topology definitions
+└── fixtures/
+    ├── loader.go           # Fixture file loading utilities
+    ├── postgres_init.sql   # PostgreSQL seed data
+    ├── mysql_init.sql      # MySQL seed data
+    ├── oracle_init.sql     # Oracle seed data
+    ├── sqlserver_init.sql  # SQL Server seed data
+    └── ssl/
+        ├── generate.go     # SSL certificate generation
+        ├── generate_test.go
+        └── postgres.conf   # PostgreSQL SSL configuration
 
-pkg/itestkit/                 # Test infrastructure framework
-├── suite.go                  # Suite builder
-├── infra.go                  # Infra interface
-├── hostport.go               # Host normalization utilities
-├── infra/                    # Infrastructure components
+pkg/itestkit/                     # Test infrastructure framework
+├── suite.go                      # Suite builder
+├── infra.go                      # Infra interface
+├── hostport.go                   # Host normalization utilities
+├── chaos.go                      # Chaos testing support
+├── chaos_toxiproxy.go            # Toxiproxy integration
+├── container_generic.go          # Generic container utilities
+├── customizer.go                 # Container customization
+├── customizer_options.go         # Customizer options
+├── infra/                        # Infrastructure components
 │   ├── mongodb/
 │   ├── postgres/
+│   ├── mysql/
+│   ├── mssql/
+│   ├── oracle/
 │   ├── rabbitmq/
 │   ├── redis/
 │   └── seaweedfs/
 └── addons/
-    ├── e2ekit/               # App container builder
-    ├── queuekit/             # Queue consumer/assertions
-    └── metricskit/           # Metrics assertions
+    ├── e2ekit/                   # App container builder
+    ├── queuekit/                 # Queue consumer/assertions
+    └── metricskit/               # Metrics assertions
 ```
 
 ## Important Patterns
 
-### Product-Based Isolation
+### Product Name Isolation
 
-Every test that creates connections or jobs **must** create its own product for isolation. This prevents interference between parallel tests.
+Connections are associated with products via the `X-Product-Name` header. Product names are simple string labels - there is no separate product entity or API. Every test that creates connections or jobs **must** generate a unique product name for isolation. This prevents interference between parallel tests.
 
 ```go
 func TestMyFeature(t *testing.T) {
@@ -181,31 +209,35 @@ func TestMyFeature(t *testing.T) {
     ctx, cancel := context.WithTimeout(context.Background(), e2eshared.DefaultTestTimeout)
     defer cancel()
 
-    // Create an isolated product for this test
-    product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+    // Generate a unique product name for this test (no API call needed)
+    productName := e2eshared.GenerateProductName()
 
-    // Create connections scoped to this product
-    conn, err := apiClient.CreateConnection(ctx, e2eshared.ConnectionInput{
-        ProductID:  product.ID,
-        ConfigName: fmt.Sprintf("e2e-mytest-%s", uuid.New().String()[:8]),
-        // ...
+    // Create connections scoped to this product name
+    conn, err := apiClient.CreateConnection(ctx, productName, e2eshared.ConnectionInput{
+        ConfigName:   fmt.Sprintf("e2e-mytest-%s", uuid.New().String()[:8]),
+        Type:         e2eshared.DBTypePostgreSQL,
+        Host:         pgHost,
+        Port:         pgPort,
+        DatabaseName: "testdb",
+        Username:     "testuser",
+        Password:     "testpass",
     })
 }
 ```
 
-When listing connections, always use `ListConnectionsWithProduct` to scope results:
+When listing connections, always use `ListConnectionsWithProductName` to scope results:
 
 ```go
-// Correct: scoped to product
-result, err := apiClient.ListConnectionsWithProduct(ctx, product.ID, e2eshared.ListConnectionsParams{})
+// Correct: scoped to product name
+result, err := apiClient.ListConnectionsWithProductName(ctx, productName, e2eshared.ListConnectionsParams{})
 
 // Incorrect: returns ALL connections in the organization (no isolation)
 result, err := apiClient.ListConnections(ctx, e2eshared.ListConnectionsParams{})
 ```
 
-### Metadata with Product Code
+### Metadata with Product Name
 
-When creating fetcher jobs, `metadata.source` **must** contain a valid product code. The API validates this field via `validateProductOwnership`.
+When creating fetcher jobs, `metadata.source` **must** contain the product name associated with the connections being queried. The API validates this field via product ownership checks.
 
 ```go
 fetcherReq := model.FetcherRequest{
@@ -217,7 +249,7 @@ fetcherReq := model.FetcherRequest{
         },
     },
     Metadata: map[string]any{
-        "source": product.Code,  // Must be a valid product code
+        "source": productName,  // Must match the product name used when creating the connection
         "test":   "my-test-name",
     },
 }
@@ -236,12 +268,14 @@ assert.NotEmpty(t, jobResult.ResultPath)
 
 ### Resource Cleanup
 
-Always use `t.Cleanup` for resource cleanup. Delete connections before products (due to foreign key constraints).
+Always use `t.Cleanup` for resource cleanup. Use `CreateTestConnection` which registers cleanup automatically, or register cleanup manually:
 
 ```go
-product := e2eshared.CreateTestProduct(t, apiClient, ctx) // auto-cleanup registered
+// Option 1: Use CreateTestConnection (auto-cleanup)
+conn := e2eshared.CreateTestConnection(t, apiClient, ctx, productName, connInput)
 
-conn, err := apiClient.CreateConnection(ctx, connInput)
+// Option 2: Manual cleanup
+conn, err := apiClient.CreateConnection(ctx, productName, connInput)
 require.NoError(t, err)
 
 t.Cleanup(func() {
@@ -278,13 +312,12 @@ func TestMyFeature(t *testing.T) {
     ctx, cancel := context.WithTimeout(context.Background(), e2eshared.DefaultTestTimeout)
     defer cancel()
 
-    // 1. Create product for isolation
-    product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+    // 1. Generate unique product name for isolation
+    productName := e2eshared.GenerateProductName()
 
-    // 2. Create connection scoped to product
+    // 2. Create connection scoped to product name
     uniqueName := fmt.Sprintf("e2e-mytest-%s", uuid.New().String()[:8])
-    conn, err := apiClient.CreateConnection(ctx, e2eshared.ConnectionInput{
-        ProductID:    product.ID,
+    conn := e2eshared.CreateTestConnection(t, apiClient, ctx, productName, e2eshared.ConnectionInput{
         ConfigName:   uniqueName,
         Type:         e2eshared.DBTypePostgreSQL,
         Host:         pgHost,
@@ -293,13 +326,8 @@ func TestMyFeature(t *testing.T) {
         Username:     "testuser",
         Password:     "testpass",
     })
-    require.NoError(t, err)
 
-    t.Cleanup(func() {
-        _ = apiClient.DeleteConnection(context.Background(), conn.ID)
-    })
-
-    // 3. Submit job with product.Code in metadata
+    // 3. Submit job with productName in metadata
     fetcherReq := model.FetcherRequest{
         DataRequest: model.DataRequest{
             MappedFields: map[string]map[string][]string{
@@ -309,7 +337,7 @@ func TestMyFeature(t *testing.T) {
             },
         },
         Metadata: map[string]any{
-            "source": product.Code,
+            "source": productName,
             "test":   "my-test",
         },
     }
@@ -366,12 +394,11 @@ func TestWithPostgres(t *testing.T) {
 The `ManagerClient` wraps HTTP calls to the Manager API:
 
 ```go
-// Create a product
-product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+// Generate product name for isolation
+productName := e2eshared.GenerateProductName()
 
-// Create a connection
-conn, err := apiClient.CreateConnection(ctx, e2eshared.ConnectionInput{
-    ProductID:    product.ID,
+// Create a connection (product name sent via X-Product-Name header)
+conn, err := apiClient.CreateConnection(ctx, productName, e2eshared.ConnectionInput{
     ConfigName:   "my-connection",
     Type:         e2eshared.DBTypePostgreSQL,
     Host:         host,
@@ -393,7 +420,7 @@ fetcherResp, err := apiClient.CreateFetcherJob(ctx, model.FetcherRequest{
         },
     },
     Metadata: map[string]any{
-        "source": product.Code,
+        "source": productName,
     },
 })
 require.NoError(t, err)
@@ -404,7 +431,7 @@ require.NoError(t, err)
 Use `*Raw` methods to test error scenarios (status codes, error bodies):
 
 ```go
-resp, err := apiClient.CreateProductRaw(ctx, invalidInput)
+resp, err := apiClient.CreateConnectionRaw(ctx, productName, invalidInput)
 require.NoError(t, err)
 e2eshared.AssertAPIError(t, resp, 400, "")
 
@@ -445,7 +472,7 @@ Build and run application containers:
 ```go
 import "github.com/LerianStudio/fetcher/pkg/itestkit/addons/e2ekit"
 
-app, err := e2ekit.New().
+app, err := e2ekit.New(nil).
     WithContext(ctx).
     WithImage("my-app:latest").
     WithEnv(map[string]string{
@@ -471,12 +498,12 @@ e2ekit.WaitRunning(timeout)
 ### Building from Dockerfile
 
 ```go
-app, err := e2ekit.New().
+app, err := e2ekit.New(nil).
     WithContext(ctx).
-    WithDockerfile(e2ekit.DockerfileBuild{
-        Context:    e2ekit.ProjectRoot(),
+    WithDockerfile(e2ekit.BuildConfig{
+        ContextDir: e2ekit.ProjectRoot(),
         Dockerfile: "Dockerfile",
-        Target:     "production",
+        Tag:        "my-app:latest",
         Secrets: []e2ekit.BuildSecret{
             {ID: "github_token", Env: "GITHUB_TOKEN"},
         },
@@ -492,10 +519,11 @@ app, err := e2ekit.New().
 ### Tests fail with "port already in use"
 
 When using `FIXED_PORT=true`, ensure no other services are using the ports:
-- MongoDB: 27017
-- RabbitMQ: 5672
-- Redis: 6379
-- SeaweedFS: 8333
+- MongoDB: 5709
+- RabbitMQ: 3008
+- Redis: 5707
+- SeaweedFS: 8889
+- PostgreSQL: 5432
 
 ### Container can't connect to host services
 
@@ -520,9 +548,17 @@ export GITHUB_TOKEN=your_token
 go test -v -tags e2e ./tests/e2e -timeout 10m
 ```
 
-### "Product Not Found" errors in job creation
+### Debugging with infrastructure-only mode
 
-Ensure `metadata.source` uses a valid product code (from `CreateTestProduct`), not a hardcoded value.
+Start infrastructure only, then run Manager/Worker in your IDE:
+
+```bash
+# Terminal 1: Start infrastructure
+FIXED_PORT=true E2E_INFRA_ONLY=true go test -v -tags e2e ./tests/e2e -timeout 30m
+
+# Terminal 2: Run tests against local Manager/Worker
+E2E_REUSE_INFRA=true E2E_MANAGER_URL=http://localhost:4006 go test -v -tags e2e ./tests/e2e -run TestMyTest -timeout 10m
+```
 
 ### Cleanup: Remove orphan containers
 
@@ -533,9 +569,9 @@ docker ps -a | grep -E "(mongo|rabbit|redis|seaweed|postgres)" | awk '{print $1}
 ## Best Practices
 
 1. **Always use `t.Parallel()`** as the first line in every test
-2. **Create a product per test** using `CreateTestProduct` for isolation
-3. **Use `ListConnectionsWithProduct`** instead of `ListConnections` to scope results
-4. **Set `metadata.source` to `product.Code`** when creating fetcher jobs
+2. **Generate a unique product name per test** using `GenerateProductName` for isolation
+3. **Use `ListConnectionsWithProductName`** instead of `ListConnections` to scope results
+4. **Set `metadata.source` to the product name** when creating fetcher jobs
 5. **Use `AssertJobCompleted` for polling** instead of AMQP message consumption
 6. **Use `t.Cleanup()`** for resource cleanup to ensure cleanup runs even on failure
 7. **Use unique names** with `uuid.New().String()[:8]` suffix to avoid conflicts
@@ -545,86 +581,54 @@ docker ps -a | grep -E "(mongo|rabbit|redis|seaweed|postgres)" | awk '{print $1}
 
 ## Test Catalog
 
-### Product CRUD
-
-| File | Test | Description |
-|------|------|-------------|
-| `product_create_test.go` | `TestCreateProduct_Success` | Product creation with unique code, name, description |
-| `product_create_test.go` | `TestCreateProduct_WithMetadata_Success` | Product creation with metadata preserved |
-| `product_create_test.go` | `TestCreateProduct_DuplicateCode_Conflict` | Duplicate code returns 409 |
-| `product_create_test.go` | `TestCreateProduct_MissingRequiredFields_BadRequest` | Missing code/name/body returns 400 |
-| `product_create_test.go` | `TestCreateProduct_InvalidCode_BadRequest` | Invalid codes (spaces, special chars, length) return 400 |
-| `product_get_test.go` | `TestGetProduct_Exists_Success` | Retrieve existing product with all fields |
-| `product_get_test.go` | `TestGetProduct_NotFound_404` | Non-existent product returns 404 |
-| `product_get_test.go` | `TestGetProduct_InvalidID_BadRequest` | Invalid UUID format returns 400 |
-| `product_list_test.go` | `TestListProducts_WithResults_Success` | List returns created products |
-| `product_list_test.go` | `TestListProducts_Pagination_Success` | Pagination mechanics (limit, pages) |
-| `product_list_test.go` | `TestListProducts_StructureValid_Success` | Response structure (Items, Page, Limit, Total) |
-| `product_update_test.go` | `TestUpdateProduct_Name_Success` | Update product name via PATCH |
-| `product_update_test.go` | `TestUpdateProduct_Description_Success` | Update product description |
-| `product_update_test.go` | `TestUpdateProduct_Metadata_Success` | Update product metadata |
-| `product_update_test.go` | `TestUpdateProduct_MultipleFields_Success` | Update multiple fields in single PATCH |
-| `product_update_test.go` | `TestUpdateProduct_NotFound_404` | Update non-existent product returns 404 |
-| `product_update_test.go` | `TestUpdateProduct_EmptyBody_BadRequest` | Empty update body returns 400 |
-| `product_delete_test.go` | `TestDeleteProduct_Success` | Delete product, verify not retrievable |
-| `product_delete_test.go` | `TestDeleteProduct_NotFound_404` | Delete non-existent product returns 404 |
-| `product_delete_test.go` | `TestDeleteProduct_Idempotent` | First delete succeeds, second returns 404 |
-| `product_delete_test.go` | `TestDeleteProduct_WithActiveConnections_Conflict` | Delete product with connections returns 409 |
-
-### Product Lifecycle
-
-| File | Test | Description |
-|------|------|-------------|
-| `product_lifecycle_test.go` | `TestProductLifecycle_FullCRUD` | Complete lifecycle: create, read, update, connection, job, cleanup |
-| `product_lifecycle_test.go` | `TestProductLifecycle_DeleteBlockedByConnections` | Cannot delete product with active connections |
-
 ### Connection Management
 
 | File | Test | Description |
 |------|------|-------------|
-| `connection_create_test.go` | `TestCreateConnection_WithProductID_Success` | Create connection with product ID |
-| `connection_create_test.go` | `TestCreateConnection_WithInvalidProductID_BadRequest` | Non-UUID product ID returns 400 |
-| `connection_create_test.go` | `TestCreateConnection_WithNonexistentProductID_NotFound` | Non-existent product returns 404 |
+| `connection_create_test.go` | `TestCreateConnection_WithProductName_Success` | Create connection with valid X-Product-Name header |
+| `connection_create_test.go` | `TestCreateConnection_WithoutProductName_BadRequest` | Missing X-Product-Name header returns 400 |
 | `connection_create_test.go` | `TestCreateConnection_PostgreSQL_Success` | PostgreSQL connection creation |
-| `connection_create_test.go` | `TestCreateConnection_MySQL_Success` | MySQL connection creation |
+| `connection_create_test.go` | `TestCreateConnection_MySQL_Success` | MySQL connection creation (skipped if unavailable) |
 | `connection_create_test.go` | `TestCreateConnection_MongoDB_Success` | MongoDB connection creation |
 | `connection_create_test.go` | `TestCreateConnection_Oracle_Success` | Oracle connection creation (skipped if unavailable) |
 | `connection_create_test.go` | `TestCreateConnection_SQLServer_Success` | SQL Server connection creation (skipped if unavailable) |
 | `connection_create_test.go` | `TestCreateConnection_DuplicateConfigName_Conflict` | Duplicate config name returns 409 |
 | `connection_create_test.go` | `TestCreateConnection_ConcurrentDuplicateName` | Concurrent duplicates: one succeeds, one gets 409 |
-| `connection_create_test.go` | `TestCreateConnection_MissingRequiredFields_BadRequest` | Missing config_name/type/host returns 400 |
-| `connection_get_test.go` | `TestGetConnection_Exists_Success` | Retrieve existing connection with all fields |
+| `connection_create_test.go` | `TestCreateConnection_MissingRequiredFields_BadRequest` | Missing config_name/type/host returns 400 (subtests: `missing_config_name`, `missing_type`, `missing_host`) |
+| `connection_create_test.go` | `TestCreateConnection_InvalidProductNameHeader` | Invalid product name header returns 400 (subtests: `whitespace_only`, `special_characters`, `too_long_101_chars`) |
+| `connection_create_test.go` | `TestCreateConnection_ProductNameMaxLength_Success` | Product name of exactly 100 characters (maximum) accepted |
+| `connection_get_test.go` | `TestGetConnection_Exists_Success` | Retrieve existing connection with all fields and metadata |
 | `connection_get_test.go` | `TestGetConnection_NotFound_404` | Non-existent connection returns 404 |
-| `connection_get_test.go` | `TestGetConnection_InvalidID_BadRequest` | Invalid UUID format returns 400 |
+| `connection_get_test.go` | `TestGetConnection_InvalidID_BadRequest` | Invalid UUID format returns 400 (subtests by invalid ID value) |
 | `connection_list_test.go` | `TestListConnections_Empty_Success` | Empty result for product with no connections |
 | `connection_list_test.go` | `TestListConnections_WithResults_Success` | List returns exact count of created connections |
 | `connection_list_test.go` | `TestListConnections_FilterByType_Success` | Product-scoped list with client-side type verification |
 | `connection_list_test.go` | `TestListConnections_CombinedFilters_Success` | Multiple types/hosts with client-side filtering |
 | `connection_list_test.go` | `TestListConnections_Pagination_Success` | Pagination with product-based isolation (pages of 2) |
-| `connection_product_filter_test.go` | `TestListConnections_FilterByProduct_Success` | Filter connections by product ID |
+| `connection_product_filter_test.go` | `TestListConnections_FilterByProduct_Success` | Filter connections by product name |
 | `connection_product_filter_test.go` | `TestListConnections_FilterByProduct_NoResults` | Product with no connections returns empty |
-| `connection_product_filter_test.go` | `TestListConnections_FilterByProduct_InvalidProductID` | Invalid product ID returns 400 |
-| `connection_product_filter_test.go` | `TestListConnections_FilterByProduct_NonexistentProduct_EmptyList` | Non-existent product returns empty or 404 |
+| `connection_product_filter_test.go` | `TestListConnections_FilterByProduct_NonexistentProduct_EmptyList` | Non-existent product name returns empty list |
 | `connection_update_test.go` | `TestUpdateConnection_Success` | Update connection fields via PATCH |
 | `connection_update_test.go` | `TestUpdateConnection_PartialUpdate_Success` | Update only specific fields |
 | `connection_update_test.go` | `TestUpdateConnection_NotFound_404` | Update non-existent connection returns 404 |
 | `connection_update_test.go` | `TestUpdateConnection_EmptyUpdate_BadRequest` | Empty update returns 400 |
-| `connection_update_test.go` | `TestUpdateConnection_InvalidValues_BadRequest` | Invalid values (empty host, port 0, port too high) |
+| `connection_update_test.go` | `TestUpdateConnection_InvalidValues_BadRequest` | Invalid values (subtests: `empty_host`, `port_zero`, `port_too_high`, `empty_database`) |
+| `connection_update_test.go` | `TestUpdateConnection_Metadata_Success` | Update connection metadata via PATCH and verify persistence |
 | `connection_delete_test.go` | `TestDeleteConnection_Success` | Delete existing connection |
 | `connection_delete_test.go` | `TestDeleteConnection_NotFound_404` | Delete non-existent connection returns 404 |
 | `connection_delete_test.go` | `TestDeleteConnection_Idempotent` | First delete succeeds, second returns 404 |
-| `connection_delete_test.go` | `TestDeleteConnection_InvalidID_BadRequest` | Invalid ID format returns 400 |
-| `connection_assign_test.go` | `TestAssignConnection_Success` | Assign unassigned connection to product |
-| `connection_assign_test.go` | `TestAssignConnection_AlreadyAssigned_Conflict` | Re-assign returns 409 |
-| `connection_assign_test.go` | `TestAssignConnection_ProductNotFound_404` | Assign to non-existent product returns 404 |
+| `connection_delete_test.go` | `TestDeleteConnection_InvalidID_BadRequest` | Invalid ID format returns 400 or 404 |
+| `connection_assign_test.go` | `TestListUnassignedConnections_Success` | List unassigned connections returns valid paginated structure |
+| `connection_assign_test.go` | `TestAssignConnection_AlreadyAssigned_Conflict` | Re-assign to different product returns 409 |
 | `connection_assign_test.go` | `TestAssignConnection_ConnectionNotFound_404` | Assign non-existent connection returns 404 |
-| `connection_assign_test.go` | `TestAssignConnection_InvalidProductID_BadRequest` | Invalid product ID returns 400 |
-| `connection_assign_test.go` | `TestListUnassignedConnections_Success` | List unassigned connections returns valid structure |
-| `connection_assign_test.go` | `TestListUnassignedConnections_Pagination_Success` | Pagination for unassigned connections |
-| `connection_assign_test.go` | `TestListUnassignedConnections_AfterAssignment_Removed` | Connection disappears from unassigned list after assignment |
+| `connection_assign_test.go` | `TestAssignConnection_EmptyProductName_BadRequest` | Empty product name string returns 400 |
+| `connection_assign_test.go` | `TestAssignConnection_InvalidProductName_BadRequest` | Invalid product names return 400 (subtests: `whitespace_only`, `special_characters`, `too_long`) |
 | `connection_schema_test.go` | `TestGetConnectionSchema_PostgreSQL_Success` | Schema introspection returns tables/fields for PostgreSQL |
 | `connection_schema_test.go` | `TestGetConnectionSchema_NotFound_404` | Schema for non-existent connection returns 404 |
-| `connection_schema_test.go` | `TestGetConnectionSchema_MySQL_Success` | Schema introspection for MySQL |
+| `connection_schema_test.go` | `TestGetConnectionSchema_MySQL_Success` | Schema introspection for MySQL (skipped if unavailable) |
+| `connection_schema_test.go` | `TestGetConnectionSchema_Oracle_Success` | Schema introspection for Oracle (skipped if unavailable) |
+| `connection_schema_test.go` | `TestGetConnectionSchema_SQLServer_Success` | Schema introspection for SQL Server (skipped if unavailable) |
+| `connection_schema_test.go` | `TestGetConnectionSchema_MongoDB_Success` | Schema introspection for MongoDB (skipped if unavailable) |
 | `connection_test_test.go` | `TestConnectionTest_PostgreSQL_Success` | Test valid PostgreSQL connection returns success |
 | `connection_test_test.go` | `TestConnectionTest_MySQL_Success` | Test valid MySQL connection (skipped if unavailable) |
 | `connection_test_test.go` | `TestConnectionTest_UnreachableHost_Error` | Unreachable host returns error |
@@ -668,7 +672,7 @@ docker ps -a | grep -E "(mongo|rabbit|redis|seaweed|postgres)" | awk '{print $1}
 | File | Test | Description |
 |------|------|-------------|
 | `extraction_mongodb_test.go` | `TestMongoDBExtraction_Collection_Success` | Complete extraction from MongoDB collection |
-| `extraction_mongodb_test.go` | `TestMongoDBExtraction_WithAggregation_Success` | MongoDB aggregation and metadata |
+| `extraction_mongodb_test.go` | `TestMongoDBExtraction_WithAggregation_Success` | MongoDB connection with aggregation metadata |
 
 ### Data Extraction - Oracle
 
@@ -738,7 +742,7 @@ docker ps -a | grep -E "(mongo|rabbit|redis|seaweed|postgres)" | awk '{print $1}
 | `job_status_test.go` | `TestGetJob_Completed_Success` | Completed job shows correct status and result path |
 | `job_status_test.go` | `TestGetJob_NotFound_404` | Non-existent job returns 404 |
 | `job_status_test.go` | `TestCreateJob_DuplicateRequest_ReturnsExisting` | Duplicate request returns existing job (idempotency) |
-| `job_status_test.go` | `TestGetJob_InvalidID_BadRequest` | Invalid job ID format returns 400 |
+| `job_status_test.go` | `TestGetJob_InvalidID_BadRequest` | Invalid job ID format returns 400 (subtests by invalid ID value) |
 
 ### Schema Validation
 
@@ -760,7 +764,9 @@ docker ps -a | grep -E "(mongo|rabbit|redis|seaweed|postgres)" | awk '{print $1}
 | `error_scenarios_test.go` | `TestExtraction_MissingFields_BadRequest` | Table without fields returns 400 |
 | `error_scenarios_test.go` | `TestExtraction_TooManyDatasources_BadRequest` | Exceeding datasource limit returns 400 |
 | `error_scenarios_test.go` | `TestExtraction_ConnectionWithWrongCredentials_Rejected` | Wrong credentials fails |
-| `error_scenarios_test.go` | `TestCreateJob_InvalidMetadata_BadRequest` | Missing/empty metadata.source returns 400 |
+| `error_scenarios_test.go` | `TestCreateJob_InvalidMetadata_BadRequest` | Missing/empty metadata.source returns 400 (subtests: `missing_metadata`, `missing_source`, `empty_source`) |
+| `error_scenarios_test.go` | `TestCreateFetcherJob_ProductMismatch_Rejected` | Product name mismatch between metadata and connection returns 400/409 |
+| `error_scenarios_test.go` | `TestCreateFetcherJob_InvalidFilterReferences_BadRequest` | Filters reference datasource not in mappedFields returns 400 |
 
 ## Related Documentation
 
