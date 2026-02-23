@@ -8,7 +8,7 @@ Fetcher is a **data extraction microservices system** built with Go following **
 
 | Category | Technology | Version |
 |----------|------------|---------|
-| **Language** | Go | 1.25.3 |
+| **Language** | Go | 1.25.6 |
 | **Web Framework** | Fiber | v2.52.10 |
 | **Message Queue** | RabbitMQ | v1.10.0 |
 | **Primary Database** | MongoDB | Latest |

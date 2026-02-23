@@ -187,7 +187,7 @@ External consumers that need to verify document signatures can derive the extern
 make derive-key KEY="<your-base64-master-key>"
 ```
 
-This outputs a hex-encoded HMAC key that consumers use to verify HMAC-SHA256 signatures on extracted data. See [docs/security/verification-guide.md](docs/security/verification-guide.md) for the full verification protocol.
+This outputs a hex-encoded HMAC key that consumers use to verify HMAC-SHA256 signatures on extracted data. See [scripts/crypto/derive-key/verification-guide.md](scripts/crypto/derive-key/verification-guide.md) for the full verification protocol.
 
 ## About Lerian
 

@@ -893,7 +893,7 @@ ifndef APP_ENC_KEY
 	@echo "Example:"
 	@echo "  make derive-key KEY=\"dGhpcy1pcy1hLTMyLWJ5dGUtbWFzdGVyLWtleTEyMzQ=\""
 	@echo ""
-	@echo "See docs/security/verification-guide.md for more information."
+	@echo "See scripts/crypto/derive-key/verification-guide.md for more information."
 	@exit 1
 endif
 	@go run ./scripts/crypto/derive-key/main.go

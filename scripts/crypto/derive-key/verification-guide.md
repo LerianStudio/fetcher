@@ -114,7 +114,7 @@ def verify_signature(hex_key: str, signature: str, timestamp: int, body: bytes) 
 To prevent replay attacks, verify that the timestamp is within an acceptable window (e.g., 5 minutes) of the current time:
 
 ```go
-if abs(time.Now().Unix() - timestamp) > 300 {
+if math.Abs(float64(time.Now().UTC().Unix() - timestamp)) > 300 {
     return fmt.Errorf("signature timestamp too old or too far in the future")
 }
 ```
