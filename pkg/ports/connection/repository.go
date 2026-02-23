@@ -24,6 +24,5 @@ type Repository interface {
 	FindByConfigNames(ctx context.Context, organizationID uuid.UUID, configNames []string) ([]*model.Connection, error)
 	List(ctx context.Context, organizationID uuid.UUID, filters http.QueryHeader) ([]*model.Connection, int64, error)
 	ListUnassigned(ctx context.Context, organizationID uuid.UUID, filters http.QueryHeader) ([]*model.Connection, int64, error)
-	CountByProduct(ctx context.Context, organizationID, productID uuid.UUID) (int64, error)
-	AssignProduct(ctx context.Context, connectionID, organizationID, productID uuid.UUID) (*model.Connection, error)
+	AssignProductName(ctx context.Context, connectionID, organizationID uuid.UUID, productName string) (*model.Connection, error)
 }

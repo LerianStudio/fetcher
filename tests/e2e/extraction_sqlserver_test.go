@@ -36,12 +36,11 @@ func TestSQLServerExtraction_Table_Success(t *testing.T) {
 	mssqlHost, mssqlPort, err := mssqlInfra.HostPort()
 	require.NoError(t, err, "get mssql host/port")
 
-	// Step 2: Create product and connection to source database
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	// Step 2: Generate product name and create connection to source database
+	productName := e2eshared.GenerateProductName()
 
 	uniqueName := fmt.Sprintf("e2e-mssql-extract-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
-		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypeSQLServer,
 		Host:         mssqlHost,
@@ -51,7 +50,7 @@ func TestSQLServerExtraction_Table_Success(t *testing.T) {
 		Password:     "YourStrong@Passw0rd",
 	}
 
-	conn, err := apiClient.CreateConnection(ctx, connInput)
+	conn, err := apiClient.CreateConnection(ctx, productName, connInput)
 	require.NoError(t, err, "create connection")
 	require.NotEmpty(t, conn.ID, "connection ID should be set")
 	t.Logf("Created SQL Server connection: id=%s, host=%s:%d", conn.ID, conn.Host, conn.Port)
@@ -73,7 +72,7 @@ func TestSQLServerExtraction_Table_Success(t *testing.T) {
 			},
 		},
 		Metadata: map[string]any{
-			"source": product.Code,
+			"source": productName,
 			"test":   "sqlserver-extraction-e2e",
 		},
 	}
@@ -146,12 +145,11 @@ func TestSQLServerExtraction_MultiSchema_Success(t *testing.T) {
 	mssqlHost, mssqlPort, err := mssqlInfra.HostPort()
 	require.NoError(t, err, "get mssql host/port")
 
-	// Create product and connection
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	// Generate product name and create connection
+	productName := e2eshared.GenerateProductName()
 
 	uniqueName := fmt.Sprintf("e2e-mssql-multi-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
-		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypeSQLServer,
 		Host:         mssqlHost,
@@ -161,7 +159,7 @@ func TestSQLServerExtraction_MultiSchema_Success(t *testing.T) {
 		Password:     "YourStrong@Passw0rd",
 	}
 
-	conn, err := apiClient.CreateConnection(ctx, connInput)
+	conn, err := apiClient.CreateConnection(ctx, productName, connInput)
 	require.NoError(t, err, "create connection")
 
 	t.Cleanup(func() {
@@ -183,7 +181,8 @@ func TestSQLServerExtraction_MultiSchema_Success(t *testing.T) {
 			},
 		},
 		Metadata: map[string]any{
-			"test": "sqlserver-multi-schema",
+			"source": productName,
+			"test":   "sqlserver-multi-schema",
 		},
 	}
 
@@ -217,12 +216,11 @@ func TestSQLServerExtraction_WithDateFilters_Success(t *testing.T) {
 	mssqlHost, mssqlPort, err := mssqlInfra.HostPort()
 	require.NoError(t, err, "get mssql host/port")
 
-	// Create product and connection
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	// Generate product name and create connection
+	productName := e2eshared.GenerateProductName()
 
 	uniqueName := fmt.Sprintf("e2e-mssql-date-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
-		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypeSQLServer,
 		Host:         mssqlHost,
@@ -232,7 +230,7 @@ func TestSQLServerExtraction_WithDateFilters_Success(t *testing.T) {
 		Password:     "YourStrong@Passw0rd",
 	}
 
-	conn, err := apiClient.CreateConnection(ctx, connInput)
+	conn, err := apiClient.CreateConnection(ctx, productName, connInput)
 	require.NoError(t, err, "create connection")
 
 	t.Cleanup(func() {
@@ -253,6 +251,7 @@ func TestSQLServerExtraction_WithDateFilters_Success(t *testing.T) {
 			// Note: Filters use the job.FilterCondition type
 		},
 		Metadata: map[string]any{
+			"source":     productName,
 			"test":       "sqlserver-date-filter",
 			"dateFilter": "Q3-2024",
 		},

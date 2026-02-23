@@ -26,12 +26,11 @@ func TestConnectionTest_PostgreSQL_Success(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	productName := e2eshared.GenerateProductName()
 
 	// Create connection
 	uniqueName := fmt.Sprintf("e2e-test-pg-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
-		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,
@@ -41,7 +40,7 @@ func TestConnectionTest_PostgreSQL_Success(t *testing.T) {
 		Password:     "testpass",
 	}
 
-	conn, err := apiClient.CreateConnection(ctx, connInput)
+	conn, err := apiClient.CreateConnection(ctx, productName, connInput)
 	require.NoError(t, err, "create connection")
 
 	t.Cleanup(func() {
@@ -78,12 +77,11 @@ func TestConnectionTest_MySQL_Success(t *testing.T) {
 	mysqlHost, mysqlPort, err := mysqlInfra.HostPort()
 	require.NoError(t, err, "get mysql host/port")
 
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	productName := e2eshared.GenerateProductName()
 
 	// Create connection
 	uniqueName := fmt.Sprintf("e2e-test-mysql-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
-		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypeMySQL,
 		Host:         mysqlHost,
@@ -93,7 +91,7 @@ func TestConnectionTest_MySQL_Success(t *testing.T) {
 		Password:     "testpass",
 	}
 
-	conn, err := apiClient.CreateConnection(ctx, connInput)
+	conn, err := apiClient.CreateConnection(ctx, productName, connInput)
 	require.NoError(t, err, "create connection")
 
 	t.Cleanup(func() {
@@ -121,12 +119,11 @@ func TestConnectionTest_UnreachableHost_Error(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), e2eshared.DefaultTestTimeout)
 	defer cancel()
 
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	productName := e2eshared.GenerateProductName()
 
 	// Create connection with unreachable host
 	uniqueName := fmt.Sprintf("e2e-test-unreachable-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
-		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         "unreachable.invalid.host",
@@ -136,7 +133,7 @@ func TestConnectionTest_UnreachableHost_Error(t *testing.T) {
 		Password:     "testpass",
 	}
 
-	conn, err := apiClient.CreateConnection(ctx, connInput)
+	conn, err := apiClient.CreateConnection(ctx, productName, connInput)
 	require.NoError(t, err, "create connection")
 
 	t.Cleanup(func() {
@@ -165,12 +162,11 @@ func TestConnectionTest_WrongCredentials_Error(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	productName := e2eshared.GenerateProductName()
 
 	// Create connection with wrong password
 	uniqueName := fmt.Sprintf("e2e-test-wrongcreds-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
-		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,
@@ -180,7 +176,7 @@ func TestConnectionTest_WrongCredentials_Error(t *testing.T) {
 		Password:     "wrong_password_that_should_fail",
 	}
 
-	conn, err := apiClient.CreateConnection(ctx, connInput)
+	conn, err := apiClient.CreateConnection(ctx, productName, connInput)
 	require.NoError(t, err, "create connection")
 
 	t.Cleanup(func() {

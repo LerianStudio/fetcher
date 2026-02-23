@@ -13,7 +13,7 @@ import (
 type ConnectionMongoDBModel struct {
 	ID                   uuid.UUID              `bson:"_id"`
 	OrganizationID       uuid.UUID              `bson:"organization_id"`
-	ProductID            *uuid.UUID             `bson:"product_id,omitempty"`
+	ProductName          string                 `bson:"product_name"`
 	ConfigName           string                 `bson:"config_name"`
 	Type                 string                 `bson:"type"`
 	Host                 string                 `bson:"host"`
@@ -66,7 +66,7 @@ func (cm *ConnectionMongoDBModel) ToEntity() (*model.Connection, error) {
 	return &model.Connection{
 		ID:                   cm.ID,
 		OrganizationID:       cm.OrganizationID,
-		ProductID:            cm.ProductID,
+		ProductName:          cm.ProductName,
 		ConfigName:           cm.ConfigName,
 		Type:                 connType,
 		Host:                 cm.Host,
@@ -101,7 +101,7 @@ func (cm *ConnectionMongoDBModel) FromEntity(conn *model.Connection) error {
 
 	cm.ID = conn.ID
 	cm.OrganizationID = conn.OrganizationID
-	cm.ProductID = conn.ProductID
+	cm.ProductName = conn.ProductName
 	cm.ConfigName = conn.ConfigName
 	cm.Type = string(conn.Type)
 	cm.Host = conn.Host
@@ -137,7 +137,7 @@ func (cm *ConnectionMongoDBModel) ToMapWithMask() map[string]any {
 	result := map[string]any{
 		"id":                     cm.ID,
 		"organization_id":        cm.OrganizationID,
-		"product_id":             cm.ProductID,
+		"product_name":           cm.ProductName,
 		"config_name":            cm.ConfigName,
 		"type":                   cm.Type,
 		"host":                   cm.Host,

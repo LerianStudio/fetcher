@@ -34,14 +34,13 @@ func TestMongoDBExtraction_Collection_Success(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), e2eshared.DefaultTestTimeout)
 	defer cancel()
 
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	productName := e2eshared.GenerateProductName()
 
 	// Create a MongoDB connection configuration
 	// Note: This points to a hypothetical MongoDB source - the API will validate
 	// and reject if the connection is not reachable.
 	uniqueName := fmt.Sprintf("e2e-mongo-extract-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
-		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypeMongoDB,
 		Host:         "localhost",
@@ -54,7 +53,7 @@ func TestMongoDBExtraction_Collection_Success(t *testing.T) {
 		},
 	}
 
-	conn, err := apiClient.CreateConnection(ctx, connInput)
+	conn, err := apiClient.CreateConnection(ctx, productName, connInput)
 	require.NoError(t, err, "create connection")
 	t.Logf("Created MongoDB connection: id=%s", conn.ID)
 
@@ -72,7 +71,7 @@ func TestMongoDBExtraction_Collection_Success(t *testing.T) {
 			},
 		},
 		Metadata: map[string]any{
-			"source": product.Code,
+			"source": productName,
 			"test":   "mongodb-extraction-e2e",
 		},
 	}
@@ -164,11 +163,10 @@ func TestMongoDBExtraction_WithAggregation_Success(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), e2eshared.DefaultTestTimeout)
 	defer cancel()
 
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	productName := e2eshared.GenerateProductName()
 
 	uniqueName := fmt.Sprintf("e2e-mongo-agg-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
-		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypeMongoDB,
 		Host:         "localhost",
@@ -183,7 +181,7 @@ func TestMongoDBExtraction_WithAggregation_Success(t *testing.T) {
 		},
 	}
 
-	conn, err := apiClient.CreateConnection(ctx, connInput)
+	conn, err := apiClient.CreateConnection(ctx, productName, connInput)
 	require.NoError(t, err, "create connection with metadata")
 
 	t.Cleanup(func() {

@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -37,7 +38,8 @@ func TestExtraction_InvalidConnectionName_Error(t *testing.T) {
 			},
 		},
 		Metadata: map[string]any{
-			"test": "invalid-connection-name",
+			"source": "any-product",
+			"test":   "invalid-connection-name",
 		},
 	}
 
@@ -80,12 +82,11 @@ func TestExtraction_InvalidTableName_Error(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
-	// Create product and valid connection
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	// Create valid connection
+	productName := e2eshared.GenerateProductName()
 
 	uniqueName := fmt.Sprintf("e2e-invalid-table-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
-		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,
@@ -95,7 +96,7 @@ func TestExtraction_InvalidTableName_Error(t *testing.T) {
 		Password:     "testpass",
 	}
 
-	conn, err := apiClient.CreateConnection(ctx, connInput)
+	conn, err := apiClient.CreateConnection(ctx, productName, connInput)
 	require.NoError(t, err, "create connection")
 
 	t.Cleanup(func() {
@@ -115,7 +116,8 @@ func TestExtraction_InvalidTableName_Error(t *testing.T) {
 			},
 		},
 		Metadata: map[string]any{
-			"test": "invalid-table-name",
+			"source": productName,
+			"test":   "invalid-table-name",
 		},
 	}
 
@@ -155,7 +157,8 @@ func TestExtraction_EmptyMappedFields_BadRequest(t *testing.T) {
 			MappedFields: map[string]map[string][]string{},
 		},
 		Metadata: map[string]any{
-			"test": "empty-mapped-fields",
+			"source": "any-product",
+			"test":   "empty-mapped-fields",
 		},
 	}
 
@@ -178,11 +181,10 @@ func TestExtraction_MissingFields_BadRequest(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	productName := e2eshared.GenerateProductName()
 
 	uniqueName := fmt.Sprintf("e2e-no-fields-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
-		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,
@@ -192,7 +194,7 @@ func TestExtraction_MissingFields_BadRequest(t *testing.T) {
 		Password:     "testpass",
 	}
 
-	conn, err := apiClient.CreateConnection(ctx, connInput)
+	conn, err := apiClient.CreateConnection(ctx, productName, connInput)
 	require.NoError(t, err, "create connection")
 
 	t.Cleanup(func() {
@@ -212,7 +214,8 @@ func TestExtraction_MissingFields_BadRequest(t *testing.T) {
 			},
 		},
 		Metadata: map[string]any{
-			"test": "missing-fields",
+			"source": productName,
+			"test":   "missing-fields",
 		},
 	}
 
@@ -250,7 +253,8 @@ func TestExtraction_TooManyDatasources_BadRequest(t *testing.T) {
 			MappedFields: mappedFields,
 		},
 		Metadata: map[string]any{
-			"test": "too-many-datasources",
+			"source": "any-product",
+			"test":   "too-many-datasources",
 		},
 	}
 
@@ -275,12 +279,11 @@ func TestExtraction_ConnectionWithWrongCredentials_Rejected(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
-	// Create product and connection with wrong password
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	// Create connection with wrong password
+	productName := e2eshared.GenerateProductName()
 
 	uniqueName := fmt.Sprintf("e2e-wrong-creds-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
-		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,
@@ -290,7 +293,7 @@ func TestExtraction_ConnectionWithWrongCredentials_Rejected(t *testing.T) {
 		Password:     "wrong_password_should_fail",
 	}
 
-	conn, err := apiClient.CreateConnection(ctx, connInput)
+	conn, err := apiClient.CreateConnection(ctx, productName, connInput)
 	require.NoError(t, err, "create connection")
 
 	t.Cleanup(func() {
@@ -307,7 +310,7 @@ func TestExtraction_ConnectionWithWrongCredentials_Rejected(t *testing.T) {
 			},
 		},
 		Metadata: map[string]any{
-			"source": product.Code,
+			"source": productName,
 			"test":   "wrong-credentials",
 		},
 	}
@@ -380,6 +383,8 @@ func TestCreateJob_InvalidMetadata_BadRequest(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), e2eshared.DefaultTestTimeout)
 			defer cancel()
 
+			productName := e2eshared.GenerateProductName()
+
 			connInput := e2eshared.ConnectionInput{
 				ConfigName:   fmt.Sprintf("e2e-meta-%s-%s", tt.name, uuid.New().String()[:8]),
 				Type:         e2eshared.DBTypePostgreSQL,
@@ -390,7 +395,7 @@ func TestCreateJob_InvalidMetadata_BadRequest(t *testing.T) {
 				Password:     "testpass",
 			}
 
-			_, conn := e2eshared.CreateTestProductAndConnection(t, apiClient, ctx, connInput)
+			conn := e2eshared.CreateTestConnection(t, apiClient, ctx, productName, connInput)
 
 			waitErr := apiClient.WaitForConnectionAvailable(ctx, conn.ID, 10*time.Second)
 			require.NoError(t, waitErr, "wait for connection to be available")
@@ -428,10 +433,12 @@ func TestCreateFetcherJob_ProductMismatch_Rejected(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
-	// Create product A (the one we'll reference in metadata.source)
-	productA := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	// Create product A name (the one we'll reference in metadata.source)
+	productNameA := e2eshared.GenerateProductName()
 
 	// Create product B with its own connection
+	productNameB := e2eshared.GenerateProductName()
+
 	connInput := e2eshared.ConnectionInput{
 		ConfigName:   fmt.Sprintf("e2e-mismatch-%s", uuid.New().String()[:8]),
 		Type:         e2eshared.DBTypePostgreSQL,
@@ -442,13 +449,13 @@ func TestCreateFetcherJob_ProductMismatch_Rejected(t *testing.T) {
 		Password:     "testpass",
 	}
 
-	_, connB := e2eshared.CreateTestProductAndConnection(t, apiClient, ctx, connInput)
+	connB := e2eshared.CreateTestConnection(t, apiClient, ctx, productNameB, connInput)
 
 	// Wait for connection B to be available
 	err = apiClient.WaitForConnectionAvailable(ctx, connB.ID, 10*time.Second)
 	require.NoError(t, err, "wait for connection B to be available")
 
-	// Submit job with metadata.source = productA.Code but reference connB (owned by product B)
+	// Submit job with metadata.source = productNameA but reference connB (owned by product B)
 	fetcherReq := model.FetcherRequest{
 		DataRequest: model.DataRequest{
 			MappedFields: map[string]map[string][]string{
@@ -458,7 +465,7 @@ func TestCreateFetcherJob_ProductMismatch_Rejected(t *testing.T) {
 			},
 		},
 		Metadata: map[string]any{
-			"source": productA.Code,
+			"source": productNameA,
 			"test":   "product-mismatch-e2e",
 		},
 	}
@@ -481,12 +488,8 @@ func TestCreateFetcherJob_ProductMismatch_Rejected(t *testing.T) {
 // containsAny checks if s contains any of the given substrings.
 func containsAny(s string, substrings ...string) bool {
 	for _, sub := range substrings {
-		if len(sub) > 0 && len(s) >= len(sub) {
-			for i := 0; i <= len(s)-len(sub); i++ {
-				if s[i:i+len(sub)] == sub {
-					return true
-				}
-			}
+		if strings.Contains(s, sub) {
+			return true
 		}
 	}
 
@@ -504,6 +507,8 @@ func TestCreateFetcherJob_InvalidFilterReferences_BadRequest(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
+	productName := e2eshared.GenerateProductName()
+
 	connInput := e2eshared.ConnectionInput{
 		ConfigName:   fmt.Sprintf("e2e-badfilter-%s", uuid.New().String()[:8]),
 		Type:         e2eshared.DBTypePostgreSQL,
@@ -514,7 +519,7 @@ func TestCreateFetcherJob_InvalidFilterReferences_BadRequest(t *testing.T) {
 		Password:     "testpass",
 	}
 
-	product, conn := e2eshared.CreateTestProductAndConnection(t, apiClient, ctx, connInput)
+	conn := e2eshared.CreateTestConnection(t, apiClient, ctx, productName, connInput)
 
 	err = apiClient.WaitForConnectionAvailable(ctx, conn.ID, 10*time.Second)
 	require.NoError(t, err, "wait for connection to be available")
@@ -539,7 +544,7 @@ func TestCreateFetcherJob_InvalidFilterReferences_BadRequest(t *testing.T) {
 			},
 		},
 		Metadata: map[string]any{
-			"source": product.Code,
+			"source": productName,
 			"test":   "invalid-filter-references-e2e",
 		},
 	}

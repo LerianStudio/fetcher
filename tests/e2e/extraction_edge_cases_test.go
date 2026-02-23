@@ -33,12 +33,11 @@ func TestExtraction_EmptyResultSet(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
-	// Create product and connection
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	// Generate product name and create connection
+	productName := e2eshared.GenerateProductName()
 
 	uniqueName := fmt.Sprintf("e2e-empty-result-%s", uuid.New().String()[:8])
-	conn, err := apiClient.CreateConnection(ctx, e2eshared.ConnectionInput{
-		ProductID:    product.ID,
+	conn, err := apiClient.CreateConnection(ctx, productName, e2eshared.ConnectionInput{
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,
@@ -78,7 +77,7 @@ func TestExtraction_EmptyResultSet(t *testing.T) {
 			},
 		},
 		Metadata: map[string]any{
-			"source": product.Code,
+			"source": productName,
 			"test":   "empty-result-set-e2e",
 		},
 	}
@@ -114,12 +113,11 @@ func TestExtraction_EmptyResultSet_MultipleFilters(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
-	// Create product and connection
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	// Generate product name and create connection
+	productName := e2eshared.GenerateProductName()
 
 	uniqueName := fmt.Sprintf("e2e-empty-multi-%s", uuid.New().String()[:8])
-	conn, err := apiClient.CreateConnection(ctx, e2eshared.ConnectionInput{
-		ProductID:    product.ID,
+	conn, err := apiClient.CreateConnection(ctx, productName, e2eshared.ConnectionInput{
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,
@@ -160,7 +158,7 @@ func TestExtraction_EmptyResultSet_MultipleFilters(t *testing.T) {
 			},
 		},
 		Metadata: map[string]any{
-			"source": product.Code,
+			"source": productName,
 			"test":   "empty-result-multiple-filters-e2e",
 		},
 	}
@@ -192,12 +190,11 @@ func TestExtraction_LargeAmountFilter(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
-	// Create product and connection
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	// Generate product name and create connection
+	productName := e2eshared.GenerateProductName()
 
 	uniqueName := fmt.Sprintf("e2e-largeamt-%s", uuid.New().String()[:8])
-	conn, err := apiClient.CreateConnection(ctx, e2eshared.ConnectionInput{
-		ProductID:    product.ID,
+	conn, err := apiClient.CreateConnection(ctx, productName, e2eshared.ConnectionInput{
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,
@@ -234,7 +231,7 @@ func TestExtraction_LargeAmountFilter(t *testing.T) {
 			},
 		},
 		Metadata: map[string]any{
-			"source": product.Code,
+			"source": productName,
 			"test":   "large-amount-filter-e2e",
 		},
 	}
@@ -263,12 +260,11 @@ func TestExtraction_SpecialCharactersInFilter(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
-	// Create product and connection
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	// Generate product name and create connection
+	productName := e2eshared.GenerateProductName()
 
 	uniqueName := fmt.Sprintf("e2e-special-%s", uuid.New().String()[:8])
-	conn, err := apiClient.CreateConnection(ctx, e2eshared.ConnectionInput{
-		ProductID:    product.ID,
+	conn, err := apiClient.CreateConnection(ctx, productName, e2eshared.ConnectionInput{
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,
@@ -307,7 +303,7 @@ func TestExtraction_SpecialCharactersInFilter(t *testing.T) {
 			},
 		},
 		Metadata: map[string]any{
-			"source": product.Code,
+			"source": productName,
 			"test":   "special-characters-filter-e2e",
 		},
 	}
@@ -340,11 +336,10 @@ func TestExtraction_ManyTablesPerDatasource(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	productName := e2eshared.GenerateProductName()
 
 	uniqueName := fmt.Sprintf("e2e-many-tables-%s", uuid.New().String()[:8])
-	conn, err := apiClient.CreateConnection(ctx, e2eshared.ConnectionInput{
-		ProductID:    product.ID,
+	conn, err := apiClient.CreateConnection(ctx, productName, e2eshared.ConnectionInput{
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,
@@ -381,7 +376,7 @@ func TestExtraction_ManyTablesPerDatasource(t *testing.T) {
 			},
 		},
 		Metadata: map[string]any{
-			"source": product.Code,
+			"source": productName,
 			"test":   "many-tables-boundary-e2e",
 		},
 	}
@@ -410,11 +405,10 @@ func TestExtraction_ManyFieldsPerTable(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	productName := e2eshared.GenerateProductName()
 
 	uniqueName := fmt.Sprintf("e2e-many-fields-%s", uuid.New().String()[:8])
-	conn, err := apiClient.CreateConnection(ctx, e2eshared.ConnectionInput{
-		ProductID:    product.ID,
+	conn, err := apiClient.CreateConnection(ctx, productName, e2eshared.ConnectionInput{
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,
@@ -447,7 +441,7 @@ func TestExtraction_ManyFieldsPerTable(t *testing.T) {
 			},
 		},
 		Metadata: map[string]any{
-			"source": product.Code,
+			"source": productName,
 			"test":   "many-fields-boundary-e2e",
 		},
 	}
@@ -475,12 +469,11 @@ func TestExtraction_AllFieldsFromTable(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
-	// Create product and connection
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	// Generate product name and create connection
+	productName := e2eshared.GenerateProductName()
 
 	uniqueName := fmt.Sprintf("e2e-allfields-%s", uuid.New().String()[:8])
-	conn, err := apiClient.CreateConnection(ctx, e2eshared.ConnectionInput{
-		ProductID:    product.ID,
+	conn, err := apiClient.CreateConnection(ctx, productName, e2eshared.ConnectionInput{
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,
@@ -519,7 +512,7 @@ func TestExtraction_AllFieldsFromTable(t *testing.T) {
 			},
 		},
 		Metadata: map[string]any{
-			"source": product.Code,
+			"source": productName,
 			"test":   "all-fields-e2e",
 		},
 	}

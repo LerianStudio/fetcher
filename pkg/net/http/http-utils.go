@@ -1,6 +1,7 @@
 package http
 
 import (
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -22,7 +23,7 @@ type QueryHeader struct {
 	StartDate   time.Time
 	EndDate     time.Time
 	UseMetadata bool
-	ProductID   *uuid.UUID
+	ProductName string
 }
 
 // Pagination entity from query parameter from get apis
@@ -231,26 +232,80 @@ func GetOrganizationID(c *fiber.Ctx) (uuid.UUID, error) {
 	return orgID, nil
 }
 
-// GetProductID extracts and validates X-Product-Id header as UUID.
-// Returns nil and nil error if the header is not provided (optional header).
-func GetProductID(c *fiber.Ctx) (*uuid.UUID, error) {
-	productHeader := strings.TrimSpace(c.Get("X-Product-Id"))
-	if productHeader == "" {
-		return nil, nil
-	}
+// productNameRegex validates product name format: alphanumeric with underscores and hyphens.
+var productNameRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
-	productID, err := uuid.Parse(productHeader)
-	if err != nil {
-		return nil, pkg.ValidationError{
+// validateProductName checks character set and length constraints on a product name.
+func validateProductName(productName string) error {
+	if len(productName) > 100 {
+		return pkg.ValidationError{
 			EntityType: "request",
 			Code:       constant.ErrInvalidHeaderParameter.Error(),
 			Title:      "Invalid header",
-			Message:    "X-Product-Id header must be a valid UUID",
-			Err:        err,
+			Message:    "X-Product-Name must not exceed 100 characters",
 		}
 	}
 
-	return &productID, nil
+	if !productNameRegex.MatchString(productName) {
+		return pkg.ValidationError{
+			EntityType: "request",
+			Code:       constant.ErrInvalidHeaderParameter.Error(),
+			Title:      "Invalid header",
+			Message:    "X-Product-Name can only contain alphanumeric characters, underscores, and hyphens",
+		}
+	}
+
+	return nil
+}
+
+// GetProductName extracts X-Product-Name header (optional).
+// Returns empty string if the header is not provided.
+// Returns error if the header is provided but is empty, whitespace-only, or has invalid format.
+func GetProductName(c *fiber.Ctx) (string, error) {
+	raw := c.Get("X-Product-Name")
+	if raw == "" {
+		return "", nil // header not provided
+	}
+
+	productName := strings.TrimSpace(raw)
+	if productName == "" {
+		return "", pkg.ValidationError{
+			EntityType: "request",
+			Code:       constant.ErrInvalidHeaderParameter.Error(),
+			Title:      "Invalid header",
+			Message:    "X-Product-Name header must not be empty or whitespace-only",
+		}
+	}
+
+	productName = strings.ToLower(productName)
+
+	if err := validateProductName(productName); err != nil {
+		return "", err
+	}
+
+	return productName, nil
+}
+
+// GetRequiredProductName extracts X-Product-Name header (required).
+// Returns error if the header is missing, empty, whitespace-only, or has invalid format.
+func GetRequiredProductName(c *fiber.Ctx) (string, error) {
+	productName := strings.TrimSpace(c.Get("X-Product-Name"))
+	if productName == "" {
+		return "", pkg.ValidationError{
+			EntityType: "request",
+			Code:       constant.ErrInvalidHeaderParameter.Error(),
+			Title:      "Invalid header",
+			Message:    "X-Product-Name header is required and must not be empty",
+		}
+	}
+
+	productName = strings.ToLower(productName)
+
+	if err := validateProductName(productName); err != nil {
+		return "", err
+	}
+
+	return productName, nil
 }
 
 // ParseIntDefault parses int with fallback.

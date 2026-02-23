@@ -50,13 +50,12 @@ func TestMultiDatasourceExtraction(t *testing.T) {
 	mysqlHost, mysqlPort, err := mysqlInfra.HostPort()
 	require.NoError(t, err, "get mysql host/port")
 
-	// Step 2: Create product
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	// Step 2: Generate product name
+	productName := e2eshared.GenerateProductName()
 
 	// Step 3: Create PostgreSQL connection
 	pgConnName := fmt.Sprintf("e2e-multids-pg-%s", uuid.New().String()[:8])
 	pgConnInput := e2eshared.ConnectionInput{
-		ProductID:    product.ID,
 		ConfigName:   pgConnName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,
@@ -69,7 +68,7 @@ func TestMultiDatasourceExtraction(t *testing.T) {
 		},
 	}
 
-	pgConn, err := apiClient.CreateConnection(ctx, pgConnInput)
+	pgConn, err := apiClient.CreateConnection(ctx, productName, pgConnInput)
 	require.NoError(t, err, "create PostgreSQL connection")
 	t.Logf("Created PostgreSQL connection: id=%s", pgConn.ID)
 
@@ -83,7 +82,6 @@ func TestMultiDatasourceExtraction(t *testing.T) {
 	// Step 4: Create MySQL connection
 	mysqlConnName := fmt.Sprintf("e2e-multids-mysql-%s", uuid.New().String()[:8])
 	mysqlConnInput := e2eshared.ConnectionInput{
-		ProductID:    product.ID,
 		ConfigName:   mysqlConnName,
 		Type:         e2eshared.DBTypeMySQL,
 		Host:         mysqlHost,
@@ -96,7 +94,7 @@ func TestMultiDatasourceExtraction(t *testing.T) {
 		},
 	}
 
-	mysqlConn, err := apiClient.CreateConnection(ctx, mysqlConnInput)
+	mysqlConn, err := apiClient.CreateConnection(ctx, productName, mysqlConnInput)
 	require.NoError(t, err, "create MySQL connection")
 	t.Logf("Created MySQL connection: id=%s", mysqlConn.ID)
 
@@ -122,7 +120,7 @@ func TestMultiDatasourceExtraction(t *testing.T) {
 			},
 		},
 		Metadata: map[string]any{
-			"source": product.Code,
+			"source": productName,
 			"test":   "multi-datasource-extraction-e2e",
 		},
 	}
@@ -206,13 +204,12 @@ func TestMultiDatasourceExtraction_WithFilters(t *testing.T) {
 	mysqlHost, mysqlPort, err := mysqlInfra.HostPort()
 	require.NoError(t, err, "get mysql host/port")
 
-	// Step 2: Create product
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	// Step 2: Generate product name
+	productName := e2eshared.GenerateProductName()
 
 	// Step 3: Create connections
 	pgConnName := fmt.Sprintf("e2e-multids-filter-pg-%s", uuid.New().String()[:8])
-	pgConn, err := apiClient.CreateConnection(ctx, e2eshared.ConnectionInput{
-		ProductID:    product.ID,
+	pgConn, err := apiClient.CreateConnection(ctx, productName, e2eshared.ConnectionInput{
 		ConfigName:   pgConnName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,
@@ -231,8 +228,7 @@ func TestMultiDatasourceExtraction_WithFilters(t *testing.T) {
 	require.NoError(t, err, "wait for PostgreSQL connection to be available")
 
 	mysqlConnName := fmt.Sprintf("e2e-multids-filter-mysql-%s", uuid.New().String()[:8])
-	mysqlConn, err := apiClient.CreateConnection(ctx, e2eshared.ConnectionInput{
-		ProductID:    product.ID,
+	mysqlConn, err := apiClient.CreateConnection(ctx, productName, e2eshared.ConnectionInput{
 		ConfigName:   mysqlConnName,
 		Type:         e2eshared.DBTypeMySQL,
 		Host:         mysqlHost,
@@ -281,7 +277,7 @@ func TestMultiDatasourceExtraction_WithFilters(t *testing.T) {
 			},
 		},
 		Metadata: map[string]any{
-			"source": product.Code,
+			"source": productName,
 			"test":   "multi-datasource-filtered-e2e",
 		},
 	}
@@ -328,7 +324,27 @@ func TestMultiDatasourceExtraction_WithFilters(t *testing.T) {
 	assert.Equal(t, e2eshared.JobStatusCompleted, jobResult.Status)
 	assert.NotEmpty(t, jobResult.ResultPath)
 
-	t.Logf("Multi-datasource filtered extraction completed: status=%s", jobResult.Status)
+	// Step 6: Download result and verify per-datasource row counts
+	seaweedURL, err := coreInfra.SeaweedFS.URL()
+	require.NoError(t, err, "get seaweedfs url")
+
+	resultData := e2eshared.DownloadAndDecryptResult(t, ctx, seaweedURL, jobResult.ResultPath)
+
+	pgData := resultData[pgConnName]
+	require.NotNil(t, pgData, "result should contain PostgreSQL datasource %s", pgConnName)
+	assert.Len(t, pgData["transactions"], 9,
+		"PostgreSQL transactions with category='salary' should return 9 rows")
+
+	mysqlData := resultData[mysqlConnName]
+	require.NotNil(t, mysqlData, "result should contain MySQL datasource %s", mysqlConnName)
+	assert.Len(t, mysqlData["transactions"], 15,
+		"MySQL transactions with amount > 100 should return 15 rows")
+
+	totalRows := e2eshared.CountResultRows(resultData)
+	assert.Equal(t, 24, totalRows, "total rows across both datasources should be 24")
+
+	t.Logf("Multi-datasource filtered extraction completed: status=%s, pgRows=%d, mysqlRows=%d, totalRows=%d",
+		jobResult.Status, len(pgData["transactions"]), len(mysqlData["transactions"]), totalRows)
 }
 
 // TestMultiDatasourceValidation verifies that schema validation works
@@ -351,13 +367,12 @@ func TestMultiDatasourceValidation(t *testing.T) {
 	mysqlHost, mysqlPort, err := mysqlInfra.HostPort()
 	require.NoError(t, err, "get mysql host/port")
 
-	// Step 2: Create product
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	// Step 2: Generate product name
+	productName := e2eshared.GenerateProductName()
 
 	// Step 3: Create connections
 	pgConnName := fmt.Sprintf("e2e-multids-valid-pg-%s", uuid.New().String()[:8])
-	pgConn, err := apiClient.CreateConnection(ctx, e2eshared.ConnectionInput{
-		ProductID:    product.ID,
+	pgConn, err := apiClient.CreateConnection(ctx, productName, e2eshared.ConnectionInput{
 		ConfigName:   pgConnName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,
@@ -376,8 +391,7 @@ func TestMultiDatasourceValidation(t *testing.T) {
 	require.NoError(t, err, "wait for PostgreSQL connection to be available")
 
 	mysqlConnName := fmt.Sprintf("e2e-multids-valid-mysql-%s", uuid.New().String()[:8])
-	mysqlConn, err := apiClient.CreateConnection(ctx, e2eshared.ConnectionInput{
-		ProductID:    product.ID,
+	mysqlConn, err := apiClient.CreateConnection(ctx, productName, e2eshared.ConnectionInput{
 		ConfigName:   mysqlConnName,
 		Type:         e2eshared.DBTypeMySQL,
 		Host:         mysqlHost,
@@ -437,13 +451,12 @@ func TestMultiDatasourceValidation_PartialFailure(t *testing.T) {
 	mysqlHost, mysqlPort, err := mysqlInfra.HostPort()
 	require.NoError(t, err, "get mysql host/port")
 
-	// Step 2: Create product
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	// Step 2: Generate product name
+	productName := e2eshared.GenerateProductName()
 
 	// Step 3: Create connections
 	pgConnName := fmt.Sprintf("e2e-partial-pg-%s", uuid.New().String()[:8])
-	pgConn, err := apiClient.CreateConnection(ctx, e2eshared.ConnectionInput{
-		ProductID:    product.ID,
+	pgConn, err := apiClient.CreateConnection(ctx, productName, e2eshared.ConnectionInput{
 		ConfigName:   pgConnName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,
@@ -462,8 +475,7 @@ func TestMultiDatasourceValidation_PartialFailure(t *testing.T) {
 	require.NoError(t, err, "wait for PostgreSQL connection to be available")
 
 	mysqlConnName := fmt.Sprintf("e2e-partial-mysql-%s", uuid.New().String()[:8])
-	mysqlConn, err := apiClient.CreateConnection(ctx, e2eshared.ConnectionInput{
-		ProductID:    product.ID,
+	mysqlConn, err := apiClient.CreateConnection(ctx, productName, e2eshared.ConnectionInput{
 		ConfigName:   mysqlConnName,
 		Type:         e2eshared.DBTypeMySQL,
 		Host:         mysqlHost,

@@ -9,8 +9,8 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/model"
-	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 	cacheRepo "github.com/LerianStudio/fetcher/pkg/ports/cache"
+	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"

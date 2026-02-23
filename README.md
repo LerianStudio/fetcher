@@ -93,6 +93,14 @@ Lerian Fetcher is built as a cloud-native platform following Hexagonal Architect
 | `GET` | `/version` | Version info |
 | `GET` | `/swagger/*` | Swagger UI |
 
+### API Reference & Testing
+
+For hands-on API exploration and testing scenarios, the following resources are available:
+
+- **[`components/manager/api/requests.http`](components/manager/api/requests.http)**: Ready-to-use HTTP request examples covering all API endpoints — useful for quick testing with VS Code REST Client, IntelliJ, or similar tools.
+- **[`components/manager/api/swagger.yaml`](components/manager/api/swagger.yaml)**: Full OpenAPI specification for the Manager API, which can be imported into Postman, Insomnia, or any OpenAPI-compatible tool.
+- **[`tests/e2e/`](tests/e2e/)**: End-to-end test suite covering connection management, data extraction across all supported databases, filtering, multi-datasource/multi-schema scenarios, schema validation, and error handling. These tests serve as practical usage examples and can be referenced to understand expected behaviors and edge cases.
+
 ### Technical Highlights
 
 - **Hexagonal Architecture**: Clear separation between domain logic and external dependencies
@@ -135,30 +143,51 @@ Lerian Fetcher is built as a cloud-native platform following Hexagonal Architect
    make set-env
    ```
 
-3. **Start all services:**
+3. **Generate the master encryption key:**
+   ```bash
+   make generate-master-key
+   ```
+   Copy the generated key and set it as `APP_ENC_KEY` in both `components/manager/.env` and `components/worker/.env`. This key is **required** — the services will not start without it. See [Security](#security) for details.
+
+4. **Start all services:**
    ```bash
    make up
    ```
 
-4. **Access the API:**
+5. **Access the API:**
    - REST API: `http://localhost:4006`
    - Swagger UI: `http://localhost:4006/swagger/index.html`
    - RabbitMQ Management: `http://localhost:3008`
 
-### Development Commands
+### Security
 
-| Command | Description |
-|---------|-------------|
-| `make help` | Display all available commands |
-| `make dev-setup` | Complete development environment setup |
-| `make set-env` | Copy .env.example to .env for all components |
-| `make up` | Start all services (infra first, then backends) |
-| `make down` | Stop all services |
-| `make rebuild-up` | Rebuild and restart all services |
-| `make test` | Run all tests |
-| `make lint` | Run golangci-lint with auto-fix |
-| `make sec` | Run gosec security analysis |
-| `make generate-docs` | Generate Swagger documentation |
+Fetcher uses a single master key (`APP_ENC_KEY`) to derive three cryptographically independent keys via HKDF (RFC 5869). This means you only need to manage one secret, but the system internally separates concerns:
+
+| Derived Key | Purpose |
+|-------------|---------|
+| **Credential Key** | AES-256-GCM encryption of database passwords stored in MongoDB |
+| **Internal HMAC Key** | HMAC-SHA256 signing of RabbitMQ messages between Manager and Worker, preventing message tampering |
+| **External HMAC Key** | HMAC-SHA256 signing of extracted data documents, enabling consumers to verify authenticity |
+
+#### Generating the Master Key
+
+```bash
+make generate-master-key
+```
+
+This produces a cryptographically secure 32-byte key encoded in base64. Set it as `APP_ENC_KEY` in the `.env` files of both Manager and Worker. Both services **must** use the same key — the Worker needs it to decrypt connection credentials and verify internal message signatures.
+
+The `APP_ENC_KEY_VERSION` variable (default: `1`) tracks key rotations. Increment it when rotating keys; the system uses it to identify which key version encrypted each credential.
+
+#### Deriving the External HMAC Key
+
+External consumers that need to verify document signatures can derive the external HMAC key from the master key:
+
+```bash
+make derive-key KEY="<your-base64-master-key>"
+```
+
+This outputs a hex-encoded HMAC key that consumers use to verify HMAC-SHA256 signatures on extracted data. See [scripts/crypto/derive-key/verification-guide.md](scripts/crypto/derive-key/verification-guide.md) for the full verification protocol.
 
 ## About Lerian
 

@@ -12,9 +12,8 @@ import (
 	"github.com/LerianStudio/fetcher/components/manager/internal/services/command"
 	"github.com/LerianStudio/fetcher/components/manager/internal/services/query"
 	"github.com/LerianStudio/fetcher/pkg/model"
-	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 	jobRepo "github.com/LerianStudio/fetcher/pkg/mongodb/job"
-	productRepo "github.com/LerianStudio/fetcher/pkg/mongodb/product"
+	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
 
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/ports/messaging"
@@ -245,24 +244,16 @@ func TestFetcherHandler_CreateJob_Success_NewJob(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
-	mockProdRepo := productRepo.NewMockRepository(ctrl)
 	mockCryptor := crypto.NewMockCryptor(ctrl)
 	mockRabbitMQ := messaging.NewMockMessagePublisher(ctrl)
 	mockTester := command.NewMockConnectionTester(ctrl)
 
 	orgID := uuid.New()
-	productID := uuid.New()
-	testProduct := &model.Product{
-		ID:             productID,
-		OrganizationID: orgID,
-		Code:           "test-product",
-		Name:           "Test Product",
-	}
 
 	testConn := &model.Connection{
 		ID:             uuid.New(),
 		OrganizationID: orgID,
-		ProductID:      &productID,
+		ProductName:    "test-product",
 		ConfigName:     "ds1",
 		Type:           model.TypePostgreSQL,
 	}
@@ -273,20 +264,18 @@ func TestFetcherHandler_CreateJob_Success_NewJob(t *testing.T) {
 	mockJobRepo.EXPECT().FindByRequestHashWithinWindow(gomock.Any(), orgID, gomock.Any(), command.DeduplicationWindowMinutes).Return(nil, nil)
 	// 3. Find connections by datasource names
 	mockConnRepo.EXPECT().FindByConfigNames(gomock.Any(), orgID, gomock.Any()).Return([]*model.Connection{testConn}, nil)
-	// 4. Validate product ownership (metadata.source = "test-product")
-	mockProdRepo.EXPECT().FindByCode(gomock.Any(), "test-product", orgID).Return(testProduct, nil)
-	// 5. Test each connection
+	// 4. Test each connection
 	mockTester.EXPECT().TestConnection(gomock.Any(), testConn).Return(nil)
-	// 6. Create the job in the repository
+	// 5. Create the job in the repository
 	mockJobRepo.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, j *model.Job) (*model.Job, error) {
 			return j, nil
 		},
 	)
-	// 7. Publish to RabbitMQ queue
+	// 6. Publish to RabbitMQ queue
 	mockRabbitMQ.EXPECT().ProducerDefault(gomock.Any(), "", gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 
-	createCmd := command.NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, mockProdRepo, mockCryptor, mockRabbitMQ, mockTester, "test-queue", nil)
+	createCmd := command.NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, mockCryptor, mockRabbitMQ, mockTester, "test-queue", nil)
 	handler := &FetcherHandler{CreateJobCmd: createCmd}
 
 	app := setupTestApp()
@@ -316,7 +305,6 @@ func TestFetcherHandler_CreateJob_Success_DuplicateJob(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
-	mockProdRepo := productRepo.NewMockRepository(ctrl)
 	mockCryptor := crypto.NewMockCryptor(ctrl)
 	mockRabbitMQ := messaging.NewMockMessagePublisher(ctrl)
 	mockTester := command.NewMockConnectionTester(ctrl)
@@ -328,7 +316,7 @@ func TestFetcherHandler_CreateJob_Success_DuplicateJob(t *testing.T) {
 	// Service finds existing job within dedup window -> returns duplicate
 	mockJobRepo.EXPECT().FindByRequestHashWithinWindow(gomock.Any(), orgID, gomock.Any(), command.DeduplicationWindowMinutes).Return(existingJob, nil)
 
-	createCmd := command.NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, mockProdRepo, mockCryptor, mockRabbitMQ, mockTester, "test-queue", nil)
+	createCmd := command.NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, mockCryptor, mockRabbitMQ, mockTester, "test-queue", nil)
 	handler := &FetcherHandler{CreateJobCmd: createCmd}
 
 	app := setupTestApp()
@@ -361,7 +349,6 @@ func TestFetcherHandler_CreateJob_Conflict(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
-	mockProdRepo := productRepo.NewMockRepository(ctrl)
 	mockCryptor := crypto.NewMockCryptor(ctrl)
 	mockRabbitMQ := messaging.NewMockMessagePublisher(ctrl)
 	mockTester := command.NewMockConnectionTester(ctrl)
@@ -373,7 +360,7 @@ func TestFetcherHandler_CreateJob_Conflict(t *testing.T) {
 	// No connections found for the datasource -> returns "No Connections Found" error
 	mockConnRepo.EXPECT().FindByConfigNames(gomock.Any(), orgID, gomock.Any()).Return(nil, nil)
 
-	createCmd := command.NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, mockProdRepo, mockCryptor, mockRabbitMQ, mockTester, "test-queue", nil)
+	createCmd := command.NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, mockCryptor, mockRabbitMQ, mockTester, "test-queue", nil)
 	handler := &FetcherHandler{CreateJobCmd: createCmd}
 
 	app := setupTestApp()
@@ -400,7 +387,6 @@ func TestFetcherHandler_CreateJob_InternalError(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
-	mockProdRepo := productRepo.NewMockRepository(ctrl)
 	mockCryptor := crypto.NewMockCryptor(ctrl)
 	mockRabbitMQ := messaging.NewMockMessagePublisher(ctrl)
 	mockTester := command.NewMockConnectionTester(ctrl)
@@ -410,7 +396,7 @@ func TestFetcherHandler_CreateJob_InternalError(t *testing.T) {
 	// FindByRequestHashWithinWindow returns an error -> internal server error
 	mockJobRepo.EXPECT().FindByRequestHashWithinWindow(gomock.Any(), orgID, gomock.Any(), command.DeduplicationWindowMinutes).Return(nil, assert.AnError)
 
-	createCmd := command.NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, mockProdRepo, mockCryptor, mockRabbitMQ, mockTester, "test-queue", nil)
+	createCmd := command.NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, mockCryptor, mockRabbitMQ, mockTester, "test-queue", nil)
 	handler := &FetcherHandler{CreateJobCmd: createCmd}
 
 	app := setupTestApp()
@@ -629,31 +615,22 @@ func TestFetcherHandler_CreateJob_WithMetadata(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
-	mockProdRepo := productRepo.NewMockRepository(ctrl)
 	mockCryptor := crypto.NewMockCryptor(ctrl)
 	mockRabbitMQ := messaging.NewMockMessagePublisher(ctrl)
 	mockTester := command.NewMockConnectionTester(ctrl)
 
 	orgID := uuid.New()
-	productID := uuid.New()
-	testProduct := &model.Product{
-		ID:             productID,
-		OrganizationID: orgID,
-		Code:           "test",
-		Name:           "Test Product",
-	}
 
 	testConn := &model.Connection{
 		ID:             uuid.New(),
 		OrganizationID: orgID,
-		ProductID:      &productID,
+		ProductName:    "test",
 		ConfigName:     "ds1",
 		Type:           model.TypePostgreSQL,
 	}
 
 	mockJobRepo.EXPECT().FindByRequestHashWithinWindow(gomock.Any(), orgID, gomock.Any(), command.DeduplicationWindowMinutes).Return(nil, nil)
 	mockConnRepo.EXPECT().FindByConfigNames(gomock.Any(), orgID, gomock.Any()).Return([]*model.Connection{testConn}, nil)
-	mockProdRepo.EXPECT().FindByCode(gomock.Any(), "test", orgID).Return(testProduct, nil)
 	mockTester.EXPECT().TestConnection(gomock.Any(), testConn).Return(nil)
 	mockJobRepo.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, j *model.Job) (*model.Job, error) {
@@ -662,7 +639,7 @@ func TestFetcherHandler_CreateJob_WithMetadata(t *testing.T) {
 	)
 	mockRabbitMQ.EXPECT().ProducerDefault(gomock.Any(), "", gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 
-	createCmd := command.NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, mockProdRepo, mockCryptor, mockRabbitMQ, mockTester, "test-queue", nil)
+	createCmd := command.NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, mockCryptor, mockRabbitMQ, mockTester, "test-queue", nil)
 	handler := &FetcherHandler{CreateJobCmd: createCmd}
 
 	app := setupTestApp()
@@ -698,31 +675,22 @@ func TestFetcherHandler_CreateJob_WithFilters(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
-	mockProdRepo := productRepo.NewMockRepository(ctrl)
 	mockCryptor := crypto.NewMockCryptor(ctrl)
 	mockRabbitMQ := messaging.NewMockMessagePublisher(ctrl)
 	mockTester := command.NewMockConnectionTester(ctrl)
 
 	orgID := uuid.New()
-	productID := uuid.New()
-	testProduct := &model.Product{
-		ID:             productID,
-		OrganizationID: orgID,
-		Code:           "test-product",
-		Name:           "Test Product",
-	}
 
 	testConn := &model.Connection{
 		ID:             uuid.New(),
 		OrganizationID: orgID,
-		ProductID:      &productID,
+		ProductName:    "test-product",
 		ConfigName:     "ds1",
 		Type:           model.TypePostgreSQL,
 	}
 
 	mockJobRepo.EXPECT().FindByRequestHashWithinWindow(gomock.Any(), orgID, gomock.Any(), command.DeduplicationWindowMinutes).Return(nil, nil)
 	mockConnRepo.EXPECT().FindByConfigNames(gomock.Any(), orgID, gomock.Any()).Return([]*model.Connection{testConn}, nil)
-	mockProdRepo.EXPECT().FindByCode(gomock.Any(), "test-product", orgID).Return(testProduct, nil)
 	mockTester.EXPECT().TestConnection(gomock.Any(), testConn).Return(nil)
 	mockJobRepo.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, j *model.Job) (*model.Job, error) {
@@ -731,7 +699,7 @@ func TestFetcherHandler_CreateJob_WithFilters(t *testing.T) {
 	)
 	mockRabbitMQ.EXPECT().ProducerDefault(gomock.Any(), "", gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 
-	createCmd := command.NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, mockProdRepo, mockCryptor, mockRabbitMQ, mockTester, "test-queue", nil)
+	createCmd := command.NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, mockCryptor, mockRabbitMQ, mockTester, "test-queue", nil)
 	handler := &FetcherHandler{CreateJobCmd: createCmd}
 
 	app := setupTestApp()

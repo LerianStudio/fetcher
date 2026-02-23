@@ -24,12 +24,11 @@ func TestUpdateConnection_Success(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	productName := e2eshared.GenerateProductName()
 
 	// Create connection
 	uniqueName := fmt.Sprintf("e2e-update-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
-		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,
@@ -42,7 +41,7 @@ func TestUpdateConnection_Success(t *testing.T) {
 		},
 	}
 
-	conn, err := apiClient.CreateConnection(ctx, connInput)
+	conn, err := apiClient.CreateConnection(ctx, productName, connInput)
 	require.NoError(t, err, "create connection")
 
 	t.Cleanup(func() {
@@ -85,12 +84,11 @@ func TestUpdateConnection_PartialUpdate_Success(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	productName := e2eshared.GenerateProductName()
 
 	// Create connection with all fields
 	uniqueName := fmt.Sprintf("e2e-partial-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
-		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,
@@ -100,7 +98,7 @@ func TestUpdateConnection_PartialUpdate_Success(t *testing.T) {
 		Password:     "testpass",
 	}
 
-	conn, err := apiClient.CreateConnection(ctx, connInput)
+	conn, err := apiClient.CreateConnection(ctx, productName, connInput)
 	require.NoError(t, err, "create connection")
 
 	t.Cleanup(func() {
@@ -158,12 +156,11 @@ func TestUpdateConnection_EmptyUpdate_BadRequest(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	productName := e2eshared.GenerateProductName()
 
 	// Create connection
 	uniqueName := fmt.Sprintf("e2e-empty-update-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
-		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,
@@ -173,7 +170,7 @@ func TestUpdateConnection_EmptyUpdate_BadRequest(t *testing.T) {
 		Password:     "testpass",
 	}
 
-	conn, err := apiClient.CreateConnection(ctx, connInput)
+	conn, err := apiClient.CreateConnection(ctx, productName, connInput)
 	require.NoError(t, err, "create connection")
 
 	t.Cleanup(func() {
@@ -239,6 +236,8 @@ func TestUpdateConnection_InvalidValues_BadRequest(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), e2eshared.DefaultTestTimeout)
 			defer cancel()
 
+			productName := e2eshared.GenerateProductName()
+
 			connInput := e2eshared.ConnectionInput{
 				ConfigName:   fmt.Sprintf("e2e-inv-update-%s", uuid.New().String()[:8]),
 				Type:         e2eshared.DBTypePostgreSQL,
@@ -249,7 +248,7 @@ func TestUpdateConnection_InvalidValues_BadRequest(t *testing.T) {
 				Password:     "testpass",
 			}
 
-			_, conn := e2eshared.CreateTestProductAndConnection(t, apiClient, ctx, connInput)
+			conn := e2eshared.CreateTestConnection(t, apiClient, ctx, productName, connInput)
 
 			resp, err := apiClient.UpdateConnectionRaw(ctx, conn.ID, tt.update)
 			require.NoError(t, err, "request should succeed")
@@ -272,12 +271,11 @@ func TestUpdateConnection_Metadata_Success(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	productName := e2eshared.GenerateProductName()
 
 	// Create connection with initial metadata
 	uniqueName := fmt.Sprintf("e2e-meta-update-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
-		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,
@@ -292,7 +290,7 @@ func TestUpdateConnection_Metadata_Success(t *testing.T) {
 		},
 	}
 
-	conn, err := apiClient.CreateConnection(ctx, connInput)
+	conn, err := apiClient.CreateConnection(ctx, productName, connInput)
 	require.NoError(t, err, "create connection")
 
 	t.Cleanup(func() {

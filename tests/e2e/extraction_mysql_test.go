@@ -37,12 +37,11 @@ func TestMySQLExtraction_TransactionsTable_Success(t *testing.T) {
 	mysqlHost, mysqlPort, err := mysqlInfra.HostPort()
 	require.NoError(t, err, "get mysql host/port")
 
-	// Step 2: Create product and connection to source database
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	// Step 2: Generate product name and create connection to source database
+	productName := e2eshared.GenerateProductName()
 
 	uniqueName := fmt.Sprintf("e2e-mysql-extract-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
-		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypeMySQL,
 		Host:         mysqlHost,
@@ -52,7 +51,7 @@ func TestMySQLExtraction_TransactionsTable_Success(t *testing.T) {
 		Password:     "testpass",
 	}
 
-	conn, err := apiClient.CreateConnection(ctx, connInput)
+	conn, err := apiClient.CreateConnection(ctx, productName, connInput)
 	require.NoError(t, err, "create connection")
 	require.NotEmpty(t, conn.ID, "connection ID should be set")
 	t.Logf("Created MySQL connection: id=%s, host=%s:%d", conn.ID, conn.Host, conn.Port)
@@ -74,7 +73,7 @@ func TestMySQLExtraction_TransactionsTable_Success(t *testing.T) {
 			},
 		},
 		Metadata: map[string]any{
-			"source": product.Code,
+			"source": productName,
 			"test":   "mysql-extraction-e2e",
 		},
 	}
@@ -148,12 +147,11 @@ func TestMySQLExtraction_WithFilters_Success(t *testing.T) {
 	mysqlHost, mysqlPort, err := mysqlInfra.HostPort()
 	require.NoError(t, err, "get mysql host/port")
 
-	// Create product and connection
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	// Generate product name and create connection
+	productName := e2eshared.GenerateProductName()
 
 	uniqueName := fmt.Sprintf("e2e-mysql-filter-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
-		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypeMySQL,
 		Host:         mysqlHost,
@@ -163,7 +161,7 @@ func TestMySQLExtraction_WithFilters_Success(t *testing.T) {
 		Password:     "testpass",
 	}
 
-	conn, err := apiClient.CreateConnection(ctx, connInput)
+	conn, err := apiClient.CreateConnection(ctx, productName, connInput)
 	require.NoError(t, err, "create connection")
 
 	t.Cleanup(func() {
@@ -192,7 +190,8 @@ func TestMySQLExtraction_WithFilters_Success(t *testing.T) {
 			},
 		},
 		Metadata: map[string]any{
-			"test": "mysql-extraction-with-filters",
+			"source": productName,
+			"test":   "mysql-extraction-with-filters",
 		},
 	}
 

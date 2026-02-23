@@ -66,10 +66,9 @@ func NewManagerClient(baseURL, organizationID string) *ManagerClient {
 }
 
 // ConnectionInput represents the request body for creating a new database connection.
-// All fields except Metadata are required.
+// All fields except Metadata are required. The product name is sent via the X-Product-Name
+// header, not in the request body.
 type ConnectionInput struct {
-	// ProductID is the product this connection belongs to (required for product isolation).
-	ProductID string `json:"productId,omitempty"`
 	// ConfigName is a unique identifier for this connection within the organization.
 	ConfigName string `json:"configName"`
 	// Type is the database type (use DBType* constants from constants.go).
@@ -93,8 +92,8 @@ type ConnectionInput struct {
 type ConnectionResponse struct {
 	// ID is the server-generated unique identifier (UUID).
 	ID string `json:"id"`
-	// ProductID is the product this connection belongs to.
-	ProductID string `json:"productId,omitempty"`
+	// ProductName is the product name this connection belongs to.
+	ProductName string `json:"productName,omitempty"`
 	// ConfigName is the unique connection name within the organization.
 	ConfigName string `json:"configName"`
 	// Type is the database type.
@@ -131,12 +130,14 @@ func checkStatus(resp *resty.Response, method string, expected ...int) error {
 }
 
 // CreateConnection creates a new database connection via POST /v1/management/connections.
+// The productName is sent via the X-Product-Name header.
 // Returns the created connection with its server-generated ID on success (201 or 200).
-func (c *ManagerClient) CreateConnection(ctx context.Context, input ConnectionInput) (*ConnectionResponse, error) {
+func (c *ManagerClient) CreateConnection(ctx context.Context, productName string, input ConnectionInput) (*ConnectionResponse, error) {
 	var result ConnectionResponse
 
 	resp, err := c.client.R().
 		SetContext(ctx).
+		SetHeader("X-Product-Name", productName).
 		SetBody(input).
 		SetResult(&result).
 		Post("/v1/management/connections")
@@ -238,7 +239,7 @@ func (c *ManagerClient) GetJobRaw(ctx context.Context, jobID string) (*resty.Res
 // All fields are optional; zero values are omitted from the query string.
 //
 // Note: The API does not support filtering by host or type via query parameters.
-// Use ListConnectionsWithProduct to filter by product (via X-Product-Id header).
+// Use ListConnectionsWithProductName to filter by product (via X-Product-Name header).
 type ListConnectionsParams struct {
 	// Page is the page number for pagination (1-based).
 	Page int
@@ -485,9 +486,11 @@ func (c *ManagerClient) ValidateSchemaRaw(ctx context.Context, request SchemaVal
 }
 
 // CreateConnectionRaw creates a connection and returns the raw response for testing error scenarios.
-func (c *ManagerClient) CreateConnectionRaw(ctx context.Context, input ConnectionInput) (*resty.Response, error) {
+// The productName is sent via the X-Product-Name header.
+func (c *ManagerClient) CreateConnectionRaw(ctx context.Context, productName string, input ConnectionInput) (*resty.Response, error) {
 	return c.client.R().
 		SetContext(ctx).
+		SetHeader("X-Product-Name", productName).
 		SetBody(input).
 		Post("/v1/management/connections")
 }
@@ -515,242 +518,17 @@ func (c *ManagerClient) CreateFetcherJobRaw(ctx context.Context, request model.F
 }
 
 // ############################################################################
-// Product Types and Methods
-// ############################################################################
-
-// ProductInput represents the request body for creating a new product.
-type ProductInput struct {
-	// Code is a unique, immutable slug identifier (lowercase alphanumeric with hyphens, 2-50 chars).
-	Code string `json:"code"`
-	// Name is the display name of the product (required, max 100 chars).
-	Name string `json:"name"`
-	// Description is an optional description (max 500 chars).
-	Description string `json:"description,omitempty"`
-	// Metadata contains optional key-value pairs for custom attributes.
-	Metadata *map[string]any `json:"metadata,omitempty"`
-}
-
-// ProductUpdateInput represents the request body for PATCH /v1/management/products/{id}.
-// All fields are pointers to support partial updates.
-type ProductUpdateInput struct {
-	// Name updates the product display name.
-	Name *string `json:"name,omitempty"`
-	// Description updates the product description.
-	Description *string `json:"description,omitempty"`
-	// Metadata updates the custom key-value pairs.
-	Metadata *map[string]any `json:"metadata,omitempty"`
-}
-
-// ProductResponse represents the API response for product operations.
-type ProductResponse struct {
-	// ID is the server-generated unique identifier (UUID).
-	ID string `json:"id"`
-	// Code is the unique, immutable slug identifier.
-	Code string `json:"code"`
-	// Name is the display name.
-	Name string `json:"name"`
-	// Description is the product description.
-	Description string `json:"description,omitempty"`
-	// Metadata contains custom key-value pairs.
-	Metadata *map[string]any `json:"metadata,omitempty"`
-	// CreatedAt is the ISO 8601 timestamp when the product was created.
-	CreatedAt string `json:"createdAt"`
-	// UpdatedAt is the ISO 8601 timestamp when the product was last modified.
-	UpdatedAt string `json:"updatedAt"`
-}
-
-// ListProductsParams holds query parameters for the list products endpoint.
-type ListProductsParams struct {
-	// Page is the page number for pagination (1-based).
-	Page int
-	// Limit is the maximum number of items per page.
-	Limit int
-	// SortOrder specifies the sort direction: "asc" or "desc".
-	SortOrder string
-}
-
-// toQueryString builds the URL query string from the non-zero parameter values.
-func (p ListProductsParams) toQueryString() string {
-	query := url.Values{}
-	if p.Page > 0 {
-		query.Set("page", strconv.Itoa(p.Page))
-	}
-
-	if p.Limit > 0 {
-		query.Set("limit", strconv.Itoa(p.Limit))
-	}
-
-	if p.SortOrder != "" {
-		query.Set("sortOrder", p.SortOrder)
-	}
-
-	if len(query) == 0 {
-		return ""
-	}
-
-	return "?" + query.Encode()
-}
-
-// ListProductsResponse represents the paginated response from GET /v1/management/products.
-type ListProductsResponse struct {
-	// Items contains the products for the current page.
-	Items []ProductResponse `json:"items"`
-	// Page is the current page number.
-	Page int `json:"page"`
-	// Limit is the maximum items per page.
-	Limit int `json:"limit"`
-	// Total is the total count of products matching the filters.
-	Total int `json:"total"`
-}
-
-// CreateProduct creates a new product via POST /v1/management/products.
-func (c *ManagerClient) CreateProduct(ctx context.Context, input ProductInput) (*ProductResponse, error) {
-	var result ProductResponse
-
-	resp, err := c.client.R().
-		SetContext(ctx).
-		SetBody(input).
-		SetResult(&result).
-		Post("/v1/management/products")
-	if err != nil {
-		return nil, fmt.Errorf("CreateProduct: %w", err)
-	}
-
-	if err := checkStatus(resp, "CreateProduct", 200, 201); err != nil {
-		return nil, err
-	}
-
-	return &result, nil
-}
-
-// CreateProductRaw creates a product and returns the raw response for testing error scenarios.
-func (c *ManagerClient) CreateProductRaw(ctx context.Context, input ProductInput) (*resty.Response, error) {
-	return c.client.R().
-		SetContext(ctx).
-		SetBody(input).
-		Post("/v1/management/products")
-}
-
-// GetProduct retrieves a product by ID via GET /v1/management/products/{id}.
-func (c *ManagerClient) GetProduct(ctx context.Context, productID string) (*ProductResponse, error) {
-	var result ProductResponse
-
-	resp, err := c.client.R().
-		SetContext(ctx).
-		SetResult(&result).
-		Get("/v1/management/products/" + productID)
-	if err != nil {
-		return nil, fmt.Errorf("GetProduct: %w", err)
-	}
-
-	if err := checkStatus(resp, "GetProduct", 200); err != nil {
-		return nil, err
-	}
-
-	return &result, nil
-}
-
-// GetProductRaw retrieves a product and returns the raw response for testing error scenarios.
-func (c *ManagerClient) GetProductRaw(ctx context.Context, productID string) (*resty.Response, error) {
-	return c.client.R().
-		SetContext(ctx).
-		Get("/v1/management/products/" + productID)
-}
-
-// ListProducts retrieves products via GET /v1/management/products with optional filters.
-func (c *ManagerClient) ListProducts(ctx context.Context, params ListProductsParams) (*ListProductsResponse, error) {
-	var result ListProductsResponse
-
-	path := "/v1/management/products" + params.toQueryString()
-
-	resp, err := c.client.R().
-		SetContext(ctx).
-		SetResult(&result).
-		Get(path)
-	if err != nil {
-		return nil, fmt.Errorf("ListProducts: %w", err)
-	}
-
-	if err := checkStatus(resp, "ListProducts", 200); err != nil {
-		return nil, err
-	}
-
-	return &result, nil
-}
-
-// ListProductsRaw retrieves products and returns the raw response for testing error scenarios.
-func (c *ManagerClient) ListProductsRaw(ctx context.Context, params ListProductsParams) (*resty.Response, error) {
-	path := "/v1/management/products" + params.toQueryString()
-
-	return c.client.R().
-		SetContext(ctx).
-		Get(path)
-}
-
-// UpdateProduct performs a partial update via PATCH /v1/management/products/{id}.
-func (c *ManagerClient) UpdateProduct(ctx context.Context, productID string, input ProductUpdateInput) (*ProductResponse, error) {
-	var result ProductResponse
-
-	resp, err := c.client.R().
-		SetContext(ctx).
-		SetBody(input).
-		SetResult(&result).
-		Patch("/v1/management/products/" + productID)
-	if err != nil {
-		return nil, fmt.Errorf("UpdateProduct: %w", err)
-	}
-
-	if err := checkStatus(resp, "UpdateProduct", 200); err != nil {
-		return nil, err
-	}
-
-	return &result, nil
-}
-
-// UpdateProductRaw performs a partial update and returns the raw response for testing error scenarios.
-func (c *ManagerClient) UpdateProductRaw(ctx context.Context, productID string, input ProductUpdateInput) (*resty.Response, error) {
-	return c.client.R().
-		SetContext(ctx).
-		SetBody(input).
-		Patch("/v1/management/products/" + productID)
-}
-
-// DeleteProduct performs a soft delete on a product via DELETE /v1/management/products/{id}.
-func (c *ManagerClient) DeleteProduct(ctx context.Context, productID string) error {
-	resp, err := c.client.R().
-		SetContext(ctx).
-		Delete("/v1/management/products/" + productID)
-	if err != nil {
-		return fmt.Errorf("DeleteProduct: %w", err)
-	}
-
-	return checkStatus(resp, "DeleteProduct", 200, 202, 204)
-}
-
-// DeleteProductRaw deletes a product and returns the raw response for testing error scenarios.
-func (c *ManagerClient) DeleteProductRaw(ctx context.Context, productID string) (*resty.Response, error) {
-	return c.client.R().
-		SetContext(ctx).
-		Delete("/v1/management/products/" + productID)
-}
-
-// ############################################################################
 // Connection Assignment and Schema Types and Methods
 // ############################################################################
 
-// AssignConnectionInput represents the request body for POST /v1/management/connections/{id}/assign.
-type AssignConnectionInput struct {
-	// ProductID is the product to assign the connection to.
-	ProductID string `json:"productId"`
-}
-
 // AssignConnection assigns a connection to a product via POST /v1/management/connections/{id}/assign.
-func (c *ManagerClient) AssignConnection(ctx context.Context, connectionID string, input AssignConnectionInput) (*ConnectionResponse, error) {
+// The productName is sent via the X-Product-Name header.
+func (c *ManagerClient) AssignConnection(ctx context.Context, connectionID string, productName string) (*ConnectionResponse, error) {
 	var result ConnectionResponse
 
 	resp, err := c.client.R().
 		SetContext(ctx).
-		SetBody(input).
+		SetHeader("X-Product-Name", productName).
 		SetResult(&result).
 		Post("/v1/management/connections/" + connectionID + "/assign")
 	if err != nil {
@@ -765,10 +543,11 @@ func (c *ManagerClient) AssignConnection(ctx context.Context, connectionID strin
 }
 
 // AssignConnectionRaw assigns a connection and returns the raw response for testing error scenarios.
-func (c *ManagerClient) AssignConnectionRaw(ctx context.Context, connectionID string, input AssignConnectionInput) (*resty.Response, error) {
+// The productName is sent via the X-Product-Name header.
+func (c *ManagerClient) AssignConnectionRaw(ctx context.Context, connectionID string, productName string) (*resty.Response, error) {
 	return c.client.R().
 		SetContext(ctx).
-		SetBody(input).
+		SetHeader("X-Product-Name", productName).
 		Post("/v1/management/connections/" + connectionID + "/assign")
 }
 
@@ -844,34 +623,34 @@ func (c *ManagerClient) GetConnectionSchemaRaw(ctx context.Context, connectionID
 		Get("/v1/management/connections/" + connectionID + "/schema")
 }
 
-// ListConnectionsWithProduct retrieves connections filtered by product ID using the X-Product-Id header.
-func (c *ManagerClient) ListConnectionsWithProduct(ctx context.Context, productID string, params ListConnectionsParams) (*ListConnectionsResponse, error) {
+// ListConnectionsWithProductName retrieves connections filtered by product name using the X-Product-Name header.
+func (c *ManagerClient) ListConnectionsWithProductName(ctx context.Context, productName string, params ListConnectionsParams) (*ListConnectionsResponse, error) {
 	var result ListConnectionsResponse
 
 	path := "/v1/management/connections" + params.toQueryString()
 
 	resp, err := c.client.R().
 		SetContext(ctx).
-		SetHeader("X-Product-Id", productID).
+		SetHeader("X-Product-Name", productName).
 		SetResult(&result).
 		Get(path)
 	if err != nil {
-		return nil, fmt.Errorf("ListConnectionsWithProduct: %w", err)
+		return nil, fmt.Errorf("ListConnectionsWithProductName: %w", err)
 	}
 
-	if err := checkStatus(resp, "ListConnectionsWithProduct", 200); err != nil {
+	if err := checkStatus(resp, "ListConnectionsWithProductName", 200); err != nil {
 		return nil, err
 	}
 
 	return &result, nil
 }
 
-// ListConnectionsWithProductRaw retrieves connections by product and returns the raw response.
-func (c *ManagerClient) ListConnectionsWithProductRaw(ctx context.Context, productID string, params ListConnectionsParams) (*resty.Response, error) {
+// ListConnectionsWithProductNameRaw retrieves connections by product name and returns the raw response.
+func (c *ManagerClient) ListConnectionsWithProductNameRaw(ctx context.Context, productName string, params ListConnectionsParams) (*resty.Response, error) {
 	path := "/v1/management/connections" + params.toQueryString()
 
 	return c.client.R().
 		SetContext(ctx).
-		SetHeader("X-Product-Id", productID).
+		SetHeader("X-Product-Name", productName).
 		Get(path)
 }

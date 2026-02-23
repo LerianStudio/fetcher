@@ -409,6 +409,7 @@ func TestNewConnection(t *testing.T) {
 				ctx,
 				testCryptor,
 				orgID,
+				"test-product",
 				tt.configName,
 				tt.typ,
 				tt.host,
@@ -472,6 +473,7 @@ func TestConnection_IsValid(t *testing.T) {
 			connection: Connection{
 				ID:                uuid.New(),
 				OrganizationID:    uuid.New(),
+				ProductName:       "test-product",
 				ConfigName:        "test-connection",
 				Type:              TypePostgreSQL,
 				Host:              "localhost",
@@ -487,6 +489,7 @@ func TestConnection_IsValid(t *testing.T) {
 			connection: Connection{
 				ID:                uuid.New(),
 				OrganizationID:    uuid.New(),
+				ProductName:       "test-product",
 				ConfigName:        "test-connection",
 				Type:              TypePostgreSQL,
 				Host:              "localhost",
@@ -502,10 +505,28 @@ func TestConnection_IsValid(t *testing.T) {
 			expectError: false,
 		},
 		{
+			name: "missing product name",
+			connection: Connection{
+				ID:                uuid.New(),
+				OrganizationID:    uuid.New(),
+				ProductName:       "",
+				ConfigName:        "test-connection",
+				Type:              TypePostgreSQL,
+				Host:              "localhost",
+				Port:              5432,
+				DatabaseName:      "testdb",
+				Username:          "testuser",
+				PasswordEncrypted: "encrypted-password",
+			},
+			expectError: true,
+			errorField:  "product_name",
+		},
+		{
 			name: "missing organization ID",
 			connection: Connection{
 				ID:                uuid.New(),
 				OrganizationID:    uuid.Nil,
+				ProductName:       "test-product",
 				ConfigName:        "test-connection",
 				Type:              TypePostgreSQL,
 				Host:              "localhost",
@@ -522,6 +543,7 @@ func TestConnection_IsValid(t *testing.T) {
 			connection: Connection{
 				ID:                uuid.Nil,
 				OrganizationID:    uuid.New(),
+				ProductName:       "test-product",
 				ConfigName:        "test-connection",
 				Type:              TypePostgreSQL,
 				Host:              "localhost",
@@ -538,6 +560,7 @@ func TestConnection_IsValid(t *testing.T) {
 			connection: Connection{
 				ID:                uuid.New(),
 				OrganizationID:    uuid.New(),
+				ProductName:       "test-product",
 				ConfigName:        "",
 				Type:              TypePostgreSQL,
 				Host:              "localhost",
@@ -554,6 +577,7 @@ func TestConnection_IsValid(t *testing.T) {
 			connection: Connection{
 				ID:                uuid.New(),
 				OrganizationID:    uuid.New(),
+				ProductName:       "test-product",
 				ConfigName:        "ab",
 				Type:              TypePostgreSQL,
 				Host:              "localhost",
@@ -570,6 +594,7 @@ func TestConnection_IsValid(t *testing.T) {
 			connection: Connection{
 				ID:                uuid.New(),
 				OrganizationID:    uuid.New(),
+				ProductName:       "test-product",
 				ConfigName:        "test@connection!",
 				Type:              TypePostgreSQL,
 				Host:              "localhost",
@@ -586,6 +611,7 @@ func TestConnection_IsValid(t *testing.T) {
 			connection: Connection{
 				ID:                uuid.New(),
 				OrganizationID:    uuid.New(),
+				ProductName:       "test-product",
 				ConfigName:        "test-connection",
 				Type:              DBType("INVALID"),
 				Host:              "localhost",
@@ -602,6 +628,7 @@ func TestConnection_IsValid(t *testing.T) {
 			connection: Connection{
 				ID:                uuid.New(),
 				OrganizationID:    uuid.New(),
+				ProductName:       "test-product",
 				ConfigName:        "test-connection",
 				Type:              TypePostgreSQL,
 				Host:              "",
@@ -618,6 +645,7 @@ func TestConnection_IsValid(t *testing.T) {
 			connection: Connection{
 				ID:                uuid.New(),
 				OrganizationID:    uuid.New(),
+				ProductName:       "test-product",
 				ConfigName:        "test-connection",
 				Type:              TypePostgreSQL,
 				Host:              "localhost",
@@ -634,6 +662,7 @@ func TestConnection_IsValid(t *testing.T) {
 			connection: Connection{
 				ID:                uuid.New(),
 				OrganizationID:    uuid.New(),
+				ProductName:       "test-product",
 				ConfigName:        "test-connection",
 				Type:              TypePostgreSQL,
 				Host:              "localhost",
@@ -650,6 +679,7 @@ func TestConnection_IsValid(t *testing.T) {
 			connection: Connection{
 				ID:                uuid.New(),
 				OrganizationID:    uuid.New(),
+				ProductName:       "test-product",
 				ConfigName:        "test-connection",
 				Type:              TypePostgreSQL,
 				Host:              "localhost",
@@ -666,6 +696,7 @@ func TestConnection_IsValid(t *testing.T) {
 			connection: Connection{
 				ID:                uuid.New(),
 				OrganizationID:    uuid.New(),
+				ProductName:       "test-product",
 				ConfigName:        "test-connection",
 				Type:              TypePostgreSQL,
 				Host:              "localhost",
@@ -682,6 +713,7 @@ func TestConnection_IsValid(t *testing.T) {
 			connection: Connection{
 				ID:                uuid.New(),
 				OrganizationID:    uuid.New(),
+				ProductName:       "test-product",
 				ConfigName:        "test-connection",
 				Type:              TypePostgreSQL,
 				Host:              "localhost",
@@ -698,6 +730,7 @@ func TestConnection_IsValid(t *testing.T) {
 			connection: Connection{
 				ID:                uuid.New(),
 				OrganizationID:    uuid.New(),
+				ProductName:       "test-product",
 				ConfigName:        "test-connection",
 				Type:              TypePostgreSQL,
 				Host:              "localhost",
@@ -718,6 +751,7 @@ func TestConnection_IsValid(t *testing.T) {
 			connection: Connection{
 				ID:                uuid.New(),
 				OrganizationID:    uuid.New(),
+				ProductName:       "test-product",
 				ConfigName:        "test-connection",
 				Type:              TypePostgreSQL,
 				Host:              "localhost",
@@ -738,6 +772,7 @@ func TestConnection_IsValid(t *testing.T) {
 			connection: Connection{
 				ID:                uuid.New(),
 				OrganizationID:    uuid.New(),
+				ProductName:       "test-product",
 				ConfigName:        "   test-connection   ",
 				Type:              TypePostgreSQL,
 				Host:              "localhost",
@@ -753,6 +788,7 @@ func TestConnection_IsValid(t *testing.T) {
 			connection: Connection{
 				ID:                uuid.New(),
 				OrganizationID:    uuid.New(),
+				ProductName:       "test-product",
 				ConfigName:        "test-connection",
 				Type:              TypePostgreSQL,
 				Host:              "localhost",
@@ -773,6 +809,7 @@ func TestConnection_IsValid(t *testing.T) {
 			connection: Connection{
 				ID:                uuid.New(),
 				OrganizationID:    uuid.New(),
+				ProductName:       "test-product",
 				ConfigName:        "test-connection",
 				Type:              TypeMySQL,
 				Host:              "localhost",
@@ -792,6 +829,7 @@ func TestConnection_IsValid(t *testing.T) {
 			connection: Connection{
 				ID:                uuid.New(),
 				OrganizationID:    uuid.New(),
+				ProductName:       "test-product",
 				ConfigName:        "test-connection",
 				Type:              TypeMySQL,
 				Host:              "localhost",
@@ -812,6 +850,7 @@ func TestConnection_IsValid(t *testing.T) {
 			connection: Connection{
 				ID:                uuid.New(),
 				OrganizationID:    uuid.New(),
+				ProductName:       "test-product",
 				ConfigName:        "test-connection",
 				Type:              TypeMongoDB,
 				Host:              "localhost",
@@ -831,6 +870,7 @@ func TestConnection_IsValid(t *testing.T) {
 			connection: Connection{
 				ID:                uuid.New(),
 				OrganizationID:    uuid.New(),
+				ProductName:       "test-product",
 				ConfigName:        "test-connection",
 				Type:              TypeMongoDB,
 				Host:              "localhost",
@@ -851,6 +891,7 @@ func TestConnection_IsValid(t *testing.T) {
 			connection: Connection{
 				ID:                uuid.New(),
 				OrganizationID:    uuid.New(),
+				ProductName:       "test-product",
 				ConfigName:        "test-connection",
 				Type:              TypeOracle,
 				Host:              "localhost",
@@ -870,6 +911,7 @@ func TestConnection_IsValid(t *testing.T) {
 			connection: Connection{
 				ID:                uuid.New(),
 				OrganizationID:    uuid.New(),
+				ProductName:       "test-product",
 				ConfigName:        "test-connection",
 				Type:              TypeOracle,
 				Host:              "localhost",
@@ -890,6 +932,7 @@ func TestConnection_IsValid(t *testing.T) {
 			connection: Connection{
 				ID:                uuid.New(),
 				OrganizationID:    uuid.New(),
+				ProductName:       "test-product",
 				ConfigName:        "test-connection",
 				Type:              TypeSQLServer,
 				Host:              "localhost",
@@ -909,6 +952,7 @@ func TestConnection_IsValid(t *testing.T) {
 			connection: Connection{
 				ID:                uuid.New(),
 				OrganizationID:    uuid.New(),
+				ProductName:       "test-product",
 				ConfigName:        "test-connection",
 				Type:              TypeSQLServer,
 				Host:              "localhost",
@@ -929,6 +973,7 @@ func TestConnection_IsValid(t *testing.T) {
 			connection: Connection{
 				ID:                uuid.New(),
 				OrganizationID:    uuid.New(),
+				ProductName:       "test-product",
 				ConfigName:        "test-connection",
 				Type:              TypePostgreSQL,
 				Host:              "localhost",
@@ -987,6 +1032,7 @@ func TestConnection_ApplyPatch(t *testing.T) {
 		return &Connection{
 			ID:                   uuid.New(),
 			OrganizationID:       uuid.New(),
+			ProductName:          "test-product",
 			ConfigName:           "original-connection",
 			Type:                 TypePostgreSQL,
 			Host:                 "localhost",
@@ -1210,6 +1256,7 @@ func TestConnection_ApplyPatch_Metadata(t *testing.T) {
 		conn := &Connection{
 			ID:                   uuid.New(),
 			OrganizationID:       uuid.New(),
+			ProductName:          "test-product",
 			ConfigName:           "oracle-connection",
 			Type:                 TypeOracle,
 			Host:                 "localhost",
@@ -1269,6 +1316,7 @@ func TestConnection_ApplyPatch_Metadata(t *testing.T) {
 		conn := &Connection{
 			ID:                   uuid.New(),
 			OrganizationID:       uuid.New(),
+			ProductName:          "test-product",
 			ConfigName:           "oracle-connection",
 			Type:                 TypeOracle,
 			Host:                 "localhost",
@@ -1840,6 +1888,80 @@ func TestNewConnectionResponseFrom(t *testing.T) {
 	})
 }
 
+// TestConnection_AssignProductName tests the Connection.AssignProductName method.
+func TestConnection_AssignProductName(t *testing.T) {
+	tests := []struct {
+		name            string
+		initialProduct  string
+		assignProduct   string
+		expectError     bool
+		expectedProduct string
+	}{
+		{
+			name:            "assign to unassigned connection succeeds",
+			initialProduct:  "",
+			assignProduct:   "new-product",
+			expectError:     false,
+			expectedProduct: "new-product",
+		},
+		{
+			name:           "assign to already assigned connection returns error",
+			initialProduct: "existing-product",
+			assignProduct:  "new-product",
+			expectError:    true,
+		},
+		{
+			name:            "assign empty string to unassigned connection succeeds at model level",
+			initialProduct:  "",
+			assignProduct:   "",
+			expectError:     false,
+			expectedProduct: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			conn := &Connection{
+				ID:                uuid.New(),
+				OrganizationID:    uuid.New(),
+				ProductName:       tt.initialProduct,
+				ConfigName:        "test-connection",
+				Type:              TypePostgreSQL,
+				Host:              "localhost",
+				Port:              5432,
+				DatabaseName:      "testdb",
+				Username:          "testuser",
+				PasswordEncrypted: "encrypted-password",
+				CreatedAt:         time.Now().UTC().Add(-1 * time.Hour),
+				UpdatedAt:         time.Now().UTC().Add(-1 * time.Hour),
+			}
+
+			beforeAssign := conn.UpdatedAt
+
+			err := conn.AssignProductName(tt.assignProduct)
+
+			if tt.expectError {
+				if err == nil {
+					t.Fatalf("expected error, got nil")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if conn.ProductName != tt.expectedProduct {
+				t.Fatalf("expected ProductName %q, got %q", tt.expectedProduct, conn.ProductName)
+			}
+
+			if !conn.UpdatedAt.After(beforeAssign) {
+				t.Fatalf("expected UpdatedAt to be updated after assignment")
+			}
+		})
+	}
+}
+
 // TestConnection_ConfigNameEdgeCases tests edge cases for config name validation.
 func TestConnection_ConfigNameEdgeCases(t *testing.T) {
 	tests := []struct {
@@ -1904,6 +2026,7 @@ func TestConnection_ConfigNameEdgeCases(t *testing.T) {
 			conn := Connection{
 				ID:                uuid.New(),
 				OrganizationID:    uuid.New(),
+				ProductName:       "test-product",
 				ConfigName:        tt.configName,
 				Type:              TypePostgreSQL,
 				Host:              "localhost",
@@ -1943,6 +2066,7 @@ func TestConnection_AllDatabaseTypes(t *testing.T) {
 			conn := Connection{
 				ID:                uuid.New(),
 				OrganizationID:    uuid.New(),
+				ProductName:       "test-product",
 				ConfigName:        "test-connection",
 				Type:              tt.dbType,
 				Host:              "localhost",

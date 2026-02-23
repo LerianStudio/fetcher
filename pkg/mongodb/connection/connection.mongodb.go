@@ -631,7 +631,11 @@ func (rm *ConnectionMongoDBRepository) ListUnassigned(ctx context.Context, organ
 	queryFilter := bson.M{
 		"organization_id": organizationID,
 		"deleted_at":      bson.D{{Key: "$eq", Value: nil}},
-		"product_id":      bson.D{{Key: "$eq", Value: nil}},
+		"$or": []bson.M{
+			{"product_name": ""},
+			{"product_name": bson.M{"$eq": nil}},
+			{"product_name": bson.M{"$exists": false}},
+		},
 	}
 
 	mongodb.AddDateRangeFilter(queryFilter, filters)
@@ -690,8 +694,8 @@ func (rm *ConnectionMongoDBRepository) ListUnassigned(ctx context.Context, organ
 	return connections, totalCount, nil
 }
 
-// AssignProduct associates a legacy (unassigned) connection to a product. Returns the updated connection.
-func (cr *ConnectionMongoDBRepository) AssignProduct(ctx context.Context, connectionID, organizationID, productID uuid.UUID) (*model.Connection, error) {
+// AssignProductName associates a legacy (unassigned) connection to a product by name. Returns the updated connection.
+func (cr *ConnectionMongoDBRepository) AssignProductName(ctx context.Context, connectionID, organizationID uuid.UUID, productName string) (*model.Connection, error) {
 	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "mongodb.assign_connection_product")
@@ -701,7 +705,7 @@ func (cr *ConnectionMongoDBRepository) AssignProduct(ctx context.Context, connec
 		attribute.String("app.request.request_id", reqID),
 		attribute.String("app.request.connection_id", connectionID.String()),
 		attribute.String("app.request.organization_id", organizationID.String()),
-		attribute.String("app.request.product_id", productID.String()),
+		attribute.String("app.request.product_name", productName),
 	)
 
 	db, err := cr.connection.GetDB(ctx)
@@ -716,14 +720,18 @@ func (cr *ConnectionMongoDBRepository) AssignProduct(ctx context.Context, connec
 		"_id":             connectionID,
 		"organization_id": organizationID,
 		"deleted_at":      bson.D{{Key: "$eq", Value: nil}},
-		"product_id":      bson.D{{Key: "$eq", Value: nil}},
+		"$or": []bson.M{
+			{"product_name": ""},
+			{"product_name": bson.M{"$eq": nil}},
+			{"product_name": bson.M{"$exists": false}},
+		},
 	}
 
 	now := time.Now().UTC()
 	update := bson.M{
 		"$set": bson.M{
-			"product_id": productID,
-			"updated_at": now,
+			"product_name": productName,
+			"updated_at":   now,
 		},
 	}
 
@@ -749,44 +757,6 @@ func (cr *ConnectionMongoDBRepository) AssignProduct(ctx context.Context, connec
 	return connection, nil
 }
 
-// CountByProduct counts the number of active (non-deleted) connections associated with a product.
-func (cr *ConnectionMongoDBRepository) CountByProduct(ctx context.Context, organizationID, productID uuid.UUID) (int64, error) {
-	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
-
-	ctx, span := tracer.Start(ctx, "mongodb.count_connections_by_product")
-	defer span.End()
-
-	span.SetAttributes(
-		attribute.String("app.request.request_id", reqID),
-		attribute.String("app.request.organization_id", organizationID.String()),
-		attribute.String("app.request.product_id", productID.String()),
-	)
-
-	db, err := cr.connection.GetDB(ctx)
-	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
-		return 0, mongodb.MapMongoErrorToResponse(err, ctx)
-	}
-
-	coll := db.Database(strings.ToLower(cr.Database)).Collection(strings.ToLower(constant.MongoCollectionConnection))
-
-	filter := bson.M{
-		"organization_id": organizationID,
-		"product_id":      productID,
-		"deleted_at":      bson.D{{Key: "$eq", Value: nil}},
-	}
-
-	count, err := coll.CountDocuments(ctx, filter)
-	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to count connections by product", err)
-		return 0, mongodb.MapMongoErrorToResponse(err, ctx)
-	}
-
-	span.SetAttributes(attribute.Int64("app.response.count", count))
-
-	return count, nil
-}
-
 // buildQueryFilter builds the MongoDB query filter from filters
 func (rm *ConnectionMongoDBRepository) buildQueryFilter(organizationID uuid.UUID, filters http.QueryHeader) bson.M {
 	queryFilter := bson.M{
@@ -794,8 +764,8 @@ func (rm *ConnectionMongoDBRepository) buildQueryFilter(organizationID uuid.UUID
 		"deleted_at":      bson.D{{Key: "$eq", Value: nil}},
 	}
 
-	if filters.ProductID != nil {
-		queryFilter["product_id"] = *filters.ProductID
+	if filters.ProductName != "" {
+		queryFilter["product_name"] = filters.ProductName
 	}
 
 	if len(filters.Metadata) > 0 && filters.UseMetadata {

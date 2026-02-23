@@ -24,10 +24,11 @@ func TestExtraction_AllFilterOperators(t *testing.T) {
 	t.Parallel()
 
 	testCases := []struct {
-		name   string
-		filter job.FilterCondition
-		field  string
-		desc   string
+		name         string
+		filter       job.FilterCondition
+		field        string
+		desc         string
+		expectedRows int
 	}{
 		{
 			name:  "equals_single",
@@ -35,7 +36,8 @@ func TestExtraction_AllFilterOperators(t *testing.T) {
 			filter: job.FilterCondition{
 				Equals: []any{"completed"},
 			},
-			desc: "status = 'completed'",
+			desc:         "status = 'completed'",
+			expectedRows: 24,
 		},
 		{
 			name:  "equals_multiple_OR",
@@ -43,7 +45,8 @@ func TestExtraction_AllFilterOperators(t *testing.T) {
 			filter: job.FilterCondition{
 				Equals: []any{"salary", "groceries"},
 			},
-			desc: "category IN ('salary', 'groceries')",
+			desc:         "category IN ('salary', 'groceries')",
+			expectedRows: 13,
 		},
 		{
 			name:  "greater_than",
@@ -51,7 +54,8 @@ func TestExtraction_AllFilterOperators(t *testing.T) {
 			filter: job.FilterCondition{
 				GreaterThan: []any{1000},
 			},
-			desc: "amount > 1000",
+			desc:         "amount > 1000",
+			expectedRows: 8,
 		},
 		{
 			name:  "greater_or_equal",
@@ -59,7 +63,8 @@ func TestExtraction_AllFilterOperators(t *testing.T) {
 			filter: job.FilterCondition{
 				GreaterOrEqual: []any{1500},
 			},
-			desc: "amount >= 1500",
+			desc:         "amount >= 1500",
+			expectedRows: 8,
 		},
 		{
 			name:  "less_than",
@@ -67,7 +72,8 @@ func TestExtraction_AllFilterOperators(t *testing.T) {
 			filter: job.FilterCondition{
 				LessThan: []any{100},
 			},
-			desc: "amount < 100",
+			desc:         "amount < 100",
+			expectedRows: 7,
 		},
 		{
 			name:  "less_or_equal",
@@ -75,7 +81,8 @@ func TestExtraction_AllFilterOperators(t *testing.T) {
 			filter: job.FilterCondition{
 				LessOrEqual: []any{89.99},
 			},
-			desc: "amount <= 89.99",
+			desc:         "amount <= 89.99",
+			expectedRows: 5,
 		},
 	}
 
@@ -91,12 +98,11 @@ func TestExtraction_AllFilterOperators(t *testing.T) {
 			pgHost, pgPort, err := postgresInfra.HostPort()
 			require.NoError(t, err, "get postgres host/port")
 
-			// Create product and connection
-			product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+			// Generate product name and create connection
+			productName := e2eshared.GenerateProductName()
 
 			uniqueName := fmt.Sprintf("e2e-filter-%s-%s", tc.name, uuid.New().String()[:8])
-			conn, err := apiClient.CreateConnection(ctx, e2eshared.ConnectionInput{
-				ProductID:    product.ID,
+			conn, err := apiClient.CreateConnection(ctx, productName, e2eshared.ConnectionInput{
 				ConfigName:   uniqueName,
 				Type:         e2eshared.DBTypePostgreSQL,
 				Host:         pgHost,
@@ -131,7 +137,7 @@ func TestExtraction_AllFilterOperators(t *testing.T) {
 					},
 				},
 				Metadata: map[string]any{
-					"source":     product.Code,
+					"source":     productName,
 					"test":       fmt.Sprintf("filter-operator-%s", tc.name),
 					"filterDesc": tc.desc,
 				},
@@ -147,7 +153,16 @@ func TestExtraction_AllFilterOperators(t *testing.T) {
 			jobResult := e2eshared.AssertJobCompleted(t, apiClient, jobID, e2eshared.DefaultJobTimeout)
 			assert.NotEmpty(t, jobResult.ResultPath, "should have result path")
 
-			t.Logf("Filter %s completed successfully", tc.desc)
+			// Download result and verify row count matches filter
+			seaweedURL, err := coreInfra.SeaweedFS.URL()
+			require.NoError(t, err, "get seaweedfs url")
+
+			resultData := e2eshared.DownloadAndDecryptResult(t, ctx, seaweedURL, jobResult.ResultPath)
+			rowCount := e2eshared.CountResultRows(resultData)
+			assert.Equal(t, tc.expectedRows, rowCount,
+				"filter %s should return exactly %d rows, got %d", tc.desc, tc.expectedRows, rowCount)
+
+			t.Logf("Filter %s completed successfully (%d rows)", tc.desc, rowCount)
 		})
 	}
 }
@@ -168,12 +183,11 @@ func TestExtraction_SelectiveFilters(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
-	// Create product and connection
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	// Generate product name and create connection
+	productName := e2eshared.GenerateProductName()
 
 	uniqueName := fmt.Sprintf("e2e-selective-filter-%s", uuid.New().String()[:8])
-	conn, err := apiClient.CreateConnection(ctx, e2eshared.ConnectionInput{
-		ProductID:    product.ID,
+	conn, err := apiClient.CreateConnection(ctx, productName, e2eshared.ConnectionInput{
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,
@@ -212,7 +226,7 @@ func TestExtraction_SelectiveFilters(t *testing.T) {
 			},
 		},
 		Metadata: map[string]any{
-			"source": product.Code,
+			"source": productName,
 			"test":   "selective-filters-e2e",
 		},
 	}
@@ -244,12 +258,11 @@ func TestExtraction_DateRangeFilter(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
-	// Create product and connection
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	// Generate product name and create connection
+	productName := e2eshared.GenerateProductName()
 
 	uniqueName := fmt.Sprintf("e2e-daterange-%s", uuid.New().String()[:8])
-	conn, err := apiClient.CreateConnection(ctx, e2eshared.ConnectionInput{
-		ProductID:    product.ID,
+	conn, err := apiClient.CreateConnection(ctx, productName, e2eshared.ConnectionInput{
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,
@@ -287,7 +300,7 @@ func TestExtraction_DateRangeFilter(t *testing.T) {
 			},
 		},
 		Metadata: map[string]any{
-			"source": product.Code,
+			"source": productName,
 			"test":   "date-range-filter-e2e",
 		},
 	}
@@ -319,12 +332,11 @@ func TestExtraction_CombinedFilters(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
-	// Create product and connection
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	// Generate product name and create connection
+	productName := e2eshared.GenerateProductName()
 
 	uniqueName := fmt.Sprintf("e2e-combined-%s", uuid.New().String()[:8])
-	conn, err := apiClient.CreateConnection(ctx, e2eshared.ConnectionInput{
-		ProductID:    product.ID,
+	conn, err := apiClient.CreateConnection(ctx, productName, e2eshared.ConnectionInput{
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,
@@ -370,7 +382,7 @@ func TestExtraction_CombinedFilters(t *testing.T) {
 			},
 		},
 		Metadata: map[string]any{
-			"source": product.Code,
+			"source": productName,
 			"test":   "combined-filters-e2e",
 		},
 	}
@@ -401,12 +413,11 @@ func TestExtraction_AccountIdFilter(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
-	// Create product and connection
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	// Generate product name and create connection
+	productName := e2eshared.GenerateProductName()
 
 	uniqueName := fmt.Sprintf("e2e-accountid-%s", uuid.New().String()[:8])
-	conn, err := apiClient.CreateConnection(ctx, e2eshared.ConnectionInput{
-		ProductID:    product.ID,
+	conn, err := apiClient.CreateConnection(ctx, productName, e2eshared.ConnectionInput{
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,
@@ -443,7 +454,7 @@ func TestExtraction_AccountIdFilter(t *testing.T) {
 			},
 		},
 		Metadata: map[string]any{
-			"source":    product.Code,
+			"source":    productName,
 			"test":      "account-id-filter-e2e",
 			"accountId": e2eshared.TestAccount1ID,
 		},

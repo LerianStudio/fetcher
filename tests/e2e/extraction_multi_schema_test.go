@@ -39,12 +39,11 @@ func TestPostgreSQLMultiSchemaExtraction(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
-	// Step 2: Create product and connection to source database
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	// Step 2: Generate product name and create connection to source database
+	productName := e2eshared.GenerateProductName()
 
 	uniqueName := fmt.Sprintf("e2e-multischema-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
-		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,
@@ -57,7 +56,7 @@ func TestPostgreSQLMultiSchemaExtraction(t *testing.T) {
 		},
 	}
 
-	conn, err := apiClient.CreateConnection(ctx, connInput)
+	conn, err := apiClient.CreateConnection(ctx, productName, connInput)
 	require.NoError(t, err, "create connection")
 	t.Logf("Created connection: id=%s", conn.ID)
 
@@ -85,7 +84,7 @@ func TestPostgreSQLMultiSchemaExtraction(t *testing.T) {
 			},
 		},
 		Metadata: map[string]any{
-			"source": product.Code,
+			"source": productName,
 			"test":   "multi-schema-extraction-e2e",
 		},
 	}
@@ -127,12 +126,11 @@ func TestPostgreSQLMultiSchemaWithFilters(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
-	// Step 2: Create product and connection
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	// Step 2: Generate product name and create connection
+	productName := e2eshared.GenerateProductName()
 
 	uniqueName := fmt.Sprintf("e2e-multischema-filter-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
-		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,
@@ -142,7 +140,7 @@ func TestPostgreSQLMultiSchemaWithFilters(t *testing.T) {
 		Password:     "testpass",
 	}
 
-	conn, err := apiClient.CreateConnection(ctx, connInput)
+	conn, err := apiClient.CreateConnection(ctx, productName, connInput)
 	require.NoError(t, err, "create connection")
 	t.Logf("Created connection: id=%s", conn.ID)
 
@@ -188,7 +186,7 @@ func TestPostgreSQLMultiSchemaWithFilters(t *testing.T) {
 			},
 		},
 		Metadata: map[string]any{
-			"source": product.Code,
+			"source": productName,
 			"test":   "multi-schema-filtered-extraction-e2e",
 		},
 	}
@@ -206,8 +204,27 @@ func TestPostgreSQLMultiSchemaWithFilters(t *testing.T) {
 	assert.Equal(t, e2eshared.JobStatusCompleted, jobResult.Status, "job should be completed")
 	assert.NotEmpty(t, jobResult.ResultPath, "result path should be set")
 
-	t.Logf("Multi-schema filtered extraction completed: status=%s, resultPath=%s",
-		jobResult.Status, jobResult.ResultPath)
+	// Step 5: Download result and verify per-table row counts
+	seaweedURL, err := coreInfra.SeaweedFS.URL()
+	require.NoError(t, err, "get seaweedfs url")
+
+	resultData := e2eshared.DownloadAndDecryptResult(t, ctx, seaweedURL, jobResult.ResultPath)
+
+	dsData := resultData[uniqueName]
+	require.NotNil(t, dsData, "result should contain datasource %s", uniqueName)
+
+	assert.Len(t, dsData["transactions"], 24,
+		"transactions with status='completed' should return 24 rows")
+	assert.Len(t, dsData["accounting.invoices"], 8,
+		"invoices with status IN ('paid','pending') should return 8 rows")
+	assert.Len(t, dsData["reporting.daily_summary"], 7,
+		"daily_summary with account_id=TestAccount1ID should return 7 rows")
+
+	totalRows := e2eshared.CountResultRows(resultData)
+	assert.Equal(t, 39, totalRows, "total rows across all tables should be 39")
+
+	t.Logf("Multi-schema filtered extraction completed: status=%s, resultPath=%s, totalRows=%d",
+		jobResult.Status, jobResult.ResultPath, totalRows)
 }
 
 // TestPostgreSQLMultiSchemaValidation verifies that schema validation works
@@ -222,12 +239,11 @@ func TestPostgreSQLMultiSchemaValidation(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
-	// Step 2: Create product and connection
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	// Step 2: Generate product name and create connection
+	productName := e2eshared.GenerateProductName()
 
 	uniqueName := fmt.Sprintf("e2e-multischema-valid-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
-		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,
@@ -237,7 +253,7 @@ func TestPostgreSQLMultiSchemaValidation(t *testing.T) {
 		Password:     "testpass",
 	}
 
-	conn, err := apiClient.CreateConnection(ctx, connInput)
+	conn, err := apiClient.CreateConnection(ctx, productName, connInput)
 	require.NoError(t, err, "create connection")
 
 	t.Cleanup(func() {
@@ -279,12 +295,11 @@ func TestPostgreSQLMultiSchemaValidation_InvalidSchema(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
-	// Step 2: Create product and connection
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	// Step 2: Generate product name and create connection
+	productName := e2eshared.GenerateProductName()
 
 	uniqueName := fmt.Sprintf("e2e-invalidschema-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
-		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,
@@ -294,7 +309,7 @@ func TestPostgreSQLMultiSchemaValidation_InvalidSchema(t *testing.T) {
 		Password:     "testpass",
 	}
 
-	conn, err := apiClient.CreateConnection(ctx, connInput)
+	conn, err := apiClient.CreateConnection(ctx, productName, connInput)
 	require.NoError(t, err, "create connection")
 
 	t.Cleanup(func() {

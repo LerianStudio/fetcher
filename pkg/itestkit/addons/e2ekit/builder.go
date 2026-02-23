@@ -39,7 +39,7 @@ type Builder struct {
 	logOnFailMaxBytes int
 }
 
-func New(t *testing.T) *Builder {
+func New(t *testing.T) *Builder { //nolint:thelper // t can be nil when called from TestMain
 	if t != nil {
 		t.Helper()
 	}

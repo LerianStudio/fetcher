@@ -24,11 +24,10 @@ func TestGetConnection_Exists_Success(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
-	product := e2eshared.CreateTestProduct(t, apiClient, ctx)
+	productName := e2eshared.GenerateProductName()
 
 	uniqueName := fmt.Sprintf("e2e-get-exists-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
-		ProductID:    product.ID,
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,
@@ -42,7 +41,7 @@ func TestGetConnection_Exists_Success(t *testing.T) {
 		},
 	}
 
-	created, err := apiClient.CreateConnection(ctx, connInput)
+	created, err := apiClient.CreateConnection(ctx, productName, connInput)
 	require.NoError(t, err, "create connection")
 
 	t.Cleanup(func() {
@@ -61,6 +60,7 @@ func TestGetConnection_Exists_Success(t *testing.T) {
 	assert.Equal(t, pgPort, retrieved.Port, "port should match")
 	assert.Equal(t, "testdb", retrieved.DatabaseName, "database name should match")
 	assert.Equal(t, "testuser", retrieved.Username, "username should match")
+	assert.Equal(t, productName, retrieved.ProductName, "product name should match")
 	assert.NotEmpty(t, retrieved.CreatedAt, "created_at should be set")
 	assert.NotEmpty(t, retrieved.UpdatedAt, "updated_at should be set")
 

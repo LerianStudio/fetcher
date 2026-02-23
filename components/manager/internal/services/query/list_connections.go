@@ -4,12 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/LerianStudio/fetcher/pkg"
-	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/net/http"
 	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
-	productRepo "github.com/LerianStudio/fetcher/pkg/ports/product"
 
 	"github.com/LerianStudio/lib-commons/v2/commons"
 	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
@@ -19,15 +16,14 @@ import (
 )
 
 type ListConnections struct {
-	connRepo    connRepo.Repository
-	productRepo productRepo.Repository
+	connRepo connRepo.Repository
 }
 
-func NewListConnections(connectionRepo connRepo.Repository, prodRepo productRepo.Repository) *ListConnections {
-	return &ListConnections{connRepo: connectionRepo, productRepo: prodRepo}
+func NewListConnections(connectionRepo connRepo.Repository) *ListConnections {
+	return &ListConnections{connRepo: connectionRepo}
 }
 
-func (s *ListConnections) Execute(ctx context.Context, organizationID uuid.UUID, productID *uuid.UUID, filters http.QueryHeader) (*model.Pagination, error) {
+func (s *ListConnections) Execute(ctx context.Context, organizationID uuid.UUID, productName string, filters http.QueryHeader) (*model.Pagination, error) {
 	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "service.list_connections")
@@ -38,21 +34,10 @@ func (s *ListConnections) Execute(ctx context.Context, organizationID uuid.UUID,
 		attribute.String("app.request.organization_id", organizationID.String()),
 	)
 
-	if productID != nil {
-		span.SetAttributes(attribute.String("app.request.product_id", productID.String()))
+	if productName != "" {
+		span.SetAttributes(attribute.String("app.request.product_name", productName))
 
-		prod, err := s.productRepo.FindByID(ctx, *productID, organizationID)
-		if err != nil {
-			libOpentelemetry.HandleSpanError(&span, "Failed to find product by ID", err)
-			return nil, fmt.Errorf("failed to find product by id: %w", err)
-		}
-
-		if prod == nil {
-			libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "Product not found", constant.ErrEntityNotFound)
-			return nil, pkg.ValidateBusinessError(constant.ErrEntityNotFound, "product")
-		}
-
-		filters.ProductID = productID
+		filters.ProductName = productName
 	}
 
 	err := libOpentelemetry.SetSpanAttributesFromStruct(&span, "app.request.payload", filters)

@@ -1,0 +1,715 @@
+### =============================================================================
+### Fetcher Manager API - REST Client Requests
+### =============================================================================
+### Documentation: https://marketplace.visualstudio.com/items?itemName=humao.rest-client
+### =============================================================================
+
+### Configuration Variables
+@baseUrl = http://localhost:4006
+@organizationId = aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa
+
+### =============================================================================
+### HEALTH CHECK
+### =============================================================================
+
+### Health Check
+GET {{baseUrl}}/health
+
+###
+
+### Version Info
+GET {{baseUrl}}/version
+
+### =============================================================================
+### CONNECTION MANAGEMENT - CRUD Operations
+### =============================================================================
+
+### Create PostgreSQL Connection
+# @name createPostgresConnection
+POST {{baseUrl}}/v1/management/connections
+Content-Type: application/json
+X-Organization-Id: {{organizationId}}
+X-Product-Name: reporter
+
+{
+    "configName": "bruno",
+    "type": "POSTGRESQL",
+    "host": "host.docker.internal",
+    "port": 5432,
+    "databaseName": "postgres",
+    "userName": "postgres",
+    "password": "postgres"
+}
+
+###
+
+### Create MySQL Connection
+# @name createMySQLConnection
+POST {{baseUrl}}/v1/management/connections
+Content-Type: application/json
+X-Organization-Id: {{organizationId}}
+X-Product-Name: reporter
+
+{
+    "configName": "mysql_test",
+    "type": "MYSQL",
+    "host": "localhost",
+    "port": 3306,
+    "databaseName": "external_transactions",
+    "userName": "root",
+    "password": "root"
+}
+
+###
+
+### Create SQL Server Connection
+# @name createSQLServerConnection
+POST {{baseUrl}}/v1/management/connections
+Content-Type: application/json
+X-Organization-Id: {{organizationId}}
+X-Product-Name: reporter
+
+{
+    "configName": "sqlserver_test",
+    "type": "SQL_SERVER",
+    "host": "localhost",
+    "port": 1433,
+    "databaseName": "external_transactions",
+    "userName": "sa",
+    "password": "YourStrong@Passw0rd"
+}
+
+###
+
+### Create Oracle Connection
+# @name createOracleConnection
+POST {{baseUrl}}/v1/management/connections
+Content-Type: application/json
+X-Organization-Id: {{organizationId}}
+X-Product-Name: reporter
+
+{
+    "configName": "oracle_test",
+    "type": "ORACLE",
+    "host": "localhost",
+    "port": 1521,
+    "databaseName": "XEPDB1",
+    "userName": "testuser",
+    "password": "testpassword",
+    "metadata": {
+        "serviceName": "XEPDB1"
+    }
+}
+
+###
+
+### Create MongoDB Connection
+# @name createMongoDBConnection
+POST {{baseUrl}}/v1/management/connections
+Content-Type: application/json
+X-Organization-Id: {{organizationId}}
+X-Product-Name: reporter
+
+{
+    "configName": "mongodb_test",
+    "type": "MONGODB",
+    "host": "localhost",
+    "port": 27018,
+    "databaseName": "external_transactions",
+    "userName": "root",
+    "password": "root",
+    "metadata": {
+        "authSource": "admin"
+    },
+    "ssl": {
+        "mode": "disable"
+    }
+}
+
+###
+
+### List All Connections
+# @name listConnections
+GET {{baseUrl}}/v1/management/connections
+X-Organization-Id: {{organizationId}}
+
+###
+
+### List Connections Filtered by Product
+GET {{baseUrl}}/v1/management/connections
+X-Organization-Id: {{organizationId}}
+X-Product-Name: reporter
+
+###
+
+### List Connections with Pagination
+GET {{baseUrl}}/v1/management/connections?page=2&limit=2&sortOrder=desc
+X-Organization-Id: {{organizationId}}
+
+###
+
+### List Connections Filtered by Type
+GET {{baseUrl}}/v1/management/connections?type=POSTGRESQL
+X-Organization-Id: {{organizationId}}
+
+###
+
+### Get Connection by ID
+# @name getConnection
+GET {{baseUrl}}/v1/management/connections/{{createPostgresConnection.response.body.id}}
+X-Organization-Id: {{organizationId}}
+
+###
+
+### Get Connection Schema
+# @name getConnectionSchema
+GET {{baseUrl}}/v1/management/connections/{{createPostgresConnection.response.body.id}}/schema
+X-Organization-Id: {{organizationId}}
+
+###
+
+### Update Connection
+# @name updateConnection
+PATCH {{baseUrl}}/v1/management/connections/{{createPostgresConnection.response.body.id}}
+Content-Type: application/json
+X-Organization-Id: {{organizationId}}
+
+{
+    "metadata": {
+        "authSource": "admin223"
+    }
+}
+
+###
+
+### Test Connection
+# @name testConnection
+POST {{baseUrl}}/v1/management/connections/{{createPostgresConnection.response.body.id}}/test
+X-Organization-Id: {{organizationId}}
+
+###
+
+### Delete Connection
+DELETE {{baseUrl}}/v1/management/connections/{{createPostgresConnection.response.body.id}}
+X-Organization-Id: {{organizationId}}
+
+### =============================================================================
+### MIGRATION - Connection Assignment
+### =============================================================================
+
+### List Unassigned Connections
+# @name listUnassignedConnections
+GET {{baseUrl}}/v1/management/connections/unassigned
+X-Organization-Id: {{organizationId}}
+
+###
+
+### List Unassigned Connections with Pagination
+GET {{baseUrl}}/v1/management/connections/unassigned?page=1&limit=10&sortOrder=asc
+X-Organization-Id: {{organizationId}}
+
+###
+
+### Assign Connection to Product (one-time, irreversible)
+# @name assignConnection
+POST {{baseUrl}}/v1/management/connections/{{listUnassignedConnections.response.body.items[0].id}}/assign
+X-Organization-Id: {{organizationId}}
+X-Product-Name: reporter
+
+### =============================================================================
+### SCHEMA VALIDATION
+### =============================================================================
+
+### Validate Schema - Success Case
+# @name validateSchemaSuccess
+POST {{baseUrl}}/v1/management/connections/validate-schema
+Content-Type: application/json
+X-Organization-Id: {{organizationId}}
+
+{
+    "mappedFields": {
+        "postgres_test_bruno2": {
+            "accounts": ["id", "email", "created_at"]
+        }
+    }
+}
+
+###
+
+### Validate Schema - Multi-Schema (PostgreSQL)
+POST {{baseUrl}}/v1/management/connections/validate-schema
+Content-Type: application/json
+X-Organization-Id: {{organizationId}}
+
+{
+    "mappedFields": {
+        "postgres_test": {
+            "transactions": ["id", "account_id", "amount"],
+            "accounting.invoices": ["id", "account_id", "invoice_number"],
+            "reporting.daily_summary": ["id", "report_date", "total_credits"]
+        }
+    }
+}
+
+###
+
+### Validate Schema - Non-existent Table (Expected Failure)
+POST {{baseUrl}}/v1/management/connections/validate-schema
+Content-Type: application/json
+X-Organization-Id: {{organizationId}}
+
+{
+    "mappedFields": {
+        "postgres_test": {
+            "non_existent_table": ["id", "name"]
+        }
+    }
+}
+
+### =============================================================================
+### FETCHER JOBS - Data Extraction
+### =============================================================================
+
+### Create Fetcher Job - Single Datasource (PostgreSQL)
+# @name createFetcherJobPostgres
+POST {{baseUrl}}/v1/fetcher
+Content-Type: application/json
+X-Organization-Id: {{organizationId}}
+
+{
+    "dataRequest": {
+        "mappedFields": {
+            "postgres_test_bruno2": {
+                "accounts": ["id", "email", "created_at"]
+            }
+        }
+    },
+    "metadata": {
+        "source": "report",
+        "testName": "SingleDatasourcePostgreSQL"
+    }
+}
+
+###
+
+### Create Fetcher Job - Single Datasource (MySQL)
+# @name createFetcherJobMySQL
+POST {{baseUrl}}/v1/fetcher
+Content-Type: application/json
+X-Organization-Id: {{organizationId}}
+
+{
+    "dataRequest": {
+        "mappedFields": {
+            "mysql_test": {
+                "transactions": ["id", "account_id", "amount", "currency", "type", "category", "status", "created_at"]
+            }
+        }
+    },
+    "metadata": {
+        "source": "rest_client_test",
+        "testName": "SingleDatasourceMySQL"
+    }
+}
+
+###
+
+### Create Fetcher Job - Single Datasource (MongoDB)
+# @name createFetcherJobMongoDB
+POST {{baseUrl}}/v1/fetcher
+Content-Type: application/json
+X-Organization-Id: {{organizationId}}
+
+{
+    "dataRequest": {
+        "mappedFields": {
+            "mongodb_test": {
+                "transactions": ["account_id", "amount", "currency", "type", "category", "status", "created_at"]
+            }
+        }
+    },
+    "metadata": {
+        "source": "rest_client_test",
+        "testName": "SingleDatasourceMongoDB"
+    }
+}
+
+###
+
+### Create Fetcher Job - Multi-Schema Extraction (PostgreSQL)
+# @name createFetcherJobMultiSchema
+POST {{baseUrl}}/v1/fetcher
+Content-Type: application/json
+X-Organization-Id: {{organizationId}}
+
+{
+    "dataRequest": {
+        "mappedFields": {
+            "postgres_test": {
+                "transactions": ["id", "account_id", "amount", "currency", "status"],
+                "accounting.invoices": ["id", "account_id", "invoice_number", "amount", "status"],
+                "reporting.daily_summary": ["id", "report_date", "account_id", "total_credits", "total_debits"]
+            }
+        }
+    },
+    "metadata": {
+        "source": "rest_client_test",
+        "testName": "MultiSchemaExtraction"
+    }
+}
+
+###
+
+### Create Fetcher Job - Multi-Datasource Extraction
+# @name createFetcherJobMultiDatasource
+POST {{baseUrl}}/v1/fetcher
+Content-Type: application/json
+X-Organization-Id: {{organizationId}}
+
+{
+    "dataRequest": {
+        "mappedFields": {
+            "postgres_test": {
+                "transactions": ["id", "account_id", "amount", "category"]
+            },
+            "mysql_test": {
+                "transactions": ["id", "account_id", "amount", "category"]
+            }
+        }
+    },
+    "metadata": {
+        "source": "rest_client_test",
+        "testName": "MultiDatasourceExtraction"
+    }
+}
+
+###
+
+### Create Fetcher Job - With Filters
+# @name createFetcherJobWithFilters
+POST {{baseUrl}}/v1/fetcher
+Content-Type: application/json
+X-Organization-Id: {{organizationId}}
+
+{
+    "dataRequest": {
+        "mappedFields": {
+            "postgres_test_bruno2": {
+                "accounts": ["id", "email", "created_at"]
+            }
+        },
+        "filters": {
+            "postgres_test_bruno2": {
+                "accounts": {
+                    "email": {"eq": ["test@example.com"]}
+                }
+            }
+        }
+    },
+    "metadata": {
+        "source": "report",
+        "testName": "JobWithFilters"
+    }
+}
+
+###
+
+### Create Fetcher Job - With IN Filter
+# @name createFetcherJobWithInFilter
+POST {{baseUrl}}/v1/fetcher
+Content-Type: application/json
+X-Organization-Id: {{organizationId}}
+
+{
+    "dataRequest": {
+        "mappedFields": {
+            "postgres_test": {
+                "transactions": ["id", "account_id", "amount", "status"]
+            }
+        },
+        "filters": {
+            "postgres_test": {
+                "transactions": {
+                    "status": {"in": ["completed", "pending", "processing"]}
+                }
+            }
+        }
+    },
+    "metadata": {
+        "source": "rest_client_test",
+        "testName": "JobWithInFilter"
+    }
+}
+
+###
+
+### Create Fetcher Job - Multi-Schema with Filters
+# @name createFetcherJobMultiSchemaFiltered
+POST {{baseUrl}}/v1/fetcher
+Content-Type: application/json
+X-Organization-Id: {{organizationId}}
+
+{
+    "dataRequest": {
+        "mappedFields": {
+            "postgres_test": {
+                "transactions": ["id", "account_id", "amount", "status"],
+                "accounting.invoices": ["id", "account_id", "amount", "status"]
+            }
+        },
+        "filters": {
+            "postgres_test": {
+                "transactions": {
+                    "status": {"in": ["completed", "paid"]}
+                },
+                "accounting.invoices": {
+                    "status": {"in": ["completed", "paid"]}
+                }
+            }
+        }
+    },
+    "metadata": {
+        "source": "rest_client_test",
+        "testName": "MultiSchemaWithFilters"
+    }
+}
+
+###
+
+### Get Fetcher Job Status
+# @name getJobStatus
+GET {{baseUrl}}/v1/fetcher/{{createFetcherJobPostgres.response.body.jobId}}
+X-Organization-Id: {{organizationId}}
+
+### =============================================================================
+### ERROR SCENARIOS
+### =============================================================================
+
+### Create Connection - Missing X-Product-Name Header (Expected 400)
+POST {{baseUrl}}/v1/management/connections
+Content-Type: application/json
+X-Organization-Id: {{organizationId}}
+
+{
+    "configName": "postgres_no_product",
+    "type": "POSTGRESQL",
+    "host": "localhost",
+    "port": 5432,
+    "databaseName": "testdb",
+    "userName": "testuser",
+    "password": "testpassword"
+}
+
+###
+
+### Create Connection - Invalid Host (for testing error handling)
+# @name createConnectionInvalidHost
+POST {{baseUrl}}/v1/management/connections
+Content-Type: application/json
+X-Organization-Id: {{organizationId}}
+X-Product-Name: reporter
+
+{
+    "configName": "postgres_invalid",
+    "type": "POSTGRESQL",
+    "host": "non-existent-host.local",
+    "port": 5432,
+    "databaseName": "testdb",
+    "userName": "testuser",
+    "password": "testpassword"
+}
+
+###
+
+### Create Fetcher Job - Non-existent Datasource (Expected 400 Error)
+POST {{baseUrl}}/v1/fetcher
+Content-Type: application/json
+X-Organization-Id: {{organizationId}}
+
+{
+    "dataRequest": {
+        "mappedFields": {
+            "unknown_datasource": {
+                "some_table": ["field1", "field2"]
+            }
+        }
+    },
+    "metadata": {
+        "source": "rest_client_test",
+        "testName": "ErrorMissingDatasource"
+    }
+}
+
+###
+
+### Create Fetcher Job - Non-existent Table (Job will fail during processing)
+POST {{baseUrl}}/v1/fetcher
+Content-Type: application/json
+X-Organization-Id: {{organizationId}}
+
+{
+    "dataRequest": {
+        "mappedFields": {
+            "postgres_test": {
+                "this_table_does_not_exist": ["id", "name"]
+            }
+        }
+    },
+    "metadata": {
+        "source": "rest_client_test",
+        "testName": "ErrorNonExistentTable"
+    }
+}
+
+###
+
+### Get Non-existent Connection (Expected 404)
+GET {{baseUrl}}/v1/management/connections/00000000-0000-0000-0000-000000000000
+X-Organization-Id: {{organizationId}}
+
+###
+
+### Get Non-existent Job (Expected 404)
+GET {{baseUrl}}/v1/fetcher/00000000-0000-0000-0000-000000000000
+X-Organization-Id: {{organizationId}}
+
+### =============================================================================
+### SSL CONNECTION EXAMPLES
+### =============================================================================
+
+### Create PostgreSQL Connection with SSL
+POST {{baseUrl}}/v1/management/connections
+Content-Type: application/json
+X-Organization-Id: {{organizationId}}
+X-Product-Name: reporter
+
+{
+    "configName": "postgres_ssl",
+    "type": "POSTGRESQL",
+    "host": "secure-db.example.com",
+    "port": 5432,
+    "databaseName": "production",
+    "userName": "dbuser",
+    "password": "secretpassword",
+    "ssl": {
+        "mode": "require"
+    }
+}
+
+###
+
+### Create PostgreSQL Connection with SSL Certificates
+POST {{baseUrl}}/v1/management/connections
+Content-Type: application/json
+X-Organization-Id: {{organizationId}}
+X-Product-Name: reporter
+
+{
+    "configName": "postgres_ssl_certs",
+    "type": "POSTGRESQL",
+    "host": "secure-db.example.com",
+    "port": 5432,
+    "databaseName": "production",
+    "userName": "dbuser",
+    "password": "secretpassword",
+    "ssl": {
+        "mode": "verify-full",
+        "ca": "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----",
+        "cert": "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----",
+        "key": "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
+    }
+}
+
+### =============================================================================
+### COMPLETE WORKFLOW EXAMPLE
+### =============================================================================
+### Execute these requests in order to test a complete flow:
+### 1. Create a connection (associated with a product via header)
+### 2. Test the connection
+### 3. Get the connection schema
+### 4. Validate the schema
+### 5. Create a fetcher job
+### 6. Get job status (poll until completed)
+### =============================================================================
+
+### Step 1: Create PostgreSQL Connection for Workflow
+# @name workflowCreateConnection
+POST {{baseUrl}}/v1/management/connections
+Content-Type: application/json
+X-Organization-Id: {{organizationId}}
+X-Product-Name: reporter
+
+{
+    "configName": "workflow_postgres",
+    "type": "POSTGRESQL",
+    "host": "localhost",
+    "port": 5432,
+    "databaseName": "external_transactions",
+    "userName": "postgres",
+    "password": "postgres"
+}
+
+###
+
+### Step 2: Test Connection
+# @name workflowTestConnection
+POST {{baseUrl}}/v1/management/connections/{{workflowCreateConnection.response.body.id}}/test
+X-Organization-Id: {{organizationId}}
+
+###
+
+### Step 3: Get Connection Schema
+# @name workflowGetSchema
+GET {{baseUrl}}/v1/management/connections/{{workflowCreateConnection.response.body.id}}/schema
+X-Organization-Id: {{organizationId}}
+
+###
+
+### Step 4: Validate Schema
+# @name workflowValidateSchema
+POST {{baseUrl}}/v1/management/connections/validate-schema
+Content-Type: application/json
+X-Organization-Id: {{organizationId}}
+
+{
+    "mappedFields": {
+        "workflow_postgres": {
+            "transactions": ["id", "account_id", "amount", "currency", "status", "created_at"]
+        }
+    }
+}
+
+###
+
+### Step 5: Create Fetcher Job
+# @name workflowCreateJob
+POST {{baseUrl}}/v1/fetcher
+Content-Type: application/json
+X-Organization-Id: {{organizationId}}
+
+{
+    "dataRequest": {
+        "mappedFields": {
+            "workflow_postgres": {
+                "transactions": ["id", "account_id", "amount", "currency", "status", "created_at"]
+            }
+        }
+    },
+    "metadata": {
+        "source": "workflow_test",
+        "workflow": "complete_flow"
+    }
+}
+
+###
+
+### Step 6: Get Job Status (poll until status is "completed" or "failed")
+# @name workflowGetJobStatus
+GET {{baseUrl}}/v1/fetcher/{{workflowCreateJob.response.body.jobId}}
+X-Organization-Id: {{organizationId}}
+
+###
+
+### Cleanup: Delete Connection
+DELETE {{baseUrl}}/v1/management/connections/{{workflowCreateConnection.response.body.id}}
+X-Organization-Id: {{organizationId}}
