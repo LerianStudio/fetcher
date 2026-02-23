@@ -30,7 +30,9 @@ type Builder struct {
 }
 
 func New(t *testing.T) *Builder {
-	t.Helper()
+	if t != nil {
+		t.Helper()
+	}
 
 	return &Builder{
 		t:     t,
