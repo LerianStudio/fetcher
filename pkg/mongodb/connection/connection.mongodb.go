@@ -631,7 +631,11 @@ func (rm *ConnectionMongoDBRepository) ListUnassigned(ctx context.Context, organ
 	queryFilter := bson.M{
 		"organization_id": organizationID,
 		"deleted_at":      bson.D{{Key: "$eq", Value: nil}},
-		"product_name":    "",
+		"$or": []bson.M{
+			{"product_name": ""},
+			{"product_name": bson.M{"$eq": nil}},
+			{"product_name": bson.M{"$exists": false}},
+		},
 	}
 
 	mongodb.AddDateRangeFilter(queryFilter, filters)
@@ -716,7 +720,11 @@ func (cr *ConnectionMongoDBRepository) AssignProductName(ctx context.Context, co
 		"_id":             connectionID,
 		"organization_id": organizationID,
 		"deleted_at":      bson.D{{Key: "$eq", Value: nil}},
-		"product_name":    "",
+		"$or": []bson.M{
+			{"product_name": ""},
+			{"product_name": bson.M{"$eq": nil}},
+			{"product_name": bson.M{"$exists": false}},
+		},
 	}
 
 	now := time.Now().UTC()
