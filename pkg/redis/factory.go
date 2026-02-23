@@ -2,7 +2,6 @@
 package redis
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/LerianStudio/lib-commons/v2/commons/log"
@@ -40,16 +39,17 @@ func NewCacheWithFallback[T any](
 	}
 
 	// Redis connected successfully - create fallback cache
-	redisCache, err := NewRedisCache[T](redisConn, ttl, keyPrefix)
+	redisCache, err := NewRedisCacheSafe[T](redisConn, ttl, keyPrefix)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create redis cache: %w", err)
+		logger.Warnf("Redis cache initialization failed, using memory-only cache: %v", err)
+		return NewInMemoryCache[T](ttl, logger), nil
 	}
 
 	return NewFallbackCache(redisCache, logger, ttl), nil
 }
 
-// MustNewCacheWithFallback is like NewCacheWithFallback but panics on unexpected errors.
-// Note: Redis connection failures do NOT cause a panic - they result in graceful degradation.
+// MustNewCacheWithFallback is like NewCacheWithFallback but never panics.
+// If an unexpected error occurs, it falls back to in-memory cache.
 func MustNewCacheWithFallback[T any](
 	cfg RedisConfig,
 	logger log.Logger,
@@ -58,7 +58,8 @@ func MustNewCacheWithFallback[T any](
 ) Cache[T] {
 	cache, err := NewCacheWithFallback[T](cfg, logger, ttl, keyPrefix)
 	if err != nil {
-		panic(err)
+		logger.Warnf("Cache initialization failed, using memory-only cache: %v", err)
+		return NewInMemoryCache[T](ttl, logger)
 	}
 
 	return cache

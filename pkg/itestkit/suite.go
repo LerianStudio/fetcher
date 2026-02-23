@@ -79,12 +79,10 @@ func (b *Builder) Build(ctx context.Context) (*Suite, error) {
 		return nil, fmt.Errorf("create network: %w", err)
 	}
 
-	networkName := nw.Name
-
 	var chaos ChaosInterface
 
 	if b.chaosConf.Enabled {
-		tc, err := NewToxiproxyChaos(ctx, b.chaosConf, networkName)
+		tc, err := NewToxiproxyChaos(ctx, b.chaosConf, nw.Name)
 		if err != nil {
 			_ = nw.Remove(ctx)
 			return nil, err
@@ -101,7 +99,7 @@ func (b *Builder) Build(ctx context.Context) (*Suite, error) {
 		env: &Env{
 			Containers: map[string]ContainerEndpoint{},
 			Chaos:      chaos,
-			Network:    networkName,
+			Network:    nw.Name,
 		},
 	}
 

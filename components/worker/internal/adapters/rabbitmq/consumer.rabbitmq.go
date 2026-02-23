@@ -3,6 +3,8 @@ package rabbitmq
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/LerianStudio/fetcher/pkg/crypto"
@@ -34,13 +36,29 @@ type ConsumerRoutes struct {
 }
 
 // NewConsumerRoutes creates a new instance of ConsumerRoutes using a RabbitMQ connection.
-// The signer parameter is optional - pass nil to disable signature verification.
-func NewConsumerRoutes(conn *libRabbitmq.RabbitMQConnection, numWorkers int, logger log.Logger, telemetry *opentelemetry.Telemetry, signer crypto.Signer) *ConsumerRoutes {
+// The signer parameter is required in non-development environments.
+// In dev/local/test, nil signer disables signature verification and message signing.
+// The envName parameter should come from the bootstrap Config.EnvName field.
+func NewConsumerRoutes(conn *libRabbitmq.RabbitMQConnection, numWorkers int, logger log.Logger, telemetry *opentelemetry.Telemetry, signer crypto.Signer, envName string) (*ConsumerRoutes, error) {
 	opts := rabbitmq.DefaultOptions()
 	opts.Signer = signer
+
+	envName = strings.TrimSpace(envName)
+
+	if signer == nil {
+		if isNonDevelopmentEnvironment(envName) {
+			return nil, fmt.Errorf("rabbitmq signature verification requires configured signer in env %q", envName)
+		}
+
+		logger.Warnf("RabbitMQ signer not configured in env %q; disabling signature verification", envName)
+
+		opts.EnableSignatureVerification = false
+		opts.EnableMessageSigning = false
+	}
+
 	adapter := rabbitmq.NewRabbitMQAdapterWithOptions(conn, opts)
 
-	return NewConsumerRoutesWithAdapter(adapter, numWorkers, logger, telemetry)
+	return NewConsumerRoutesWithAdapter(adapter, numWorkers, logger, telemetry), nil
 }
 
 // NewConsumerRoutesWithAdapter creates a new instance of ConsumerRoutes using a specific RabbitMQ adapter.
@@ -49,15 +67,33 @@ func NewConsumerRoutesWithAdapter(adapter rabbitmq.Adapter, numWorkers int, logg
 		numWorkers = 5
 	}
 
+	telemetryValue := opentelemetry.Telemetry{}
+	if telemetry != nil {
+		telemetryValue = *telemetry
+	}
+
 	cr := &ConsumerRoutes{
 		adapter:    adapter,
 		routes:     make(map[string]QueueHandlerFunc),
 		numWorkers: numWorkers,
 		Logger:     logger,
-		Telemetry:  *telemetry,
+		Telemetry:  telemetryValue,
 	}
 
 	return cr
+}
+
+// isNonDevelopmentEnvironment returns true unless envName is an explicitly
+// allowlisted development environment. Empty/unknown values default to true
+// (fail-closed: unknown environment is treated as production).
+// Caller is expected to TrimSpace before calling.
+func isNonDevelopmentEnvironment(envName string) bool {
+	switch strings.ToLower(envName) {
+	case "dev", "development", "local", "test", "testing":
+		return false
+	default:
+		return true
+	}
 }
 
 // Register adds a new queue handler.

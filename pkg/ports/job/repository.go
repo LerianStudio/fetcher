@@ -34,6 +34,7 @@ type Repository interface {
 	UpdateStatus(ctx context.Context, id, organizationID uuid.UUID, status model.JobStatus, resultPath, resultHMAC string, metadata map[string]any) error
 	FindByID(ctx context.Context, id, organizationID uuid.UUID) (*model.Job, error)
 	FindByRequestHashWithinWindow(ctx context.Context, organizationID uuid.UUID, requestHash string, windowMinutes int) (*model.Job, error)
+	FindActiveByRequestHash(ctx context.Context, organizationID uuid.UUID, requestHash string) (*model.Job, error)
 	List(ctx context.Context, filters *ListFilter) ([]*model.Job, error)
 	ExistsRunningByMappedFieldKey(ctx context.Context, organizationID uuid.UUID, keyPattern string) (bool, error)
 }

@@ -349,6 +349,9 @@ var ErrSignatureVerificationFailed = errors.New("message signature verification 
 // ErrMissingSignatureHeaders is returned when required signature headers are missing.
 var ErrMissingSignatureHeaders = errors.New("missing required signature headers")
 
+// ErrSignatureVerifierNotConfigured is returned when verification is enabled without signer.
+var ErrSignatureVerifierNotConfigured = errors.New("signature verification enabled but signer is not configured")
+
 // ErrSignatureExpired is returned when the message signature timestamp is too old.
 var ErrSignatureExpired = errors.New("message signature has expired")
 
@@ -1088,8 +1091,22 @@ func (prmq *RabbitMQAdapter) processDelivery(
 		libOpentelemetry.HandleSpanError(&hspan, "Failed to convert message to JSON string", err)
 	}
 
-	// Verify message signature if signer is configured and verification is enabled
-	if prmq.options.Signer != nil && prmq.options.EnableSignatureVerification {
+	if prmq.options.EnableSignatureVerification {
+		if prmq.options.Signer == nil {
+			if nackErr := d.Nack(false, false); nackErr != nil {
+				logWithFields.Warnf("Failed to Nack message when signer is not configured: %v", nackErr)
+			}
+
+			libOpentelemetry.HandleSpanError(&hspan, "Signature verification is enabled but signer is not configured", ErrSignatureVerifierNotConfigured)
+			logWithFields.Errorf("Signature verification is enabled but signer is not configured")
+			prmq.recordConsumeFailed(ctx,
+				attribute.String("queue", queue),
+				attribute.String("reason", "signature_verifier_not_configured"),
+			)
+
+			return
+		}
+
 		if err := prmq.verifyMessageSignature(d.Body, headers, logWithFields, &hspan); err != nil {
 			if nackErr := d.Nack(false, false); nackErr != nil {
 				logWithFields.Warnf("Failed to Nack message after signature verification failure: %v", nackErr)

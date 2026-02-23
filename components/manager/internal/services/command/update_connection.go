@@ -95,24 +95,28 @@ func (s *UpdateConnection) Execute(ctx context.Context, organizationID, connecti
 			if connInput.SSL != nil {
 				return connInput.SSL.Mode
 			}
+
 			return nil
 		}(),
 		func() *string {
 			if connInput.SSL != nil {
 				return connInput.SSL.CA
 			}
+
 			return nil
 		}(),
 		func() *string {
 			if connInput.SSL != nil && connInput.SSL.Cert != nil {
 				return connInput.SSL.Cert
 			}
+
 			return nil
 		}(),
 		func() *string {
 			if connInput.SSL != nil && connInput.SSL.Key != nil {
 				return connInput.SSL.Key
 			}
+
 			return nil
 		}(),
 	); errPatch != nil {

@@ -22,6 +22,9 @@ func TestNewPublisherRoutes(t *testing.T) {
 	pr := NewPublisherRoutesWithAdapter(mockAdapter, logger, telemetry)
 	assert.NotNil(t, pr)
 	assert.Equal(t, mockAdapter, pr.adapter)
+
+	prNilTelemetry := NewPublisherRoutesWithAdapter(mockAdapter, logger, nil)
+	assert.NotNil(t, prNilTelemetry)
 }
 
 func TestPublisherRoutes_Publish(t *testing.T) {

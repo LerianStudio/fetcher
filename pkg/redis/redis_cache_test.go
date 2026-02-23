@@ -2,6 +2,7 @@ package redis
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -300,7 +301,7 @@ func TestRedisCache_NewRedisCache_NilConnection_ReturnsError(t *testing.T) {
 		cache, err := NewRedisCache[testStruct](nil, time.Minute, "test:")
 		assert.Nil(t, cache)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "redis connection and client must not be nil")
+		assert.ErrorIs(t, err, ErrRedisCacheNotInitialized)
 	})
 
 	t.Run("connection with nil client returns error", func(t *testing.T) {
@@ -312,8 +313,15 @@ func TestRedisCache_NewRedisCache_NilConnection_ReturnsError(t *testing.T) {
 		cache, err := NewRedisCache[testStruct](conn, time.Minute, "test:")
 		assert.Nil(t, cache)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "redis connection and client must not be nil")
+		assert.ErrorIs(t, err, ErrRedisCacheNotInitialized)
 	})
+}
+
+func TestRedisCache_NewRedisCacheSafe_ReturnsErrorOnInvalidConnection(t *testing.T) {
+	cache, err := NewRedisCacheSafe[testStruct](nil, time.Minute, "test:")
+	assert.Nil(t, cache)
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, ErrRedisCacheNotInitialized)
 }
 
 func TestRedisCache_Close(t *testing.T) {
@@ -468,6 +476,55 @@ func TestRedisCache_CacheKey(t *testing.T) {
 			assert.Equal(t, tt.expected, cache.cacheKey(tt.key))
 		})
 	}
+}
+
+// TestRedisCache_IsHealthy_WithInitErr verifies the initErr guard in IsHealthy.
+// The initErr field is never set by constructors (they return an error instead),
+// but the guard exists as defense-in-depth for future degraded-mode constructors.
+// We test it by directly setting the field on a valid cache instance.
+func TestRedisCache_IsHealthy_WithInitErr(t *testing.T) {
+	_, conn := setupMiniredis(t)
+	cache, err := NewRedisCache[testStruct](conn, time.Minute, "test:")
+	require.NoError(t, err)
+
+	ctx := context.Background()
+
+	// Sanity: healthy before setting initErr
+	assert.True(t, cache.IsHealthy(ctx))
+
+	// Inject initErr to simulate degraded construction
+	cache.initErr = errors.New("simulated init failure")
+
+	assert.False(t, cache.IsHealthy(ctx),
+		"IsHealthy must return false when initErr is set")
+}
+
+// TestRedisCache_EnsureClient_WithInitErr verifies ensureClient propagates initErr.
+func TestRedisCache_EnsureClient_WithInitErr(t *testing.T) {
+	_, conn := setupMiniredis(t)
+	cache, err := NewRedisCache[testStruct](conn, time.Minute, "test:")
+	require.NoError(t, err)
+
+	cache.initErr = errors.New("init failed")
+
+	ctx := context.Background()
+
+	// All operations should fail with initErr
+	_, _, getErr := cache.Get(ctx, "key")
+	assert.Error(t, getErr)
+	assert.Contains(t, getErr.Error(), "init failed")
+
+	setErr := cache.Set(ctx, "key", testStruct{}, 0)
+	assert.Error(t, setErr)
+	assert.Contains(t, setErr.Error(), "init failed")
+
+	delErr := cache.Delete(ctx, "key")
+	assert.Error(t, delErr)
+	assert.Contains(t, delErr.Error(), "init failed")
+
+	clearErr := cache.Clear(ctx)
+	assert.Error(t, clearErr)
+	assert.Contains(t, clearErr.Error(), "init failed")
 }
 
 func TestRedisCache_GetSet_MultipleTypes(t *testing.T) {

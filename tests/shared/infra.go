@@ -81,12 +81,27 @@ func NewCoreInfra() *CoreInfra {
 	}
 }
 
+// callerDir returns the directory of the calling source file.
+// It wraps runtime.Caller to avoid triggering the dogsled linter
+// for multiple blank identifiers.
+//
+// IMPORTANT: This function assumes exactly 1 frame of indirection (called
+// from definitionsPath only). If the call chain changes, the skip=1 value
+// must be updated accordingly.
+func callerDir() string {
+	_, file, _, ok := runtime.Caller(1)
+	if !ok {
+		return "."
+	}
+
+	return filepath.Dir(file)
+}
+
 // definitionsPath returns the absolute path to the RabbitMQ topology definitions file.
 // The path is resolved relative to this source file to ensure correct resolution
 // regardless of the working directory.
 func definitionsPath() string {
-	_, file, _, _ := runtime.Caller(0) //nolint:dogsled // runtime.Caller returns 4 values, only file needed here
-	return filepath.Join(filepath.Dir(file), "testdata", "definitions.json")
+	return filepath.Join(callerDir(), "testdata", "definitions.json")
 }
 
 // Infras returns all infrastructure components as a slice of itestkit.Infra interfaces.
