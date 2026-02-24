@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/LerianStudio/fetcher/pkg"
+	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/datasource/sslmode"
 
@@ -17,6 +18,7 @@ import (
 type Connection struct {
 	ID                   uuid.UUID
 	OrganizationID       uuid.UUID
+	ProductName          string
 	ConfigName           string
 	Type                 DBType
 	Host                 string
@@ -44,6 +46,7 @@ func NewConnection(
 	ctx context.Context,
 	cryptor crypto.Cryptor,
 	organizationID uuid.UUID,
+	productName string,
 	configName string,
 	typ string,
 	host string,
@@ -101,6 +104,7 @@ func NewConnection(
 	connection := Connection{
 		ID:                   id,
 		OrganizationID:       organizationID,
+		ProductName:          productName,
 		ConfigName:           configName,
 		Type:                 dbType,
 		Host:                 host,
@@ -139,6 +143,7 @@ func (conn *Connection) IsValid() error {
 
 // normalizeFields trims whitespace from string fields
 func (conn *Connection) normalizeFields() {
+	conn.ProductName = strings.TrimSpace(conn.ProductName)
 	conn.ConfigName = strings.TrimSpace(conn.ConfigName)
 	conn.Host = strings.TrimSpace(conn.Host)
 	conn.DatabaseName = strings.TrimSpace(conn.DatabaseName)
@@ -151,6 +156,10 @@ func (conn *Connection) validateRequiredFields() map[string]string {
 
 	if conn.OrganizationID == uuid.Nil {
 		requiredFields["organization_id"] = "organization ID is required"
+	}
+
+	if conn.ProductName == "" {
+		requiredFields["product_name"] = "product name is required"
 	}
 
 	if conn.ConfigName == "" {
@@ -355,6 +364,22 @@ func (conn *Connection) SoftDelete(ts time.Time) {
 	conn.UpdatedAt = ts
 }
 
+// AssignProductName associates a legacy (unassigned) connection to a product name.
+// This is a one-time operation for migration purposes.
+func (conn *Connection) AssignProductName(productName string) error {
+	if conn.ProductName != "" {
+		return pkg.ValidateBusinessError(
+			constant.ErrConnectionAlreadyAssigned,
+			"connection",
+		)
+	}
+
+	conn.ProductName = productName
+	conn.UpdatedAt = time.Now().UTC()
+
+	return nil
+}
+
 // GetPasswordDecrypted decrypts and returns the connection password.
 func (conn *Connection) GetPasswordDecrypted(ctx context.Context, cryptor crypto.Cryptor) (string, error) {
 	if cryptor == nil {
@@ -402,6 +427,7 @@ func (conn *Connection) ToMapWithMask() map[string]any {
 	return map[string]any{
 		"id":                     conn.ID,
 		"organization_id":        conn.OrganizationID,
+		"product_name":           conn.ProductName,
 		"config_name":            conn.ConfigName,
 		"type":                   string(conn.Type),
 		"host":                   conn.Host,
@@ -611,6 +637,7 @@ func (s *SSLUpdateInput) IsEmpty() bool {
 
 type ConnectionResponse struct {
 	ID           uuid.UUID       `json:"id"`
+	ProductName  string          `json:"productName,omitempty"`
 	ConfigName   string          `json:"configName"`
 	Type         string          `json:"type"`
 	Host         string          `json:"host"`
@@ -641,6 +668,7 @@ func NewConnectionResponseFrom(conn *Connection) *ConnectionResponse {
 
 	resp := &ConnectionResponse{
 		ID:           conn.ID,
+		ProductName:  conn.ProductName,
 		ConfigName:   conn.ConfigName,
 		Type:         string(conn.Type),
 		Host:         conn.Host,
@@ -658,6 +686,43 @@ func NewConnectionResponseFrom(conn *Connection) *ConnectionResponse {
 	}
 
 	return resp
+}
+
+// ConnectionSchemaResponse is the response DTO for GET /v1/management/connections/{id}/schema.
+// It contains the connection details along with the list of tables/collections and their fields.
+type ConnectionSchemaResponse struct {
+	ID           string         `json:"id"`
+	ConfigName   string         `json:"configName"`
+	DatabaseName string         `json:"databaseName"`
+	Type         string         `json:"type"`
+	Tables       []TableDetails `json:"tables"`
+}
+
+// TableDetails contains information about a table or collection.
+// The Name field is the qualified name (e.g., "schema.table" for SQL databases
+// or "database.collection" for MongoDB).
+type TableDetails struct {
+	Name   string   `json:"name"`
+	Fields []string `json:"fields"`
+}
+
+// NewConnectionSchemaFrom creates a ConnectionSchemaResponse from a Connection and a list of tables.
+func NewConnectionSchemaFrom(conn *Connection, tables []TableDetails) *ConnectionSchemaResponse {
+	if conn == nil {
+		return nil
+	}
+
+	if tables == nil {
+		tables = []TableDetails{}
+	}
+
+	return &ConnectionSchemaResponse{
+		ID:           conn.ID.String(),
+		ConfigName:   conn.ConfigName,
+		DatabaseName: conn.DatabaseName,
+		Type:         string(conn.Type),
+		Tables:       tables,
+	}
 }
 
 type DBType string

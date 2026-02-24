@@ -5,11 +5,15 @@ import (
 
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/model"
+	jobRepo "github.com/LerianStudio/fetcher/pkg/mongodb/job"
 	"github.com/google/uuid"
 )
 
 // Compile-time interface compliance verification
-var _ crypto.Cryptor = (*MockCryptor)(nil)
+var (
+	_ crypto.Cryptor     = (*MockCryptor)(nil)
+	_ jobRepo.Repository = (*MockJobRepository)(nil)
+)
 
 // MockCryptor implements crypto.Cryptor for testing
 type MockCryptor struct {
@@ -102,9 +106,38 @@ func (m *MockConnectionRepository) List(ctx context.Context, orgID uuid.UUID, pa
 
 // MockJobRepository implements job.Repository for testing
 type MockJobRepository struct {
-	FindByIDFunc     func(ctx context.Context, id, orgID uuid.UUID) (*model.Job, error)
-	CreateFunc       func(ctx context.Context, job *model.Job) error
-	UpdateStatusFunc func(ctx context.Context, id, orgID uuid.UUID, status model.JobStatus, resultPath string, metadata map[string]any) error
+	CreateFunc                        func(ctx context.Context, job *model.Job) (*model.Job, error)
+	UpdateFunc                        func(ctx context.Context, job *model.Job) (*model.Job, error)
+	UpdateStatusFunc                  func(ctx context.Context, id, orgID uuid.UUID, status model.JobStatus, resultPath, resultHMAC string, metadata map[string]any) error
+	FindByIDFunc                      func(ctx context.Context, id, orgID uuid.UUID) (*model.Job, error)
+	FindByRequestHashWithinWindowFunc func(ctx context.Context, orgID uuid.UUID, requestHash string, windowMinutes int) (*model.Job, error)
+	FindActiveByRequestHashFunc       func(ctx context.Context, orgID uuid.UUID, requestHash string) (*model.Job, error)
+	ListFunc                          func(ctx context.Context, filters *jobRepo.ListFilter) ([]*model.Job, error)
+	ExistsRunningByMappedFieldKeyFunc func(ctx context.Context, orgID uuid.UUID, keyPattern string) (bool, error)
+}
+
+func (m *MockJobRepository) Create(ctx context.Context, job *model.Job) (*model.Job, error) {
+	if m.CreateFunc != nil {
+		return m.CreateFunc(ctx, job)
+	}
+
+	return job, nil
+}
+
+func (m *MockJobRepository) Update(ctx context.Context, job *model.Job) (*model.Job, error) {
+	if m.UpdateFunc != nil {
+		return m.UpdateFunc(ctx, job)
+	}
+
+	return job, nil
+}
+
+func (m *MockJobRepository) UpdateStatus(ctx context.Context, id, orgID uuid.UUID, status model.JobStatus, resultPath, resultHMAC string, metadata map[string]any) error {
+	if m.UpdateStatusFunc != nil {
+		return m.UpdateStatusFunc(ctx, id, orgID, status, resultPath, resultHMAC, metadata)
+	}
+
+	return nil
 }
 
 func (m *MockJobRepository) FindByID(ctx context.Context, id, orgID uuid.UUID) (*model.Job, error) {
@@ -115,18 +148,34 @@ func (m *MockJobRepository) FindByID(ctx context.Context, id, orgID uuid.UUID) (
 	return nil, nil
 }
 
-func (m *MockJobRepository) Create(ctx context.Context, job *model.Job) error {
-	if m.CreateFunc != nil {
-		return m.CreateFunc(ctx, job)
+func (m *MockJobRepository) FindByRequestHashWithinWindow(ctx context.Context, orgID uuid.UUID, requestHash string, windowMinutes int) (*model.Job, error) {
+	if m.FindByRequestHashWithinWindowFunc != nil {
+		return m.FindByRequestHashWithinWindowFunc(ctx, orgID, requestHash, windowMinutes)
 	}
 
-	return nil
+	return nil, nil
 }
 
-func (m *MockJobRepository) UpdateStatus(ctx context.Context, id, orgID uuid.UUID, status model.JobStatus, resultPath string, metadata map[string]any) error {
-	if m.UpdateStatusFunc != nil {
-		return m.UpdateStatusFunc(ctx, id, orgID, status, resultPath, metadata)
+func (m *MockJobRepository) FindActiveByRequestHash(ctx context.Context, orgID uuid.UUID, requestHash string) (*model.Job, error) {
+	if m.FindActiveByRequestHashFunc != nil {
+		return m.FindActiveByRequestHashFunc(ctx, orgID, requestHash)
 	}
 
-	return nil
+	return nil, nil
+}
+
+func (m *MockJobRepository) List(ctx context.Context, filters *jobRepo.ListFilter) ([]*model.Job, error) {
+	if m.ListFunc != nil {
+		return m.ListFunc(ctx, filters)
+	}
+
+	return nil, nil
+}
+
+func (m *MockJobRepository) ExistsRunningByMappedFieldKey(ctx context.Context, orgID uuid.UUID, keyPattern string) (bool, error) {
+	if m.ExistsRunningByMappedFieldKeyFunc != nil {
+		return m.ExistsRunningByMappedFieldKeyFunc(ctx, orgID, keyPattern)
+	}
+
+	return false, nil
 }

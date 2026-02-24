@@ -5,15 +5,15 @@ import (
 	"fmt"
 	"strings"
 
-	cacheRepo "github.com/LerianStudio/fetcher/components/manager/internal/adapters/cache"
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/datasource"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	datasourceModel "github.com/LerianStudio/fetcher/pkg/model/datasource"
-	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
-	"github.com/LerianStudio/fetcher/pkg/postgres"
+	cacheRepo "github.com/LerianStudio/fetcher/pkg/ports/cache"
+	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
+	"github.com/LerianStudio/fetcher/pkg/schemautil"
 
 	"github.com/LerianStudio/lib-commons/v2/commons"
 	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
@@ -80,7 +80,7 @@ func (s *ValidateSchema) Execute(
 
 	// Validate request payload structure and limits
 	if errValidation := spec.Validate(); errValidation != nil {
-		libOpentelemetry.HandleSpanError(&span, "Invalid request payload", errValidation)
+		libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "Invalid request payload", errValidation)
 		logger.Warnf("schema validation request invalid org=%s: %v", organizationID, errValidation)
 
 		return nil, errValidation
@@ -100,7 +100,7 @@ func (s *ValidateSchema) Execute(
 	}
 
 	if len(connections) == 0 {
-		libOpentelemetry.HandleSpanError(&span, "No connections found for the provided datasources", nil)
+		libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "No connections found for the provided datasources", nil)
 
 		return nil, pkg.ValidationError{
 			EntityType: "schema",
@@ -150,6 +150,12 @@ func (s *ValidateSchema) Execute(
 			schemas = ensureDefaultSchemaForPostgreSQL(tables, schemas)
 		}
 
+		// For SQL Server, ensure the default "dbo" schema is included
+		// when there are unqualified table names (tables without a dot)
+		if conn.Type == model.TypeSQLServer {
+			schemas = ensureDefaultSchemaForSQLServer(tables, schemas)
+		}
+
 		// Get or fetch schema for the connection
 		schema, err := s.getOrFetchSchema(ctx, conn, schemas)
 		if err != nil {
@@ -160,7 +166,7 @@ func (s *ValidateSchema) Execute(
 		}
 
 		// Validate against schema using transformed table names
-		schemaErrors := validateTablesAgainstSchema(configName, tables, schema, tableNameReverseMap)
+		schemaErrors := validateTablesAgainstSchema(configName, tables, schema, tableNameReverseMap, conn.Type)
 		validationErrors = append(validationErrors, schemaErrors...)
 	}
 
@@ -243,11 +249,13 @@ func (s *ValidateSchema) getOrFetchSchema(
 
 // validateTablesAgainstSchema validates tables against a DataSourceSchema.
 // If reverseMap is provided, it uses original table names in error messages.
+// The dbType parameter is used to normalize table names for databases with default schemas.
 func validateTablesAgainstSchema(
 	configName string,
 	tables map[string][]string,
 	schema *model.DataSourceSchema,
 	reverseMap map[string]string,
+	dbType model.DBType,
 ) []model.SchemaValidationError {
 	var errors []model.SchemaValidationError
 
@@ -260,8 +268,11 @@ func validateTablesAgainstSchema(
 			}
 		}
 
+		// Normalize table name for lookup based on database type
+		lookupName := normalizeTableNameForValidation(tableName, dbType)
+
 		// Check if table exists in schema
-		if !schema.HasTable(tableName) {
+		if !schema.HasTable(lookupName) {
 			errors = append(errors, model.SchemaValidationError{
 				Type:         model.ErrTypeTableNotFound,
 				DataSourceID: configName,
@@ -273,7 +284,8 @@ func validateTablesAgainstSchema(
 
 		// Check if each field exists in the table schema
 		for _, fieldName := range fields {
-			if !schema.HasField(tableName, fieldName) {
+			lookupFieldName := normalizeFieldNameForValidation(fieldName, dbType)
+			if !schema.HasField(lookupName, lookupFieldName) {
 				errors = append(errors, model.SchemaValidationError{
 					Type:         model.ErrTypeFieldNotFound,
 					DataSourceID: configName,
@@ -287,10 +299,45 @@ func validateTablesAgainstSchema(
 	return errors
 }
 
-// ensureDefaultSchemaForPostgreSQL adds the default "public" schema to the schemas list
+// normalizeTableNameForValidation normalizes a table name for schema lookup
+// based on the database type. This handles cases where users request
+// "dbo.users" but schema stores "users", or "SYSTEM.table" vs "table".
+func normalizeTableNameForValidation(tableName string, dbType model.DBType) string {
+	switch dbType {
+	case model.TypeSQLServer:
+		return schemautil.NormalizeTableNameForLookup(tableName, schemautil.DefaultSchemaSQLServer)
+	case model.TypeOracle:
+		// Oracle stores table names in lowercase after normalization
+		// and uses the current user as default schema
+		return strings.ToLower(tableName)
+	case model.TypePostgreSQL:
+		return schemautil.NormalizeTableNameForLookup(tableName, schemautil.DefaultSchemaPostgreSQL)
+	default:
+		return tableName
+	}
+}
+
+// normalizeFieldNameForValidation normalizes a field name for schema lookup
+// based on the database type. Oracle stores column names in UPPERCASE in its
+// data dictionary (ALL_TAB_COLUMNS), but the Oracle datasource's GetSchemaInfo
+// normalizes them to lowercase for case-insensitive matching.
+func normalizeFieldNameForValidation(fieldName string, dbType model.DBType) string {
+	switch dbType {
+	case model.TypeOracle:
+		// Oracle's GetSchemaInfo normalizes column names to lowercase.
+		// User input like "ID" must be converted to "id" for lookup.
+		return strings.ToLower(fieldName)
+	default:
+		// PostgreSQL, SQL Server, MySQL are case-insensitive for unquoted identifiers
+		// but we store them in their original case, so no normalization needed.
+		return fieldName
+	}
+}
+
+// ensureDefaultSchema adds the default schema to the schemas list
 // if any table name is unqualified (has no schema prefix with a dot).
-// This ensures tables in the public schema are discoverable when mixed with schema-qualified tables.
-func ensureDefaultSchemaForPostgreSQL(tables map[string][]string, schemas []string) []string {
+// This ensures tables in the default schema are discoverable when mixed with schema-qualified tables.
+func ensureDefaultSchema(tables map[string][]string, schemas []string, defaultSchema string) []string {
 	// Check if any table has no dot (unqualified name)
 	hasUnqualifiedTable := false
 
@@ -301,23 +348,37 @@ func ensureDefaultSchemaForPostgreSQL(tables map[string][]string, schemas []stri
 		}
 	}
 
-	// If there are unqualified tables, ensure public schema is included
+	// If there are unqualified tables, ensure default schema is included
 	if hasUnqualifiedTable {
-		publicIncluded := false
+		defaultIncluded := false
 
 		for _, s := range schemas {
-			if s == postgres.DefaultSchema {
-				publicIncluded = true
+			if s == defaultSchema {
+				defaultIncluded = true
 				break
 			}
 		}
 
-		if !publicIncluded {
-			schemas = append(schemas, postgres.DefaultSchema)
+		if !defaultIncluded {
+			schemas = append(schemas, defaultSchema)
 		}
 	}
 
 	return schemas
+}
+
+// ensureDefaultSchemaForPostgreSQL adds the default "public" schema to the schemas list
+// if any table name is unqualified (has no schema prefix with a dot).
+// This ensures tables in the public schema are discoverable when mixed with schema-qualified tables.
+func ensureDefaultSchemaForPostgreSQL(tables map[string][]string, schemas []string) []string {
+	return ensureDefaultSchema(tables, schemas, schemautil.DefaultSchemaPostgreSQL)
+}
+
+// ensureDefaultSchemaForSQLServer adds the default "dbo" schema to the schemas list
+// if any table name is unqualified (has no schema prefix with a dot).
+// This ensures tables in the dbo schema are discoverable when mixed with schema-qualified tables.
+func ensureDefaultSchemaForSQLServer(tables map[string][]string, schemas []string) []string {
+	return ensureDefaultSchema(tables, schemas, schemautil.DefaultSchemaSQLServer)
 }
 
 // transformPluginCRMTables transforms table names for plugin_crm datasource.

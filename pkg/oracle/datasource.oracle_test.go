@@ -127,6 +127,10 @@ func TestExternalDataSource_Query(t *testing.T) {
 
 		ds := &ExternalDataSource{connection: conn}
 
+		// Mock current user query (called in ValidateTableAndFields -> normalizeTableNameForLookup)
+		userRow := sqlmock.NewRows([]string{"USER"}).AddRow("SYSTEM")
+		mock.ExpectQuery("SELECT USER FROM DUAL").WillReturnRows(userRow)
+
 		rows := sqlmock.NewRows([]string{"ID", "NAME"}).
 			AddRow(1, "Alice").
 			AddRow(2, "Bob")
@@ -161,6 +165,10 @@ func TestExternalDataSource_Query(t *testing.T) {
 		}
 
 		ds := &ExternalDataSource{connection: conn}
+
+		// Mock current user query (called in ValidateTableAndFields -> normalizeTableNameForLookup)
+		userRow := sqlmock.NewRows([]string{"USER"}).AddRow("SYSTEM")
+		mock.ExpectQuery("SELECT USER FROM DUAL").WillReturnRows(userRow)
 
 		rows := sqlmock.NewRows([]string{"ID", "NAME"}).
 			AddRow(1, "Alice")
@@ -199,6 +207,10 @@ func TestExternalDataSource_Query(t *testing.T) {
 		}
 
 		ds := &ExternalDataSource{connection: conn}
+
+		// Mock current user query (called in ValidateTableAndFields -> normalizeTableNameForLookup)
+		userRow := sqlmock.NewRows([]string{"USER"}).AddRow("SYSTEM")
+		mock.ExpectQuery("SELECT USER FROM DUAL").WillReturnRows(userRow)
 
 		rows := sqlmock.NewRows([]string{"ID", "NAME", "EMAIL"}).
 			AddRow(1, "Alice", "alice@example.com")
@@ -293,6 +305,10 @@ func TestExternalDataSource_QueryWithAdvancedFilters(t *testing.T) {
 
 		ds := &ExternalDataSource{connection: conn}
 
+		// Mock current user query (called in ValidateTableAndFields -> normalizeTableNameForLookup)
+		userRow := sqlmock.NewRows([]string{"USER"}).AddRow("SYSTEM")
+		mock.ExpectQuery("SELECT USER FROM DUAL").WillReturnRows(userRow)
+
 		rows := sqlmock.NewRows([]string{"ID", "STATUS"}).
 			AddRow(1, "active")
 
@@ -332,6 +348,10 @@ func TestExternalDataSource_QueryWithAdvancedFilters(t *testing.T) {
 		}
 
 		ds := &ExternalDataSource{connection: conn}
+
+		// Mock current user query (called in ValidateTableAndFields -> normalizeTableNameForLookup)
+		userRow := sqlmock.NewRows([]string{"USER"}).AddRow("SYSTEM")
+		mock.ExpectQuery("SELECT USER FROM DUAL").WillReturnRows(userRow)
 
 		rows := sqlmock.NewRows([]string{"ID", "AMOUNT"}).
 			AddRow(1, 150.00)
@@ -494,26 +514,11 @@ func TestExternalDataSource_ValidateTableAndFields(t *testing.T) {
 			expectError: true,
 			errContains: "no valid fields",
 		},
-		{
-			name: "table with schema prefix",
-			schema: []TableSchema{
-				{
-					TableName: "ORDERS",
-					Columns: []ColumnInformation{
-						{Name: "ID"},
-						{Name: "TOTAL"},
-					},
-				},
-			},
-			table:       "SALES.ORDERS",
-			fields:      []string{"ID", "TOTAL"},
-			expectError: false,
-		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			db, _ := setupMockDB(t)
+			db, mock := setupMockDB(t)
 			defer db.Close()
 
 			conn := &Connection{
@@ -523,6 +528,10 @@ func TestExternalDataSource_ValidateTableAndFields(t *testing.T) {
 			}
 
 			ds := &ExternalDataSource{connection: conn}
+
+			// Mock current user query (called in ValidateTableAndFields -> normalizeTableNameForLookup)
+			userRow := sqlmock.NewRows([]string{"USER"}).AddRow("SYSTEM")
+			mock.ExpectQuery("SELECT USER FROM DUAL").WillReturnRows(userRow)
 
 			result, err := ds.ValidateTableAndFields(ctx, tt.table, tt.fields, tt.schema)
 
@@ -537,6 +546,40 @@ func TestExternalDataSource_ValidateTableAndFields(t *testing.T) {
 			}
 		})
 	}
+
+	// Separate test for table with schema prefix (requires specific mock for getCurrentSchema)
+	t.Run("table with schema prefix", func(t *testing.T) {
+		db, mock := setupMockDB(t)
+		defer db.Close()
+
+		conn := &Connection{
+			ConnectionDB: db,
+			Connected:    true,
+			Logger:       testLogger(),
+		}
+
+		ds := &ExternalDataSource{connection: conn}
+
+		// Mock current user query - return SALES so the prefix gets stripped
+		userRow := sqlmock.NewRows([]string{"USER"}).AddRow("SALES")
+		mock.ExpectQuery("SELECT USER FROM DUAL").WillReturnRows(userRow)
+
+		schema := []TableSchema{
+			{
+				TableName: "ORDERS",
+				Columns: []ColumnInformation{
+					{Name: "ID"},
+					{Name: "TOTAL"},
+				},
+			},
+		}
+
+		result, err := ds.ValidateTableAndFields(ctx, "SALES.ORDERS", []string{"ID", "TOTAL"}, schema)
+
+		assert.NoError(t, err)
+		assert.NotNil(t, result)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
 }
 
 func TestExternalDataSource_GetDatabaseSchema(t *testing.T) {
@@ -597,15 +640,20 @@ func TestExternalDataSource_GetDatabaseSchema(t *testing.T) {
 
 		ds := &ExternalDataSource{connection: conn}
 
-		// Mock table query with schema filter
-		tableRows := sqlmock.NewRows([]string{"table_name"}).
-			AddRow("USERS")
-		mock.ExpectQuery("SELECT table_name").WillReturnRows(tableRows)
+		// Mock current user query (to get default schema) - only called once due to caching
+		userRow := sqlmock.NewRows([]string{"USER"}).AddRow("MYSCHEMA")
+		mock.ExpectQuery("SELECT USER FROM DUAL").WillReturnRows(userRow)
 
-		// Mock primary key query
-		pkRows := sqlmock.NewRows([]string{"table_name", "column_name"}).
-			AddRow("USERS", "ID")
-		mock.ExpectQuery("SELECT").WillReturnRows(pkRows)
+		// Mock table query with schema filter (returns owner, table_name for all_tables)
+		tableRows := sqlmock.NewRows([]string{"owner", "table_name"}).
+			AddRow("MYSCHEMA", "USERS")
+		mock.ExpectQuery("SELECT owner, table_name").WillReturnRows(tableRows)
+
+		// Mock primary key query (returns owner, table_name, column_name for all_cons_columns)
+		// Note: getCurrentSchema is cached, so no additional SELECT USER calls needed
+		pkRows := sqlmock.NewRows([]string{"owner", "table_name", "column_name"}).
+			AddRow("MYSCHEMA", "USERS", "ID")
+		mock.ExpectQuery("SELECT acc.owner, acc.table_name, acc.column_name").WillReturnRows(pkRows)
 
 		// Mock column query
 		colRows := sqlmock.NewRows([]string{"column_name", "data_type", "is_nullable"}).
@@ -1968,3 +2016,173 @@ func TestGetDB_MultipleCallsWithError(t *testing.T) {
 
 // mockLogger is an alias for testutil.MockLogger for backward compatibility in this test file.
 type mockLogger = testutil.MockLogger
+
+// TestSQLInjectionPrevention verifies that malicious input cannot be used for SQL injection.
+// Oracle uses parameterized queries with :1, :2 placeholders via squirrel query builder.
+func TestSQLInjectionPrevention(t *testing.T) {
+	ctx := testContext()
+
+	// Malicious inputs that could be used for SQL injection attacks
+	maliciousInputs := []string{
+		"USERS; DROP TABLE USERS;--",
+		"USERS' OR '1'='1",
+		`USERS"; DROP TABLE USERS;--`,
+		"USERS UNION SELECT * FROM PASSWORDS--",
+		"USERS; DELETE FROM USERS WHERE 1=1;--",
+	}
+
+	t.Run("malicious table names are rejected by validation", func(t *testing.T) {
+		db, _ := setupMockDB(t)
+		defer db.Close()
+
+		conn := &Connection{
+			ConnectionDB: db,
+			Connected:    true,
+			Logger:       testLogger(),
+		}
+
+		ds := &ExternalDataSource{connection: conn}
+
+		// Schema with only valid table names
+		schema := []TableSchema{
+			{
+				TableName: "USERS",
+				Columns: []ColumnInformation{
+					{Name: "ID", DataType: "NUMBER"},
+					{Name: "NAME", DataType: "VARCHAR2"},
+				},
+			},
+		}
+
+		for _, maliciousTable := range maliciousInputs {
+			t.Run(maliciousTable, func(t *testing.T) {
+				// Attempting to query with a malicious table name should fail validation
+				_, err := ds.Query(ctx, schema, maliciousTable, []string{"ID"}, nil)
+
+				// Should fail because the malicious table doesn't exist in schema
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "does not exist")
+			})
+		}
+	})
+
+	t.Run("malicious field names are rejected by validation", func(t *testing.T) {
+		db, _ := setupMockDB(t)
+		defer db.Close()
+
+		conn := &Connection{
+			ConnectionDB: db,
+			Connected:    true,
+			Logger:       testLogger(),
+		}
+
+		ds := &ExternalDataSource{connection: conn}
+
+		schema := []TableSchema{
+			{
+				TableName: "USERS",
+				Columns: []ColumnInformation{
+					{Name: "ID", DataType: "NUMBER"},
+					{Name: "NAME", DataType: "VARCHAR2"},
+				},
+			},
+		}
+
+		for _, maliciousField := range maliciousInputs {
+			t.Run(maliciousField, func(t *testing.T) {
+				// Attempting to query with a malicious field name should fail validation
+				_, err := ds.Query(ctx, schema, "USERS", []string{maliciousField}, nil)
+
+				// Should fail because the malicious field doesn't exist in schema
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "invalid fields")
+			})
+		}
+	})
+
+	t.Run("filter values are parameterized with Oracle placeholders", func(t *testing.T) {
+		db, mock := setupMockDB(t)
+		defer db.Close()
+
+		conn := &Connection{
+			ConnectionDB: db,
+			Connected:    true,
+			Logger:       testLogger(),
+		}
+
+		ds := &ExternalDataSource{connection: conn}
+
+		schema := []TableSchema{
+			{
+				TableName: "USERS",
+				Columns: []ColumnInformation{
+					{Name: "ID", DataType: "NUMBER"},
+					{Name: "NAME", DataType: "VARCHAR2"},
+				},
+			},
+		}
+
+		// Even with malicious filter values, they should be passed as parameters
+		maliciousValue := "'; DROP TABLE USERS;--"
+
+		// Mock expects the query with Oracle's :1 parameterized placeholder (IN clause for single values)
+		rows := sqlmock.NewRows([]string{"ID", "NAME"})
+		mock.ExpectQuery(`SELECT ID, NAME FROM USERS WHERE NAME IN \(:1\)`).
+			WithArgs(maliciousValue).
+			WillReturnRows(rows)
+
+		filter := map[string][]any{
+			"NAME": {maliciousValue},
+		}
+
+		// Query should succeed - the malicious value is safely parameterized
+		result, err := ds.Query(ctx, schema, "USERS", []string{"ID", "NAME"}, filter)
+
+		require.NoError(t, err)
+		assert.Empty(t, result) // No rows returned, but no error
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("advanced filter values are parameterized", func(t *testing.T) {
+		db, mock := setupMockDB(t)
+		defer db.Close()
+
+		conn := &Connection{
+			ConnectionDB: db,
+			Connected:    true,
+			Logger:       testLogger(),
+		}
+
+		ds := &ExternalDataSource{connection: conn}
+
+		schema := []TableSchema{
+			{
+				TableName: "USERS",
+				Columns: []ColumnInformation{
+					{Name: "ID", DataType: "NUMBER"},
+					{Name: "NAME", DataType: "VARCHAR2"},
+				},
+			},
+		}
+
+		maliciousValue := "ADMIN' OR '1'='1"
+
+		// Mock expects parameterized query with Oracle :1 placeholder
+		rows := sqlmock.NewRows([]string{"ID", "NAME"})
+		mock.ExpectQuery(`SELECT ID, NAME FROM USERS WHERE NAME = :1`).
+			WithArgs(maliciousValue).
+			WillReturnRows(rows)
+
+		filter := map[string]job.FilterCondition{
+			"NAME": {
+				Equals: []any{maliciousValue},
+			},
+		}
+
+		result, err := ds.QueryWithAdvancedFilters(ctx, schema, "USERS", []string{"ID", "NAME"}, filter)
+
+		require.NoError(t, err)
+		assert.Empty(t, result)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+}

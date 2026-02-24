@@ -25,7 +25,7 @@ type DataSourceConfigSQLServer struct {
 	datasource.DataSourceConfig
 
 	SQLServerConnection *sqlserver.Connection
-	SQLServerRepository sqlserver.Repository
+	SQLServerRepository sqlserver.Datasource
 }
 
 // GetConfig returns the base DataSourceConfig.

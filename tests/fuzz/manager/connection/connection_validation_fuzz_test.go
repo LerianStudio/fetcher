@@ -13,26 +13,27 @@ import (
 )
 
 func FuzzConnectionValidation(f *testing.F) {
-	f.Add("", "", "", 0, "", "", "")
-	f.Add("ab", "POSTGRESQL", "h", 1, "d", "u", "p")
-	f.Add("abc", "POSTGRESQL", "h", 1, "d", "u", "p")
-	f.Add(string(make([]byte, 100)), "POSTGRESQL", "h", 1, "d", "u", "p")
-	f.Add(string(make([]byte, 101)), "POSTGRESQL", "h", 1, "d", "u", "p")
-	f.Add("test@db", "POSTGRESQL", "h", 1, "d", "u", "p")
-	f.Add("test_db-123", "POSTGRESQL", "h", 1, "d", "u", "p")
-	f.Add("test", "INVALID", "h", 1, "d", "u", "p")
-	f.Add("test", "postgresql", "h", 1, "d", "u", "p")
-	f.Add("test", "POSTGRESQL", "h", 0, "d", "u", "p")
-	f.Add("test", "POSTGRESQL", "h", -1, "d", "u", "p")
-	f.Add("test", "POSTGRESQL", "h", 65535, "d", "u", "p")
-	f.Add("test", "POSTGRESQL", "h", 65536, "d", "u", "p")
+	f.Add("test-product", "", "", "", 0, "", "", "")
+	f.Add("test-product", "ab", "POSTGRESQL", "h", 1, "d", "u", "p")
+	f.Add("test-product", "abc", "POSTGRESQL", "h", 1, "d", "u", "p")
+	f.Add("", "abc", "POSTGRESQL", "h", 1, "d", "u", "p")
+	f.Add("my-product", string(make([]byte, 100)), "POSTGRESQL", "h", 1, "d", "u", "p")
+	f.Add("my-product", string(make([]byte, 101)), "POSTGRESQL", "h", 1, "d", "u", "p")
+	f.Add("my-product", "test@db", "POSTGRESQL", "h", 1, "d", "u", "p")
+	f.Add("my-product", "test_db-123", "POSTGRESQL", "h", 1, "d", "u", "p")
+	f.Add("my-product", "test", "INVALID", "h", 1, "d", "u", "p")
+	f.Add("my-product", "test", "postgresql", "h", 1, "d", "u", "p")
+	f.Add("my-product", "test", "POSTGRESQL", "h", 0, "d", "u", "p")
+	f.Add("my-product", "test", "POSTGRESQL", "h", -1, "d", "u", "p")
+	f.Add("my-product", "test", "POSTGRESQL", "h", 65535, "d", "u", "p")
+	f.Add("my-product", "test", "POSTGRESQL", "h", 65536, "d", "u", "p")
 
-	f.Fuzz(func(t *testing.T, configName, typ, host string, port int, dbName, username, password string) {
+	f.Fuzz(func(t *testing.T, productName, configName, typ, host string, port int, dbName, username, password string) {
 		ctx := context.Background()
 		mockCryptor := &mocks.MockCryptor{}
 		orgID := uuid.New()
 
-		conn, err := model.NewConnection(ctx, mockCryptor, orgID, configName, typ, host, port, dbName, username, password, nil, nil, nil, nil, nil)
+		conn, err := model.NewConnection(ctx, mockCryptor, orgID, productName, configName, typ, host, port, dbName, username, password, nil, nil, nil, nil, nil)
 		if err != nil {
 			return
 		}

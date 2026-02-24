@@ -9,11 +9,11 @@ import (
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/model"
-	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
+	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
 
-	"github.com/golang/mock/gomock"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+	"go.uber.org/mock/gomock"
 )
 
 // newValidConnectionInput creates a valid ConnectionInput for testing.
@@ -58,7 +58,7 @@ func TestCreateConnection_Execute_Success(t *testing.T) {
 			return conn, nil
 		})
 
-	result, err := svc.Execute(ctx, orgID, input)
+	result, err := svc.Execute(ctx, orgID, input, "test-product")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -86,6 +86,8 @@ func TestCreateConnection_Execute_Success(t *testing.T) {
 	if result.Port != input.Port {
 		t.Fatalf("expected Port %d, got %d", input.Port, result.Port)
 	}
+
+	assert.Equal(t, "test-product", result.ProductName, "ProductName should match the input")
 }
 
 // TestCreateConnection_Execute_ConflictError tests that duplicate connection name returns conflict error.
@@ -116,7 +118,7 @@ func TestCreateConnection_Execute_ConflictError(t *testing.T) {
 		FindByOrganizationAndName(gomock.Any(), orgID, input.ConfigName).
 		Return(existingConnection, nil)
 
-	result, err := svc.Execute(ctx, orgID, input)
+	result, err := svc.Execute(ctx, orgID, input, "test-product")
 
 	if result != nil {
 		t.Fatalf("expected nil result, got %+v", result)
@@ -157,7 +159,7 @@ func TestCreateConnection_Execute_FindByOrganizationAndNameError(t *testing.T) {
 		FindByOrganizationAndName(gomock.Any(), orgID, input.ConfigName).
 		Return(nil, dbError)
 
-	result, err := svc.Execute(ctx, orgID, input)
+	result, err := svc.Execute(ctx, orgID, input, "test-product")
 
 	if result != nil {
 		t.Fatalf("expected nil result, got %+v", result)
@@ -201,7 +203,7 @@ func TestCreateConnection_Execute_CreateError(t *testing.T) {
 		Create(gomock.Any(), gomock.Any()).
 		Return(nil, dbError)
 
-	result, err := svc.Execute(ctx, orgID, input)
+	result, err := svc.Execute(ctx, orgID, input, "test-product")
 
 	if result != nil {
 		t.Fatalf("expected nil result, got %+v", result)
@@ -235,7 +237,7 @@ func TestCreateConnection_Execute_EncryptionError(t *testing.T) {
 	orgID := uuid.New()
 	input := newValidConnectionInput()
 
-	result, err := svc.Execute(ctx, orgID, input)
+	result, err := svc.Execute(ctx, orgID, input, "test-product")
 
 	if result != nil {
 		t.Fatalf("expected nil result, got %+v", result)
@@ -407,7 +409,7 @@ func TestCreateConnection_Execute_ValidationErrors(t *testing.T) {
 			ctx := testContext()
 			orgID := uuid.New()
 
-			result, err := svc.Execute(ctx, orgID, tt.input)
+			result, err := svc.Execute(ctx, orgID, tt.input, "test-product")
 
 			if result != nil {
 				t.Fatalf("expected nil result for invalid request, got %+v", result)
@@ -490,7 +492,7 @@ func TestCreateConnection_Execute_WithSSL(t *testing.T) {
 			return conn, nil
 		})
 
-	result, err := svc.Execute(ctx, orgID, input)
+	result, err := svc.Execute(ctx, orgID, input, "test-product")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -515,36 +517,12 @@ func TestCreateConnection_Execute_AllDatabaseTypes(t *testing.T) {
 		dbType       string
 		expectedType model.DBType
 	}{
-		{
-			name:         "PostgreSQL",
-			dbType:       "POSTGRESQL",
-			expectedType: model.TypePostgreSQL,
-		},
-		{
-			name:         "MySQL",
-			dbType:       "MYSQL",
-			expectedType: model.TypeMySQL,
-		},
-		{
-			name:         "MongoDB",
-			dbType:       "MONGODB",
-			expectedType: model.TypeMongoDB,
-		},
-		{
-			name:         "Oracle",
-			dbType:       "ORACLE",
-			expectedType: model.TypeOracle,
-		},
-		{
-			name:         "SQL Server",
-			dbType:       "SQL_SERVER",
-			expectedType: model.TypeSQLServer,
-		},
-		{
-			name:         "lowercase postgresql",
-			dbType:       "postgresql",
-			expectedType: model.TypePostgreSQL,
-		},
+		{name: "PostgreSQL", dbType: "POSTGRESQL", expectedType: model.TypePostgreSQL},
+		{name: "MySQL", dbType: "MYSQL", expectedType: model.TypeMySQL},
+		{name: "MongoDB", dbType: "MONGODB", expectedType: model.TypeMongoDB},
+		{name: "Oracle", dbType: "ORACLE", expectedType: model.TypeOracle},
+		{name: "SQL Server", dbType: "SQL_SERVER", expectedType: model.TypeSQLServer},
+		{name: "lowercase postgresql", dbType: "postgresql", expectedType: model.TypePostgreSQL},
 	}
 
 	for _, tt := range tests {
@@ -573,19 +551,17 @@ func TestCreateConnection_Execute_AllDatabaseTypes(t *testing.T) {
 				Password:     "testpassword",
 			}
 
-			// Mock: no existing connection found
 			mockConnRepo.EXPECT().
 				FindByOrganizationAndName(gomock.Any(), orgID, input.ConfigName).
 				Return(nil, nil)
 
-			// Mock: create returns the connection
 			mockConnRepo.EXPECT().
 				Create(gomock.Any(), gomock.Any()).
 				DoAndReturn(func(ctx context.Context, conn *model.Connection) (*model.Connection, error) {
 					return conn, nil
 				})
 
-			result, err := svc.Execute(ctx, orgID, input)
+			result, err := svc.Execute(ctx, orgID, input, "test-product")
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -631,46 +607,14 @@ func TestCreateConnection_Execute_ConfigNameEdgeCases(t *testing.T) {
 		configName string
 		shouldPass bool
 	}{
-		{
-			name:       "valid with underscore",
-			configName: "test_connection",
-			shouldPass: true,
-		},
-		{
-			name:       "valid with hyphen",
-			configName: "test-connection",
-			shouldPass: true,
-		},
-		{
-			name:       "valid with numbers",
-			configName: "test123connection",
-			shouldPass: true,
-		},
-		{
-			name:       "valid mixed",
-			configName: "Test_Connection-123",
-			shouldPass: true,
-		},
-		{
-			name:       "exactly 3 characters",
-			configName: "abc",
-			shouldPass: true,
-		},
-		{
-			name:       "whitespace only",
-			configName: "   ",
-			shouldPass: false,
-		},
-		{
-			name:       "with spaces",
-			configName: "test connection",
-			shouldPass: false,
-		},
-		{
-			name:       "with dots",
-			configName: "test.connection",
-			shouldPass: false,
-		},
+		{name: "valid with underscore", configName: "test_connection", shouldPass: true},
+		{name: "valid with hyphen", configName: "test-connection", shouldPass: true},
+		{name: "valid with numbers", configName: "test123connection", shouldPass: true},
+		{name: "valid mixed", configName: "Test_Connection-123", shouldPass: true},
+		{name: "exactly 3 characters", configName: "abc", shouldPass: true},
+		{name: "whitespace only", configName: "   ", shouldPass: false},
+		{name: "with spaces", configName: "test connection", shouldPass: false},
+		{name: "with dots", configName: "test.connection", shouldPass: false},
 	}
 
 	for _, tt := range tests {
@@ -681,7 +625,6 @@ func TestCreateConnection_Execute_ConfigNameEdgeCases(t *testing.T) {
 			mockConnRepo := connRepo.NewMockRepository(ctrl)
 			mockCrypto := crypto.NewMockCryptor(ctrl)
 
-			// Setup Encrypt expectation - encryption is always called before validation
 			mockCrypto.EXPECT().
 				Encrypt(gomock.Any(), gomock.Any()).
 				Return("encrypted-password", "v1", nil).
@@ -703,12 +646,9 @@ func TestCreateConnection_Execute_ConfigNameEdgeCases(t *testing.T) {
 			}
 
 			if tt.shouldPass {
-				// Mock: no existing connection found
 				mockConnRepo.EXPECT().
 					FindByOrganizationAndName(gomock.Any(), orgID, gomock.Any()).
 					Return(nil, nil)
-
-				// Mock: create returns the connection
 				mockConnRepo.EXPECT().
 					Create(gomock.Any(), gomock.Any()).
 					DoAndReturn(func(ctx context.Context, conn *model.Connection) (*model.Connection, error) {
@@ -716,7 +656,7 @@ func TestCreateConnection_Execute_ConfigNameEdgeCases(t *testing.T) {
 					})
 			}
 
-			result, err := svc.Execute(ctx, orgID, input)
+			result, err := svc.Execute(ctx, orgID, input, "test-product")
 
 			if tt.shouldPass {
 				if err != nil {

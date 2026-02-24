@@ -4,8 +4,8 @@ import (
 	"errors"
 	"time"
 
-	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/model"
+	portsJob "github.com/LerianStudio/fetcher/pkg/ports/job"
 
 	"github.com/google/uuid"
 )
@@ -19,6 +19,7 @@ type JobMongoDBModel struct {
 	Filters        model.NestedFilters            `bson:"filters,omitempty"`
 	Status         string                         `bson:"status"`
 	ResultPath     string                         `bson:"result_path,omitempty"`
+	ResultHMAC     string                         `bson:"result_hmac,omitempty"`
 	RequestHash    string                         `bson:"request_hash,omitempty"`
 	CreatedAt      time.Time                      `bson:"created_at"`
 	CompletedAt    *time.Time                     `bson:"completed_at"`
@@ -43,6 +44,7 @@ func (jm *JobMongoDBModel) ToEntity() (*model.Job, error) {
 		Filters:        jm.Filters,
 		Status:         jobStatus,
 		ResultPath:     jm.ResultPath,
+		ResultHMAC:     jm.ResultHMAC,
 		RequestHash:    jm.RequestHash,
 		CreatedAt:      jm.CreatedAt,
 		CompletedAt:    jm.CompletedAt,
@@ -63,6 +65,7 @@ func (jm *JobMongoDBModel) FromEntity(job *model.Job) error {
 	jm.Filters = job.Filters
 	jm.Status = string(job.Status)
 	jm.ResultPath = job.ResultPath
+	jm.ResultHMAC = job.ResultHMAC
 	jm.RequestHash = job.RequestHash
 	jm.CreatedAt = job.CreatedAt
 	jm.CompletedAt = job.CompletedAt
@@ -70,16 +73,5 @@ func (jm *JobMongoDBModel) FromEntity(job *model.Job) error {
 	return nil
 }
 
-// ListFilter controls pagination and filtering for job listings.
-type ListFilter struct {
-	OrganizationID uuid.UUID
-	Status         model.JobStatus
-	Statuses       []model.JobStatus
-	CreatedFrom    *time.Time
-	CreatedTo      *time.Time
-	CompletedFrom  *time.Time
-	CompletedTo    *time.Time
-	Limit          int
-	Page           int
-	SortOrder      constant.Order
-}
+// ListFilter is an alias for the domain filter type defined in pkg/ports/job.
+type ListFilter = portsJob.ListFilter

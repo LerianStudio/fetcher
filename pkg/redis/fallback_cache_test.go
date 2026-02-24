@@ -18,7 +18,10 @@ func setupFallbackCache(t *testing.T) (*miniredis.Miniredis, *FallbackCache[test
 	require.NoError(t, err)
 
 	client := redis.NewClient(&redis.Options{
-		Addr: mr.Addr(),
+		Addr:         mr.Addr(),
+		DialTimeout:  100 * time.Millisecond, // Fast timeout for tests
+		ReadTimeout:  100 * time.Millisecond,
+		WriteTimeout: 100 * time.Millisecond,
 	})
 
 	conn := &RedisConnection{
@@ -27,7 +30,8 @@ func setupFallbackCache(t *testing.T) (*miniredis.Miniredis, *FallbackCache[test
 		Connected: true,
 	}
 
-	redisCache := NewRedisCache[testStruct](conn, time.Minute, "test:")
+	redisCache, err := NewRedisCache[testStruct](conn, time.Minute, "test:")
+	require.NoError(t, err)
 	fallback := NewFallbackCache[testStruct](redisCache, &mockLogger{}, time.Minute)
 
 	t.Cleanup(func() {
@@ -136,7 +140,10 @@ func TestFallbackCache_Close_Idempotent(t *testing.T) {
 	defer mr.Close()
 
 	client := redis.NewClient(&redis.Options{
-		Addr: mr.Addr(),
+		Addr:         mr.Addr(),
+		DialTimeout:  100 * time.Millisecond,
+		ReadTimeout:  100 * time.Millisecond,
+		WriteTimeout: 100 * time.Millisecond,
 	})
 	defer client.Close()
 
@@ -146,7 +153,8 @@ func TestFallbackCache_Close_Idempotent(t *testing.T) {
 		Connected: true,
 	}
 
-	redisCache := NewRedisCache[testStruct](conn, time.Minute, "test:")
+	redisCache, err := NewRedisCache[testStruct](conn, time.Minute, "test:")
+	require.NoError(t, err)
 	fallback := NewFallbackCache[testStruct](redisCache, &mockLogger{}, time.Minute)
 
 	// First close should succeed
@@ -188,7 +196,10 @@ func TestFallbackCache_DefaultTTL(t *testing.T) {
 	defer mr.Close()
 
 	client := redis.NewClient(&redis.Options{
-		Addr: mr.Addr(),
+		Addr:         mr.Addr(),
+		DialTimeout:  100 * time.Millisecond,
+		ReadTimeout:  100 * time.Millisecond,
+		WriteTimeout: 100 * time.Millisecond,
 	})
 	defer client.Close()
 
@@ -198,7 +209,8 @@ func TestFallbackCache_DefaultTTL(t *testing.T) {
 		Connected: true,
 	}
 
-	redisCache := NewRedisCache[testStruct](conn, time.Minute, "test:")
+	redisCache, err := NewRedisCache[testStruct](conn, time.Minute, "test:")
+	require.NoError(t, err)
 
 	// Test that zero TTL uses default
 	fallback := NewFallbackCache[testStruct](redisCache, &mockLogger{}, 0)
@@ -221,7 +233,10 @@ func TestFallbackCache_NegativeTTL(t *testing.T) {
 	defer mr.Close()
 
 	client := redis.NewClient(&redis.Options{
-		Addr: mr.Addr(),
+		Addr:         mr.Addr(),
+		DialTimeout:  100 * time.Millisecond,
+		ReadTimeout:  100 * time.Millisecond,
+		WriteTimeout: 100 * time.Millisecond,
 	})
 	defer client.Close()
 
@@ -231,7 +246,8 @@ func TestFallbackCache_NegativeTTL(t *testing.T) {
 		Connected: true,
 	}
 
-	redisCache := NewRedisCache[testStruct](conn, time.Minute, "test:")
+	redisCache, err := NewRedisCache[testStruct](conn, time.Minute, "test:")
+	require.NoError(t, err)
 
 	// Test that negative TTL uses default
 	fallback := NewFallbackCache[testStruct](redisCache, &mockLogger{}, -5*time.Minute)
@@ -343,7 +359,10 @@ func TestFallbackCache_UseRedisFlag_Switch(t *testing.T) {
 	defer mr.Close()
 
 	client := redis.NewClient(&redis.Options{
-		Addr: mr.Addr(),
+		Addr:         mr.Addr(),
+		DialTimeout:  100 * time.Millisecond,
+		ReadTimeout:  100 * time.Millisecond,
+		WriteTimeout: 100 * time.Millisecond,
 	})
 	defer client.Close()
 
@@ -353,7 +372,8 @@ func TestFallbackCache_UseRedisFlag_Switch(t *testing.T) {
 		Connected: true,
 	}
 
-	redisCache := NewRedisCache[testStruct](conn, time.Minute, "test:")
+	redisCache, err := NewRedisCache[testStruct](conn, time.Minute, "test:")
+	require.NoError(t, err)
 	cache := NewFallbackCache[testStruct](redisCache, &mockLogger{}, time.Minute)
 	defer cache.Close()
 
@@ -440,7 +460,10 @@ func TestFallbackCache_Close_StopsHealthMonitor(t *testing.T) {
 	defer mr.Close()
 
 	client := redis.NewClient(&redis.Options{
-		Addr: mr.Addr(),
+		Addr:         mr.Addr(),
+		DialTimeout:  100 * time.Millisecond,
+		ReadTimeout:  100 * time.Millisecond,
+		WriteTimeout: 100 * time.Millisecond,
 	})
 
 	conn := &RedisConnection{
@@ -449,7 +472,8 @@ func TestFallbackCache_Close_StopsHealthMonitor(t *testing.T) {
 		Connected: true,
 	}
 
-	redisCache := NewRedisCache[testStruct](conn, time.Minute, "test:")
+	redisCache, err := NewRedisCache[testStruct](conn, time.Minute, "test:")
+	require.NoError(t, err)
 	cache := NewFallbackCache[testStruct](redisCache, &mockLogger{}, time.Minute)
 
 	// Close should stop the health monitor goroutine

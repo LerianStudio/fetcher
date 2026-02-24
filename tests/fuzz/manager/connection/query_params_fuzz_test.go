@@ -46,8 +46,8 @@ func FuzzMetadataQueryParams(f *testing.F) {
 	f.Fuzz(func(t *testing.T, key, value string) {
 		params := map[string]string{key: value}
 		queryHeader, _ := httpUtils.ValidateParameters(params)
-		if queryHeader != nil && queryHeader.Metadata != nil {
-			for k, v := range *queryHeader.Metadata {
+		if queryHeader != nil && len(queryHeader.Metadata) > 0 {
+			for k, v := range queryHeader.Metadata {
 				_ = k
 				_ = v
 			}

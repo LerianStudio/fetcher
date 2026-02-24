@@ -9,7 +9,7 @@ import (
 	reflect "reflect"
 
 	job "github.com/LerianStudio/fetcher/pkg/model/job"
-	gomock "github.com/golang/mock/gomock"
+	gomock "go.uber.org/mock/gomock"
 )
 
 // MockRepository is a mock of Repository interface.

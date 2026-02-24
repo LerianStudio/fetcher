@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"github.com/LerianStudio/fetcher/pkg/model"
-	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 )
 
 // mockGenericCache implements redis.Cache[model.DataSourceSchema] for testing.
@@ -17,7 +17,6 @@ import (
 // NOTE: This manual mock is intentionally retained because mockgen does not support
 // generating mocks for generic interfaces (Go 1.18+ type parameters). The redis.Cache[T]
 // interface uses generics, which makes it incompatible with mockgen's code generation.
-// See: https://github.com/golang/mock/issues/621
 type mockGenericCache struct {
 	data    map[string]model.DataSourceSchema
 	healthy bool

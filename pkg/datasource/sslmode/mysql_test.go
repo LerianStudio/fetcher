@@ -14,7 +14,7 @@ func TestValidateMySQLMode(t *testing.T) {
 		wantError bool
 	}{
 		// Valid modes - from go-sql-driver/mysql documentation
-		{name: "empty string is valid (defaults to false)", mode: "", wantError: false},
+		{name: "empty string is invalid (must use explicit mode)", mode: "", wantError: true},
 		{name: "false is valid", mode: "false", wantError: false},
 		{name: "true is valid", mode: "true", wantError: false},
 		{name: "skip-verify is valid", mode: "skip-verify", wantError: false},
@@ -58,6 +58,6 @@ func TestGetValidMySQLModes(t *testing.T) {
 	modes := GetValidMySQLModes()
 
 	// Verify all expected modes are present
-	expected := []string{"", "false", "true", "skip-verify", "preferred"}
+	expected := []string{"false", "true", "skip-verify", "preferred"}
 	assert.ElementsMatch(t, expected, modes, "Should return all valid MySQL SSL modes")
 }

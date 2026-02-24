@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.4
 
-FROM golang:1.25-alpine AS builder
+FROM golang:1.26-alpine AS builder
 
 # Install required packages: git is needed for private modules (e.g., from GitHub)
 RUN apk add --no-cache git
@@ -28,14 +28,18 @@ RUN CGO_ENABLED=0 GOOS=linux go build -tags netgo \
   -o /worker ./components/worker/cmd/app/main.go
 
 # Stage 2: Final minimal image with only the binary
-FROM alpine:latest
+FROM alpine:3.23
 
 WORKDIR /app
 
+# Install certificates/timezone data required for TLS connections
+RUN apk add --no-cache ca-certificates tzdata && \
+  update-ca-certificates
+
 # Create a non-root user for security
 RUN addgroup -g 1001 -S appgroup && \
-    adduser -u 1001 -S -h /app appuser -G appgroup && \
-    chown -R appuser:appgroup /app
+  adduser -u 1001 -S -h /app appuser -G appgroup && \
+  chown -R appuser:appgroup /app
 
 ENV HOME=/app
 
@@ -46,7 +50,7 @@ COPY --from=builder /worker /app/worker
 USER appuser
 
 # Expose the application port
-EXPOSE 4005
+EXPOSE 4019
 
 # Set the entrypoint to the worker binary
 ENTRYPOINT ["/app/worker"]

@@ -40,6 +40,12 @@ var (
 	ErrEntityNotFound = errors.New("FET-1001")
 	ErrEntityConflict = errors.New("FET-1002")
 
+	// Product related errors
+	ErrProductHasConnections     = errors.New("FET-1013")
+	ErrConnectionNotAssigned     = errors.New("FET-1014")
+	ErrConnectionAlreadyAssigned = errors.New("FET-1015")
+	ErrProductMismatch           = errors.New("FET-1016")
+
 	// Job related errors
 	ErrMissingDataSource = errors.New("FET-1020")
 	ErrJobInProgress     = errors.New("FET-1021")

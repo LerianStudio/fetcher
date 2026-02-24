@@ -3,30 +3,23 @@ package services
 import (
 	"context"
 
-	libCommons "github.com/LerianStudio/lib-commons/v2/commons"
 	libLog "github.com/LerianStudio/lib-commons/v2/commons/log"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/LerianStudio/fetcher/components/worker/internal/adapters/rabbitmq"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
-	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 	jobRepo "github.com/LerianStudio/fetcher/pkg/mongodb/job"
-	externalData "github.com/LerianStudio/fetcher/pkg/seaweedfs/external"
-	"github.com/golang/mock/gomock"
+	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
+	publisherPort "github.com/LerianStudio/fetcher/pkg/ports/publisher"
+	storagePort "github.com/LerianStudio/fetcher/pkg/ports/storage"
+	"github.com/LerianStudio/fetcher/pkg/testutil"
 	"github.com/google/uuid"
+	"go.uber.org/mock/gomock"
 )
 
 // testContext creates a context with logger and tracer for testing.
 func testContext() context.Context {
-	logger := testLogger()
-	values := &libCommons.CustomContextKeyValue{
-		HeaderID: "test-request-id",
-		Logger:   logger,
-		Tracer:   otel.Tracer("test"),
-	}
-
-	return context.WithValue(context.Background(), libCommons.CustomContextKey, values)
+	return testutil.TestContext()
 }
 
 // testLogger creates a logger for testing that suppresses output.
@@ -39,9 +32,9 @@ type testMocks struct {
 	ctrl            *gomock.Controller
 	jobRepo         *jobRepo.MockRepository
 	connRepo        *connRepo.MockRepository
-	seaweedFS       *externalData.MockRepository
+	seaweedFS       *storagePort.MockRepository
 	cryptor         *crypto.MockCryptor
-	rabbitPublisher *rabbitmq.MockPublisherRepository
+	rabbitPublisher *publisherPort.MockRepository
 }
 
 // newTestMocks creates and returns all mock dependencies.
@@ -50,16 +43,16 @@ func newTestMocks(ctrl *gomock.Controller) *testMocks {
 		ctrl:            ctrl,
 		jobRepo:         jobRepo.NewMockRepository(ctrl),
 		connRepo:        connRepo.NewMockRepository(ctrl),
-		seaweedFS:       externalData.NewMockRepository(ctrl),
+		seaweedFS:       storagePort.NewMockRepository(ctrl),
 		cryptor:         crypto.NewMockCryptor(ctrl),
-		rabbitPublisher: rabbitmq.NewMockPublisherRepository(ctrl),
+		rabbitPublisher: publisherPort.NewMockRepository(ctrl),
 	}
 }
 
 // newTestUseCase creates a UseCase with all mocked dependencies.
 // Now that UseCase uses interfaces, we can inject mocks directly.
 func newTestUseCase(mocks *testMocks) *UseCase {
-	return &UseCase{
+	uc := &UseCase{
 		ExternalDataSeaweedFS: mocks.seaweedFS,
 		JobRepository:         mocks.jobRepo,
 		ConnectionRepository:  mocks.connRepo,
@@ -68,6 +61,11 @@ func newTestUseCase(mocks *testMocks) *UseCase {
 		RabbitMQPublisher:     mocks.rabbitPublisher,
 		JobEventsExchange:     "test-exchange",
 	}
+
+	uc.SetSeaweedFSSecrets("test-seaweedfs-encrypt-key", "test-seaweedfs-hash-key")
+	uc.SetCRMSecrets("test-crm-encrypt-key", "test-crm-hash-key")
+
+	return uc
 }
 
 // newTestJobID returns a new UUID for testing.

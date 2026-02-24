@@ -27,14 +27,10 @@ type AESGCMService struct {
 	keyVersion string
 }
 
-// NewAESGCMServiceFromEnv builds a service from a Base64-encoded 32-byte key.
+// NewAESGCMService builds a service from a raw 32-byte key.
 // keyVersion can be empty; in that case it defaults to "1" to avoid blank metadata.
-func NewAESGCMServiceFromEnv(keyBase64, keyVersion string) (*AESGCMService, error) {
-	key, err := base64.StdEncoding.DecodeString(keyBase64)
-	if err != nil {
-		return nil, fmt.Errorf("invalid encryption key (base64): %w", err)
-	}
-
+// Use this constructor with keys derived from KeyDeriver.
+func NewAESGCMService(key []byte, keyVersion string) (*AESGCMService, error) {
 	if len(key) != 32 {
 		return nil, fmt.Errorf("invalid encryption key length: got %d, expected 32 bytes", len(key))
 	}
@@ -47,6 +43,20 @@ func NewAESGCMServiceFromEnv(keyBase64, keyVersion string) (*AESGCMService, erro
 		key:        key,
 		keyVersion: keyVersion,
 	}, nil
+}
+
+// NewAESGCMServiceFromEnv builds a service from a Base64-encoded 32-byte key.
+// keyVersion can be empty; in that case it defaults to "1" to avoid blank metadata.
+//
+// Deprecated: NewAESGCMServiceFromEnv decodes the key from base64 but does not
+// support key derivation. Use NewAESGCMService with a key from KeyDeriver.GetCredentialKey().
+func NewAESGCMServiceFromEnv(keyBase64, keyVersion string) (*AESGCMService, error) {
+	key, err := base64.StdEncoding.DecodeString(keyBase64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid encryption key (base64): %w", err)
+	}
+
+	return NewAESGCMService(key, keyVersion)
 }
 
 // Encrypt returns a Base64 string containing nonce + ciphertext.

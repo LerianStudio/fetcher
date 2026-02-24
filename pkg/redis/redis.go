@@ -111,7 +111,7 @@ func (r *RedisConnection) Close() error {
 		err := r.Client.Close()
 		if err != nil {
 			r.Logger.Errorf("Error closing Redis connection: %v", err)
-			return err
+			return fmt.Errorf("failed to close Redis connection: %w", err)
 		}
 
 		r.Connected = false

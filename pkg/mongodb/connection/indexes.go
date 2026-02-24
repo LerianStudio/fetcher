@@ -2,11 +2,11 @@ package connection
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"time"
 
 	"github.com/LerianStudio/fetcher/pkg/constant"
+	sharedMongo "github.com/LerianStudio/fetcher/pkg/mongodb"
 	"github.com/LerianStudio/lib-commons/v2/commons"
 	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
 
@@ -20,17 +20,6 @@ const (
 	indexCreateTimeout = 60 * time.Second
 	indexDropTimeout   = 30 * time.Second
 )
-
-// isIndexConflictError checks if the error is a MongoDB index conflict error.
-// IndexOptionsConflict is code 85, IndexKeySpecsConflict is code 86.
-func isIndexConflictError(err error) bool {
-	var cmdErr mongo.CommandError
-	if errors.As(err, &cmdErr) {
-		return cmdErr.Code == 85 || cmdErr.Code == 86
-	}
-
-	return false
-}
 
 // EnsureIndexes creates MongoDB indexes tailored for the connections collection workload.
 func (cr *ConnectionMongoDBRepository) EnsureIndexes(ctx context.Context) error {
@@ -83,6 +72,43 @@ func (cr *ConnectionMongoDBRepository) EnsureIndexes(ctx context.Context) error 
 				SetName("idx_connection_org_database_name").
 				SetPartialFilterExpression(bson.D{{Key: "deleted_at", Value: nil}}),
 		},
+		// Product isolation indexes
+		{
+			Keys: bson.D{
+				{Key: "organization_id", Value: 1},
+				{Key: "product_name", Value: 1},
+				{Key: "config_name", Value: 1},
+			},
+			Options: options.Index().
+				SetName("idx_connection_org_product_config").
+				SetUnique(true).
+				SetPartialFilterExpression(bson.D{
+					{Key: "deleted_at", Value: nil},
+					{Key: "product_name", Value: bson.D{{Key: "$gt", Value: ""}}},
+				}),
+		},
+		{
+			Keys: bson.D{
+				{Key: "organization_id", Value: 1},
+				{Key: "product_name", Value: 1},
+				{Key: "created_at", Value: -1},
+			},
+			Options: options.Index().
+				SetName("idx_connection_org_product_created").
+				SetPartialFilterExpression(bson.D{{Key: "deleted_at", Value: nil}}),
+		},
+		{
+			Keys: bson.D{
+				{Key: "organization_id", Value: 1},
+				{Key: "product_name", Value: 1},
+			},
+			Options: options.Index().
+				SetName("idx_connection_unassigned").
+				SetPartialFilterExpression(bson.D{
+					{Key: "deleted_at", Value: nil},
+					{Key: "product_name", Value: ""},
+				}),
+		},
 	}
 
 	span.SetAttributes(
@@ -96,7 +122,7 @@ func (cr *ConnectionMongoDBRepository) EnsureIndexes(ctx context.Context) error 
 
 	indexNames, err := coll.Indexes().CreateMany(ctx, indexes)
 	if err != nil {
-		if isIndexConflictError(err) {
+		if sharedMongo.IsIndexConflictError(err) {
 			logger.Infof("Indexes for %s already exist", constant.MongoCollectionConnection)
 			return nil
 		}
