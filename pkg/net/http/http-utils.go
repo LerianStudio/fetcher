@@ -1,6 +1,7 @@
 package http
 
 import (
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -10,12 +11,11 @@ import (
 	libCommons "github.com/LerianStudio/lib-commons/commons"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
-	"go.mongodb.org/mongo-driver/bson"
 )
 
 // QueryHeader entity from query parameter from get apis
 type QueryHeader struct {
-	Metadata    *bson.M
+	Metadata    map[string]string
 	Limit       int
 	Page        int
 	Cursor      string
@@ -23,6 +23,7 @@ type QueryHeader struct {
 	StartDate   time.Time
 	EndDate     time.Time
 	UseMetadata bool
+	ProductName string
 }
 
 // Pagination entity from query parameter from get apis
@@ -48,7 +49,7 @@ func (qh *QueryHeader) ToOffsetPagination() Pagination {
 // ValidateParameters validate and return struct of default parameters
 func ValidateParameters(params map[string]string) (*QueryHeader, error) {
 	var (
-		metadata    = bson.M{}
+		metadata    = make(map[string]string)
 		startDate   time.Time
 		endDate     time.Time
 		cursor      string
@@ -62,9 +63,9 @@ func ValidateParameters(params map[string]string) (*QueryHeader, error) {
 		return nil, err
 	}
 
-	var metadataPtr *bson.M
+	var metadataResult map[string]string
 	if len(metadata) > 0 {
-		metadataPtr = &metadata
+		metadataResult = metadata
 		useMetadata = true
 	}
 
@@ -79,7 +80,7 @@ func ValidateParameters(params map[string]string) (*QueryHeader, error) {
 	}
 
 	query := &QueryHeader{
-		Metadata:    metadataPtr,
+		Metadata:    metadataResult,
 		Limit:       limit,
 		Page:        page,
 		Cursor:      cursor,
@@ -94,7 +95,7 @@ func ValidateParameters(params map[string]string) (*QueryHeader, error) {
 
 func parseParameters(
 	params map[string]string,
-	metadata bson.M,
+	metadata map[string]string,
 	startDate, endDate *time.Time,
 	cursor *string,
 	limit, page *int,
@@ -141,7 +142,25 @@ func parseParameters(
 
 			*endDate = parsed
 		default:
-			metadata[key] = value
+			// Reject keys that start with "$" to prevent MongoDB operator
+			// injection (e.g. $where, $ne, $regex). Also reject keys starting
+			// with underscore (internal fields like _id).
+			if strings.HasPrefix(key, "$") || strings.HasPrefix(key, "_") {
+				return pkg.ValidateBusinessError(constant.ErrInvalidQueryParameter, key)
+			}
+
+			// Cap key/value length to prevent abuse via oversized query payloads.
+			const (
+				maxFilterKeyLen   = 64
+				maxFilterValueLen = 256
+			)
+
+			if len(key) > maxFilterKeyLen || len(value) > maxFilterValueLen {
+				return pkg.ValidateBusinessError(constant.ErrInvalidQueryParameter, key)
+			}
+
+			// Unknown keys that pass safety checks are silently ignored.
+			// Only keys with the "metadata." prefix are captured as filters.
 		}
 	}
 
@@ -211,6 +230,82 @@ func GetOrganizationID(c *fiber.Ctx) (uuid.UUID, error) {
 	}
 
 	return orgID, nil
+}
+
+// productNameRegex validates product name format: alphanumeric with underscores and hyphens.
+var productNameRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+
+// validateProductName checks character set and length constraints on a product name.
+func validateProductName(productName string) error {
+	if len(productName) > 100 {
+		return pkg.ValidationError{
+			EntityType: "request",
+			Code:       constant.ErrInvalidHeaderParameter.Error(),
+			Title:      "Invalid header",
+			Message:    "X-Product-Name must not exceed 100 characters",
+		}
+	}
+
+	if !productNameRegex.MatchString(productName) {
+		return pkg.ValidationError{
+			EntityType: "request",
+			Code:       constant.ErrInvalidHeaderParameter.Error(),
+			Title:      "Invalid header",
+			Message:    "X-Product-Name can only contain alphanumeric characters, underscores, and hyphens",
+		}
+	}
+
+	return nil
+}
+
+// GetProductName extracts X-Product-Name header (optional).
+// Returns empty string if the header is not provided.
+// Returns error if the header is provided but is empty, whitespace-only, or has invalid format.
+func GetProductName(c *fiber.Ctx) (string, error) {
+	raw := c.Get("X-Product-Name")
+	if raw == "" {
+		return "", nil // header not provided
+	}
+
+	productName := strings.TrimSpace(raw)
+	if productName == "" {
+		return "", pkg.ValidationError{
+			EntityType: "request",
+			Code:       constant.ErrInvalidHeaderParameter.Error(),
+			Title:      "Invalid header",
+			Message:    "X-Product-Name header must not be empty or whitespace-only",
+		}
+	}
+
+	productName = strings.ToLower(productName)
+
+	if err := validateProductName(productName); err != nil {
+		return "", err
+	}
+
+	return productName, nil
+}
+
+// GetRequiredProductName extracts X-Product-Name header (required).
+// Returns error if the header is missing, empty, whitespace-only, or has invalid format.
+func GetRequiredProductName(c *fiber.Ctx) (string, error) {
+	productName := strings.TrimSpace(c.Get("X-Product-Name"))
+	if productName == "" {
+		return "", pkg.ValidationError{
+			EntityType: "request",
+			Code:       constant.ErrInvalidHeaderParameter.Error(),
+			Title:      "Invalid header",
+			Message:    "X-Product-Name header is required and must not be empty",
+		}
+	}
+
+	productName = strings.ToLower(productName)
+
+	if err := validateProductName(productName); err != nil {
+		return "", err
+	}
+
+	return productName, nil
 }
 
 // ParseIntDefault parses int with fallback.

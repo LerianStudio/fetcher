@@ -19,7 +19,6 @@ import (
 //   - "verify-ca": Require SSL and verify that server cert is signed by trusted CA
 //   - "verify-full": Require SSL, verify CA, and verify server hostname matches cert
 var validPostgreSQLModes = map[string]struct{}{
-	"":            {}, // Empty string defaults to "disable"
 	"disable":     {}, // Explicitly disable SSL
 	"allow":       {}, // Try non-SSL first, SSL if required
 	"prefer":      {}, // Try SSL first, fallback to non-SSL

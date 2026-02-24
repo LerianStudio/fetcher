@@ -2,6 +2,7 @@ package oracle
 
 import (
 	"database/sql"
+	"fmt"
 	"strings"
 
 	"github.com/LerianStudio/fetcher/pkg/constant"
@@ -9,6 +10,14 @@ import (
 	"github.com/LerianStudio/lib-commons/v2/commons/log"
 	_ "github.com/sijms/go-ora/v2" // Oracle driver
 )
+
+// DefaultSchema represents Oracle's default schema behavior.
+// Unlike PostgreSQL ("public") or SQL Server ("dbo"), Oracle uses the
+// current user as the default schema. This constant is empty because
+// Oracle's default schema is dynamic and determined at runtime.
+// Table name normalization for Oracle is handled differently - see
+// normalizeTableNameForValidation in validate_schema.go.
+const DefaultSchema = ""
 
 // Connection is a hub which deals with Oracle connections.
 type Connection struct {
@@ -28,7 +37,7 @@ func (c *Connection) Connect() error {
 	db, err := sql.Open("oracle", c.ConnectionString)
 	if err != nil {
 		c.Logger.Errorf("Error opening connection: %v", err)
-		return err
+		return fmt.Errorf("failed to open Oracle connection: %w", err)
 	}
 
 	if err := db.Ping(); err != nil {
@@ -39,7 +48,7 @@ func (c *Connection) Connect() error {
 
 		c.Logger.Errorf("Error pinging Oracle: %v", err)
 
-		return err
+		return fmt.Errorf("failed to ping Oracle: %w", err)
 	}
 
 	db.SetMaxOpenConns(c.MaxOpenConnections)
@@ -60,7 +69,7 @@ func (c *Connection) Connect() error {
 func (oc *Connection) GetDB() (*sql.DB, error) {
 	if oc.ConnectionDB == nil {
 		if err := oc.Connect(); err != nil {
-			oc.Logger.Infof("ERRCONECT %s", err)
+			oc.Logger.Errorf("ERR_CONNECT: failed to connect to Oracle: %v", err)
 			return nil, err
 		}
 	}

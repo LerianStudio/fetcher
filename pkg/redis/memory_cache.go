@@ -139,6 +139,15 @@ func (c *InMemoryCache[T]) Delete(ctx context.Context, key string) error {
 
 // Clear removes all cache entries.
 func (c *InMemoryCache[T]) Clear(ctx context.Context) error {
+	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+
+	_, span := tracer.Start(ctx, "cache.in_memory.clear")
+	defer span.End()
+
+	span.SetAttributes(
+		attribute.String("app.request.request_id", reqID),
+	)
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 

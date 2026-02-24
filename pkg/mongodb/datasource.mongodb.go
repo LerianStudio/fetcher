@@ -23,10 +23,10 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 )
 
-// Repository defines an interface for querying data from MongoDB collections.
+// Datasource defines an interface for querying data from MongoDB collections.
 //
-//go:generate mockgen --destination=datasource.mongodb.mock.go --package=mongodb . Repository
-type Repository interface {
+//go:generate mockgen --destination=datasource.mongodb.mock.go --package=mongodb . Datasource
+type Datasource interface {
 	Query(ctx context.Context, collection string, fields []string, filter map[string][]any) ([]map[string]any, error)
 	QueryWithAdvancedFilters(ctx context.Context, collection string, fields []string, filter map[string]job.FilterCondition) ([]map[string]any, error)
 	GetDatabaseSchema(ctx context.Context) ([]CollectionSchema, error)
@@ -80,7 +80,7 @@ func (ds *ExternalDataSource) CloseConnection(ctx context.Context) error {
 		err := ds.connection.DB.Disconnect(ctx)
 		if err != nil {
 			ds.connection.Logger.Errorf("Error closing MongoDB connection: %v", err)
-			return err
+			return fmt.Errorf("failed to close MongoDB connection: %w", err)
 		}
 
 		ds.connection.DB = nil
@@ -98,7 +98,7 @@ func (ds *ExternalDataSource) Query(ctx context.Context, collection string, fiel
 
 	logger.Infof("Querying %s collection with fields %v", collection, fields)
 
-	_, span := tracer.Start(ctx, "mongodb.data_source.query")
+	ctx, span := tracer.Start(ctx, "mongodb.data_source.query")
 	defer span.End()
 
 	span.SetAttributes(
@@ -255,7 +255,7 @@ func convertBsonValue(value any) any {
 func (ds *ExternalDataSource) GetDatabaseSchema(ctx context.Context) ([]CollectionSchema, error) {
 	logger, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
 
-	_, span := tracer.Start(ctx, "mongodb.data_source.get_database_schema")
+	ctx, span := tracer.Start(ctx, "mongodb.data_source.get_database_schema")
 	defer span.End()
 
 	span.SetAttributes(
@@ -580,7 +580,7 @@ func (ds *ExternalDataSource) QueryWithAdvancedFilters(ctx context.Context, coll
 
 	logger.Infof("Querying %s collection with advanced filters on fields %v", collection, fields)
 
-	_, span := tracer.Start(ctx, "mongodb.data_source.query_with_advanced_filters")
+	ctx, span := tracer.Start(ctx, "mongodb.data_source.query_with_advanced_filters")
 	defer span.End()
 
 	span.SetAttributes(

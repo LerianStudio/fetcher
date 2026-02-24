@@ -14,7 +14,7 @@ func TestValidatePostgreSQLMode(t *testing.T) {
 		wantError bool
 	}{
 		// Valid modes - from PostgreSQL documentation
-		{name: "empty string is valid (defaults to disable)", mode: "", wantError: false},
+		{name: "empty string is invalid (must use explicit mode)", mode: "", wantError: true},
 		{name: "disable is valid", mode: "disable", wantError: false},
 		{name: "allow is valid", mode: "allow", wantError: false},
 		{name: "prefer is valid", mode: "prefer", wantError: false},
@@ -59,6 +59,6 @@ func TestGetValidPostgreSQLModes(t *testing.T) {
 	modes := GetValidPostgreSQLModes()
 
 	// Verify all expected modes are present
-	expected := []string{"", "disable", "allow", "prefer", "require", "verify-ca", "verify-full"}
+	expected := []string{"disable", "allow", "prefer", "require", "verify-ca", "verify-full"}
 	assert.ElementsMatch(t, expected, modes, "Should return all valid PostgreSQL SSL modes")
 }

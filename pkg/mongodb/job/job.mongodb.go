@@ -3,6 +3,7 @@ package job
 import (
 	"context"
 	"errors"
+	"fmt"
 	"regexp"
 	"strings"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/model"
+	portsJob "github.com/LerianStudio/fetcher/pkg/ports/job"
 
 	"github.com/LerianStudio/lib-commons/v2/commons"
 	libMongo "github.com/LerianStudio/lib-commons/v2/commons/mongo"
@@ -31,19 +33,10 @@ const (
 	DefaultInitTimeout = 10 * time.Second
 )
 
-// Repository defines the MongoDB contract for the jobs collection.
-//
-//go:generate mockgen --destination=job.mongodb.mock.go --package=job . Repository
-type Repository interface {
-	Create(ctx context.Context, job *model.Job) (*model.Job, error)
-	Update(ctx context.Context, job *model.Job) (*model.Job, error)
-	UpdateStatus(ctx context.Context, id, organizationID uuid.UUID, status model.JobStatus, resultPath string, metadata map[string]any) error
-	FindByID(ctx context.Context, id, organizationID uuid.UUID) (*model.Job, error)
-	FindByRequestHashWithinWindow(ctx context.Context, organizationID uuid.UUID, requestHash string, windowMinutes int) (*model.Job, error)
-	List(ctx context.Context, filters *ListFilter) ([]*model.Job, error)
-	ExistsRunningByMappedFieldKey(ctx context.Context, organizationID uuid.UUID, keyPattern string) (bool, error)
-}
+// Repository is an alias for the domain port interface defined in pkg/ports/job.
+type Repository = portsJob.Repository
 
+//go:generate mockgen --destination=mock_db_provider_test.go --package=job . mongoDatabaseProvider
 type mongoDatabaseProvider interface {
 	GetDB(ctx context.Context) (*mongo.Client, error)
 }
@@ -58,6 +51,9 @@ type RepositoryConfig struct {
 }
 
 // JobMongoDBRepository implements Repository backed by MongoDB.
+// NOTE: Span names in this file use the pattern "mongodb.verb_entity" (e.g., "mongodb.create_job").
+// The preferred convention is "mongodb.entity.operation" (e.g., "mongodb.job.create").
+// This inconsistency is tracked for a future rename when dashboards and alerts can be updated.
 type JobMongoDBRepository struct {
 	connection mongoDatabaseProvider
 	Database   string
@@ -66,7 +62,7 @@ type JobMongoDBRepository struct {
 
 // NewJobMongoDBRepository provisions a repository using the given client.
 // Accepts an optional RepositoryConfig; if nil, defaults are used.
-func NewJobMongoDBRepository(mc *libMongo.MongoConnection, cfg ...RepositoryConfig) (*JobMongoDBRepository, error) {
+func NewJobMongoDBRepository(ctx context.Context, mc *libMongo.MongoConnection, cfg ...RepositoryConfig) (*JobMongoDBRepository, error) {
 	config := RepositoryConfig{
 		InitTimeout: DefaultInitTimeout,
 	}
@@ -83,11 +79,11 @@ func NewJobMongoDBRepository(mc *libMongo.MongoConnection, cfg ...RepositoryConf
 		config:     config,
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), config.InitTimeout)
+	ctx, cancel := context.WithTimeout(ctx, config.InitTimeout)
 	defer cancel()
 
 	if _, err := repo.connection.GetDB(ctx); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to connect to database: %w", err)
 	}
 
 	return repo, nil
@@ -128,7 +124,7 @@ func (jr *JobMongoDBRepository) Create(ctx context.Context, job *model.Job) (*mo
 	db, err := jr.connection.GetDB(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
-		return nil, err
+		return nil, fmt.Errorf("failed to get database connection: %w", err)
 	}
 
 	coll := db.Database(strings.ToLower(jr.Database)).Collection(strings.ToLower(constant.MongoCollectionJob))
@@ -136,7 +132,7 @@ func (jr *JobMongoDBRepository) Create(ctx context.Context, job *model.Job) (*mo
 
 	if err := record.FromEntity(job); err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to convert entity to MongoDB model", err)
-		return nil, err
+		return nil, fmt.Errorf("failed to convert job entity to model: %w", err)
 	}
 
 	ctx, spanInsert := tracer.Start(ctx, "mongodb.create_job.insert")
@@ -151,7 +147,7 @@ func (jr *JobMongoDBRepository) Create(ctx context.Context, job *model.Job) (*mo
 
 	if _, err := coll.InsertOne(ctx, record); err != nil {
 		libOpentelemetry.HandleSpanError(&spanInsert, "Failed to insert job", err)
-		return nil, err
+		return nil, fmt.Errorf("failed to insert job: %w", err)
 	}
 
 	job, err = record.ToEntity()
@@ -191,7 +187,7 @@ func (jr *JobMongoDBRepository) Update(ctx context.Context, job *model.Job) (*mo
 	db, err := jr.connection.GetDB(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
-		return nil, err
+		return nil, fmt.Errorf("failed to get database connection: %w", err)
 	}
 
 	coll := db.Database(strings.ToLower(jr.Database)).Collection(strings.ToLower(constant.MongoCollectionJob))
@@ -207,6 +203,7 @@ func (jr *JobMongoDBRepository) Update(ctx context.Context, job *model.Job) (*mo
 			"filters":       job.Filters,
 			"status":        job.Status,
 			"result_path":   job.ResultPath,
+			"result_hmac":   job.ResultHMAC,
 			"completed_at":  job.CompletedAt,
 		},
 	}
@@ -225,7 +222,7 @@ func (jr *JobMongoDBRepository) Update(ctx context.Context, job *model.Job) (*mo
 	opts := options.FindOneAndUpdate().SetReturnDocument(options.After)
 	if err := coll.FindOneAndUpdate(ctx, filter, update, opts).Decode(&record); err != nil {
 		libOpentelemetry.HandleSpanError(&spanUpdate, "Failed to update job", err)
-		return nil, err
+		return nil, fmt.Errorf("failed to update job: %w", err)
 	}
 
 	job, err = record.ToEntity()
@@ -237,8 +234,8 @@ func (jr *JobMongoDBRepository) Update(ctx context.Context, job *model.Job) (*mo
 	return job, nil
 }
 
-// UpdateStatus updates only the status, resultPath and metadata of a job, automatically managing CompletedAt.
-func (jr *JobMongoDBRepository) UpdateStatus(ctx context.Context, id, organizationID uuid.UUID, status model.JobStatus, resultPath string, metadata map[string]any) error {
+// UpdateStatus updates only the status, resultPath, resultHMAC and metadata of a job, automatically managing CompletedAt.
+func (jr *JobMongoDBRepository) UpdateStatus(ctx context.Context, id, organizationID uuid.UUID, status model.JobStatus, resultPath, resultHMAC string, metadata map[string]any) error {
 	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "mongodb.update_job_status")
@@ -254,7 +251,7 @@ func (jr *JobMongoDBRepository) UpdateStatus(ctx context.Context, id, organizati
 
 	if !status.IsValid() {
 		err := errors.New("invalid job status")
-		libOpentelemetry.HandleSpanError(&span, "Invalid status", err)
+		libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "Invalid status", err)
 
 		return err
 	}
@@ -262,7 +259,7 @@ func (jr *JobMongoDBRepository) UpdateStatus(ctx context.Context, id, organizati
 	db, err := jr.connection.GetDB(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
-		return err
+		return fmt.Errorf("failed to get database connection: %w", err)
 	}
 
 	coll := db.Database(strings.ToLower(jr.Database)).Collection(strings.ToLower(constant.MongoCollectionJob))
@@ -294,9 +291,23 @@ func (jr *JobMongoDBRepository) UpdateStatus(ctx context.Context, id, organizati
 		update["$set"].(bson.M)["result_path"] = resultPath
 	}
 
-	// Update metadata if provided
-	if metadata != nil {
-		update["$set"].(bson.M)["metadata"] = metadata
+	// Update resultHMAC if provided
+	if resultHMAC != "" {
+		update["$set"].(bson.M)["result_hmac"] = resultHMAC
+	}
+
+	// Merge metadata fields using dot-notation so individual keys are set
+	// without replacing the entire metadata document. This preserves existing
+	// metadata fields (e.g. "source") when adding error information.
+	for k, v := range metadata {
+		if strings.Contains(k, ".") || strings.HasPrefix(k, "$") {
+			err := fmt.Errorf("invalid metadata key %q: must not contain '.' or start with '$'", k)
+			libOpentelemetry.HandleSpanError(&span, "Invalid metadata key", err)
+
+			return err
+		}
+
+		update["$set"].(bson.M)["metadata."+k] = v
 	}
 
 	ctx, spanUpdate := tracer.Start(ctx, "mongodb.update_job_status.update_one")
@@ -311,12 +322,12 @@ func (jr *JobMongoDBRepository) UpdateStatus(ctx context.Context, id, organizati
 	result, err := coll.UpdateOne(ctx, filter, update)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&spanUpdate, "Failed to update job status", err)
-		return err
+		return fmt.Errorf("failed to update job status: %w", err)
 	}
 
 	if result.MatchedCount == 0 {
 		err := errors.New("job not found")
-		libOpentelemetry.HandleSpanError(&spanUpdate, "Job not found", err)
+		libOpentelemetry.HandleSpanBusinessErrorEvent(&spanUpdate, "Job not found", err)
 
 		return err
 	}
@@ -341,7 +352,7 @@ func (jr *JobMongoDBRepository) FindByID(ctx context.Context, id, organizationID
 	db, err := jr.connection.GetDB(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
-		return nil, err
+		return nil, fmt.Errorf("failed to get database connection: %w", err)
 	}
 
 	coll := db.Database(strings.ToLower(jr.Database)).Collection(strings.ToLower(constant.MongoCollectionJob))
@@ -360,7 +371,7 @@ func (jr *JobMongoDBRepository) FindByID(ctx context.Context, id, organizationID
 
 		libOpentelemetry.HandleSpanError(&span, "Failed to find job", err)
 
-		return nil, err
+		return nil, fmt.Errorf("failed to find job by id: %w", err)
 	}
 
 	job, err := record.ToEntity()
@@ -396,7 +407,7 @@ func (jr *JobMongoDBRepository) FindByRequestHashWithinWindow(ctx context.Contex
 	db, err := jr.connection.GetDB(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
-		return nil, err
+		return nil, fmt.Errorf("failed to get database connection: %w", err)
 	}
 
 	coll := db.Database(strings.ToLower(jr.Database)).Collection(strings.ToLower(constant.MongoCollectionJob))
@@ -425,7 +436,69 @@ func (jr *JobMongoDBRepository) FindByRequestHashWithinWindow(ctx context.Contex
 
 		libOpentelemetry.HandleSpanError(&span, "Failed to find job by request hash", err)
 
-		return nil, err
+		return nil, fmt.Errorf("failed to find job by request hash: %w", err)
+	}
+
+	job, err := record.ToEntity()
+	if err != nil {
+		libOpentelemetry.HandleSpanError(&span, "Failed to convert MongoDB model to entity", err)
+		return nil, pkg.ValidateInternalError(err, "job")
+	}
+
+	return job, nil
+}
+
+// FindActiveByRequestHash finds the most recent active job (pending or processing)
+// for a request hash in an organization. Returns nil without error when no active
+// matching job exists.
+func (jr *JobMongoDBRepository) FindActiveByRequestHash(ctx context.Context, organizationID uuid.UUID, requestHash string) (*model.Job, error) {
+	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+
+	ctx, span := tracer.Start(ctx, "mongodb.find_active_job_by_request_hash")
+	defer span.End()
+
+	attributes := []attribute.KeyValue{
+		attribute.String("app.request.request_id", reqID),
+		attribute.String("app.request.organization_id", organizationID.String()),
+		attribute.String("app.request.request_hash", requestHash),
+	}
+	span.SetAttributes(attributes...)
+
+	if requestHash == "" {
+		return nil, nil
+	}
+
+	db, err := jr.connection.GetDB(ctx)
+	if err != nil {
+		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
+		return nil, fmt.Errorf("failed to get database connection: %w", err)
+	}
+
+	coll := db.Database(strings.ToLower(jr.Database)).Collection(strings.ToLower(constant.MongoCollectionJob))
+
+	filter := bson.M{
+		"organization_id": organizationID,
+		"request_hash":    requestHash,
+		"status": bson.M{
+			"$in": bson.A{model.JobStatusPending, model.JobStatusProcessing},
+		},
+	}
+
+	if err := setSpanAttributesFromStruct(&span, "app.request.repository_filter", filter); err != nil {
+		libOpentelemetry.HandleSpanError(&span, "Failed to convert filter to JSON", err)
+	}
+
+	opts := options.FindOne().SetSort(bson.D{{Key: "created_at", Value: -1}})
+
+	var record JobMongoDBModel
+	if err := coll.FindOne(ctx, filter, opts).Decode(&record); err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			return nil, nil
+		}
+
+		libOpentelemetry.HandleSpanError(&span, "Failed to find active job by request hash", err)
+
+		return nil, fmt.Errorf("failed to find active job by request hash: %w", err)
 	}
 
 	job, err := record.ToEntity()
@@ -516,7 +589,7 @@ func (jr *JobMongoDBRepository) List(ctx context.Context, filters *ListFilter) (
 	db, err := jr.connection.GetDB(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
-		return nil, err
+		return nil, fmt.Errorf("failed to get database connection: %w", err)
 	}
 
 	coll := db.Database(strings.ToLower(jr.Database)).Collection(strings.ToLower(constant.MongoCollectionJob))
@@ -531,7 +604,7 @@ func (jr *JobMongoDBRepository) List(ctx context.Context, filters *ListFilter) (
 	cur, err := coll.Find(ctx, queryFilter, &opts)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to list jobs", err)
-		return nil, err
+		return nil, fmt.Errorf("failed to list jobs: %w", err)
 	}
 	defer cur.Close(ctx)
 
@@ -646,7 +719,7 @@ func (jr *JobMongoDBRepository) scanJobs(ctx context.Context, cur *mongo.Cursor,
 		var record JobMongoDBModel
 		if err := cur.Decode(&record); err != nil {
 			libOpentelemetry.HandleSpanError(span, "Failed to decode job record", err)
-			return nil, err
+			return nil, fmt.Errorf("failed to decode job record: %w", err)
 		}
 
 		job, err := record.ToEntity()
@@ -660,7 +733,7 @@ func (jr *JobMongoDBRepository) scanJobs(ctx context.Context, cur *mongo.Cursor,
 
 	if err := cur.Err(); err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to iterate over jobs", err)
-		return nil, err
+		return nil, fmt.Errorf("failed to iterate over jobs: %w", err)
 	}
 
 	return jobs, nil

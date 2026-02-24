@@ -7,8 +7,8 @@ import (
 
 	"github.com/LerianStudio/fetcher/pkg/rabbitmq"
 	"github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
-	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
+	"go.uber.org/mock/gomock"
 )
 
 func TestNewPublisherRoutes(t *testing.T) {
@@ -22,6 +22,9 @@ func TestNewPublisherRoutes(t *testing.T) {
 	pr := NewPublisherRoutesWithAdapter(mockAdapter, logger, telemetry)
 	assert.NotNil(t, pr)
 	assert.Equal(t, mockAdapter, pr.adapter)
+
+	prNilTelemetry := NewPublisherRoutesWithAdapter(mockAdapter, logger, nil)
+	assert.NotNil(t, prNilTelemetry)
 }
 
 func TestPublisherRoutes_Publish(t *testing.T) {

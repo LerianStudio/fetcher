@@ -1,6 +1,7 @@
 package bootstrap
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 
@@ -8,6 +9,7 @@ import (
 	"github.com/LerianStudio/fetcher/components/worker/internal/services"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
+	"github.com/LerianStudio/fetcher/pkg/datasource"
 	"github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 	mongoDB "github.com/LerianStudio/lib-commons/v2/commons/mongo"
 
@@ -62,14 +64,22 @@ type Config struct {
 	// Encryption
 	AppEncryptionKey        string `env:"APP_ENC_KEY"`
 	AppEncryptionKeyVersion string `env:"APP_ENC_KEY_VERSION"`
+	// SeaweedFS encryption keys
+	CryptoEncryptSecretKeySeaweedFS string `env:"CRYPTO_ENCRYPT_SECRET_KEY_SEAWEEDFS"`
+	CryptoHashSecretKeySeaweedFS    string `env:"CRYPTO_HASH_SECRET_KEY_SEAWEEDFS"`
+	// CRM plugin encryption keys
+	CryptoEncryptSecretKeyPluginCRM string `env:"CRYPTO_ENCRYPT_SECRET_KEY_PLUGIN_CRM"`
+	CryptoHashSecretKeyPluginCRM    string `env:"CRYPTO_HASH_SECRET_KEY_PLUGIN_CRM"`
 }
 
 // InitWorker initializes and configures the application's dependencies and returns the Service instance.
-func InitWorker() *Service {
+func InitWorker() (*Service, error) {
 	cfg := &Config{}
 	if err := libCommons.SetConfigFromEnvVars(cfg); err != nil {
-		panic(err)
+		return nil, fmt.Errorf("load environment configuration: %w", err)
 	}
+
+	ctx := context.Background()
 
 	logger := libZap.InitializeLogger()
 
@@ -114,21 +124,44 @@ func InitWorker() *Service {
 		Logger:                 logger,
 	}
 
-	// Init crypto service (same as manager) - moved before RabbitMQ for signer
-	cryptoService, errCrypto := crypto.NewAESGCMServiceFromEnv(cfg.AppEncryptionKey, cfg.AppEncryptionKeyVersion)
-	if errCrypto != nil {
-		logger.Fatalf("Failed to initialize crypto service: %v", errCrypto)
+	// Init key deriver for cryptographic key segregation
+	masterKey, err := crypto.DecodeMasterKey(cfg.AppEncryptionKey)
+	if err != nil {
+		return nil, fmt.Errorf("decode master encryption key: %w", err)
 	}
 
-	// Init message signer for RabbitMQ
-	messageSigner, errSigner := crypto.NewHMACSignerFromCryptor(cryptoService)
+	keyDeriver, err := crypto.NewHKDFKeyDeriver(masterKey)
+	if err != nil {
+		return nil, fmt.Errorf("initialize key deriver: %w", err)
+	}
+
+	logger.Info("Key derivation initialized successfully")
+
+	// Init crypto service with derived credential key
+	cryptoService, errCrypto := crypto.NewAESGCMService(keyDeriver.GetCredentialKey(), cfg.AppEncryptionKeyVersion)
+	if errCrypto != nil {
+		return nil, fmt.Errorf("initialize crypto service: %w", errCrypto)
+	}
+
+	// Init message signer for RabbitMQ with derived internal HMAC key
+	cryptoWithInternalHMAC, errSigner := crypto.NewHMACSigner(keyDeriver.GetInternalHMACKey(), crypto.SignatureVersion)
 	if errSigner != nil {
-		logger.Fatalf("Failed to initialize message signer: %v", errSigner)
+		return nil, fmt.Errorf("initialize internal message signer: %w", errSigner)
+	}
+
+	// Init document signer for external verification with derived external HMAC key
+	cryptoWithExternalHMAC, errSigner := crypto.NewHMACSigner(keyDeriver.GetExternalHMACKey(), crypto.SignatureVersion)
+	if errSigner != nil {
+		return nil, fmt.Errorf("initialize external document signer: %w", errSigner)
 	}
 
 	// Initialize RabbitMQ consumer and publisher with separate connections
-	consumerRoutes := rabbitmq.NewConsumerRoutes(consumerConnection, cfg.RabbitMQNumWorkers, logger, telemetry, messageSigner)
-	publisherRoutes := rabbitmq.NewPublisherRoutes(publisherConnection, logger, telemetry, messageSigner)
+	consumerRoutes, errRoutes := rabbitmq.NewConsumerRoutes(consumerConnection, cfg.RabbitMQNumWorkers, logger, telemetry, cryptoWithInternalHMAC, cfg.EnvName)
+	if errRoutes != nil {
+		return nil, fmt.Errorf("initialize consumer routes: %w", errRoutes)
+	}
+
+	publisherRoutes := rabbitmq.NewPublisherRoutes(publisherConnection, logger, telemetry, cryptoWithExternalHMAC)
 
 	// Config SeaweedFS connection
 	seaweedFSEndpoint := fmt.Sprintf("http://%s:%s", cfg.SeaweedFSHost, cfg.SeaweedFSFilerPort)
@@ -153,14 +186,14 @@ func InitWorker() *Service {
 	externalDataSeaweedFSRepository := external.NewSimpleRepository(seaweedFSClient, constant.ExternalDataBucketName)
 
 	// Initialize MongoDB repositories
-	jobRepository, errJobRepo := job.NewJobMongoDBRepository(mongoConnection)
+	jobRepository, errJobRepo := job.NewJobMongoDBRepository(ctx, mongoConnection)
 	if errJobRepo != nil {
-		logger.Fatalf("Failed to initialize job repository: %v", errJobRepo)
+		return nil, fmt.Errorf("initialize job repository: %w", errJobRepo)
 	}
 
-	connectionRepository, errConnectRepo := connection.NewConnectionMongoDBRepository(mongoConnection)
+	connectionRepository, errConnectRepo := connection.NewConnectionMongoDBRepository(ctx, mongoConnection)
 	if errConnectRepo != nil {
-		logger.Fatalf("Failed to initialize connection repository: %v", errConnectRepo)
+		return nil, fmt.Errorf("initialize connection repository: %w", errConnectRepo)
 	}
 
 	service := &services.UseCase{
@@ -168,10 +201,14 @@ func InitWorker() *Service {
 		JobRepository:         jobRepository,
 		ConnectionRepository:  connectionRepository,
 		Cryptor:               cryptoService,
+		DocumentSigner:        cryptoWithExternalHMAC,
 		FileTTL:               cfg.SeaweedFSTTL,
 		RabbitMQPublisher:     publisherRoutes,
 		JobEventsExchange:     cfg.RabbitMQJobEventsExchange,
 	}
+	service.SetSeaweedFSSecrets(cfg.CryptoEncryptSecretKeySeaweedFS, cfg.CryptoHashSecretKeySeaweedFS)
+	service.SetCRMSecrets(cfg.CryptoEncryptSecretKeyPluginCRM, cfg.CryptoHashSecretKeyPluginCRM)
+	service.SetDataSourceFactory(datasource.NewDataSourceFromConnectionWithLogger(logger))
 
 	if cfg.SeaweedFSTTL != "" {
 		logger.Infof("Reports will expire after: %s", cfg.SeaweedFSTTL)
@@ -185,11 +222,11 @@ func InitWorker() *Service {
 		cfg.OrganizationIDs,
 		&logger,
 	)
-	multiQueueConsumer := NewMultiQueueConsumer(consumerRoutes, service)
+	multiQueueConsumer := NewMultiQueueConsumer(consumerRoutes, service, cfg.RabbitMQGenerateReportQueue)
 
 	return &Service{
 		MultiQueueConsumer: multiQueueConsumer,
 		Logger:             logger,
 		licenseShutdown:    licenseClient.GetLicenseManagerShutdown(),
-	}
+	}, nil
 }

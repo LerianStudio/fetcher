@@ -26,6 +26,7 @@ func NewRoutes(
 	auth *middlewareAuth.AuthClient,
 	licenseClient *libLicense.LicenseClient,
 	connectionHandler *ConnectionHandler,
+	migrationHandler *MigrationHandler,
 	fetcherHandler *FetcherHandler,
 ) *fiber.App {
 	f := fiber.New(fiber.Config{
@@ -57,8 +58,12 @@ func NewRoutes(
 	f.Get("/v1/management/connections", auth.Authorize(applicationName, connectionsResource, "get"), connectionHandler.ListConnections)
 	// Schema Validation - must be before :id routes to avoid conflict
 	f.Post("/v1/management/connections/validate-schema", auth.Authorize(applicationName, connectionsResource, "post"), connectionHandler.ValidateSchema)
+	// Migration - must be before :id routes to avoid conflict
+	f.Get("/v1/management/connections/unassigned", auth.Authorize(applicationName, connectionsResource, "get"), migrationHandler.ListUnassignedConnections)
+	f.Post("/v1/management/connections/:id/assign", auth.Authorize(applicationName, connectionsResource, "post"), migrationHandler.AssignConnectionToProduct)
 	f.Get("/v1/management/connections/:id", auth.Authorize(applicationName, connectionsResource, "get"), connectionHandler.GetConnection)
 	f.Post("/v1/management/connections/:id/test", auth.Authorize(applicationName, connectionsResource, "post"), connectionHandler.TestConnection)
+	f.Get("/v1/management/connections/:id/schema", auth.Authorize(applicationName, connectionsResource, "get"), connectionHandler.GetConnectionSchema)
 	f.Patch("/v1/management/connections/:id", auth.Authorize(applicationName, connectionsResource, "patch"), connectionHandler.UpdateConnection)
 	f.Delete("/v1/management/connections/:id", auth.Authorize(applicationName, connectionsResource, "delete"), connectionHandler.DeleteConnection)
 

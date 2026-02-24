@@ -3,21 +3,21 @@ package rabbitmq
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/LerianStudio/fetcher/pkg/crypto"
+	portPublisher "github.com/LerianStudio/fetcher/pkg/ports/publisher"
 	"github.com/LerianStudio/fetcher/pkg/rabbitmq"
+	libCommons "github.com/LerianStudio/lib-commons/v2/commons"
 	"github.com/LerianStudio/lib-commons/v2/commons/log"
 	"github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
 	libRabbitmq "github.com/LerianStudio/lib-commons/v2/commons/rabbitmq"
+	"go.opentelemetry.io/otel/attribute"
 )
 
-// PublisherRepository provides an interface for Publisher related to rabbitmq.
-//
-//go:generate mockgen --destination=publisher.mock.go --package=rabbitmq . PublisherRepository
-type PublisherRepository interface {
-	Publish(ctx context.Context, exchange, routingKey string, body []byte) error
-	Shutdown(ctx context.Context) error
-}
+// PublisherRepository is an alias for the port interface.
+// The canonical definition lives in pkg/ports/publisher.
+type PublisherRepository = portPublisher.Repository
 
 // PublisherRoutes wraps RabbitMQAdapter to support publishing messages to topic exchanges.
 type PublisherRoutes struct {
@@ -38,10 +38,15 @@ func NewPublisherRoutes(conn *libRabbitmq.RabbitMQConnection, logger log.Logger,
 
 // NewPublisherRoutesWithAdapter creates a new instance of PublisherRoutes using a specific RabbitMQ adapter.
 func NewPublisherRoutesWithAdapter(adapter rabbitmq.Adapter, logger log.Logger, telemetry *opentelemetry.Telemetry) *PublisherRoutes {
+	telemetryValue := opentelemetry.Telemetry{}
+	if telemetry != nil {
+		telemetryValue = *telemetry
+	}
+
 	pr := &PublisherRoutes{
 		adapter:   adapter,
 		Logger:    logger,
-		Telemetry: *telemetry,
+		Telemetry: telemetryValue,
 	}
 
 	return pr
@@ -49,11 +54,25 @@ func NewPublisherRoutesWithAdapter(adapter rabbitmq.Adapter, logger log.Logger, 
 
 // Publish sends a message to the specified exchange with the given routing key.
 func (pr *PublisherRoutes) Publish(ctx context.Context, exchange, routingKey string, body []byte) error {
+	_, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
+
+	ctx, span := tracer.Start(ctx, "adapter.rabbitmq.publish")
+	defer span.End()
+
+	span.SetAttributes(
+		attribute.String("app.request.request_id", reqID),
+		attribute.String("messaging.exchange", exchange),
+		attribute.String("messaging.routing_key", routingKey),
+		attribute.Int("messaging.body_size", len(body)),
+	)
+
 	pr.Debugf("Publishing message to exchange=%s, routingKey=%s", exchange, routingKey)
 
 	if err := pr.adapter.ProducerDefault(ctx, exchange, routingKey, body, nil); err != nil {
+		opentelemetry.HandleSpanError(&span, "Failed to publish message", err)
 		pr.Errorf("Error publishing message to exchange %s with routing key %s: %v", exchange, routingKey, err)
-		return err
+
+		return fmt.Errorf("failed to publish message to exchange %s: %w", exchange, err)
 	}
 
 	pr.Debugf("Successfully published message to exchange=%s, routingKey=%s", exchange, routingKey)
@@ -68,7 +87,7 @@ func (pr *PublisherRoutes) Shutdown(ctx context.Context) error {
 	// Shutdown the RabbitMQ adapter
 	if err := pr.adapter.Shutdown(ctx); err != nil {
 		pr.Errorf("Error shutting down RabbitMQ adapter: %v", err)
-		return err
+		return fmt.Errorf("failed to shutdown RabbitMQ adapter: %w", err)
 	}
 
 	pr.Info("PublisherRoutes shutdown complete")

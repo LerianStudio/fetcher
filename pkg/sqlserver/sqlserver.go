@@ -2,6 +2,7 @@ package sqlserver
 
 import (
 	"database/sql"
+	"fmt"
 	"strings"
 
 	"github.com/LerianStudio/fetcher/pkg/constant"
@@ -28,7 +29,7 @@ func (c *Connection) Connect() error {
 	db, err := sql.Open("sqlserver", c.ConnectionString)
 	if err != nil {
 		c.Logger.Errorf("Error opening connection: %v", err)
-		return err
+		return fmt.Errorf("failed to open SQL Server connection: %w", err)
 	}
 
 	if err := db.Ping(); err != nil {
@@ -39,7 +40,7 @@ func (c *Connection) Connect() error {
 
 		c.Logger.Errorf("Error pinging SQL Server: %v", err)
 
-		return err
+		return fmt.Errorf("failed to ping SQL Server: %w", err)
 	}
 
 	db.SetMaxOpenConns(c.MaxOpenConnections)
@@ -60,7 +61,7 @@ func (c *Connection) Connect() error {
 func (sc *Connection) GetDB() (*sql.DB, error) {
 	if sc.ConnectionDB == nil {
 		if err := sc.Connect(); err != nil {
-			sc.Logger.Infof("ERRCONECT %s", err)
+			sc.Logger.Errorf("ERR_CONNECT: failed to connect to SQL Server: %v", err)
 			return nil, err
 		}
 	}

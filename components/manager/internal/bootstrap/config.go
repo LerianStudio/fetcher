@@ -11,13 +11,15 @@ import (
 	connectionCommand "github.com/LerianStudio/fetcher/components/manager/internal/services/command"
 	connectionQuery "github.com/LerianStudio/fetcher/components/manager/internal/services/query"
 
-	cacheRepo "github.com/LerianStudio/fetcher/components/manager/internal/adapters/cache"
+	cacheAdapter "github.com/LerianStudio/fetcher/components/manager/internal/adapters/cache"
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
+	datasourceFactory "github.com/LerianStudio/fetcher/pkg/datasource"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 	"github.com/LerianStudio/fetcher/pkg/mongodb/job"
+	cacheRepo "github.com/LerianStudio/fetcher/pkg/ports/cache"
 	"github.com/LerianStudio/fetcher/pkg/rabbitmq"
 	"github.com/LerianStudio/fetcher/pkg/ratelimit"
 	redisCache "github.com/LerianStudio/fetcher/pkg/redis"
@@ -81,10 +83,10 @@ type Config struct {
 }
 
 // InitServers initiate http and grpc servers.
-func InitServers() *Service {
+func InitServers() (*Service, error) {
 	cfg := &Config{}
 	if err := pkg.SetConfigFromEnvVars(cfg); err != nil {
-		panic(err)
+		return nil, fmt.Errorf("load environment configuration: %w", err)
 	}
 
 	ctx := context.Background()
@@ -115,39 +117,52 @@ func InitServers() *Service {
 		Logger:                 logger,
 	}
 
-	connectionRepository, err := connection.NewConnectionMongoDBRepository(mongoConnection)
+	connectionRepository, err := connection.NewConnectionMongoDBRepository(ctx, mongoConnection)
 	if err != nil {
-		logger.Fatalf("Failed to create MongoDB repository: %v", err)
+		return nil, fmt.Errorf("create connection repository: %w", err)
 	}
 
 	logger.Info("Ensuring MongoDB indexes exist for connections...")
 
 	if errConnRepo := connectionRepository.EnsureIndexes(ctx); errConnRepo != nil {
-		logger.Fatalf("Failed to ensure MongoDB indexes: %v", errConnRepo)
+		return nil, fmt.Errorf("ensure connection indexes: %w", errConnRepo)
 	}
 
 	// Init Job repository
-	jobRepository, err := job.NewJobMongoDBRepository(mongoConnection)
+	jobRepository, err := job.NewJobMongoDBRepository(ctx, mongoConnection)
 	if err != nil {
-		logger.Fatalf("Failed to create Job MongoDB repository: %v", err)
+		return nil, fmt.Errorf("create job repository: %w", err)
 	}
 
 	logger.Info("Ensuring MongoDB indexes exist for jobs...")
 
 	if errJobRepo := jobRepository.EnsureIndexes(ctx); errJobRepo != nil {
-		logger.Fatalf("Failed to ensure Job indexes: %v", errJobRepo)
+		return nil, fmt.Errorf("ensure job indexes: %w", errJobRepo)
 	}
 
-	// Init crypto
-	cryptoService, err := crypto.NewAESGCMServiceFromEnv(cfg.AppEncryptionKey, cfg.AppEncryptionKeyVersion)
+	// Init key deriver for cryptographic key segregation
+	masterKey, err := crypto.DecodeMasterKey(cfg.AppEncryptionKey)
 	if err != nil {
-		logger.Fatalf("Failed to initialize crypto service: %v", err)
+		return nil, fmt.Errorf("decode master encryption key: %w", err)
 	}
 
-	// Init message signer for RabbitMQ
-	messageSigner, err := crypto.NewHMACSignerFromCryptor(cryptoService)
+	keyDeriver, err := crypto.NewHKDFKeyDeriver(masterKey)
 	if err != nil {
-		logger.Fatalf("Failed to initialize message signer: %v", err)
+		return nil, fmt.Errorf("initialize key deriver: %w", err)
+	}
+
+	logger.Info("Key derivation initialized successfully")
+
+	// Init crypto service with derived credential key
+	cryptoService, err := crypto.NewAESGCMService(keyDeriver.GetCredentialKey(), cfg.AppEncryptionKeyVersion)
+	if err != nil {
+		return nil, fmt.Errorf("initialize crypto service: %w", err)
+	}
+
+	// Init message signer for RabbitMQ with derived internal HMAC key
+	cryptoWithInternalHMAC, err := crypto.NewHMACSigner(keyDeriver.GetInternalHMACKey(), crypto.SignatureVersion)
+	if err != nil {
+		return nil, fmt.Errorf("initialize internal message signer: %w", err)
 	}
 
 	// Init RabbitMQ
@@ -167,7 +182,7 @@ func InitServers() *Service {
 	}
 
 	rabbitMQOptions := rabbitmq.DefaultOptions()
-	rabbitMQOptions.Signer = messageSigner
+	rabbitMQOptions.Signer = cryptoWithInternalHMAC
 
 	rabbitMQAdapter := rabbitmq.NewRabbitMQAdapterWithOptions(rabbitMQConnection, rabbitMQOptions)
 
@@ -207,10 +222,10 @@ func InitServers() *Service {
 	)
 	if errCache != nil {
 		// This should never happen as NewCacheWithFallback handles Redis failures gracefully
-		logger.Fatalf("Failed to initialize cache: %v", errCache)
+		return nil, fmt.Errorf("initialize schema cache: %w", errCache)
 	}
 
-	schemaCache = cacheRepo.NewSchemaCache(genericCache, schemaCacheTTL)
+	schemaCache = cacheAdapter.NewSchemaCache(genericCache, schemaCacheTTL)
 
 	// Init services and handlers
 	createConnectionCmd := connectionCommand.NewCreateConnection(connectionRepository, cryptoService)
@@ -218,8 +233,13 @@ func InitServers() *Service {
 	deleteConnectionCmd := connectionCommand.NewDeleteConnection(connectionRepository, jobRepository)
 	getConnectionQuery := connectionQuery.NewGetConnection(connectionRepository)
 	listConnectionsQuery := connectionQuery.NewListConnections(connectionRepository)
-	testConnectionQuery := connectionQuery.NewTestConnection(connectionRepository, cryptoService, connectionTestStore)
+	testConnectionQuery := connectionQuery.NewTestConnection(connectionRepository, cryptoService, connectionTestStore, datasourceFactory.NewDataSourceFromConnectionWithLogger(logger))
 	validateSchemaQuery := connectionQuery.NewValidateSchema(connectionRepository, cryptoService, schemaCache)
+	getConnectionSchemaQuery := connectionQuery.NewGetConnectionSchema(
+		connectionRepository,
+		cryptoService,
+		datasourceFactory.NewDataSourceFromConnectionWithLogger(logger),
+	)
 
 	connectionHandler := in2.NewConnectionHandler(
 		createConnectionCmd,
@@ -229,7 +249,14 @@ func InitServers() *Service {
 		listConnectionsQuery,
 		testConnectionQuery,
 		validateSchemaQuery,
+		getConnectionSchemaQuery,
 	)
+
+	// Init Migration services and handler
+	assignConnectionCmd := connectionCommand.NewAssignConnection(connectionRepository)
+	listUnassignedQuery := connectionQuery.NewListUnassignedConnections(connectionRepository)
+
+	migrationHandler := in2.NewMigrationHandler(assignConnectionCmd, listUnassignedQuery)
 
 	// Init Fetcher services and handler
 	createFetcherJobCmd := connectionCommand.NewCreateFetcherJob(
@@ -238,19 +265,20 @@ func InitServers() *Service {
 		cryptoService,
 		rabbitMQAdapter,
 		cfg.RabbitMQGenerateReportQueue,
+		datasourceFactory.NewDataSourceFromConnectionWithLogger(logger),
 	)
 
 	getJobQuery := connectionQuery.NewGetJob(jobRepository)
 	fetcherHandler := in2.NewFetcherHandler(createFetcherJobCmd, getJobQuery)
 
 	// Init HTTP server
-	httpApp := in2.NewRoutes(logger, telemetry, authClient, licenseClient, connectionHandler, fetcherHandler)
+	httpApp := in2.NewRoutes(logger, telemetry, authClient, licenseClient, connectionHandler, migrationHandler, fetcherHandler)
 	serverAPI := NewServer(cfg, httpApp, logger, telemetry, licenseClient)
 
 	return &Service{
 		Server: serverAPI,
 		Logger: logger,
-	}
+	}, nil
 }
 
 // getSchemaCacheTTL parses the TTL from string and returns a time.Duration.

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
+	"strings"
 	"time"
 
 	libCommons "github.com/LerianStudio/lib-commons/v2/commons"
@@ -13,6 +15,10 @@ import (
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/trace"
 )
+
+var invalidRoutingSourceChars = regexp.MustCompile(`[^a-z0-9_-]+`)
+
+const maxRoutingSourceSegmentLength = 64
 
 // JobResultData contains information about the extraction result.
 // All fields use omitempty to only include data when provided.
@@ -28,6 +34,10 @@ type JobResultData struct {
 
 	// Format is the output format (e.g., "json").
 	Format string `json:"format,omitempty"`
+
+	// HMAC is the HMAC-SHA256 signature of the result data (before encryption).
+	// Consumers can use this to verify data integrity using the external HMAC key.
+	HMAC string `json:"hmac,omitempty"`
 }
 
 // JobNotificationOptions contains optional data for job notifications.
@@ -125,7 +135,7 @@ func (uc *UseCase) publishJobNotification(
 
 	if notification.Metadata != nil {
 		if src, ok := notification.Metadata["source"].(string); ok && src != "" {
-			source = src
+			source = sanitizeRoutingSourceSegment(src)
 		}
 	}
 
@@ -152,4 +162,21 @@ func (uc *UseCase) publishJobNotification(
 	logger.Infof("Successfully published job notification: jobId=%s, status=%s, routingKey=%s", message.JobID, status, routingKey)
 
 	return nil
+}
+
+func sanitizeRoutingSourceSegment(source string) string {
+	normalized := strings.ToLower(strings.TrimSpace(source))
+	normalized = invalidRoutingSourceChars.ReplaceAllString(normalized, "-")
+
+	normalized = strings.Trim(normalized, "-_")
+	if len(normalized) > maxRoutingSourceSegmentLength {
+		normalized = normalized[:maxRoutingSourceSegmentLength]
+		normalized = strings.Trim(normalized, "-_")
+	}
+
+	if normalized == "" {
+		return "unknown"
+	}
+
+	return normalized
 }

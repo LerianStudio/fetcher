@@ -142,7 +142,10 @@ func TestRedisConnection_Close(t *testing.T) {
 	require.NoError(t, err)
 
 	client := redis.NewClient(&redis.Options{
-		Addr: mr.Addr(),
+		Addr:         mr.Addr(),
+		DialTimeout:  100 * time.Millisecond,
+		ReadTimeout:  100 * time.Millisecond,
+		WriteTimeout: 100 * time.Millisecond,
 	})
 
 	conn := &RedisConnection{
@@ -176,7 +179,10 @@ func TestRedisConnection_Close_Error(t *testing.T) {
 	require.NoError(t, err)
 
 	client := redis.NewClient(&redis.Options{
-		Addr: mr.Addr(),
+		Addr:         mr.Addr(),
+		DialTimeout:  100 * time.Millisecond,
+		ReadTimeout:  100 * time.Millisecond,
+		WriteTimeout: 100 * time.Millisecond,
 	})
 
 	conn := &RedisConnection{
@@ -205,7 +211,10 @@ func TestRedisConnection_IsConnected(t *testing.T) {
 	defer mr.Close()
 
 	client := redis.NewClient(&redis.Options{
-		Addr: mr.Addr(),
+		Addr:         mr.Addr(),
+		DialTimeout:  100 * time.Millisecond,
+		ReadTimeout:  100 * time.Millisecond,
+		WriteTimeout: 100 * time.Millisecond,
 	})
 	defer client.Close()
 
@@ -224,7 +233,10 @@ func TestRedisConnection_IsConnected_Disconnected(t *testing.T) {
 	require.NoError(t, err)
 
 	client := redis.NewClient(&redis.Options{
-		Addr: mr.Addr(),
+		Addr:         mr.Addr(),
+		DialTimeout:  100 * time.Millisecond, // Fast timeout for tests
+		ReadTimeout:  100 * time.Millisecond,
+		WriteTimeout: 100 * time.Millisecond,
 	})
 	defer client.Close()
 

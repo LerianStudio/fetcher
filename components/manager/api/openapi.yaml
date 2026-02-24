@@ -12,7 +12,8 @@ paths:
     post:
       description: Create a new data extraction job. The request will be validated,
         deduplicated within a 5-minute window, and all referenced connections will
-        be tested before job creation.
+        be tested before job creation. The metadata.source field is required for product
+        isolation and datasource ownership validation.
       parameters:
       - description: The authorization token in the 'Bearer access_token' format.
           Only required when auth plugin is enabled.
@@ -31,7 +32,7 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/github_com_LerianStudio_fetcher_pkg_model.FetcherRequest'
-        description: Fetcher request payload
+        description: Fetcher request payload. metadata.source is required.
         required: true
       responses:
         "200":
@@ -127,7 +128,8 @@ paths:
       - Fetcher
   /v1/management/connections:
     get:
-      description: List connections with pagination and filters.
+      description: List connections with pagination and filters. When X-Product-Name
+        is provided, returns only connections associated with that product.
       parameters:
       - description: The authorization token in the 'Bearer access_token' format.
           Only required when auth plugin is enabled.
@@ -141,11 +143,16 @@ paths:
         required: true
         schema:
           type: string
-      - description: Page number (default 0)
+      - description: Product name. When provided, filters connections by product.
+        in: header
+        name: X-Product-Name
+        schema:
+          type: string
+      - description: Page number (minimum 1)
         in: query
         name: page
         schema:
-          default: 0
+          default: 1
           type: integer
       - description: Page size (default 50, max 1000)
         in: query
@@ -222,9 +229,10 @@ paths:
       tags:
       - Connections
     post:
-      description: Create a new database connection for the organization. ConfigName
-        must be unique per organization; password is encrypted and a UUID is generated
-        on creation.
+      description: Create a new database connection for the organization. The X-Product-Name
+        header is required and identifies the product for this connection. ConfigName
+        must be unique per organization (and per product when assigned); password
+        is encrypted and a UUID is generated on creation.
       parameters:
       - description: The authorization token in the 'Bearer access_token' format.
           Only required when auth plugin is enabled.
@@ -235,6 +243,12 @@ paths:
       - description: Organization ID
         in: header
         name: X-Organization-Id
+        required: true
+        schema:
+          type: string
+      - description: Product name (required, non-empty)
+        in: header
+        name: X-Product-Name
         required: true
         schema:
           type: string
@@ -276,10 +290,71 @@ paths:
       tags:
       - Connections
       x-codegen-request-body-name: connection
+  /v1/management/connections/unassigned:
+    get:
+      description: List connections that have no product assigned, useful for migration
+        purposes.
+      parameters:
+      - description: The authorization token in the 'Bearer access_token' format.
+          Only required when auth plugin is enabled.
+        in: header
+        name: Authorization
+        schema:
+          type: string
+      - description: Organization ID
+        in: header
+        name: X-Organization-Id
+        required: true
+        schema:
+          type: string
+      - description: Page number (minimum 1)
+        in: query
+        name: page
+        schema:
+          default: 1
+          type: integer
+      - description: Page size (default 50, max 1000)
+        in: query
+        name: limit
+        schema:
+          default: 50
+          type: integer
+      - description: Sort order
+        in: query
+        name: sortOrder
+        schema:
+          default: desc
+          enum:
+          - asc
+          - desc
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/inline_response_200'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Internal Server Error
+      summary: List unassigned connections
+      tags:
+      - Migration
   /v1/management/connections/validate-schema:
     post:
       description: Validate that tables and fields referenced in the request exist
-        in the configured datasources.
+        in the configured datasources. Returns 200 when validation passes, 422 when
+        validation fails with detailed error information.
       parameters:
       - description: The authorization token in the 'Bearer access_token' format.
           Only required when auth plugin is enabled.
@@ -306,19 +381,26 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/github_com_LerianStudio_fetcher_pkg_model.SchemaValidationResponse'
-          description: OK
+          description: Validation successful - all tables and fields exist
         "400":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/pkg.HTTPError'
-          description: Bad Request
+          description: Invalid request payload or missing headers
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_LerianStudio_fetcher_pkg_model.SchemaValidationErrorResponse'
+          description: Validation failed - schema errors found (missing tables, fields,
+            or unreachable datasources)
         "500":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/pkg.HTTPError'
-          description: Internal Server Error
+          description: Internal server error
       summary: Validate schema
       tags:
       - Connections
@@ -490,6 +572,120 @@ paths:
       tags:
       - Connections
       x-codegen-request-body-name: connection
+  /v1/management/connections/{id}/assign:
+    post:
+      description: Associate an unassigned connection to a product. This is a one-time,
+        irreversible operation for migration purposes. The product name must be provided
+        via the X-Product-Name header.
+      parameters:
+      - description: The authorization token in the 'Bearer access_token' format.
+          Only required when auth plugin is enabled.
+        in: header
+        name: Authorization
+        schema:
+          type: string
+      - description: Organization ID
+        in: header
+        name: X-Organization-Id
+        required: true
+        schema:
+          type: string
+      - description: Connection ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - description: Product name to assign
+        in: header
+        name: X-Product-Name
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_LerianStudio_fetcher_pkg_model.ConnectionResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Internal Server Error
+      summary: Assign connection to product
+      tags:
+      - Migration
+  /v1/management/connections/{id}/schema:
+    get:
+      description: Get the database schema (tables and fields) for a connection.
+      parameters:
+      - description: The authorization token in the 'Bearer access_token' format.
+          Only required when auth plugin is enabled.
+        in: header
+        name: Authorization
+        schema:
+          type: string
+      - description: Organization ID
+        in: header
+        name: X-Organization-Id
+        required: true
+        schema:
+          type: string
+      - description: Connection ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_LerianStudio_fetcher_pkg_model.ConnectionSchemaResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pkg.HTTPError'
+          description: Internal Server Error
+      summary: Get connection schema
+      tags:
+      - Connections
   /v1/management/connections/{id}/test:
     post:
       description: Test the configured connection by establishing and closing a connection.
@@ -633,6 +829,7 @@ components:
         userName: userName
         ssl:
           mode: mode
+        productName: productName
         updatedAt: updatedAt
       properties:
         configName:
@@ -651,6 +848,8 @@ components:
           type: object
         port:
           type: integer
+        productName:
+          type: string
         ssl:
           $ref: '#/components/schemas/github_com_LerianStudio_fetcher_pkg_model.SSLResponse'
         type:
@@ -658,6 +857,35 @@ components:
         updatedAt:
           type: string
         userName:
+          type: string
+      type: object
+    github_com_LerianStudio_fetcher_pkg_model.ConnectionSchemaResponse:
+      example:
+        configName: configName
+        tables:
+        - name: name
+          fields:
+          - fields
+          - fields
+        - name: name
+          fields:
+          - fields
+          - fields
+        databaseName: databaseName
+        id: id
+        type: type
+      properties:
+        configName:
+          type: string
+        databaseName:
+          type: string
+        id:
+          type: string
+        tables:
+          items:
+            $ref: '#/components/schemas/github_com_LerianStudio_fetcher_pkg_model.TableDetails'
+          type: array
+        type:
           type: string
       type: object
     github_com_LerianStudio_fetcher_pkg_model.ConnectionUpdateInput:
@@ -759,6 +987,7 @@ components:
         job.
       example:
         organizationId: organizationId
+        resultHmac: resultHmac
         createdAt: createdAt
         mappedFields:
           key:
@@ -837,6 +1066,8 @@ components:
           type: string
         requestHash:
           type: string
+        resultHmac:
+          type: string
         resultPath:
           type: string
         status:
@@ -903,6 +1134,19 @@ components:
         type:
           type: string
       type: object
+    github_com_LerianStudio_fetcher_pkg_model.SchemaValidationErrorResponse:
+      properties:
+        code:
+          type: string
+        errors:
+          items:
+            $ref: '#/components/schemas/github_com_LerianStudio_fetcher_pkg_model.SchemaValidationError'
+          type: array
+        message:
+          type: string
+        title:
+          type: string
+      type: object
     github_com_LerianStudio_fetcher_pkg_model.SchemaValidationRequest:
       description: Request body for schema validation containing mapped fields per
         datasource.
@@ -944,6 +1188,20 @@ components:
           type: string
         status:
           description: '"success" or "failure"'
+          type: string
+      type: object
+    github_com_LerianStudio_fetcher_pkg_model.TableDetails:
+      example:
+        name: name
+        fields:
+        - fields
+        - fields
+      properties:
+        fields:
+          items:
+            type: string
+          type: array
+        name:
           type: string
       type: object
     github_com_LerianStudio_fetcher_pkg_model_job.FilterCondition:
@@ -1095,6 +1353,7 @@ components:
           userName: userName
           ssl:
             mode: mode
+          productName: productName
           updatedAt: updatedAt
         - configName: configName
           createdAt: createdAt
@@ -1108,6 +1367,7 @@ components:
           userName: userName
           ssl:
             mode: mode
+          productName: productName
           updatedAt: updatedAt
       properties:
         Pagination:

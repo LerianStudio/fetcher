@@ -8,7 +8,7 @@ Fetcher is a **data extraction microservices system** built with Go following **
 
 | Category | Technology | Version |
 |----------|------------|---------|
-| **Language** | Go | 1.25.3 |
+| **Language** | Go | 1.25.6 |
 | **Web Framework** | Fiber | v2.52.10 |
 | **Message Queue** | RabbitMQ | v1.10.0 |
 | **Primary Database** | MongoDB | Latest |
@@ -36,7 +36,7 @@ fetcher/
 │   └── worker/                    # Async job processor
 ├── pkg/                           # Shared packages
 │   ├── model/                     # Domain models (entities, DTOs)
-│   ├── mongodb/                   # MongoDB repositories
+│   ├── mongodb/                   # MongoDB repositories (connection, job)
 │   ├── postgres/                  # PostgreSQL adapter
 │   ├── mysql/                     # MySQL adapter
 │   ├── oracle/                    # Oracle adapter
@@ -44,7 +44,9 @@ fetcher/
 │   ├── rabbitmq/                  # RabbitMQ adapter
 │   ├── seaweedfs/                 # SeaweedFS client
 │   ├── crypto/                    # Encryption service
-│   ├── datasource/                # DataSource factory
+│   ├── datasource/                # DataSource factory + SSL mode utils
+│   ├── redis/                     # Redis/Valkey client adapter
+│   ├── ratelimit/                 # Rate limiter (Redis-backed)
 │   ├── net/http/                  # HTTP utilities
 │   └── constant/                  # Application constants
 ├── tests/                         # Test infrastructure and integration tests
@@ -124,7 +126,12 @@ components/manager/
     │       ├── middlewares.go      # HTTP middleware
     │       ├── connection.go       # Connection HTTP handlers
     │       ├── fetcher.go          # Fetcher job HTTP handlers
+    │       ├── migration.go        # Migration HTTP handlers (assign/unassigned)
     │       └── swagger.go          # Swagger configuration
+    ├── adapters/
+    │   └── cache/
+    │       ├── schema_cache_interface.go  # SchemaCacheRepository interface
+    │       └── schema_cache.go           # Redis-backed schema cache implementation
     ├── bootstrap/
     │   ├── config.go               # Dependency injection
     │   ├── server.go               # HTTP server wrapper
@@ -134,12 +141,16 @@ components/manager/
         │   ├── create_connection.go
         │   ├── update_connection.go
         │   ├── delete_connection.go
-        │   └── create_fetcher_job.go
+        │   ├── create_fetcher_job.go
+        │   └── assign_connection.go
         └── query/                  # CQRS Queries (Read operations)
             ├── get_connection.go
             ├── list_connections.go
             ├── test_connection.go
-            └── get_job.go
+            ├── get_job.go
+            ├── get_connection_schema.go
+            ├── validate_schema.go
+            └── list_unassigned_connections.go
 ```
 
 #### API Endpoints
@@ -148,12 +159,21 @@ components/manager/
 
 | Method | Endpoint | Handler | Description |
 |--------|----------|---------|-------------|
-| `POST` | `/v1/management/connections` | `CreateConnection` | Create new database connection (encrypted password) |
-| `GET` | `/v1/management/connections` | `ListConnections` | List connections with pagination/filters |
+| `POST` | `/v1/management/connections` | `CreateConnection` | Create new database connection (requires `X-Product-Name` header, encrypted password) |
+| `GET` | `/v1/management/connections` | `ListConnections` | List connections with pagination/filters (optional `X-Product-Name` header to filter by product) |
+| `POST` | `/v1/management/connections/validate-schema` | `ValidateSchema` | Validate tables/fields against datasources (200 OK / 422 on failure) |
 | `GET` | `/v1/management/connections/{id}` | `GetConnection` | Get connection details by ID |
 | `POST` | `/v1/management/connections/{id}/test` | `TestConnection` | Test connection (rate-limited: 10/min) |
+| `GET` | `/v1/management/connections/{id}/schema` | `GetConnectionSchema` | Retrieve database schema for a connection |
 | `PATCH` | `/v1/management/connections/{id}` | `UpdateConnection` | Partial update (409 if active jobs) |
 | `DELETE` | `/v1/management/connections/{id}` | `DeleteConnection` | Soft delete (409 if active jobs) |
+
+##### Migration (Tag: `Migration`)
+
+| Method | Endpoint | Handler | Description |
+|--------|----------|---------|-------------|
+| `GET` | `/v1/management/connections/unassigned` | `ListUnassignedConnections` | List connections not assigned to any product |
+| `POST` | `/v1/management/connections/{id}/assign` | `AssignConnectionToProduct` | Assign connection to a product (one-time, irreversible, requires `X-Product-Name` header) |
 
 ##### Fetcher Jobs (Tag: `Fetcher`)
 
@@ -243,8 +263,9 @@ Domain models including entities, DTOs, requests, and responses.
 
 | File | Purpose |
 |------|---------|
-| `connection.go` | Connection domain entity + DTOs (CreateConnectionInput, UpdateConnectionInput, ConnectionResponse) |
-| `job.go` | Job domain entity + DTOs (CreateJobInput, JobResponse, JobStatus enum) |
+| `connection.go` | Connection domain entity + DTOs (ConnectionInput, ConnectionUpdateInput, ConnectionResponse). Includes `ProductName` field for product isolation. |
+| `job.go` | Job domain entity + DTOs (FetcherRequest, FetcherResponse, JobResponse, JobStatus enum) |
+| `schema.go` | Schema validation models (SchemaValidationRequest, SchemaValidationResponse, DataSourceSchema) |
 | `pagination.go` | Pagination models and utilities |
 
 **Subpackages:**
@@ -271,6 +292,30 @@ MongoDB connection and repository implementations.
   - `job.go` - MongoDB model mapping
   - `job.mongodb.go` - Repository implementation (CRUD operations)
   - `indexes.go` - Index definitions
+
+### redis (`pkg/redis/`)
+
+Redis/Valkey client adapter used for rate limiting and schema caching.
+
+| File | Purpose |
+|------|---------|
+| `redis.go` | Redis connection management and client wrapper |
+
+### ratelimit (`pkg/ratelimit/`)
+
+Rate limiter implementation backed by Redis.
+
+| File | Purpose |
+|------|---------|
+| `ratelimit.go` | Token-bucket rate limiter using Redis store |
+
+### datasource/sslmode (`pkg/datasource/sslmode/`)
+
+SSL mode configuration utilities for database connections.
+
+| File | Purpose |
+|------|---------|
+| `sslmode.go` | SSL mode validation and injection for datasource configs |
 
 ### Database Adapters
 
@@ -375,6 +420,7 @@ The project follows hexagonal architecture (ports and adapters):
 │  │   │ - UpdateConnection  │      │ - ListConnections   │             │ │
 │  │   │ - DeleteConnection  │      │ - TestConnection    │             │ │
 │  │   │ - CreateFetcherJob  │      │ - GetJob            │             │ │
+│  │   │ - AssignConnection  │      │ - ListUnassigned    │             │ │
 │  │   │                     │      │                     │             │ │
 │  │   └─────────────────────┘      └─────────────────────┘             │ │
 │  └────────────────────────────────────────────────────────────────────┘ │
@@ -382,10 +428,14 @@ The project follows hexagonal architecture (ports and adapters):
 │  ┌────────────────────────────────────────────────────────────────────┐ │
 │  │                         DOMAIN                                     │ │
 │  │                                                                    │ │
-│  │   ┌─────────────┐    ┌─────────────┐    ┌─────────────┐            │ │
-│  │   │ Connection  │    │    Job      │    │ DataSource  │            │ │
-│  │   │   Entity    │    │   Entity    │    │  Interface  │            │ │
-│  │   └─────────────┘    └─────────────┘    └─────────────┘            │ │
+│  │   ┌─────────────┐    ┌─────────────┐                              │ │
+│  │   │ Connection  │    │    Job      │                              │ │
+│  │   │   Entity    │    │   Entity    │                              │ │
+│  │   └─────────────┘    └─────────────┘                              │ │
+│  │   ┌─────────────┐                                                 │ │
+│  │   │ DataSource  │                                                 │ │
+│  │   │  Interface  │                                                 │ │
+│  │   └─────────────┘                                                 │ │
 │  └────────────────────────────────────────────────────────────────────┘ │
 │                                                                         │
 │  ┌────────────────────────────────────────────────────────────────────┐ │
@@ -393,7 +443,8 @@ The project follows hexagonal architecture (ports and adapters):
 │  │                                                                    │ │
 │  │   - ConnectionRepository    - RabbitMQ Publisher                   │ │
 │  │   - JobRepository           - SeaweedFS Repository                 │ │
-│  │   - DataSource              - Cryptor                              │ │
+│  │   - SchemaCacheRepository   - Cryptor                              │ │
+│  │   - DataSource                                                     │ │
 │  └────────────────────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────────────────┘
                               │                    │
@@ -418,8 +469,10 @@ The project follows hexagonal architecture (ports and adapters):
 
 Commands and Queries are separated:
 
-- **Commands** (Write operations): `CreateConnection`, `UpdateConnection`, `DeleteConnection`, `CreateFetcherJob`
-- **Queries** (Read operations): `GetConnection`, `ListConnections`, `TestConnection`, `GetJob`
+- **Commands** (Write operations): `CreateConnection`, `UpdateConnection`, `DeleteConnection`, `CreateFetcherJob`, `AssignConnection`
+- **Queries** (Read operations): `GetConnection`, `ListConnections`, `TestConnection`, `GetJob`, `GetConnectionSchema`, `ValidateSchema`, `ListUnassignedConnections`
+
+**Worker Exception:** The Worker component does **not** follow CQRS. Instead, it uses a single `UseCase` struct (`components/worker/internal/services/service.go`) that holds all dependencies and exposes methods like `ExtractExternalData()` and `SendJobNotification()`. This is intentional because the Worker has no HTTP API and processes messages from a single queue, making CQRS separation unnecessary.
 
 ---
 
@@ -801,8 +854,9 @@ sequenceDiagram
 
 | Resource | Used By | Purpose |
 |----------|---------|---------|
-| MongoDB `connections` collection | Manager, Worker | Store connection configs |
+| MongoDB `connections` collection | Manager, Worker | Store connection configs (includes `productName` for product isolation) |
 | MongoDB `jobs` collection | Manager, Worker | Store job state |
+| Redis/Valkey | Manager | Rate limiting (connection tests), schema caching |
 | RabbitMQ `fetcher.extract-external-data.queue` | Manager (publish), Worker (consume) | Job dispatch |
 | RabbitMQ `fetcher.job.events` exchange | Worker (publish) | Job status notifications |
 | SeaweedFS `external_data` bucket | Worker | Store encrypted extracted data |
@@ -977,12 +1031,12 @@ type ConnectionInput struct {
 # Run all integration tests with pre-built images
 MANAGER_IMAGE=fetcher-manager:local \
 WORKER_IMAGE=fetcher-worker:local \
-  make test-integration-container
+  make test-integration
 
 # Run specific test
 MANAGER_IMAGE=fetcher-manager:local \
 WORKER_IMAGE=fetcher-worker:local \
-  make test-integration-container TEST=TestSingleDatasourcePostgreSQL
+  make test-integration TEST=TestSingleDatasourcePostgreSQL
 
 # Start infrastructure for debugging
 make test-integration-infra

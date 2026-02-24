@@ -71,6 +71,7 @@ type Job struct {
 	Filters        NestedFilters
 	Status         JobStatus
 	ResultPath     string
+	ResultHMAC     string
 	RequestHash    string
 	CreatedAt      time.Time
 	CompletedAt    *time.Time
@@ -323,6 +324,7 @@ type JobResponse struct {
 	Filters        NestedFilters                  `json:"filters,omitempty"`
 	Status         string                         `json:"status"`
 	ResultPath     string                         `json:"resultPath,omitempty"`
+	ResultHmac     string                         `json:"resultHmac,omitempty"`
 	RequestHash    string                         `json:"requestHash,omitempty"`
 	CreatedAt      time.Time                      `json:"createdAt"`
 	CompletedAt    *time.Time                     `json:"completedAt,omitempty"`
@@ -342,6 +344,7 @@ func NewJobResponseFrom(j *Job) *JobResponse {
 		Filters:        j.Filters,
 		Status:         string(j.Status),
 		ResultPath:     j.ResultPath,
+		ResultHmac:     j.ResultHMAC,
 		RequestHash:    j.RequestHash,
 		CreatedAt:      j.CreatedAt,
 		CompletedAt:    j.CompletedAt,
