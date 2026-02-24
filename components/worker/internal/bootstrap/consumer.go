@@ -17,8 +17,6 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 )
 
-const healthFilePath = "/tmp/health"
-
 // MultiQueueConsumer represents a multi-queue consumer.
 type MultiQueueConsumer struct {
 	consumerRoutes *rabbitmq.ConsumerRoutes
@@ -61,11 +59,6 @@ func (mq *MultiQueueConsumer) Run(l *commons.Launcher) error {
 		cancel()
 	}()
 
-	// Write initial health file to indicate the worker is alive
-	if err := touchHealthFile(); err != nil {
-		return fmt.Errorf("failed to write initial health file: %w", err)
-	}
-
 	if err := mq.consumerRoutes.RunConsumers(ctx, wg); err != nil {
 		return fmt.Errorf("failed to run consumers: %w", err)
 	}
@@ -106,15 +99,5 @@ func (mq *MultiQueueConsumer) handlerGenerateReport(ctx context.Context, body []
 		return fmt.Errorf("failed to generate report: %w", err)
 	}
 
-	// Update health file timestamp on successful processing
-	if err := touchHealthFile(); err != nil {
-		logger.Warnf("Failed to update health file: %v", err)
-	}
-
 	return nil
-}
-
-// touchHealthFile writes the current Unix timestamp to the health file.
-func touchHealthFile() error {
-	return os.WriteFile(healthFilePath, fmt.Appendf(nil, "%d", time.Now().Unix()), 0600)
 }

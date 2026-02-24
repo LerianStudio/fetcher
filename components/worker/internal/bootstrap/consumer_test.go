@@ -17,9 +17,3 @@ func TestMultiQueueConsumer_StructFields(t *testing.T) {
 	}
 }
 
-func TestHealthFilePath(t *testing.T) {
-	// Verify the health file path constant is set correctly.
-	if healthFilePath != "/tmp/health" {
-		t.Errorf("healthFilePath = %q, want %q", healthFilePath, "/tmp/health")
-	}
-}

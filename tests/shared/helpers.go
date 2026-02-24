@@ -64,6 +64,7 @@ func DownloadAndDecryptResult(t *testing.T, ctx context.Context, seaweedFSURL, r
 
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err, "download result from SeaweedFS")
+
 	defer resp.Body.Close()
 
 	require.Equal(t, http.StatusOK, resp.StatusCode, "SeaweedFS download should return 200")
