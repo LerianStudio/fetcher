@@ -11,7 +11,7 @@ import (
 func main() {
 	defer func() {
 		if r := recover(); r != nil {
-			log.Fatalf("failed to initialize worker service. unexpected panic: %v", r)
+			log.Fatalf("worker service terminated due to unexpected panic: %v", r)
 		}
 	}()
 
