@@ -9,12 +9,6 @@ services:
         - github_token
     env_file:
       - .env
-    healthcheck:
-      test: ["CMD-SHELL", "test -f /tmp/health && [ $(( $(date +%s) - $(cat /tmp/health) )) -lt 120 ]"]
-      interval: 30s
-      timeout: 5s
-      start_period: 30s
-      retries: 3
     depends_on:
       fetcher-mongodb:
         condition: service_healthy

@@ -52,9 +52,5 @@ USER appuser
 # Expose the application port
 EXPOSE 4019
 
-# Health check via health file freshness (updated on startup and after each successful message)
-HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-  CMD test -f /tmp/health && [ $(( $(date +%s) - $(cat /tmp/health) )) -lt 120 ] || exit 1
-
 # Set the entrypoint to the worker binary
 ENTRYPOINT ["/app/worker"]
