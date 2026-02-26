@@ -45,7 +45,7 @@ Lerian Fetcher is built as a cloud-native platform following Hexagonal Architect
 
    - Consumes jobs from RabbitMQ queue
    - Extracts data from configured external databases
-   - Encrypts and stores results in SeaweedFS
+   - Encrypts and stores results in configurable object storage (SeaweedFS or S3-compatible)
    - Publishes job completion/failure notifications
    - Configurable worker concurrency (default: 5)
 
@@ -53,7 +53,7 @@ Lerian Fetcher is built as a cloud-native platform following Hexagonal Architect
 
    - MongoDB for primary metadata storage
    - RabbitMQ for message queuing with DLQ support
-   - SeaweedFS for distributed file storage
+   - SeaweedFS for distributed file storage (default) or any S3-compatible service (AWS S3, MinIO)
    - Valkey/Redis for caching
    - KEDA for Kubernetes event-driven autoscaling
 
@@ -120,7 +120,7 @@ For hands-on API exploration and testing scenarios, the following resources are 
 - **Field Projection**: Select specific fields or use `["*"]` for all fields
 - **JSON/BSON Parsing**: Automatic parsing of JSON fields in relational databases
 - **Deduplication**: 5-minute window for duplicate job detection
-- **Result Storage**: Encrypted results stored in SeaweedFS with configurable TTL
+- **Result Storage**: Encrypted results stored in pluggable object storage (SeaweedFS or S3-compatible) with configurable TTL
 
 ## Getting Started
 
