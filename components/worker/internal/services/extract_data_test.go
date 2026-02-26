@@ -1075,8 +1075,8 @@ func TestExtractConfigNamesFromMappedFields_WithComplexStructure(t *testing.T) {
 	}
 }
 
-// TestEncryptDataForSeaweedFS tests the encryption function for SeaweedFS.
-func TestEncryptDataForSeaweedFS(t *testing.T) {
+// TestEncryptData tests the encryption function for storage.
+func TestEncryptData(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
@@ -1097,7 +1097,7 @@ func TestEncryptDataForSeaweedFS(t *testing.T) {
 			encryptKey:  "",
 			hashKey:     "",
 			wantErr:     true,
-			errContains: "SeaweedFS encrypt secret key not configured",
+			errContains: "storage encrypt secret key not configured",
 		},
 		{
 			name:        "missing hash secret key returns error",
@@ -1105,16 +1105,16 @@ func TestEncryptDataForSeaweedFS(t *testing.T) {
 			encryptKey:  "test-encrypt-key",
 			hashKey:     "",
 			wantErr:     true,
-			errContains: "SeaweedFS hash secret key not configured",
+			errContains: "storage hash secret key not configured",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			uc := newTestUseCase(mocks)
-			uc.SetSeaweedFSSecrets(tt.encryptKey, tt.hashKey)
+			uc.SetStorageSecrets(tt.encryptKey, tt.hashKey)
 
-			result, err := uc.encryptDataForSeaweedFS(tt.data, logger)
+			result, err := uc.encryptData(tt.data, logger)
 
 			if tt.wantErr {
 				if err == nil {
@@ -1713,8 +1713,8 @@ func TestQueryDatabase_ConnectionFoundButDifferentConfigName(t *testing.T) {
 	}
 }
 
-// TestSaveExternalDataToSeaweedFS_MarshalError tests saveExternalDataToSeaweedFS with data that can't be marshaled.
-func TestSaveExternalDataToSeaweedFS_MarshalError(t *testing.T) {
+// TestSaveExternalData_MarshalError tests saveExternalData with data that can't be marshaled.
+func TestSaveExternalData_MarshalError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
@@ -1742,14 +1742,14 @@ func TestSaveExternalDataToSeaweedFS_MarshalError(t *testing.T) {
 		},
 	}
 
-	_, err := uc.saveExternalDataToSeaweedFS(ctx, testTracer(), message, result, nil, logger)
+	_, err := uc.saveExternalData(ctx, testTracer(), message, result, nil, logger)
 	if err == nil {
 		t.Fatal("expected error when marshaling fails")
 	}
 }
 
-// TestSaveExternalDataToSeaweedFS_MissingEnvVars tests saveExternalDataToSeaweedFS with missing environment variables.
-func TestSaveExternalDataToSeaweedFS_MissingEnvVars(t *testing.T) {
+// TestSaveExternalData_MissingEnvVars tests saveExternalData with missing environment variables.
+func TestSaveExternalData_MissingEnvVars(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
@@ -1778,14 +1778,14 @@ func TestSaveExternalDataToSeaweedFS_MissingEnvVars(t *testing.T) {
 	// Ensure environment variables are not set
 	// Note: This will fail because CRYPTO_ENCRYPT_SECRET_KEY_SEAWEEDFS is not set
 
-	_, err := uc.saveExternalDataToSeaweedFS(ctx, testTracer(), message, result, nil, logger)
+	_, err := uc.saveExternalData(ctx, testTracer(), message, result, nil, logger)
 	if err == nil {
 		t.Fatal("expected error when env vars are missing")
 	}
 }
 
-// TestSaveExternalDataToSeaweedFS_SeaweedFSPutError tests saveExternalDataToSeaweedFS when SeaweedFS put fails.
-func TestSaveExternalDataToSeaweedFS_SeaweedFSPutError(t *testing.T) {
+// TestSaveExternalData_StoragePutError tests saveExternalData when storage put fails.
+func TestSaveExternalData_StoragePutError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
@@ -1798,7 +1798,7 @@ func TestSaveExternalDataToSeaweedFS_SeaweedFSPutError(t *testing.T) {
 	orgID := newTestOrgID()
 
 	// Set valid encryption keys on the UseCase
-	uc.SetSeaweedFSSecrets(
+	uc.SetStorageSecrets(
 		"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 		"fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
 	)
@@ -1817,20 +1817,20 @@ func TestSaveExternalDataToSeaweedFS_SeaweedFSPutError(t *testing.T) {
 		},
 	}
 
-	// Mock SeaweedFS to return error
+	// Mock storage to return error
 	expectedObjectName := jobID.String() + ".json"
 	mocks.seaweedFS.EXPECT().
 		Put(gomock.Any(), expectedObjectName, gomock.Any()).
-		Return(errors.New("seaweedfs connection failed"))
+		Return(errors.New("storage connection failed"))
 
-	_, err := uc.saveExternalDataToSeaweedFS(ctx, testTracer(), message, result, nil, logger)
+	_, err := uc.saveExternalData(ctx, testTracer(), message, result, nil, logger)
 	if err == nil {
-		t.Fatal("expected error when SeaweedFS put fails")
+		t.Fatal("expected error when storage put fails")
 	}
 }
 
-// TestSaveExternalDataToSeaweedFS_Success tests saveExternalDataToSeaweedFS happy path.
-func TestSaveExternalDataToSeaweedFS_Success(t *testing.T) {
+// TestSaveExternalData_Success tests saveExternalData happy path.
+func TestSaveExternalData_Success(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
@@ -1843,7 +1843,7 @@ func TestSaveExternalDataToSeaweedFS_Success(t *testing.T) {
 	orgID := newTestOrgID()
 
 	// Set valid encryption keys on the UseCase
-	uc.SetSeaweedFSSecrets(
+	uc.SetStorageSecrets(
 		"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 		"fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
 	)
@@ -1866,13 +1866,13 @@ func TestSaveExternalDataToSeaweedFS_Success(t *testing.T) {
 		},
 	}
 
-	// Mock SeaweedFS to succeed
+	// Mock storage to succeed
 	expectedObjectName := jobID.String() + ".json"
 	mocks.seaweedFS.EXPECT().
 		Put(gomock.Any(), expectedObjectName, gomock.Any()).
 		Return(nil)
 
-	resultData, err := uc.saveExternalDataToSeaweedFS(ctx, testTracer(), message, result, nil, logger)
+	resultData, err := uc.saveExternalData(ctx, testTracer(), message, result, nil, logger)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -2180,8 +2180,8 @@ func TestQueryExternalData_WithConnections(t *testing.T) {
 	}
 }
 
-// TestEncryptDataForSeaweedFS_InvalidCipherInitialization tests cipher initialization failure.
-func TestEncryptDataForSeaweedFS_InvalidCipherInitialization(t *testing.T) {
+// TestEncryptData_InvalidCipherInitialization tests cipher initialization failure.
+func TestEncryptData_InvalidCipherInitialization(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
@@ -2190,18 +2190,18 @@ func TestEncryptDataForSeaweedFS_InvalidCipherInitialization(t *testing.T) {
 	logger := testLogger()
 
 	// Set invalid keys that will cause cipher initialization to fail
-	uc.SetSeaweedFSSecrets("invalid-short-key", "invalid-short-key")
+	uc.SetStorageSecrets("invalid-short-key", "invalid-short-key")
 
 	data := []byte(`{"test": "data"}`)
 
-	_, err := uc.encryptDataForSeaweedFS(data, logger)
+	_, err := uc.encryptData(data, logger)
 	if err == nil {
 		t.Error("expected error with invalid keys")
 	}
 }
 
-// TestEncryptDataForSeaweedFS_Success tests successful encryption.
-func TestEncryptDataForSeaweedFS_Success(t *testing.T) {
+// TestEncryptData_Success tests successful encryption.
+func TestEncryptData_Success(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
@@ -2210,14 +2210,14 @@ func TestEncryptDataForSeaweedFS_Success(t *testing.T) {
 	logger := testLogger()
 
 	// Set valid 32-byte hex keys on the UseCase struct
-	uc.SetSeaweedFSSecrets(
+	uc.SetStorageSecrets(
 		"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 		"fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
 	)
 
 	data := []byte(`{"test": "data"}`)
 
-	result, err := uc.encryptDataForSeaweedFS(data, logger)
+	result, err := uc.encryptData(data, logger)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -2270,8 +2270,8 @@ func TestQueryExternalData_MultipleDatabase(t *testing.T) {
 	}
 }
 
-// TestSaveExternalDataToSeaweedFS_EmptyResult tests saveExternalDataToSeaweedFS with empty result.
-func TestSaveExternalDataToSeaweedFS_EmptyResult(t *testing.T) {
+// TestSaveExternalData_EmptyResult tests saveExternalData with empty result.
+func TestSaveExternalData_EmptyResult(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
@@ -2284,7 +2284,7 @@ func TestSaveExternalDataToSeaweedFS_EmptyResult(t *testing.T) {
 	orgID := newTestOrgID()
 
 	// Set valid encryption keys on the UseCase
-	uc.SetSeaweedFSSecrets(
+	uc.SetStorageSecrets(
 		"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 		"fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
 	)
@@ -2298,13 +2298,13 @@ func TestSaveExternalDataToSeaweedFS_EmptyResult(t *testing.T) {
 	// Empty result
 	result := map[string]map[string][]map[string]any{}
 
-	// Mock SeaweedFS to succeed
+	// Mock storage to succeed
 	expectedObjectName := jobID.String() + ".json"
 	mocks.seaweedFS.EXPECT().
 		Put(gomock.Any(), expectedObjectName, gomock.Any()).
 		Return(nil)
 
-	resultData, err := uc.saveExternalDataToSeaweedFS(ctx, testTracer(), message, result, nil, logger)
+	resultData, err := uc.saveExternalData(ctx, testTracer(), message, result, nil, logger)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -2493,11 +2493,11 @@ func TestCompleteJob_NilResultData(t *testing.T) {
 	}
 }
 
-// TestEncryptDataForSeaweedFS_InvalidKeyLength verifies that cipher initialization
+// TestEncryptData_InvalidKeyLength verifies that cipher initialization
 // fails with invalid (too short) encryption keys.
-// newTestUseCase sets seaweedFSEncryptSecretKey to "test-seaweedfs-encrypt-key" (28 bytes)
+// newTestUseCase sets storageEncryptSecretKey to "test-seaweedfs-encrypt-key" (28 bytes)
 // which is not a valid AES key length (16, 24, or 32 bytes), triggering the cipher init error.
-func TestEncryptDataForSeaweedFS_InvalidKeyLength(t *testing.T) {
+func TestEncryptData_InvalidKeyLength(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
@@ -2505,7 +2505,7 @@ func TestEncryptDataForSeaweedFS_InvalidKeyLength(t *testing.T) {
 	uc := newTestUseCase(mocks)
 	logger := testLogger()
 
-	_, err := uc.encryptDataForSeaweedFS([]byte(`{"test": "data"}`), logger)
+	_, err := uc.encryptData([]byte(`{"test": "data"}`), logger)
 	if err == nil {
 		t.Fatal("expected error for invalid cipher initialization")
 	}

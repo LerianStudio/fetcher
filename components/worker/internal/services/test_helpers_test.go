@@ -53,7 +53,7 @@ func newTestMocks(ctrl *gomock.Controller) *testMocks {
 // Now that UseCase uses interfaces, we can inject mocks directly.
 func newTestUseCase(mocks *testMocks) *UseCase {
 	uc := &UseCase{
-		ExternalDataSeaweedFS: mocks.seaweedFS,
+		ExternalDataStorage: mocks.seaweedFS,
 		JobRepository:         mocks.jobRepo,
 		ConnectionRepository:  mocks.connRepo,
 		Cryptor:               mocks.cryptor,
@@ -62,7 +62,7 @@ func newTestUseCase(mocks *testMocks) *UseCase {
 		JobEventsExchange:     "test-exchange",
 	}
 
-	uc.SetSeaweedFSSecrets("test-seaweedfs-encrypt-key", "test-seaweedfs-hash-key")
+	uc.SetStorageSecrets("test-seaweedfs-encrypt-key", "test-seaweedfs-hash-key")
 	uc.SetCRMSecrets("test-crm-encrypt-key", "test-crm-hash-key")
 
 	return uc

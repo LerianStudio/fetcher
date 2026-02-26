@@ -12,7 +12,7 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
-func TestSetSeaweedFSSecrets(t *testing.T) {
+func TestSetStorageSecrets(t *testing.T) {
 	tests := []struct {
 		name       string
 		encryptKey string
@@ -38,13 +38,13 @@ func TestSetSeaweedFSSecrets(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			uc := &UseCase{}
-			uc.SetSeaweedFSSecrets(tt.encryptKey, tt.hashKey)
+			uc.SetStorageSecrets(tt.encryptKey, tt.hashKey)
 
-			if uc.seaweedFSEncryptSecretKey != tt.encryptKey {
-				t.Errorf("seaweedFSEncryptSecretKey = %q, want %q", uc.seaweedFSEncryptSecretKey, tt.encryptKey)
+			if uc.storageEncryptSecretKey != tt.encryptKey {
+				t.Errorf("storageEncryptSecretKey = %q, want %q", uc.storageEncryptSecretKey, tt.encryptKey)
 			}
-			if uc.seaweedFSHashSecretKey != tt.hashKey {
-				t.Errorf("seaweedFSHashSecretKey = %q, want %q", uc.seaweedFSHashSecretKey, tt.hashKey)
+			if uc.storageHashSecretKey != tt.hashKey {
+				t.Errorf("storageHashSecretKey = %q, want %q", uc.storageHashSecretKey, tt.hashKey)
 			}
 		})
 	}
