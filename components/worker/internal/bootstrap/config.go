@@ -14,8 +14,7 @@ import (
 	mongoDB "github.com/LerianStudio/lib-commons/v2/commons/mongo"
 
 	"github.com/LerianStudio/fetcher/pkg/mongodb/job"
-	simpleClient "github.com/LerianStudio/fetcher/pkg/seaweedfs"
-	"github.com/LerianStudio/fetcher/pkg/seaweedfs/external"
+	pkgStorage "github.com/LerianStudio/fetcher/pkg/storage"
 
 	libCommons "github.com/LerianStudio/lib-commons/v2/commons"
 	libOtel "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
@@ -50,6 +49,18 @@ type Config struct {
 	SeaweedFSHost      string `env:"SEAWEEDFS_HOST"`
 	SeaweedFSFilerPort string `env:"SEAWEEDFS_FILER_PORT"`
 	SeaweedFSTTL       string `env:"SEAWEEDFS_TTL"`
+	// Storage provider selection ("seaweedfs" or "s3", defaults to "seaweedfs")
+	StorageProvider string `env:"STORAGE_PROVIDER"`
+	// S3-compatible object storage configuration (used when STORAGE_PROVIDER=s3)
+	// SSL is controlled by the URL scheme of ObjectStorageEndpoint.
+	ObjectStorageEndpoint     string `env:"OBJECT_STORAGE_ENDPOINT"`
+	ObjectStorageRegion       string `env:"OBJECT_STORAGE_REGION"`
+	ObjectStorageBucket       string `env:"OBJECT_STORAGE_BUCKET"`
+	ObjectStorageKeyPrefix    string `env:"OBJECT_STORAGE_KEY_PREFIX"`
+	ObjectStorageAccessKeyID  string `env:"OBJECT_STORAGE_ACCESS_KEY_ID"`
+	ObjectStorageSecretKey    string `env:"OBJECT_STORAGE_SECRET_KEY"`
+	ObjectStorageUsePathStyle bool   `env:"OBJECT_STORAGE_USE_PATH_STYLE"`
+	// OBJECT_STORAGE_DISABLE_SSL omitted — SSL controlled by endpoint URL scheme.
 	// MongoDB
 	MongoURI        string `env:"MONGO_URI"`
 	MongoDBHost     string `env:"MONGO_HOST"`
@@ -65,8 +76,8 @@ type Config struct {
 	AppEncryptionKey        string `env:"APP_ENC_KEY"`
 	AppEncryptionKeyVersion string `env:"APP_ENC_KEY_VERSION"`
 	// SeaweedFS encryption keys
-	CryptoEncryptSecretKeySeaweedFS string `env:"CRYPTO_ENCRYPT_SECRET_KEY_SEAWEEDFS"`
-	CryptoHashSecretKeySeaweedFS    string `env:"CRYPTO_HASH_SECRET_KEY_SEAWEEDFS"`
+	CryptoEncryptFileStorage string `env:"CRYPTO_ENCRYPT_FILE_STORAGE"`
+	CryptoHashFileStorage    string `env:"CRYPTO_HASH_SECRET_KEY_FILE_STORAGE"`
 	// CRM plugin encryption keys
 	CryptoEncryptSecretKeyPluginCRM string `env:"CRYPTO_ENCRYPT_SECRET_KEY_PLUGIN_CRM"`
 	CryptoHashSecretKeyPluginCRM    string `env:"CRYPTO_HASH_SECRET_KEY_PLUGIN_CRM"`
@@ -163,9 +174,29 @@ func InitWorker() (*Service, error) {
 
 	publisherRoutes := rabbitmq.NewPublisherRoutes(publisherConnection, logger, telemetry, cryptoWithExternalHMAC)
 
-	// Config SeaweedFS connection
-	seaweedFSEndpoint := fmt.Sprintf("http://%s:%s", cfg.SeaweedFSHost, cfg.SeaweedFSFilerPort)
-	seaweedFSClient := simpleClient.NewSeaweedFSClient(seaweedFSEndpoint)
+	// Initialize storage repository (SeaweedFS or S3) via factory
+	storageProvider := cfg.StorageProvider
+	if storageProvider == "" {
+		storageProvider = pkgStorage.ProviderSeaweedFS
+	}
+
+	storageRepository, err := pkgStorage.NewRepository(ctx, pkgStorage.ProviderConfig{
+		Provider:          storageProvider,
+		SeaweedFSEndpoint: fmt.Sprintf("http://%s:%s", cfg.SeaweedFSHost, cfg.SeaweedFSFilerPort),
+		Bucket:            constant.ExternalDataBucketName,
+		S3Endpoint:        cfg.ObjectStorageEndpoint,
+		S3Region:          cfg.ObjectStorageRegion,
+		S3Bucket:          cfg.ObjectStorageBucket,
+		S3KeyPrefix:       cfg.ObjectStorageKeyPrefix,
+		S3AccessKeyID:     cfg.ObjectStorageAccessKeyID,
+		S3SecretAccessKey: cfg.ObjectStorageSecretKey,
+		S3UsePathStyle:    cfg.ObjectStorageUsePathStyle,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("initialize storage repository: %w", err)
+	}
+
+	logger.Infof("Storage initialized with provider: %s", storageProvider)
 
 	// Init mongo DB connection
 	escapedPass := url.QueryEscape(cfg.MongoDBPassword)
@@ -183,8 +214,6 @@ func InitWorker() (*Service, error) {
 		MaxPoolSize:            uint64(cfg.MaxPoolSize),
 	}
 
-	externalDataSeaweedFSRepository := external.NewSimpleRepository(seaweedFSClient, constant.ExternalDataBucketName)
-
 	// Initialize MongoDB repositories
 	jobRepository, errJobRepo := job.NewJobMongoDBRepository(ctx, mongoConnection)
 	if errJobRepo != nil {
@@ -197,16 +226,16 @@ func InitWorker() (*Service, error) {
 	}
 
 	service := &services.UseCase{
-		ExternalDataSeaweedFS: externalDataSeaweedFSRepository,
-		JobRepository:         jobRepository,
-		ConnectionRepository:  connectionRepository,
-		Cryptor:               cryptoService,
-		DocumentSigner:        cryptoWithExternalHMAC,
-		FileTTL:               cfg.SeaweedFSTTL,
-		RabbitMQPublisher:     publisherRoutes,
-		JobEventsExchange:     cfg.RabbitMQJobEventsExchange,
+		ExternalDataStorage:  storageRepository,
+		JobRepository:        jobRepository,
+		ConnectionRepository: connectionRepository,
+		Cryptor:              cryptoService,
+		DocumentSigner:       cryptoWithExternalHMAC,
+		FileTTL:              cfg.SeaweedFSTTL,
+		RabbitMQPublisher:    publisherRoutes,
+		JobEventsExchange:    cfg.RabbitMQJobEventsExchange,
 	}
-	service.SetSeaweedFSSecrets(cfg.CryptoEncryptSecretKeySeaweedFS, cfg.CryptoHashSecretKeySeaweedFS)
+	service.SetStorageSecrets(cfg.CryptoEncryptFileStorage, cfg.CryptoHashFileStorage)
 	service.SetCRMSecrets(cfg.CryptoEncryptSecretKeyPluginCRM, cfg.CryptoHashSecretKeyPluginCRM)
 	service.SetDataSourceFactory(datasource.NewDataSourceFromConnectionWithLogger(logger))
 

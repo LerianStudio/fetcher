@@ -1776,7 +1776,7 @@ func TestSaveExternalData_MissingEnvVars(t *testing.T) {
 	}
 
 	// Ensure environment variables are not set
-	// Note: This will fail because CRYPTO_ENCRYPT_SECRET_KEY_SEAWEEDFS is not set
+	// Note: This will fail because CRYPTO_ENCRYPT_FILE_STORAGE is not set
 
 	_, err := uc.saveExternalData(ctx, testTracer(), message, result, nil, logger)
 	if err == nil {

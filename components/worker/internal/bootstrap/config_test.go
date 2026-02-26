@@ -129,8 +129,8 @@ func TestConfig_LoadFromEnvVars(t *testing.T) {
 			envVars: map[string]string{
 				"APP_ENC_KEY":                          "master-key-123",
 				"APP_ENC_KEY_VERSION":                  "v1",
-				"CRYPTO_ENCRYPT_SECRET_KEY_SEAWEEDFS":  "seaweed-encrypt",
-				"CRYPTO_HASH_SECRET_KEY_SEAWEEDFS":     "seaweed-hash",
+				"CRYPTO_ENCRYPT_FILE_STORAGE":          "seaweed-encrypt",
+				"CRYPTO_HASH_SECRET_KEY_FILE_STORAGE":  "seaweed-hash",
 				"CRYPTO_ENCRYPT_SECRET_KEY_PLUGIN_CRM": "crm-encrypt",
 				"CRYPTO_HASH_SECRET_KEY_PLUGIN_CRM":    "crm-hash",
 			},
@@ -139,11 +139,11 @@ func TestConfig_LoadFromEnvVars(t *testing.T) {
 				if cfg.AppEncryptionKey != "master-key-123" {
 					t.Errorf("AppEncryptionKey = %q, want %q", cfg.AppEncryptionKey, "master-key-123")
 				}
-				if cfg.CryptoEncryptSecretKeySeaweedFS != "seaweed-encrypt" {
-					t.Errorf("CryptoEncryptSecretKeySeaweedFS = %q, want %q", cfg.CryptoEncryptSecretKeySeaweedFS, "seaweed-encrypt")
+				if cfg.CryptoEncryptFileStorage != "seaweed-encrypt" {
+					t.Errorf("CryptoEncryptFileStorage = %q, want %q", cfg.CryptoEncryptFileStorage, "seaweed-encrypt")
 				}
-				if cfg.CryptoHashSecretKeyPluginCRM != "crm-hash" {
-					t.Errorf("CryptoHashSecretKeyPluginCRM = %q, want %q", cfg.CryptoHashSecretKeyPluginCRM, "crm-hash")
+				if cfg.CryptoHashFileStorage != "crm-hash" {
+					t.Errorf("CryptoHashFileStorage = %q, want %q", cfg.CryptoHashFileStorage, "crm-hash")
 				}
 			},
 		},
