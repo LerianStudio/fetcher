@@ -16,8 +16,13 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/model/job"
 	jobRepo "github.com/LerianStudio/fetcher/pkg/mongodb/job"
 	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
+	"github.com/LerianStudio/fetcher/pkg/ports/messaging"
+
+	tmcore "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/core"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.uber.org/mock/gomock"
 )
@@ -1442,5 +1447,78 @@ func TestCreateFetcherJob_Execute_ProductValidationSuccess(t *testing.T) {
 
 	if result.Job.Metadata == nil || result.Job.Metadata["source"] != "test" {
 		t.Fatal("expected metadata source to be preserved")
+	}
+}
+
+// TestPublishToQueue_TenantIDHeaderPropagation tests that publishToQueue includes X-Tenant-ID
+// in AMQP headers when tenant context is present, and omits it when absent.
+func TestPublishToQueue_TenantIDHeaderPropagation(t *testing.T) {
+	tests := []struct {
+		name           string
+		tenantID       string
+		expectTenantID bool
+	}{
+		{
+			name:           "includes X-Tenant-ID when tenant context is present",
+			tenantID:       "tenant-abc-123",
+			expectTenantID: true,
+		},
+		{
+			name:           "omits X-Tenant-ID when tenant context is empty",
+			tenantID:       "",
+			expectTenantID: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			mockPublisher := messaging.NewMockMessagePublisher(ctrl)
+
+			svc := &CreateFetcherJob{
+				rabbitMQ:  mockPublisher,
+				queueName: "test-queue",
+			}
+
+			testJob := &model.Job{
+				ID:             uuid.New(),
+				OrganizationID: uuid.New(),
+				MappedFields:   map[string]map[string][]string{"ds1": {"t1": {"f1"}}},
+				Metadata:       map[string]any{"source": "test-product"},
+				CreatedAt:      time.Now().UTC(),
+			}
+
+			// Capture headers passed to ProducerDefault
+			var capturedHeaders *map[string]any
+			mockPublisher.EXPECT().
+				ProducerDefault(gomock.Any(), "", "test-queue", gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, _ string, _ string, _ []byte, h *map[string]any) error {
+					capturedHeaders = h
+					return nil
+				})
+
+			ctx := testContext()
+			if tt.tenantID != "" {
+				ctx = tmcore.SetTenantIDInContext(ctx, tt.tenantID)
+			}
+
+			err := svc.publishToQueue(ctx, testJob)
+			require.NoError(t, err)
+			require.NotNil(t, capturedHeaders)
+
+			headers := *capturedHeaders
+			if tt.expectTenantID {
+				assert.Equal(t, tt.tenantID, headers["X-Tenant-ID"], "expected X-Tenant-ID header to match tenant ID from context")
+			} else {
+				_, exists := headers["X-Tenant-ID"]
+				assert.False(t, exists, "expected no X-Tenant-ID header when tenant context is empty")
+			}
+
+			// Always verify standard headers are present
+			assert.Equal(t, testJob.ID.String(), headers["jobId"])
+			assert.Equal(t, testJob.OrganizationID.String(), headers["organizationId"])
+		})
 	}
 }

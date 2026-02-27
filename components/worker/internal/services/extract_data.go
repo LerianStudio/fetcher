@@ -14,10 +14,10 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/model"
 	modelJob "github.com/LerianStudio/fetcher/pkg/model/job"
 	portDS "github.com/LerianStudio/fetcher/pkg/ports/datasource"
-	libCommons "github.com/LerianStudio/lib-commons/v2/commons"
-	libCrypto "github.com/LerianStudio/lib-commons/v2/commons/crypto"
-	"github.com/LerianStudio/lib-commons/v2/commons/log"
-	libOtel "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
+	libCommons "github.com/LerianStudio/lib-commons/v3/commons"
+	libCrypto "github.com/LerianStudio/lib-commons/v3/commons/crypto"
+	"github.com/LerianStudio/lib-commons/v3/commons/log"
+	libOtel "github.com/LerianStudio/lib-commons/v3/commons/opentelemetry"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
@@ -96,7 +96,7 @@ func (uc *UseCase) ExtractExternalData(ctx context.Context, body []byte, headers
 	// (e.g. on message redelivery). Note: there is a narrow TOCTOU gap between this
 	// read and the UpdateStatus below — true atomic transition would require a
 	// conditional MongoDB update (filter on status=PENDING). In practice the window
-	// is O(microseconds) and downstream processing is idempotent (same SeaweedFS
+	// is O(microseconds) and downstream processing is idempotent (same storage
 	// path), so duplicate work is the worst-case consequence, not data corruption.
 	if job.Status != model.JobStatusPending {
 		logger.Infof("Job %s status is %s (expected pending), skipping", message.JobID, job.Status)
@@ -126,9 +126,9 @@ func (uc *UseCase) ExtractExternalData(ctx context.Context, body []byte, headers
 		return uc.handleErrorWithUpdate(ctx, message.JobID, message.OrganizationID, *message, &span, "Error querying external data", err, logger)
 	}
 
-	resultData, err := uc.saveExternalDataToSeaweedFS(ctx, tracer, *message, result, &span, logger)
+	resultData, err := uc.saveExternalData(ctx, tracer, *message, result, &span, logger)
 	if err != nil {
-		return uc.handleErrorWithUpdate(ctx, message.JobID, message.OrganizationID, *message, &span, "Error saving external data to SeaweedFS", err, logger)
+		return uc.handleErrorWithUpdate(ctx, message.JobID, message.OrganizationID, *message, &span, "Error saving external data to storage", err, logger)
 	}
 
 	return uc.completeJob(ctx, tracer, *message, resultData, startTime, &span, logger)
@@ -521,9 +521,9 @@ func getTableFilters(databaseFilters map[string]map[string]modelJob.FilterCondit
 	return databaseFilters[tableName]
 }
 
-// saveExternalDataToSeaweedFS converts the result map to JSON, encrypts it, and saves it to SeaweedFS storage.
+// saveExternalData converts the result map to JSON, encrypts it, and saves it to storage.
 // Returns result data (path, sizeBytes, rowCount, format) for use in notifications and job status updates.
-func (uc *UseCase) saveExternalDataToSeaweedFS(
+func (uc *UseCase) saveExternalData(
 	ctx context.Context,
 	tracer trace.Tracer,
 	message ExtractExternalDataMessage,
@@ -568,25 +568,25 @@ func (uc *UseCase) saveExternalDataToSeaweedFS(
 		logger.Infof("Document HMAC computed successfully for job result")
 	}
 
-	encryptedData, err := uc.encryptDataForSeaweedFS(jsonData, logger)
+	encryptedData, err := uc.encryptData(jsonData, logger)
 	if err != nil {
-		libOtel.HandleSpanError(span, "Error encrypting data for SeaweedFS", err)
-		logger.Errorf("Error encrypting data for SeaweedFS: %s", err.Error())
+		libOtel.HandleSpanError(span, "Error encrypting data for storage", err)
+		logger.Errorf("Error encrypting data for storage: %s", err.Error())
 
-		return nil, fmt.Errorf("encrypting data for SeaweedFS: %w", err)
+		return nil, fmt.Errorf("encrypting data for storage: %w", err)
 	}
 
 	objectName := fmt.Sprintf("%s.json", message.JobID.String())
-	if err := uc.ExternalDataSeaweedFS.Put(ctx, objectName, encryptedData); err != nil {
-		libOtel.HandleSpanError(span, "Error saving external data to SeaweedFS", err)
-		logger.Errorf("Error saving external data to SeaweedFS: %s", err.Error())
+	if err := uc.ExternalDataStorage.Put(ctx, objectName, encryptedData); err != nil {
+		libOtel.HandleSpanError(span, "Error saving external data to storage", err)
+		logger.Errorf("Error saving external data to storage: %s", err.Error())
 
-		return nil, fmt.Errorf("saving external data to SeaweedFS: %w", err)
+		return nil, fmt.Errorf("saving external data to storage: %w", err)
 	}
 
 	// Construct the full result path for job status updates
 	resultPath := fmt.Sprintf("/%s/%s", constant.ExternalDataBucketName, objectName)
-	logger.Infof("Successfully saved encrypted external data to SeaweedFS: %s (size=%d bytes, rows=%d)",
+	logger.Infof("Successfully saved encrypted external data to storage: %s (size=%d bytes, rows=%d)",
 		resultPath, sizeBytes, rowCount)
 
 	return &JobResultData{
@@ -598,19 +598,19 @@ func (uc *UseCase) saveExternalDataToSeaweedFS(
 	}, nil
 }
 
-// encryptDataForSeaweedFS encrypts the data using the crypto library before saving to SeaweedFS.
-func (uc *UseCase) encryptDataForSeaweedFS(data []byte, logger log.Logger) ([]byte, error) {
-	if uc.seaweedFSEncryptSecretKey == "" {
-		return nil, fmt.Errorf("SeaweedFS encrypt secret key not configured")
+// encryptData encrypts the data using the crypto library before saving to storage.
+func (uc *UseCase) encryptData(data []byte, logger log.Logger) ([]byte, error) {
+	if uc.storageEncryptSecretKey == "" {
+		return nil, fmt.Errorf("storage encrypt secret key not configured")
 	}
 
-	if uc.seaweedFSHashSecretKey == "" {
-		return nil, fmt.Errorf("SeaweedFS hash secret key not configured")
+	if uc.storageHashSecretKey == "" {
+		return nil, fmt.Errorf("storage hash secret key not configured")
 	}
 
 	crypto := &libCrypto.Crypto{
-		HashSecretKey:    uc.seaweedFSHashSecretKey,
-		EncryptSecretKey: uc.seaweedFSEncryptSecretKey,
+		HashSecretKey:    uc.storageHashSecretKey,
+		EncryptSecretKey: uc.storageEncryptSecretKey,
 		Logger:           logger,
 	}
 

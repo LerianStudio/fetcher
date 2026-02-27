@@ -8,10 +8,11 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	portPublisher "github.com/LerianStudio/fetcher/pkg/ports/publisher"
 	"github.com/LerianStudio/fetcher/pkg/rabbitmq"
-	libCommons "github.com/LerianStudio/lib-commons/v2/commons"
-	"github.com/LerianStudio/lib-commons/v2/commons/log"
-	"github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
-	libRabbitmq "github.com/LerianStudio/lib-commons/v2/commons/rabbitmq"
+	libCommons "github.com/LerianStudio/lib-commons/v3/commons"
+	"github.com/LerianStudio/lib-commons/v3/commons/log"
+	"github.com/LerianStudio/lib-commons/v3/commons/opentelemetry"
+	libRabbitmq "github.com/LerianStudio/lib-commons/v3/commons/rabbitmq"
+	tmcore "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/core"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -68,7 +69,16 @@ func (pr *PublisherRoutes) Publish(ctx context.Context, exchange, routingKey str
 
 	pr.Debugf("Publishing message to exchange=%s, routingKey=%s", exchange, routingKey)
 
-	if err := pr.adapter.ProducerDefault(ctx, exchange, routingKey, body, nil); err != nil {
+	// Forward tenant ID from context to AMQP headers for multi-tenant isolation.
+	// When no tenant context is present (single-tenant mode), headers remain nil.
+	var headers *map[string]any
+
+	if tenantID := tmcore.GetTenantIDFromContext(ctx); tenantID != "" {
+		h := map[string]any{"X-Tenant-ID": tenantID}
+		headers = &h
+	}
+
+	if err := pr.adapter.ProducerDefault(ctx, exchange, routingKey, body, headers); err != nil {
 		opentelemetry.HandleSpanError(&span, "Failed to publish message", err)
 		pr.Errorf("Error publishing message to exchange %s with routing key %s: %v", exchange, routingKey, err)
 

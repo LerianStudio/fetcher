@@ -4,7 +4,7 @@ package redis
 import (
 	"time"
 
-	"github.com/LerianStudio/lib-commons/v2/commons/log"
+	"github.com/LerianStudio/lib-commons/v3/commons/log"
 )
 
 // NewCacheWithFallback creates a cache with Redis primary and in-memory fallback.

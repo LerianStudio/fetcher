@@ -14,10 +14,12 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/mongodb"
 
-	libLog "github.com/LerianStudio/lib-commons/v2/commons/log"
-	libMongo "github.com/LerianStudio/lib-commons/v2/commons/mongo"
+	libLog "github.com/LerianStudio/lib-commons/v3/commons/log"
+	libMongo "github.com/LerianStudio/lib-commons/v3/commons/mongo"
+	tmcore "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/core"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tryvium-travels/memongo"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -1198,4 +1200,55 @@ func TestList_PaginationSecondPageEmpty(t *testing.T) {
 	if len(list) != 0 {
 		t.Fatalf("expected empty page")
 	}
+}
+
+func TestJobMongoDBRepository_getDatabase(t *testing.T) {
+	t.Run("returns tenant database when tenant context is set", func(t *testing.T) {
+		repo := newJobRepository(t)
+
+		client, err := jobTestMongoConn.GetDB(context.Background())
+		if err != nil {
+			t.Fatalf("failed to get db client: %v", err)
+		}
+
+		tenantDB := client.Database("tenant_xyz789")
+		ctx := tmcore.ContextWithTenantMongo(context.Background(), tenantDB)
+
+		db, err := repo.getDatabase(ctx)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		assert.Equal(t, "tenant_xyz789", db.Name())
+	})
+
+	t.Run("falls back to static connection when no tenant context", func(t *testing.T) {
+		repo := newJobRepository(t)
+
+		db, err := repo.getDatabase(context.Background())
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		assert.Equal(t, strings.ToLower(jobTestDatabaseName), db.Name())
+	})
+
+	t.Run("returns error when no tenant and static connection fails", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		mockConn := NewMockmongoDatabaseProvider(ctrl)
+		mockConn.EXPECT().
+			GetDB(gomock.Any()).
+			Return(nil, errors.New("db down"))
+
+		repo := &JobMongoDBRepository{
+			connection: mockConn,
+			Database:   jobTestDatabaseName,
+		}
+
+		_, err := repo.getDatabase(context.Background())
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "db down")
+	})
 }

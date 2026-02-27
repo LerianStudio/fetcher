@@ -114,13 +114,13 @@ func TestPublishJobNotification_PublisherNotConfigured(t *testing.T) {
 	mocks := newTestMocks(ctrl)
 	// Create UseCase without publisher
 	uc := &UseCase{
-		ExternalDataSeaweedFS: mocks.seaweedFS,
-		JobRepository:         mocks.jobRepo,
-		ConnectionRepository:  mocks.connRepo,
-		Cryptor:               mocks.cryptor,
-		FileTTL:               "1h",
-		RabbitMQPublisher:     nil, // No publisher
-		JobEventsExchange:     "",
+		ExternalDataStorage:  mocks.seaweedFS,
+		JobRepository:        mocks.jobRepo,
+		ConnectionRepository: mocks.connRepo,
+		Cryptor:              mocks.cryptor,
+		FileTTL:              "1h",
+		RabbitMQPublisher:    nil, // No publisher
+		JobEventsExchange:    "",
 	}
 
 	ctx := testContext()
@@ -300,13 +300,13 @@ func TestPublishJobNotification_EmptyExchange(t *testing.T) {
 	mocks := newTestMocks(ctrl)
 	// Create UseCase with empty exchange
 	uc := &UseCase{
-		ExternalDataSeaweedFS: mocks.seaweedFS,
-		JobRepository:         mocks.jobRepo,
-		ConnectionRepository:  mocks.connRepo,
-		Cryptor:               mocks.cryptor,
-		FileTTL:               "1h",
-		RabbitMQPublisher:     mocks.rabbitPublisher,
-		JobEventsExchange:     "", // Empty exchange
+		ExternalDataStorage:  mocks.seaweedFS,
+		JobRepository:        mocks.jobRepo,
+		ConnectionRepository: mocks.connRepo,
+		Cryptor:              mocks.cryptor,
+		FileTTL:              "1h",
+		RabbitMQPublisher:    mocks.rabbitPublisher,
+		JobEventsExchange:    "", // Empty exchange
 	}
 
 	ctx := testContext()

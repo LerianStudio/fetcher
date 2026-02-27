@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"time"
 
 	"github.com/LerianStudio/fetcher/components/worker/internal/adapters/rabbitmq"
 	"github.com/LerianStudio/fetcher/components/worker/internal/services"
@@ -11,16 +12,18 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/datasource"
 	"github.com/LerianStudio/fetcher/pkg/mongodb/connection"
-	mongoDB "github.com/LerianStudio/lib-commons/v2/commons/mongo"
+	mongoDB "github.com/LerianStudio/lib-commons/v3/commons/mongo"
 
 	"github.com/LerianStudio/fetcher/pkg/mongodb/job"
-	simpleClient "github.com/LerianStudio/fetcher/pkg/seaweedfs"
-	"github.com/LerianStudio/fetcher/pkg/seaweedfs/external"
+	pkgStorage "github.com/LerianStudio/fetcher/pkg/storage"
 
-	libCommons "github.com/LerianStudio/lib-commons/v2/commons"
-	libOtel "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
-	libRabbitMQ "github.com/LerianStudio/lib-commons/v2/commons/rabbitmq"
-	libZap "github.com/LerianStudio/lib-commons/v2/commons/zap"
+	libCommons "github.com/LerianStudio/lib-commons/v3/commons"
+	"github.com/LerianStudio/lib-commons/v3/commons/log"
+	libOtel "github.com/LerianStudio/lib-commons/v3/commons/opentelemetry"
+	libRabbitMQ "github.com/LerianStudio/lib-commons/v3/commons/rabbitmq"
+	tmclient "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/client"
+	tmmongo "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/mongo"
+	libZap "github.com/LerianStudio/lib-commons/v3/commons/zap"
 	libLicense "github.com/LerianStudio/lib-license-go/v2/middleware"
 )
 
@@ -50,6 +53,18 @@ type Config struct {
 	SeaweedFSHost      string `env:"SEAWEEDFS_HOST"`
 	SeaweedFSFilerPort string `env:"SEAWEEDFS_FILER_PORT"`
 	SeaweedFSTTL       string `env:"SEAWEEDFS_TTL"`
+	// Storage provider selection ("seaweedfs" or "s3", defaults to "seaweedfs")
+	StorageProvider string `env:"STORAGE_PROVIDER"`
+	// S3-compatible object storage configuration (used when STORAGE_PROVIDER=s3)
+	// SSL is controlled by the URL scheme of ObjectStorageEndpoint.
+	ObjectStorageEndpoint     string `env:"OBJECT_STORAGE_ENDPOINT"`
+	ObjectStorageRegion       string `env:"OBJECT_STORAGE_REGION"`
+	ObjectStorageBucket       string `env:"OBJECT_STORAGE_BUCKET"`
+	ObjectStorageKeyPrefix    string `env:"OBJECT_STORAGE_KEY_PREFIX"`
+	ObjectStorageAccessKeyID  string `env:"OBJECT_STORAGE_ACCESS_KEY_ID"`
+	ObjectStorageSecretKey    string `env:"OBJECT_STORAGE_SECRET_KEY"`
+	ObjectStorageUsePathStyle bool   `env:"OBJECT_STORAGE_USE_PATH_STYLE"`
+	// OBJECT_STORAGE_DISABLE_SSL omitted — SSL controlled by endpoint URL scheme.
 	// MongoDB
 	MongoURI        string `env:"MONGO_URI"`
 	MongoDBHost     string `env:"MONGO_HOST"`
@@ -65,11 +80,20 @@ type Config struct {
 	AppEncryptionKey        string `env:"APP_ENC_KEY"`
 	AppEncryptionKeyVersion string `env:"APP_ENC_KEY_VERSION"`
 	// SeaweedFS encryption keys
-	CryptoEncryptSecretKeySeaweedFS string `env:"CRYPTO_ENCRYPT_SECRET_KEY_SEAWEEDFS"`
-	CryptoHashSecretKeySeaweedFS    string `env:"CRYPTO_HASH_SECRET_KEY_SEAWEEDFS"`
+	CryptoEncryptFileStorage string `env:"CRYPTO_ENCRYPT_FILE_STORAGE"`
+	CryptoHashFileStorage    string `env:"CRYPTO_HASH_SECRET_KEY_FILE_STORAGE"`
 	// CRM plugin encryption keys
 	CryptoEncryptSecretKeyPluginCRM string `env:"CRYPTO_ENCRYPT_SECRET_KEY_PLUGIN_CRM"`
 	CryptoHashSecretKeyPluginCRM    string `env:"CRYPTO_HASH_SECRET_KEY_PLUGIN_CRM"`
+	// Multi-Tenant configuration
+	MultiTenantEnabled bool   `env:"MULTI_TENANT_ENABLED"`
+	MultiTenantURL     string `env:"MULTI_TENANT_URL"`
+	// TODO(multi-tenant): Wire MultiTenantEnvironment into RabbitMQ lazy consumer when full multi-tenant RabbitMQ is implemented.
+	MultiTenantEnvironment              string `env:"MULTI_TENANT_ENVIRONMENT"`
+	MultiTenantMaxTenantPools           int    `env:"MULTI_TENANT_MAX_TENANT_POOLS"`
+	MultiTenantIdleTimeoutSec           int    `env:"MULTI_TENANT_IDLE_TIMEOUT_SEC"`
+	MultiTenantCircuitBreakerThreshold  int    `env:"MULTI_TENANT_CIRCUIT_BREAKER_THRESHOLD"`
+	MultiTenantCircuitBreakerTimeoutSec int    `env:"MULTI_TENANT_CIRCUIT_BREAKER_TIMEOUT_SEC"`
 }
 
 // InitWorker initializes and configures the application's dependencies and returns the Service instance.
@@ -81,9 +105,18 @@ func InitWorker() (*Service, error) {
 
 	ctx := context.Background()
 
-	logger := libZap.InitializeLogger()
+	logger, err := libZap.InitializeLoggerWithError()
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize logger: %w", err)
+	}
 
-	telemetry := libOtel.InitializeTelemetry(&libOtel.TelemetryConfig{
+	if cfg.MultiTenantEnabled {
+		logger.Info("Multi-tenant mode ENABLED")
+	} else {
+		logger.Info("Running in SINGLE-TENANT MODE")
+	}
+
+	telemetry, err := libOtel.InitializeTelemetryWithError(&libOtel.TelemetryConfig{
 		LibraryName:               cfg.OtelLibraryName,
 		ServiceName:               cfg.OtelServiceName,
 		ServiceVersion:            cfg.OtelServiceVersion,
@@ -92,6 +125,9 @@ func InitWorker() (*Service, error) {
 		EnableTelemetry:           cfg.EnableTelemetry,
 		Logger:                    logger,
 	})
+	if err != nil {
+		return nil, fmt.Errorf("initialize telemetry: %w", err)
+	}
 
 	// Init rabbitmq connection for consumer
 	// Consumer and Publisher use SEPARATE connections to avoid channel interference.
@@ -163,9 +199,29 @@ func InitWorker() (*Service, error) {
 
 	publisherRoutes := rabbitmq.NewPublisherRoutes(publisherConnection, logger, telemetry, cryptoWithExternalHMAC)
 
-	// Config SeaweedFS connection
-	seaweedFSEndpoint := fmt.Sprintf("http://%s:%s", cfg.SeaweedFSHost, cfg.SeaweedFSFilerPort)
-	seaweedFSClient := simpleClient.NewSeaweedFSClient(seaweedFSEndpoint)
+	// Initialize storage repository (SeaweedFS or S3) via factory
+	storageProvider := cfg.StorageProvider
+	if storageProvider == "" {
+		storageProvider = pkgStorage.ProviderSeaweedFS
+	}
+
+	storageRepository, err := pkgStorage.NewRepository(ctx, pkgStorage.ProviderConfig{
+		Provider:          storageProvider,
+		SeaweedFSEndpoint: fmt.Sprintf("http://%s:%s", cfg.SeaweedFSHost, cfg.SeaweedFSFilerPort),
+		Bucket:            constant.ExternalDataBucketName,
+		S3Endpoint:        cfg.ObjectStorageEndpoint,
+		S3Region:          cfg.ObjectStorageRegion,
+		S3Bucket:          cfg.ObjectStorageBucket,
+		S3KeyPrefix:       cfg.ObjectStorageKeyPrefix,
+		S3AccessKeyID:     cfg.ObjectStorageAccessKeyID,
+		S3SecretAccessKey: cfg.ObjectStorageSecretKey,
+		S3UsePathStyle:    cfg.ObjectStorageUsePathStyle,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("initialize storage repository: %w", err)
+	}
+
+	logger.Infof("Storage initialized with provider: %s", storageProvider)
 
 	// Init mongo DB connection
 	escapedPass := url.QueryEscape(cfg.MongoDBPassword)
@@ -183,7 +239,8 @@ func InitWorker() (*Service, error) {
 		MaxPoolSize:            uint64(cfg.MaxPoolSize),
 	}
 
-	externalDataSeaweedFSRepository := external.NewSimpleRepository(seaweedFSClient, constant.ExternalDataBucketName)
+	// Initialize multi-tenant MongoDB manager (nil when MULTI_TENANT_ENABLED=false)
+	mongoManager := initMultiTenantMongoManager(cfg, logger)
 
 	// Initialize MongoDB repositories
 	jobRepository, errJobRepo := job.NewJobMongoDBRepository(ctx, mongoConnection)
@@ -197,16 +254,16 @@ func InitWorker() (*Service, error) {
 	}
 
 	service := &services.UseCase{
-		ExternalDataSeaweedFS: externalDataSeaweedFSRepository,
-		JobRepository:         jobRepository,
-		ConnectionRepository:  connectionRepository,
-		Cryptor:               cryptoService,
-		DocumentSigner:        cryptoWithExternalHMAC,
-		FileTTL:               cfg.SeaweedFSTTL,
-		RabbitMQPublisher:     publisherRoutes,
-		JobEventsExchange:     cfg.RabbitMQJobEventsExchange,
+		ExternalDataStorage:  storageRepository,
+		JobRepository:        jobRepository,
+		ConnectionRepository: connectionRepository,
+		Cryptor:              cryptoService,
+		DocumentSigner:       cryptoWithExternalHMAC,
+		FileTTL:              cfg.SeaweedFSTTL,
+		RabbitMQPublisher:    publisherRoutes,
+		JobEventsExchange:    cfg.RabbitMQJobEventsExchange,
 	}
-	service.SetSeaweedFSSecrets(cfg.CryptoEncryptSecretKeySeaweedFS, cfg.CryptoHashSecretKeySeaweedFS)
+	service.SetStorageSecrets(cfg.CryptoEncryptFileStorage, cfg.CryptoHashFileStorage)
 	service.SetCRMSecrets(cfg.CryptoEncryptSecretKeyPluginCRM, cfg.CryptoHashSecretKeyPluginCRM)
 	service.SetDataSourceFactory(datasource.NewDataSourceFromConnectionWithLogger(logger))
 
@@ -222,11 +279,68 @@ func InitWorker() (*Service, error) {
 		cfg.OrganizationIDs,
 		&logger,
 	)
-	multiQueueConsumer := NewMultiQueueConsumer(consumerRoutes, service, cfg.RabbitMQGenerateReportQueue)
+	multiQueueConsumer := NewMultiQueueConsumer(consumerRoutes, service, cfg.RabbitMQGenerateReportQueue, mongoManager)
 
 	return &Service{
 		MultiQueueConsumer: multiQueueConsumer,
 		Logger:             logger,
 		licenseShutdown:    licenseClient.GetLicenseManagerShutdown(),
 	}, nil
+}
+
+// initMultiTenantMongoManager creates a MongoDB Manager for tenant connection pool management
+// if multi-tenant mode is enabled and configured. Returns nil when multi-tenant is disabled.
+// The Worker does not need HTTP middleware (no HTTP server) -- tenant context comes from
+// RabbitMQ message headers (to be implemented in Gate 6).
+//
+// Per multi-tenant.md standards:
+//   - Circuit breaker is MANDATORY for the Tenant Manager client
+//   - Uses constant.ApplicationName and constant.ModuleWorker for service/module identity
+//   - WithMongoManager configures MongoDB connection pool management
+func initMultiTenantMongoManager(cfg *Config, logger log.Logger) *tmmongo.Manager {
+	if !cfg.MultiTenantEnabled || cfg.MultiTenantURL == "" {
+		return nil
+	}
+
+	// Create Tenant Manager HTTP client with circuit breaker (MANDATORY per multi-tenant.md).
+	// Default: 5 consecutive failures, 30s half-open timeout.
+	var clientOpts []tmclient.ClientOption
+	if cfg.MultiTenantCircuitBreakerThreshold > 0 {
+		clientOpts = append(clientOpts,
+			tmclient.WithCircuitBreaker(
+				cfg.MultiTenantCircuitBreakerThreshold,
+				time.Duration(cfg.MultiTenantCircuitBreakerTimeoutSec)*time.Second,
+			),
+		)
+	} else {
+		clientOpts = append(clientOpts,
+			tmclient.WithCircuitBreaker(5, 30*time.Second),
+		)
+	}
+
+	tmClient := tmclient.NewClient(cfg.MultiTenantURL, logger, clientOpts...)
+
+	// Create MongoDB Manager for tenant connection pool management
+	var mongoOpts []tmmongo.Option
+
+	mongoOpts = append(mongoOpts,
+		tmmongo.WithModule(constant.ModuleWorker),
+		tmmongo.WithLogger(logger),
+	)
+
+	if cfg.MultiTenantMaxTenantPools > 0 {
+		mongoOpts = append(mongoOpts, tmmongo.WithMaxTenantPools(cfg.MultiTenantMaxTenantPools))
+	}
+
+	if cfg.MultiTenantIdleTimeoutSec > 0 {
+		mongoOpts = append(mongoOpts, tmmongo.WithIdleTimeout(
+			time.Duration(cfg.MultiTenantIdleTimeoutSec)*time.Second,
+		))
+	}
+
+	mongoManager := tmmongo.NewManager(tmClient, constant.ApplicationName, mongoOpts...)
+
+	logger.Infof("Multi-tenant MongoDB manager initialized: url=%s, module=%s", cfg.MultiTenantURL, constant.ModuleWorker)
+
+	return mongoManager
 }

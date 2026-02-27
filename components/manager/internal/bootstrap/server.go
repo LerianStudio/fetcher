@@ -1,11 +1,11 @@
 package bootstrap
 
 import (
-	libCommons "github.com/LerianStudio/lib-commons/v2/commons"
-	libCommonsLicense "github.com/LerianStudio/lib-commons/v2/commons/license"
-	libCommonsLog "github.com/LerianStudio/lib-commons/v2/commons/log"
-	libCommonsOtel "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
-	libCommonsServer "github.com/LerianStudio/lib-commons/v2/commons/server"
+	libCommons "github.com/LerianStudio/lib-commons/v3/commons"
+	libCommonsLicense "github.com/LerianStudio/lib-commons/v3/commons/license"
+	libCommonsLog "github.com/LerianStudio/lib-commons/v3/commons/log"
+	libCommonsOtel "github.com/LerianStudio/lib-commons/v3/commons/opentelemetry"
+	libCommonsServer "github.com/LerianStudio/lib-commons/v3/commons/server"
 	libLicense "github.com/LerianStudio/lib-license-go/v2/middleware"
 	"github.com/gofiber/fiber/v2"
 )

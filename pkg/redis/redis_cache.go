@@ -7,9 +7,10 @@ import (
 	"fmt"
 	"time"
 
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v3/commons"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v3/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/valkey"
 
-	"github.com/LerianStudio/lib-commons/v2/commons"
 	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -54,9 +55,13 @@ func NewRedisCacheSafe[T any](conn *RedisConnection, ttl time.Duration, keyPrefi
 	}, nil
 }
 
-// cacheKey generates the full Redis key.
-func (c *RedisCache[T]) cacheKey(key string) string {
-	return fmt.Sprintf("%s%s", c.keyPrefix, key)
+// cacheKey generates the full Redis key with tenant-aware prefixing.
+// In multi-tenant mode, the key is prefixed with the tenant ID from context.
+// In single-tenant mode (no tenant in context), the key is used as-is.
+func (c *RedisCache[T]) cacheKey(ctx context.Context, key string) string {
+	tenantKey := valkey.GetKeyFromContext(ctx, key)
+
+	return fmt.Sprintf("%s%s", c.keyPrefix, tenantKey)
 }
 
 // Get retrieves a cached value by key.
@@ -78,7 +83,7 @@ func (c *RedisCache[T]) Get(ctx context.Context, key string) (T, bool, error) {
 
 	var zero T
 
-	fullKey := c.cacheKey(key)
+	fullKey := c.cacheKey(ctx, key)
 
 	data, err := c.client.Get(ctx, fullKey).Bytes()
 	if err != nil {
@@ -140,7 +145,7 @@ func (c *RedisCache[T]) Set(ctx context.Context, key string, value T, ttl time.D
 		return fmt.Errorf("failed to marshal value: %w", err)
 	}
 
-	fullKey := c.cacheKey(key)
+	fullKey := c.cacheKey(ctx, key)
 	if err := c.client.Set(ctx, fullKey, data, ttl).Err(); err != nil {
 		libOpentelemetry.HandleSpanError(&span, "failed to set cache value", err)
 		logger.Errorf("error storing in cache key %s: %v", key, err)
@@ -169,7 +174,7 @@ func (c *RedisCache[T]) Delete(ctx context.Context, key string) error {
 		attribute.String("app.request.request_id", reqID),
 	)
 
-	fullKey := c.cacheKey(key)
+	fullKey := c.cacheKey(ctx, key)
 	if err := c.client.Del(ctx, fullKey).Err(); err != nil {
 		libOpentelemetry.HandleSpanError(&span, "failed to delete cache key", err)
 		logger.Errorf("error deleting cache key %s: %v", key, err)
@@ -193,7 +198,8 @@ func (c *RedisCache[T]) Clear(ctx context.Context) error {
 	ctx, span := tracer.Start(ctx, "cache.redis.clear")
 	defer span.End()
 
-	pattern := fmt.Sprintf("%s*", c.keyPrefix)
+	tenantWildcard := valkey.GetKeyFromContext(ctx, "*")
+	pattern := fmt.Sprintf("%s%s", c.keyPrefix, tenantWildcard)
 
 	span.SetAttributes(
 		attribute.String("app.cache.key_prefix", c.keyPrefix),

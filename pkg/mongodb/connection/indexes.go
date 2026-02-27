@@ -7,8 +7,8 @@ import (
 
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	sharedMongo "github.com/LerianStudio/fetcher/pkg/mongodb"
-	"github.com/LerianStudio/lib-commons/v2/commons"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v3/commons"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v3/commons/opentelemetry"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -35,13 +35,13 @@ func (cr *ConnectionMongoDBRepository) EnsureIndexes(ctx context.Context) error 
 
 	logger.Infof("Creating indexes for %s collection", constant.MongoCollectionConnection)
 
-	db, err := cr.connection.GetDB(ctx)
+	db, err := cr.getDatabase(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
 		return err
 	}
 
-	coll := db.Database(strings.ToLower(cr.Database)).Collection(strings.ToLower(constant.MongoCollectionConnection))
+	coll := db.Collection(strings.ToLower(constant.MongoCollectionConnection))
 
 	indexes := []mongo.IndexModel{
 		{
@@ -152,13 +152,13 @@ func (cr *ConnectionMongoDBRepository) DropIndexes(ctx context.Context) error {
 
 	logger.Warnf("Dropping all custom indexes for %s collection", constant.MongoCollectionConnection)
 
-	db, err := cr.connection.GetDB(ctx)
+	db, err := cr.getDatabase(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
 		return err
 	}
 
-	coll := db.Database(strings.ToLower(cr.Database)).Collection(strings.ToLower(constant.MongoCollectionConnection))
+	coll := db.Collection(strings.ToLower(constant.MongoCollectionConnection))
 
 	ctx, cancel := context.WithTimeout(ctx, indexDropTimeout)
 	defer cancel()

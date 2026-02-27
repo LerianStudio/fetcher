@@ -3,9 +3,9 @@ package in
 import (
 	"github.com/LerianStudio/fetcher/pkg/net/http"
 	middlewareAuth "github.com/LerianStudio/lib-auth/v2/auth/middleware"
-	"github.com/LerianStudio/lib-commons/v2/commons/log"
-	commonsHttp "github.com/LerianStudio/lib-commons/v2/commons/net/http"
-	"github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v3/commons/log"
+	commonsHttp "github.com/LerianStudio/lib-commons/v3/commons/net/http"
+	"github.com/LerianStudio/lib-commons/v3/commons/opentelemetry"
 	libLicense "github.com/LerianStudio/lib-license-go/v2/middleware"
 
 	"github.com/gofiber/fiber/v2"
@@ -20,6 +20,8 @@ const (
 )
 
 // NewRoutes creates a new fiber router with the specified handlers and middleware.
+// The tenantMiddleware parameter accepts a fiber.Handler for multi-tenant DB resolution.
+// Pass nil to disable tenant middleware (single-tenant mode).
 func NewRoutes(
 	lg log.Logger,
 	tl *opentelemetry.Telemetry,
@@ -28,6 +30,7 @@ func NewRoutes(
 	connectionHandler *ConnectionHandler,
 	migrationHandler *MigrationHandler,
 	fetcherHandler *FetcherHandler,
+	tenantMiddleware fiber.Handler,
 ) *fiber.App {
 	f := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
@@ -44,6 +47,7 @@ func NewRoutes(
 	// TODO: Enable license middleware when ready
 	// f.Use(licenseClient.Middleware())
 
+	// Public endpoints (no tenant context needed)
 	// Doc Swagger
 	f.Get("/swagger/*", WithSwaggerEnvConfig(), fiberSwagger.WrapHandler)
 
@@ -52,6 +56,12 @@ func NewRoutes(
 
 	// Version
 	f.Get("/version", commonsHttp.Version)
+
+	// Tenant middleware: registered AFTER public endpoints, BEFORE protected routes.
+	// When nil (single-tenant mode), no middleware is registered.
+	if tenantMiddleware != nil {
+		f.Use(tenantMiddleware)
+	}
 
 	// Connections
 	f.Post("/v1/management/connections", auth.Authorize(applicationName, connectionsResource, "post"), connectionHandler.CreateConnection)
