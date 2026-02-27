@@ -7,6 +7,12 @@
 *.mongodb.go
 *.rabbitmq.go
 *.redis.go
+*.postgre.go
+*rabbitmq.go
+*oracle.go
+*sqlserver.go
+*s3.go
+*seaweedfs.go
 
 # Auto-generated mocks
 *.mock.go
@@ -22,3 +28,7 @@ bootstrap.go
 # HTTP routing infrastructure (no business logic)
 routes.go
 swagger.go
+
+# Pkgs
+/pkg/itestkit/
+/pkg/testutil/
