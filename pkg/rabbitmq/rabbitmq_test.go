@@ -1004,8 +1004,11 @@ type testAcknowledger struct {
 }
 
 // newTestAdapter creates a properly initialized RabbitMQAdapter for testing.
+// Signature verification is disabled so delivery processing tests can exercise
+// handler invocation without requiring a Signer to be configured.
 func newTestAdapter(conn rabbitConnection) *RabbitMQAdapter {
 	opts := DefaultOptions()
+	opts.EnableSignatureVerification = false
 	return &RabbitMQAdapter{
 		conn:           conn,
 		options:        opts,
@@ -1014,8 +1017,11 @@ func newTestAdapter(conn rabbitConnection) *RabbitMQAdapter {
 }
 
 // newTestAdapterWithChannel creates a properly initialized RabbitMQAdapter with a channel for testing.
+// Signature verification is disabled so delivery processing tests can exercise
+// handler invocation without requiring a Signer to be configured.
 func newTestAdapterWithChannel(conn rabbitConnection, channel amqpChannel) *RabbitMQAdapter {
 	opts := DefaultOptions()
+	opts.EnableSignatureVerification = false
 	return &RabbitMQAdapter{
 		conn:           conn,
 		channel:        channel,
