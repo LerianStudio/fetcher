@@ -9,9 +9,9 @@ import (
 
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/rabbitmq"
-	"github.com/LerianStudio/lib-commons/v2/commons/log"
-	"github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
-	libRabbitmq "github.com/LerianStudio/lib-commons/v2/commons/rabbitmq"
+	"github.com/LerianStudio/lib-commons/v3/commons/log"
+	"github.com/LerianStudio/lib-commons/v3/commons/opentelemetry"
+	libRabbitmq "github.com/LerianStudio/lib-commons/v3/commons/rabbitmq"
 )
 
 // ConsumerRepository provides an interface for Consumer related to rabbitmq.

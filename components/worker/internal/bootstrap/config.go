@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"time"
 
 	"github.com/LerianStudio/fetcher/components/worker/internal/adapters/rabbitmq"
 	"github.com/LerianStudio/fetcher/components/worker/internal/services"
@@ -11,15 +12,18 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/datasource"
 	"github.com/LerianStudio/fetcher/pkg/mongodb/connection"
-	mongoDB "github.com/LerianStudio/lib-commons/v2/commons/mongo"
+	mongoDB "github.com/LerianStudio/lib-commons/v3/commons/mongo"
 
 	"github.com/LerianStudio/fetcher/pkg/mongodb/job"
 	pkgStorage "github.com/LerianStudio/fetcher/pkg/storage"
 
-	libCommons "github.com/LerianStudio/lib-commons/v2/commons"
-	libOtel "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
-	libRabbitMQ "github.com/LerianStudio/lib-commons/v2/commons/rabbitmq"
-	libZap "github.com/LerianStudio/lib-commons/v2/commons/zap"
+	libCommons "github.com/LerianStudio/lib-commons/v3/commons"
+	"github.com/LerianStudio/lib-commons/v3/commons/log"
+	libOtel "github.com/LerianStudio/lib-commons/v3/commons/opentelemetry"
+	libRabbitMQ "github.com/LerianStudio/lib-commons/v3/commons/rabbitmq"
+	tmclient "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/client"
+	tmmongo "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/mongo"
+	libZap "github.com/LerianStudio/lib-commons/v3/commons/zap"
 	libLicense "github.com/LerianStudio/lib-license-go/v2/middleware"
 )
 
@@ -81,6 +85,15 @@ type Config struct {
 	// CRM plugin encryption keys
 	CryptoEncryptSecretKeyPluginCRM string `env:"CRYPTO_ENCRYPT_SECRET_KEY_PLUGIN_CRM"`
 	CryptoHashSecretKeyPluginCRM    string `env:"CRYPTO_HASH_SECRET_KEY_PLUGIN_CRM"`
+	// Multi-Tenant configuration
+	MultiTenantEnabled bool   `env:"MULTI_TENANT_ENABLED"`
+	MultiTenantURL     string `env:"MULTI_TENANT_URL"`
+	// TODO(multi-tenant): Wire MultiTenantEnvironment into RabbitMQ lazy consumer when full multi-tenant RabbitMQ is implemented.
+	MultiTenantEnvironment              string `env:"MULTI_TENANT_ENVIRONMENT"`
+	MultiTenantMaxTenantPools           int    `env:"MULTI_TENANT_MAX_TENANT_POOLS"`
+	MultiTenantIdleTimeoutSec           int    `env:"MULTI_TENANT_IDLE_TIMEOUT_SEC"`
+	MultiTenantCircuitBreakerThreshold  int    `env:"MULTI_TENANT_CIRCUIT_BREAKER_THRESHOLD"`
+	MultiTenantCircuitBreakerTimeoutSec int    `env:"MULTI_TENANT_CIRCUIT_BREAKER_TIMEOUT_SEC"`
 }
 
 // InitWorker initializes and configures the application's dependencies and returns the Service instance.
@@ -92,9 +105,18 @@ func InitWorker() (*Service, error) {
 
 	ctx := context.Background()
 
-	logger := libZap.InitializeLogger()
+	logger, err := libZap.InitializeLoggerWithError()
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize logger: %w", err)
+	}
 
-	telemetry := libOtel.InitializeTelemetry(&libOtel.TelemetryConfig{
+	if cfg.MultiTenantEnabled {
+		logger.Info("Multi-tenant mode ENABLED")
+	} else {
+		logger.Info("Running in SINGLE-TENANT MODE")
+	}
+
+	telemetry, err := libOtel.InitializeTelemetryWithError(&libOtel.TelemetryConfig{
 		LibraryName:               cfg.OtelLibraryName,
 		ServiceName:               cfg.OtelServiceName,
 		ServiceVersion:            cfg.OtelServiceVersion,
@@ -103,6 +125,9 @@ func InitWorker() (*Service, error) {
 		EnableTelemetry:           cfg.EnableTelemetry,
 		Logger:                    logger,
 	})
+	if err != nil {
+		return nil, fmt.Errorf("initialize telemetry: %w", err)
+	}
 
 	// Init rabbitmq connection for consumer
 	// Consumer and Publisher use SEPARATE connections to avoid channel interference.
@@ -214,6 +239,9 @@ func InitWorker() (*Service, error) {
 		MaxPoolSize:            uint64(cfg.MaxPoolSize),
 	}
 
+	// Initialize multi-tenant MongoDB manager (nil when MULTI_TENANT_ENABLED=false)
+	mongoManager := initMultiTenantMongoManager(cfg, logger)
+
 	// Initialize MongoDB repositories
 	jobRepository, errJobRepo := job.NewJobMongoDBRepository(ctx, mongoConnection)
 	if errJobRepo != nil {
@@ -251,11 +279,68 @@ func InitWorker() (*Service, error) {
 		cfg.OrganizationIDs,
 		&logger,
 	)
-	multiQueueConsumer := NewMultiQueueConsumer(consumerRoutes, service, cfg.RabbitMQGenerateReportQueue)
+	multiQueueConsumer := NewMultiQueueConsumer(consumerRoutes, service, cfg.RabbitMQGenerateReportQueue, mongoManager)
 
 	return &Service{
 		MultiQueueConsumer: multiQueueConsumer,
 		Logger:             logger,
 		licenseShutdown:    licenseClient.GetLicenseManagerShutdown(),
 	}, nil
+}
+
+// initMultiTenantMongoManager creates a MongoDB Manager for tenant connection pool management
+// if multi-tenant mode is enabled and configured. Returns nil when multi-tenant is disabled.
+// The Worker does not need HTTP middleware (no HTTP server) -- tenant context comes from
+// RabbitMQ message headers (to be implemented in Gate 6).
+//
+// Per multi-tenant.md standards:
+//   - Circuit breaker is MANDATORY for the Tenant Manager client
+//   - Uses constant.ApplicationName and constant.ModuleWorker for service/module identity
+//   - WithMongoManager configures MongoDB connection pool management
+func initMultiTenantMongoManager(cfg *Config, logger log.Logger) *tmmongo.Manager {
+	if !cfg.MultiTenantEnabled || cfg.MultiTenantURL == "" {
+		return nil
+	}
+
+	// Create Tenant Manager HTTP client with circuit breaker (MANDATORY per multi-tenant.md).
+	// Default: 5 consecutive failures, 30s half-open timeout.
+	var clientOpts []tmclient.ClientOption
+	if cfg.MultiTenantCircuitBreakerThreshold > 0 {
+		clientOpts = append(clientOpts,
+			tmclient.WithCircuitBreaker(
+				cfg.MultiTenantCircuitBreakerThreshold,
+				time.Duration(cfg.MultiTenantCircuitBreakerTimeoutSec)*time.Second,
+			),
+		)
+	} else {
+		clientOpts = append(clientOpts,
+			tmclient.WithCircuitBreaker(5, 30*time.Second),
+		)
+	}
+
+	tmClient := tmclient.NewClient(cfg.MultiTenantURL, logger, clientOpts...)
+
+	// Create MongoDB Manager for tenant connection pool management
+	var mongoOpts []tmmongo.Option
+
+	mongoOpts = append(mongoOpts,
+		tmmongo.WithModule(constant.ModuleWorker),
+		tmmongo.WithLogger(logger),
+	)
+
+	if cfg.MultiTenantMaxTenantPools > 0 {
+		mongoOpts = append(mongoOpts, tmmongo.WithMaxTenantPools(cfg.MultiTenantMaxTenantPools))
+	}
+
+	if cfg.MultiTenantIdleTimeoutSec > 0 {
+		mongoOpts = append(mongoOpts, tmmongo.WithIdleTimeout(
+			time.Duration(cfg.MultiTenantIdleTimeoutSec)*time.Second,
+		))
+	}
+
+	mongoManager := tmmongo.NewManager(tmClient, constant.ApplicationName, mongoOpts...)
+
+	logger.Infof("Multi-tenant MongoDB manager initialized: url=%s, module=%s", cfg.MultiTenantURL, constant.ModuleWorker)
+
+	return mongoManager
 }

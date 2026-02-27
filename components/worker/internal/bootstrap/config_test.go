@@ -3,7 +3,8 @@ package bootstrap
 import (
 	"testing"
 
-	libCommons "github.com/LerianStudio/lib-commons/v2/commons"
+	libCommons "github.com/LerianStudio/lib-commons/v3/commons"
+	libZap "github.com/LerianStudio/lib-commons/v3/commons/zap"
 )
 
 func TestConfig_StructFields(t *testing.T) {
@@ -142,8 +143,8 @@ func TestConfig_LoadFromEnvVars(t *testing.T) {
 				if cfg.CryptoEncryptFileStorage != "seaweed-encrypt" {
 					t.Errorf("CryptoEncryptFileStorage = %q, want %q", cfg.CryptoEncryptFileStorage, "seaweed-encrypt")
 				}
-				if cfg.CryptoHashFileStorage != "crm-hash" {
-					t.Errorf("CryptoHashFileStorage = %q, want %q", cfg.CryptoHashFileStorage, "crm-hash")
+				if cfg.CryptoHashFileStorage != "seaweed-hash" {
+					t.Errorf("CryptoHashFileStorage = %q, want %q", cfg.CryptoHashFileStorage, "seaweed-hash")
 				}
 			},
 		},
@@ -163,6 +164,70 @@ func TestConfig_LoadFromEnvVars(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "loads multi-tenant configuration with all fields",
+			envVars: map[string]string{
+				"MULTI_TENANT_ENABLED":                     "true",
+				"MULTI_TENANT_URL":                         "http://tenant-manager:8080",
+				"MULTI_TENANT_ENVIRONMENT":                 "staging",
+				"MULTI_TENANT_MAX_TENANT_POOLS":            "200",
+				"MULTI_TENANT_IDLE_TIMEOUT_SEC":            "600",
+				"MULTI_TENANT_CIRCUIT_BREAKER_THRESHOLD":   "10",
+				"MULTI_TENANT_CIRCUIT_BREAKER_TIMEOUT_SEC": "60",
+			},
+			validate: func(t *testing.T, cfg *Config) {
+				t.Helper()
+				if !cfg.MultiTenantEnabled {
+					t.Error("MultiTenantEnabled should be true")
+				}
+				if cfg.MultiTenantURL != "http://tenant-manager:8080" {
+					t.Errorf("MultiTenantURL = %q, want %q", cfg.MultiTenantURL, "http://tenant-manager:8080")
+				}
+				if cfg.MultiTenantEnvironment != "staging" {
+					t.Errorf("MultiTenantEnvironment = %q, want %q", cfg.MultiTenantEnvironment, "staging")
+				}
+				if cfg.MultiTenantMaxTenantPools != 200 {
+					t.Errorf("MultiTenantMaxTenantPools = %d, want 200", cfg.MultiTenantMaxTenantPools)
+				}
+				if cfg.MultiTenantIdleTimeoutSec != 600 {
+					t.Errorf("MultiTenantIdleTimeoutSec = %d, want 600", cfg.MultiTenantIdleTimeoutSec)
+				}
+				if cfg.MultiTenantCircuitBreakerThreshold != 10 {
+					t.Errorf("MultiTenantCircuitBreakerThreshold = %d, want 10", cfg.MultiTenantCircuitBreakerThreshold)
+				}
+				if cfg.MultiTenantCircuitBreakerTimeoutSec != 60 {
+					t.Errorf("MultiTenantCircuitBreakerTimeoutSec = %d, want 60", cfg.MultiTenantCircuitBreakerTimeoutSec)
+				}
+			},
+		},
+		{
+			name:    "multi-tenant defaults to disabled when env vars not set",
+			envVars: map[string]string{},
+			validate: func(t *testing.T, cfg *Config) {
+				t.Helper()
+				if cfg.MultiTenantEnabled {
+					t.Error("MultiTenantEnabled should default to false")
+				}
+				if cfg.MultiTenantURL != "" {
+					t.Errorf("MultiTenantURL should be empty, got %q", cfg.MultiTenantURL)
+				}
+				if cfg.MultiTenantEnvironment != "" {
+					t.Errorf("MultiTenantEnvironment should be empty, got %q", cfg.MultiTenantEnvironment)
+				}
+				if cfg.MultiTenantMaxTenantPools != 0 {
+					t.Errorf("MultiTenantMaxTenantPools should be 0, got %d", cfg.MultiTenantMaxTenantPools)
+				}
+				if cfg.MultiTenantIdleTimeoutSec != 0 {
+					t.Errorf("MultiTenantIdleTimeoutSec should be 0, got %d", cfg.MultiTenantIdleTimeoutSec)
+				}
+				if cfg.MultiTenantCircuitBreakerThreshold != 0 {
+					t.Errorf("MultiTenantCircuitBreakerThreshold should be 0, got %d", cfg.MultiTenantCircuitBreakerThreshold)
+				}
+				if cfg.MultiTenantCircuitBreakerTimeoutSec != 0 {
+					t.Errorf("MultiTenantCircuitBreakerTimeoutSec should be 0, got %d", cfg.MultiTenantCircuitBreakerTimeoutSec)
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -177,6 +242,75 @@ func TestConfig_LoadFromEnvVars(t *testing.T) {
 			}
 
 			tt.validate(t, cfg)
+		})
+	}
+}
+
+func TestInitMultiTenantMongoManager(t *testing.T) {
+	logger := libZap.InitializeLogger()
+
+	tests := []struct {
+		name        string
+		cfg         *Config
+		wantNil     bool
+		description string
+	}{
+		{
+			name: "returns nil when multi-tenant disabled",
+			cfg: &Config{
+				MultiTenantEnabled: false,
+				MultiTenantURL:     "http://tenant-manager:8080",
+			},
+			wantNil:     true,
+			description: "single-tenant mode should return nil manager",
+		},
+		{
+			name: "returns nil when multi-tenant URL is empty",
+			cfg: &Config{
+				MultiTenantEnabled: true,
+				MultiTenantURL:     "",
+			},
+			wantNil:     true,
+			description: "enabled without URL should return nil manager",
+		},
+		{
+			name: "returns manager when fully configured",
+			cfg: &Config{
+				MultiTenantEnabled:                  true,
+				MultiTenantURL:                      "http://tenant-manager:8080",
+				MultiTenantMaxTenantPools:           100,
+				MultiTenantIdleTimeoutSec:           300,
+				MultiTenantCircuitBreakerThreshold:  5,
+				MultiTenantCircuitBreakerTimeoutSec: 30,
+			},
+			wantNil:     false,
+			description: "fully configured multi-tenant should return manager",
+		},
+		{
+			name: "returns manager with zero circuit breaker threshold and applies default",
+			cfg: &Config{
+				MultiTenantEnabled:                  true,
+				MultiTenantURL:                      "http://tenant-manager:8080",
+				MultiTenantCircuitBreakerThreshold:  0,
+				MultiTenantCircuitBreakerTimeoutSec: 0,
+			},
+			wantNil:     false,
+			description: "zero threshold should apply default circuit breaker (5 failures, 30s timeout)",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manager := initMultiTenantMongoManager(tt.cfg, logger)
+			if tt.wantNil {
+				if manager != nil {
+					t.Errorf("initMultiTenantMongoManager() = non-nil, want nil: %s", tt.description)
+				}
+			} else {
+				if manager == nil {
+					t.Errorf("initMultiTenantMongoManager() = nil, want non-nil: %s", tt.description)
+				}
+			}
 		})
 	}
 }

@@ -166,6 +166,7 @@ func (e *AppEnv) ManagerEnv() map[string]string {
 		"OTEL_RESOURCE_DEPLOYMENT_ENVIRONMENT": "development",
 		"OTEL_EXPORTER_OTLP_ENDPOINT_PORT":     "4317",
 		"OTEL_EXPORTER_OTLP_ENDPOINT":          "host.docker.internal:4317",
+		"MULTI_TENANT_ENABLED":                 "false",
 	}
 }
 
@@ -207,6 +208,7 @@ func (e *AppEnv) WorkerEnv() map[string]string {
 		"OTEL_RESOURCE_DEPLOYMENT_ENVIRONMENT": "development",
 		"OTEL_EXPORTER_OTLP_ENDPOINT_PORT":     "4317",
 		"OTEL_EXPORTER_OTLP_ENDPOINT":          "host.docker.internal:4317",
+		"MULTI_TENANT_ENABLED":                 "false",
 	}
 
 	if e.StorageProvider == "s3" {
