@@ -12,6 +12,7 @@ import (
 
 	"github.com/LerianStudio/fetcher/pkg/storage"
 	"github.com/LerianStudio/fetcher/pkg/testutil"
+	tmcore "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/core"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -553,6 +554,103 @@ func TestS3Repository_KeyPrefix(t *testing.T) {
 			require.NoError(t, err)
 			assert.True(t, strings.Contains(capturedPath, tt.expectedKey),
 				"expected path to contain %q, got %q", tt.expectedKey, capturedPath)
+		})
+	}
+}
+
+// TestS3Repository_TenantKeyPrefix verifies that when tenant context is set,
+// the objectName is prefixed with the tenant ID in both Get and Put operations.
+// In single-tenant mode (no tenant in context), the key is used unchanged.
+func TestS3Repository_TenantKeyPrefix(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		tenantID      string
+		keyPrefix     string
+		objectName    string
+		expectedInKey string
+	}{
+		{
+			name:          "tenant_prefix_added_to_get_put",
+			tenantID:      "org_abc123",
+			keyPrefix:     "data/",
+			objectName:    "job-id.json",
+			expectedInKey: "data/org_abc123/job-id.json",
+		},
+		{
+			name:          "no_tenant_uses_plain_key",
+			tenantID:      "",
+			keyPrefix:     "data/",
+			objectName:    "job-id.json",
+			expectedInKey: "data/job-id.json",
+		},
+		{
+			name:          "tenant_with_empty_prefix",
+			tenantID:      "org_xyz",
+			keyPrefix:     "",
+			objectName:    "result.json",
+			expectedInKey: "org_xyz/result.json",
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name+"_get", func(t *testing.T) {
+			t.Parallel()
+
+			var capturedPath string
+
+			handler := func(w http.ResponseWriter, r *http.Request) {
+				capturedPath = r.URL.Path
+				w.Header().Set("Content-Type", "application/octet-stream")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte("test-content"))
+			}
+
+			repo, server := createTestClientWithServer(t, handler, storage.S3Config{
+				KeyPrefix: tt.keyPrefix,
+			})
+			defer server.Close()
+
+			ctx := testutil.TestContext()
+			if tt.tenantID != "" {
+				ctx = tmcore.SetTenantIDInContext(ctx, tt.tenantID)
+			}
+
+			_, err := repo.Get(ctx, tt.objectName)
+
+			require.NoError(t, err)
+			assert.True(t, strings.Contains(capturedPath, tt.expectedInKey),
+				"expected path to contain %q, got %q", tt.expectedInKey, capturedPath)
+		})
+
+		t.Run(tt.name+"_put", func(t *testing.T) {
+			t.Parallel()
+
+			var capturedPath string
+
+			handler := func(w http.ResponseWriter, r *http.Request) {
+				capturedPath = r.URL.Path
+				w.Header().Set("ETag", `"abc123"`)
+				w.WriteHeader(http.StatusOK)
+			}
+
+			repo, server := createTestClientWithServer(t, handler, storage.S3Config{
+				KeyPrefix: tt.keyPrefix,
+			})
+			defer server.Close()
+
+			ctx := testutil.TestContext()
+			if tt.tenantID != "" {
+				ctx = tmcore.SetTenantIDInContext(ctx, tt.tenantID)
+			}
+
+			err := repo.Put(ctx, tt.objectName, []byte("test-data"))
+
+			require.NoError(t, err)
+			assert.True(t, strings.Contains(capturedPath, tt.expectedInKey),
+				"expected path to contain %q, got %q", tt.expectedInKey, capturedPath)
 		})
 	}
 }

@@ -120,6 +120,7 @@ func (m *MinioInfra) Start(ctx context.Context, env *itestkit.Env) error {
 	alias := fmt.Sprintf("minio-%s", m.cfg.Name)
 
 	var networks []string
+
 	networkAliases := map[string][]string{}
 
 	if env != nil && env.Network != "" {

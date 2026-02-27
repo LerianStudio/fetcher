@@ -15,8 +15,9 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/mongodb"
 	http "github.com/LerianStudio/fetcher/pkg/net/http"
-	libLog "github.com/LerianStudio/lib-commons/v2/commons/log"
-	libMongo "github.com/LerianStudio/lib-commons/v2/commons/mongo"
+	libLog "github.com/LerianStudio/lib-commons/v3/commons/log"
+	libMongo "github.com/LerianStudio/lib-commons/v3/commons/mongo"
+	tmcore "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/core"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/tryvium-travels/memongo"
@@ -800,6 +801,58 @@ func TestIsIndexConflictError(t *testing.T) {
 		if mongodb.IsIndexConflictError(err) {
 			t.Fatalf("expected false for non-command error")
 		}
+	})
+}
+
+func TestConnectionMongoDBRepository_getDatabase(t *testing.T) {
+	t.Run("returns tenant database when tenant context is set", func(t *testing.T) {
+		repo := newConnectionRepository(t)
+
+		// Get underlying client to create a tenant database reference
+		client, err := connectionTestMongoConn.GetDB(context.Background())
+		if err != nil {
+			t.Fatalf("failed to get db client: %v", err)
+		}
+
+		tenantDB := client.Database("tenant_abc123")
+		ctx := tmcore.ContextWithTenantMongo(context.Background(), tenantDB)
+
+		db, err := repo.getDatabase(ctx)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		assert.Equal(t, "tenant_abc123", db.Name())
+	})
+
+	t.Run("falls back to static connection when no tenant context", func(t *testing.T) {
+		repo := newConnectionRepository(t)
+
+		db, err := repo.getDatabase(context.Background())
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		assert.Equal(t, strings.ToLower(connectionTestDatabaseName), db.Name())
+	})
+
+	t.Run("returns error when no tenant and static connection fails", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		mockConn := mongodb.NewMockMongoClientProvider(ctrl)
+		mockConn.EXPECT().
+			GetDB(gomock.Any()).
+			Return(nil, errors.New("db down"))
+
+		repo := &ConnectionMongoDBRepository{
+			connection: mockConn,
+			Database:   connectionTestDatabaseName,
+		}
+
+		_, err := repo.getDatabase(context.Background())
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "db down")
 	})
 }
 

@@ -7,7 +7,7 @@ import (
 
 	"github.com/LerianStudio/fetcher/pkg/constant"
 
-	"github.com/LerianStudio/lib-commons/v2/commons/log"
+	"github.com/LerianStudio/lib-commons/v3/commons/log"
 	_ "github.com/sijms/go-ora/v2" // Oracle driver
 )
 

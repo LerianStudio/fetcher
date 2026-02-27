@@ -6,8 +6,9 @@ import (
 
 	portStorage "github.com/LerianStudio/fetcher/pkg/ports/storage"
 	"github.com/LerianStudio/fetcher/pkg/seaweedfs"
-	libCommons "github.com/LerianStudio/lib-commons/v2/commons"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
+	libCommons "github.com/LerianStudio/lib-commons/v3/commons"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v3/commons/opentelemetry"
+	tms3 "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/s3"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -37,13 +38,16 @@ func (repo *SimpleRepository) Get(ctx context.Context, objectName string) ([]byt
 	ctx, span := tracer.Start(ctx, "seaweedfs.external_data.get")
 	defer span.End()
 
+	// Apply tenant-prefixed key (multi-tenant: "{tenantId}/{objectName}", single-tenant: "{objectName}")
+	tenantObjectName := tms3.GetObjectStorageKeyForTenant(ctx, objectName)
+
 	span.SetAttributes(
 		attribute.String("app.request.request_id", reqID),
-		attribute.String("seaweedfs.object_name", objectName),
+		attribute.String("seaweedfs.object_name", tenantObjectName),
 	)
 
 	// Add .json extension for external data
-	path := fmt.Sprintf("/%s/%s.json", repo.bucket, objectName)
+	path := fmt.Sprintf("/%s/%s.json", repo.bucket, tenantObjectName)
 
 	data, err := repo.client.DownloadFile(ctx, path)
 	if err != nil {
@@ -63,13 +67,16 @@ func (repo *SimpleRepository) Put(ctx context.Context, objectName string, data [
 	ctx, span := tracer.Start(ctx, "seaweedfs.external_data.put")
 	defer span.End()
 
+	// Apply tenant-prefixed key (multi-tenant: "{tenantId}/{objectName}", single-tenant: "{objectName}")
+	tenantObjectName := tms3.GetObjectStorageKeyForTenant(ctx, objectName)
+
 	span.SetAttributes(
 		attribute.String("app.request.request_id", reqID),
-		attribute.String("seaweedfs.object_name", objectName),
+		attribute.String("seaweedfs.object_name", tenantObjectName),
 		attribute.Int("seaweedfs.data_size", len(data)),
 	)
 
-	path := fmt.Sprintf("/%s/%s", repo.bucket, objectName)
+	path := fmt.Sprintf("/%s/%s", repo.bucket, tenantObjectName)
 
 	err := repo.client.UploadFile(ctx, path, data)
 	if err != nil {

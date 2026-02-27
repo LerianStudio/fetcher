@@ -19,14 +19,14 @@ import (
 func FuzzS3ObjectName(f *testing.F) {
 	// Seed corpus: 5+ entries covering important edge cases
 	f.Add("normal-key.json")
-	f.Add("")                          // empty key
-	f.Add("../traversal")              // path traversal attempt
-	f.Add("path/with/slashes/key.json") // nested path
-	f.Add("key with spaces")            // spaces
+	f.Add("")                               // empty key
+	f.Add("../traversal")                   // path traversal attempt
+	f.Add("path/with/slashes/key.json")     // nested path
+	f.Add("key with spaces")                // spaces
 	f.Add(string([]byte{0x00, 0x01, 0x02})) // control chars
-	f.Add("ünïcödé-key.json")          // unicode
-	f.Add("../../etc/passwd")          // deeper traversal
-	f.Add("/absolute/path/key")        // absolute path
+	f.Add("ünïcödé-key.json")               // unicode
+	f.Add("../../etc/passwd")               // deeper traversal
+	f.Add("/absolute/path/key")             // absolute path
 
 	// Create a test server that returns 404 NoSuchKey for any request
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -65,8 +65,8 @@ func FuzzS3ObjectName(f *testing.F) {
 func FuzzS3Config(f *testing.F) {
 	// Seed corpus: 5+ bucket name patterns
 	f.Add("valid-bucket")
-	f.Add("")                    // empty bucket — should return error, not panic
-	f.Add("UPPER-CASE")          // uppercase (invalid, but should not panic)
+	f.Add("")           // empty bucket — should return error, not panic
+	f.Add("UPPER-CASE") // uppercase (invalid, but should not panic)
 	f.Add("very-long-bucket-name-that-is-quite-long-but-still-valid-name-here")
 	f.Add("bucket/with/slashes") // invalid bucket name
 	f.Add("bucket name")         // space in bucket name
@@ -78,10 +78,10 @@ func FuzzS3Config(f *testing.F) {
 
 		// Should never panic regardless of input
 		repo, err := storage.NewS3Repository(ctx, storage.S3Config{
-			Endpoint:        "http://localhost:9999", // non-existent, we won't connect
-			Region:          "us-east-1",
-			Bucket:          bucket,
-			UsePathStyle:    true,
+			Endpoint:     "http://localhost:9999", // non-existent, we won't connect
+			Region:       "us-east-1",
+			Bucket:       bucket,
+			UsePathStyle: true,
 		})
 		_ = repo
 		_ = err

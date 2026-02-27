@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/LerianStudio/fetcher/pkg/seaweedfs"
+	"github.com/LerianStudio/fetcher/pkg/testutil"
+	tmcore "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/core"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -282,6 +284,94 @@ func TestSimpleRepository_Get_WithContext(t *testing.T) {
 	_, err := repo.Get(ctx, "test")
 
 	assert.Error(t, err)
+}
+
+func TestSimpleRepository_TenantKeyPrefixing(t *testing.T) {
+	tests := []struct {
+		name       string
+		tenantID   string
+		objectName string
+		operation  string // "get" or "put"
+		wantPath   string
+	}{
+		{
+			name:       "get with tenant context prefixes path with tenant ID",
+			tenantID:   "org_abc123",
+			objectName: "job-result",
+			operation:  "get",
+			wantPath:   "/test-bucket/org_abc123/job-result.json",
+		},
+		{
+			name:       "get without tenant context uses plain path",
+			tenantID:   "",
+			objectName: "job-result",
+			operation:  "get",
+			wantPath:   "/test-bucket/job-result.json",
+		},
+		{
+			name:       "put with tenant context prefixes path with tenant ID",
+			tenantID:   "org_xyz789",
+			objectName: "output.json",
+			operation:  "put",
+			wantPath:   "/test-bucket/org_xyz789/output.json",
+		},
+		{
+			name:       "put without tenant context uses plain path",
+			tenantID:   "",
+			objectName: "output.json",
+			operation:  "put",
+			wantPath:   "/test-bucket/output.json",
+		},
+		{
+			name:       "get with tenant and nested object name",
+			tenantID:   "tenant_42",
+			objectName: "sub/folder/data",
+			operation:  "get",
+			wantPath:   "/test-bucket/tenant_42/sub/folder/data.json",
+		},
+		{
+			name:       "put with tenant and nested object name",
+			tenantID:   "tenant_42",
+			objectName: "sub/folder/data.json",
+			operation:  "put",
+			wantPath:   "/test-bucket/tenant_42/sub/folder/data.json",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var capturedPath string
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				capturedPath = r.URL.Path
+				w.WriteHeader(http.StatusOK)
+				if tt.operation == "get" {
+					_, _ = w.Write([]byte(`{"data": "test"}`))
+				}
+			}))
+			defer server.Close()
+
+			client := seaweedfs.NewSeaweedFSClient(server.URL)
+			repo := NewSimpleRepository(client, "test-bucket")
+
+			ctx := testutil.TestContext()
+			if tt.tenantID != "" {
+				ctx = tmcore.SetTenantIDInContext(ctx, tt.tenantID)
+			}
+
+			switch tt.operation {
+			case "get":
+				_, err := repo.Get(ctx, tt.objectName)
+				require.NoError(t, err)
+			case "put":
+				err := repo.Put(ctx, tt.objectName, []byte(`{"data": "test"}`))
+				require.NoError(t, err)
+			}
+
+			assert.Equal(t, tt.wantPath, capturedPath,
+				"expected path %q, got %q", tt.wantPath, capturedPath)
+		})
+	}
 }
 
 // readAll is a helper to read all data from a reader

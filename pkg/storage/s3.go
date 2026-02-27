@@ -8,8 +8,9 @@ import (
 	"io"
 
 	portStorage "github.com/LerianStudio/fetcher/pkg/ports/storage"
-	libCommons "github.com/LerianStudio/lib-commons/v2/commons"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
+	libCommons "github.com/LerianStudio/lib-commons/v3/commons"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v3/commons/opentelemetry"
+	tms3 "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/s3"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsConfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -107,7 +108,8 @@ func (r *S3Repository) Get(ctx context.Context, objectName string) ([]byte, erro
 	ctx, span := tracer.Start(ctx, "s3.external_data.get")
 	defer span.End()
 
-	key := r.cfg.KeyPrefix + objectName
+	tenantObjectName := tms3.GetObjectStorageKeyForTenant(ctx, objectName)
+	key := r.cfg.KeyPrefix + tenantObjectName
 
 	span.SetAttributes(
 		attribute.String("app.request.request_id", reqID),
@@ -152,7 +154,8 @@ func (r *S3Repository) Put(ctx context.Context, objectName string, data []byte) 
 	ctx, span := tracer.Start(ctx, "s3.external_data.put")
 	defer span.End()
 
-	key := r.cfg.KeyPrefix + objectName
+	tenantObjectName := tms3.GetObjectStorageKeyForTenant(ctx, objectName)
+	key := r.cfg.KeyPrefix + tenantObjectName
 
 	span.SetAttributes(
 		attribute.String("app.request.request_id", reqID),

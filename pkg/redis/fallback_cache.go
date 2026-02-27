@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/LerianStudio/lib-commons/v2/commons"
-	"github.com/LerianStudio/lib-commons/v2/commons/log"
+	"github.com/LerianStudio/lib-commons/v3/commons"
+	"github.com/LerianStudio/lib-commons/v3/commons/log"
 	"go.opentelemetry.io/otel/attribute"
 )
 

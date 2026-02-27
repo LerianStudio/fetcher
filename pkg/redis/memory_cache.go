@@ -5,8 +5,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/LerianStudio/lib-commons/v2/commons"
-	"github.com/LerianStudio/lib-commons/v2/commons/log"
+	"github.com/LerianStudio/lib-commons/v3/commons"
+	"github.com/LerianStudio/lib-commons/v3/commons/log"
+	valkey "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/valkey"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -50,14 +51,18 @@ func NewInMemoryCache[T any](ttl time.Duration, logger log.Logger) *InMemoryCach
 }
 
 // Get retrieves a cached value by key.
+// In multi-tenant mode, the key is prefixed with the tenant ID from context
+// to prevent cross-tenant cache leaks.
 func (c *InMemoryCache[T]) Get(ctx context.Context, key string) (T, bool, error) {
 	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	_, span := tracer.Start(ctx, "cache.in_memory.get")
 	defer span.End()
 
+	tenantKey := valkey.GetKeyFromContext(ctx, key)
+
 	span.SetAttributes(
-		attribute.String("app.cache.key", key),
+		attribute.String("app.cache.key", tenantKey),
 		attribute.String("app.request.request_id", reqID),
 	)
 
@@ -66,28 +71,30 @@ func (c *InMemoryCache[T]) Get(ctx context.Context, key string) (T, bool, error)
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	entry, exists := c.entries[key]
+	entry, exists := c.entries[tenantKey]
 	if !exists {
 		span.SetAttributes(attribute.Bool("app.cache.hit", false))
-		logger.Debugf("in-memory cache miss for key %s", key)
+		logger.Debugf("in-memory cache miss for key %s", tenantKey)
 
 		return zero, false, nil
 	}
 
 	if time.Now().UTC().After(entry.expiresAt) {
 		span.SetAttributes(attribute.Bool("app.cache.hit", false))
-		logger.Debugf("in-memory cache expired for key %s", key)
+		logger.Debugf("in-memory cache expired for key %s", tenantKey)
 
 		return zero, false, nil
 	}
 
 	span.SetAttributes(attribute.Bool("app.cache.hit", true))
-	logger.Debugf("in-memory cache hit for key %s", key)
+	logger.Debugf("in-memory cache hit for key %s", tenantKey)
 
 	return entry.value, true, nil
 }
 
 // Set stores a value in the cache.
+// In multi-tenant mode, the key is prefixed with the tenant ID from context
+// to prevent cross-tenant cache leaks.
 func (c *InMemoryCache[T]) Set(ctx context.Context, key string, value T, ttl time.Duration) error {
 	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
@@ -98,8 +105,10 @@ func (c *InMemoryCache[T]) Set(ctx context.Context, key string, value T, ttl tim
 		ttl = c.ttl
 	}
 
+	tenantKey := valkey.GetKeyFromContext(ctx, key)
+
 	span.SetAttributes(
-		attribute.String("app.cache.key", key),
+		attribute.String("app.cache.key", tenantKey),
 		attribute.String("app.request.request_id", reqID),
 		attribute.Int64("app.cache.ttl_seconds", int64(ttl.Seconds())),
 	)
@@ -107,32 +116,36 @@ func (c *InMemoryCache[T]) Set(ctx context.Context, key string, value T, ttl tim
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.entries[key] = &cacheEntry[T]{
+	c.entries[tenantKey] = &cacheEntry[T]{
 		value:     value,
 		expiresAt: time.Now().UTC().Add(ttl),
 	}
 
-	logger.Debugf("in-memory cached key %s with TTL %v", key, ttl)
+	logger.Debugf("in-memory cached key %s with TTL %v", tenantKey, ttl)
 
 	return nil
 }
 
 // Delete removes a value from the cache.
+// In multi-tenant mode, the key is prefixed with the tenant ID from context
+// to prevent cross-tenant cache leaks.
 func (c *InMemoryCache[T]) Delete(ctx context.Context, key string) error {
 	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	_, span := tracer.Start(ctx, "cache.in_memory.delete")
 	defer span.End()
 
+	tenantKey := valkey.GetKeyFromContext(ctx, key)
+
 	span.SetAttributes(
-		attribute.String("app.cache.key", key),
+		attribute.String("app.cache.key", tenantKey),
 		attribute.String("app.request.request_id", reqID),
 	)
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	delete(c.entries, key)
+	delete(c.entries, tenantKey)
 
 	return nil
 }

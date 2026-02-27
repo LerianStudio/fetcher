@@ -13,11 +13,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	libCommons "github.com/LerianStudio/lib-commons/v2/commons"
-	libConstants "github.com/LerianStudio/lib-commons/v2/commons/constants"
-	libLog "github.com/LerianStudio/lib-commons/v2/commons/log"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
-	libRabbitmq "github.com/LerianStudio/lib-commons/v2/commons/rabbitmq"
+	libCommons "github.com/LerianStudio/lib-commons/v3/commons"
+	libConstants "github.com/LerianStudio/lib-commons/v3/commons/constants"
+	libLog "github.com/LerianStudio/lib-commons/v3/commons/log"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v3/commons/opentelemetry"
+	libRabbitmq "github.com/LerianStudio/lib-commons/v3/commons/rabbitmq"
 
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 
