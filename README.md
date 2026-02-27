@@ -110,6 +110,7 @@ For hands-on API exploration and testing scenarios, the following resources are 
 - **Advanced Filtering**: 10 operators (eq, gt, gte, lt, lte, between, in, nin, ne, like)
 - **Schema Discovery**: Automatic table/column detection across all database types
 - **Message Signing**: HMAC-SHA256 signing with replay attack prevention
+- **Multi-Tenant Support**: Database-per-tenant isolation via JWT-based tenant context, with zero overhead when disabled
 - **OpenTelemetry**: Distributed tracing and metrics for comprehensive observability
 
 ### Data Extraction Capabilities
@@ -188,6 +189,21 @@ make derive-key KEY="<your-base64-master-key>"
 ```
 
 This outputs a hex-encoded HMAC key that consumers use to verify HMAC-SHA256 signatures on extracted data. See [scripts/crypto/derive-key/verification-guide.md](scripts/crypto/derive-key/verification-guide.md) for the full verification protocol.
+
+### Multi-Tenant Support
+
+Fetcher supports multi-tenant deployments with database-per-tenant isolation. When enabled, each tenant gets isolated MongoDB databases, Redis key namespaces, and S3 object paths.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `MULTI_TENANT_ENABLED` | Enable multi-tenant mode | `false` |
+| `MULTI_TENANT_URL` | Tenant Manager service URL | - |
+| `MULTI_TENANT_MAX_TENANT_POOLS` | Max concurrent tenant connection pools | `100` |
+| `MULTI_TENANT_IDLE_TIMEOUT_SEC` | Idle tenant connection timeout | `300` |
+| `MULTI_TENANT_CIRCUIT_BREAKER_THRESHOLD` | Circuit breaker failure threshold | `5` |
+| `MULTI_TENANT_CIRCUIT_BREAKER_TIMEOUT_SEC` | Circuit breaker reset timeout | `30` |
+
+When `MULTI_TENANT_ENABLED=false` (default), all multi-tenant code paths are bypassed with zero performance impact. See `docs/multi-tenant-guide.md` for activation instructions.
 
 ## About Lerian
 

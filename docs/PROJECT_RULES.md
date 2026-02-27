@@ -48,6 +48,8 @@ fetcher/
 │   ├── datasource/                # DataSource factory + SSL mode utils
 │   ├── redis/                     # Redis/Valkey client adapter
 │   ├── ratelimit/                 # Rate limiter (Redis-backed)
+│   ├── metrics/                   # Multi-tenant OTel metrics (no-op when disabled)
+│   ├── multitenant/               # Multi-tenant cross-cutting test suite
 │   ├── net/http/                  # HTTP utilities
 │   └── constant/                  # Application constants
 ├── tests/                         # Test infrastructure and integration tests
@@ -123,7 +125,7 @@ components/manager/
 └── internal/
     ├── adapters/
     │   └── http/in/
-    │       ├── routes.go           # HTTP route definitions (Primary Adapter)
+    │       ├── routes.go           # HTTP route definitions (Primary Adapter). Accepts optional tenantMiddleware for multi-tenant DB resolution.
     │       ├── middlewares.go      # HTTP middleware
     │       ├── connection.go       # Connection HTTP handlers
     │       ├── fetcher.go          # Fetcher job HTTP handlers
@@ -223,7 +225,7 @@ components/worker/
     ├── bootstrap/
     │   ├── config.go                # Dependency injection
     │   ├── service.go               # Application service wrapper
-    │   └── consumer.go              # Multi-queue consumer orchestration
+    │   └── consumer.go              # Multi-queue consumer orchestration with tenant ID extraction from AMQP headers and tenant MongoDB resolution
     └── services/
         ├── service.go               # UseCase struct definition
         ├── extract-data.go          # Main data extraction logic
@@ -251,7 +253,7 @@ Application-wide constants.
 
 | File | Purpose |
 |------|---------|
-| `app.go` | Application constants |
+| `app.go` | Application constants (includes `ApplicationName`, `ModuleManager`, `ModuleWorker` for multi-tenant service identification) |
 | `errors.go` | Error code constants |
 | `mongo.go` | MongoDB-specific constants |
 | `pagination.go` | Pagination defaults |
@@ -281,6 +283,7 @@ MongoDB connection and repository implementations.
 | File | Purpose |
 |------|---------|
 | `mongo.go` | MongoDB connection management |
+| `tenant.go` | Shared tenant-aware database resolution (GetDatabaseForContext) |
 
 **Subpackages:**
 
@@ -396,6 +399,22 @@ HTTP utilities for the Fiber framework.
 | `cursor.go` | Cursor-based pagination utilities |
 | `withBody.go` | Request body handling |
 | `http-utils.go` | General HTTP utilities |
+
+### metrics (`pkg/metrics/`)
+
+Multi-tenant metrics instrumentation using OpenTelemetry.
+
+| File | Purpose |
+|------|---------|
+| `tenant_metrics.go` | 4 canonical tenant metrics with no-op when disabled |
+
+### multitenant (`pkg/multitenant/`)
+
+Cross-cutting multi-tenant test suite (test-only package).
+
+| File | Purpose |
+|------|---------|
+| `multitenant_test.go` | Tenant isolation, backward compatibility, and context propagation tests |
 
 ---
 
@@ -1115,16 +1134,19 @@ make generate-docs
 | Component | File | Purpose |
 |-----------|------|---------|
 | Manager | `components/manager/cmd/app/main.go` | Entry point |
-| Manager | `components/manager/internal/bootstrap/config.go` | DI container |
+| Manager | `components/manager/internal/bootstrap/config.go` | DI container + multi-tenant middleware init |
 | Manager | `components/manager/internal/adapters/http/in/routes.go` | Route definitions |
 | Manager | `components/manager/internal/services/command/create_fetcher_job.go` | Job creation logic |
 | Worker | `components/worker/cmd/app/main.go` | Entry point |
 | Worker | `components/worker/internal/bootstrap/config.go` | DI container |
-| Worker | `components/worker/internal/bootstrap/consumer.go` | Consumer orchestration |
+| Worker | `components/worker/internal/bootstrap/consumer.go` | Consumer orchestration + tenant DB resolution |
 | Worker | `components/worker/internal/services/extract-data.go` | Data extraction logic |
 | Shared | `pkg/model/connection.go` | Connection domain |
 | Shared | `pkg/model/job.go` | Job domain |
 | Shared | `pkg/datasource/datasource-factory.go` | DataSource factory |
+| Shared | `pkg/mongodb/tenant.go` | Shared tenant-aware database resolution |
+| Shared | `pkg/metrics/tenant_metrics.go` | Multi-tenant OTel metrics |
+| Shared | `pkg/constant/app.go` | Service and module constants |
 | Shared | `pkg/rabbitmq/rabbitmq.go` | RabbitMQ adapter |
 | Infra | `components/infra/docker-compose.yml` | Infrastructure |
 | Infra | `components/infra/rabbitmq/etc/definitions.json` | RabbitMQ topology |
