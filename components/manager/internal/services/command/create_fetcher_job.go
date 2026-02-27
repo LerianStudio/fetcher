@@ -15,9 +15,10 @@ import (
 	jobRepo "github.com/LerianStudio/fetcher/pkg/ports/job"
 	"github.com/LerianStudio/fetcher/pkg/ports/messaging"
 
-	"github.com/LerianStudio/lib-commons/v2/commons"
-	libLog "github.com/LerianStudio/lib-commons/v2/commons/log"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v3/commons"
+	libLog "github.com/LerianStudio/lib-commons/v3/commons/log"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v3/commons/opentelemetry"
+	tmcore "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/core"
 
 	"github.com/google/uuid"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -628,6 +629,12 @@ func (s *CreateFetcherJob) publishToQueue(ctx context.Context, j *model.Job) err
 	header := map[string]any{
 		"jobId":          j.ID.String(),
 		"organizationId": j.OrganizationID.String(),
+	}
+
+	// Propagate tenant ID to worker via AMQP header for multi-tenant isolation.
+	// When MULTI_TENANT_ENABLED=false, tenant context is empty and no header is added.
+	if tenantID := tmcore.GetTenantIDFromContext(ctx); tenantID != "" {
+		header["X-Tenant-ID"] = tenantID
 	}
 
 	return s.rabbitMQ.ProducerDefault(ctx, "", s.queueName, messageBytes, &header)
