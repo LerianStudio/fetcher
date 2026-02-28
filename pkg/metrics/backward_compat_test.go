@@ -22,7 +22,7 @@ import (
 //  3. Redis: cacheKey returns unprefixed key without tenant context
 //  4. S3: GetObjectStorageKeyForTenant returns original objectName without tenant context
 //  5. RabbitMQ: extractTenantIDFromHeaders returns unmodified context for messages without X-Tenant-ID
-//  6. MongoDB: GetMongoForTenant returns error without tenant context (falls back to static)
+//  6. MongoDB: GetMongoFromContext returns nil without tenant context (falls back to static)
 func TestMultiTenant_BackwardCompatibility(t *testing.T) {
 	t.Run("config_defaults_multi_tenant_disabled", func(t *testing.T) {
 		// When no MULTI_TENANT_* env vars are set, MultiTenantEnabled must default to false.
@@ -125,15 +125,13 @@ func TestMultiTenant_BackwardCompatibility(t *testing.T) {
 	})
 
 	t.Run("mongodb_fallback_to_static_without_tenant", func(t *testing.T) {
-		// When no tenant is in context, tmcore.GetMongoForTenant must return an error,
+		// When no tenant is in context, tmcore.GetMongoFromContext must return nil,
 		// which signals the repository to fall back to its static connection.
 		ctx := context.Background()
 
-		db, err := tmcore.GetMongoForTenant(ctx)
+		db := tmcore.GetMongoFromContext(ctx)
 		assert.Nil(t, db,
-			"GetMongoForTenant must return nil database when no tenant in context")
-		assert.Error(t, err,
-			"GetMongoForTenant must return error when no tenant in context, triggering static fallback")
+			"GetMongoFromContext must return nil database when no tenant in context, triggering static fallback")
 	})
 
 	t.Run("tenant_context_isolation", func(t *testing.T) {

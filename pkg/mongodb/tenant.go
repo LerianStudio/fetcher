@@ -16,15 +16,5 @@ import (
 // In single-tenant mode (no tenant in context), it uses the static provider
 // and database name.
 func GetDatabaseForContext(ctx context.Context, conn MongoClientProvider, dbName string) (*mongo.Database, error) {
-	tenantDB, err := tmcore.GetMongoForTenant(ctx)
-	if err == nil && tenantDB != nil {
-		return tenantDB, nil
-	}
-
-	client, err := conn.GetDB(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	return client.Database(strings.ToLower(dbName)), nil
+	return tmcore.ResolveMongo(ctx, conn, strings.ToLower(dbName))
 }

@@ -24,6 +24,8 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/ratelimit"
 	redisCache "github.com/LerianStudio/fetcher/pkg/redis"
 
+	mgrRabbitMQ "github.com/LerianStudio/fetcher/components/manager/internal/adapters/rabbitmq"
+	"github.com/LerianStudio/fetcher/pkg/ports/messaging"
 	"github.com/LerianStudio/lib-auth/v2/auth/middleware"
 	"github.com/LerianStudio/lib-commons/v3/commons/log"
 	mongoDB "github.com/LerianStudio/lib-commons/v3/commons/mongo"
@@ -32,6 +34,7 @@ import (
 	tmclient "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/client"
 	tmmiddleware "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/middleware"
 	tmmongo "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/mongo"
+	tmrabbitmq "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/rabbitmq"
 	"github.com/LerianStudio/lib-commons/v3/commons/zap"
 	libLicense "github.com/LerianStudio/lib-license-go/v2/middleware"
 	"github.com/gofiber/fiber/v2"
@@ -86,9 +89,8 @@ type Config struct {
 	// Schema cache TTL
 	SchemaCacheTTLSeconds string `env:"SCHEMA_CACHE_TTL_SECONDS"`
 	// Multi-Tenant configuration
-	MultiTenantEnabled bool   `env:"MULTI_TENANT_ENABLED"`
-	MultiTenantURL     string `env:"MULTI_TENANT_URL"`
-	// TODO(multi-tenant): Wire MultiTenantEnvironment into RabbitMQ lazy consumer when full multi-tenant RabbitMQ is implemented.
+	MultiTenantEnabled                  bool   `env:"MULTI_TENANT_ENABLED"`
+	MultiTenantURL                      string `env:"MULTI_TENANT_URL"`
 	MultiTenantEnvironment              string `env:"MULTI_TENANT_ENVIRONMENT"`
 	MultiTenantMaxTenantPools           int    `env:"MULTI_TENANT_MAX_TENANT_POOLS"`
 	MultiTenantIdleTimeoutSec           int    `env:"MULTI_TENANT_IDLE_TIMEOUT_SEC"`
@@ -191,26 +193,41 @@ func InitServers() (*Service, error) {
 		return nil, fmt.Errorf("initialize internal message signer: %w", err)
 	}
 
-	// Init RabbitMQ
-	escapedUserRMQ := url.PathEscape(cfg.RabbitMQUser)
-	escapedPassRMQ := url.PathEscape(cfg.RabbitMQPass)
-	rabbitSource := fmt.Sprintf("%s://%s:%s@%s:%s", cfg.RabbitURI, escapedUserRMQ, escapedPassRMQ, cfg.RabbitMQHost, cfg.RabbitMQPortAMQP)
+	// Init RabbitMQ - choose single-tenant or multi-tenant adapter based on configuration.
+	// When MULTI_TENANT_ENABLED=true, use tmrabbitmq.Manager for per-tenant vhost isolation (Layer 1).
+	// Single-tenant path remains unchanged.
+	var rabbitMQPublisher messaging.MessagePublisher
 
-	rabbitMQConnection := &libRabbitmq.RabbitMQConnection{
-		ConnectionStringSource: rabbitSource,
-		HealthCheckURL:         cfg.RabbitMQHealthCheckURL,
-		Host:                   cfg.RabbitMQHost,
-		Port:                   cfg.RabbitMQPortHost,
-		User:                   cfg.RabbitMQUser,
-		Pass:                   cfg.RabbitMQPass,
-		Queue:                  cfg.RabbitMQGenerateReportQueue,
-		Logger:                 logger,
+	if cfg.MultiTenantEnabled && cfg.MultiTenantURL != "" {
+		// Multi-tenant path: use tmrabbitmq.Manager for per-tenant vhost isolation
+		logger.Info("Initializing RabbitMQ with multi-tenant vhost isolation")
+
+		rmqManager := initMultiTenantRabbitMQManager(cfg, logger)
+		rabbitMQPublisher = mgrRabbitMQ.NewMultiTenantPublisher(rmqManager, logger, telemetry)
+
+		logger.Infof("Multi-tenant RabbitMQ publisher initialized: module=%s", constant.ModuleManager)
+	} else {
+		// Single-tenant path: use existing static RabbitMQ connection (unchanged)
+		escapedUserRMQ := url.PathEscape(cfg.RabbitMQUser)
+		escapedPassRMQ := url.PathEscape(cfg.RabbitMQPass)
+		rabbitSource := fmt.Sprintf("%s://%s:%s@%s:%s", cfg.RabbitURI, escapedUserRMQ, escapedPassRMQ, cfg.RabbitMQHost, cfg.RabbitMQPortAMQP)
+
+		rabbitMQConnection := &libRabbitmq.RabbitMQConnection{
+			ConnectionStringSource: rabbitSource,
+			HealthCheckURL:         cfg.RabbitMQHealthCheckURL,
+			Host:                   cfg.RabbitMQHost,
+			Port:                   cfg.RabbitMQPortHost,
+			User:                   cfg.RabbitMQUser,
+			Pass:                   cfg.RabbitMQPass,
+			Queue:                  cfg.RabbitMQGenerateReportQueue,
+			Logger:                 logger,
+		}
+
+		rabbitMQOptions := rabbitmq.DefaultOptions()
+		rabbitMQOptions.Signer = cryptoWithInternalHMAC
+
+		rabbitMQPublisher = rabbitmq.NewRabbitMQAdapterWithOptions(rabbitMQConnection, rabbitMQOptions)
 	}
-
-	rabbitMQOptions := rabbitmq.DefaultOptions()
-	rabbitMQOptions.Signer = cryptoWithInternalHMAC
-
-	rabbitMQAdapter := rabbitmq.NewRabbitMQAdapterWithOptions(rabbitMQConnection, rabbitMQOptions)
 
 	// Init Auth middleware client
 	authClient := middleware.NewAuthClient(cfg.AuthAddress, cfg.AuthEnabled, &logger)
@@ -289,7 +306,7 @@ func InitServers() (*Service, error) {
 		connectionRepository,
 		jobRepository,
 		cryptoService,
-		rabbitMQAdapter,
+		rabbitMQPublisher,
 		cfg.RabbitMQGenerateReportQueue,
 		datasourceFactory.NewDataSourceFromConnectionWithLogger(logger),
 	)
@@ -399,4 +416,49 @@ func getRedisDB(dbStr string) int {
 	}
 
 	return db
+}
+
+// initMultiTenantRabbitMQManager creates a RabbitMQ Manager for per-tenant vhost isolation.
+// Each tenant has a dedicated RabbitMQ vhost with separate queues, exchanges, and connections.
+//
+// Per multi-tenant.md standards:
+//   - Layer 1 (Vhost Isolation): tmrabbitmq.Manager → GetChannel(ctx, tenantID)
+//   - Layer 2 (X-Tenant-ID Header): Injected by the publisher
+func initMultiTenantRabbitMQManager(cfg *Config, logger log.Logger) *tmrabbitmq.Manager {
+	// Create Tenant Manager HTTP client with circuit breaker (MANDATORY per multi-tenant.md)
+	var clientOpts []tmclient.ClientOption
+	if cfg.MultiTenantCircuitBreakerThreshold > 0 {
+		clientOpts = append(clientOpts,
+			tmclient.WithCircuitBreaker(
+				cfg.MultiTenantCircuitBreakerThreshold,
+				time.Duration(cfg.MultiTenantCircuitBreakerTimeoutSec)*time.Second,
+			),
+		)
+	} else {
+		clientOpts = append(clientOpts,
+			tmclient.WithCircuitBreaker(5, 30*time.Second),
+		)
+	}
+
+	tmClient := tmclient.NewClient(cfg.MultiTenantURL, logger, clientOpts...)
+
+	// Create RabbitMQ Manager for per-tenant vhost connections
+	var rmqOpts []tmrabbitmq.Option
+
+	rmqOpts = append(rmqOpts,
+		tmrabbitmq.WithModule(constant.ModuleManager),
+		tmrabbitmq.WithLogger(logger),
+	)
+
+	if cfg.MultiTenantMaxTenantPools > 0 {
+		rmqOpts = append(rmqOpts, tmrabbitmq.WithMaxTenantPools(cfg.MultiTenantMaxTenantPools))
+	}
+
+	if cfg.MultiTenantIdleTimeoutSec > 0 {
+		rmqOpts = append(rmqOpts, tmrabbitmq.WithIdleTimeout(
+			time.Duration(cfg.MultiTenantIdleTimeoutSec)*time.Second,
+		))
+	}
+
+	return tmrabbitmq.NewManager(tmClient, constant.ApplicationName, rmqOpts...)
 }

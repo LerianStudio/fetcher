@@ -22,9 +22,12 @@ import (
 	libOtel "github.com/LerianStudio/lib-commons/v3/commons/opentelemetry"
 	libRabbitMQ "github.com/LerianStudio/lib-commons/v3/commons/rabbitmq"
 	tmclient "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/client"
+	tmconsumer "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/consumer"
 	tmmongo "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/mongo"
+	tmrabbitmq "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/rabbitmq"
 	libZap "github.com/LerianStudio/lib-commons/v3/commons/zap"
 	libLicense "github.com/LerianStudio/lib-license-go/v2/middleware"
+	"github.com/redis/go-redis/v9"
 )
 
 // Config holds the application's configurable parameters read from environment variables.
@@ -86,14 +89,18 @@ type Config struct {
 	CryptoEncryptSecretKeyPluginCRM string `env:"CRYPTO_ENCRYPT_SECRET_KEY_PLUGIN_CRM"`
 	CryptoHashSecretKeyPluginCRM    string `env:"CRYPTO_HASH_SECRET_KEY_PLUGIN_CRM"`
 	// Multi-Tenant configuration
-	MultiTenantEnabled bool   `env:"MULTI_TENANT_ENABLED"`
-	MultiTenantURL     string `env:"MULTI_TENANT_URL"`
-	// TODO(multi-tenant): Wire MultiTenantEnvironment into RabbitMQ lazy consumer when full multi-tenant RabbitMQ is implemented.
+	MultiTenantEnabled                  bool   `env:"MULTI_TENANT_ENABLED"`
+	MultiTenantURL                      string `env:"MULTI_TENANT_URL"`
 	MultiTenantEnvironment              string `env:"MULTI_TENANT_ENVIRONMENT"`
 	MultiTenantMaxTenantPools           int    `env:"MULTI_TENANT_MAX_TENANT_POOLS"`
 	MultiTenantIdleTimeoutSec           int    `env:"MULTI_TENANT_IDLE_TIMEOUT_SEC"`
 	MultiTenantCircuitBreakerThreshold  int    `env:"MULTI_TENANT_CIRCUIT_BREAKER_THRESHOLD"`
 	MultiTenantCircuitBreakerTimeoutSec int    `env:"MULTI_TENANT_CIRCUIT_BREAKER_TIMEOUT_SEC"`
+	// Redis configuration for multi-tenant consumer (tenant discovery)
+	RedisHost     string `env:"REDIS_HOST"`
+	RedisPort     string `env:"REDIS_PORT"`
+	RedisPassword string `env:"REDIS_PASSWORD"`
+	RedisDB       int    `env:"REDIS_DB"`
 }
 
 // InitWorker initializes and configures the application's dependencies and returns the Service instance.
@@ -191,13 +198,61 @@ func InitWorker() (*Service, error) {
 		return nil, fmt.Errorf("initialize external document signer: %w", errSigner)
 	}
 
-	// Initialize RabbitMQ consumer and publisher with separate connections
-	consumerRoutes, errRoutes := rabbitmq.NewConsumerRoutes(consumerConnection, cfg.RabbitMQNumWorkers, logger, telemetry, cryptoWithInternalHMAC, cfg.EnvName)
-	if errRoutes != nil {
-		return nil, fmt.Errorf("initialize consumer routes: %w", errRoutes)
-	}
+	// Initialize RabbitMQ consumer and publisher with separate connections.
+	// When MULTI_TENANT_ENABLED=true, use tmrabbitmq.Manager and tmconsumer.MultiTenantConsumer
+	// for per-tenant vhost isolation (Layer 1). Single-tenant path remains unchanged.
+	var consumerRoutes *rabbitmq.ConsumerRoutes
+	var multiTenantConsumer *tmconsumer.MultiTenantConsumer
+	var rmqManager *tmrabbitmq.Manager
+	var publisherRoutes rabbitmq.PublisherRepository
 
-	publisherRoutes := rabbitmq.NewPublisherRoutes(publisherConnection, logger, telemetry, cryptoWithExternalHMAC)
+	if cfg.MultiTenantEnabled && cfg.MultiTenantURL != "" {
+		// Multi-tenant path: use tmrabbitmq.Manager for per-tenant vhost isolation
+		logger.Info("Initializing RabbitMQ with multi-tenant vhost isolation")
+
+		// Create Tenant Manager client (reusing same pattern as MongoDB manager)
+		tmClient := initTenantManagerClient(cfg, logger)
+
+		// Create RabbitMQ Manager for per-tenant vhost connections
+		rmqManager = initMultiTenantRabbitMQManager(tmClient, cfg, logger)
+
+		// Create Redis client for tenant discovery
+		redisClient := initRedisClient(cfg, logger)
+
+		// Create multi-tenant consumer configuration
+		mtConfig := tmconsumer.MultiTenantConfig{
+			SyncInterval:     30 * time.Second,
+			PrefetchCount:    cfg.RabbitMQNumWorkers,
+			MultiTenantURL:   cfg.MultiTenantURL,
+			Service:          constant.ApplicationName,
+			Environment:      cfg.MultiTenantEnvironment,
+			DiscoveryTimeout: 500 * time.Millisecond,
+		}
+
+		// Create multi-tenant consumer with MongoDB manager for connection cleanup
+		mongoManager := initMultiTenantMongoManager(cfg, logger)
+		multiTenantConsumer = tmconsumer.NewMultiTenantConsumer(
+			rmqManager,
+			redisClient,
+			mtConfig,
+			logger,
+			tmconsumer.WithMongoManager(mongoManager),
+		)
+
+		// Create multi-tenant publisher
+		publisherRoutes = rabbitmq.NewPublisherRoutesMultiTenant(rmqManager, logger, telemetry, cryptoWithExternalHMAC)
+
+		logger.Infof("Multi-tenant RabbitMQ initialized: environment=%s, service=%s", cfg.MultiTenantEnvironment, constant.ApplicationName)
+	} else {
+		// Single-tenant path: use existing static RabbitMQ connections (unchanged)
+		var errRoutes error
+		consumerRoutes, errRoutes = rabbitmq.NewConsumerRoutes(consumerConnection, cfg.RabbitMQNumWorkers, logger, telemetry, cryptoWithInternalHMAC, cfg.EnvName)
+		if errRoutes != nil {
+			return nil, fmt.Errorf("initialize consumer routes: %w", errRoutes)
+		}
+
+		publisherRoutes = rabbitmq.NewPublisherRoutes(publisherConnection, logger, telemetry, cryptoWithExternalHMAC)
+	}
 
 	// Initialize storage repository (SeaweedFS or S3) via factory
 	storageProvider := cfg.StorageProvider
@@ -239,9 +294,6 @@ func InitWorker() (*Service, error) {
 		MaxPoolSize:            uint64(cfg.MaxPoolSize),
 	}
 
-	// Initialize multi-tenant MongoDB manager (nil when MULTI_TENANT_ENABLED=false)
-	mongoManager := initMultiTenantMongoManager(cfg, logger)
-
 	// Initialize MongoDB repositories
 	jobRepository, errJobRepo := job.NewJobMongoDBRepository(ctx, mongoConnection)
 	if errJobRepo != nil {
@@ -279,12 +331,30 @@ func InitWorker() (*Service, error) {
 		cfg.OrganizationIDs,
 		&logger,
 	)
-	multiQueueConsumer := NewMultiQueueConsumer(consumerRoutes, service, cfg.RabbitMQGenerateReportQueue, mongoManager)
+
+	// Create consumer abstraction based on multi-tenant mode
+	var consumer Consumer
+	if cfg.MultiTenantEnabled && cfg.MultiTenantURL != "" {
+		// Multi-tenant: use MultiTenantConsumerAdapter that wraps tmconsumer.MultiTenantConsumer
+		mongoManager := initMultiTenantMongoManager(cfg, logger)
+		consumer = NewMultiTenantConsumerAdapter(
+			multiTenantConsumer,
+			service,
+			cfg.RabbitMQGenerateReportQueue,
+			mongoManager,
+			rmqManager,
+			logger,
+		)
+	} else {
+		// Single-tenant: use existing MultiQueueConsumer (unchanged)
+		mongoManager := initMultiTenantMongoManager(cfg, logger)
+		consumer = NewMultiQueueConsumer(consumerRoutes, service, cfg.RabbitMQGenerateReportQueue, mongoManager)
+	}
 
 	return &Service{
-		MultiQueueConsumer: multiQueueConsumer,
-		Logger:             logger,
-		licenseShutdown:    licenseClient.GetLicenseManagerShutdown(),
+		Consumer:        consumer,
+		Logger:          logger,
+		licenseShutdown: licenseClient.GetLicenseManagerShutdown(),
 	}, nil
 }
 
@@ -343,4 +413,72 @@ func initMultiTenantMongoManager(cfg *Config, logger log.Logger) *tmmongo.Manage
 	logger.Infof("Multi-tenant MongoDB manager initialized: url=%s, module=%s", cfg.MultiTenantURL, constant.ModuleWorker)
 
 	return mongoManager
+}
+
+// initTenantManagerClient creates a Tenant Manager HTTP client with circuit breaker.
+// Used by both MongoDB and RabbitMQ managers.
+func initTenantManagerClient(cfg *Config, logger log.Logger) *tmclient.Client {
+	var clientOpts []tmclient.ClientOption
+	if cfg.MultiTenantCircuitBreakerThreshold > 0 {
+		clientOpts = append(clientOpts,
+			tmclient.WithCircuitBreaker(
+				cfg.MultiTenantCircuitBreakerThreshold,
+				time.Duration(cfg.MultiTenantCircuitBreakerTimeoutSec)*time.Second,
+			),
+		)
+	} else {
+		clientOpts = append(clientOpts,
+			tmclient.WithCircuitBreaker(5, 30*time.Second),
+		)
+	}
+
+	return tmclient.NewClient(cfg.MultiTenantURL, logger, clientOpts...)
+}
+
+// initMultiTenantRabbitMQManager creates a RabbitMQ Manager for per-tenant vhost isolation.
+// Each tenant has a dedicated RabbitMQ vhost with separate queues, exchanges, and connections.
+//
+// Per multi-tenant.md standards:
+//   - Layer 1 (Vhost Isolation): tmrabbitmq.Manager → GetChannel(ctx, tenantID)
+//   - Layer 2 (X-Tenant-ID Header): Already implemented in publisher/consumer
+func initMultiTenantRabbitMQManager(tmClient *tmclient.Client, cfg *Config, logger log.Logger) *tmrabbitmq.Manager {
+	var rmqOpts []tmrabbitmq.Option
+
+	rmqOpts = append(rmqOpts,
+		tmrabbitmq.WithModule(constant.ModuleWorker),
+		tmrabbitmq.WithLogger(logger),
+	)
+
+	if cfg.MultiTenantMaxTenantPools > 0 {
+		rmqOpts = append(rmqOpts, tmrabbitmq.WithMaxTenantPools(cfg.MultiTenantMaxTenantPools))
+	}
+
+	if cfg.MultiTenantIdleTimeoutSec > 0 {
+		rmqOpts = append(rmqOpts, tmrabbitmq.WithIdleTimeout(
+			time.Duration(cfg.MultiTenantIdleTimeoutSec)*time.Second,
+		))
+	}
+
+	rmqManager := tmrabbitmq.NewManager(tmClient, constant.ApplicationName, rmqOpts...)
+
+	logger.Infof("Multi-tenant RabbitMQ manager initialized: module=%s", constant.ModuleWorker)
+
+	return rmqManager
+}
+
+// initRedisClient creates a Redis client for multi-tenant consumer tenant discovery.
+// The MultiTenantConsumer uses Redis to discover active tenants without connecting
+// to RabbitMQ at startup (lazy mode).
+func initRedisClient(cfg *Config, logger log.Logger) redis.UniversalClient {
+	redisAddr := fmt.Sprintf("%s:%s", cfg.RedisHost, cfg.RedisPort)
+
+	client := redis.NewClient(&redis.Options{
+		Addr:     redisAddr,
+		Password: cfg.RedisPassword,
+		DB:       cfg.RedisDB,
+	})
+
+	logger.Infof("Redis client initialized for multi-tenant consumer: addr=%s", redisAddr)
+
+	return client
 }

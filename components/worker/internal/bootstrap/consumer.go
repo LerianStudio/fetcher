@@ -11,9 +11,13 @@ import (
 
 	"github.com/LerianStudio/fetcher/components/worker/internal/adapters/rabbitmq"
 	"github.com/LerianStudio/fetcher/components/worker/internal/services"
+	"github.com/LerianStudio/lib-commons/v3/commons/log"
 	"github.com/LerianStudio/lib-commons/v3/commons/opentelemetry"
+	tmconsumer "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/consumer"
 	tmcore "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/core"
 	tmmongo "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/mongo"
+	tmrabbitmq "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/rabbitmq"
+	amqp "github.com/rabbitmq/amqp091-go"
 
 	"github.com/LerianStudio/lib-commons/v3/commons"
 	"go.opentelemetry.io/otel/attribute"
@@ -138,7 +142,7 @@ func extractTenantIDFromHeaders(ctx context.Context, headers map[string]any) con
 
 // resolveTenantMongo resolves a tenant-specific MongoDB database using the mongo manager
 // and injects it into the context via tmcore.ContextWithTenantMongo. This enables
-// downstream repositories to retrieve the tenant DB via tmcore.GetMongoForTenant(ctx).
+// downstream repositories to retrieve the tenant DB via tmcore.GetMongoFromContext(ctx).
 //
 // Per multi-tenant.md worker pattern:
 //   - When mongoManager is nil (single-tenant mode), returns context unchanged (no-op)
@@ -160,4 +164,144 @@ func resolveTenantMongo(ctx context.Context, mongoManager *tmmongo.Manager) (con
 	}
 
 	return tmcore.ContextWithTenantMongo(ctx, tenantDB), nil
+}
+
+// MultiTenantConsumerAdapter wraps tmconsumer.MultiTenantConsumer to implement the Consumer interface.
+// It adapts the lib-commons multi-tenant consumer for use with the fetcher worker's UseCase.
+//
+// Per multi-tenant.md standards:
+//   - Uses tmconsumer.MultiTenantConsumer for lazy consumer initialization
+//   - Consumers are spawned on-demand per tenant vhost (not at startup)
+//   - Tenant ID is set in context via tmcore.SetTenantIDInContext by the lib-commons consumer
+type MultiTenantConsumerAdapter struct {
+	consumer     *tmconsumer.MultiTenantConsumer
+	useCase      *services.UseCase
+	queueName    string
+	mongoManager *tmmongo.Manager
+	rmqManager   *tmrabbitmq.Manager
+	logger       log.Logger
+}
+
+// NewMultiTenantConsumerAdapter creates a new adapter that wraps the lib-commons MultiTenantConsumer.
+func NewMultiTenantConsumerAdapter(
+	consumer *tmconsumer.MultiTenantConsumer,
+	useCase *services.UseCase,
+	queueName string,
+	mongoManager *tmmongo.Manager,
+	rmqManager *tmrabbitmq.Manager,
+	logger log.Logger,
+) *MultiTenantConsumerAdapter {
+	adapter := &MultiTenantConsumerAdapter{
+		consumer:     consumer,
+		useCase:      useCase,
+		queueName:    queueName,
+		mongoManager: mongoManager,
+		rmqManager:   rmqManager,
+		logger:       logger,
+	}
+
+	// Register the handler for the queue.
+	// The handler signature is tmconsumer.HandlerFunc: func(ctx context.Context, delivery amqp.Delivery) error
+	// The tenant ID is already set in context by the lib-commons consumer.
+	consumer.Register(queueName, adapter.handleDelivery)
+
+	return adapter
+}
+
+// Run starts the multi-tenant consumer in lazy mode.
+// It discovers tenants without starting consumers (non-blocking) and starts background polling.
+func (m *MultiTenantConsumerAdapter) Run(l *commons.Launcher) error {
+	requestID := commons.GenerateUUIDv7().String()
+	baseCtx := commons.ContextWithLogger(
+		commons.ContextWithHeaderID(context.Background(), requestID),
+		m.logger,
+	)
+
+	ctx, cancel := context.WithCancel(baseCtx)
+	defer cancel()
+
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
+
+	go func() {
+		<-sigs
+		m.logger.Info("Received shutdown signal, starting graceful shutdown...")
+		cancel()
+	}()
+
+	// Start the multi-tenant consumer (lazy mode - non-blocking)
+	if err := m.consumer.Run(ctx); err != nil {
+		m.logger.Errorf("Failed to start multi-tenant consumer: %v", err)
+		return fmt.Errorf("start multi-tenant consumer: %w", err)
+	}
+
+	m.logger.Info("Multi-tenant consumer started in lazy mode")
+
+	// Wait for context cancellation (shutdown signal)
+	<-ctx.Done()
+
+	// Graceful shutdown
+	m.logger.Info("Shutting down multi-tenant consumer...")
+
+	if err := m.consumer.Close(); err != nil {
+		m.logger.Errorf("Error closing multi-tenant consumer: %v", err)
+		return fmt.Errorf("close multi-tenant consumer: %w", err)
+	}
+
+	// Close RabbitMQ manager connections
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer shutdownCancel()
+
+	if err := m.rmqManager.Close(shutdownCtx); err != nil {
+		m.logger.Errorf("Error closing RabbitMQ manager: %v", err)
+	}
+
+	m.logger.Info("Multi-tenant consumer shutdown complete")
+
+	return nil
+}
+
+// handleDelivery is the handler function for the multi-tenant consumer.
+// It adapts the amqp.Delivery to the format expected by the UseCase.
+// The tenant ID is already set in context by the lib-commons consumer via tmcore.SetTenantIDInContext.
+func (m *MultiTenantConsumerAdapter) handleDelivery(ctx context.Context, delivery amqp.Delivery) error {
+	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+
+	spanCtx, span := tracer.Start(ctx, "consumer.handler_generate_report")
+	defer span.End()
+
+	span.SetAttributes(
+		attribute.String("app.request.request_id", reqID),
+	)
+
+	// Resolve tenant-specific MongoDB database and inject into context.
+	// The tenant ID is already in context from the lib-commons consumer.
+	spanCtx, err := resolveTenantMongo(spanCtx, m.mongoManager)
+	if err != nil {
+		opentelemetry.HandleSpanError(&span, "Failed to resolve tenant MongoDB database.", err)
+		logger.Errorf("Failed to resolve tenant MongoDB: %v", err)
+
+		return fmt.Errorf("resolve tenant mongo: %w", err)
+	}
+
+	logger.Info("Processing message from generate report queue (multi-tenant)")
+
+	// Convert AMQP headers to map[string]any
+	headers := make(map[string]any)
+	if delivery.Headers != nil {
+		for k, v := range delivery.Headers {
+			headers[k] = v
+		}
+	}
+
+	// Call the UseCase with the message body and headers
+	err = m.useCase.ExtractExternalData(spanCtx, delivery.Body, headers)
+	if err != nil {
+		opentelemetry.HandleSpanError(&span, "Error generating report.", err)
+		logger.Errorf("Error generating report: %v", err)
+
+		return fmt.Errorf("failed to generate report: %w", err)
+	}
+
+	return nil
 }

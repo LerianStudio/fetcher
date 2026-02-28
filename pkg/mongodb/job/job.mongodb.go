@@ -92,7 +92,7 @@ func NewJobMongoDBRepository(ctx context.Context, mc *libMongo.MongoConnection, 
 
 // getDatabase returns a *mongo.Database for the current request context.
 // In multi-tenant mode, it retrieves the tenant-specific database from context
-// via tmcore.GetMongoForTenant. In single-tenant mode (no tenant in context),
+// via tmcore.GetMongoFromContext. In single-tenant mode (no tenant in context),
 // it falls back to the static connection using jr.connection.GetDB.
 func (jr *JobMongoDBRepository) getDatabase(ctx context.Context) (*mongo.Database, error) {
 	return mongodb.GetDatabaseForContext(ctx, jr.connection, jr.Database)
