@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/LerianStudio/fetcher/components/worker/internal/adapters/rabbitmq"
@@ -12,15 +13,18 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/datasource"
 	"github.com/LerianStudio/fetcher/pkg/mongodb/connection"
-	mongoDB "github.com/LerianStudio/lib-commons/v3/commons/mongo"
-
 	"github.com/LerianStudio/fetcher/pkg/mongodb/job"
+	portConnection "github.com/LerianStudio/fetcher/pkg/ports/connection"
+	portJob "github.com/LerianStudio/fetcher/pkg/ports/job"
+	portStorage "github.com/LerianStudio/fetcher/pkg/ports/storage"
 	pkgStorage "github.com/LerianStudio/fetcher/pkg/storage"
+	mongoDB "github.com/LerianStudio/lib-commons/v3/commons/mongo"
 
 	libCommons "github.com/LerianStudio/lib-commons/v3/commons"
 	"github.com/LerianStudio/lib-commons/v3/commons/log"
 	libOtel "github.com/LerianStudio/lib-commons/v3/commons/opentelemetry"
 	libRabbitMQ "github.com/LerianStudio/lib-commons/v3/commons/rabbitmq"
+	libRedis "github.com/LerianStudio/lib-commons/v3/commons/redis"
 	tmclient "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/client"
 	tmconsumer "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/consumer"
 	tmmongo "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/mongo"
@@ -103,11 +107,95 @@ type Config struct {
 	RedisDB       int    `env:"REDIS_DB"`
 }
 
+// Validate checks that all required configuration fields are present.
+// Returns a descriptive multi-error message listing all missing fields.
+func (c *Config) Validate() error {
+	var errs []string
+
+	if c.RabbitMQHost == "" {
+		errs = append(errs, "RABBITMQ_HOST is required")
+	}
+
+	if c.RabbitMQPortAMQP == "" {
+		errs = append(errs, "RABBITMQ_PORT_AMQP is required")
+	}
+
+	if c.RabbitMQUser == "" {
+		errs = append(errs, "RABBITMQ_DEFAULT_USER is required")
+	}
+
+	if c.RabbitMQPass == "" {
+		errs = append(errs, "RABBITMQ_DEFAULT_PASS is required")
+	}
+
+	if c.RabbitMQGenerateReportQueue == "" {
+		errs = append(errs, "RABBITMQ_FETCHER_WORK_QUEUE is required")
+	}
+
+	if c.MongoDBHost == "" {
+		errs = append(errs, "MONGO_HOST is required")
+	}
+
+	if c.MongoDBName == "" {
+		errs = append(errs, "MONGO_NAME is required")
+	}
+
+	if c.AppEncryptionKey == "" {
+		errs = append(errs, "APP_ENC_KEY is required")
+	}
+
+	if c.MultiTenantEnabled && c.MultiTenantURL == "" {
+		errs = append(errs, "MULTI_TENANT_URL is required when MULTI_TENANT_ENABLED=true")
+	}
+
+	if c.MultiTenantEnabled {
+		if c.RedisHost == "" {
+			errs = append(errs, "REDIS_HOST is required when MULTI_TENANT_ENABLED=true")
+		}
+
+		if c.RedisPort == "" {
+			errs = append(errs, "REDIS_PORT is required when MULTI_TENANT_ENABLED=true")
+		}
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("config validation failed:\n- %s", strings.Join(errs, "\n- "))
+	}
+
+	return nil
+}
+
+// cryptoComponents holds the initialized cryptographic services for the worker.
+type cryptoComponents struct {
+	service      *crypto.AESGCMService
+	internalHMAC *crypto.HMACSigner
+	externalHMAC *crypto.HMACSigner
+}
+
+// rabbitMQComponents holds the initialized RabbitMQ consumer and publisher for the worker.
+type rabbitMQComponents struct {
+	consumerRoutes      *rabbitmq.ConsumerRoutes
+	multiTenantConsumer *tmconsumer.MultiTenantConsumer
+	rmqManager          *tmrabbitmq.Manager
+	publisherRoutes     rabbitmq.PublisherRepository
+}
+
+// mongoComponents holds the initialized MongoDB connection and repositories.
+type mongoComponents struct {
+	connection *mongoDB.MongoConnection
+	jobRepo    portJob.Repository
+	connRepo   portConnection.Repository
+}
+
 // InitWorker initializes and configures the application's dependencies and returns the Service instance.
-func InitWorker() (*Service, error) {
+func InitWorker() (_ *Service, err error) {
 	cfg := &Config{}
 	if err := libCommons.SetConfigFromEnvVars(cfg); err != nil {
 		return nil, fmt.Errorf("load environment configuration: %w", err)
+	}
+
+	if err := cfg.Validate(); err != nil {
+		return nil, err
 	}
 
 	ctx := context.Background()
@@ -117,12 +205,105 @@ func InitWorker() (*Service, error) {
 		return nil, fmt.Errorf("failed to initialize logger: %w", err)
 	}
 
+	logTenantMode(cfg, logger)
+
+	// Cleanup stack: on failure, close resources in reverse order
+	var cleanups []func()
+
+	defer func() {
+		if err != nil {
+			runCleanups(cleanups, logger)
+		}
+	}()
+
+	telemetry, err := initTelemetry(cfg, logger)
+	if err != nil {
+		return nil, err
+	}
+
+	cleanups = append(cleanups, func() {
+		logger.Info("Cleanup: shutting down telemetry")
+		telemetry.ShutdownTelemetry()
+	})
+
+	cryptoComps, err := initCryptoServices(cfg, logger)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create shared Tenant Manager client for MT mode (nil in single-tenant mode).
+	var tmClient *tmclient.Client
+	if cfg.MultiTenantEnabled && cfg.MultiTenantURL != "" {
+		tmClient = initTenantManagerClient(cfg, logger)
+	}
+
+	// Initialize MongoDB manager once -- reused by consumer setup below.
+	// In single-tenant mode initMultiTenantMongoManager returns nil (no-op).
+	mongoManager := initMultiTenantMongoManager(tmClient, cfg, logger)
+
+	rmqComps, err := initRabbitMQComponents(cfg, tmClient, mongoManager, cryptoComps, logger, telemetry)
+	if err != nil {
+		return nil, err
+	}
+
+	storageRepository, err := initStorageRepository(ctx, cfg, logger)
+	if err != nil {
+		return nil, err
+	}
+
+	mongoComps, err := initMongoRepositories(ctx, cfg, logger)
+	if err != nil {
+		return nil, err
+	}
+
+	cleanups = append(cleanups, func() {
+		if mongoComps.connection.DB != nil {
+			logger.Info("Cleanup: disconnecting MongoDB")
+
+			if disconnectErr := mongoComps.connection.DB.Disconnect(context.Background()); disconnectErr != nil {
+				logger.Errorf("Cleanup: failed to disconnect MongoDB: %v", disconnectErr)
+			}
+		}
+	})
+
+	service := assembleUseCase(cfg, mongoComps, storageRepository, cryptoComps, rmqComps.publisherRoutes, logger)
+
+	licenseClient := libLicense.NewLicenseClient(
+		constant.ApplicationName,
+		cfg.LicenseKey,
+		cfg.OrganizationIDs,
+		&logger,
+	)
+
+	consumer := initConsumer(cfg, rmqComps, service, mongoManager, logger)
+
+	return &Service{
+		Consumer:        consumer,
+		Logger:          logger,
+		licenseShutdown: licenseClient.GetLicenseManagerShutdown(),
+	}, nil
+}
+
+// logTenantMode logs whether the worker is running in multi-tenant or single-tenant mode.
+func logTenantMode(cfg *Config, logger log.Logger) {
 	if cfg.MultiTenantEnabled {
 		logger.Info("Multi-tenant mode ENABLED")
 	} else {
 		logger.Info("Running in SINGLE-TENANT MODE")
 	}
+}
 
+// runCleanups executes cleanup functions in reverse order on initialization failure.
+func runCleanups(cleanups []func(), logger log.Logger) {
+	logger.Infof("Initialization failed, cleaning up %d resources...", len(cleanups))
+
+	for i := len(cleanups) - 1; i >= 0; i-- {
+		cleanups[i]()
+	}
+}
+
+// initTelemetry initializes the OpenTelemetry provider.
+func initTelemetry(cfg *Config, logger log.Logger) (*libOtel.Telemetry, error) {
 	telemetry, err := libOtel.InitializeTelemetryWithError(&libOtel.TelemetryConfig{
 		LibraryName:               cfg.OtelLibraryName,
 		ServiceName:               cfg.OtelServiceName,
@@ -136,38 +317,12 @@ func InitWorker() (*Service, error) {
 		return nil, fmt.Errorf("initialize telemetry: %w", err)
 	}
 
-	// Init rabbitmq connection for consumer
-	// Consumer and Publisher use SEPARATE connections to avoid channel interference.
-	// A shared connection causes both to share the same AMQP channel, leading to issues
-	// when one invalidates/closes the channel (affects the other).
-	// URL-encode credentials to handle special characters (@ : / etc.)
-	escapedUserRMQ := url.PathEscape(cfg.RabbitMQUser)
-	escapedPassRMQ := url.QueryEscape(cfg.RabbitMQPass)
-	rabbitSource := fmt.Sprintf("%s://%s:%s@%s:%s",
-		cfg.RabbitURI, escapedUserRMQ, escapedPassRMQ, cfg.RabbitMQHost, cfg.RabbitMQPortAMQP)
-	consumerConnection := &libRabbitMQ.RabbitMQConnection{
-		ConnectionStringSource: rabbitSource,
-		HealthCheckURL:         cfg.RabbitMQHealthCheckURL,
-		Host:                   cfg.RabbitMQHost,
-		Port:                   cfg.RabbitMQPortHost,
-		User:                   cfg.RabbitMQUser,
-		Pass:                   cfg.RabbitMQPass,
-		Queue:                  cfg.RabbitMQGenerateReportQueue,
-		Logger:                 logger,
-	}
+	return telemetry, nil
+}
 
-	// Separate connection for Publisher to isolate channel lifecycle
-	publisherConnection := &libRabbitMQ.RabbitMQConnection{
-		ConnectionStringSource: rabbitSource,
-		HealthCheckURL:         cfg.RabbitMQHealthCheckURL,
-		Host:                   cfg.RabbitMQHost,
-		Port:                   cfg.RabbitMQPortHost,
-		User:                   cfg.RabbitMQUser,
-		Pass:                   cfg.RabbitMQPass,
-		Logger:                 logger,
-	}
-
-	// Init key deriver for cryptographic key segregation
+// initCryptoServices initializes the master key, key deriver, AES-GCM crypto service,
+// and HMAC signers (internal for RabbitMQ messages, external for document verification).
+func initCryptoServices(cfg *Config, logger log.Logger) (*cryptoComponents, error) {
 	masterKey, err := crypto.DecodeMasterKey(cfg.AppEncryptionKey)
 	if err != nil {
 		return nil, fmt.Errorf("decode master encryption key: %w", err)
@@ -180,81 +335,153 @@ func InitWorker() (*Service, error) {
 
 	logger.Info("Key derivation initialized successfully")
 
-	// Init crypto service with derived credential key
-	cryptoService, errCrypto := crypto.NewAESGCMService(keyDeriver.GetCredentialKey(), cfg.AppEncryptionKeyVersion)
-	if errCrypto != nil {
-		return nil, fmt.Errorf("initialize crypto service: %w", errCrypto)
+	cryptoService, err := crypto.NewAESGCMService(keyDeriver.GetCredentialKey(), cfg.AppEncryptionKeyVersion)
+	if err != nil {
+		return nil, fmt.Errorf("initialize crypto service: %w", err)
 	}
 
-	// Init message signer for RabbitMQ with derived internal HMAC key
-	cryptoWithInternalHMAC, errSigner := crypto.NewHMACSigner(keyDeriver.GetInternalHMACKey(), crypto.SignatureVersion)
-	if errSigner != nil {
-		return nil, fmt.Errorf("initialize internal message signer: %w", errSigner)
+	internalHMAC, err := crypto.NewHMACSigner(keyDeriver.GetInternalHMACKey(), crypto.SignatureVersion)
+	if err != nil {
+		return nil, fmt.Errorf("initialize internal message signer: %w", err)
 	}
 
-	// Init document signer for external verification with derived external HMAC key
-	cryptoWithExternalHMAC, errSigner := crypto.NewHMACSigner(keyDeriver.GetExternalHMACKey(), crypto.SignatureVersion)
-	if errSigner != nil {
-		return nil, fmt.Errorf("initialize external document signer: %w", errSigner)
+	externalHMAC, err := crypto.NewHMACSigner(keyDeriver.GetExternalHMACKey(), crypto.SignatureVersion)
+	if err != nil {
+		return nil, fmt.Errorf("initialize external document signer: %w", err)
 	}
 
-	// Initialize RabbitMQ consumer and publisher with separate connections.
-	// When MULTI_TENANT_ENABLED=true, use tmrabbitmq.Manager and tmconsumer.MultiTenantConsumer
-	// for per-tenant vhost isolation (Layer 1). Single-tenant path remains unchanged.
-	var consumerRoutes *rabbitmq.ConsumerRoutes
-	var multiTenantConsumer *tmconsumer.MultiTenantConsumer
-	var rmqManager *tmrabbitmq.Manager
-	var publisherRoutes rabbitmq.PublisherRepository
+	return &cryptoComponents{
+		service:      cryptoService,
+		internalHMAC: internalHMAC,
+		externalHMAC: externalHMAC,
+	}, nil
+}
 
+// initRabbitMQComponents initializes RabbitMQ consumer and publisher, choosing between
+// multi-tenant vhost isolation and single-tenant static connections based on configuration.
+func initRabbitMQComponents(
+	cfg *Config,
+	tmClient *tmclient.Client,
+	mongoManager *tmmongo.Manager,
+	cryptoComps *cryptoComponents,
+	logger log.Logger,
+	telemetry *libOtel.Telemetry,
+) (*rabbitMQComponents, error) {
 	if cfg.MultiTenantEnabled && cfg.MultiTenantURL != "" {
-		// Multi-tenant path: use tmrabbitmq.Manager for per-tenant vhost isolation
-		logger.Info("Initializing RabbitMQ with multi-tenant vhost isolation")
-
-		// Create Tenant Manager client (reusing same pattern as MongoDB manager)
-		tmClient := initTenantManagerClient(cfg, logger)
-
-		// Create RabbitMQ Manager for per-tenant vhost connections
-		rmqManager = initMultiTenantRabbitMQManager(tmClient, cfg, logger)
-
-		// Create Redis client for tenant discovery
-		redisClient := initRedisClient(cfg, logger)
-
-		// Create multi-tenant consumer configuration
-		mtConfig := tmconsumer.MultiTenantConfig{
-			SyncInterval:     30 * time.Second,
-			PrefetchCount:    cfg.RabbitMQNumWorkers,
-			MultiTenantURL:   cfg.MultiTenantURL,
-			Service:          constant.ApplicationName,
-			Environment:      cfg.MultiTenantEnvironment,
-			DiscoveryTimeout: 500 * time.Millisecond,
-		}
-
-		// Create multi-tenant consumer with MongoDB manager for connection cleanup
-		mongoManager := initMultiTenantMongoManager(cfg, logger)
-		multiTenantConsumer = tmconsumer.NewMultiTenantConsumer(
-			rmqManager,
-			redisClient,
-			mtConfig,
-			logger,
-			tmconsumer.WithMongoManager(mongoManager),
-		)
-
-		// Create multi-tenant publisher
-		publisherRoutes = rabbitmq.NewPublisherRoutesMultiTenant(rmqManager, logger, telemetry, cryptoWithExternalHMAC)
-
-		logger.Infof("Multi-tenant RabbitMQ initialized: environment=%s, service=%s", cfg.MultiTenantEnvironment, constant.ApplicationName)
-	} else {
-		// Single-tenant path: use existing static RabbitMQ connections (unchanged)
-		var errRoutes error
-		consumerRoutes, errRoutes = rabbitmq.NewConsumerRoutes(consumerConnection, cfg.RabbitMQNumWorkers, logger, telemetry, cryptoWithInternalHMAC, cfg.EnvName)
-		if errRoutes != nil {
-			return nil, fmt.Errorf("initialize consumer routes: %w", errRoutes)
-		}
-
-		publisherRoutes = rabbitmq.NewPublisherRoutes(publisherConnection, logger, telemetry, cryptoWithExternalHMAC)
+		return initMultiTenantRabbitMQ(cfg, tmClient, mongoManager, cryptoComps, logger, telemetry)
 	}
 
-	// Initialize storage repository (SeaweedFS or S3) via factory
+	return initSingleTenantRabbitMQ(cfg, cryptoComps, logger, telemetry)
+}
+
+// initMultiTenantRabbitMQ sets up RabbitMQ with per-tenant vhost isolation using
+// tmrabbitmq.Manager and tmconsumer.MultiTenantConsumer.
+func initMultiTenantRabbitMQ(
+	cfg *Config,
+	tmClient *tmclient.Client,
+	mongoManager *tmmongo.Manager,
+	cryptoComps *cryptoComponents,
+	logger log.Logger,
+	telemetry *libOtel.Telemetry,
+) (*rabbitMQComponents, error) {
+	logger.Info("Initializing RabbitMQ with multi-tenant vhost isolation")
+
+	rmqManager := initMultiTenantRabbitMQManager(tmClient, cfg, logger)
+
+	redisClient, err := initRedisClient(cfg, logger)
+	if err != nil {
+		return nil, fmt.Errorf("initialize redis client: %w", err)
+	}
+
+	mtConfig := tmconsumer.MultiTenantConfig{
+		SyncInterval:     30 * time.Second,
+		PrefetchCount:    cfg.RabbitMQNumWorkers,
+		MultiTenantURL:   cfg.MultiTenantURL,
+		Service:          constant.ApplicationName,
+		Environment:      cfg.MultiTenantEnvironment,
+		DiscoveryTimeout: 500 * time.Millisecond,
+	}
+
+	var consumerOpts []tmconsumer.Option
+	if mongoManager != nil {
+		consumerOpts = append(consumerOpts, tmconsumer.WithMongoManager(mongoManager))
+	}
+
+	multiTenantConsumer := tmconsumer.NewMultiTenantConsumer(
+		rmqManager,
+		redisClient,
+		mtConfig,
+		logger,
+		consumerOpts...,
+	)
+
+	publisherRoutes := rabbitmq.NewPublisherRoutesMultiTenant(rmqManager, logger, telemetry, cryptoComps.externalHMAC)
+
+	logger.Infof("Multi-tenant RabbitMQ initialized: environment=%s, service=%s", cfg.MultiTenantEnvironment, constant.ApplicationName)
+
+	return &rabbitMQComponents{
+		multiTenantConsumer: multiTenantConsumer,
+		rmqManager:          rmqManager,
+		publisherRoutes:     publisherRoutes,
+	}, nil
+}
+
+// initSingleTenantRabbitMQ sets up RabbitMQ with static consumer and publisher connections.
+// Consumer and Publisher use SEPARATE connections to avoid channel interference.
+func initSingleTenantRabbitMQ(
+	cfg *Config,
+	cryptoComps *cryptoComponents,
+	logger log.Logger,
+	telemetry *libOtel.Telemetry,
+) (*rabbitMQComponents, error) {
+	// URL-encode credentials to handle special characters (@ : / etc.)
+	rabbitSource := buildRabbitMQSource(cfg)
+
+	consumerConnection := &libRabbitMQ.RabbitMQConnection{
+		ConnectionStringSource: rabbitSource,
+		HealthCheckURL:         cfg.RabbitMQHealthCheckURL,
+		Host:                   cfg.RabbitMQHost,
+		Port:                   cfg.RabbitMQPortHost,
+		User:                   cfg.RabbitMQUser,
+		Pass:                   cfg.RabbitMQPass,
+		Queue:                  cfg.RabbitMQGenerateReportQueue,
+		Logger:                 logger,
+	}
+
+	publisherConnection := &libRabbitMQ.RabbitMQConnection{
+		ConnectionStringSource: rabbitSource,
+		HealthCheckURL:         cfg.RabbitMQHealthCheckURL,
+		Host:                   cfg.RabbitMQHost,
+		Port:                   cfg.RabbitMQPortHost,
+		User:                   cfg.RabbitMQUser,
+		Pass:                   cfg.RabbitMQPass,
+		Logger:                 logger,
+	}
+
+	consumerRoutes, err := rabbitmq.NewConsumerRoutes(consumerConnection, cfg.RabbitMQNumWorkers, logger, telemetry, cryptoComps.internalHMAC, cfg.EnvName)
+	if err != nil {
+		return nil, fmt.Errorf("initialize consumer routes: %w", err)
+	}
+
+	publisherRoutes := rabbitmq.NewPublisherRoutes(publisherConnection, logger, telemetry, cryptoComps.externalHMAC)
+
+	return &rabbitMQComponents{
+		consumerRoutes:  consumerRoutes,
+		publisherRoutes: publisherRoutes,
+	}, nil
+}
+
+// buildRabbitMQSource builds the AMQP connection string with URL-encoded credentials.
+func buildRabbitMQSource(cfg *Config) string {
+	escapedUser := url.PathEscape(cfg.RabbitMQUser)
+	escapedPass := url.QueryEscape(cfg.RabbitMQPass)
+
+	return fmt.Sprintf("%s://%s:%s@%s:%s",
+		cfg.RabbitURI, escapedUser, escapedPass, cfg.RabbitMQHost, cfg.RabbitMQPortAMQP)
+}
+
+// initStorageRepository initializes the storage backend (SeaweedFS or S3) via factory.
+func initStorageRepository(ctx context.Context, cfg *Config, logger log.Logger) (portStorage.Repository, error) {
 	storageProvider := cfg.StorageProvider
 	if storageProvider == "" {
 		storageProvider = pkgStorage.ProviderSeaweedFS
@@ -278,7 +505,11 @@ func InitWorker() (*Service, error) {
 
 	logger.Infof("Storage initialized with provider: %s", storageProvider)
 
-	// Init mongo DB connection
+	return storageRepository, nil
+}
+
+// initMongoRepositories initializes the MongoDB connection and creates job and connection repositories.
+func initMongoRepositories(ctx context.Context, cfg *Config, logger log.Logger) (*mongoComponents, error) {
 	escapedPass := url.QueryEscape(cfg.MongoDBPassword)
 	mongoSource := fmt.Sprintf("%s://%s:%s@%s:%s",
 		cfg.MongoURI, cfg.MongoDBUser, escapedPass, cfg.MongoDBHost, cfg.MongoDBPort)
@@ -291,26 +522,41 @@ func InitWorker() (*Service, error) {
 		ConnectionStringSource: mongoSource,
 		Database:               cfg.MongoDBName,
 		Logger:                 logger,
-		MaxPoolSize:            uint64(cfg.MaxPoolSize),
+		MaxPoolSize:            uint64(cfg.MaxPoolSize), //nolint:gosec // MaxPoolSize is validated > 0 above
 	}
 
-	// Initialize MongoDB repositories
-	jobRepository, errJobRepo := job.NewJobMongoDBRepository(ctx, mongoConnection)
-	if errJobRepo != nil {
-		return nil, fmt.Errorf("initialize job repository: %w", errJobRepo)
+	jobRepository, err := job.NewJobMongoDBRepository(ctx, mongoConnection)
+	if err != nil {
+		return nil, fmt.Errorf("initialize job repository: %w", err)
 	}
 
-	connectionRepository, errConnectRepo := connection.NewConnectionMongoDBRepository(ctx, mongoConnection)
-	if errConnectRepo != nil {
-		return nil, fmt.Errorf("initialize connection repository: %w", errConnectRepo)
+	connectionRepository, err := connection.NewConnectionMongoDBRepository(ctx, mongoConnection)
+	if err != nil {
+		return nil, fmt.Errorf("initialize connection repository: %w", err)
 	}
 
+	return &mongoComponents{
+		connection: mongoConnection,
+		jobRepo:    jobRepository,
+		connRepo:   connectionRepository,
+	}, nil
+}
+
+// assembleUseCase creates and configures the worker UseCase with all required dependencies.
+func assembleUseCase(
+	cfg *Config,
+	mongoComps *mongoComponents,
+	storageRepository portStorage.Repository,
+	cryptoComps *cryptoComponents,
+	publisherRoutes rabbitmq.PublisherRepository,
+	logger log.Logger,
+) *services.UseCase {
 	service := &services.UseCase{
 		ExternalDataStorage:  storageRepository,
-		JobRepository:        jobRepository,
-		ConnectionRepository: connectionRepository,
-		Cryptor:              cryptoService,
-		DocumentSigner:       cryptoWithExternalHMAC,
+		JobRepository:        mongoComps.jobRepo,
+		ConnectionRepository: mongoComps.connRepo,
+		Cryptor:              cryptoComps.service,
+		DocumentSigner:       cryptoComps.externalHMAC,
 		FileTTL:              cfg.SeaweedFSTTL,
 		RabbitMQPublisher:    publisherRoutes,
 		JobEventsExchange:    cfg.RabbitMQJobEventsExchange,
@@ -325,37 +571,29 @@ func InitWorker() (*Service, error) {
 		logger.Infof("Reports will be stored permanently (no TTL)")
 	}
 
-	licenseClient := libLicense.NewLicenseClient(
-		constant.ApplicationName,
-		cfg.LicenseKey,
-		cfg.OrganizationIDs,
-		&logger,
-	)
+	return service
+}
 
-	// Create consumer abstraction based on multi-tenant mode
-	var consumer Consumer
+// initConsumer creates the appropriate consumer (multi-tenant or single-tenant) based on configuration.
+func initConsumer(
+	cfg *Config,
+	rmqComps *rabbitMQComponents,
+	service *services.UseCase,
+	mongoManager *tmmongo.Manager,
+	logger log.Logger,
+) Consumer {
 	if cfg.MultiTenantEnabled && cfg.MultiTenantURL != "" {
-		// Multi-tenant: use MultiTenantConsumerAdapter that wraps tmconsumer.MultiTenantConsumer
-		mongoManager := initMultiTenantMongoManager(cfg, logger)
-		consumer = NewMultiTenantConsumerAdapter(
-			multiTenantConsumer,
+		return NewMultiTenantConsumerAdapter(
+			rmqComps.multiTenantConsumer,
 			service,
 			cfg.RabbitMQGenerateReportQueue,
 			mongoManager,
-			rmqManager,
+			rmqComps.rmqManager,
 			logger,
 		)
-	} else {
-		// Single-tenant: use existing MultiQueueConsumer (unchanged)
-		mongoManager := initMultiTenantMongoManager(cfg, logger)
-		consumer = NewMultiQueueConsumer(consumerRoutes, service, cfg.RabbitMQGenerateReportQueue, mongoManager)
 	}
 
-	return &Service{
-		Consumer:        consumer,
-		Logger:          logger,
-		licenseShutdown: licenseClient.GetLicenseManagerShutdown(),
-	}, nil
+	return NewMultiQueueConsumer(rmqComps.consumerRoutes, service, cfg.RabbitMQGenerateReportQueue, mongoManager)
 }
 
 // initMultiTenantMongoManager creates a MongoDB Manager for tenant connection pool management
@@ -367,28 +605,10 @@ func InitWorker() (*Service, error) {
 //   - Circuit breaker is MANDATORY for the Tenant Manager client
 //   - Uses constant.ApplicationName and constant.ModuleWorker for service/module identity
 //   - WithMongoManager configures MongoDB connection pool management
-func initMultiTenantMongoManager(cfg *Config, logger log.Logger) *tmmongo.Manager {
-	if !cfg.MultiTenantEnabled || cfg.MultiTenantURL == "" {
+func initMultiTenantMongoManager(tmClient *tmclient.Client, cfg *Config, logger log.Logger) *tmmongo.Manager {
+	if !cfg.MultiTenantEnabled || cfg.MultiTenantURL == "" || tmClient == nil {
 		return nil
 	}
-
-	// Create Tenant Manager HTTP client with circuit breaker (MANDATORY per multi-tenant.md).
-	// Default: 5 consecutive failures, 30s half-open timeout.
-	var clientOpts []tmclient.ClientOption
-	if cfg.MultiTenantCircuitBreakerThreshold > 0 {
-		clientOpts = append(clientOpts,
-			tmclient.WithCircuitBreaker(
-				cfg.MultiTenantCircuitBreakerThreshold,
-				time.Duration(cfg.MultiTenantCircuitBreakerTimeoutSec)*time.Second,
-			),
-		)
-	} else {
-		clientOpts = append(clientOpts,
-			tmclient.WithCircuitBreaker(5, 30*time.Second),
-		)
-	}
-
-	tmClient := tmclient.NewClient(cfg.MultiTenantURL, logger, clientOpts...)
 
 	// Create MongoDB Manager for tenant connection pool management
 	var mongoOpts []tmmongo.Option
@@ -467,18 +687,23 @@ func initMultiTenantRabbitMQManager(tmClient *tmclient.Client, cfg *Config, logg
 }
 
 // initRedisClient creates a Redis client for multi-tenant consumer tenant discovery.
-// The MultiTenantConsumer uses Redis to discover active tenants without connecting
-// to RabbitMQ at startup (lazy mode).
-func initRedisClient(cfg *Config, logger log.Logger) redis.UniversalClient {
+// Uses lib-commons RedisConnection for standardized connection management.
+func initRedisClient(cfg *Config, logger log.Logger) (redis.UniversalClient, error) {
 	redisAddr := fmt.Sprintf("%s:%s", cfg.RedisHost, cfg.RedisPort)
 
-	client := redis.NewClient(&redis.Options{
-		Addr:     redisAddr,
+	redisConn := &libRedis.RedisConnection{
+		Address:  []string{redisAddr},
 		Password: cfg.RedisPassword,
 		DB:       cfg.RedisDB,
-	})
+		Logger:   logger,
+	}
+
+	client, err := redisConn.GetClient(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to Redis for tenant discovery: %w", err)
+	}
 
 	logger.Infof("Redis client initialized for multi-tenant consumer: addr=%s", redisAddr)
 
-	return client
+	return client, nil
 }

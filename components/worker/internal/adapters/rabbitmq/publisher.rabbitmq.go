@@ -4,6 +4,7 @@ package rabbitmq
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	portPublisher "github.com/LerianStudio/fetcher/pkg/ports/publisher"
@@ -145,6 +146,10 @@ func NewPublisherRoutesMultiTenant(
 // Publish sends a message to the specified exchange with the given routing key
 // using a tenant-specific RabbitMQ channel (vhost isolation).
 func (pr *MultiTenantPublisherRoutes) Publish(ctx context.Context, exchange, routingKey string, body []byte) error {
+	if pr.rmqManager == nil {
+		return fmt.Errorf("multi-tenant RabbitMQ manager is not initialized")
+	}
+
 	_, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "adapter.rabbitmq.publish_multi_tenant")
@@ -171,49 +176,95 @@ func (pr *MultiTenantPublisherRoutes) Publish(ctx context.Context, exchange, rou
 
 	pr.Debugf("Publishing message to exchange=%s, routingKey=%s, tenant=%s", exchange, routingKey, tenantID)
 
-	// Get tenant-specific channel from the RabbitMQ manager (Layer 1: Vhost Isolation)
-	channel, err := pr.rmqManager.GetChannel(ctx, tenantID)
-	if err != nil {
-		opentelemetry.HandleSpanError(&span, "Failed to get tenant RabbitMQ channel", err)
-		pr.Errorf("Failed to get RabbitMQ channel for tenant %s: %v", tenantID, err)
-
-		return fmt.Errorf("get tenant RabbitMQ channel: %w", err)
-	}
-
-	defer func() {
-		// Close the channel after publishing (per lib-commons docs: caller owns channel lifecycle)
-		if closeErr := channel.Close(); closeErr != nil {
-			pr.Warnf("Failed to close RabbitMQ channel for tenant %s: %v", tenantID, closeErr)
-		}
-	}()
-
 	// Build AMQP headers with X-Tenant-ID (Layer 2: Header for audit/tracing)
 	headers := amqp.Table{
-		"X-Tenant-ID":        tenantID,
+		"X-Tenant-ID":         tenantID,
 		libConstants.HeaderID: reqID,
 	}
 
 	// Inject trace context
 	opentelemetry.InjectTraceHeadersIntoQueue(ctx, (*map[string]any)(&headers))
 
-	// Publish the message
-	err = channel.PublishWithContext(ctx, exchange, routingKey, false, false,
-		amqp.Publishing{
-			ContentType:  "application/json",
-			DeliveryMode: amqp.Persistent,
-			Headers:      headers,
-			Body:         body,
-		})
-	if err != nil {
-		opentelemetry.HandleSpanError(&span, "Failed to publish message", err)
-		pr.Errorf("Error publishing message to exchange %s with routing key %s: %v", exchange, routingKey, err)
+	// Sign message if signer is configured (parity with single-tenant RabbitMQAdapter)
+	if pr.signer != nil {
+		timestamp := time.Now().UTC().Unix()
+		payload := crypto.BuildSignaturePayload(timestamp, body)
+		signature := pr.signer.Sign(payload)
 
-		return fmt.Errorf("failed to publish message to exchange %s: %w", exchange, err)
+		headers["x-message-signature"] = signature
+		headers["t"] = fmt.Sprintf("%d", timestamp)
+		headers["signature-version"] = pr.signer.SignatureVersion()
+
+		span.SetAttributes(
+			attribute.String("messaging.signature.version", pr.signer.SignatureVersion()),
+		)
 	}
 
-	pr.Debugf("Successfully published message to exchange=%s, routingKey=%s, tenant=%s", exchange, routingKey, tenantID)
+	// Retry loop with exponential backoff and jitter (matches midaz pattern).
+	// GetChannel returns a fresh channel each call, so we retry the full
+	// get-channel + publish sequence on transient failures.
+	const maxRetries = 3
 
-	return nil
+	baseDelay := 200 * time.Millisecond
+
+	var lastErr error
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			delay := rabbitmq.FullJitter(baseDelay)
+			pr.Infof("Retrying publish in %v (attempt %d/%d, tenant=%s)", delay, attempt+1, maxRetries+1, tenantID)
+
+			span.SetAttributes(attribute.Int("messaging.retry_attempt", attempt))
+
+			select {
+			case <-ctx.Done():
+				return fmt.Errorf("context cancelled during publish retry: %w", ctx.Err())
+			case <-time.After(delay):
+			}
+
+			baseDelay = rabbitmq.NextBackoff(baseDelay)
+		}
+
+		// Get tenant-specific channel from the RabbitMQ manager (Layer 1: Vhost Isolation)
+		channel, chanErr := pr.rmqManager.GetChannel(ctx, tenantID)
+		if chanErr != nil {
+			lastErr = chanErr
+			pr.Errorf("Failed to get RabbitMQ channel for tenant %s (attempt %d/%d): %v", tenantID, attempt+1, maxRetries+1, chanErr)
+
+			continue
+		}
+
+		// Publish the message
+		pubErr := channel.PublishWithContext(ctx, exchange, routingKey, false, false,
+			amqp.Publishing{
+				ContentType:  "application/json",
+				DeliveryMode: amqp.Persistent,
+				Headers:      headers,
+				Body:         body,
+			})
+
+		// Close the channel after publishing (per lib-commons docs: caller owns channel lifecycle)
+		if closeErr := channel.Close(); closeErr != nil {
+			pr.Warnf("Failed to close RabbitMQ channel for tenant %s: %v", tenantID, closeErr)
+		}
+
+		if pubErr != nil {
+			lastErr = pubErr
+			pr.Errorf("Publish failed for tenant %s (attempt %d/%d): %v", tenantID, attempt+1, maxRetries+1, pubErr)
+
+			continue
+		}
+
+		// Success
+		pr.Debugf("Successfully published message to exchange=%s, routingKey=%s, tenant=%s", exchange, routingKey, tenantID)
+
+		return nil
+	}
+
+	opentelemetry.HandleSpanError(&span, "Failed to publish message after all retries", lastErr)
+	pr.Errorf("Error publishing message to exchange %s with routing key %s after %d retries: %v", exchange, routingKey, maxRetries, lastErr)
+
+	return fmt.Errorf("failed to publish message to exchange %s after %d retries: %w", exchange, maxRetries, lastErr)
 }
 
 // Shutdown is a no-op for multi-tenant publisher as the RabbitMQ manager

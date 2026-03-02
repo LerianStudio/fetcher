@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	libCommons "github.com/LerianStudio/lib-commons/v3/commons"
+	tmclient "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/client"
 	libZap "github.com/LerianStudio/lib-commons/v3/commons/zap"
 )
 
@@ -248,15 +249,19 @@ func TestConfig_LoadFromEnvVars(t *testing.T) {
 
 func TestInitMultiTenantMongoManager(t *testing.T) {
 	logger := libZap.InitializeLogger()
+	// Create a shared tmClient for tests that expect a non-nil manager
+	sharedClient := tmclient.NewClient("http://tenant-manager:8080", logger)
 
 	tests := []struct {
 		name        string
+		tmClient    *tmclient.Client
 		cfg         *Config
 		wantNil     bool
 		description string
 	}{
 		{
-			name: "returns nil when multi-tenant disabled",
+			name:     "returns nil when multi-tenant disabled",
+			tmClient: sharedClient,
 			cfg: &Config{
 				MultiTenantEnabled: false,
 				MultiTenantURL:     "http://tenant-manager:8080",
@@ -265,7 +270,8 @@ func TestInitMultiTenantMongoManager(t *testing.T) {
 			description: "single-tenant mode should return nil manager",
 		},
 		{
-			name: "returns nil when multi-tenant URL is empty",
+			name:     "returns nil when multi-tenant URL is empty",
+			tmClient: sharedClient,
 			cfg: &Config{
 				MultiTenantEnabled: true,
 				MultiTenantURL:     "",
@@ -274,7 +280,18 @@ func TestInitMultiTenantMongoManager(t *testing.T) {
 			description: "enabled without URL should return nil manager",
 		},
 		{
-			name: "returns manager when fully configured",
+			name:     "returns nil when tmClient is nil",
+			tmClient: nil,
+			cfg: &Config{
+				MultiTenantEnabled: true,
+				MultiTenantURL:     "http://tenant-manager:8080",
+			},
+			wantNil:     true,
+			description: "nil tmClient should return nil manager",
+		},
+		{
+			name:     "returns manager when fully configured",
+			tmClient: sharedClient,
 			cfg: &Config{
 				MultiTenantEnabled:                  true,
 				MultiTenantURL:                      "http://tenant-manager:8080",
@@ -287,7 +304,8 @@ func TestInitMultiTenantMongoManager(t *testing.T) {
 			description: "fully configured multi-tenant should return manager",
 		},
 		{
-			name: "returns manager with zero circuit breaker threshold and applies default",
+			name:     "returns manager with zero circuit breaker threshold and applies default",
+			tmClient: sharedClient,
 			cfg: &Config{
 				MultiTenantEnabled:                  true,
 				MultiTenantURL:                      "http://tenant-manager:8080",
@@ -301,7 +319,7 @@ func TestInitMultiTenantMongoManager(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			manager := initMultiTenantMongoManager(tt.cfg, logger)
+			manager := initMultiTenantMongoManager(tt.tmClient, tt.cfg, logger)
 			if tt.wantNil {
 				if manager != nil {
 					t.Errorf("initMultiTenantMongoManager() = non-nil, want nil: %s", tt.description)

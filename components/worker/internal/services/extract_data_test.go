@@ -2495,8 +2495,8 @@ func TestCompleteJob_NilResultData(t *testing.T) {
 
 // TestEncryptData_InvalidKeyLength verifies that cipher initialization
 // fails with invalid (too short) encryption keys.
-// newTestUseCase sets storageEncryptSecretKey to "test-seaweedfs-encrypt-key" (28 bytes)
-// which is not a valid AES key length (16, 24, or 32 bytes), triggering the cipher init error.
+// newTestUseCase sets storageEncryptSecretKey to a test value whose length (28 bytes)
+// is not a valid AES key length (16, 24, or 32 bytes), triggering the cipher init error.
 func TestEncryptData_InvalidKeyLength(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()

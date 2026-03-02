@@ -288,6 +288,7 @@ func (m *MultiTenantConsumerAdapter) handleDelivery(ctx context.Context, deliver
 
 	// Convert AMQP headers to map[string]any
 	headers := make(map[string]any)
+
 	if delivery.Headers != nil {
 		for k, v := range delivery.Headers {
 			headers[k] = v
