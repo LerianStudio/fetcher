@@ -106,6 +106,24 @@ func TestNewS3Repository_InvalidConfig(t *testing.T) {
 			},
 			wantErr: "bucket",
 		},
+		{
+			name: "partial_credentials_only_access_key",
+			cfg: storage.S3Config{
+				Endpoint:    "http://localhost:9000",
+				Bucket:      "test-bucket",
+				AccessKeyID: "minioadmin",
+			},
+			wantErr: "partial credentials",
+		},
+		{
+			name: "partial_credentials_only_secret_key",
+			cfg: storage.S3Config{
+				Endpoint:        "http://localhost:9000",
+				Bucket:          "test-bucket",
+				SecretAccessKey: "minioadmin",
+			},
+			wantErr: "partial credentials",
+		},
 	}
 
 	for _, tt := range tests {

@@ -6,6 +6,7 @@ package metrics
 
 import (
 	"context"
+	"fmt"
 
 	"go.opentelemetry.io/otel/attribute"
 	otelmetric "go.opentelemetry.io/otel/metric"
@@ -41,6 +42,10 @@ type TenantMetrics struct {
 func NewTenantMetrics(multiTenantEnabled bool, provider otelmetric.MeterProvider) (*TenantMetrics, error) {
 	if !multiTenantEnabled {
 		return newNoOpTenantMetrics()
+	}
+
+	if provider == nil {
+		return nil, fmt.Errorf("meter provider is required when multi-tenant is enabled")
 	}
 
 	return newOTelTenantMetrics(provider)

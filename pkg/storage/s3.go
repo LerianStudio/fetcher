@@ -70,6 +70,8 @@ func NewS3Repository(ctx context.Context, cfg S3Config) (*S3Repository, error) {
 		opts = append(opts, awsConfig.WithCredentialsProvider(
 			credentials.NewStaticCredentialsProvider(cfg.AccessKeyID, cfg.SecretAccessKey, ""),
 		))
+	} else if cfg.AccessKeyID != "" || cfg.SecretAccessKey != "" {
+		return nil, fmt.Errorf("both S3 access key ID and secret access key must be provided together (got partial credentials)")
 	}
 
 	awsCfg, err := awsConfig.LoadDefaultConfig(ctx, opts...)
