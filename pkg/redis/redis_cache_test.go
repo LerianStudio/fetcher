@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/LerianStudio/fetcher/pkg/testutil"
+	tmcore "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/core"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
@@ -473,9 +474,68 @@ func TestRedisCache_CacheKey(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			cache, err := NewRedisCache[testStruct](conn, time.Minute, tt.prefix)
 			require.NoError(t, err)
-			assert.Equal(t, tt.expected, cache.cacheKey(tt.key))
+			// No tenant in context => key returned unchanged
+			assert.Equal(t, tt.expected, cache.cacheKey(context.Background(), tt.key))
 		})
 	}
+}
+
+func TestRedisCache_CacheKey_WithTenantContext(t *testing.T) {
+	_, conn := setupMiniredis(t)
+	cache, err := NewRedisCache[testStruct](conn, time.Minute, "fetcher:schema:")
+	require.NoError(t, err)
+
+	t.Run("includes tenant prefix when tenant context is set", func(t *testing.T) {
+		ctx := tmcore.SetTenantIDInContext(context.Background(), "org_abc123")
+
+		result := cache.cacheKey(ctx, "mykey")
+		assert.Equal(t, "fetcher:schema:tenant:org_abc123:mykey", result)
+	})
+
+	t.Run("no tenant prefix when tenant context is not set", func(t *testing.T) {
+		result := cache.cacheKey(context.Background(), "mykey")
+		assert.Equal(t, "fetcher:schema:mykey", result)
+	})
+}
+
+func TestRedisCache_GetSet_WithTenantContext(t *testing.T) {
+	mr, conn := setupMiniredis(t)
+	cache, err := NewRedisCache[testStruct](conn, time.Minute, "test:")
+	require.NoError(t, err)
+
+	t.Run("tenant-scoped keys are isolated", func(t *testing.T) {
+		tenant1Ctx := tmcore.SetTenantIDInContext(context.Background(), "tenant1")
+		tenant2Ctx := tmcore.SetTenantIDInContext(context.Background(), "tenant2")
+		key := "shared-key"
+
+		value1 := testStruct{ID: "1", Name: "Tenant1"}
+		value2 := testStruct{ID: "2", Name: "Tenant2"}
+
+		// Set for tenant1
+		err := cache.Set(tenant1Ctx, key, value1, 0)
+		require.NoError(t, err)
+
+		// Set for tenant2
+		err = cache.Set(tenant2Ctx, key, value2, 0)
+		require.NoError(t, err)
+
+		// Get for tenant1 should return tenant1's value
+		result1, found1, err := cache.Get(tenant1Ctx, key)
+		assert.NoError(t, err)
+		assert.True(t, found1)
+		assert.Equal(t, value1, result1)
+
+		// Get for tenant2 should return tenant2's value
+		result2, found2, err := cache.Get(tenant2Ctx, key)
+		assert.NoError(t, err)
+		assert.True(t, found2)
+		assert.Equal(t, value2, result2)
+
+		// Verify distinct keys in Redis
+		keys := mr.Keys()
+		assert.Contains(t, keys, "test:tenant:tenant1:shared-key")
+		assert.Contains(t, keys, "test:tenant:tenant2:shared-key")
+	})
 }
 
 // TestRedisCache_IsHealthy_WithInitErr verifies the initErr guard in IsHealthy.

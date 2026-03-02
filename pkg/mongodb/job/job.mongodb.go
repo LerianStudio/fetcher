@@ -11,11 +11,12 @@ import (
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/model"
+	"github.com/LerianStudio/fetcher/pkg/mongodb"
 	portsJob "github.com/LerianStudio/fetcher/pkg/ports/job"
 
-	"github.com/LerianStudio/lib-commons/v2/commons"
-	libMongo "github.com/LerianStudio/lib-commons/v2/commons/mongo"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v3/commons"
+	libMongo "github.com/LerianStudio/lib-commons/v3/commons/mongo"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v3/commons/opentelemetry"
 
 	"github.com/google/uuid"
 	"go.mongodb.org/mongo-driver/bson"
@@ -89,6 +90,14 @@ func NewJobMongoDBRepository(ctx context.Context, mc *libMongo.MongoConnection, 
 	return repo, nil
 }
 
+// getDatabase returns a *mongo.Database for the current request context.
+// In multi-tenant mode, it retrieves the tenant-specific database from context
+// via tmcore.GetMongoFromContext. In single-tenant mode (no tenant in context),
+// it falls back to the static connection using jr.connection.GetDB.
+func (jr *JobMongoDBRepository) getDatabase(ctx context.Context) (*mongo.Database, error) {
+	return mongodb.GetDatabaseForContext(ctx, jr.connection, jr.Database)
+}
+
 // Create inserts a new job document.
 func (jr *JobMongoDBRepository) Create(ctx context.Context, job *model.Job) (*model.Job, error) {
 	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
@@ -121,13 +130,13 @@ func (jr *JobMongoDBRepository) Create(ctx context.Context, job *model.Job) (*mo
 		libOpentelemetry.HandleSpanError(&span, "Failed to convert job payload to JSON", err)
 	}
 
-	db, err := jr.connection.GetDB(ctx)
+	db, err := jr.getDatabase(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
 		return nil, fmt.Errorf("failed to get database connection: %w", err)
 	}
 
-	coll := db.Database(strings.ToLower(jr.Database)).Collection(strings.ToLower(constant.MongoCollectionJob))
+	coll := db.Collection(strings.ToLower(constant.MongoCollectionJob))
 	record := &JobMongoDBModel{}
 
 	if err := record.FromEntity(job); err != nil {
@@ -184,13 +193,13 @@ func (jr *JobMongoDBRepository) Update(ctx context.Context, job *model.Job) (*mo
 		libOpentelemetry.HandleSpanError(&span, "Failed to convert job payload to JSON", err)
 	}
 
-	db, err := jr.connection.GetDB(ctx)
+	db, err := jr.getDatabase(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
 		return nil, fmt.Errorf("failed to get database connection: %w", err)
 	}
 
-	coll := db.Database(strings.ToLower(jr.Database)).Collection(strings.ToLower(constant.MongoCollectionJob))
+	coll := db.Collection(strings.ToLower(constant.MongoCollectionJob))
 	filter := bson.M{
 		"_id":             job.ID,
 		"organization_id": job.OrganizationID,
@@ -256,13 +265,13 @@ func (jr *JobMongoDBRepository) UpdateStatus(ctx context.Context, id, organizati
 		return err
 	}
 
-	db, err := jr.connection.GetDB(ctx)
+	db, err := jr.getDatabase(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
 		return fmt.Errorf("failed to get database connection: %w", err)
 	}
 
-	coll := db.Database(strings.ToLower(jr.Database)).Collection(strings.ToLower(constant.MongoCollectionJob))
+	coll := db.Collection(strings.ToLower(constant.MongoCollectionJob))
 
 	filter := bson.M{
 		"_id":             id,
@@ -349,13 +358,13 @@ func (jr *JobMongoDBRepository) FindByID(ctx context.Context, id, organizationID
 	}
 	span.SetAttributes(attributes...)
 
-	db, err := jr.connection.GetDB(ctx)
+	db, err := jr.getDatabase(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
 		return nil, fmt.Errorf("failed to get database connection: %w", err)
 	}
 
-	coll := db.Database(strings.ToLower(jr.Database)).Collection(strings.ToLower(constant.MongoCollectionJob))
+	coll := db.Collection(strings.ToLower(constant.MongoCollectionJob))
 
 	var record JobMongoDBModel
 
@@ -404,13 +413,13 @@ func (jr *JobMongoDBRepository) FindByRequestHashWithinWindow(ctx context.Contex
 		return nil, nil
 	}
 
-	db, err := jr.connection.GetDB(ctx)
+	db, err := jr.getDatabase(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
 		return nil, fmt.Errorf("failed to get database connection: %w", err)
 	}
 
-	coll := db.Database(strings.ToLower(jr.Database)).Collection(strings.ToLower(constant.MongoCollectionJob))
+	coll := db.Collection(strings.ToLower(constant.MongoCollectionJob))
 
 	windowStart := time.Now().UTC().Add(-time.Duration(windowMinutes) * time.Minute)
 
@@ -468,13 +477,13 @@ func (jr *JobMongoDBRepository) FindActiveByRequestHash(ctx context.Context, org
 		return nil, nil
 	}
 
-	db, err := jr.connection.GetDB(ctx)
+	db, err := jr.getDatabase(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
 		return nil, fmt.Errorf("failed to get database connection: %w", err)
 	}
 
-	coll := db.Database(strings.ToLower(jr.Database)).Collection(strings.ToLower(constant.MongoCollectionJob))
+	coll := db.Collection(strings.ToLower(constant.MongoCollectionJob))
 
 	filter := bson.M{
 		"organization_id": organizationID,
@@ -525,13 +534,13 @@ func (jr *JobMongoDBRepository) ExistsRunningByMappedFieldKey(ctx context.Contex
 	}
 	span.SetAttributes(attributes...)
 
-	db, err := jr.connection.GetDB(ctx)
+	db, err := jr.getDatabase(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
 		return false, pkg.ValidateInternalError(err, "job")
 	}
 
-	coll := db.Database(strings.ToLower(jr.Database)).Collection(strings.ToLower(constant.MongoCollectionJob))
+	coll := db.Collection(strings.ToLower(constant.MongoCollectionJob))
 
 	// Validate keyPattern to prevent injection attacks
 	configNameRegex := regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
@@ -586,13 +595,13 @@ func (jr *JobMongoDBRepository) List(ctx context.Context, filters *ListFilter) (
 	}
 	span.SetAttributes(attributes...)
 
-	db, err := jr.connection.GetDB(ctx)
+	db, err := jr.getDatabase(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
 		return nil, fmt.Errorf("failed to get database connection: %w", err)
 	}
 
-	coll := db.Database(strings.ToLower(jr.Database)).Collection(strings.ToLower(constant.MongoCollectionJob))
+	coll := db.Collection(strings.ToLower(constant.MongoCollectionJob))
 
 	queryFilter := jr.buildQueryFilter(filters)
 	opts := jr.buildPaginationOptions(filters)

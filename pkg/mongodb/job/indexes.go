@@ -9,8 +9,8 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	sharedMongo "github.com/LerianStudio/fetcher/pkg/mongodb"
-	"github.com/LerianStudio/lib-commons/v2/commons"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v3/commons"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v3/commons/opentelemetry"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -38,13 +38,13 @@ func (jr *JobMongoDBRepository) EnsureIndexes(ctx context.Context) error {
 
 	logger.Infof("Creating indexes for %s collection", constant.MongoCollectionJob)
 
-	db, err := jr.connection.GetDB(ctx)
+	db, err := jr.getDatabase(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
 		return err
 	}
 
-	coll := db.Database(strings.ToLower(jr.Database)).Collection(strings.ToLower(constant.MongoCollectionJob))
+	coll := db.Collection(strings.ToLower(constant.MongoCollectionJob))
 
 	indexes := []mongo.IndexModel{
 		{
@@ -311,13 +311,13 @@ func (jr *JobMongoDBRepository) DropIndexes(ctx context.Context) error {
 
 	logger.Warnf("Dropping all custom indexes for %s collection", constant.MongoCollectionJob)
 
-	db, err := jr.connection.GetDB(ctx)
+	db, err := jr.getDatabase(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
 		return err
 	}
 
-	coll := db.Database(strings.ToLower(jr.Database)).Collection(strings.ToLower(constant.MongoCollectionJob))
+	coll := db.Collection(strings.ToLower(constant.MongoCollectionJob))
 
 	ctx, cancel := context.WithTimeout(ctx, indexDropTimeout)
 	defer cancel()

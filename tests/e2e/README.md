@@ -50,6 +50,9 @@ go test -v -tags e2e ./tests/e2e -timeout 10m
 # Run with fixed ports (useful for debugging)
 FIXED_PORT=true go test -v -tags e2e ./tests/e2e -timeout 10m
 
+# Run with S3 storage (MinIO) instead of SeaweedFS
+E2E_ENABLE_S3=true go test -v -tags e2e ./tests/e2e -run TestS3Storage -timeout 10m
+
 # Infrastructure-only mode (start infra, then debug Manager/Worker in IDE)
 FIXED_PORT=true E2E_INFRA_ONLY=true go test -v -tags e2e ./tests/e2e -timeout 30m
 
@@ -70,6 +73,7 @@ E2E_REUSE_INFRA=true E2E_MANAGER_URL=http://localhost:4006 go test -v -tags e2e 
 | `E2E_ENABLE_ORACLE` | `false` | Enable Oracle infrastructure for Oracle-specific tests |
 | `E2E_ENABLE_MSSQL` | `false` | Enable SQL Server infrastructure for MSSQL-specific tests |
 | `E2E_ENABLE_MONGODB` | `false` | Enable MongoDB source infrastructure for MongoDB extraction tests |
+| `E2E_ENABLE_S3` | `false` | Start MinIO and configure Worker with `STORAGE_PROVIDER=s3` to validate S3 object storage |
 | `E2E_INFRA_ONLY` | `false` | Start infrastructure only and block (for debugging Manager/Worker in IDE) |
 | `E2E_REUSE_INFRA` | `false` | Skip container creation, connect to already-running infrastructure |
 | `E2E_SKIP_MANAGER` | `false` | Skip Manager container, use external Manager at `E2E_MANAGER_URL` |
@@ -116,9 +120,11 @@ The E2E tests spin up a complete test environment using [testcontainers-go](http
 │  │   MySQL    │       └──────────┘                              │
 │  │  MongoDB   │                                                  │
 │  │   Oracle   │       ┌───────────┐                             │
-│  │   MSSQL    │       │ SeaweedFS │  (Result storage)           │
+│  │   MSSQL    │       │ SeaweedFS │  (Result storage, default)  │
 │  └────────────┘       └───────────┘                             │
-│   (Source DBs)                                                   │
+│   (Source DBs)        ┌──────────┐                              │
+│                       │  MinIO   │  (S3, E2E_ENABLE_S3=true)    │
+│                       └──────────┘                              │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -753,6 +759,29 @@ docker ps -a | grep -E "(mongo|rabbit|redis|seaweed|postgres)" | awk '{print $1}
 | `schema_validation_test.go` | `TestValidateSchema_InvalidField_Failure` | Non-existent field returns 422 |
 | `schema_validation_test.go` | `TestValidateSchema_UnknownDatasource_Error` | Non-existent datasource returns error |
 | `schema_validation_test.go` | `TestValidateSchema_EmptyRequest_BadRequest` | Empty request returns 400 |
+
+### S3 Storage Verification (requires `E2E_ENABLE_S3=true`)
+
+These tests verify that extraction results are correctly persisted to S3-compatible object storage (MinIO). All tests in this section are **skipped** unless `E2E_ENABLE_S3=true`.
+
+| File | Test | Description |
+|------|------|-------------|
+| `extraction_s3_storage_test.go` | `TestS3Storage_JobCompletesSuccessfully` | Smoke test: full extraction with S3 provider — validates job status "completed" and result_path prefix |
+| `extraction_s3_storage_test.go` | `TestS3Storage_ObjectExistsInBucket` | After job completion, verifies the S3 object exists via `HeadObject` |
+| `extraction_s3_storage_test.go` | `TestS3Storage_ObjectHasContent` | Verifies the S3 object is non-empty (data is encrypted, content not validated) |
+| `extraction_s3_storage_test.go` | `TestS3Storage_ObjectKeyMatchesResultPath` | Confirms the S3 key (`{jobID}.json`) matches the result_path returned by the API |
+| `extraction_s3_storage_test.go` | `TestS3Storage_MultipleJobsStoredSeparately` | Two concurrent jobs produce distinct S3 objects with unique keys |
+
+**Run S3 tests:**
+```bash
+E2E_ENABLE_S3=true go test -v -tags e2e ./tests/e2e -run TestS3Storage -timeout 10m
+```
+
+**Debug with infrastructure-only mode + S3:**
+```bash
+E2E_ENABLE_S3=true FIXED_PORT=true E2E_INFRA_ONLY=true go test -v -tags e2e ./tests/e2e -timeout 30m
+```
+MinIO S3 API will be available at `http://localhost:9000` (access key: `minioadmin`, secret: `minioadmin`).
 
 ### Error Scenarios
 

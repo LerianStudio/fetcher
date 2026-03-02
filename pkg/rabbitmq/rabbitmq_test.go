@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/LerianStudio/fetcher/pkg/crypto"
-	libCommons "github.com/LerianStudio/lib-commons/v2/commons"
-	libConstants "github.com/LerianStudio/lib-commons/v2/commons/constants"
-	libLog "github.com/LerianStudio/lib-commons/v2/commons/log"
+	libCommons "github.com/LerianStudio/lib-commons/v3/commons"
+	libConstants "github.com/LerianStudio/lib-commons/v3/commons/constants"
+	libLog "github.com/LerianStudio/lib-commons/v3/commons/log"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1004,8 +1004,11 @@ type testAcknowledger struct {
 }
 
 // newTestAdapter creates a properly initialized RabbitMQAdapter for testing.
+// Signature verification is disabled so delivery processing tests can exercise
+// handler invocation without requiring a Signer to be configured.
 func newTestAdapter(conn rabbitConnection) *RabbitMQAdapter {
 	opts := DefaultOptions()
+	opts.EnableSignatureVerification = false
 	return &RabbitMQAdapter{
 		conn:           conn,
 		options:        opts,
@@ -1014,8 +1017,11 @@ func newTestAdapter(conn rabbitConnection) *RabbitMQAdapter {
 }
 
 // newTestAdapterWithChannel creates a properly initialized RabbitMQAdapter with a channel for testing.
+// Signature verification is disabled so delivery processing tests can exercise
+// handler invocation without requiring a Signer to be configured.
 func newTestAdapterWithChannel(conn rabbitConnection, channel amqpChannel) *RabbitMQAdapter {
 	opts := DefaultOptions()
+	opts.EnableSignatureVerification = false
 	return &RabbitMQAdapter{
 		conn:           conn,
 		channel:        channel,

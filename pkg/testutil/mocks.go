@@ -2,7 +2,7 @@
 package testutil
 
 import (
-	"github.com/LerianStudio/lib-commons/v2/commons/log"
+	"github.com/LerianStudio/lib-commons/v3/commons/log"
 )
 
 // Compile-time interface compliance verification.
@@ -11,7 +11,7 @@ var _ log.Logger = (*MockLogger)(nil)
 // MockLogger implements log.Logger for testing.
 //
 // NOTE: This manual mock is intentionally retained because log.Logger is an external
-// interface from github.com/LerianStudio/lib-commons/v2/commons/log. Generating mockgen
+// interface from github.com/LerianStudio/lib-commons/v3/commons/log. Generating mockgen
 // mocks for external interfaces requires either:
 // 1. A local wrapper interface (adds unnecessary indirection)
 // 2. Reflect mode with full package path (fragile to library changes)

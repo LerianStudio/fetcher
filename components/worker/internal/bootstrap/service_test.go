@@ -9,8 +9,8 @@ func TestService_StructComposition(t *testing.T) {
 	// Run() requires real dependencies, so we test the struct directly.
 	svc := &Service{}
 
-	if svc.MultiQueueConsumer != nil {
-		t.Error("MultiQueueConsumer should be nil by default")
+	if svc.Consumer != nil {
+		t.Error("Consumer should be nil by default")
 	}
 
 	if svc.Logger != nil {

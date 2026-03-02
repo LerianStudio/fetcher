@@ -13,11 +13,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	libCommons "github.com/LerianStudio/lib-commons/v2/commons"
-	libConstants "github.com/LerianStudio/lib-commons/v2/commons/constants"
-	libLog "github.com/LerianStudio/lib-commons/v2/commons/log"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
-	libRabbitmq "github.com/LerianStudio/lib-commons/v2/commons/rabbitmq"
+	libCommons "github.com/LerianStudio/lib-commons/v3/commons"
+	libConstants "github.com/LerianStudio/lib-commons/v3/commons/constants"
+	libLog "github.com/LerianStudio/lib-commons/v3/commons/log"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v3/commons/opentelemetry"
+	libRabbitmq "github.com/LerianStudio/lib-commons/v3/commons/rabbitmq"
 
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 
@@ -620,6 +620,27 @@ func calculateBackoff(attempt int, baseDelay, maxDelay time.Duration) time.Durat
 	jitter := time.Duration(rand.Int63n(int64(delay / 4))) // #nosec G404 -- jitter for backoff timing is not security-sensitive
 
 	return delay + jitter
+}
+
+// FullJitter returns a random duration in [0, baseDelay) for use as a retry delay.
+// This implements the "full jitter" strategy from the AWS Architecture Blog,
+// which provides the best spread across retrying clients.
+func FullJitter(baseDelay time.Duration) time.Duration {
+	if baseDelay <= 0 {
+		return 0
+	}
+
+	return time.Duration(rand.Int63n(int64(baseDelay))) // #nosec G404 -- jitter for backoff timing is not security-sensitive
+}
+
+// NextBackoff doubles the given delay, capping at DefaultMaxRetryDelay.
+func NextBackoff(current time.Duration) time.Duration {
+	next := current * 2
+	if next > DefaultMaxRetryDelay {
+		return DefaultMaxRetryDelay
+	}
+
+	return next
 }
 
 // ensureChannel checks and establishes a RabbitMQ channel if not already available.

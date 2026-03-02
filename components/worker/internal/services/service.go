@@ -14,8 +14,8 @@ import (
 
 // UseCase is a struct that coordinates the handling of template files, report storage, external data sources, and report data.
 type UseCase struct {
-	// ExternalDataSeaweedFS is a repository used to retrieve external data from SeaweedFS storage.
-	ExternalDataSeaweedFS storage.Repository
+	// ExternalDataStorage is a repository used to retrieve external data from external data storage.
+	ExternalDataStorage storage.Repository
 
 	// JobRepository is a repository used to retrieve job data from MongoDB storage.
 	JobRepository job.Repository
@@ -42,11 +42,11 @@ type UseCase struct {
 	// dataSourceFactory creates DataSource instances from connections.
 	dataSourceFactory func(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor) (datasource.DataSource, error)
 
-	// seaweedFSEncryptSecretKey is the encryption secret key for SeaweedFS data-at-rest.
-	seaweedFSEncryptSecretKey string
+	// storageEncryptSecretKey is the encryption secret key for external data storage data-at-rest.
+	storageEncryptSecretKey string
 
-	// seaweedFSHashSecretKey is the hash secret key for SeaweedFS data-at-rest.
-	seaweedFSHashSecretKey string
+	// storageHashSecretKey is the hash secret key for external data storage data-at-rest.
+	storageHashSecretKey string
 
 	// crmEncryptSecretKey is the encryption secret key for plugin_crm datasource.
 	crmEncryptSecretKey string
@@ -55,10 +55,10 @@ type UseCase struct {
 	crmHashSecretKey string
 }
 
-// SetSeaweedFSSecrets configures the SeaweedFS encryption and hash secret keys.
-func (uc *UseCase) SetSeaweedFSSecrets(encryptKey, hashKey string) {
-	uc.seaweedFSEncryptSecretKey = encryptKey
-	uc.seaweedFSHashSecretKey = hashKey
+// SetStorageSecrets configures the storage encryption and hash secret keys.
+func (uc *UseCase) SetStorageSecrets(encryptKey, hashKey string) {
+	uc.storageEncryptSecretKey = encryptKey
+	uc.storageHashSecretKey = hashKey
 }
 
 // SetCRMSecrets configures the CRM plugin encryption and hash secret keys.

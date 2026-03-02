@@ -14,9 +14,9 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/net/http"
 	portsConnection "github.com/LerianStudio/fetcher/pkg/ports/connection"
 
-	"github.com/LerianStudio/lib-commons/v2/commons"
-	libMongo "github.com/LerianStudio/lib-commons/v2/commons/mongo"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v3/commons"
+	libMongo "github.com/LerianStudio/lib-commons/v3/commons/mongo"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v3/commons/opentelemetry"
 
 	"github.com/google/uuid"
 	"go.mongodb.org/mongo-driver/bson"
@@ -89,6 +89,14 @@ func NewConnectionMongoDBRepository(ctx context.Context, mc *libMongo.MongoConne
 	return repo, nil
 }
 
+// getDatabase returns a *mongo.Database for the current request context.
+// In multi-tenant mode, it retrieves the tenant-specific database from context
+// via tmcore.GetMongoFromContext. In single-tenant mode (no tenant in context),
+// it falls back to the static connection using cr.connection.GetDB.
+func (cr *ConnectionMongoDBRepository) getDatabase(ctx context.Context) (*mongo.Database, error) {
+	return mongodb.GetDatabaseForContext(ctx, cr.connection, cr.Database)
+}
+
 // Create inserts a new connection respecting the unique constraint per organization.
 func (cr *ConnectionMongoDBRepository) Create(ctx context.Context, conn *model.Connection) (*model.Connection, error) {
 	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
@@ -110,7 +118,7 @@ func (cr *ConnectionMongoDBRepository) Create(ctx context.Context, conn *model.C
 		attribute.String("app.request.connection_id", conn.ID.String()),
 	)
 
-	db, err := cr.connection.GetDB(ctx)
+	db, err := cr.getDatabase(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
 		return nil, mongodb.MapMongoErrorToResponse(err, ctx)
@@ -121,7 +129,7 @@ func (cr *ConnectionMongoDBRepository) Create(ctx context.Context, conn *model.C
 		libOpentelemetry.HandleSpanError(&span, "Failed to convert record to JSON", err)
 	}
 
-	coll := db.Database(strings.ToLower(cr.Database)).Collection(strings.ToLower(constant.MongoCollectionConnection))
+	coll := db.Collection(strings.ToLower(constant.MongoCollectionConnection))
 	if _, err := coll.InsertOne(ctx, record); err != nil {
 		if mongo.IsDuplicateKeyError(err) {
 			err := fmt.Errorf("connection with config_name '%s' already exists for organization '%s'", conn.ConfigName, conn.OrganizationID.String())
@@ -168,13 +176,13 @@ func (cr *ConnectionMongoDBRepository) Update(ctx context.Context, conn *model.C
 	}
 	span.SetAttributes(attributes...)
 
-	db, err := cr.connection.GetDB(ctx)
+	db, err := cr.getDatabase(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
 		return nil, mongodb.MapMongoErrorToResponse(err, ctx)
 	}
 
-	coll := db.Database(strings.ToLower(cr.Database)).Collection(strings.ToLower(constant.MongoCollectionConnection))
+	coll := db.Collection(strings.ToLower(constant.MongoCollectionConnection))
 	filter := bson.M{
 		"_id":             conn.ID,
 		"organization_id": conn.OrganizationID,
@@ -255,13 +263,13 @@ func (cr *ConnectionMongoDBRepository) Delete(ctx context.Context, connectionID,
 	}
 	span.SetAttributes(attributes...)
 
-	db, err := cr.connection.GetDB(ctx)
+	db, err := cr.getDatabase(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
 		return mongodb.MapMongoErrorToResponse(err, ctx)
 	}
 
-	coll := db.Database(strings.ToLower(cr.Database)).Collection(strings.ToLower(constant.MongoCollectionConnection))
+	coll := db.Collection(strings.ToLower(constant.MongoCollectionConnection))
 	filter := bson.M{
 		"_id":             connectionID,
 		"organization_id": organizationID,
@@ -307,7 +315,7 @@ func (cr *ConnectionMongoDBRepository) FindByID(ctx context.Context, connectionI
 	}
 	span.SetAttributes(attributes...)
 
-	db, err := cr.connection.GetDB(ctx)
+	db, err := cr.getDatabase(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
 		return nil, mongodb.MapMongoErrorToResponse(err, ctx)
@@ -321,7 +329,7 @@ func (cr *ConnectionMongoDBRepository) FindByID(ctx context.Context, connectionI
 		"deleted_at":      bson.D{{Key: "$eq", Value: nil}},
 	}
 
-	coll := db.Database(strings.ToLower(cr.Database)).Collection(strings.ToLower(constant.MongoCollectionConnection))
+	coll := db.Collection(strings.ToLower(constant.MongoCollectionConnection))
 	if err := coll.FindOne(ctx, filter).Decode(&record); err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
 			return nil, nil
@@ -355,7 +363,7 @@ func (cr *ConnectionMongoDBRepository) FindByOrganizationAndName(ctx context.Con
 	}
 	span.SetAttributes(attributes...)
 
-	db, err := cr.connection.GetDB(ctx)
+	db, err := cr.getDatabase(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
 		return nil, mongodb.MapMongoErrorToResponse(err, ctx)
@@ -369,7 +377,7 @@ func (cr *ConnectionMongoDBRepository) FindByOrganizationAndName(ctx context.Con
 		"deleted_at":      bson.D{{Key: "$eq", Value: nil}},
 	}
 
-	coll := db.Database(strings.ToLower(cr.Database)).Collection(strings.ToLower(constant.MongoCollectionConnection))
+	coll := db.Collection(strings.ToLower(constant.MongoCollectionConnection))
 	if err := coll.FindOne(ctx, filter).Decode(&record); err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
 			return nil, nil
@@ -414,13 +422,13 @@ func (cr *ConnectionMongoDBRepository) FindByOrganizationAndDatabaseName(ctx con
 		return nil, pkg.ValidateInternalError(err, "connection")
 	}
 
-	db, err := cr.connection.GetDB(ctx)
+	db, err := cr.getDatabase(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
 		return nil, mongodb.MapMongoErrorToResponse(err, ctx)
 	}
 
-	coll := db.Database(strings.ToLower(cr.Database)).Collection(strings.ToLower(constant.MongoCollectionConnection))
+	coll := db.Collection(strings.ToLower(constant.MongoCollectionConnection))
 
 	var record ConnectionMongoDBModel
 
@@ -479,13 +487,13 @@ func (cr *ConnectionMongoDBRepository) FindByConfigNames(ctx context.Context, or
 	}
 	span.SetAttributes(attributes...)
 
-	db, err := cr.connection.GetDB(ctx)
+	db, err := cr.getDatabase(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
 		return nil, mongodb.MapMongoErrorToResponse(err, ctx)
 	}
 
-	coll := db.Database(strings.ToLower(cr.Database)).Collection(strings.ToLower(constant.MongoCollectionConnection))
+	coll := db.Collection(strings.ToLower(constant.MongoCollectionConnection))
 
 	filter := bson.M{
 		"organization_id": organizationID,
@@ -546,7 +554,7 @@ func (rm *ConnectionMongoDBRepository) List(ctx context.Context, organizationID 
 		libOpentelemetry.HandleSpanError(&span, "Failed to convert filters to JSON string", err)
 	}
 
-	db, err := rm.connection.GetDB(ctx)
+	db, err := rm.getDatabase(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
 		return nil, 0, mongodb.MapMongoErrorToResponse(err, ctx)
@@ -560,7 +568,7 @@ func (rm *ConnectionMongoDBRepository) List(ctx context.Context, organizationID 
 		libOpentelemetry.HandleSpanError(&span, "Failed to convert filters to JSON string", err)
 	}
 
-	coll := db.Database(strings.ToLower(rm.Database)).Collection(strings.ToLower(constant.MongoCollectionConnection))
+	coll := db.Collection(strings.ToLower(constant.MongoCollectionConnection))
 
 	totalCount, err := coll.CountDocuments(ctx, queryFilter)
 	if err != nil {
@@ -622,7 +630,7 @@ func (rm *ConnectionMongoDBRepository) ListUnassigned(ctx context.Context, organ
 		libOpentelemetry.HandleSpanError(&span, "Failed to convert filters to JSON string", err)
 	}
 
-	db, err := rm.connection.GetDB(ctx)
+	db, err := rm.getDatabase(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
 		return nil, 0, mongodb.MapMongoErrorToResponse(err, ctx)
@@ -646,7 +654,7 @@ func (rm *ConnectionMongoDBRepository) ListUnassigned(ctx context.Context, organ
 		libOpentelemetry.HandleSpanError(&span, "Failed to convert filters to JSON string", err)
 	}
 
-	coll := db.Database(strings.ToLower(rm.Database)).Collection(strings.ToLower(constant.MongoCollectionConnection))
+	coll := db.Collection(strings.ToLower(constant.MongoCollectionConnection))
 
 	totalCount, err := coll.CountDocuments(ctx, queryFilter)
 	if err != nil {
@@ -708,13 +716,13 @@ func (cr *ConnectionMongoDBRepository) AssignProductName(ctx context.Context, co
 		attribute.String("app.request.product_name", productName),
 	)
 
-	db, err := cr.connection.GetDB(ctx)
+	db, err := cr.getDatabase(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
 		return nil, mongodb.MapMongoErrorToResponse(err, ctx)
 	}
 
-	coll := db.Database(strings.ToLower(cr.Database)).Collection(strings.ToLower(constant.MongoCollectionConnection))
+	coll := db.Collection(strings.ToLower(constant.MongoCollectionConnection))
 
 	filter := bson.M{
 		"_id":             connectionID,

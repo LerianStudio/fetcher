@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	tmcore "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/core"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -291,6 +292,84 @@ func TestInMemoryCache_DeleteNonExistentKey(t *testing.T) {
 	// Delete non-existent key should not error
 	err := cache.Delete(ctx, "nonexistent")
 	assert.NoError(t, err)
+}
+
+func TestInMemoryCache_GetSet_WithTenantContext(t *testing.T) {
+	cache := NewInMemoryCache[testStruct](time.Minute, &mockLogger{})
+	defer cache.Close()
+
+	t.Run("tenant-scoped keys are isolated", func(t *testing.T) {
+		tenant1Ctx := tmcore.SetTenantIDInContext(context.Background(), "tenant1")
+		tenant2Ctx := tmcore.SetTenantIDInContext(context.Background(), "tenant2")
+		key := "shared-key"
+
+		value1 := testStruct{ID: "1", Name: "Tenant1"}
+		value2 := testStruct{ID: "2", Name: "Tenant2"}
+
+		// Set for tenant1
+		err := cache.Set(tenant1Ctx, key, value1, 0)
+		require.NoError(t, err)
+
+		// Set for tenant2
+		err = cache.Set(tenant2Ctx, key, value2, 0)
+		require.NoError(t, err)
+
+		// Get for tenant1 should return tenant1's value
+		result1, found1, err := cache.Get(tenant1Ctx, key)
+		assert.NoError(t, err)
+		assert.True(t, found1)
+		assert.Equal(t, value1, result1)
+
+		// Get for tenant2 should return tenant2's value
+		result2, found2, err := cache.Get(tenant2Ctx, key)
+		assert.NoError(t, err)
+		assert.True(t, found2)
+		assert.Equal(t, value2, result2)
+	})
+
+	t.Run("no tenant context returns original key behavior", func(t *testing.T) {
+		ctx := context.Background()
+		key := "no-tenant-key"
+		value := testStruct{ID: "3", Name: "NoTenant"}
+
+		err := cache.Set(ctx, key, value, 0)
+		require.NoError(t, err)
+
+		result, found, err := cache.Get(ctx, key)
+		assert.NoError(t, err)
+		assert.True(t, found)
+		assert.Equal(t, value, result)
+	})
+
+	t.Run("delete only affects the tenant that owns the key", func(t *testing.T) {
+		tenant1Ctx := tmcore.SetTenantIDInContext(context.Background(), "tenant_del_1")
+		tenant2Ctx := tmcore.SetTenantIDInContext(context.Background(), "tenant_del_2")
+		key := "delete-test-key"
+
+		value1 := testStruct{ID: "d1", Name: "DelTenant1"}
+		value2 := testStruct{ID: "d2", Name: "DelTenant2"}
+
+		err := cache.Set(tenant1Ctx, key, value1, 0)
+		require.NoError(t, err)
+
+		err = cache.Set(tenant2Ctx, key, value2, 0)
+		require.NoError(t, err)
+
+		// Delete tenant1's key
+		err = cache.Delete(tenant1Ctx, key)
+		require.NoError(t, err)
+
+		// Tenant1's key should be gone
+		_, found, err := cache.Get(tenant1Ctx, key)
+		assert.NoError(t, err)
+		assert.False(t, found)
+
+		// Tenant2's key should still exist
+		result, found, err := cache.Get(tenant2Ctx, key)
+		assert.NoError(t, err)
+		assert.True(t, found)
+		assert.Equal(t, value2, result)
+	})
 }
 
 func TestInMemoryCache_ClearEmpty(t *testing.T) {

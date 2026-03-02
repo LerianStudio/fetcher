@@ -7,7 +7,7 @@ import (
 
 	"github.com/LerianStudio/fetcher/pkg/constant"
 
-	"github.com/LerianStudio/lib-commons/v2/commons/log"
+	"github.com/LerianStudio/lib-commons/v3/commons/log"
 	_ "github.com/microsoft/go-mssqldb" // SQL Server driver
 )
 

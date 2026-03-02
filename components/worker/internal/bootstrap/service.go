@@ -1,14 +1,21 @@
 package bootstrap
 
 import (
-	"github.com/LerianStudio/lib-commons/v2/commons"
-	libCommonsLicense "github.com/LerianStudio/lib-commons/v2/commons/license"
-	"github.com/LerianStudio/lib-commons/v2/commons/log"
+	"github.com/LerianStudio/lib-commons/v3/commons"
+	libCommonsLicense "github.com/LerianStudio/lib-commons/v3/commons/license"
+	"github.com/LerianStudio/lib-commons/v3/commons/log"
 )
+
+// Consumer defines the interface for message queue consumers.
+// This abstraction allows both single-tenant (MultiQueueConsumer) and
+// multi-tenant (MultiTenantConsumerAdapter) implementations to be used interchangeably.
+type Consumer interface {
+	Run(l *commons.Launcher) error
+}
 
 // Service is the application glue where we put all top level components to be used.
 type Service struct {
-	*MultiQueueConsumer
+	Consumer Consumer
 	log.Logger
 	licenseShutdown *libCommonsLicense.ManagerShutdown
 }
@@ -18,7 +25,7 @@ type Service struct {
 func (app *Service) Run() {
 	commons.NewLauncher(
 		commons.WithLogger(app.Logger),
-		commons.RunApp("RabbitMQ Consumer", app.MultiQueueConsumer),
+		commons.RunApp("RabbitMQ Consumer", app.Consumer),
 	).Run()
 
 	// Graceful shutdown
