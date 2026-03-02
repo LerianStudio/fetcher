@@ -97,9 +97,13 @@ func (p *MultiTenantPublisher) ProducerDefault(ctx context.Context, exchange, ke
 		libConstants.HeaderID: reqID,
 	}
 
-	// Copy existing headers if provided
+	// Copy existing headers if provided, but protect reserved headers from overwrite
 	if header != nil {
 		for k, v := range *header {
+			if k == "X-Tenant-ID" || k == libConstants.HeaderID {
+				continue
+			}
+
 			headers[k] = v
 		}
 	}

@@ -196,7 +196,10 @@ func InitServers() (*Service, error) {
 	// Init RabbitMQ - choose single-tenant or multi-tenant adapter based on configuration.
 	// When MULTI_TENANT_ENABLED=true, use tmrabbitmq.Manager for per-tenant vhost isolation (Layer 1).
 	// Single-tenant path remains unchanged.
-	var rabbitMQPublisher messaging.MessagePublisher
+	var (
+		rabbitMQPublisher messaging.MessagePublisher
+		cleanups          []func()
+	)
 
 	if cfg.MultiTenantEnabled && cfg.MultiTenantURL != "" {
 		// Multi-tenant path: use tmrabbitmq.Manager for per-tenant vhost isolation
@@ -204,6 +207,15 @@ func InitServers() (*Service, error) {
 
 		rmqManager := initMultiTenantRabbitMQManager(cfg, logger)
 		rabbitMQPublisher = mgrRabbitMQ.NewMultiTenantPublisher(rmqManager, logger, telemetry)
+
+		// Schedule cleanup for multi-tenant RabbitMQ manager
+		cleanups = append(cleanups, func() {
+			logger.Info("Cleanup: closing multi-tenant RabbitMQ manager")
+
+			if closeErr := rmqManager.Close(context.Background()); closeErr != nil {
+				logger.Errorf("Cleanup: failed to close RabbitMQ manager: %v", closeErr)
+			}
+		})
 
 		logger.Infof("Multi-tenant RabbitMQ publisher initialized: module=%s", constant.ModuleManager)
 	} else {
@@ -322,8 +334,9 @@ func InitServers() (*Service, error) {
 	serverAPI := NewServer(cfg, httpApp, logger, telemetry, licenseClient)
 
 	return &Service{
-		Server: serverAPI,
-		Logger: logger,
+		Server:   serverAPI,
+		Logger:   logger,
+		cleanups: cleanups,
 	}, nil
 }
 
