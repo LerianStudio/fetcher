@@ -22,5 +22,6 @@ func main() {
 		log.Fatalf("failed to initialize worker service: %s", startup.SanitizeError(err))
 	}
 
+	
 	app.Run()
 }
