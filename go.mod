@@ -8,7 +8,7 @@ require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/LerianStudio/lib-auth/v2 v2.5.0-beta.5
 	github.com/LerianStudio/lib-commons v1.18.0
-	github.com/LerianStudio/lib-commons/v3 v3.0.0-beta.8
+	github.com/LerianStudio/lib-commons/v3 v3.0.0-beta.12
 	github.com/LerianStudio/lib-license-go/v2 v2.3.3-beta.1
 	github.com/Masterminds/squirrel v1.5.4
 	github.com/Shopify/toxiproxy/v2 v2.12.0
