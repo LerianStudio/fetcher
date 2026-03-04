@@ -14,6 +14,8 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/model/datasource"
 	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
 
+	tmcore "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/core"
+
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/mock/gomock"
@@ -814,4 +816,109 @@ func TestTestConnection_Execute_DifferentOrganizations(t *testing.T) {
 
 	// The connection exists in connectionOrgID but not accessible from requestingOrgID
 	_ = connectionOrgID // Demonstrates the scenario
+}
+
+// TestTestConnection_Execute_RateLimitKeyTenantIsolation tests that rate limiter keys
+// are scoped per tenant, preventing cross-tenant rate limit interference.
+func TestTestConnection_Execute_RateLimitKeyTenantIsolation(t *testing.T) {
+	connID := uuid.New()
+
+	tests := []struct {
+		name        string
+		tenantA     string
+		tenantB     string
+		wantDiffKey bool
+	}{
+		{
+			name:        "different tenants produce different keys",
+			tenantA:     "tenant-aaa",
+			tenantB:     "tenant-bbb",
+			wantDiffKey: true,
+		},
+		{
+			name:        "same tenant produces same key",
+			tenantA:     "tenant-aaa",
+			tenantB:     "tenant-aaa",
+			wantDiffKey: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			var capturedKeys []string
+
+			mockConnRepo := connRepo.NewMockRepository(ctrl)
+			mockCrypto := crypto.NewMockCryptor(ctrl)
+			mockStore := NewMockRateLimiterStore(ctrl)
+			mockStore.EXPECT().
+				Take(gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, key string) (uint64, uint64, uint64, bool, error) {
+					capturedKeys = append(capturedKeys, key)
+					// Return rate limited to avoid needing repo mocks
+					return 0, 0, uint64(time.Now().UTC().Add(30 * time.Second).UnixNano()), false, nil
+				}).
+				Times(2)
+
+			svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, nil)
+			orgID := uuid.New()
+
+			// Execute with tenant A context
+			ctxA := testContext()
+			ctxA = tmcore.SetTenantIDInContext(ctxA, tt.tenantA)
+			_, _ = svc.Execute(ctxA, orgID, connID)
+
+			// Execute with tenant B context
+			ctxB := testContext()
+			ctxB = tmcore.SetTenantIDInContext(ctxB, tt.tenantB)
+			_, _ = svc.Execute(ctxB, orgID, connID)
+
+			assert.Len(t, capturedKeys, 2, "expected two rate limiter keys to be captured")
+
+			if tt.wantDiffKey {
+				assert.NotEqual(t, capturedKeys[0], capturedKeys[1],
+					"different tenants must produce different rate limiter keys")
+				assert.Contains(t, capturedKeys[0], tt.tenantA,
+					"key for tenant A must contain its tenant ID")
+				assert.Contains(t, capturedKeys[1], tt.tenantB,
+					"key for tenant B must contain its tenant ID")
+			} else {
+				assert.Equal(t, capturedKeys[0], capturedKeys[1],
+					"same tenant must produce identical rate limiter keys")
+			}
+		})
+	}
+}
+
+// TestTestConnection_Execute_RateLimitKeySingleTenant tests that without tenant context
+// (single-tenant mode), the rate limiter key is just the connection ID without prefix.
+func TestTestConnection_Execute_RateLimitKeySingleTenant(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	connID := uuid.New()
+	var capturedKey string
+
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockCrypto := crypto.NewMockCryptor(ctrl)
+	mockStore := NewMockRateLimiterStore(ctrl)
+	mockStore.EXPECT().
+		Take(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, key string) (uint64, uint64, uint64, bool, error) {
+			capturedKey = key
+			return 0, 0, uint64(time.Now().UTC().Add(30 * time.Second).UnixNano()), false, nil
+		})
+
+	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, nil)
+
+	// No tenant in context (single-tenant mode)
+	ctx := testContext()
+	orgID := uuid.New()
+
+	_, _ = svc.Execute(ctx, orgID, connID)
+
+	assert.Equal(t, connID.String(), capturedKey,
+		"single-tenant mode must use plain connection ID as rate limiter key")
 }
