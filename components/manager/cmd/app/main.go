@@ -22,6 +22,5 @@ func main() {
 		log.Fatalf("failed to initialize manager service: %s", startup.SanitizeError(err))
 	}
 
-	
 	app.Run()
 }
