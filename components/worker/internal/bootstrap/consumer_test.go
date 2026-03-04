@@ -3,6 +3,8 @@ package bootstrap
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"testing"
 
 	tmcore "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/core"
@@ -154,4 +156,93 @@ func TestHandlerGenerateReport_TenantIDNotInBody(t *testing.T) {
 
 	_, exists := decoded["X-Tenant-ID"]
 	assert.False(t, exists, "X-Tenant-ID must be in AMQP headers, not message body")
+}
+
+// TestIsPermanentTenantError verifies that isPermanentTenantError correctly classifies
+// errors from the tenant-manager library as permanent (will not resolve on retry) or
+// transient (may succeed on retry).
+func TestIsPermanentTenantError(t *testing.T) {
+	tests := []struct {
+		name      string
+		err       error
+		permanent bool
+	}{
+		{
+			name:      "nil error is not permanent",
+			err:       nil,
+			permanent: false,
+		},
+		{
+			name: "TenantSuspendedError is permanent",
+			err: &tmcore.TenantSuspendedError{
+				TenantID: "tenant-123",
+				Status:   "suspended",
+				Message:  "service suspended",
+			},
+			permanent: true,
+		},
+		{
+			name: "wrapped TenantSuspendedError is permanent",
+			err: fmt.Errorf("resolve: %w", &tmcore.TenantSuspendedError{
+				TenantID: "tenant-123",
+				Status:   "purged",
+			}),
+			permanent: true,
+		},
+		{
+			name:      "ErrTenantNotFound is permanent",
+			err:       tmcore.ErrTenantNotFound,
+			permanent: true,
+		},
+		{
+			name:      "wrapped ErrTenantNotFound is permanent",
+			err:       fmt.Errorf("outer: %w", tmcore.ErrTenantNotFound),
+			permanent: true,
+		},
+		{
+			name:      "ErrServiceNotConfigured is permanent",
+			err:       tmcore.ErrServiceNotConfigured,
+			permanent: true,
+		},
+		{
+			name:      "ErrManagerClosed is permanent",
+			err:       tmcore.ErrManagerClosed,
+			permanent: true,
+		},
+		{
+			name:      "ErrCircuitBreakerOpen is transient",
+			err:       tmcore.ErrCircuitBreakerOpen,
+			permanent: false,
+		},
+		{
+			name:      "generic error is transient",
+			err:       errors.New("network timeout"),
+			permanent: false,
+		},
+		{
+			name:      "wrapped generic error is transient",
+			err:       fmt.Errorf("failed to connect: %w", errors.New("connection refused")),
+			permanent: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isPermanentTenantError(tt.err)
+			assert.Equal(t, tt.permanent, result)
+		})
+	}
+}
+
+// TestResolveTenantMongo_PropagatesTypedErrors verifies that resolveTenantMongo
+// propagates typed errors transparently (without re-wrapping) so callers can
+// use errors.Is and errors.As to classify them.
+func TestResolveTenantMongo_PropagatesTypedErrors(t *testing.T) {
+	// resolveTenantMongo with nil manager should always succeed (single-tenant mode)
+	ctx := context.Background()
+	ctx = tmcore.SetTenantIDInContext(ctx, "tenant-abc")
+
+	resultCtx, err := resolveTenantMongo(ctx, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "tenant-abc", tmcore.GetTenantIDFromContext(resultCtx))
 }
