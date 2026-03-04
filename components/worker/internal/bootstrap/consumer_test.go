@@ -234,10 +234,9 @@ func TestIsPermanentTenantError(t *testing.T) {
 	}
 }
 
-// TestResolveTenantMongo_PropagatesTypedErrors verifies that resolveTenantMongo
-// propagates typed errors transparently (without re-wrapping) so callers can
-// use errors.Is and errors.As to classify them.
-func TestResolveTenantMongo_PropagatesTypedErrors(t *testing.T) {
+// TestResolveTenantMongo_NilManagerPreservesContext verifies that resolveTenantMongo
+// with a nil manager preserves the tenant context (single-tenant backward compatibility).
+func TestResolveTenantMongo_NilManagerPreservesContext(t *testing.T) {
 	// resolveTenantMongo with nil manager should always succeed (single-tenant mode)
 	ctx := context.Background()
 	ctx = tmcore.SetTenantIDInContext(ctx, "tenant-abc")

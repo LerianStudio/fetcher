@@ -87,7 +87,10 @@ func TestGetDatabaseForContext(t *testing.T) {
 				// Inject a real-ish tenant DB into context.
 				// We use mongo.Database obtained from a disconnected client.
 				// This tests context extraction; actual DB operations are integration-tested.
-				client, _ := mongo.NewClient() //nolint:staticcheck // test-only disconnected client
+				client, err := mongo.NewClient() //nolint:staticcheck // test-only disconnected client
+				if err != nil {
+					panic("mongo.NewClient() failed: " + err.Error())
+				}
 				db := client.Database("tenant_abc")
 				return tmcore.ContextWithTenantMongo(context.Background(), db)
 			},
@@ -105,7 +108,10 @@ func TestGetDatabaseForContext(t *testing.T) {
 		{
 			name: "single-tenant with tenant DB in context still uses tenant DB",
 			setupCtx: func() context.Context {
-				client, _ := mongo.NewClient() //nolint:staticcheck // test-only disconnected client
+				client, err := mongo.NewClient() //nolint:staticcheck // test-only disconnected client
+				if err != nil {
+					panic("mongo.NewClient() failed: " + err.Error())
+				}
 				db := client.Database("tenant_xyz")
 				return tmcore.ContextWithTenantMongo(context.Background(), db)
 			},

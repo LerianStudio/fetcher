@@ -868,12 +868,14 @@ func TestTestConnection_Execute_RateLimitKeyTenantIsolation(t *testing.T) {
 			// Execute with tenant A context
 			ctxA := testContext()
 			ctxA = tmcore.SetTenantIDInContext(ctxA, tt.tenantA)
-			_, _ = svc.Execute(ctxA, orgID, connID)
+			_, errA := svc.Execute(ctxA, orgID, connID)
+			assert.Error(t, errA, "rate-limited request must return an error for tenant A")
 
 			// Execute with tenant B context
 			ctxB := testContext()
 			ctxB = tmcore.SetTenantIDInContext(ctxB, tt.tenantB)
-			_, _ = svc.Execute(ctxB, orgID, connID)
+			_, errB := svc.Execute(ctxB, orgID, connID)
+			assert.Error(t, errB, "rate-limited request must return an error for tenant B")
 
 			assert.Len(t, capturedKeys, 2, "expected two rate limiter keys to be captured")
 
@@ -917,7 +919,8 @@ func TestTestConnection_Execute_RateLimitKeySingleTenant(t *testing.T) {
 	ctx := testContext()
 	orgID := uuid.New()
 
-	_, _ = svc.Execute(ctx, orgID, connID)
+	_, err := svc.Execute(ctx, orgID, connID)
+	assert.Error(t, err, "rate-limited request must return an error in single-tenant mode")
 
 	assert.Equal(t, connID.String(), capturedKey,
 		"single-tenant mode must use plain connection ID as rate limiter key")
