@@ -120,9 +120,8 @@ func TestGetDatabaseForContext_TenantDBFromContext(t *testing.T) {
 // See TestConnectionMongoDBRepository_getDatabase and TestJobMongoDBRepository_getDatabase
 // for those integration-level tests.
 func TestGetDatabaseForContext_WithTenantContext(t *testing.T) {
-	// Verify that tmcore.GetMongoForTenant returns an error for empty context
+	// Verify that tmcore.GetMongoFromContext returns nil for empty context
 	// (no tenant set), confirming the fallback path is exercised.
-	db, err := tmcore.GetMongoForTenant(context.Background())
-	assert.Error(t, err)
+	db := tmcore.GetMongoFromContext(context.Background())
 	assert.Nil(t, db)
 }
