@@ -57,4 +57,9 @@ var (
 	ErrSchemaValidationFailed   = errors.New("FET-1060")
 	ErrSchemaValidationLimit    = errors.New("FET-1061")
 	ErrSchemaValidationNotFound = errors.New("FET-1062")
+
+	// Multi-tenant errors
+	ErrTenantContextRequired = errors.New("FET-1080")
+	ErrTenantNotFound        = errors.New("FET-1081")
+	ErrTenantCircuitBreaker  = errors.New("FET-1082")
 )

@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/LerianStudio/fetcher/pkg/testutil"
 	tms3 "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/s3"
 	"github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/valkey"
 
@@ -127,7 +128,7 @@ func TestMultiTenant_BackwardCompatibility(t *testing.T) {
 	t.Run("mongodb_fallback_to_static_without_tenant", func(t *testing.T) {
 		// When no tenant is in context, tmcore.GetMongoFromContext must return nil,
 		// which signals the repository to fall back to its static connection.
-		ctx := context.Background()
+		ctx := testutil.TestContext()
 
 		db := tmcore.GetMongoFromContext(ctx)
 		assert.Nil(t, db,

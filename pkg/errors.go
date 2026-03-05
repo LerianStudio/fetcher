@@ -318,6 +318,10 @@ func ValidateBusinessError(err error, entityType string, args ...any) error {
 		return result
 	}
 
+	if result := validateTenantErrors(err, entityType); result != nil {
+		return result
+	}
+
 	if result := validateProductErrors(err, entityType, args...); result != nil {
 		return result
 	}
@@ -442,6 +446,35 @@ func validateEntityErrors(err error, entityType string) error {
 			Code:       constant.ErrEntityConflict.Error(),
 			Title:      "Conflict",
 			Message:    fmt.Sprintf("An entity of type %v with the same unique attributes already exists. Please use different values to avoid conflicts and review the data provided in the request.", entityType),
+		}
+	default:
+		return nil
+	}
+}
+
+// validateTenantErrors handles multi-tenant errors (context required, not found, circuit breaker).
+func validateTenantErrors(err error, entityType string) error {
+	switch err {
+	case constant.ErrTenantContextRequired:
+		return ValidationError{
+			EntityType: entityType,
+			Code:       constant.ErrTenantContextRequired.Error(),
+			Title:      "Tenant Context Required",
+			Message:    "The request requires a tenant context. Ensure the X-Tenant-ID header is present and valid.",
+		}
+	case constant.ErrTenantNotFound:
+		return ResponseErrorWithStatusCode{
+			StatusCode: http.StatusNotFound,
+			Code:       constant.ErrTenantNotFound.Error(),
+			Title:      "Tenant Not Found",
+			Message:    "The specified tenant was not found. Verify the tenant ID and try again.",
+		}
+	case constant.ErrTenantCircuitBreaker:
+		return ResponseErrorWithStatusCode{
+			StatusCode: http.StatusServiceUnavailable,
+			Code:       constant.ErrTenantCircuitBreaker.Error(),
+			Title:      "Tenant Service Unavailable",
+			Message:    "The tenant service is temporarily unavailable due to circuit breaker protection. Please try again later.",
 		}
 	default:
 		return nil

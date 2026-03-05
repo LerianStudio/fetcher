@@ -16,6 +16,7 @@ import (
 
 	"github.com/LerianStudio/lib-commons/v3/commons"
 	libOpentelemetry "github.com/LerianStudio/lib-commons/v3/commons/opentelemetry"
+	valkey "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/valkey"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
@@ -62,7 +63,7 @@ func (s *TestConnection) Execute(ctx context.Context, organizationID, connection
 		attribute.String("app.request.connection_id", connectionID.String()),
 	)
 
-	key := connectionID.String()
+	key := valkey.GetKeyFromContext(ctx, connectionID.String())
 
 	_, _, reset, ok, err := s.store.Take(ctx, key)
 	if err != nil {

@@ -10,6 +10,7 @@ import (
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/lib-commons/v3/commons"
+	tmcore "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/core"
 	"go.mongodb.org/mongo-driver/bson/bsoncodec"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/readpref"
@@ -127,6 +128,22 @@ func MapMongoErrorToResponse(err error, ctx context.Context) error {
 	if errors.As(err, &decodeErr) {
 		logger.Errorf("MongoDB decode error: %v", err)
 		return pkg.ValidateInternalError(constant.ErrInternalServer, "")
+	}
+
+	// Multi-tenant sentinel errors
+	if errors.Is(err, tmcore.ErrTenantContextRequired) {
+		logger.Errorf("MongoDB tenant context required: %v", err)
+		return pkg.ValidateBusinessError(constant.ErrTenantContextRequired, "tenant")
+	}
+
+	if errors.Is(err, tmcore.ErrTenantNotFound) {
+		logger.Errorf("MongoDB tenant not found: %v", err)
+		return pkg.ValidateBusinessError(constant.ErrTenantNotFound, "tenant")
+	}
+
+	if errors.Is(err, tmcore.ErrCircuitBreakerOpen) {
+		logger.Errorf("MongoDB tenant circuit breaker open: %v", err)
+		return pkg.ValidateBusinessError(constant.ErrTenantCircuitBreaker, "tenant")
 	}
 
 	logger.Errorf("MongoDB unknown error: %v", err)

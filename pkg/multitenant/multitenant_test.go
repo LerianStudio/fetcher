@@ -5,12 +5,14 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/LerianStudio/fetcher/pkg/testutil"
 	tmcore "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/core"
 	tms3 "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/s3"
 	"github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/valkey"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.mongodb.org/mongo-driver/mongo"
 )
 
 // ---------------------------------------------------------------------------
@@ -18,7 +20,7 @@ import (
 // ---------------------------------------------------------------------------
 
 // TestTenantIsolation_MongoDBDatabaseRouting verifies that two tenants with different
-// tenant IDs get different *mongo.Database instances from tmcore.GetMongoForTenant.
+// tenant IDs get different *mongo.Database instances from tmcore.GetMongoFromContext.
 // This test validates the context-based routing mechanism that underpins all MongoDB
 // multi-tenant isolation in fetcher.
 func TestTenantIsolation_MongoDBDatabaseRouting(t *testing.T) {
@@ -63,11 +65,11 @@ func TestTenantIsolation_MongoDBDatabaseRouting(t *testing.T) {
 			t.Parallel()
 
 			// Set up context with tenant ID for tenant A
-			ctxA := tmcore.SetTenantIDInContext(context.Background(), tt.tenantAID)
+			ctxA := tmcore.SetTenantIDInContext(testutil.TestContext(), tt.tenantAID)
 			tenantAFromCtx := tmcore.GetTenantIDFromContext(ctxA)
 
 			// Set up context with tenant ID for tenant B
-			ctxB := tmcore.SetTenantIDInContext(context.Background(), tt.tenantBID)
+			ctxB := tmcore.SetTenantIDInContext(testutil.TestContext(), tt.tenantBID)
 			tenantBFromCtx := tmcore.GetTenantIDFromContext(ctxB)
 
 			// Verify tenant IDs are correctly stored and retrievable
@@ -93,6 +95,31 @@ func TestTenantIsolation_MongoDBDatabaseRouting(t *testing.T) {
 			dbB := tmcore.GetMongoFromContext(ctxB)
 			assert.Nil(t, dbB,
 				"GetMongoFromContext must return nil when no mongo connection in context (tenant B)")
+
+			// Positive path: inject tenant-specific databases and verify routing
+			clientA, _ := mongo.NewClient() //nolint:staticcheck // test-only disconnected client
+			tenantDBa := clientA.Database(tt.tenantADB)
+			ctxWithDBA := tmcore.ContextWithTenantMongo(ctxA, tenantDBa)
+
+			clientB, _ := mongo.NewClient() //nolint:staticcheck // test-only disconnected client
+			tenantDBb := clientB.Database(tt.tenantBDB)
+			ctxWithDBB := tmcore.ContextWithTenantMongo(ctxB, tenantDBb)
+
+			resolvedA := tmcore.GetMongoFromContext(ctxWithDBA)
+			require.NotNil(t, resolvedA,
+				"GetMongoFromContext must return non-nil when tenant DB is injected (tenant A)")
+
+			resolvedB := tmcore.GetMongoFromContext(ctxWithDBB)
+			require.NotNil(t, resolvedB,
+				"GetMongoFromContext must return non-nil when tenant DB is injected (tenant B)")
+
+			if tt.wantDiffDB {
+				assert.NotEqual(t, resolvedA.Name(), resolvedB.Name(),
+					"different tenants must resolve to different database names")
+			} else {
+				assert.Equal(t, resolvedA.Name(), resolvedB.Name(),
+					"same tenant must resolve to same database name")
+			}
 		})
 	}
 }
@@ -305,29 +332,22 @@ func TestTenantContext_MissingJWTFallback(t *testing.T) {
 }
 
 // TestTenantContext_TenantManagerUnavailable verifies that when
-// tmcore.GetMongoForTenant returns an error (e.g., tenant not found,
-// circuit breaker open), the error is propagated correctly and the
-// repository layer can fall back to static connections.
+// tmcore.GetMongoFromContext returns nil (e.g., no mongo connection set),
+// the repository layer can fall back to static connections.
 func TestTenantContext_TenantManagerUnavailable(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name           string
-		tenantID       string
-		expectErr      bool
-		expectErrMatch string
+		name     string
+		tenantID string
 	}{
 		{
-			name:           "tenant ID set but no mongo connection in context returns error",
-			tenantID:       "tenant-orphan-123",
-			expectErr:      true,
-			expectErrMatch: "tenant",
+			name:     "tenant ID set but no mongo connection in context returns nil",
+			tenantID: "tenant-orphan-123",
 		},
 		{
-			name:           "empty tenant ID returns nil from GetMongoFromContext",
-			tenantID:       "",
-			expectErr:      true,
-			expectErrMatch: "tenant",
+			name:     "empty tenant ID returns nil from GetMongoFromContext",
+			tenantID: "",
 		},
 	}
 
@@ -341,11 +361,8 @@ func TestTenantContext_TenantManagerUnavailable(t *testing.T) {
 			}
 
 			db := tmcore.GetMongoFromContext(ctx)
-
-			if tt.expectErr {
-				assert.Nil(t, db,
-					"database must be nil when tenant manager is unavailable")
-			}
+			assert.Nil(t, db,
+				"GetMongoFromContext must return nil when no mongo connection in context")
 		})
 	}
 }
@@ -538,10 +555,10 @@ func TestContextPropagation_EndToEndFlow(t *testing.T) {
 				"tenant ID must be retrievable from context after setting")
 
 			// Step 3: Verify MongoDB layer sees tenant context
-			// GetMongoFromContext will return nil (no real DB), but proves it reads from context
+			// GetMongoFromContext returns nil when no real DB is set in context
 			mongoDB := tmcore.GetMongoFromContext(ctx)
 			assert.Nil(t, mongoDB,
-				"GetMongoFromContext returns nil without real DB, but context was checked")
+				"GetMongoFromContext returns nil without real DB set in context")
 
 			// Step 4: Verify Redis layer applies tenant prefix
 			redisKey := valkey.GetKeyFromContext(ctx, "test-cache-key")
