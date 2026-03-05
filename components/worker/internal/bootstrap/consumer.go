@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -100,8 +101,21 @@ func (mq *MultiQueueConsumer) handlerGenerateReport(ctx context.Context, body []
 	// In single-tenant mode (mongoManager is nil), this is a no-op.
 	spanCtx, err := resolveTenantMongo(spanCtx, mq.mongoManager)
 	if err != nil {
-		opentelemetry.HandleSpanError(&span, "Failed to resolve tenant MongoDB database.", err)
-		logger.Errorf("Failed to resolve tenant MongoDB: %v", err)
+		if isPermanentTenantError(err) {
+			// Permanent errors: tenant is suspended, not found, or service not configured.
+			// Log at WARN (not ERROR) because this is an expected business condition, not
+			// an infrastructure failure. The message will be Nack'd without requeue.
+			span.SetAttributes(attribute.String("app.tenant.error_class", "permanent"))
+			opentelemetry.HandleSpanError(&span, "Tenant resolution failed permanently (will not retry).", err)
+			logger.Warnf("Permanent tenant resolution failure (message will be dropped): %v", err)
+		} else {
+			// Transient errors: circuit breaker open, network failure, etc.
+			// Log at ERROR because this indicates an infrastructure issue that should
+			// be investigated. The message will be Nack'd without requeue.
+			span.SetAttributes(attribute.String("app.tenant.error_class", "transient"))
+			opentelemetry.HandleSpanError(&span, "Tenant resolution failed (transient error).", err)
+			logger.Errorf("Transient tenant resolution failure: %v", err)
+		}
 
 		return fmt.Errorf("resolve tenant mongo: %w", err)
 	}
@@ -156,8 +170,41 @@ func resolveTenantMongo(ctx context.Context, mongoManager *tmmongo.Manager) (con
 
 	tenantDB, err := mongoManager.GetDatabaseForTenant(ctx, tenantID)
 	if err != nil {
-		return ctx, fmt.Errorf("get tenant mongo database for tenant %s: %w", tenantID, err)
+		// Propagate typed errors directly without re-wrapping, so callers can
+		// use errors.Is / errors.As to classify permanent vs transient failures.
+		return ctx, err
 	}
 
 	return tmcore.ContextWithTenantMongo(ctx, tenantDB), nil
+}
+
+// isPermanentTenantError returns true if the error indicates a permanent failure
+// that will not resolve on retry. These errors should cause the message to be
+// Nack'd without requeue and logged at WARN level (not ERROR).
+func isPermanentTenantError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	// Tenant suspended or purged
+	if tmcore.IsTenantSuspendedError(err) {
+		return true
+	}
+
+	// Tenant does not exist in Tenant Manager
+	if errors.Is(err, tmcore.ErrTenantNotFound) {
+		return true
+	}
+
+	// Service not configured for this tenant
+	if errors.Is(err, tmcore.ErrServiceNotConfigured) {
+		return true
+	}
+
+	// Manager closed (shutdown in progress)
+	if errors.Is(err, tmcore.ErrManagerClosed) {
+		return true
+	}
+
+	return false
 }

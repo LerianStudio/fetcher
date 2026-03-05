@@ -37,6 +37,11 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
+// defaultMaxTenantPools is the fallback soft limit for tenant connection pools
+// when MULTI_TENANT_MAX_TENANT_POOLS is unset or zero. This prevents unbounded
+// pool growth. The value can be overridden via the environment variable.
+const defaultMaxTenantPools = 100
+
 // Config is the top-level configuration struct for the entire application.
 type Config struct {
 	// Service envs
@@ -349,9 +354,14 @@ func initMultiTenantMiddleware(cfg *Config, logger log.Logger) fiber.Handler {
 		tmmongo.WithLogger(logger),
 	)
 
-	if cfg.MultiTenantMaxTenantPools > 0 {
-		mongoOpts = append(mongoOpts, tmmongo.WithMaxTenantPools(cfg.MultiTenantMaxTenantPools))
+	// Apply tenant pool limit. Use configured value if > 0, otherwise apply a sensible
+	// default to prevent unbounded pool growth. The default matches the value in .env.example.
+	maxTenantPools := cfg.MultiTenantMaxTenantPools
+	if maxTenantPools <= 0 {
+		maxTenantPools = defaultMaxTenantPools
 	}
+
+	mongoOpts = append(mongoOpts, tmmongo.WithMaxTenantPools(maxTenantPools))
 
 	if cfg.MultiTenantIdleTimeoutSec > 0 {
 		mongoOpts = append(mongoOpts, tmmongo.WithIdleTimeout(

@@ -8,46 +8,66 @@ import (
 	tmcore "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/core"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.mongodb.org/mongo-driver/mongo"
 	"go.uber.org/mock/gomock"
 )
 
+// multiTenantProvider wraps MockMongoClientProvider and adds MultiTenantChecker behavior.
+type multiTenantProvider struct {
+	*MockMongoClientProvider
+	multiTenant bool
+}
+
+func (m *multiTenantProvider) IsMultiTenant() bool {
+	return m.multiTenant
+}
+
 func TestGetDatabaseForContext(t *testing.T) {
 	tests := []struct {
-		name           string
-		setupCtx       func(ctrl *gomock.Controller) context.Context
-		setupProvider  func(ctrl *gomock.Controller) MongoClientProvider
-		dbName         string
-		wantDBName     string
-		wantErr        bool
-		wantErrMessage string
+		name          string
+		setupCtx      func() context.Context
+		setupProvider func(ctrl *gomock.Controller) MongoClientProvider
+		dbName        string
+		wantErr       bool
+		wantErrIs     error
+		wantErrMsg    string
 	}{
 		{
-			name: "returns tenant database when tenant context is set",
-			setupCtx: func(ctrl *gomock.Controller) context.Context {
-				// We need a real *mongo.Database for the tenant context.
-				// Since we can't create one without a real client in unit tests,
-				// we test this scenario in the integration tests within
-				// connection.mongodb_test.go and job.mongodb_test.go.
-				// Here we test the fallback paths.
+			name: "single-tenant fallback when provider errors",
+			setupCtx: func() context.Context {
 				return context.Background()
 			},
 			setupProvider: func(ctrl *gomock.Controller) MongoClientProvider {
 				mock := NewMockMongoClientProvider(ctrl)
-				// When no tenant in context, it falls back to static provider.
-				// We can't provide a real *mongo.Client in pure unit tests
-				// without memongo, so we test the error path instead.
 				mock.EXPECT().
 					GetDB(gomock.Any()).
 					Return(nil, errors.New("connection failed"))
 				return mock
 			},
-			dbName:         "test_db",
-			wantErr:        true,
-			wantErrMessage: "connection failed",
+			dbName:     "test_db",
+			wantErr:    true,
+			wantErrMsg: "connection failed",
 		},
 		{
-			name: "falls back to static connection when no tenant context",
-			setupCtx: func(_ *gomock.Controller) context.Context {
+			name: "multi-tenant returns ErrTenantContextRequired when no tenant in context",
+			setupCtx: func() context.Context {
+				return context.Background()
+			},
+			setupProvider: func(ctrl *gomock.Controller) MongoClientProvider {
+				mock := NewMockMongoClientProvider(ctrl)
+				// GetDB should NOT be called when multi-tenant and no tenant in context
+				return &multiTenantProvider{
+					MockMongoClientProvider: mock,
+					multiTenant:             true,
+				}
+			},
+			dbName:    "test_db",
+			wantErr:   true,
+			wantErrIs: tmcore.ErrTenantContextRequired,
+		},
+		{
+			name: "single-tenant mode falls back to static provider when no tenant context",
+			setupCtx: func() context.Context {
 				return context.Background()
 			},
 			setupProvider: func(ctrl *gomock.Controller) MongoClientProvider {
@@ -57,9 +77,51 @@ func TestGetDatabaseForContext(t *testing.T) {
 					Return(nil, errors.New("static fallback error"))
 				return mock
 			},
-			dbName:         "my_database",
-			wantErr:        true,
-			wantErrMessage: "static fallback error",
+			dbName:     "my_database",
+			wantErr:    true,
+			wantErrMsg: "static fallback error",
+		},
+		{
+			name: "multi-tenant uses tenant DB from context",
+			setupCtx: func() context.Context {
+				// Inject a real-ish tenant DB into context.
+				// We use mongo.Database obtained from a disconnected client.
+				// This tests context extraction; actual DB operations are integration-tested.
+				client, err := mongo.NewClient() //nolint:staticcheck // test-only disconnected client
+				if err != nil {
+					panic("mongo.NewClient() failed: " + err.Error())
+				}
+				db := client.Database("tenant_abc")
+				return tmcore.ContextWithTenantMongo(context.Background(), db)
+			},
+			setupProvider: func(ctrl *gomock.Controller) MongoClientProvider {
+				mock := NewMockMongoClientProvider(ctrl)
+				// GetDB should NOT be called when tenant DB is in context
+				return &multiTenantProvider{
+					MockMongoClientProvider: mock,
+					multiTenant:             true,
+				}
+			},
+			dbName:  "default_db",
+			wantErr: false,
+		},
+		{
+			name: "single-tenant with tenant DB in context still uses tenant DB",
+			setupCtx: func() context.Context {
+				client, err := mongo.NewClient() //nolint:staticcheck // test-only disconnected client
+				if err != nil {
+					panic("mongo.NewClient() failed: " + err.Error())
+				}
+				db := client.Database("tenant_xyz")
+				return tmcore.ContextWithTenantMongo(context.Background(), db)
+			},
+			setupProvider: func(ctrl *gomock.Controller) MongoClientProvider {
+				mock := NewMockMongoClientProvider(ctrl)
+				// GetDB should NOT be called when tenant DB is in context
+				return mock
+			},
+			dbName:  "default_db",
+			wantErr: false,
 		},
 	}
 
@@ -68,61 +130,24 @@ func TestGetDatabaseForContext(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			defer ctrl.Finish()
 
-			ctx := tt.setupCtx(ctrl)
+			ctx := tt.setupCtx()
 			provider := tt.setupProvider(ctrl)
 
 			db, err := GetDatabaseForContext(ctx, provider, tt.dbName)
 
 			if tt.wantErr {
 				require.Error(t, err)
-				assert.Contains(t, err.Error(), tt.wantErrMessage)
+				if tt.wantErrIs != nil {
+					assert.ErrorIs(t, err, tt.wantErrIs)
+				}
+				if tt.wantErrMsg != "" {
+					assert.Contains(t, err.Error(), tt.wantErrMsg)
+				}
 				assert.Nil(t, db)
 			} else {
 				require.NoError(t, err)
 				assert.NotNil(t, db)
-				assert.Equal(t, tt.wantDBName, db.Name())
 			}
 		})
 	}
-}
-
-func TestGetDatabaseForContext_TenantDBFromContext(t *testing.T) {
-	// Test that when tmcore.GetMongoForTenant returns a non-nil database,
-	// GetDatabaseForContext uses it instead of the static provider.
-	// This test verifies the provider is NOT called when tenant DB is available.
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	// Create a mock that should NOT be called
-	mock := NewMockMongoClientProvider(ctrl)
-	// No expectations set - if GetDB is called, the test will fail
-
-	// We need a real *mongo.Database to set in context.
-	// Since tmcore.ContextWithTenantMongo expects *mongo.Database,
-	// and we can't create one without a real client, we verify the
-	// behavior using tmcore.GetMongoForTenant error path.
-	// The actual tenant-context tests are in the integration tests
-	// (connection.mongodb_test.go and job.mongodb_test.go).
-
-	// Verify that when no tenant context exists, provider IS called
-	mock.EXPECT().
-		GetDB(gomock.Any()).
-		Return(nil, errors.New("expected call"))
-
-	_, err := GetDatabaseForContext(context.Background(), mock, "test_db")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "expected call")
-}
-
-// TestGetDatabaseForContext_WithRealTenantDB verifies the tenant path
-// using the tmcore context injection. This requires a real *mongo.Database
-// which is only available in integration tests that use memongo.
-// See TestConnectionMongoDBRepository_getDatabase and TestJobMongoDBRepository_getDatabase
-// for those integration-level tests.
-func TestGetDatabaseForContext_WithTenantContext(t *testing.T) {
-	// Verify that tmcore.GetMongoForTenant returns an error for empty context
-	// (no tenant set), confirming the fallback path is exercised.
-	db, err := tmcore.GetMongoForTenant(context.Background())
-	assert.Error(t, err)
-	assert.Nil(t, db)
 }
