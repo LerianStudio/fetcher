@@ -5,8 +5,30 @@
 ### =============================================================================
 
 ### Configuration Variables
-@baseUrl = http://localhost:4006
+# @baseUrl = http://localhost:4006
+@baseUrl = https://reporter.dev.clotilde.lerian.net
+# @authUrl = https://auth.dev.clotilde.lerian.net
+@authUrl = https://auth.dev.clotilde.lerian.net
 @organizationId = aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa
+
+### =============================================================================
+### AUTHENTICATION
+### =============================================================================
+
+### Get JWT Token
+# @name login
+POST {{authUrl}}/v1/login/oauth/access_token
+Content-Type: application/json
+
+{
+    "grantType": "password",
+    "username": "admin",
+    "password": "Lerian@123"
+}
+
+###
+
+@token = {{login.response.body.access_token}}
 
 ### =============================================================================
 ### HEALTH CHECK
@@ -28,6 +50,7 @@ GET {{baseUrl}}/version
 # @name createPostgresConnection
 POST {{baseUrl}}/v1/management/connections
 Content-Type: application/json
+Authorization: Bearer {{token}}
 X-Organization-Id: {{organizationId}}
 X-Product-Name: reporter
 
@@ -47,6 +70,7 @@ X-Product-Name: reporter
 # @name createMySQLConnection
 POST {{baseUrl}}/v1/management/connections
 Content-Type: application/json
+Authorization: Bearer {{token}}
 X-Organization-Id: {{organizationId}}
 X-Product-Name: reporter
 
@@ -66,6 +90,7 @@ X-Product-Name: reporter
 # @name createSQLServerConnection
 POST {{baseUrl}}/v1/management/connections
 Content-Type: application/json
+Authorization: Bearer {{token}}
 X-Organization-Id: {{organizationId}}
 X-Product-Name: reporter
 
@@ -85,6 +110,7 @@ X-Product-Name: reporter
 # @name createOracleConnection
 POST {{baseUrl}}/v1/management/connections
 Content-Type: application/json
+Authorization: Bearer {{token}}
 X-Organization-Id: {{organizationId}}
 X-Product-Name: reporter
 
@@ -107,6 +133,7 @@ X-Product-Name: reporter
 # @name createMongoDBConnection
 POST {{baseUrl}}/v1/management/connections
 Content-Type: application/json
+Authorization: Bearer {{token}}
 X-Organization-Id: {{organizationId}}
 X-Product-Name: reporter
 
@@ -131,12 +158,14 @@ X-Product-Name: reporter
 ### List All Connections
 # @name listConnections
 GET {{baseUrl}}/v1/management/connections
+Authorization: Bearer {{token}}
 X-Organization-Id: {{organizationId}}
 
 ###
 
 ### List Connections Filtered by Product
 GET {{baseUrl}}/v1/management/connections
+Authorization: Bearer {{token}}
 X-Organization-Id: {{organizationId}}
 X-Product-Name: reporter
 
@@ -144,12 +173,14 @@ X-Product-Name: reporter
 
 ### List Connections with Pagination
 GET {{baseUrl}}/v1/management/connections?page=2&limit=2&sortOrder=desc
+Authorization: Bearer {{token}}
 X-Organization-Id: {{organizationId}}
 
 ###
 
 ### List Connections Filtered by Type
 GET {{baseUrl}}/v1/management/connections?type=POSTGRESQL
+Authorization: Bearer {{token}}
 X-Organization-Id: {{organizationId}}
 
 ###
@@ -157,6 +188,7 @@ X-Organization-Id: {{organizationId}}
 ### Get Connection by ID
 # @name getConnection
 GET {{baseUrl}}/v1/management/connections/{{createPostgresConnection.response.body.id}}
+Authorization: Bearer {{token}}
 X-Organization-Id: {{organizationId}}
 
 ###
@@ -164,6 +196,7 @@ X-Organization-Id: {{organizationId}}
 ### Get Connection Schema
 # @name getConnectionSchema
 GET {{baseUrl}}/v1/management/connections/{{createPostgresConnection.response.body.id}}/schema
+Authorization: Bearer {{token}}
 X-Organization-Id: {{organizationId}}
 
 ###
@@ -172,6 +205,7 @@ X-Organization-Id: {{organizationId}}
 # @name updateConnection
 PATCH {{baseUrl}}/v1/management/connections/{{createPostgresConnection.response.body.id}}
 Content-Type: application/json
+Authorization: Bearer {{token}}
 X-Organization-Id: {{organizationId}}
 
 {
@@ -185,12 +219,14 @@ X-Organization-Id: {{organizationId}}
 ### Test Connection
 # @name testConnection
 POST {{baseUrl}}/v1/management/connections/{{createPostgresConnection.response.body.id}}/test
+Authorization: Bearer {{token}}
 X-Organization-Id: {{organizationId}}
 
 ###
 
 ### Delete Connection
 DELETE {{baseUrl}}/v1/management/connections/{{createPostgresConnection.response.body.id}}
+Authorization: Bearer {{token}}
 X-Organization-Id: {{organizationId}}
 
 ### =============================================================================
@@ -200,12 +236,14 @@ X-Organization-Id: {{organizationId}}
 ### List Unassigned Connections
 # @name listUnassignedConnections
 GET {{baseUrl}}/v1/management/connections/unassigned
+Authorization: Bearer {{token}}
 X-Organization-Id: {{organizationId}}
 
 ###
 
 ### List Unassigned Connections with Pagination
 GET {{baseUrl}}/v1/management/connections/unassigned?page=1&limit=10&sortOrder=asc
+Authorization: Bearer {{token}}
 X-Organization-Id: {{organizationId}}
 
 ###
@@ -213,6 +251,7 @@ X-Organization-Id: {{organizationId}}
 ### Assign Connection to Product (one-time, irreversible)
 # @name assignConnection
 POST {{baseUrl}}/v1/management/connections/{{listUnassignedConnections.response.body.items[0].id}}/assign
+Authorization: Bearer {{token}}
 X-Organization-Id: {{organizationId}}
 X-Product-Name: reporter
 
@@ -224,6 +263,7 @@ X-Product-Name: reporter
 # @name validateSchemaSuccess
 POST {{baseUrl}}/v1/management/connections/validate-schema
 Content-Type: application/json
+Authorization: Bearer {{token}}
 X-Organization-Id: {{organizationId}}
 
 {
@@ -239,6 +279,7 @@ X-Organization-Id: {{organizationId}}
 ### Validate Schema - Multi-Schema (PostgreSQL)
 POST {{baseUrl}}/v1/management/connections/validate-schema
 Content-Type: application/json
+Authorization: Bearer {{token}}
 X-Organization-Id: {{organizationId}}
 
 {
@@ -256,6 +297,7 @@ X-Organization-Id: {{organizationId}}
 ### Validate Schema - Non-existent Table (Expected Failure)
 POST {{baseUrl}}/v1/management/connections/validate-schema
 Content-Type: application/json
+Authorization: Bearer {{token}}
 X-Organization-Id: {{organizationId}}
 
 {
@@ -274,6 +316,7 @@ X-Organization-Id: {{organizationId}}
 # @name createFetcherJobPostgres
 POST {{baseUrl}}/v1/fetcher
 Content-Type: application/json
+Authorization: Bearer {{token}}
 X-Organization-Id: {{organizationId}}
 
 {
@@ -296,6 +339,7 @@ X-Organization-Id: {{organizationId}}
 # @name createFetcherJobMySQL
 POST {{baseUrl}}/v1/fetcher
 Content-Type: application/json
+Authorization: Bearer {{token}}
 X-Organization-Id: {{organizationId}}
 
 {
@@ -318,6 +362,7 @@ X-Organization-Id: {{organizationId}}
 # @name createFetcherJobMongoDB
 POST {{baseUrl}}/v1/fetcher
 Content-Type: application/json
+Authorization: Bearer {{token}}
 X-Organization-Id: {{organizationId}}
 
 {
@@ -340,6 +385,7 @@ X-Organization-Id: {{organizationId}}
 # @name createFetcherJobMultiSchema
 POST {{baseUrl}}/v1/fetcher
 Content-Type: application/json
+Authorization: Bearer {{token}}
 X-Organization-Id: {{organizationId}}
 
 {
@@ -364,6 +410,7 @@ X-Organization-Id: {{organizationId}}
 # @name createFetcherJobMultiDatasource
 POST {{baseUrl}}/v1/fetcher
 Content-Type: application/json
+Authorization: Bearer {{token}}
 X-Organization-Id: {{organizationId}}
 
 {
@@ -389,6 +436,7 @@ X-Organization-Id: {{organizationId}}
 # @name createFetcherJobWithFilters
 POST {{baseUrl}}/v1/fetcher
 Content-Type: application/json
+Authorization: Bearer {{token}}
 X-Organization-Id: {{organizationId}}
 
 {
@@ -418,6 +466,7 @@ X-Organization-Id: {{organizationId}}
 # @name createFetcherJobWithInFilter
 POST {{baseUrl}}/v1/fetcher
 Content-Type: application/json
+Authorization: Bearer {{token}}
 X-Organization-Id: {{organizationId}}
 
 {
@@ -447,6 +496,7 @@ X-Organization-Id: {{organizationId}}
 # @name createFetcherJobMultiSchemaFiltered
 POST {{baseUrl}}/v1/fetcher
 Content-Type: application/json
+Authorization: Bearer {{token}}
 X-Organization-Id: {{organizationId}}
 
 {
@@ -479,6 +529,7 @@ X-Organization-Id: {{organizationId}}
 ### Get Fetcher Job Status
 # @name getJobStatus
 GET {{baseUrl}}/v1/fetcher/{{createFetcherJobPostgres.response.body.jobId}}
+Authorization: Bearer {{token}}
 X-Organization-Id: {{organizationId}}
 
 ### =============================================================================
@@ -488,6 +539,7 @@ X-Organization-Id: {{organizationId}}
 ### Create Connection - Missing X-Product-Name Header (Expected 400)
 POST {{baseUrl}}/v1/management/connections
 Content-Type: application/json
+Authorization: Bearer {{token}}
 X-Organization-Id: {{organizationId}}
 
 {
@@ -506,6 +558,7 @@ X-Organization-Id: {{organizationId}}
 # @name createConnectionInvalidHost
 POST {{baseUrl}}/v1/management/connections
 Content-Type: application/json
+Authorization: Bearer {{token}}
 X-Organization-Id: {{organizationId}}
 X-Product-Name: reporter
 
@@ -524,6 +577,7 @@ X-Product-Name: reporter
 ### Create Fetcher Job - Non-existent Datasource (Expected 400 Error)
 POST {{baseUrl}}/v1/fetcher
 Content-Type: application/json
+Authorization: Bearer {{token}}
 X-Organization-Id: {{organizationId}}
 
 {
@@ -545,6 +599,7 @@ X-Organization-Id: {{organizationId}}
 ### Create Fetcher Job - Non-existent Table (Job will fail during processing)
 POST {{baseUrl}}/v1/fetcher
 Content-Type: application/json
+Authorization: Bearer {{token}}
 X-Organization-Id: {{organizationId}}
 
 {
@@ -565,12 +620,14 @@ X-Organization-Id: {{organizationId}}
 
 ### Get Non-existent Connection (Expected 404)
 GET {{baseUrl}}/v1/management/connections/00000000-0000-0000-0000-000000000000
+Authorization: Bearer {{token}}
 X-Organization-Id: {{organizationId}}
 
 ###
 
 ### Get Non-existent Job (Expected 404)
 GET {{baseUrl}}/v1/fetcher/00000000-0000-0000-0000-000000000000
+Authorization: Bearer {{token}}
 X-Organization-Id: {{organizationId}}
 
 ### =============================================================================
@@ -580,6 +637,7 @@ X-Organization-Id: {{organizationId}}
 ### Create PostgreSQL Connection with SSL
 POST {{baseUrl}}/v1/management/connections
 Content-Type: application/json
+Authorization: Bearer {{token}}
 X-Organization-Id: {{organizationId}}
 X-Product-Name: reporter
 
@@ -601,6 +659,7 @@ X-Product-Name: reporter
 ### Create PostgreSQL Connection with SSL Certificates
 POST {{baseUrl}}/v1/management/connections
 Content-Type: application/json
+Authorization: Bearer {{token}}
 X-Organization-Id: {{organizationId}}
 X-Product-Name: reporter
 
@@ -636,6 +695,7 @@ X-Product-Name: reporter
 # @name workflowCreateConnection
 POST {{baseUrl}}/v1/management/connections
 Content-Type: application/json
+Authorization: Bearer {{token}}
 X-Organization-Id: {{organizationId}}
 X-Product-Name: reporter
 
@@ -654,6 +714,7 @@ X-Product-Name: reporter
 ### Step 2: Test Connection
 # @name workflowTestConnection
 POST {{baseUrl}}/v1/management/connections/{{workflowCreateConnection.response.body.id}}/test
+Authorization: Bearer {{token}}
 X-Organization-Id: {{organizationId}}
 
 ###
@@ -661,6 +722,7 @@ X-Organization-Id: {{organizationId}}
 ### Step 3: Get Connection Schema
 # @name workflowGetSchema
 GET {{baseUrl}}/v1/management/connections/{{workflowCreateConnection.response.body.id}}/schema
+Authorization: Bearer {{token}}
 X-Organization-Id: {{organizationId}}
 
 ###
@@ -669,6 +731,7 @@ X-Organization-Id: {{organizationId}}
 # @name workflowValidateSchema
 POST {{baseUrl}}/v1/management/connections/validate-schema
 Content-Type: application/json
+Authorization: Bearer {{token}}
 X-Organization-Id: {{organizationId}}
 
 {
@@ -685,6 +748,7 @@ X-Organization-Id: {{organizationId}}
 # @name workflowCreateJob
 POST {{baseUrl}}/v1/fetcher
 Content-Type: application/json
+Authorization: Bearer {{token}}
 X-Organization-Id: {{organizationId}}
 
 {
@@ -706,10 +770,12 @@ X-Organization-Id: {{organizationId}}
 ### Step 6: Get Job Status (poll until status is "completed" or "failed")
 # @name workflowGetJobStatus
 GET {{baseUrl}}/v1/fetcher/{{workflowCreateJob.response.body.jobId}}
+Authorization: Bearer {{token}}
 X-Organization-Id: {{organizationId}}
 
 ###
 
 ### Cleanup: Delete Connection
 DELETE {{baseUrl}}/v1/management/connections/{{workflowCreateConnection.response.body.id}}
+Authorization: Bearer {{token}}
 X-Organization-Id: {{organizationId}}
