@@ -78,7 +78,7 @@ Lerian Fetcher is built as a cloud-native platform following Hexagonal Architect
 | `DELETE` | `/v1/management/connections/{id}` | Soft delete (409 if active jobs) |
 | `POST` | `/v1/management/connections/validate-schema` | Validate tables/fields exist in datasources |
 
-#### Fetcher Jobs
+#### Fetcher  Jobs
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
