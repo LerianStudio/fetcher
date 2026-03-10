@@ -20,4 +20,8 @@ func TestService_StructComposition(t *testing.T) {
 	if svc.licenseShutdown != nil {
 		t.Error("licenseShutdown should be nil by default")
 	}
+
+	if svc.mtCleanup != nil {
+		t.Error("mtCleanup should be nil by default")
+	}
 }
