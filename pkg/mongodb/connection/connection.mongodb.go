@@ -15,7 +15,6 @@ import (
 	portsConnection "github.com/LerianStudio/fetcher/pkg/ports/connection"
 
 	"github.com/LerianStudio/lib-commons/v3/commons"
-	libMongo "github.com/LerianStudio/lib-commons/v3/commons/mongo"
 	libOpentelemetry "github.com/LerianStudio/lib-commons/v3/commons/opentelemetry"
 
 	"github.com/google/uuid"
@@ -62,7 +61,10 @@ type ConnectionMongoDBRepository struct {
 
 // NewConnectionMongoDBRepository provisions a repository using the given client.
 // Accepts an optional RepositoryConfig; if nil, defaults are used.
-func NewConnectionMongoDBRepository(ctx context.Context, mc *libMongo.MongoConnection, cfg ...RepositoryConfig) (*ConnectionMongoDBRepository, error) {
+// The provider must implement GetDB(ctx) (*mongo.Client, error). When the provider
+// also implements tmcore.MultiTenantChecker (IsMultiTenant() bool), ResolveMongo will
+// return ErrTenantContextRequired instead of silently falling back to the default DB.
+func NewConnectionMongoDBRepository(ctx context.Context, provider mongodb.MongoClientProvider, dbName string, cfg ...RepositoryConfig) (*ConnectionMongoDBRepository, error) {
 	config := RepositoryConfig{
 		InitTimeout: DefaultInitTimeout,
 	}
@@ -74,8 +76,8 @@ func NewConnectionMongoDBRepository(ctx context.Context, mc *libMongo.MongoConne
 	}
 
 	repo := &ConnectionMongoDBRepository{
-		connection: mc,
-		Database:   mc.Database,
+		connection: provider,
+		Database:   dbName,
 		config:     config,
 	}
 

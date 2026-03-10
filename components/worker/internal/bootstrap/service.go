@@ -11,6 +11,8 @@ type Service struct {
 	*MultiQueueConsumer
 	log.Logger
 	licenseShutdown *libCommonsLicense.ManagerShutdown
+	// mtCleanup is the cleanup function for multi-tenant resources (Redis, etc.)
+	mtCleanup func()
 }
 
 // Run starts the application.
@@ -23,6 +25,15 @@ func (app *Service) Run() {
 
 	// Graceful shutdown
 	app.Info("Starting graceful shutdown...")
+
+	// Close multi-tenant resources (Redis) if present.
+	// mtConsumer.Close() is handled by MultiQueueConsumer.Run() on context cancellation.
+	// mtCleanup only closes Redis connection.
+	if app.mtCleanup != nil {
+		app.Info("Closing multi-tenant resources (Redis)...")
+		app.mtCleanup()
+		app.Info("Multi-tenant resources closed")
+	}
 
 	// After all consumers are done, shutdown license
 	if app.licenseShutdown != nil {

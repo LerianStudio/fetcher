@@ -7,27 +7,76 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/LerianStudio/lib-commons/v3/commons/log"
+	tmconsumer "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/consumer"
 	tmcore "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/core"
 	tmmongo "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/mongo"
+	amqp "github.com/rabbitmq/amqp091-go"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestMultiQueueConsumer_StructFields(t *testing.T) {
-	// MultiQueueConsumer can be partially constructed without infrastructure.
-	// NewMultiQueueConsumer requires real ConsumerRoutes, so we test the struct directly.
-	consumer := &MultiQueueConsumer{}
+// mockMultiTenantConsumer implements MultiTenantConsumerInterface for testing.
+type mockMultiTenantConsumer struct {
+	registeredQueues   []string
+	registeredHandlers []tmconsumer.HandlerFunc
+	runCalled          bool
+	closeCalled        bool
+	runErr             error
+	closeErr           error
+}
 
-	if consumer.consumerRoutes != nil {
-		t.Error("consumerRoutes should be nil by default")
-	}
-	if consumer.UseCase != nil {
-		t.Error("UseCase should be nil by default")
-	}
-	if consumer.mongoManager != nil {
-		t.Error("mongoManager should be nil by default")
-	}
+func (m *mockMultiTenantConsumer) Register(queueName string, handler tmconsumer.HandlerFunc) {
+	m.registeredQueues = append(m.registeredQueues, queueName)
+	m.registeredHandlers = append(m.registeredHandlers, handler)
+}
+
+func (m *mockMultiTenantConsumer) Run(_ context.Context) error {
+	m.runCalled = true
+	return m.runErr
+}
+
+func (m *mockMultiTenantConsumer) Close() error {
+	m.closeCalled = true
+	return m.closeErr
+}
+
+// mockBootstrapLogger is a minimal logger for bootstrap package tests
+// that satisfies the log.Logger interface from lib-commons v3.
+type mockBootstrapLogger struct{}
+
+func (m *mockBootstrapLogger) Info(args ...any)                                     {}
+func (m *mockBootstrapLogger) Infof(format string, args ...any)                     {}
+func (m *mockBootstrapLogger) Infoln(args ...any)                                   {}
+func (m *mockBootstrapLogger) Warn(args ...any)                                     {}
+func (m *mockBootstrapLogger) Warnf(format string, args ...any)                     {}
+func (m *mockBootstrapLogger) Warnln(args ...any)                                   {}
+func (m *mockBootstrapLogger) Error(args ...any)                                    {}
+func (m *mockBootstrapLogger) Errorf(format string, args ...any)                    {}
+func (m *mockBootstrapLogger) Errorln(args ...any)                                  {}
+func (m *mockBootstrapLogger) Debug(args ...any)                                    {}
+func (m *mockBootstrapLogger) Debugf(format string, args ...any)                    {}
+func (m *mockBootstrapLogger) Debugln(args ...any)                                  {}
+func (m *mockBootstrapLogger) Fatal(args ...any)                                    {}
+func (m *mockBootstrapLogger) Fatalf(format string, args ...any)                    {}
+func (m *mockBootstrapLogger) Fatalln(args ...any)                                  {}
+func (m *mockBootstrapLogger) WithFields(fields ...any) log.Logger                  { return m }
+func (m *mockBootstrapLogger) WithDefaultMessageTemplate(message string) log.Logger { return m }
+func (m *mockBootstrapLogger) Sync() error                                          { return nil }
+
+func TestNewMultiQueueConsumerMultiTenant_SetsFields(t *testing.T) {
+	mockConsumer := &mockMultiTenantConsumer{}
+	logger := &mockBootstrapLogger{}
+	mgr := &tmmongo.Manager{}
+
+	consumer := NewMultiQueueConsumerMultiTenant(mockConsumer, nil, "my-queue", logger, mgr)
+
+	assert.Equal(t, "my-queue", consumer.queueName)
+	assert.Equal(t, logger, consumer.logger)
+	assert.Equal(t, mgr, consumer.mongoManager)
+	assert.Nil(t, consumer.consumerRoutes, "single-tenant routes must be nil in multi-tenant mode")
+	assert.NotNil(t, consumer.mtConsumer)
 }
 
 // TestResolveTenantMongo verifies that resolveTenantMongo correctly resolves
@@ -244,4 +293,62 @@ func TestResolveTenantMongo_NilManagerPreservesContext(t *testing.T) {
 	resultCtx, err := resolveTenantMongo(ctx, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "tenant-abc", tmcore.GetTenantIDFromContext(resultCtx))
+}
+
+func TestNewMultiQueueConsumerMultiTenant_RegistersHandler(t *testing.T) {
+	mockConsumer := &mockMultiTenantConsumer{}
+	logger := &mockBootstrapLogger{}
+
+	mqConsumer := NewMultiQueueConsumerMultiTenant(
+		mockConsumer,
+		nil, // UseCase not needed for this test
+		"test-queue",
+		logger,
+		nil, // mongoManager
+	)
+
+	assert.NotNil(t, mqConsumer)
+	assert.Equal(t, 1, len(mockConsumer.registeredQueues))
+	assert.Equal(t, "test-queue", mockConsumer.registeredQueues[0])
+	assert.NotNil(t, mockConsumer.registeredHandlers[0])
+}
+
+func TestHandlerGenerateReportDelivery_NilMongoManager_SkipsResolution(t *testing.T) {
+	// When mongoManager is nil, handlerGenerateReportDelivery should skip
+	// tenant resolution and delegate to handlerGenerateReport. It will fail
+	// there because UseCase is nil, but it proves the nil-guard works.
+	logger := &mockBootstrapLogger{}
+	consumer := &MultiQueueConsumer{
+		mongoManager: nil,
+		logger:       logger,
+	}
+
+	ctx := context.Background()
+	delivery := amqp.Delivery{
+		Headers: amqp.Table{"X-Tenant-ID": "tenant-abc"},
+		Body:    []byte(`{}`),
+	}
+
+	// This will fail in handlerGenerateReport (nil UseCase) but must NOT panic
+	// on nil mongoManager. The error proves we got past the nil guard.
+	err := consumer.handlerGenerateReportDelivery(ctx, delivery)
+	assert.Error(t, err, "expected error from nil UseCase, not from nil mongoManager")
+}
+
+func TestHeadersFromDelivery_NilHeaders(t *testing.T) {
+	delivery := amqp.Delivery{Headers: nil}
+	headers := headersFromDelivery(delivery)
+	assert.Nil(t, headers)
+}
+
+func TestHeadersFromDelivery_WithHeaders(t *testing.T) {
+	delivery := amqp.Delivery{
+		Headers: amqp.Table{
+			"X-Tenant-ID": "tenant-abc",
+			"jobId":       "job-123",
+		},
+	}
+	headers := headersFromDelivery(delivery)
+	assert.Equal(t, "tenant-abc", headers["X-Tenant-ID"])
+	assert.Equal(t, "job-123", headers["jobId"])
 }

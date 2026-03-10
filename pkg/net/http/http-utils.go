@@ -8,7 +8,7 @@ import (
 
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
-	libCommons "github.com/LerianStudio/lib-commons/commons"
+	libCommons "github.com/LerianStudio/lib-commons/v3/commons"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 )
