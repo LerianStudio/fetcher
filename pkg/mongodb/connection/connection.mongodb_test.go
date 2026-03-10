@@ -59,7 +59,7 @@ func TestMain(m *testing.M) {
 func newConnectionRepository(t *testing.T) *ConnectionMongoDBRepository {
 	t.Helper()
 	clearConnectionsCollection(t)
-	repo, err := NewConnectionMongoDBRepository(context.Background(), connectionTestMongoConn)
+	repo, err := NewConnectionMongoDBRepository(context.Background(), connectionTestMongoConn, connectionTestDatabaseName)
 	if err != nil {
 		t.Fatalf("failed to create repository: %v", err)
 	}

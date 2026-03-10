@@ -59,7 +59,7 @@ func TestMain(m *testing.M) {
 func newJobRepository(t *testing.T) *JobMongoDBRepository {
 	t.Helper()
 	clearJobsCollection(t)
-	repo, err := NewJobMongoDBRepository(context.Background(), jobTestMongoConn)
+	repo, err := NewJobMongoDBRepository(context.Background(), jobTestMongoConn, jobTestDatabaseName)
 	if err != nil {
 		t.Fatalf("failed to create repository: %v", err)
 	}
@@ -1070,7 +1070,7 @@ func TestDropIndexes_DatabaseError(t *testing.T) {
 }
 
 func TestNewJobMongoDBRepository_ValidatesDB(t *testing.T) {
-	repo, err := NewJobMongoDBRepository(context.Background(), jobTestMongoConn)
+	repo, err := NewJobMongoDBRepository(context.Background(), jobTestMongoConn, jobTestDatabaseName)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
