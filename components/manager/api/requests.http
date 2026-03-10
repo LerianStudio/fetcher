@@ -15,6 +15,10 @@
 ### AUTHENTICATION
 ### =============================================================================
 
+# Local-only values (do not commit real credentials)
+@authUsername = <set-locally>
+@authPassword = <set-locally>
+
 ### Get JWT Token
 # @name login
 POST {{authUrl}}/v1/login/oauth/access_token
@@ -22,8 +26,8 @@ Content-Type: application/json
 
 {
     "grantType": "password",
-    "username": "admin",
-    "password": "Lerian@123"
+    "username": "{{authUsername}}",
+    "password": "{{authPassword}}"
 }
 
 ###
