@@ -6,7 +6,7 @@
 
 ### Configuration Variables
 # @baseUrl = http://localhost:4006
-@baseUrl = https://reporter.dev.clotilde.lerian.net
+@baseUrl = https://fetcher.dev.clotilde.lerian.net
 # @authUrl = https://auth.dev.clotilde.lerian.net
 @authUrl = https://auth.dev.clotilde.lerian.net
 @organizationId = aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa
