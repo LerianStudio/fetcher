@@ -17,6 +17,7 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	datasourceFactory "github.com/LerianStudio/fetcher/pkg/datasource"
 	"github.com/LerianStudio/fetcher/pkg/model"
+	"github.com/LerianStudio/fetcher/pkg/mongodb"
 	"github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 	"github.com/LerianStudio/fetcher/pkg/mongodb/job"
 	cacheRepo "github.com/LerianStudio/fetcher/pkg/ports/cache"
@@ -148,7 +149,12 @@ func InitServers() (*Service, error) {
 		Logger:                 logger,
 	}
 
-	connectionRepository, err := connection.NewConnectionMongoDBRepository(ctx, mongoConnection)
+	// Wrap the MongoDB connection to implement tmcore.MultiTenantChecker.
+	// When multi-tenant mode is enabled, tmcore.ResolveMongo returns
+	// ErrTenantContextRequired instead of silently falling back to the default DB.
+	mongoProvider := mongodb.NewMultiTenantMongoProvider(mongoConnection, cfg.MultiTenantEnabled)
+
+	connectionRepository, err := connection.NewConnectionMongoDBRepository(ctx, mongoProvider, mongoConnection.Database)
 	if err != nil {
 		return nil, fmt.Errorf("create connection repository: %w", err)
 	}
@@ -160,7 +166,7 @@ func InitServers() (*Service, error) {
 	}
 
 	// Init Job repository
-	jobRepository, err := job.NewJobMongoDBRepository(ctx, mongoConnection)
+	jobRepository, err := job.NewJobMongoDBRepository(ctx, mongoProvider, mongoConnection.Database)
 	if err != nil {
 		return nil, fmt.Errorf("create job repository: %w", err)
 	}
