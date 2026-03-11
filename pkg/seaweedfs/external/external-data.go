@@ -7,6 +7,7 @@ import (
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/seaweedfs"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
 )
 
 // Repository provides an interface for SeaweedFS storage operations
@@ -53,7 +54,7 @@ func (repo *SimpleRepository) Put(ctx context.Context, objectName string, data [
 
 	err := repo.client.UploadFile(ctx, path, data)
 	if err != nil {
-		logger.Errorf("Error communicating with SeaweedFS: %v", err)
+		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Error communicating with SeaweedFS: %v", err))
 		return pkg.ValidateInternalError(constant.ErrServiceUnavailable, "")
 	}
 

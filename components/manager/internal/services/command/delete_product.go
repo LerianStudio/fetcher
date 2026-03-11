@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/LerianStudio/fetcher/pkg"
@@ -9,8 +10,9 @@ import (
 
 	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 	productRepo "github.com/LerianStudio/fetcher/pkg/mongodb/product"
-	"github.com/LerianStudio/lib-commons/v2/commons"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v4/commons"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
@@ -39,12 +41,12 @@ func (s *DeleteProduct) Execute(ctx context.Context, organizationID, productID u
 
 	current, err := s.productRepo.FindByID(ctx, productID, organizationID)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to find product by ID", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to find product by ID", err)
 		return err
 	}
 
 	if current == nil {
-		libOpentelemetry.HandleSpanError(&span, "Product not found", constant.ErrEntityNotFound)
+		libOpentelemetry.HandleSpanError(span, "Product not found", constant.ErrEntityNotFound)
 
 		return pkg.ValidateBusinessError(
 			constant.ErrEntityNotFound,
@@ -54,13 +56,13 @@ func (s *DeleteProduct) Execute(ctx context.Context, organizationID, productID u
 
 	count, err := s.connRepo.CountByProduct(ctx, organizationID, productID)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to count connections by product", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to count connections by product", err)
 		return err
 	}
 
 	if count > 0 {
-		logger.Infof("Delete blocked: product id=%s has %d active connections", productID, count)
-		libOpentelemetry.HandleSpanError(&span, "Product has active connections", constant.ErrProductHasConnections)
+		logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Delete blocked: product id=%s has %d active connections", productID, count))
+		libOpentelemetry.HandleSpanError(span, "Product has active connections", constant.ErrProductHasConnections)
 
 		return pkg.ValidateBusinessError(
 			constant.ErrProductHasConnections,
@@ -69,11 +71,11 @@ func (s *DeleteProduct) Execute(ctx context.Context, organizationID, productID u
 	}
 
 	if err := s.productRepo.Delete(ctx, productID, organizationID, time.Now().UTC()); err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to delete product", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to delete product", err)
 		return err
 	}
 
-	logger.Infof("Deleted product id=%s org=%s", productID, organizationID)
+	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Deleted product id=%s org=%s", productID, organizationID))
 
 	return nil
 }

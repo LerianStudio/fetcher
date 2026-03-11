@@ -12,8 +12,8 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/model"
 
 	"github.com/LerianStudio/lib-commons/v2/commons"
-	libMongo "github.com/LerianStudio/lib-commons/v2/commons/mongo"
 	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
+	libMongo "github.com/LerianStudio/lib-commons/v4/commons/mongo"
 
 	"github.com/google/uuid"
 	"go.mongodb.org/mongo-driver/bson"
@@ -45,7 +45,7 @@ type Repository interface {
 }
 
 type mongoDatabaseProvider interface {
-	GetDB(ctx context.Context) (*mongo.Client, error)
+	Client(ctx context.Context) (*mongo.Client, error)
 }
 
 var setSpanAttributesFromStruct = libOpentelemetry.SetSpanAttributesFromStruct
@@ -66,7 +66,7 @@ type JobMongoDBRepository struct {
 
 // NewJobMongoDBRepository provisions a repository using the given client.
 // Accepts an optional RepositoryConfig; if nil, defaults are used.
-func NewJobMongoDBRepository(mc *libMongo.MongoConnection, cfg ...RepositoryConfig) (*JobMongoDBRepository, error) {
+func NewJobMongoDBRepository(mc *libMongo.Client, database string, cfg ...RepositoryConfig) (*JobMongoDBRepository, error) {
 	config := RepositoryConfig{
 		InitTimeout: DefaultInitTimeout,
 	}
@@ -79,14 +79,14 @@ func NewJobMongoDBRepository(mc *libMongo.MongoConnection, cfg ...RepositoryConf
 
 	repo := &JobMongoDBRepository{
 		connection: mc,
-		Database:   mc.Database,
+		Database:   database,
 		config:     config,
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), config.InitTimeout)
 	defer cancel()
 
-	if _, err := repo.connection.GetDB(ctx); err != nil {
+	if _, err := repo.connection.Client(ctx); err != nil {
 		return nil, err
 	}
 
@@ -125,7 +125,7 @@ func (jr *JobMongoDBRepository) Create(ctx context.Context, job *model.Job) (*mo
 		libOpentelemetry.HandleSpanError(&span, "Failed to convert job payload to JSON", err)
 	}
 
-	db, err := jr.connection.GetDB(ctx)
+	db, err := jr.connection.Client(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
 		return nil, err
@@ -188,7 +188,7 @@ func (jr *JobMongoDBRepository) Update(ctx context.Context, job *model.Job) (*mo
 		libOpentelemetry.HandleSpanError(&span, "Failed to convert job payload to JSON", err)
 	}
 
-	db, err := jr.connection.GetDB(ctx)
+	db, err := jr.connection.Client(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
 		return nil, err
@@ -260,7 +260,7 @@ func (jr *JobMongoDBRepository) UpdateStatus(ctx context.Context, id, organizati
 		return err
 	}
 
-	db, err := jr.connection.GetDB(ctx)
+	db, err := jr.connection.Client(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
 		return err
@@ -344,7 +344,7 @@ func (jr *JobMongoDBRepository) FindByID(ctx context.Context, id, organizationID
 	}
 	span.SetAttributes(attributes...)
 
-	db, err := jr.connection.GetDB(ctx)
+	db, err := jr.connection.Client(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
 		return nil, err
@@ -399,7 +399,7 @@ func (jr *JobMongoDBRepository) FindByRequestHashWithinWindow(ctx context.Contex
 		return nil, nil
 	}
 
-	db, err := jr.connection.GetDB(ctx)
+	db, err := jr.connection.Client(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
 		return nil, err
@@ -458,7 +458,7 @@ func (jr *JobMongoDBRepository) ExistsRunningByMappedFieldKey(ctx context.Contex
 	}
 	span.SetAttributes(attributes...)
 
-	db, err := jr.connection.GetDB(ctx)
+	db, err := jr.connection.Client(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
 		return false, pkg.ValidateInternalError(err, "job")
@@ -519,7 +519,7 @@ func (jr *JobMongoDBRepository) List(ctx context.Context, filters *ListFilter) (
 	}
 	span.SetAttributes(attributes...)
 
-	db, err := jr.connection.GetDB(ctx)
+	db, err := jr.connection.Client(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
 		return nil, err

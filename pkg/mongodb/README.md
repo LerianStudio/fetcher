@@ -48,15 +48,15 @@ graph TB
     end
 
     subgraph "lib-commons"
-        MongoConn[MongoConnection]
+        MongoClient[lib-commons/v4 mongo.Client]
     end
 
     Factory -->|creates| DSConfig
     Factory -->|validates| SSLMode
     DSConfig -->|contains| Repo
     Repo -->|implements| RepoInterface
-    Repo -->|uses| MongoConn
-    MongoConn -->|uses| Driver
+    Repo -->|uses| MongoClient
+    MongoClient -->|uses| Driver
     Driver -->|connects| DB
     ConnMongo -->|stores| DB
     JobMongo -->|stores| DB
@@ -116,8 +116,8 @@ sequenceDiagram
 
 ```go
 type ExternalDataSource struct {
-    connection *libMongo.MongoConnection  // lib-commons connection wrapper
-    Database   string                      // Database name
+    connection *libMongo.Client  // lib-commons/v4 mongo client
+    Database   string            // Database name
 }
 ```
 
@@ -128,7 +128,7 @@ func NewDataSourceRepository(mongoURI string, dbName string, logger log.Logger) 
 ```
 
 **Behavior:**
-- Creates `MongoConnection` with `maxPoolSize=100`
+- Creates `libMongo.Client` with `maxPoolSize=100`
 - Validates connection immediately
 - Returns error if connection fails
 
@@ -486,6 +486,7 @@ for _, collection := range schema.Tables {
 
 ```go
 // Kubernetes readiness probe
+// mongoProvider must implement Client(ctx) (*mongo.Client, error)
 err := mongodb.PingMongo(ctx, mongoProvider, 5*time.Second)
 if err != nil {
     return fmt.Errorf("MongoDB health check failed: %w", err)

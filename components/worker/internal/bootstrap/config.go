@@ -1,24 +1,28 @@
 package bootstrap
 
 import (
+	"context"
 	"fmt"
 	"net/url"
+	"strings"
 
 	"github.com/LerianStudio/fetcher/components/worker/internal/adapters/rabbitmq"
 	"github.com/LerianStudio/fetcher/components/worker/internal/services"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/mongodb/connection"
-	mongoDB "github.com/LerianStudio/lib-commons/v2/commons/mongo"
 
 	"github.com/LerianStudio/fetcher/pkg/mongodb/job"
 	simpleClient "github.com/LerianStudio/fetcher/pkg/seaweedfs"
 	"github.com/LerianStudio/fetcher/pkg/seaweedfs/external"
 
-	libCommons "github.com/LerianStudio/lib-commons/v2/commons"
-	libOtel "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
-	libRabbitMQ "github.com/LerianStudio/lib-commons/v2/commons/rabbitmq"
-	libZap "github.com/LerianStudio/lib-commons/v2/commons/zap"
+	libZapV2 "github.com/LerianStudio/lib-commons/v2/commons/zap"
+	libCommons "github.com/LerianStudio/lib-commons/v4/commons"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	libMongo "github.com/LerianStudio/lib-commons/v4/commons/mongo"
+	libOtel "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
+	libRabbitMQ "github.com/LerianStudio/lib-commons/v4/commons/rabbitmq"
+	libZap "github.com/LerianStudio/lib-commons/v4/commons/zap"
 	libLicense "github.com/LerianStudio/lib-license-go/v2/middleware"
 )
 
@@ -71,9 +75,16 @@ func InitWorker() *Service {
 		panic(err)
 	}
 
-	logger := libZap.InitializeLogger()
+	logger, err := libZap.New(libZap.Config{
+		Environment:     resolveZapEnvironment(cfg.EnvName),
+		Level:           cfg.LogLevel,
+		OTelLibraryName: cfg.OtelLibraryName,
+	})
+	if err != nil {
+		panic(err)
+	}
 
-	telemetry := libOtel.InitializeTelemetry(&libOtel.TelemetryConfig{
+	telemetry, err := libOtel.NewTelemetry(libOtel.TelemetryConfig{
 		LibraryName:               cfg.OtelLibraryName,
 		ServiceName:               cfg.OtelServiceName,
 		ServiceVersion:            cfg.OtelServiceVersion,
@@ -82,6 +93,13 @@ func InitWorker() *Service {
 		EnableTelemetry:           cfg.EnableTelemetry,
 		Logger:                    logger,
 	})
+	if err != nil {
+		panic(err)
+	}
+
+	if err := telemetry.ApplyGlobals(); err != nil {
+		panic(err)
+	}
 
 	// Init rabbitmq connection for consumer
 	// Consumer and Publisher use SEPARATE connections to avoid channel interference.
@@ -117,32 +135,32 @@ func InitWorker() *Service {
 	// Init key deriver for cryptographic key segregation
 	masterKey, err := crypto.DecodeMasterKey(cfg.AppEncryptionKey)
 	if err != nil {
-		logger.Fatalf("Failed to decode master encryption key: %v", err)
+		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to decode master encryption key: %v", err))
 	}
 
 	keyDeriver, err := crypto.NewHKDFKeyDeriver(masterKey)
 	if err != nil {
-		logger.Fatalf("Failed to initialize key deriver: %v", err)
+		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to initialize key deriver: %v", err))
 	}
 
-	logger.Info("Key derivation initialized successfully")
+	logger.Log(context.Background(), libLog.LevelInfo, "Key derivation initialized successfully")
 
 	// Init crypto service with derived credential key
 	cryptoService, errCrypto := crypto.NewAESGCMService(keyDeriver.GetCredentialKey(), cfg.AppEncryptionKeyVersion)
 	if errCrypto != nil {
-		logger.Fatalf("Failed to initialize crypto service: %v", errCrypto)
+		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to initialize crypto service: %v", errCrypto))
 	}
 
 	// Init message signer for RabbitMQ with derived internal HMAC key
 	cryptoWithInternalHMAC, errSigner := crypto.NewHMACSigner(keyDeriver.GetInternalHMACKey(), crypto.SignatureVersion)
 	if errSigner != nil {
-		logger.Fatalf("Failed to initialize message signer: %v", errSigner)
+		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to initialize message signer: %v", errSigner))
 	}
 
 	// Init document signer for external verification with derived external HMAC key
 	cryptoWithExternalHMAC, errSigner := crypto.NewHMACSigner(keyDeriver.GetExternalHMACKey(), crypto.SignatureVersion)
 	if errSigner != nil {
-		logger.Fatalf("Failed to initialize document signer: %v", errSigner)
+		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to initialize document signer: %v", errSigner))
 	}
 
 	// Initialize RabbitMQ consumer and publisher with separate connections
@@ -162,24 +180,27 @@ func InitWorker() *Service {
 		cfg.MaxPoolSize = 100
 	}
 
-	mongoConnection := &mongoDB.MongoConnection{
-		ConnectionStringSource: mongoSource,
-		Database:               cfg.MongoDBName,
-		Logger:                 logger,
-		MaxPoolSize:            uint64(cfg.MaxPoolSize),
+	mongoConnection, errConnectMongo := libMongo.NewClient(context.Background(), libMongo.Config{
+		URI:         mongoSource,
+		Database:    cfg.MongoDBName,
+		Logger:      logger,
+		MaxPoolSize: uint64(cfg.MaxPoolSize),
+	})
+	if errConnectMongo != nil {
+		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to initialize MongoDB client: %v", errConnectMongo))
 	}
 
 	externalDataSeaweedFSRepository := external.NewSimpleRepository(seaweedFSClient, constant.ExternalDataBucketName)
 
 	// Initialize MongoDB repositories
-	jobRepository, errJobRepo := job.NewJobMongoDBRepository(mongoConnection)
+	jobRepository, errJobRepo := job.NewJobMongoDBRepository(mongoConnection, cfg.MongoDBName)
 	if errJobRepo != nil {
-		logger.Fatalf("Failed to initialize job repository: %v", errJobRepo)
+		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to initialize job repository: %v", errJobRepo))
 	}
 
-	connectionRepository, errConnectRepo := connection.NewConnectionMongoDBRepository(mongoConnection)
+	connectionRepository, errConnectRepo := connection.NewConnectionMongoDBRepository(mongoConnection, cfg.MongoDBName)
 	if errConnectRepo != nil {
-		logger.Fatalf("Failed to initialize connection repository: %v", errConnectRepo)
+		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to initialize connection repository: %v", errConnectRepo))
 	}
 
 	service := &services.UseCase{
@@ -194,16 +215,17 @@ func InitWorker() *Service {
 	}
 
 	if cfg.SeaweedFSTTL != "" {
-		logger.Infof("Reports will expire after: %s", cfg.SeaweedFSTTL)
+		logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Reports will expire after: %s", cfg.SeaweedFSTTL))
 	} else {
-		logger.Infof("Reports will be stored permanently (no TTL)")
+		logger.Log(context.Background(), libLog.LevelInfo, "Reports will be stored permanently (no TTL)")
 	}
 
+	licenseLogger := libZapV2.InitializeLogger()
 	licenseClient := libLicense.NewLicenseClient(
 		constant.ApplicationName,
 		cfg.LicenseKey,
 		cfg.OrganizationIDs,
-		&logger,
+		&licenseLogger,
 	)
 	multiQueueConsumer := NewMultiQueueConsumer(consumerRoutes, service)
 
@@ -211,5 +233,22 @@ func InitWorker() *Service {
 		MultiQueueConsumer: multiQueueConsumer,
 		Logger:             logger,
 		licenseShutdown:    licenseClient.GetLicenseManagerShutdown(),
+	}
+}
+
+func resolveZapEnvironment(env string) libZap.Environment {
+	switch strings.ToLower(strings.TrimSpace(env)) {
+	case "production", "prod":
+		return libZap.EnvironmentProduction
+	case "staging", "stage":
+		return libZap.EnvironmentStaging
+	case "uat":
+		return libZap.EnvironmentUAT
+	case "development", "dev":
+		return libZap.EnvironmentDevelopment
+	case "local":
+		return libZap.EnvironmentLocal
+	default:
+		return libZap.EnvironmentLocal
 	}
 }

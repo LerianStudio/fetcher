@@ -1,12 +1,13 @@
 package sqlserver
 
 import (
+	"context"
 	"database/sql"
+	"fmt"
 	"strings"
 
 	"github.com/LerianStudio/fetcher/pkg/constant"
-
-	"github.com/LerianStudio/lib-commons/v2/commons/log"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
 	_ "github.com/microsoft/go-mssqldb" // SQL Server driver
 )
 
@@ -16,28 +17,28 @@ type Connection struct {
 	DBName             string
 	ConnectionDB       *sql.DB
 	Connected          bool
-	Logger             log.Logger
+	Logger             libLog.Logger
 	MaxOpenConnections int
 	MaxIdleConnections int
 }
 
 // Connect initializes the connection with the SQL Server DB.
 func (c *Connection) Connect() error {
-	c.Logger.Info("Connecting to SQL Server...")
+	c.Logger.Log(context.Background(), libLog.LevelInfo, "Connecting to SQL Server...")
 
 	db, err := sql.Open("sqlserver", c.ConnectionString)
 	if err != nil {
-		c.Logger.Errorf("Error opening connection: %v", err)
+		c.Logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Error opening connection: %v", err))
 		return err
 	}
 
 	if err := db.Ping(); err != nil {
 		closeErr := db.Close()
 		if closeErr != nil {
-			c.Logger.Errorf("Error closing connection: %v", closeErr)
+			c.Logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Error closing connection: %v", closeErr))
 		}
 
-		c.Logger.Errorf("Error pinging SQL Server: %v", err)
+		c.Logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Error pinging SQL Server: %v", err))
 
 		return err
 	}
@@ -50,8 +51,8 @@ func (c *Connection) Connect() error {
 	c.ConnectionDB = db
 	c.Connected = true
 
-	c.Logger.Infof("Connected to SQL Server [%s] with pool settings (maxOpen: %d, maxIdle: %d, maxLifetime: %v, maxIdleTime: %v)",
-		c.DBName, c.MaxOpenConnections, c.MaxIdleConnections, constant.SQLServerConnMaxLifetime, constant.SQLServerConnMaxIdleTime)
+	c.Logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Connected to SQL Server [%s] with pool settings (maxOpen: %d, maxIdle: %d, maxLifetime: %v, maxIdleTime: %v)",
+		c.DBName, c.MaxOpenConnections, c.MaxIdleConnections, constant.SQLServerConnMaxLifetime, constant.SQLServerConnMaxIdleTime))
 
 	return nil
 }
@@ -60,7 +61,7 @@ func (c *Connection) Connect() error {
 func (sc *Connection) GetDB() (*sql.DB, error) {
 	if sc.ConnectionDB == nil {
 		if err := sc.Connect(); err != nil {
-			sc.Logger.Infof("ERRCONECT %s", err)
+			sc.Logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("ERRCONECT %s", err))
 			return nil, err
 		}
 	}

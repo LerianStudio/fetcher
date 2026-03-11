@@ -3,13 +3,14 @@ package rabbitmq
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/rabbitmq"
-	"github.com/LerianStudio/lib-commons/v2/commons/log"
-	"github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
-	libRabbitmq "github.com/LerianStudio/lib-commons/v2/commons/rabbitmq"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	"github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
+	libRabbitmq "github.com/LerianStudio/lib-commons/v4/commons/rabbitmq"
 )
 
 // ConsumerRepository provides an interface for Consumer related to rabbitmq.
@@ -28,14 +29,15 @@ type ConsumerRoutes struct {
 	adapter    rabbitmq.Adapter
 	routes     map[string]QueueHandlerFunc
 	numWorkers int
-	log.Logger
+	libLog.
+		Logger
 	opentelemetry.Telemetry
 	shutdownWg sync.WaitGroup
 }
 
 // NewConsumerRoutes creates a new instance of ConsumerRoutes using a RabbitMQ connection.
 // The signer parameter is optional - pass nil to disable signature verification.
-func NewConsumerRoutes(conn *libRabbitmq.RabbitMQConnection, numWorkers int, logger log.Logger, telemetry *opentelemetry.Telemetry, signer crypto.Signer) *ConsumerRoutes {
+func NewConsumerRoutes(conn *libRabbitmq.RabbitMQConnection, numWorkers int, logger libLog.Logger, telemetry *opentelemetry.Telemetry, signer crypto.Signer) *ConsumerRoutes {
 	opts := rabbitmq.DefaultOptions()
 	opts.Signer = signer
 	adapter := rabbitmq.NewRabbitMQAdapterWithOptions(conn, opts)
@@ -44,7 +46,7 @@ func NewConsumerRoutes(conn *libRabbitmq.RabbitMQConnection, numWorkers int, log
 }
 
 // NewConsumerRoutesWithAdapter creates a new instance of ConsumerRoutes using a specific RabbitMQ adapter.
-func NewConsumerRoutesWithAdapter(adapter rabbitmq.Adapter, numWorkers int, logger log.Logger, telemetry *opentelemetry.Telemetry) *ConsumerRoutes {
+func NewConsumerRoutesWithAdapter(adapter rabbitmq.Adapter, numWorkers int, logger libLog.Logger, telemetry *opentelemetry.Telemetry) *ConsumerRoutes {
 	if numWorkers <= 0 {
 		numWorkers = 5
 	}
@@ -68,7 +70,7 @@ func (cr *ConsumerRoutes) Register(queueName string, handler QueueHandlerFunc) {
 // RunConsumers starts consumers for all registered queues using RabbitMQAdapter.
 func (cr *ConsumerRoutes) RunConsumers(ctx context.Context, wg *sync.WaitGroup) error {
 	for queueName, handler := range cr.routes {
-		cr.Info("Starting consumer for queue " + queueName)
+		cr.Log(context.Background(), libLog.LevelInfo, fmt.Sprint("Starting consumer for queue "+queueName))
 
 		queueName := queueName
 		handler := handler
@@ -82,7 +84,7 @@ func (cr *ConsumerRoutes) RunConsumers(ctx context.Context, wg *sync.WaitGroup) 
 
 			err := cr.adapter.ConsumerLoop(ctx, queueName, cr.numWorkers, handler)
 			if err != nil && ctx.Err() == nil {
-				cr.Errorf("Consumer loop for queue %s exited with error: %v", queueName, err)
+				cr.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Consumer loop for queue %s exited with error: %v", queueName, err))
 			}
 		}()
 	}
@@ -92,17 +94,17 @@ func (cr *ConsumerRoutes) RunConsumers(ctx context.Context, wg *sync.WaitGroup) 
 
 // Shutdown gracefully shuts down all consumers and the RabbitMQ adapter.
 func (cr *ConsumerRoutes) Shutdown(ctx context.Context) error {
-	cr.Info("Shutting down ConsumerRoutes...")
+	cr.Log(context.Background(), libLog.LevelInfo, "Shutting down ConsumerRoutes...")
 
 	cr.shutdownWg.Wait()
 
 	// Shutdown the RabbitMQ adapter
 	if err := cr.adapter.Shutdown(ctx); err != nil {
-		cr.Errorf("Error shutting down RabbitMQ adapter: %v", err)
+		cr.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Error shutting down RabbitMQ adapter: %v", err))
 		return err
 	}
 
-	cr.Info("ConsumerRoutes shutdown complete")
+	cr.Log(context.Background(), libLog.LevelInfo, "ConsumerRoutes shutdown complete")
 
 	return nil
 }

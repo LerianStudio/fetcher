@@ -13,8 +13,9 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/model"
 	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 
-	"github.com/LerianStudio/lib-commons/v2/commons"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v4/commons"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
@@ -63,8 +64,8 @@ func (s *TestConnection) Execute(ctx context.Context, organizationID, connection
 
 	_, _, reset, ok, err := s.store.Take(ctx, key)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "connection test rate limiter error", err)
-		logger.Errorf("connection test rate limiter error id=%s org=%s: %v", connectionID, organizationID, err)
+		libOpentelemetry.HandleSpanError(span, "connection test rate limiter error", err)
+		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("connection test rate limiter error id=%s org=%s: %v", connectionID, organizationID, err))
 
 		return nil, pkg.ValidateInternalError(err, "connection")
 	} else if !ok {
@@ -83,7 +84,7 @@ func (s *TestConnection) Execute(ctx context.Context, organizationID, connection
 			waitSeconds = 1
 		}
 
-		logger.Warnf("connection test rate limited id=%s org=%s", connectionID, organizationID)
+		logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("connection test rate limited id=%s org=%s", connectionID, organizationID))
 
 		return nil, pkg.ResponseError{
 			Code:    http.StatusTooManyRequests,
@@ -94,7 +95,7 @@ func (s *TestConnection) Execute(ctx context.Context, organizationID, connection
 
 	conn, err := s.connRepo.FindByID(ctx, connectionID, organizationID)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "failed to find connection", err)
+		libOpentelemetry.HandleSpanError(span, "failed to find connection", err)
 		return nil, err
 	}
 
@@ -112,8 +113,8 @@ func (s *TestConnection) Execute(ctx context.Context, organizationID, connection
 
 	ds, err := datasource.NewDataSourceFromConnection(testCtx, conn, s.cryptor, logger)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "failed to establish datasource connection", err)
-		logger.Errorf("connection test failed id=%s org=%s", connectionID, organizationID)
+		libOpentelemetry.HandleSpanError(span, "failed to establish datasource connection", err)
+		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("connection test failed id=%s org=%s", connectionID, organizationID))
 
 		return nil, pkg.ResponseError{
 			Code:    http.StatusInternalServerError,
@@ -126,7 +127,7 @@ func (s *TestConnection) Execute(ctx context.Context, organizationID, connection
 	span.SetAttributes(attribute.Int64("app.connection_test.latency_ms", latencyMs))
 
 	if err := ds.Close(testCtx); err != nil {
-		logger.Warnf("connection test cleanup failed id=%s org=%s: %v", connectionID, organizationID, err)
+		logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("connection test cleanup failed id=%s org=%s: %v", connectionID, organizationID, err))
 	}
 
 	return &model.ConnectionTestResponse{

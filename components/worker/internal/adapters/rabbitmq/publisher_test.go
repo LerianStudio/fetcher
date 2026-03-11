@@ -6,7 +6,8 @@ import (
 	"testing"
 
 	"github.com/LerianStudio/fetcher/pkg/rabbitmq"
-	"github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v4/commons/log"
+	"github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/mock/gomock"
 )
@@ -16,7 +17,7 @@ func TestNewPublisherRoutes(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockAdapter := rabbitmq.NewMockAdapter(ctrl)
-	logger := &mockLogger{}
+	logger := log.NewNop()
 	telemetry := &opentelemetry.Telemetry{}
 
 	pr := NewPublisherRoutesWithAdapter(mockAdapter, logger, telemetry)
@@ -29,7 +30,7 @@ func TestPublisherRoutes_Publish(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockAdapter := rabbitmq.NewMockAdapter(ctrl)
-	logger := &mockLogger{}
+	logger := log.NewNop()
 	telemetry := &opentelemetry.Telemetry{}
 	ctx := context.Background()
 
@@ -59,7 +60,7 @@ func TestPublisherRoutes_Shutdown(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockAdapter := rabbitmq.NewMockAdapter(ctrl)
-	logger := &mockLogger{}
+	logger := log.NewNop()
 	telemetry := &opentelemetry.Telemetry{}
 	ctx := context.Background()
 

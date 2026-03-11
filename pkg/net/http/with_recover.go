@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"runtime/debug"
@@ -8,8 +9,8 @@ import (
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 
-	libCommons "github.com/LerianStudio/lib-commons/v2/commons"
-	libLog "github.com/LerianStudio/lib-commons/v2/commons/log"
+	libCommons "github.com/LerianStudio/lib-commons/v4/commons"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
 
 	"github.com/gofiber/fiber/v2"
 	"go.opentelemetry.io/otel/codes"
@@ -54,7 +55,7 @@ func WithRecover(opts ...RecoverMiddlewareOption) fiber.Handler {
 				stack := debug.Stack()
 				panicErr := fmt.Errorf("panic recovered: %v", r)
 
-				logger.Errorf("Panic recovered: %v\nStack trace:\n%s", r, string(stack))
+				logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Panic recovered: %v\nStack trace:\n%s", r, string(stack)))
 
 				span := trace.SpanFromContext(c.UserContext())
 				if span.IsRecording() {

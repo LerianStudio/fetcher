@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	modelJob "github.com/LerianStudio/fetcher/pkg/model/job"
-	libCrypto "github.com/LerianStudio/lib-commons/v2/commons/crypto"
+	libCrypto "github.com/LerianStudio/lib-commons/v4/commons/crypto"
 	"github.com/google/uuid"
 	"go.uber.org/mock/gomock"
 )

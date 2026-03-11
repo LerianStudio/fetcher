@@ -1,12 +1,13 @@
 package oracle
 
 import (
+	"context"
 	"database/sql"
+	"fmt"
 	"strings"
 
 	"github.com/LerianStudio/fetcher/pkg/constant"
-
-	"github.com/LerianStudio/lib-commons/v2/commons/log"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
 	_ "github.com/sijms/go-ora/v2" // Oracle driver
 )
 
@@ -24,28 +25,28 @@ type Connection struct {
 	DBName             string
 	ConnectionDB       *sql.DB
 	Connected          bool
-	Logger             log.Logger
+	Logger             libLog.Logger
 	MaxOpenConnections int
 	MaxIdleConnections int
 }
 
 // Connect initializes the connection with the Oracle DB.
 func (c *Connection) Connect() error {
-	c.Logger.Info("Connecting to Oracle...")
+	c.Logger.Log(context.Background(), libLog.LevelInfo, "Connecting to Oracle...")
 
 	db, err := sql.Open("oracle", c.ConnectionString)
 	if err != nil {
-		c.Logger.Errorf("Error opening connection: %v", err)
+		c.Logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Error opening connection: %v", err))
 		return err
 	}
 
 	if err := db.Ping(); err != nil {
 		closeErr := db.Close()
 		if closeErr != nil {
-			c.Logger.Errorf("Error closing connection: %v", closeErr)
+			c.Logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Error closing connection: %v", closeErr))
 		}
 
-		c.Logger.Errorf("Error pinging Oracle: %v", err)
+		c.Logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Error pinging Oracle: %v", err))
 
 		return err
 	}
@@ -58,8 +59,8 @@ func (c *Connection) Connect() error {
 	c.ConnectionDB = db
 	c.Connected = true
 
-	c.Logger.Infof("Connected to Oracle [%s] with pool settings (maxOpen: %d, maxIdle: %d, maxLifetime: %v, maxIdleTime: %v)",
-		c.DBName, c.MaxOpenConnections, c.MaxIdleConnections, constant.OracleConnMaxLifetime, constant.OracleConnMaxIdleTime)
+	c.Logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Connected to Oracle [%s] with pool settings (maxOpen: %d, maxIdle: %d, maxLifetime: %v, maxIdleTime: %v)",
+		c.DBName, c.MaxOpenConnections, c.MaxIdleConnections, constant.OracleConnMaxLifetime, constant.OracleConnMaxIdleTime))
 
 	return nil
 }
@@ -68,7 +69,7 @@ func (c *Connection) Connect() error {
 func (oc *Connection) GetDB() (*sql.DB, error) {
 	if oc.ConnectionDB == nil {
 		if err := oc.Connect(); err != nil {
-			oc.Logger.Infof("ERRCONECT %s", err)
+			oc.Logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("ERRCONECT %s", err))
 			return nil, err
 		}
 	}

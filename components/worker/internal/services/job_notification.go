@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"time"
 
-	libCommons "github.com/LerianStudio/lib-commons/v2/commons"
-	"github.com/LerianStudio/lib-commons/v2/commons/log"
-	libOtel "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
+	libCommons "github.com/LerianStudio/lib-commons/v4/commons"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	libOtel "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/trace"
@@ -80,12 +80,12 @@ func (uc *UseCase) publishJobNotification(
 	status string,
 	errorMetadata map[string]any,
 	opts *JobNotificationOptions,
-	logger log.Logger,
+	logger libLog.Logger,
 ) error {
 	// Skip if publisher is not configured
 	if uc.RabbitMQPublisher == nil || uc.JobEventsExchange == "" {
 		if logger != nil {
-			logger.Debug("RabbitMQ publisher not configured, skipping job notification")
+			logger.Log(context.Background(), libLog.LevelDebug, "RabbitMQ publisher not configured, skipping job notification")
 		}
 
 		return nil
@@ -137,23 +137,23 @@ func (uc *UseCase) publishJobNotification(
 
 	notificationJSON, err := json.Marshal(notification)
 	if err != nil {
-		libOtel.HandleSpanError(&notifySpan, "Error marshalling job notification", err)
-		logger.Errorf("Error marshalling job notification: %s", err.Error())
+		libOtel.HandleSpanError(notifySpan, "Error marshalling job notification", err)
+		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Error marshalling job notification: %s", err.Error()))
 
 		return fmt.Errorf("marshalling job notification: %w", err)
 	}
 
-	logger.Infof("Publishing job notification: jobId=%s, status=%s, routingKey=%s, exchange=%s",
-		message.JobID, status, routingKey, uc.JobEventsExchange)
+	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Publishing job notification: jobId=%s, status=%s, routingKey=%s, exchange=%s",
+		message.JobID, status, routingKey, uc.JobEventsExchange))
 
 	if err := uc.RabbitMQPublisher.Publish(ctx, uc.JobEventsExchange, routingKey, notificationJSON); err != nil {
-		libOtel.HandleSpanError(&notifySpan, "Error publishing job notification to RabbitMQ", err)
-		logger.Errorf("Error publishing job notification to RabbitMQ: %s", err.Error())
+		libOtel.HandleSpanError(notifySpan, "Error publishing job notification to RabbitMQ", err)
+		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Error publishing job notification to RabbitMQ: %s", err.Error()))
 
 		return fmt.Errorf("publishing job notification: %w", err)
 	}
 
-	logger.Infof("Successfully published job notification: jobId=%s, status=%s, routingKey=%s", message.JobID, status, routingKey)
+	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Successfully published job notification: jobId=%s, status=%s, routingKey=%s", message.JobID, status, routingKey))
 
 	return nil
 }

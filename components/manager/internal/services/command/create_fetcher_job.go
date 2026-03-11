@@ -16,8 +16,9 @@ import (
 	productRepo "github.com/LerianStudio/fetcher/pkg/mongodb/product"
 	"github.com/LerianStudio/fetcher/pkg/rabbitmq"
 
-	"github.com/LerianStudio/lib-commons/v2/commons"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v4/commons"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
@@ -126,15 +127,15 @@ func (s *CreateFetcherJob) Execute(ctx context.Context, organizationID uuid.UUID
 		attribute.String("app.request.organization_id", organizationID.String()),
 	)
 
-	err := libOpentelemetry.SetSpanAttributesFromStruct(&span, "app.request.payload", request)
+	err := libOpentelemetry.SetSpanAttributesFromValue(span, "app.request.payload", request, nil)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to convert fetcher request to JSON string", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to convert fetcher request to JSON string", err)
 	}
 
 	// Compute request hash for idempotency
 	requestHash, err := request.ComputeRequestHash()
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to compute request hash", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to compute request hash", err)
 		return nil, pkg.ValidateInternalError(err, "fetcher")
 	}
 
@@ -152,20 +153,20 @@ func (s *CreateFetcherJob) Execute(ctx context.Context, organizationID uuid.UUID
 		nil, // CompletedAt is nil initially
 	)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to create job entity", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to create job entity", err)
 		return nil, pkg.ValidateInternalError(err, "fetcher")
 	}
 
 	// Validate the job entity
 	if errValidation := newJob.IsValid(); errValidation != nil {
-		libOpentelemetry.HandleSpanError(&span, "Invalid request payload", errValidation)
+		libOpentelemetry.HandleSpanError(span, "Invalid request payload", errValidation)
 		return nil, errValidation
 	}
 
 	// Validate filter references against mappedFields
 	if len(newJob.Filters) > 0 {
 		if errFilters := model.ValidateFilterReferences(newJob.Filters, newJob.MappedFields); errFilters != nil {
-			libOpentelemetry.HandleSpanError(&span, "Invalid filter references", errFilters)
+			libOpentelemetry.HandleSpanError(span, "Invalid filter references", errFilters)
 
 			return nil, pkg.ValidationError{
 				EntityType: "fetcher",
@@ -180,12 +181,12 @@ func (s *CreateFetcherJob) Execute(ctx context.Context, organizationID uuid.UUID
 	// Check for duplicate within deduplication window
 	existingJob, err := s.jobRepo.FindByRequestHashWithinWindow(ctx, newJob.OrganizationID, newJob.RequestHash, DeduplicationWindowMinutes)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to check for duplicate job", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to check for duplicate job", err)
 		return nil, pkg.ValidateInternalError(err, "fetcher")
 	}
 
 	if existingJob != nil {
-		logger.Infof("Duplicate request detected, returning existing job id=%s", existingJob.ID)
+		logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Duplicate request detected, returning existing job id=%s", existingJob.ID))
 		span.SetAttributes(
 			attribute.Bool("app.request.is_duplicate", true),
 			attribute.String("app.request.existing_job_id", existingJob.ID.String()),
@@ -201,13 +202,13 @@ func (s *CreateFetcherJob) Execute(ctx context.Context, organizationID uuid.UUID
 	// Validate all referenced connections exist and are UP (test each connection)
 	connections, err := s.connRepo.FindByConfigNames(ctx, organizationID, newJob.GetDatasourceNames())
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to find connections", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to find connections", err)
 		return nil, pkg.ValidateInternalError(err, "fetcher")
 	}
 
 	// No connections found
 	if len(connections) == 0 {
-		libOpentelemetry.HandleSpanError(&span, "No connections found for the provided datasources", nil)
+		libOpentelemetry.HandleSpanError(span, "No connections found for the provided datasources", nil)
 
 		return nil, pkg.ValidationError{
 			EntityType: "fetcher",
@@ -226,7 +227,7 @@ func (s *CreateFetcherJob) Execute(ctx context.Context, organizationID uuid.UUID
 	for _, dsName := range newJob.GetDatasourceNames() {
 		if _, found := connMap[dsName]; !found {
 			err := fmt.Errorf("connection not found for datasource: %s", dsName)
-			libOpentelemetry.HandleSpanError(&span, "Connection not found", err)
+			libOpentelemetry.HandleSpanError(span, "Connection not found", err)
 
 			return nil, pkg.ValidationError{
 				EntityType: "fetcher",
@@ -239,7 +240,7 @@ func (s *CreateFetcherJob) Execute(ctx context.Context, organizationID uuid.UUID
 
 	// Validate product ownership when metadata.source is provided and productRepo is available
 	if source, ok := request.Metadata["source"].(string); ok && source != "" && s.productRepo != nil {
-		if err := s.validateProductOwnership(ctx, &span, source, organizationID, connections); err != nil {
+		if err := s.validateProductOwnership(ctx, span, source, organizationID, connections); err != nil {
 			return nil, err
 		}
 	}
@@ -247,7 +248,7 @@ func (s *CreateFetcherJob) Execute(ctx context.Context, organizationID uuid.UUID
 	// Test each connection to verify they are UP
 	for _, conn := range connections {
 		if err := s.connectionTester.TestConnection(ctx, conn); err != nil {
-			libOpentelemetry.HandleSpanError(&span, fmt.Sprintf("Connection test failed for %s", conn.ConfigName), err)
+			libOpentelemetry.HandleSpanError(span, fmt.Sprintf("Connection test failed for %s", conn.ConfigName), err)
 
 			return nil, pkg.ValidationError{
 				EntityType: "fetcher",
@@ -260,23 +261,23 @@ func (s *CreateFetcherJob) Execute(ctx context.Context, organizationID uuid.UUID
 
 	createdJob, err := s.jobRepo.Create(ctx, newJob)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to create job", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to create job", err)
 		return nil, pkg.ValidateInternalError(err, "fetcher")
 	}
 
 	span.SetAttributes(attribute.String("app.request.created_job_id", createdJob.ID.String()))
-	logger.Infof("Created fetcher job id=%s org=%s", createdJob.ID, organizationID)
+	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Created fetcher job id=%s org=%s", createdJob.ID, organizationID))
 
 	if err := s.publishToQueue(ctx, createdJob); err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to publish job to queue", err)
-		logger.Errorf("Failed to publish job to queue id=%s: %v", createdJob.ID, err)
+		libOpentelemetry.HandleSpanError(span, "Failed to publish job to queue", err)
+		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to publish job to queue id=%s: %v", createdJob.ID, err))
 
 		createdJob.SetFailedStatus("process failed: unable to publish")
 
 		_, updateErr := s.jobRepo.Update(ctx, createdJob)
 		if updateErr != nil {
-			libOpentelemetry.HandleSpanError(&span, "Failed to update job status to FAILED", updateErr)
-			logger.Errorf("Failed to update job status to FAILED for job id=%s: %v", createdJob.ID, updateErr)
+			libOpentelemetry.HandleSpanError(span, "Failed to update job status to FAILED", updateErr)
+			logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to update job status to FAILED for job id=%s: %v", createdJob.ID, updateErr))
 		}
 
 		return nil, pkg.ValidateInternalError(err, "fetcher")
@@ -292,7 +293,7 @@ func (s *CreateFetcherJob) Execute(ctx context.Context, organizationID uuid.UUID
 // validateProductOwnership validates that all connections belong to the product
 // identified by the given source code. It resolves the product by code, then checks
 // that every connection is assigned to that product.
-func (s *CreateFetcherJob) validateProductOwnership(ctx context.Context, span *trace.Span, source string, organizationID uuid.UUID, connections []*model.Connection) error {
+func (s *CreateFetcherJob) validateProductOwnership(ctx context.Context, span trace.Span, source string, organizationID uuid.UUID, connections []*model.Connection) error {
 	product, errProd := s.productRepo.FindByCode(ctx, source, organizationID)
 	if errProd != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to resolve product by code", errProd)
@@ -311,7 +312,7 @@ func (s *CreateFetcherJob) validateProductOwnership(ctx context.Context, span *t
 		}
 	}
 
-	(*span).SetAttributes(attribute.String("app.request.resolved_product_id", product.ID.String()))
+	span.SetAttributes(attribute.String("app.request.resolved_product_id", product.ID.String()))
 
 	for _, conn := range connections {
 		if conn.ProductID == nil {
@@ -357,7 +358,7 @@ func (s *CreateFetcherJob) TestConnection(ctx context.Context, conn *model.Conne
 
 	// Close the connection after test
 	if err := ds.Close(testCtx); err != nil {
-		logger.Warnf("Failed to close test connection for %s: %v", conn.ConfigName, err)
+		logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("Failed to close test connection for %s: %v", conn.ConfigName, err))
 	}
 
 	return nil

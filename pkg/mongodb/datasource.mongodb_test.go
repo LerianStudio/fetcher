@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/LerianStudio/fetcher/pkg/model/job"
-	"github.com/LerianStudio/lib-commons/v2/commons/log"
+	"github.com/LerianStudio/lib-commons/v4/commons/log"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1137,5 +1137,5 @@ func TestProcessQueryResults_FieldFiltering(t *testing.T) {
 
 // testLogger creates a logger for testing that suppresses output.
 func testLogger() log.Logger {
-	return &log.GoLogger{Level: log.ErrorLevel}
+	return &log.GoLogger{Level: log.LevelError}
 }

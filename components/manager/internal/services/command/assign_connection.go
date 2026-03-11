@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
@@ -10,8 +11,9 @@ import (
 	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 	productRepo "github.com/LerianStudio/fetcher/pkg/mongodb/product"
 
-	"github.com/LerianStudio/lib-commons/v2/commons"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v4/commons"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
@@ -62,16 +64,16 @@ func (s *AssignConnection) Execute(ctx context.Context, organizationID, connecti
 	// Persist the assignment (atomic guard: repo uses product_id: {$eq: nil} filter)
 	updated, err := s.connRepo.AssignProduct(ctx, connectionID, organizationID, productID)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to assign product to connection", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to assign product to connection", err)
 		return nil, err
 	}
 
 	if updated == nil {
-		libOpentelemetry.HandleSpanError(&span, "Connection already assigned to a product", constant.ErrConnectionAlreadyAssigned)
+		libOpentelemetry.HandleSpanError(span, "Connection already assigned to a product", constant.ErrConnectionAlreadyAssigned)
 		return nil, pkg.ValidateBusinessError(constant.ErrConnectionAlreadyAssigned, "connection")
 	}
 
-	logger.Infof("connection assigned to product connection_id=%s product_id=%s org=%s", connectionID, productID, organizationID)
+	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("connection assigned to product connection_id=%s product_id=%s org=%s", connectionID, productID, organizationID))
 
 	return updated, nil
 }

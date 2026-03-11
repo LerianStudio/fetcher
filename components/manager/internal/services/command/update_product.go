@@ -2,14 +2,16 @@ package command
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/model"
 
 	productRepo "github.com/LerianStudio/fetcher/pkg/mongodb/product"
-	"github.com/LerianStudio/lib-commons/v2/commons"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v4/commons"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
@@ -35,19 +37,19 @@ func (s *UpdateProduct) Execute(ctx context.Context, organizationID, productID u
 		attribute.String("app.request.product_id", productID.String()),
 	)
 
-	err := libOpentelemetry.SetSpanAttributesFromStruct(&span, "app.request.payload", input)
+	err := libOpentelemetry.SetSpanAttributesFromValue(span, "app.request.payload", input, nil)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to convert product input to JSON string", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to convert product input to JSON string", err)
 	}
 
 	current, err := s.productRepo.FindByID(ctx, productID, organizationID)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to find product by ID", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to find product by ID", err)
 		return nil, err
 	}
 
 	if current == nil {
-		libOpentelemetry.HandleSpanError(&span, "Product not found", constant.ErrEntityNotFound)
+		libOpentelemetry.HandleSpanError(span, "Product not found", constant.ErrEntityNotFound)
 
 		return nil, pkg.ValidateBusinessError(
 			constant.ErrEntityNotFound,
@@ -60,18 +62,18 @@ func (s *UpdateProduct) Execute(ctx context.Context, organizationID, productID u
 		input.Description,
 		input.Metadata,
 	); errPatch != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to apply patch to product", errPatch)
+		libOpentelemetry.HandleSpanError(span, "Failed to apply patch to product", errPatch)
 		return nil, errPatch
 	}
 
 	updated, err := s.productRepo.Update(ctx, current)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to update product in repository", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to update product in repository", err)
 		return nil, err
 	}
 
 	if updated == nil {
-		libOpentelemetry.HandleSpanError(&span, "Product not found after update (race condition)", constant.ErrEntityNotFound)
+		libOpentelemetry.HandleSpanError(span, "Product not found after update (race condition)", constant.ErrEntityNotFound)
 
 		return nil, pkg.ValidateBusinessError(
 			constant.ErrEntityNotFound,
@@ -79,7 +81,7 @@ func (s *UpdateProduct) Execute(ctx context.Context, organizationID, productID u
 		)
 	}
 
-	logger.Infof("Updated product id=%s org=%s", productID, organizationID)
+	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Updated product id=%s org=%s", productID, organizationID))
 
 	return updated, nil
 }

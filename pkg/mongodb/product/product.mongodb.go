@@ -14,8 +14,8 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/net/http"
 
 	"github.com/LerianStudio/lib-commons/v2/commons"
-	libMongo "github.com/LerianStudio/lib-commons/v2/commons/mongo"
 	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
+	libMongo "github.com/LerianStudio/lib-commons/v4/commons/mongo"
 
 	"github.com/google/uuid"
 	"go.mongodb.org/mongo-driver/bson"
@@ -36,7 +36,7 @@ type Repository interface {
 
 // mongoDatabaseProvider defines the interface for obtaining a MongoDB client.
 type mongoDatabaseProvider interface {
-	GetDB(ctx context.Context) (*mongo.Client, error)
+	Client(ctx context.Context) (*mongo.Client, error)
 }
 
 const (
@@ -60,7 +60,7 @@ type ProductMongoDBRepository struct {
 }
 
 // NewProductMongoDBRepository provisions a repository using the given client.
-func NewProductMongoDBRepository(mc *libMongo.MongoConnection, cfg ...RepositoryConfig) (*ProductMongoDBRepository, error) {
+func NewProductMongoDBRepository(mc *libMongo.Client, database string, cfg ...RepositoryConfig) (*ProductMongoDBRepository, error) {
 	config := RepositoryConfig{
 		InitTimeout: DefaultInitTimeout,
 	}
@@ -73,14 +73,14 @@ func NewProductMongoDBRepository(mc *libMongo.MongoConnection, cfg ...Repository
 
 	repo := &ProductMongoDBRepository{
 		connection: mc,
-		Database:   mc.Database,
+		Database:   database,
 		config:     config,
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), config.InitTimeout)
 	defer cancel()
 
-	if _, err := repo.connection.GetDB(ctx); err != nil {
+	if _, err := repo.connection.Client(ctx); err != nil {
 		return nil, err
 	}
 
@@ -108,7 +108,7 @@ func (pr *ProductMongoDBRepository) Create(ctx context.Context, p *model.Product
 		attribute.String("app.request.product_id", p.ID.String()),
 	)
 
-	db, err := pr.connection.GetDB(ctx)
+	db, err := pr.connection.Client(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
 		return nil, mongodb.MapMongoErrorToResponse(err, ctx)
@@ -171,7 +171,7 @@ func (pr *ProductMongoDBRepository) Update(ctx context.Context, p *model.Product
 	}
 	span.SetAttributes(attributes...)
 
-	db, err := pr.connection.GetDB(ctx)
+	db, err := pr.connection.Client(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
 		return nil, mongodb.MapMongoErrorToResponse(err, ctx)
@@ -235,7 +235,7 @@ func (pr *ProductMongoDBRepository) Delete(ctx context.Context, productID, organ
 	}
 	span.SetAttributes(attributes...)
 
-	db, err := pr.connection.GetDB(ctx)
+	db, err := pr.connection.Client(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
 		return mongodb.MapMongoErrorToResponse(err, ctx)
@@ -287,7 +287,7 @@ func (pr *ProductMongoDBRepository) FindByID(ctx context.Context, productID, org
 	}
 	span.SetAttributes(attributes...)
 
-	db, err := pr.connection.GetDB(ctx)
+	db, err := pr.connection.Client(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
 		return nil, mongodb.MapMongoErrorToResponse(err, ctx)
@@ -335,7 +335,7 @@ func (pr *ProductMongoDBRepository) FindByCode(ctx context.Context, code string,
 	}
 	span.SetAttributes(attributes...)
 
-	db, err := pr.connection.GetDB(ctx)
+	db, err := pr.connection.Client(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
 		return nil, mongodb.MapMongoErrorToResponse(err, ctx)
@@ -383,7 +383,7 @@ func (pr *ProductMongoDBRepository) List(ctx context.Context, organizationID uui
 		libOpentelemetry.HandleSpanError(&span, "Failed to convert filters to JSON string", err)
 	}
 
-	db, err := pr.connection.GetDB(ctx)
+	db, err := pr.connection.Client(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
 		return nil, 0, mongodb.MapMongoErrorToResponse(err, ctx)

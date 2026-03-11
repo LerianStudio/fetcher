@@ -9,10 +9,10 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/model/datasource"
 	"github.com/LerianStudio/fetcher/pkg/model/job"
 	"github.com/LerianStudio/fetcher/pkg/postgres"
-	"github.com/LerianStudio/lib-commons/v2/commons"
-	libConstant "github.com/LerianStudio/lib-commons/v2/commons/constants"
-	"github.com/LerianStudio/lib-commons/v2/commons/log"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v4/commons"
+	libConstant "github.com/LerianStudio/lib-commons/v4/commons/constants"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -37,9 +37,9 @@ func (ds *DataSourceConfigPostgres) GetType() string {
 
 // Connect establishes a connection to PostgreSQL.
 // This method is a no-op as the connection is established during factory creation.
-func (ds *DataSourceConfigPostgres) Connect(ctx context.Context, logger log.Logger) error {
+func (ds *DataSourceConfigPostgres) Connect(ctx context.Context, logger libLog.Logger) error {
 	ds.Status = libConstant.DataSourceStatusAvailable
-	logger.Infof("PostgreSQL connection ready for %s", ds.ConfigName)
+	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("PostgreSQL connection ready for %s", ds.ConfigName))
 
 	return nil
 }
@@ -58,7 +58,7 @@ func (ds *DataSourceConfigPostgres) Close(ctx context.Context) error {
 }
 
 // Query executes queries on multiple PostgreSQL tables.
-func (ds *DataSourceConfigPostgres) Query(ctx context.Context, tables map[string][]string, filters map[string]map[string]job.FilterCondition, logger log.Logger) (map[string][]map[string]any, error) {
+func (ds *DataSourceConfigPostgres) Query(ctx context.Context, tables map[string][]string, filters map[string]map[string]job.FilterCondition, logger libLog.Logger) (map[string][]map[string]any, error) {
 	result := make(map[string][]map[string]any)
 
 	// Extract unique schemas from table names
@@ -69,7 +69,7 @@ func (ds *DataSourceConfigPostgres) Query(ctx context.Context, tables map[string
 
 	schemaResult, err := ds.PostgresRepository.GetDatabaseSchema(ctx, schemas)
 	if err != nil {
-		logger.Errorf("Error getting database schema: %s", err.Error())
+		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Error getting database schema: %s", err.Error()))
 		return nil, err
 	}
 
@@ -88,13 +88,13 @@ func (ds *DataSourceConfigPostgres) Query(ctx context.Context, tables map[string
 		}
 
 		if errQuery != nil {
-			logger.Errorf("Error querying table %s: %s", table, errQuery.Error())
+			logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Error querying table %s: %s", table, errQuery.Error()))
 			return nil, errQuery
 		}
 
 		tableResult, ok := queryResult.([]map[string]any)
 		if !ok {
-			logger.Errorf("Unexpected query result type for table %s", table)
+			logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Unexpected query result type for table %s", table))
 			return nil, fmt.Errorf("unexpected query result type for table %s", table)
 		}
 
@@ -118,7 +118,7 @@ func (ds *DataSourceConfigPostgres) GetSchemaInfo(ctx context.Context, schemas [
 
 	schemaResult, err := ds.PostgresRepository.GetDatabaseSchema(ctx, schemas)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "failed to get database schema", err)
+		libOpentelemetry.HandleSpanError(span, "failed to get database schema", err)
 		return nil, fmt.Errorf("failed to get PostgreSQL schema: %w", err)
 	}
 

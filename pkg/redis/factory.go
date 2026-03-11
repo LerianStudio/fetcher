@@ -2,9 +2,11 @@
 package redis
 
 import (
+	"context"
+	"fmt"
 	"time"
 
-	"github.com/LerianStudio/lib-commons/v2/commons/log"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
 )
 
 // NewCacheWithFallback creates a cache with Redis primary and in-memory fallback.
@@ -22,7 +24,7 @@ import (
 // IMPORTANT: Caller MUST call Close() on the returned cache when done.
 func NewCacheWithFallback[T any](
 	cfg RedisConfig,
-	logger log.Logger,
+	logger libLog.Logger,
 	ttl time.Duration,
 	keyPrefix string,
 ) (Cache[T], error) {
@@ -34,7 +36,7 @@ func NewCacheWithFallback[T any](
 	redisConn, err := NewRedisConnection(cfg, logger)
 	if err != nil {
 		// Graceful degradation: log warning and use memory-only cache
-		logger.Warnf("Redis connection failed, using memory-only cache: %v", err)
+		logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("Redis connection failed, using memory-only cache: %v", err))
 		return NewInMemoryCache[T](ttl, logger), nil
 	}
 
@@ -48,7 +50,7 @@ func NewCacheWithFallback[T any](
 // Note: Redis connection failures do NOT cause a panic - they result in graceful degradation.
 func MustNewCacheWithFallback[T any](
 	cfg RedisConfig,
-	logger log.Logger,
+	logger libLog.Logger,
 	ttl time.Duration,
 	keyPrefix string,
 ) Cache[T] {

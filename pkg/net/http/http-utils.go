@@ -141,6 +141,8 @@ func parseParameters(
 			}
 
 			*endDate = parsed
+		default:
+			metadata[key] = value
 		}
 	}
 

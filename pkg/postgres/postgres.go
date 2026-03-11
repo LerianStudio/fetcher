@@ -1,11 +1,12 @@
 package postgres
 
 import (
+	"context"
 	"database/sql"
+	"fmt"
 
 	"github.com/LerianStudio/fetcher/pkg/constant"
-
-	"github.com/LerianStudio/lib-commons/v2/commons/log"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
 	_ "github.com/jackc/pgx/v5/stdlib" // Registers the "pgx" driver with database/sql via init() – required for sql.Open("pgx", ...)
 )
 
@@ -15,28 +16,28 @@ type Connection struct {
 	DBName             string
 	ConnectionDB       *sql.DB
 	Connected          bool
-	Logger             log.Logger
+	Logger             libLog.Logger
 	MaxOpenConnections int
 	MaxIdleConnections int
 }
 
 // Connect initializes the connection with the PostgreSQL DB.
 func (c *Connection) Connect() error {
-	c.Logger.Info("Connecting to PostgreSQL...")
+	c.Logger.Log(context.Background(), libLog.LevelInfo, "Connecting to PostgreSQL...")
 
 	db, err := sql.Open("pgx", c.ConnectionString)
 	if err != nil {
-		c.Logger.Errorf("Error opening connection: %v", err)
+		c.Logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Error opening connection: %v", err))
 		return err
 	}
 
 	if err := db.Ping(); err != nil {
 		closeErr := db.Close()
 		if closeErr != nil {
-			c.Logger.Errorf("Error closing connection: %v", closeErr)
+			c.Logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Error closing connection: %v", closeErr))
 		}
 
-		c.Logger.Errorf("Error pinging PostgreSQL: %v", err)
+		c.Logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Error pinging PostgreSQL: %v", err))
 
 		return err
 	}
@@ -49,8 +50,8 @@ func (c *Connection) Connect() error {
 	c.ConnectionDB = db
 	c.Connected = true
 
-	c.Logger.Infof("Connected to PostgreSQL [%s] with pool settings (maxOpen: %d, maxIdle: %d, maxLifetime: %v, maxIdleTime: %v)",
-		c.DBName, c.MaxOpenConnections, c.MaxIdleConnections, constant.PostgresConnMaxLifetime, constant.PostgresConnMaxIdleTime)
+	c.Logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Connected to PostgreSQL [%s] with pool settings (maxOpen: %d, maxIdle: %d, maxLifetime: %v, maxIdleTime: %v)",
+		c.DBName, c.MaxOpenConnections, c.MaxIdleConnections, constant.PostgresConnMaxLifetime, constant.PostgresConnMaxIdleTime))
 
 	return nil
 }
@@ -59,7 +60,7 @@ func (c *Connection) Connect() error {
 func (pc *Connection) GetDB() (*sql.DB, error) {
 	if pc.ConnectionDB == nil {
 		if err := pc.Connect(); err != nil {
-			pc.Logger.Infof("ERRCONECT %s", err)
+			pc.Logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("ERRCONECT %s", err))
 			return nil, err
 		}
 	}

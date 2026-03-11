@@ -15,8 +15,8 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/model"
 	httpUtils "github.com/LerianStudio/fetcher/pkg/net/http"
 
-	libCommons "github.com/LerianStudio/lib-commons/v2/commons"
-	libLog "github.com/LerianStudio/lib-commons/v2/commons/log"
+	libCommons "github.com/LerianStudio/lib-commons/v4/commons"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -32,7 +32,7 @@ func setupTestApp() *fiber.App {
 
 	// Middleware to inject test context with logger and tracer
 	app.Use(func(c *fiber.Ctx) error {
-		logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+		logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 		values := &libCommons.CustomContextKeyValue{
 			HeaderID: "test-request-id",
 			Logger:   logger,

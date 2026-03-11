@@ -3,8 +3,8 @@ package services
 import (
 	"context"
 
-	libCommons "github.com/LerianStudio/lib-commons/v2/commons"
-	libLog "github.com/LerianStudio/lib-commons/v2/commons/log"
+	libCommons "github.com/LerianStudio/lib-commons/v4/commons"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
 
@@ -31,7 +31,7 @@ func testContext() context.Context {
 
 // testLogger creates a logger for testing that suppresses output.
 func testLogger() *libLog.GoLogger {
-	return &libLog.GoLogger{Level: libLog.ErrorLevel}
+	return &libLog.GoLogger{Level: libLog.LevelError}
 }
 
 // testMocks holds all mock dependencies for testing.

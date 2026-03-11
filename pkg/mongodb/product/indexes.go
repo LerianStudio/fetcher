@@ -2,13 +2,15 @@ package product
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	sharedMongo "github.com/LerianStudio/fetcher/pkg/mongodb"
-	"github.com/LerianStudio/lib-commons/v2/commons"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v4/commons"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -33,11 +35,11 @@ func (pr *ProductMongoDBRepository) EnsureIndexes(ctx context.Context) error {
 		attribute.String("app.request.collection", constant.MongoCollectionProduct),
 	)
 
-	logger.Infof("Creating indexes for %s collection", constant.MongoCollectionProduct)
+	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Creating indexes for %s collection", constant.MongoCollectionProduct))
 
-	db, err := pr.connection.GetDB(ctx)
+	db, err := pr.connection.Client(ctx)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to get database", err)
 		return err
 	}
 
@@ -72,22 +74,22 @@ func (pr *ProductMongoDBRepository) EnsureIndexes(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, indexCreateTimeout)
 	defer cancel()
 
-	logger.Infof("Attempting to create %d indexes for %s collection", len(indexes), constant.MongoCollectionProduct)
+	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Attempting to create %d indexes for %s collection", len(indexes), constant.MongoCollectionProduct))
 
 	indexNames, err := coll.Indexes().CreateMany(ctx, indexes)
 	if err != nil {
 		if sharedMongo.IsIndexConflictError(err) {
-			logger.Infof("Indexes for %s already exist", constant.MongoCollectionProduct)
+			logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Indexes for %s already exist", constant.MongoCollectionProduct))
 			return nil
 		}
 
-		libOpentelemetry.HandleSpanError(&span, "Failed to create product indexes", err)
-		logger.Errorf("Failed to create indexes for %s: %v", constant.MongoCollectionProduct, err)
+		libOpentelemetry.HandleSpanError(span, "Failed to create product indexes", err)
+		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to create indexes for %s: %v", constant.MongoCollectionProduct, err))
 
 		return err
 	}
 
-	logger.Infof("Successfully created %d indexes for %s collection: %v", len(indexNames), constant.MongoCollectionProduct, indexNames)
+	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Successfully created %d indexes for %s collection: %v", len(indexNames), constant.MongoCollectionProduct, indexNames))
 
 	return nil
 }
@@ -104,11 +106,11 @@ func (pr *ProductMongoDBRepository) DropIndexes(ctx context.Context) error {
 		attribute.String("app.request.collection", constant.MongoCollectionProduct),
 	)
 
-	logger.Warnf("Dropping all custom indexes for %s collection", constant.MongoCollectionProduct)
+	logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("Dropping all custom indexes for %s collection", constant.MongoCollectionProduct))
 
-	db, err := pr.connection.GetDB(ctx)
+	db, err := pr.connection.Client(ctx)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to get database", err)
 		return err
 	}
 
@@ -119,14 +121,14 @@ func (pr *ProductMongoDBRepository) DropIndexes(ctx context.Context) error {
 
 	droppedIndexes, err := coll.Indexes().DropAll(ctx)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to drop product indexes", err)
-		logger.Errorf("Failed to drop indexes for %s: %v", constant.MongoCollectionProduct, err)
+		libOpentelemetry.HandleSpanError(span, "Failed to drop product indexes", err)
+		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to drop indexes for %s: %v", constant.MongoCollectionProduct, err))
 
 		return err
 	}
 
-	logger.Infof("Dropped indexes: %v", droppedIndexes)
-	logger.Infof("Successfully dropped all custom indexes for %s collection", constant.MongoCollectionProduct)
+	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Dropped indexes: %v", droppedIndexes))
+	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Successfully dropped all custom indexes for %s collection", constant.MongoCollectionProduct))
 
 	return nil
 }

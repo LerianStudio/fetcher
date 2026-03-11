@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/LerianStudio/fetcher/pkg/crypto"
-	libCommons "github.com/LerianStudio/lib-commons/v2/commons"
-	libConstants "github.com/LerianStudio/lib-commons/v2/commons/constants"
-	libLog "github.com/LerianStudio/lib-commons/v2/commons/log"
+	libCommons "github.com/LerianStudio/lib-commons/v4/commons"
+	libConstants "github.com/LerianStudio/lib-commons/v4/commons/constants"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -989,7 +989,7 @@ func (t *testAcknowledger) Reject(uint64, bool) error {
 }
 
 func testContextWithHeader(header string) context.Context {
-	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 	values := &libCommons.CustomContextKeyValue{
 		HeaderID: header,
 		Logger:   logger,
@@ -1137,7 +1137,7 @@ func TestRabbitMQAdapter_InvalidateChannel_ClosesAndNullifiesChannel(t *testing.
 			conn := &testRabbitConnection{channel: channel}
 			adapter := newTestAdapterWithChannel(conn, channel)
 
-			logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+			logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 			adapter.invalidateChannel(logger)
 
 			assert.Equal(t, tt.expectedCloseCalls, channel.closeCalls)
@@ -1153,7 +1153,7 @@ func TestRabbitMQAdapter_InvalidateChannel_WithNilChannel(t *testing.T) {
 	adapter := newTestAdapter(conn)
 	adapter.channel = nil
 
-	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 
 	// Should not panic
 	adapter.invalidateChannel(logger)
@@ -1184,7 +1184,7 @@ func TestRabbitMQAdapter_StartChannelWatcher_HandlesNilChannel(t *testing.T) {
 
 	conn := &testRabbitConnection{}
 	adapter := newTestAdapter(conn)
-	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 
 	// Should not panic with nil channel
 	adapter.startChannelWatcher(logger, nil)
@@ -1198,7 +1198,7 @@ func TestRabbitMQAdapter_StartChannelWatcher_NullifiesChannelOnClose(t *testing.
 	channel := newTestAMQPChannel()
 	conn := &testRabbitConnection{channel: channel}
 	adapter := newTestAdapterWithChannel(conn, channel)
-	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 
 	adapter.startChannelWatcher(logger, channel)
 
@@ -1219,7 +1219,7 @@ func TestRabbitMQAdapter_StartChannelWatcher_HandlesNilError(t *testing.T) {
 	channel := newTestAMQPChannel()
 	conn := &testRabbitConnection{channel: channel}
 	adapter := newTestAdapterWithChannel(conn, channel)
-	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 
 	adapter.startChannelWatcher(logger, channel)
 
@@ -1765,7 +1765,7 @@ func TestRabbitMQAdapter_EnsureChannel_ReturnsExistingChannel(t *testing.T) {
 	conn := &testRabbitConnection{channel: channel}
 	adapter := newTestAdapterWithChannel(conn, channel)
 
-	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 	ch, err := adapter.ensureChannel(nil, logger)
 
 	require.NoError(t, err)
@@ -1786,7 +1786,7 @@ func TestRabbitMQAdapter_EnsureChannel_ReconnectsWhenChannelClosed(t *testing.T)
 
 	adapter := newTestAdapterWithChannel(conn, closedChannel)
 
-	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 	ch, err := adapter.ensureChannel(nil, logger)
 
 	require.NoError(t, err)
@@ -1812,7 +1812,7 @@ func TestRabbitMQAdapter_EnsureChannel_RetriesOnFailure(t *testing.T) {
 		circuitBreaker: newCircuitBreaker(opts.CircuitBreakerThreshold, opts.CircuitBreakerCooldown),
 	}
 
-	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 	ch, err := adapter.ensureChannel(nil, logger)
 
 	require.NoError(t, err)
@@ -2038,7 +2038,7 @@ func TestRabbitMQAdapter_ConsumerLoop_VerifiesSignatureSuccessfully(t *testing.T
 		Body: []byte(`{"data":"test"}`),
 		Headers: amqp.Table{
 			HeaderMessageSignature:   "valid-signature",
-			HeaderSignatureTimestamp: "1704067200",
+			HeaderSignatureTimestamp: strconv.FormatInt(time.Now().Unix(), 10),
 			HeaderSignatureVersion:   "v1",
 		},
 		Acknowledger: ack,
@@ -2157,7 +2157,7 @@ func TestRabbitMQAdapter_ConsumerLoop_NacksOnInvalidSignature(t *testing.T) {
 		Body: []byte(`{"data":"test"}`),
 		Headers: amqp.Table{
 			HeaderMessageSignature:   "invalid-signature",
-			HeaderSignatureTimestamp: "1704067200",
+			HeaderSignatureTimestamp: strconv.FormatInt(time.Now().Unix(), 10),
 			HeaderSignatureVersion:   "v1",
 		},
 		Acknowledger: ack,
@@ -2215,7 +2215,7 @@ func TestRabbitMQAdapter_ConsumerLoop_NacksOnVersionMismatch(t *testing.T) {
 		Body: []byte(`{"data":"test"}`),
 		Headers: amqp.Table{
 			HeaderMessageSignature:   "some-signature",
-			HeaderSignatureTimestamp: "1704067200",
+			HeaderSignatureTimestamp: strconv.FormatInt(time.Now().Unix(), 10),
 			HeaderSignatureVersion:   "v1", // Message has v1
 		},
 		Acknowledger: ack,
@@ -2331,7 +2331,7 @@ func TestVerifyMessageSignature_MissingSignatureHeader(t *testing.T) {
 	opts.Signer = mockSigner
 
 	adapter := &RabbitMQAdapter{options: opts}
-	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 
 	headers := map[string]any{
 		HeaderSignatureTimestamp: "1704067200",
@@ -2357,7 +2357,7 @@ func TestVerifyMessageSignature_MissingTimestampHeader(t *testing.T) {
 	opts.Signer = mockSigner
 
 	adapter := &RabbitMQAdapter{options: opts}
-	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 
 	headers := map[string]any{
 		HeaderMessageSignature: "some-signature",
@@ -2383,11 +2383,11 @@ func TestVerifyMessageSignature_MissingVersionHeader(t *testing.T) {
 	opts.Signer = mockSigner
 
 	adapter := &RabbitMQAdapter{options: opts}
-	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 
 	headers := map[string]any{
 		HeaderMessageSignature:   "some-signature",
-		HeaderSignatureTimestamp: "1704067200",
+		HeaderSignatureTimestamp: strconv.FormatInt(time.Now().Unix(), 10),
 	}
 
 	err := adapter.verifyMessageSignature([]byte(`{}`), headers, logger, nil)
@@ -2409,7 +2409,7 @@ func TestVerifyMessageSignature_InvalidTimestampFormat(t *testing.T) {
 	opts.Signer = mockSigner
 
 	adapter := &RabbitMQAdapter{options: opts}
-	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 
 	headers := map[string]any{
 		HeaderMessageSignature:   "some-signature",
@@ -2438,11 +2438,11 @@ func TestVerifyMessageSignature_TimestampAsInt64(t *testing.T) {
 	opts.Signer = mockSigner
 
 	adapter := &RabbitMQAdapter{options: opts}
-	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 
 	headers := map[string]any{
 		HeaderMessageSignature:   "valid-signature",
-		HeaderSignatureTimestamp: int64(1704067200),
+		HeaderSignatureTimestamp: time.Now().Unix(),
 		HeaderSignatureVersion:   "v1",
 	}
 
@@ -2465,11 +2465,11 @@ func TestVerifyMessageSignature_TimestampAsInt(t *testing.T) {
 	opts.Signer = mockSigner
 
 	adapter := &RabbitMQAdapter{options: opts}
-	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 
 	headers := map[string]any{
 		HeaderMessageSignature:   "valid-signature",
-		HeaderSignatureTimestamp: int(1704067200),
+		HeaderSignatureTimestamp: int(time.Now().Unix()),
 		HeaderSignatureVersion:   "v1",
 	}
 
@@ -2490,11 +2490,11 @@ func TestVerifyMessageSignature_NonStringSignature(t *testing.T) {
 	opts.Signer = mockSigner
 
 	adapter := &RabbitMQAdapter{options: opts}
-	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 
 	headers := map[string]any{
 		HeaderMessageSignature:   12345, // Non-string
-		HeaderSignatureTimestamp: "1704067200",
+		HeaderSignatureTimestamp: strconv.FormatInt(time.Now().Unix(), 10),
 		HeaderSignatureVersion:   "v1",
 	}
 
@@ -2517,11 +2517,11 @@ func TestVerifyMessageSignature_NonStringVersion(t *testing.T) {
 	opts.Signer = mockSigner
 
 	adapter := &RabbitMQAdapter{options: opts}
-	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 
 	headers := map[string]any{
 		HeaderMessageSignature:   "some-signature",
-		HeaderSignatureTimestamp: "1704067200",
+		HeaderSignatureTimestamp: strconv.FormatInt(time.Now().Unix(), 10),
 		HeaderSignatureVersion:   123, // Non-string
 	}
 
@@ -2544,7 +2544,7 @@ func TestVerifyMessageSignature_UnsupportedTimestampType(t *testing.T) {
 	opts.Signer = mockSigner
 
 	adapter := &RabbitMQAdapter{options: opts}
-	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 
 	headers := map[string]any{
 		HeaderMessageSignature:   "some-signature",

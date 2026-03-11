@@ -8,8 +8,8 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/LerianStudio/fetcher/pkg/model/job"
-	libCommons "github.com/LerianStudio/lib-commons/v2/commons"
-	libLog "github.com/LerianStudio/lib-commons/v2/commons/log"
+	libCommons "github.com/LerianStudio/lib-commons/v4/commons"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
@@ -17,7 +17,7 @@ import (
 
 // testContext creates a context with proper tracking values for testing
 func testContext() context.Context {
-	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 	values := &libCommons.CustomContextKeyValue{
 		HeaderID: "test-request-id",
 		Logger:   logger,
@@ -28,7 +28,7 @@ func testContext() context.Context {
 
 // testLogger creates a logger for testing
 func testLogger() *libLog.GoLogger {
-	return &libLog.GoLogger{Level: libLog.ErrorLevel}
+	return &libLog.GoLogger{Level: libLog.LevelError}
 }
 
 // setupMockDB creates a mock database connection for testing

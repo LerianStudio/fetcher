@@ -1,16 +1,22 @@
 package bootstrap
 
 import (
-	"github.com/LerianStudio/lib-commons/v2/commons"
-	libCommonsLicense "github.com/LerianStudio/lib-commons/v2/commons/license"
-	"github.com/LerianStudio/lib-commons/v2/commons/log"
+	"context"
+
+	"github.com/LerianStudio/lib-commons/v4/commons"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
 )
+
+type licenseTerminator interface {
+	Terminate(msg string)
+}
 
 // Service is the application glue where we put all top level components to be used.
 type Service struct {
 	*MultiQueueConsumer
-	log.Logger
-	licenseShutdown *libCommonsLicense.ManagerShutdown
+	libLog.
+		Logger
+	licenseShutdown licenseTerminator
 }
 
 // Run starts the application.
@@ -22,12 +28,14 @@ func (app *Service) Run() {
 	).Run()
 
 	// Graceful shutdown
-	app.Info("Starting graceful shutdown...")
+	app.Log(context.Background(), libLog.LevelInfo,
 
-	// After all consumers are done, shutdown license
+		// After all consumers are done, shutdown license
+		"Starting graceful shutdown...")
+
 	if app.licenseShutdown != nil {
 		app.licenseShutdown.Terminate("Consumers are done.")
 	}
 
-	app.Info("Graceful shutdown complete")
+	app.Log(context.Background(), libLog.LevelInfo, "Graceful shutdown complete")
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	in2 "github.com/LerianStudio/fetcher/components/manager/internal/adapters/http/in"
@@ -25,10 +26,12 @@ import (
 	redisCache "github.com/LerianStudio/fetcher/pkg/redis"
 
 	"github.com/LerianStudio/lib-auth/v2/auth/middleware"
-	mongoDB "github.com/LerianStudio/lib-commons/v2/commons/mongo"
-	libOtel "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
-	libRabbitmq "github.com/LerianStudio/lib-commons/v2/commons/rabbitmq"
-	"github.com/LerianStudio/lib-commons/v2/commons/zap"
+	libZapV2 "github.com/LerianStudio/lib-commons/v2/commons/zap"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	libMongo "github.com/LerianStudio/lib-commons/v4/commons/mongo"
+	libOtel "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
+	libRabbitmq "github.com/LerianStudio/lib-commons/v4/commons/rabbitmq"
+	"github.com/LerianStudio/lib-commons/v4/commons/zap"
 	libLicense "github.com/LerianStudio/lib-license-go/v2/middleware"
 )
 
@@ -92,10 +95,17 @@ func InitServers() *Service {
 	ctx := context.Background()
 
 	// Init Logger
-	logger := zap.InitializeLogger()
+	logger, err := zap.New(zap.Config{
+		Environment:     resolveZapEnvironment(cfg.EnvName),
+		Level:           cfg.LogLevel,
+		OTelLibraryName: cfg.OtelLibraryName,
+	})
+	if err != nil {
+		panic(err)
+	}
 
 	// Init OpenTelemetry telemetry
-	telemetry := libOtel.InitializeTelemetry(&libOtel.TelemetryConfig{
+	telemetry, err := libOtel.NewTelemetry(libOtel.TelemetryConfig{
 		LibraryName:               cfg.OtelLibraryName,
 		ServiceName:               cfg.OtelServiceName,
 		ServiceVersion:            cfg.OtelServiceVersion,
@@ -104,6 +114,13 @@ func InitServers() *Service {
 		EnableTelemetry:           cfg.EnableTelemetry,
 		Logger:                    logger,
 	})
+	if err != nil {
+		panic(err)
+	}
+
+	if err := telemetry.ApplyGlobals(); err != nil {
+		panic(err)
+	}
 
 	// Init MongoDB
 	escapedUser := url.PathEscape(cfg.MongoDBUser)
@@ -111,70 +128,73 @@ func InitServers() *Service {
 	mongoSource := fmt.Sprintf("%s://%s:%s@%s:%s",
 		cfg.MongoURI, escapedUser, escapedPass, cfg.MongoDBHost, cfg.MongoDBPort)
 
-	mongoConnection := &mongoDB.MongoConnection{
-		ConnectionStringSource: mongoSource,
-		Database:               cfg.MongoDBName,
-		Logger:                 logger,
-	}
-
-	connectionRepository, err := connection.NewConnectionMongoDBRepository(mongoConnection)
+	mongoConnection, err := libMongo.NewClient(ctx, libMongo.Config{
+		URI:      mongoSource,
+		Database: cfg.MongoDBName,
+		Logger:   logger,
+	})
 	if err != nil {
-		logger.Fatalf("Failed to create MongoDB repository: %v", err)
+		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to initialize MongoDB client: %v", err))
 	}
 
-	logger.Info("Ensuring MongoDB indexes exist for connections...")
+	connectionRepository, err := connection.NewConnectionMongoDBRepository(mongoConnection, cfg.MongoDBName)
+	if err != nil {
+		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to create MongoDB repository: %v", err))
+	}
+
+	logger.Log(context.Background(), libLog.LevelInfo, "Ensuring MongoDB indexes exist for connections...")
 
 	if errConnRepo := connectionRepository.EnsureIndexes(ctx); errConnRepo != nil {
-		logger.Fatalf("Failed to ensure MongoDB indexes: %v", errConnRepo)
+		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to ensure MongoDB indexes: %v", errConnRepo))
 	}
 
 	// Init Job repository
-	jobRepository, err := job.NewJobMongoDBRepository(mongoConnection)
+	jobRepository, err := job.NewJobMongoDBRepository(mongoConnection, cfg.MongoDBName)
 	if err != nil {
-		logger.Fatalf("Failed to create Job MongoDB repository: %v", err)
+		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to create Job MongoDB repository: %v", err))
 	}
 
-	logger.Info("Ensuring MongoDB indexes exist for jobs...")
+	logger.Log(context.Background(), libLog.LevelInfo, "Ensuring MongoDB indexes exist for jobs...")
 
 	if errJobRepo := jobRepository.EnsureIndexes(ctx); errJobRepo != nil {
-		logger.Fatalf("Failed to ensure Job indexes: %v", errJobRepo)
+		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to ensure Job indexes: %v", errJobRepo))
 	}
 
 	// Init Product repository
-	productRepository, err := product.NewProductMongoDBRepository(mongoConnection)
+	productRepository, err := product.NewProductMongoDBRepository(mongoConnection, cfg.MongoDBName)
 	if err != nil {
-		logger.Fatalf("Failed to create Product MongoDB repository: %v", err)
+		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to create Product MongoDB repository: %v", err))
 	}
 
-	logger.Info("Ensuring MongoDB indexes exist for products...")
+	logger.Log(context.Background(), libLog.LevelInfo, "Ensuring MongoDB indexes exist for products...")
 
 	if errProdRepo := productRepository.EnsureIndexes(ctx); errProdRepo != nil {
-		logger.Fatalf("Failed to ensure Product indexes: %v", errProdRepo)
+		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to ensure Product indexes: %v", errProdRepo))
 	}
 
 	// Init key deriver for cryptographic key segregation
 	masterKey, err := crypto.DecodeMasterKey(cfg.AppEncryptionKey)
 	if err != nil {
-		logger.Fatalf("Failed to decode master encryption key: %v", err)
+		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to decode master encryption key: %v", err))
 	}
 
 	keyDeriver, err := crypto.NewHKDFKeyDeriver(masterKey)
 	if err != nil {
-		logger.Fatalf("Failed to initialize key deriver: %v", err)
+		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to initialize key deriver: %v", err))
 	}
 
-	logger.Info("Key derivation initialized successfully")
+	logger.Log(context.Background(), libLog.LevelInfo, "Key derivation initialized successfully")
 
 	// Init crypto service with derived credential key
 	cryptoService, err := crypto.NewAESGCMService(keyDeriver.GetCredentialKey(), cfg.AppEncryptionKeyVersion)
 	if err != nil {
-		logger.Fatalf("Failed to initialize crypto service: %v", err)
+		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to initialize crypto service: %v", err))
 	}
 
 	// Init message signer for RabbitMQ with derived internal HMAC key
 	cryptoWithInternalHMAC, err := crypto.NewHMACSigner(keyDeriver.GetInternalHMACKey(), crypto.SignatureVersion)
 	if err != nil {
-		logger.Fatalf("Failed to initialize message signer: %v", err)
+		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to initialize message signer: %v", err))
 	}
 
 	// Init RabbitMQ
@@ -199,14 +219,16 @@ func InitServers() *Service {
 	rabbitMQAdapter := rabbitmq.NewRabbitMQAdapterWithOptions(rabbitMQConnection, rabbitMQOptions)
 
 	// Init Auth middleware client
-	authClient := middleware.NewAuthClient(cfg.AuthAddress, cfg.AuthEnabled, &logger)
+	authLogger := libZapV2.InitializeLogger()
+	authClient := middleware.NewAuthClient(cfg.AuthAddress, cfg.AuthEnabled, &authLogger)
 
 	// Init License middleware client
+	licenseLogger := libZapV2.InitializeLogger()
 	licenseClient := libLicense.NewLicenseClient(
 		constant.ApplicationName,
 		cfg.LicenseKey,
 		cfg.OrganizationIDs,
-		&logger,
+		&licenseLogger,
 	)
 
 	// Init rate limiter for connection tests
@@ -234,7 +256,7 @@ func InitServers() *Service {
 	)
 	if errCache != nil {
 		// This should never happen as NewCacheWithFallback handles Redis failures gracefully
-		logger.Fatalf("Failed to initialize cache: %v", errCache)
+		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to initialize cache: %v", errCache))
 	}
 
 	schemaCache = cacheRepo.NewSchemaCache(genericCache, schemaCacheTTL)
@@ -336,4 +358,21 @@ func getRedisDB(dbStr string) int {
 	}
 
 	return db
+}
+
+func resolveZapEnvironment(env string) zap.Environment {
+	switch strings.ToLower(strings.TrimSpace(env)) {
+	case "production", "prod":
+		return zap.EnvironmentProduction
+	case "staging", "stage":
+		return zap.EnvironmentStaging
+	case "uat":
+		return zap.EnvironmentUAT
+	case "development", "dev":
+		return zap.EnvironmentDevelopment
+	case "local":
+		return zap.EnvironmentLocal
+	default:
+		return zap.EnvironmentLocal
+	}
 }

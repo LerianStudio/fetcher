@@ -20,6 +20,7 @@ import (
 // Note: Custom TLS configs registered via mysql.RegisterTLSConfig() are NOT
 // supported through this validation as they require code changes to register.
 var validMySQLModes = map[string]struct{}{
+	"":            {}, // Driver default (same as false)
 	"false":       {}, // Explicitly disable TLS
 	"true":        {}, // Enable TLS with certificate verification
 	"skip-verify": {}, // Enable TLS, skip certificate verification (INSECURE)
