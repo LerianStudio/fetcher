@@ -12,11 +12,14 @@ WORKDIR /fetcher
 # Copy only go.mod and go.sum first to cache dependencies
 COPY go.mod go.sum ./
 
-# Download Go modules using GitHub token from BuildKit secret
-RUN --mount=type=secret,id=github_token \
-  GITHUB_TOKEN=$(cat /run/secrets/github_token) && \
-  printf "machine github.com\nlogin x-oauth-basic\npassword %s\n" "$GITHUB_TOKEN" > ~/.netrc && \
-  go mod download && rm ~/.netrc
+# Optional GitHub token for private module download.
+ARG GITHUB_TOKEN=""
+
+# Download Go modules.
+RUN if [ -n "$GITHUB_TOKEN" ]; then \
+    printf "machine github.com\nlogin x-oauth-basic\npassword %s\n" "$GITHUB_TOKEN" > ~/.netrc; \
+  fi && \
+  go mod download && rm -f ~/.netrc
 
 # Copy only necessary source files for worker component
 COPY pkg/ pkg/

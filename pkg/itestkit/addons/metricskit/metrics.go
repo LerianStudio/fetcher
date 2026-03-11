@@ -51,6 +51,7 @@ func NewChaosMetrics() *ChaosMetrics {
 func (m *ChaosMetrics) StartTest() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	m.TestStartTime = time.Now()
 }
 
@@ -58,6 +59,7 @@ func (m *ChaosMetrics) StartTest() {
 func (m *ChaosMetrics) EndTest() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	m.TestEndTime = time.Now()
 }
 
@@ -65,6 +67,7 @@ func (m *ChaosMetrics) EndTest() {
 func (m *ChaosMetrics) StartChaos() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	m.ChaosStartTime = time.Now()
 }
 
@@ -72,6 +75,7 @@ func (m *ChaosMetrics) StartChaos() {
 func (m *ChaosMetrics) EndChaos() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	m.ChaosEndTime = time.Now()
 }
 
@@ -88,6 +92,7 @@ func (m *ChaosMetrics) RecordRequest(success bool, timeout bool, latency time.Du
 	if latency < m.MinLatency {
 		m.MinLatency = latency
 	}
+
 	if latency > m.MaxLatency {
 		m.MaxLatency = latency
 	}
@@ -121,6 +126,7 @@ func (m *ChaosMetrics) GetErrorCounts() map[ErrorCategory]int {
 	if m.ErrorClassifier == nil {
 		return make(map[ErrorCategory]int)
 	}
+
 	return m.ErrorClassifier.GetCategoryCounts()
 }
 
@@ -128,6 +134,7 @@ func (m *ChaosMetrics) GetErrorCounts() map[ErrorCategory]int {
 func (m *ChaosMetrics) GetTotalRequests() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	return m.TotalRequests
 }
 
@@ -135,6 +142,7 @@ func (m *ChaosMetrics) GetTotalRequests() int {
 func (m *ChaosMetrics) GetFailedRequests() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	return m.FailedRequests
 }
 
@@ -142,6 +150,7 @@ func (m *ChaosMetrics) GetFailedRequests() int {
 func (m *ChaosMetrics) GetTimeoutRequests() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	return m.TimeoutRequests
 }
 
@@ -153,6 +162,7 @@ func (m *ChaosMetrics) GetMinLatency() time.Duration {
 	if m.TotalRequests == 0 {
 		return 0
 	}
+
 	return m.MinLatency
 }
 
@@ -164,6 +174,7 @@ func (m *ChaosMetrics) SuccessRate() float64 {
 	if m.TotalRequests == 0 {
 		return 0
 	}
+
 	return float64(m.SuccessfulRequests) / float64(m.TotalRequests) * 100
 }
 
@@ -175,6 +186,7 @@ func (m *ChaosMetrics) AverageLatency() time.Duration {
 	if m.TotalRequests == 0 {
 		return 0
 	}
+
 	return m.TotalLatency / time.Duration(m.TotalRequests)
 }
 
@@ -187,9 +199,11 @@ func (m *ChaosMetrics) ThroughputRPS() float64 {
 	if duration <= 0 {
 		duration = time.Since(m.TestStartTime)
 	}
+
 	if duration <= 0 {
 		return 0
 	}
+
 	return float64(m.TotalRequests) / duration.Seconds()
 }
 
@@ -202,9 +216,11 @@ func (m *ChaosMetrics) SuccessfulThroughputRPS() float64 {
 	if duration <= 0 {
 		duration = time.Since(m.TestStartTime)
 	}
+
 	if duration <= 0 {
 		return 0
 	}
+
 	return float64(m.SuccessfulRequests) / duration.Seconds()
 }
 
@@ -219,9 +235,11 @@ func (m *ChaosMetrics) ChaosThroughputRPS() float64 {
 			duration = time.Since(m.ChaosStartTime)
 		}
 	}
+
 	if duration <= 0 {
 		return 0
 	}
+
 	return float64(m.TotalRequests) / duration.Seconds()
 }
 
@@ -233,6 +251,7 @@ func (m *ChaosMetrics) ChaosDuration() time.Duration {
 	if m.ChaosEndTime.IsZero() {
 		return time.Since(m.ChaosStartTime)
 	}
+
 	return m.ChaosEndTime.Sub(m.ChaosStartTime)
 }
 
@@ -244,6 +263,7 @@ func (m *ChaosMetrics) TestDuration() time.Duration {
 	if m.TestEndTime.IsZero() {
 		return time.Since(m.TestStartTime)
 	}
+
 	return m.TestEndTime.Sub(m.TestStartTime)
 }
 
@@ -256,6 +276,7 @@ func (m *ChaosMetrics) Percentile(p float64) time.Duration {
 	if p < 0 || p > 100 {
 		return 0
 	}
+
 	if len(m.Latencies) == 0 {
 		return 0
 	}
@@ -284,6 +305,7 @@ func (m *ChaosMetrics) Percentile(p float64) time.Duration {
 
 	result := sorted[index]
 	m.percentileCache[p] = result
+
 	return result
 }
 

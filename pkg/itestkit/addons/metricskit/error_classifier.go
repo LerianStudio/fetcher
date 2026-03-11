@@ -109,6 +109,7 @@ func (ec *ErrorClassifier) GetCategoryCounts() map[ErrorCategory]int {
 	for k, v := range ec.counts {
 		result[k] = v
 	}
+
 	return result
 }
 

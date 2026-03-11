@@ -73,6 +73,7 @@ func NewToxiproxyChaos(ctx context.Context, cfg ChaosConfig, networkName string)
 		_ = c.Terminate(ctx)
 		return nil, err
 	}
+
 	port, err := c.MappedPort(ctx, "8474/tcp")
 	if err != nil {
 		_ = c.Terminate(ctx)
@@ -103,16 +104,19 @@ func (t *toxiproxyChaos) CreateProxy(ctx context.Context, name string, upstream 
 
 	// Create proxy listening on the allocated port inside the container
 	listenAddr := fmt.Sprintf("0.0.0.0:%d", internalPort)
+
 	p, err := t.client.CreateProxy(name, listenAddr, upstream)
 	if err != nil {
 		return ProxyRef{}, err
 	}
+
 	t.proxies[name] = p
 
 	// If we have a network alias, use internal address for container-to-container communication
 	if t.networkAlias != "" {
 		internalAddr := fmt.Sprintf("%s:%d", t.networkAlias, internalPort)
 		t.proxyMappings[name] = internalAddr
+
 		return ProxyRef{Name: name, ListenAddr: internalAddr, Upstream: upstream}, nil
 	}
 
@@ -145,6 +149,7 @@ func (t *toxiproxyChaos) AddLatency(ctx context.Context, proxyName string, laten
 			"jitter":  int(jitter / time.Millisecond),
 		},
 	)
+
 	return err
 }
 
@@ -163,6 +168,7 @@ func (t *toxiproxyChaos) CutConnection(ctx context.Context, proxyName string) er
 			"timeout": 1,
 		},
 	)
+
 	return err
 }
 
@@ -181,6 +187,7 @@ func (t *toxiproxyChaos) AddTimeout(ctx context.Context, proxyName string, timeo
 			"timeout": int(timeout / time.Millisecond),
 		},
 	)
+
 	return err
 }
 
@@ -199,6 +206,7 @@ func (t *toxiproxyChaos) AddBandwidth(ctx context.Context, proxyName string, rat
 			"rate": rateKBps,
 		},
 	)
+
 	return err
 }
 
@@ -207,6 +215,7 @@ func (t *toxiproxyChaos) RemoveToxic(ctx context.Context, proxyName, toxicName s
 	if p == nil {
 		return fmt.Errorf("proxy not found: %s", proxyName)
 	}
+
 	return p.RemoveToxic(toxicName)
 }
 
@@ -226,10 +235,12 @@ func (t *toxiproxyChaos) RemoveAllToxics(ctx context.Context, proxyName string) 
 		if toxic.Name == "" {
 			continue
 		}
+
 		if err := p.RemoveToxic(toxic.Name); err != nil {
 			return err
 		}
 	}
+
 	return nil
 }
 
@@ -237,8 +248,10 @@ func (t *toxiproxyChaos) Close(ctx context.Context) error {
 	for _, p := range t.proxies {
 		_ = p.Delete()
 	}
+
 	if t.container != nil {
 		return t.container.Terminate(ctx)
 	}
+
 	return nil
 }

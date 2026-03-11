@@ -51,6 +51,7 @@ func (a *ChaosAssertions) SuccessRateAbove(threshold float64) *ChaosAssertions {
 	if !passed {
 		a.failed = true
 	}
+
 	return a
 }
 
@@ -70,6 +71,7 @@ func (a *ChaosAssertions) P99Below(threshold time.Duration) *ChaosAssertions {
 	if !passed {
 		a.failed = true
 	}
+
 	return a
 }
 
@@ -89,6 +91,7 @@ func (a *ChaosAssertions) P95Below(threshold time.Duration) *ChaosAssertions {
 	if !passed {
 		a.failed = true
 	}
+
 	return a
 }
 
@@ -108,6 +111,7 @@ func (a *ChaosAssertions) P50Below(threshold time.Duration) *ChaosAssertions {
 	if !passed {
 		a.failed = true
 	}
+
 	return a
 }
 
@@ -127,6 +131,7 @@ func (a *ChaosAssertions) AverageLatencyBelow(threshold time.Duration) *ChaosAss
 	if !passed {
 		a.failed = true
 	}
+
 	return a
 }
 
@@ -146,6 +151,7 @@ func (a *ChaosAssertions) ThroughputAbove(threshold float64) *ChaosAssertions {
 	if !passed {
 		a.failed = true
 	}
+
 	return a
 }
 
@@ -165,6 +171,7 @@ func (a *ChaosAssertions) TimeoutsBelow(threshold int) *ChaosAssertions {
 	if !passed {
 		a.failed = true
 	}
+
 	return a
 }
 
@@ -184,6 +191,7 @@ func (a *ChaosAssertions) FailuresBelow(threshold int) *ChaosAssertions {
 	if !passed {
 		a.failed = true
 	}
+
 	return a
 }
 
@@ -203,6 +211,7 @@ func (a *ChaosAssertions) MinRequestsReached(threshold int) *ChaosAssertions {
 	if !passed {
 		a.failed = true
 	}
+
 	return a
 }
 
@@ -224,11 +233,13 @@ func (a *ChaosAssertions) Results() []AssertionResult {
 // FailedResults returns only the failed assertions.
 func (a *ChaosAssertions) FailedResults() []AssertionResult {
 	var failed []AssertionResult
+
 	for _, r := range a.results {
 		if !r.Passed {
 			failed = append(failed, r)
 		}
 	}
+
 	return failed
 }
 
@@ -237,13 +248,14 @@ func (a *ChaosAssertions) Summary() string {
 	var sb strings.Builder
 
 	passed := 0
+
 	for _, r := range a.results {
 		if r.Passed {
 			passed++
 		}
 	}
 
-	sb.WriteString(fmt.Sprintf("Assertions: %d/%d passed\n", passed, len(a.results)))
+	fmt.Fprintf(&sb, "Assertions: %d/%d passed\n", passed, len(a.results))
 	sb.WriteString(strings.Repeat("-", 50) + "\n")
 
 	for _, r := range a.results {
@@ -251,8 +263,9 @@ func (a *ChaosAssertions) Summary() string {
 		if !r.Passed {
 			status = "FAIL"
 		}
-		sb.WriteString(fmt.Sprintf("[%s] %s: %s (expected %s, got %s)\n",
-			status, r.Name, r.Message, r.Expected, r.Actual))
+
+		fmt.Fprintf(&sb, "[%s] %s: %s (expected %s, got %s)\n",
+			status, r.Name, r.Message, r.Expected, r.Actual)
 	}
 
 	return sb.String()

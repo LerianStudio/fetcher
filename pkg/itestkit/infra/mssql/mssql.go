@@ -44,20 +44,25 @@ func NewMSSQLInfra(cfg MSSQLConfig) *MSSQLInfra {
 	if cfg.Image == "" {
 		cfg.Image = "mcr.microsoft.com/mssql/server:2022-latest"
 	}
+
 	if cfg.Password == "" {
 		cfg.Password = "YourStrong@Passw0rd"
 	}
+
 	if cfg.Name == "" {
 		cfg.Name = "default"
 	}
+
 	if cfg.ProxyName == "" {
 		cfg.ProxyName = "mssql-" + cfg.Name
 	}
+
 	return &MSSQLInfra{cfg: cfg}
 }
 
 func (m *MSSQLInfra) Start(ctx context.Context, env *itestkit.Env) error {
 	opts := defaultMSSQLOptions()
+
 	for _, opt := range m.cfg.Options {
 		if opt != nil {
 			opt(opts)
@@ -88,12 +93,14 @@ func (m *MSSQLInfra) Start(ctx context.Context, env *itestkit.Env) error {
 	if err != nil {
 		return err
 	}
+
 	m.container = c
 
 	host, err := c.Host(ctx)
 	if err != nil {
 		return err
 	}
+
 	port, err := c.MappedPort(ctx, "1433/tcp")
 	if err != nil {
 		return err
@@ -112,10 +119,12 @@ func (m *MSSQLInfra) Start(ctx context.Context, env *itestkit.Env) error {
 			// Fallback to host.docker.internal for backward compatibility
 			proxyUpstream = fmt.Sprintf("host.docker.internal:%s", port.Port())
 		}
+
 		ref, err := env.Chaos.CreateProxy(ctx, m.cfg.ProxyName, proxyUpstream)
 		if err != nil {
 			return err
 		}
+
 		finalAddr = ref.ListenAddr
 		proxyListen = ref.ListenAddr
 	}
@@ -131,6 +140,7 @@ func (m *MSSQLInfra) Start(ctx context.Context, env *itestkit.Env) error {
 		DSN:         dsn,
 	}
 	m.endpoint = &endpoint
+
 	return nil
 }
 
@@ -138,6 +148,7 @@ func (m *MSSQLInfra) Endpoint() (MSSQLEndpoint, error) {
 	if m.endpoint == nil {
 		return MSSQLEndpoint{}, fmt.Errorf("mssql endpoint not ready")
 	}
+
 	return *m.endpoint, nil
 }
 
@@ -146,6 +157,7 @@ func (m *MSSQLInfra) DSN() (string, error) {
 	if err != nil {
 		return "", err
 	}
+
 	return endpoint.DSN, nil
 }
 
@@ -170,7 +182,9 @@ func (m *MSSQLInfra) HostPort() (host string, port int, err error) {
 		if err != nil {
 			return "", 0, fmt.Errorf("invalid proxy address: %s: %w", endpoint.ProxyListen, err)
 		}
+
 		portNum, _ := strconv.Atoi(portStr)
+
 		return hostStr, portNum, nil
 	}
 
@@ -197,6 +211,7 @@ func (m *MSSQLInfra) Terminate(ctx context.Context) error {
 	if m.container != nil {
 		return m.container.Terminate(ctx)
 	}
+
 	return nil
 }
 
@@ -209,10 +224,12 @@ func (m *MSSQLInfra) InfraName() string { return m.cfg.Name }
 func NewMSSQLInfraStub(cfg MSSQLConfig, host string, port int) *MSSQLInfra {
 	m := NewMSSQLInfra(cfg)
 	upstream := fmt.Sprintf("%s:%d", host, port)
+
 	dsn := fmt.Sprintf("sqlserver://sa:%s@%s", cfg.Password, upstream)
 	if cfg.Database != "" {
 		dsn = fmt.Sprintf("%s?database=%s", dsn, cfg.Database)
 	}
+
 	m.endpoint = &MSSQLEndpoint{
 		Upstream: upstream,
 		DSN:      dsn,
@@ -220,5 +237,6 @@ func NewMSSQLInfraStub(cfg MSSQLConfig, host string, port int) *MSSQLInfra {
 	// Store the raw host for HostPort() to return without normalization
 	m.stubHost = host
 	m.stubPort = port
+
 	return m
 }

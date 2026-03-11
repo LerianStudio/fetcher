@@ -22,6 +22,7 @@ func WithSeaweedFSFixedPort(hostPort string) SeaweedFSOption {
 			if hc.PortBindings == nil {
 				hc.PortBindings = nat.PortMap{}
 			}
+
 			hc.PortBindings[nat.Port("8888/tcp")] = []nat.PortBinding{
 				{HostIP: "0.0.0.0", HostPort: hostPort},
 			}

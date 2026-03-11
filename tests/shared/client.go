@@ -113,6 +113,7 @@ func checkStatus(resp *resty.Response, method string, expected ...int) error {
 			return nil
 		}
 	}
+
 	return fmt.Errorf("%s: unexpected status %d: %s", method, resp.StatusCode(), resp.String())
 }
 
@@ -242,21 +243,27 @@ func (p ListConnectionsParams) toQueryString() string {
 	if p.Page > 0 {
 		query.Set("page", strconv.Itoa(p.Page))
 	}
+
 	if p.Limit > 0 {
 		query.Set("limit", strconv.Itoa(p.Limit))
 	}
+
 	if p.SortOrder != "" {
 		query.Set("sortOrder", p.SortOrder)
 	}
+
 	if p.Type != "" {
 		query.Set("type", p.Type)
 	}
+
 	if p.Host != "" {
 		query.Set("host", p.Host)
 	}
+
 	if len(query) == 0 {
 		return ""
 	}
+
 	return "?" + query.Encode()
 }
 

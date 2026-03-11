@@ -39,10 +39,12 @@ type Builder struct {
 	logOnFailMaxBytes int
 }
 
+//nolint:thelper // t can be nil when called from TestMain bootstrap.
 func New(t *testing.T) *Builder {
 	if t != nil {
 		t.Helper()
 	}
+
 	return &Builder{
 		t:                 t,
 		env:               map[string]string{},
@@ -62,6 +64,7 @@ func (b *Builder) WithContext(ctx context.Context) *Builder {
 func (b *Builder) WithImage(image string) *Builder {
 	b.image = image
 	b.build = nil
+
 	return b
 }
 
@@ -74,6 +77,7 @@ func (b *Builder) WithEnv(env map[string]string) *Builder {
 	for k, v := range env {
 		b.env[k] = v
 	}
+
 	return b
 }
 
@@ -94,7 +98,9 @@ func (b *Builder) ExposePort(port int) *Builder {
 			return b
 		}
 	}
+
 	b.ports = append(b.ports, p)
+
 	return b
 }
 
@@ -112,6 +118,7 @@ func (b *Builder) WithWait(ws WaitStrategy) *Builder {
 	if ws != nil {
 		b.waitStrategy = ws
 	}
+
 	return b
 }
 
@@ -119,6 +126,7 @@ func (b *Builder) WithRewriter(r EnvRewriter) *Builder {
 	if r != nil {
 		b.rewriters = append(b.rewriters, r)
 	}
+
 	return b
 }
 
@@ -128,9 +136,12 @@ func (b *Builder) DisableDefaultLocalhostRewrite() *Builder {
 		if _, ok := r.(localhostToHostGatewayRewriter); ok {
 			continue
 		}
+
 		out = append(out, r)
 	}
+
 	b.rewriters = out
+
 	return b
 }
 
@@ -143,6 +154,7 @@ func (b *Builder) WithLogsOnFailureMaxBytes(n int) *Builder {
 	if n > 0 {
 		b.logOnFailMaxBytes = n
 	}
+
 	return b
 }
 
@@ -168,6 +180,7 @@ func (b *Builder) Run() (*RunningApp, error) {
 		if err != nil {
 			return nil, fmt.Errorf("e2ekit: build with secrets failed: %w", err)
 		}
+
 		image = builtTag
 		b.build = nil // Clear build config since image is now built
 	}
@@ -214,11 +227,13 @@ func (b *Builder) Run() (*RunningApp, error) {
 			_ = c.Terminate(ctx)
 			return nil, err
 		}
+
 		mp, err := c.MappedPort(ctx, nat.Port(b.ports[0]))
 		if err != nil {
 			_ = c.Terminate(ctx)
 			return nil, err
 		}
+
 		app.BaseURL = fmt.Sprintf("http://%s:%s", host, mp.Port())
 	}
 
@@ -270,9 +285,11 @@ func WaitHTTP(port int, path string, timeout time.Duration) WaitStrategy {
 	if path == "" {
 		path = "/health"
 	}
+
 	if timeout == 0 {
 		timeout = 30 * time.Second
 	}
+
 	return waitHTTP{port: port, path: path, timeout: timeout}
 }
 
@@ -285,7 +302,7 @@ func (w waitHTTP) Configure(req *testcontainers.ContainerRequest) {
 	req.WaitingFor = wait.ForAll(
 		wait.ForListeningPort(port).WithStartupTimeout(w.timeout),
 		wait.ForHTTP(w.path).WithPort(port).WithStartupTimeout(w.timeout),
-	).WithStartupTimeout(w.timeout)
+	).WithDeadline(w.timeout)
 }
 
 type waitLog struct {
@@ -297,6 +314,7 @@ func WaitLog(text string, timeout time.Duration) WaitStrategy {
 	if timeout == 0 {
 		timeout = 30 * time.Second
 	}
+
 	return waitLog{text: text, timeout: timeout}
 }
 
@@ -313,6 +331,7 @@ func WaitPort(port int, timeout time.Duration) WaitStrategy {
 	if timeout == 0 {
 		timeout = 30 * time.Second
 	}
+
 	return waitPort{port: port, timeout: timeout}
 }
 
@@ -330,6 +349,7 @@ func WaitRunning(timeout time.Duration) WaitStrategy {
 	if timeout == 0 {
 		timeout = 30 * time.Second
 	}
+
 	return waitRunning{timeout: timeout}
 }
 
@@ -352,6 +372,7 @@ func (localhostToHostGatewayRewriter) Rewrite(env map[string]string) map[string]
 	for k, v := range out {
 		out[k] = rewriteLocalhostForContainer(v)
 	}
+
 	return out
 }
 
@@ -372,8 +393,10 @@ func rewriteLocalhostForContainer(s string) string {
 			} else {
 				u.Host = hostGatewayAddr
 			}
+
 			return u.String()
 		}
+
 		return s
 	}
 
@@ -386,6 +409,7 @@ func rewriteLocalhostForContainer(s string) string {
 	if strings.HasPrefix(s, "localhost:") {
 		return strings.Replace(s, "localhost:", hostGatewayAddr+":", 1)
 	}
+
 	if strings.HasPrefix(s, "127.0.0.1:") {
 		return strings.Replace(s, "127.0.0.1:", hostGatewayAddr+":", 1)
 	}
@@ -404,6 +428,7 @@ func rewriteLocalhostForContainer(s string) string {
 
 func dumpRecentLogs(ctx context.Context, t *testing.T, c testcontainers.Container, maxBytes int) {
 	t.Helper()
+
 	r, err := c.Logs(ctx)
 	if err != nil {
 		t.Logf("[e2ekit] failed to read logs: %v", err)
@@ -416,14 +441,17 @@ func dumpRecentLogs(ctx context.Context, t *testing.T, c testcontainers.Containe
 	}
 
 	buf := make([]byte, maxBytes)
+
 	n, _ := io.ReadFull(r, buf)
 	if n <= 0 {
 		n2, _ := r.Read(buf)
 		if n2 > 0 {
 			t.Logf("[e2ekit] container logs (last ~%d bytes):\n%s", n2, string(buf[:n2]))
 		}
+
 		return
 	}
+
 	t.Logf("[e2ekit] container logs (last ~%d bytes):\n%s", n, string(buf[:n]))
 }
 
@@ -433,6 +461,7 @@ func uniqueAppend(list []string, v string) []string {
 			return list
 		}
 	}
+
 	return append(list, v)
 }
 
@@ -441,5 +470,6 @@ func cloneMap(in map[string]string) map[string]string {
 	for k, v := range in {
 		out[k] = v
 	}
+
 	return out
 }

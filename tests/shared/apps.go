@@ -3,6 +3,7 @@ package shared
 import (
 	"context"
 	"fmt"
+	"os"
 	"strconv"
 	"testing"
 	"time"
@@ -99,11 +100,21 @@ func BuildAppEnv(network string, mongo *mongodb.MongoDBInfra, rabbit *rabbitmq.R
 	}, nil
 }
 
+func githubTokenBuildArgs() map[string]*string {
+	token := os.Getenv("GITHUB_TOKEN")
+	if token == "" {
+		return nil
+	}
+
+	return map[string]*string{"GITHUB_TOKEN": &token}
+}
+
 // ManagerEnv returns the complete set of environment variables required by the Manager container.
 // It includes MongoDB, RabbitMQ, and Redis configuration, plus encryption keys and logging settings.
 // The returned map can be passed directly to e2ekit.Builder.WithEnv().
 func (e *AppEnv) ManagerEnv() map[string]string {
 	portStr := strconv.Itoa(ManagerAPIPort)
+
 	return map[string]string{
 		"ENV_NAME":                    "test",
 		"SERVER_PORT":                 portStr,
@@ -183,6 +194,8 @@ func (e *AppEnv) WorkerEnv() map[string]string {
 //   - cfg: Container start configuration
 //
 // Returns the running application with its base URL for API calls.
+//
+//nolint:thelper // t can be nil when called from TestMain bootstrap.
 func StartManager(t *testing.T, ctx context.Context, env *AppEnv, cfg AppStartConfig) (*e2ekit.RunningApp, error) {
 	builder := e2ekit.New(t).
 		WithContext(ctx).
@@ -202,9 +215,7 @@ func StartManager(t *testing.T, ctx context.Context, env *AppEnv, cfg AppStartCo
 			ContextDir: e2ekit.ProjectRoot(),
 			Dockerfile: "components/manager/Dockerfile",
 			Tag:        cfg.Image,
-			Secrets: []e2ekit.BuildSecret{
-				{ID: "github_token", Env: "GITHUB_TOKEN"},
-			},
+			BuildArgs:  githubTokenBuildArgs(),
 		})
 	}
 
@@ -229,6 +240,8 @@ func StartManager(t *testing.T, ctx context.Context, env *AppEnv, cfg AppStartCo
 //   - cfg: Container start configuration
 //
 // Returns the running application container.
+//
+//nolint:thelper // t can be nil when called from TestMain bootstrap.
 func StartWorker(t *testing.T, ctx context.Context, env *AppEnv, cfg AppStartConfig) (*e2ekit.RunningApp, error) {
 	builder := e2ekit.New(t).
 		WithContext(ctx).
@@ -247,9 +260,7 @@ func StartWorker(t *testing.T, ctx context.Context, env *AppEnv, cfg AppStartCon
 			ContextDir: e2ekit.ProjectRoot(),
 			Dockerfile: "components/worker/Dockerfile",
 			Tag:        cfg.Image,
-			Secrets: []e2ekit.BuildSecret{
-				{ID: "github_token", Env: "GITHUB_TOKEN"},
-			},
+			BuildArgs:  githubTokenBuildArgs(),
 		})
 	}
 
