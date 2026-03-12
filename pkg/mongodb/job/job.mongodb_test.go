@@ -119,13 +119,23 @@ func createJob(t *testing.T, repo *JobMongoDBRepository, job *model.Job) *model.
 
 func stubJobSpanAttributes(t *testing.T, retErr error) {
 	t.Helper()
-	original := setSpanAttributesFromStruct
-	setSpanAttributesFromStruct = func(span *trace.Span, key string, valueStruct any) error {
+	original := setSpanAttributesFromValue
+	setSpanAttributesFromValue = func(span trace.Span, key string, valueStruct any) error {
 		return retErr
 	}
 	t.Cleanup(func() {
-		setSpanAttributesFromStruct = original
+		setSpanAttributesFromValue = original
 	})
+}
+
+func TestNewJobMongoDBRepository_NilClient(t *testing.T) {
+	repo, err := NewJobMongoDBRepository(nil, jobTestDatabaseName)
+	if err == nil {
+		t.Fatalf("expected error for nil mongo client")
+	}
+	if repo != nil {
+		t.Fatalf("expected nil repository")
+	}
 }
 
 func TestJobMongoDBRepository_Create(t *testing.T) {

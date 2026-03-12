@@ -13,15 +13,16 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/mongodb"
 	"github.com/LerianStudio/fetcher/pkg/net/http"
 
-	"github.com/LerianStudio/lib-commons/v2/commons"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v4/commons"
 	libMongo "github.com/LerianStudio/lib-commons/v4/commons/mongo"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
 
 	"github.com/google/uuid"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // Repository defines the domain port for products.
@@ -44,8 +45,9 @@ const (
 	DefaultInitTimeout = 10 * time.Second
 )
 
-// setSpanAttributesFromStruct is a helper to set span attributes from a struct.
-var setSpanAttributesFromStruct = libOpentelemetry.SetSpanAttributesFromStruct
+var setSpanAttributesFromValue = func(span trace.Span, key string, value any) error {
+	return libOpentelemetry.SetSpanAttributesFromValue(span, key, value, nil)
+}
 
 // RepositoryConfig holds configuration options for the repository.
 type RepositoryConfig struct {
@@ -61,6 +63,18 @@ type ProductMongoDBRepository struct {
 
 // NewProductMongoDBRepository provisions a repository using the given client.
 func NewProductMongoDBRepository(mc *libMongo.Client, database string, cfg ...RepositoryConfig) (*ProductMongoDBRepository, error) {
+	if mc == nil {
+		return nil, errors.New("mongo client is required")
+	}
+
+	return newProductMongoDBRepository(mc, database, cfg...)
+}
+
+func newProductMongoDBRepository(provider mongoDatabaseProvider, database string, cfg ...RepositoryConfig) (*ProductMongoDBRepository, error) {
+	if provider == nil {
+		return nil, errors.New("mongo client is required")
+	}
+
 	config := RepositoryConfig{
 		InitTimeout: DefaultInitTimeout,
 	}
@@ -72,7 +86,7 @@ func NewProductMongoDBRepository(mc *libMongo.Client, database string, cfg ...Re
 	}
 
 	repo := &ProductMongoDBRepository{
-		connection: mc,
+		connection: provider,
 		Database:   database,
 		config:     config,
 	}
@@ -96,7 +110,7 @@ func (pr *ProductMongoDBRepository) Create(ctx context.Context, p *model.Product
 
 	if p == nil {
 		err := errors.New("product is required")
-		libOpentelemetry.HandleSpanError(&span, "Product payload is nil", err)
+		libOpentelemetry.HandleSpanError(span, "Product payload is nil", err)
 
 		return nil, pkg.ValidateInternalError(err, "product")
 	}
@@ -110,25 +124,25 @@ func (pr *ProductMongoDBRepository) Create(ctx context.Context, p *model.Product
 
 	db, err := pr.connection.Client(ctx)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to get database", err)
 		return nil, mongodb.MapMongoErrorToResponse(err, ctx)
 	}
 
 	record, err := NewProductMongoDBModelFromDomain(p)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to convert domain to MongoDB model", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to convert domain to MongoDB model", err)
 		return nil, pkg.ValidateInternalError(err, "product")
 	}
 
-	if err := setSpanAttributesFromStruct(&span, "app.request.payload", record.ToMapWithMask()); err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to convert record to JSON", err)
+	if err := setSpanAttributesFromValue(span, "app.request.payload", record.ToMapWithMask()); err != nil {
+		libOpentelemetry.HandleSpanError(span, "Failed to convert record to JSON", err)
 	}
 
 	coll := db.Database(strings.ToLower(pr.Database)).Collection(strings.ToLower(constant.MongoCollectionProduct))
 	if _, err := coll.InsertOne(ctx, record); err != nil {
 		if mongo.IsDuplicateKeyError(err) {
 			err := fmt.Errorf("product with code '%s' already exists for organization '%s'", p.Code, p.OrganizationID.String())
-			libOpentelemetry.HandleSpanError(&span, "Duplicate product", err)
+			libOpentelemetry.HandleSpanError(span, "Duplicate product", err)
 
 			return nil, pkg.ValidateBusinessError(
 				constant.ErrEntityConflict,
@@ -136,14 +150,14 @@ func (pr *ProductMongoDBRepository) Create(ctx context.Context, p *model.Product
 			)
 		}
 
-		libOpentelemetry.HandleSpanError(&span, "Failed to insert product", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to insert product", err)
 
 		return nil, mongodb.MapMongoErrorToResponse(err, ctx)
 	}
 
 	product, err := record.ToEntity()
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to convert record to domain", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to convert record to domain", err)
 		return nil, pkg.ValidateInternalError(err, "product")
 	}
 
@@ -159,7 +173,7 @@ func (pr *ProductMongoDBRepository) Update(ctx context.Context, p *model.Product
 
 	if p == nil {
 		err := errors.New("product is required")
-		libOpentelemetry.HandleSpanError(&span, "Product payload is nil", err)
+		libOpentelemetry.HandleSpanError(span, "Product payload is nil", err)
 
 		return nil, pkg.ValidateInternalError(err, "product")
 	}
@@ -173,7 +187,7 @@ func (pr *ProductMongoDBRepository) Update(ctx context.Context, p *model.Product
 
 	db, err := pr.connection.Client(ctx)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to get database", err)
 		return nil, mongodb.MapMongoErrorToResponse(err, ctx)
 	}
 
@@ -193,8 +207,8 @@ func (pr *ProductMongoDBRepository) Update(ctx context.Context, p *model.Product
 		},
 	}
 
-	if err := setSpanAttributesFromStruct(&span, "app.request.repository_filter", filter); err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to convert filter to JSON", err)
+	if err := setSpanAttributesFromValue(span, "app.request.repository_filter", filter); err != nil {
+		libOpentelemetry.HandleSpanError(span, "Failed to convert filter to JSON", err)
 	}
 
 	var record ProductMongoDBModel
@@ -202,19 +216,19 @@ func (pr *ProductMongoDBRepository) Update(ctx context.Context, p *model.Product
 	opts := options.FindOneAndUpdate().SetReturnDocument(options.After)
 	if err := coll.FindOneAndUpdate(ctx, filter, update, opts).Decode(&record); err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
-			libOpentelemetry.HandleSpanError(&span, "Product not found for update", err)
+			libOpentelemetry.HandleSpanError(span, "Product not found for update", err)
 
 			return nil, pkg.ValidateBusinessError(constant.ErrEntityNotFound, "product")
 		}
 
-		libOpentelemetry.HandleSpanError(&span, "Failed to update product", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to update product", err)
 
 		return nil, mongodb.MapMongoErrorToResponse(err, ctx)
 	}
 
 	product, err := record.ToEntity()
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to convert record to domain", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to convert record to domain", err)
 		return nil, pkg.ValidateInternalError(err, "product")
 	}
 
@@ -237,7 +251,7 @@ func (pr *ProductMongoDBRepository) Delete(ctx context.Context, productID, organ
 
 	db, err := pr.connection.Client(ctx)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to get database", err)
 		return mongodb.MapMongoErrorToResponse(err, ctx)
 	}
 
@@ -257,12 +271,12 @@ func (pr *ProductMongoDBRepository) Delete(ctx context.Context, productID, organ
 
 	res, err := coll.UpdateOne(ctx, filter, update)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to soft delete product", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to soft delete product", err)
 		return mongodb.MapMongoErrorToResponse(err, ctx)
 	}
 
 	if res.MatchedCount == 0 {
-		libOpentelemetry.HandleSpanError(&span, "Product not found for delete", mongo.ErrNoDocuments)
+		libOpentelemetry.HandleSpanError(span, "Product not found for delete", mongo.ErrNoDocuments)
 
 		return pkg.ValidateBusinessError(
 			constant.ErrEntityNotFound,
@@ -289,7 +303,7 @@ func (pr *ProductMongoDBRepository) FindByID(ctx context.Context, productID, org
 
 	db, err := pr.connection.Client(ctx)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to get database", err)
 		return nil, mongodb.MapMongoErrorToResponse(err, ctx)
 	}
 
@@ -307,14 +321,14 @@ func (pr *ProductMongoDBRepository) FindByID(ctx context.Context, productID, org
 			return nil, nil
 		}
 
-		libOpentelemetry.HandleSpanError(&span, "Failed to find product", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to find product", err)
 
 		return nil, mongodb.MapMongoErrorToResponse(err, ctx)
 	}
 
 	product, err := record.ToEntity()
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to convert record to domain", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to convert record to domain", err)
 		return nil, pkg.ValidateInternalError(err, "product")
 	}
 
@@ -337,7 +351,7 @@ func (pr *ProductMongoDBRepository) FindByCode(ctx context.Context, code string,
 
 	db, err := pr.connection.Client(ctx)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to get database", err)
 		return nil, mongodb.MapMongoErrorToResponse(err, ctx)
 	}
 
@@ -355,14 +369,14 @@ func (pr *ProductMongoDBRepository) FindByCode(ctx context.Context, code string,
 			return nil, nil
 		}
 
-		libOpentelemetry.HandleSpanError(&span, "Failed to find product by code", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to find product by code", err)
 
 		return nil, mongodb.MapMongoErrorToResponse(err, ctx)
 	}
 
 	product, err := record.ToEntity()
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to convert record to domain", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to convert record to domain", err)
 		return nil, pkg.ValidateInternalError(err, "product")
 	}
 
@@ -378,36 +392,36 @@ func (pr *ProductMongoDBRepository) List(ctx context.Context, organizationID uui
 
 	span.SetAttributes(attribute.String("app.request.request_id", reqID))
 
-	err := libOpentelemetry.SetSpanAttributesFromStruct(&span, "app.request.payload", filters)
+	err := setSpanAttributesFromValue(span, "app.request.payload", filters)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to convert filters to JSON string", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to convert filters to JSON string", err)
 	}
 
 	db, err := pr.connection.Client(ctx)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to get database", err)
 		return nil, 0, mongodb.MapMongoErrorToResponse(err, ctx)
 	}
 
 	queryFilter := pr.buildQueryFilter(organizationID, filters)
 	opts := mongodb.BuildPaginationOptions(filters)
 
-	err = libOpentelemetry.SetSpanAttributesFromStruct(&span, "app.request.repository_filter", queryFilter)
+	err = setSpanAttributesFromValue(span, "app.request.repository_filter", queryFilter)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to convert filters to JSON string", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to convert filters to JSON string", err)
 	}
 
 	coll := db.Database(strings.ToLower(pr.Database)).Collection(strings.ToLower(constant.MongoCollectionProduct))
 
 	totalCount, err := coll.CountDocuments(ctx, queryFilter)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to count products", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to count products", err)
 		return nil, 0, mongodb.MapMongoErrorToResponse(err, ctx)
 	}
 
 	cur, err := coll.Find(ctx, queryFilter, &opts)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to list products", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to list products", err)
 		return nil, 0, mongodb.MapMongoErrorToResponse(err, ctx)
 	}
 	defer cur.Close(ctx)
@@ -422,13 +436,13 @@ func (pr *ProductMongoDBRepository) List(ctx context.Context, organizationID uui
 	for cur.Next(ctx) {
 		var record ProductMongoDBModel
 		if err := cur.Decode(&record); err != nil {
-			libOpentelemetry.HandleSpanError(&span, "Failed to decode product record", err)
+			libOpentelemetry.HandleSpanError(span, "Failed to decode product record", err)
 			return nil, 0, mongodb.MapMongoErrorToResponse(err, ctx)
 		}
 
 		product, err := record.ToEntity()
 		if err != nil {
-			libOpentelemetry.HandleSpanError(&span, "Failed to convert record to domain", err)
+			libOpentelemetry.HandleSpanError(span, "Failed to convert record to domain", err)
 			return nil, 0, pkg.ValidateInternalError(err, "product")
 		}
 
@@ -436,7 +450,7 @@ func (pr *ProductMongoDBRepository) List(ctx context.Context, organizationID uui
 	}
 
 	if err := cur.Err(); err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to iterate over products", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to iterate over products", err)
 		return nil, 0, mongodb.MapMongoErrorToResponse(err, ctx)
 	}
 
@@ -454,6 +468,10 @@ func (pr *ProductMongoDBRepository) buildQueryFilter(organizationID uuid.UUID, f
 
 	if filters.Metadata != nil && filters.UseMetadata {
 		for key, value := range *filters.Metadata {
+			if !strings.HasPrefix(key, "metadata.") {
+				continue
+			}
+
 			queryFilter[key] = value
 		}
 	}

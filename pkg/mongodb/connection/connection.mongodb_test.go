@@ -131,13 +131,23 @@ func createConnection(t *testing.T, repo *ConnectionMongoDBRepository, conn *mod
 
 func stubConnectionSpanAttributes(t *testing.T, retErr error) {
 	t.Helper()
-	original := setSpanAttributesFromStruct
-	setSpanAttributesFromStruct = func(span *trace.Span, key string, valueStruct any) error {
+	original := setSpanAttributesFromValue
+	setSpanAttributesFromValue = func(span trace.Span, key string, valueStruct any) error {
 		return retErr
 	}
 	t.Cleanup(func() {
-		setSpanAttributesFromStruct = original
+		setSpanAttributesFromValue = original
 	})
+}
+
+func TestNewConnectionMongoDBRepository_NilClient(t *testing.T) {
+	repo, err := NewConnectionMongoDBRepository(nil, connectionTestDatabaseName)
+	if err == nil {
+		t.Fatalf("expected error for nil mongo client")
+	}
+	if repo != nil {
+		t.Fatalf("expected nil repository")
+	}
 }
 
 func TestConnectionMongoDBRepository_Create(t *testing.T) {

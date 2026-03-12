@@ -11,9 +11,9 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/model"
 
-	"github.com/LerianStudio/lib-commons/v2/commons"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v4/commons"
 	libMongo "github.com/LerianStudio/lib-commons/v4/commons/mongo"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
 
 	"github.com/google/uuid"
 	"go.mongodb.org/mongo-driver/bson"
@@ -48,7 +48,9 @@ type mongoDatabaseProvider interface {
 	Client(ctx context.Context) (*mongo.Client, error)
 }
 
-var setSpanAttributesFromStruct = libOpentelemetry.SetSpanAttributesFromStruct
+var setSpanAttributesFromValue = func(span trace.Span, key string, value any) error {
+	return libOpentelemetry.SetSpanAttributesFromValue(span, key, value, nil)
+}
 
 // RepositoryConfig holds configuration options for the repository.
 type RepositoryConfig struct {
@@ -67,6 +69,10 @@ type JobMongoDBRepository struct {
 // NewJobMongoDBRepository provisions a repository using the given client.
 // Accepts an optional RepositoryConfig; if nil, defaults are used.
 func NewJobMongoDBRepository(mc *libMongo.Client, database string, cfg ...RepositoryConfig) (*JobMongoDBRepository, error) {
+	if mc == nil {
+		return nil, errors.New("mongo client is required")
+	}
+
 	config := RepositoryConfig{
 		InitTimeout: DefaultInitTimeout,
 	}
@@ -102,7 +108,7 @@ func (jr *JobMongoDBRepository) Create(ctx context.Context, job *model.Job) (*mo
 
 	if job == nil {
 		err := errors.New("job is required")
-		libOpentelemetry.HandleSpanError(&span, "Job payload is nil", err)
+		libOpentelemetry.HandleSpanError(span, "Job payload is nil", err)
 
 		return nil, err
 	}
@@ -121,13 +127,13 @@ func (jr *JobMongoDBRepository) Create(ctx context.Context, job *model.Job) (*mo
 
 	span.SetAttributes(attributes...)
 
-	if err := setSpanAttributesFromStruct(&span, "app.request.payload", job); err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to convert job payload to JSON", err)
+	if err := setSpanAttributesFromValue(span, "app.request.payload", job); err != nil {
+		libOpentelemetry.HandleSpanError(span, "Failed to convert job payload to JSON", err)
 	}
 
 	db, err := jr.connection.Client(ctx)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to get database", err)
 		return nil, err
 	}
 
@@ -135,7 +141,7 @@ func (jr *JobMongoDBRepository) Create(ctx context.Context, job *model.Job) (*mo
 	record := &JobMongoDBModel{}
 
 	if err := record.FromEntity(job); err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to convert entity to MongoDB model", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to convert entity to MongoDB model", err)
 		return nil, err
 	}
 
@@ -145,18 +151,18 @@ func (jr *JobMongoDBRepository) Create(ctx context.Context, job *model.Job) (*mo
 	spanInsert.SetAttributes(attributes...)
 	spanInsert.SetAttributes(attribute.String("app.request.job_id", record.ID.String()))
 
-	if err := setSpanAttributesFromStruct(&spanInsert, "app.request.repository_input", record); err != nil {
-		libOpentelemetry.HandleSpanError(&spanInsert, "Failed to convert record to JSON", err)
+	if err := setSpanAttributesFromValue(spanInsert, "app.request.repository_input", record); err != nil {
+		libOpentelemetry.HandleSpanError(spanInsert, "Failed to convert record to JSON", err)
 	}
 
 	if _, err := coll.InsertOne(ctx, record); err != nil {
-		libOpentelemetry.HandleSpanError(&spanInsert, "Failed to insert job", err)
+		libOpentelemetry.HandleSpanError(spanInsert, "Failed to insert job", err)
 		return nil, err
 	}
 
 	job, err = record.ToEntity()
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to convert MongoDB model to entity", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to convert MongoDB model to entity", err)
 		return nil, pkg.ValidateInternalError(err, "job")
 	}
 
@@ -172,7 +178,7 @@ func (jr *JobMongoDBRepository) Update(ctx context.Context, job *model.Job) (*mo
 
 	if job == nil {
 		err := errors.New("job is required")
-		libOpentelemetry.HandleSpanError(&span, "Job payload is nil", err)
+		libOpentelemetry.HandleSpanError(span, "Job payload is nil", err)
 
 		return nil, err
 	}
@@ -184,13 +190,13 @@ func (jr *JobMongoDBRepository) Update(ctx context.Context, job *model.Job) (*mo
 	}
 	span.SetAttributes(attributes...)
 
-	if err := setSpanAttributesFromStruct(&span, "app.request.payload", job); err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to convert job payload to JSON", err)
+	if err := setSpanAttributesFromValue(span, "app.request.payload", job); err != nil {
+		libOpentelemetry.HandleSpanError(span, "Failed to convert job payload to JSON", err)
 	}
 
 	db, err := jr.connection.Client(ctx)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to get database", err)
 		return nil, err
 	}
 
@@ -217,21 +223,21 @@ func (jr *JobMongoDBRepository) Update(ctx context.Context, job *model.Job) (*mo
 
 	spanUpdate.SetAttributes(attributes...)
 
-	if err := setSpanAttributesFromStruct(&spanUpdate, "app.request.repository_filter", filter); err != nil {
-		libOpentelemetry.HandleSpanError(&spanUpdate, "Failed to convert filter to JSON", err)
+	if err := setSpanAttributesFromValue(spanUpdate, "app.request.repository_filter", filter); err != nil {
+		libOpentelemetry.HandleSpanError(spanUpdate, "Failed to convert filter to JSON", err)
 	}
 
 	var record JobMongoDBModel
 
 	opts := options.FindOneAndUpdate().SetReturnDocument(options.After)
 	if err := coll.FindOneAndUpdate(ctx, filter, update, opts).Decode(&record); err != nil {
-		libOpentelemetry.HandleSpanError(&spanUpdate, "Failed to update job", err)
+		libOpentelemetry.HandleSpanError(spanUpdate, "Failed to update job", err)
 		return nil, err
 	}
 
 	job, err = record.ToEntity()
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to convert MongoDB model to entity", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to convert MongoDB model to entity", err)
 		return nil, pkg.ValidateInternalError(err, "job")
 	}
 
@@ -255,14 +261,14 @@ func (jr *JobMongoDBRepository) UpdateStatus(ctx context.Context, id, organizati
 
 	if !status.IsValid() {
 		err := errors.New("invalid job status")
-		libOpentelemetry.HandleSpanError(&span, "Invalid status", err)
+		libOpentelemetry.HandleSpanError(span, "Invalid status", err)
 
 		return err
 	}
 
 	db, err := jr.connection.Client(ctx)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to get database", err)
 		return err
 	}
 
@@ -310,19 +316,19 @@ func (jr *JobMongoDBRepository) UpdateStatus(ctx context.Context, id, organizati
 
 	spanUpdate.SetAttributes(attributes...)
 
-	if err := setSpanAttributesFromStruct(&spanUpdate, "app.request.repository_filter", filter); err != nil {
-		libOpentelemetry.HandleSpanError(&spanUpdate, "Failed to convert filter to JSON", err)
+	if err := setSpanAttributesFromValue(spanUpdate, "app.request.repository_filter", filter); err != nil {
+		libOpentelemetry.HandleSpanError(spanUpdate, "Failed to convert filter to JSON", err)
 	}
 
 	result, err := coll.UpdateOne(ctx, filter, update)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&spanUpdate, "Failed to update job status", err)
+		libOpentelemetry.HandleSpanError(spanUpdate, "Failed to update job status", err)
 		return err
 	}
 
 	if result.MatchedCount == 0 {
 		err := errors.New("job not found")
-		libOpentelemetry.HandleSpanError(&spanUpdate, "Job not found", err)
+		libOpentelemetry.HandleSpanError(spanUpdate, "Job not found", err)
 
 		return err
 	}
@@ -346,7 +352,7 @@ func (jr *JobMongoDBRepository) FindByID(ctx context.Context, id, organizationID
 
 	db, err := jr.connection.Client(ctx)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to get database", err)
 		return nil, err
 	}
 
@@ -364,14 +370,14 @@ func (jr *JobMongoDBRepository) FindByID(ctx context.Context, id, organizationID
 			return nil, nil
 		}
 
-		libOpentelemetry.HandleSpanError(&span, "Failed to find job", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to find job", err)
 
 		return nil, err
 	}
 
 	job, err := record.ToEntity()
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to convert MongoDB model to entity", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to convert MongoDB model to entity", err)
 		return nil, pkg.ValidateInternalError(err, "job")
 	}
 
@@ -401,7 +407,7 @@ func (jr *JobMongoDBRepository) FindByRequestHashWithinWindow(ctx context.Contex
 
 	db, err := jr.connection.Client(ctx)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to get database", err)
 		return nil, err
 	}
 
@@ -417,8 +423,8 @@ func (jr *JobMongoDBRepository) FindByRequestHashWithinWindow(ctx context.Contex
 		},
 	}
 
-	if err := setSpanAttributesFromStruct(&span, "app.request.repository_filter", filter); err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to convert filter to JSON", err)
+	if err := setSpanAttributesFromValue(span, "app.request.repository_filter", filter); err != nil {
+		libOpentelemetry.HandleSpanError(span, "Failed to convert filter to JSON", err)
 	}
 
 	opts := options.FindOne().SetSort(bson.D{{Key: "created_at", Value: -1}})
@@ -429,14 +435,14 @@ func (jr *JobMongoDBRepository) FindByRequestHashWithinWindow(ctx context.Contex
 			return nil, nil
 		}
 
-		libOpentelemetry.HandleSpanError(&span, "Failed to find job by request hash", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to find job by request hash", err)
 
 		return nil, err
 	}
 
 	job, err := record.ToEntity()
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to convert MongoDB model to entity", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to convert MongoDB model to entity", err)
 		return nil, pkg.ValidateInternalError(err, "job")
 	}
 
@@ -460,7 +466,7 @@ func (jr *JobMongoDBRepository) ExistsRunningByMappedFieldKey(ctx context.Contex
 
 	db, err := jr.connection.Client(ctx)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to get database", err)
 		return false, pkg.ValidateInternalError(err, "job")
 	}
 
@@ -470,7 +476,7 @@ func (jr *JobMongoDBRepository) ExistsRunningByMappedFieldKey(ctx context.Contex
 	configNameRegex := regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 	if !configNameRegex.MatchString(keyPattern) {
 		errInvalidKey := errors.New("invalid key pattern format")
-		libOpentelemetry.HandleSpanError(&span, "Key pattern validation failed", errInvalidKey)
+		libOpentelemetry.HandleSpanError(span, "Key pattern validation failed", errInvalidKey)
 
 		return false, pkg.ValidateInternalError(errInvalidKey, "job")
 	}
@@ -489,13 +495,13 @@ func (jr *JobMongoDBRepository) ExistsRunningByMappedFieldKey(ctx context.Contex
 		},
 	}
 
-	if errSpan := setSpanAttributesFromStruct(&span, "app.request.repository_filter", filter); errSpan != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to convert filter to JSON", errSpan)
+	if errSpan := setSpanAttributesFromValue(span, "app.request.repository_filter", filter); errSpan != nil {
+		libOpentelemetry.HandleSpanError(span, "Failed to convert filter to JSON", errSpan)
 	}
 
 	count, err := coll.CountDocuments(ctx, filter, options.Count().SetLimit(1))
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to count running jobs by mapped field key", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to count running jobs by mapped field key", err)
 		return false, pkg.ValidateInternalError(err, "job")
 	}
 
@@ -521,7 +527,7 @@ func (jr *JobMongoDBRepository) List(ctx context.Context, filters *ListFilter) (
 
 	db, err := jr.connection.Client(ctx)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to get database", err)
 		return nil, err
 	}
 
@@ -530,18 +536,18 @@ func (jr *JobMongoDBRepository) List(ctx context.Context, filters *ListFilter) (
 	queryFilter := jr.buildQueryFilter(filters)
 	opts := jr.buildPaginationOptions(filters)
 
-	if err := setSpanAttributesFromStruct(&span, "app.request.repository_filter", queryFilter); err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to convert list filter to JSON", err)
+	if err := setSpanAttributesFromValue(span, "app.request.repository_filter", queryFilter); err != nil {
+		libOpentelemetry.HandleSpanError(span, "Failed to convert list filter to JSON", err)
 	}
 
 	cur, err := coll.Find(ctx, queryFilter, &opts)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to list jobs", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to list jobs", err)
 		return nil, err
 	}
 	defer cur.Close(ctx)
 
-	jobs, err := jr.scanJobs(ctx, cur, &span, int(*opts.Limit))
+	jobs, err := jr.scanJobs(ctx, cur, span, int(*opts.Limit))
 	if err != nil {
 		return nil, err
 	}
@@ -645,7 +651,7 @@ func (jr *JobMongoDBRepository) calculateSortDirection(sortOrder constant.Order)
 }
 
 // scanJobs scans job records from the cursor
-func (jr *JobMongoDBRepository) scanJobs(ctx context.Context, cur *mongo.Cursor, span *trace.Span, limit int) ([]*model.Job, error) {
+func (jr *JobMongoDBRepository) scanJobs(ctx context.Context, cur *mongo.Cursor, span trace.Span, limit int) ([]*model.Job, error) {
 	jobs := make([]*model.Job, 0, limit)
 
 	for cur.Next(ctx) {

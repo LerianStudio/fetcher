@@ -76,20 +76,20 @@ func NewDataSourceRepository(mongoURI string, dbName string, logger libLog.Logge
 func (ds *ExternalDataSource) CloseConnection(ctx context.Context) error {
 	if ds.connection != nil {
 		if ds.logger != nil {
-			ds.logger.Log(context.Background(), libLog.LevelInfo, "Closing MongoDB connection...")
+			ds.logger.Log(ctx, libLog.LevelInfo, "Closing MongoDB connection...")
 		}
 
 		err := ds.connection.Close(ctx)
 		if err != nil {
 			if ds.logger != nil {
-				ds.logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Error closing MongoDB connection: %v", err))
+				ds.logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Error closing MongoDB connection: %v", err))
 			}
 
 			return err
 		}
 
 		if ds.logger != nil {
-			ds.logger.Log(context.Background(), libLog.LevelInfo, "MongoDB connection closed successfully.")
+			ds.logger.Log(ctx, libLog.LevelInfo, "MongoDB connection closed successfully.")
 		}
 	}
 
@@ -100,7 +100,7 @@ func (ds *ExternalDataSource) CloseConnection(ctx context.Context) error {
 func (ds *ExternalDataSource) Query(ctx context.Context, collection string, fields []string, filter map[string][]any) ([]map[string]any, error) {
 	logger, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
 
-	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Querying %s collection with fields %v", collection, fields))
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Querying %s collection with fields %v", collection, fields))
 
 	_, span := tracer.Start(ctx, "mongodb.data_source.query")
 	defer span.End()
@@ -170,7 +170,7 @@ func (ds *ExternalDataSource) Query(ctx context.Context, collection string, fiel
 	for cursor.Next(queryCtx) {
 		var result bson.M
 		if err := cursor.Decode(&result); err != nil {
-			logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("Error decoding document: %v", err))
+			logger.Log(queryCtx, libLog.LevelWarn, fmt.Sprintf("Error decoding document: %v", err))
 			continue
 		}
 
@@ -266,7 +266,7 @@ func (ds *ExternalDataSource) GetDatabaseSchema(ctx context.Context) ([]Collecti
 		attribute.String("app.request.request_id", reqID),
 	)
 
-	logger.Log(context.Background(), libLog.LevelInfo, "Retrieving MongoDB schema information using hybrid approach")
+	logger.Log(ctx, libLog.LevelInfo, "Retrieving MongoDB schema information using hybrid approach")
 
 	// Create timeout context for schema discovery (longer timeout for this operation)
 	schemaCtx, cancel := context.WithTimeout(ctx, constant.SchemaDiscoveryTimeout)
@@ -293,18 +293,18 @@ func (ds *ExternalDataSource) GetDatabaseSchema(ctx context.Context) ([]Collecti
 	for _, collName := range collections {
 		coll := database.Collection(collName)
 
-		logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Analyzing collection: %s", collName))
+		logger.Log(schemaCtx, libLog.LevelInfo, fmt.Sprintf("Analyzing collection: %s", collName))
 
 		allFields, err := ds.discoverAllFieldsWithAggregation(schemaCtx, coll)
 		if err != nil {
-			logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("Aggregation failed for collection %s, falling back to sampling: %v", collName, err))
+			logger.Log(schemaCtx, libLog.LevelWarn, fmt.Sprintf("Aggregation failed for collection %s, falling back to sampling: %v", collName, err))
 
 			allFields = make(map[string]bool)
 		}
 
 		fieldTypes, additionalFields, err := ds.sampleMultipleDocuments(schemaCtx, coll)
 		if err != nil {
-			logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("Document sampling failed for collection %s: %v", collName, err))
+			logger.Log(schemaCtx, libLog.LevelWarn, fmt.Sprintf("Document sampling failed for collection %s: %v", collName, err))
 
 			fieldTypes = make(map[string]string)
 			additionalFields = make(map[string]bool)
@@ -331,11 +331,11 @@ func (ds *ExternalDataSource) GetDatabaseSchema(ctx context.Context) ([]Collecti
 			})
 		}
 
-		logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Discovered %d fields in collection %s", len(collSchema.Fields), collName))
+		logger.Log(schemaCtx, libLog.LevelInfo, fmt.Sprintf("Discovered %d fields in collection %s", len(collSchema.Fields), collName))
 		schema = append(schema, collSchema)
 	}
 
-	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Retrieved schema for %d collections", len(schema)))
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Retrieved schema for %d collections", len(schema)))
 
 	return schema, nil
 }
@@ -582,7 +582,7 @@ func (ds *ExternalDataSource) isMoreSpecificType(newType, currentType string) bo
 func (ds *ExternalDataSource) QueryWithAdvancedFilters(ctx context.Context, collection string, fields []string, filter map[string]job.FilterCondition) ([]map[string]any, error) {
 	logger, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
 
-	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Querying %s collection with advanced filters on fields %v", collection, fields))
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Querying %s collection with advanced filters on fields %v", collection, fields))
 
 	_, span := tracer.Start(ctx, "mongodb.data_source.query_with_advanced_filters")
 	defer span.End()
@@ -698,7 +698,7 @@ func (ds *ExternalDataSource) processQueryResults(
 	for cursor.Next(queryCtx) {
 		var result bson.M
 		if err := cursor.Decode(&result); err != nil {
-			logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("Error decoding document: %v", err))
+			logger.Log(queryCtx, libLog.LevelWarn, fmt.Sprintf("Error decoding document: %v", err))
 			continue
 		}
 

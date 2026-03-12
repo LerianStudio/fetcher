@@ -47,42 +47,42 @@ func MapMongoErrorToResponse(err error, ctx context.Context) error {
 	// Client-side cancellation / deadlines (HTTP layer)
 	// If the client closed the connection, you often can't write a response anyway.
 	if errors.Is(err, context.Canceled) {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("MongoDB request canceled by client: %v", err))
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("MongoDB request canceled by client: %v", err))
 		return pkg.ValidateInternalError(constant.ErrServiceUnavailable, "")
 	}
 
 	// Timeouts (driver/helpers)
 	if errors.Is(err, context.DeadlineExceeded) || mongo.IsTimeout(err) {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("MongoDB timeout error: %v", err))
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("MongoDB timeout error: %v", err))
 		return pkg.ValidateInternalError(constant.ErrServiceUnavailable, "")
 	}
 
 	// Server selection / network
 	if errors.Is(err, topology.ErrServerSelectionTimeout) {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("MongoDB server selection timeout: %v", err))
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("MongoDB server selection timeout: %v", err))
 		return pkg.ValidateInternalError(constant.ErrServiceUnavailable, "")
 	}
 
 	var sse topology.ServerSelectionError
 	if errors.As(err, &sse) {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("MongoDB server selection error: %v", err))
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("MongoDB server selection error: %v", err))
 		return pkg.ValidateInternalError(constant.ErrServiceUnavailable, "")
 	}
 
 	if mongo.IsNetworkError(err) {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("MongoDB network error: %v", err))
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("MongoDB network error: %v", err))
 		return pkg.ValidateInternalError(constant.ErrServiceUnavailable, "")
 	}
 
 	// Common query/result semantics
 	if errors.Is(err, mongo.ErrNoDocuments) {
-		logger.Log(context.Background(), libLog.LevelDebug, fmt.Sprintf("MongoDB document not found: %v", err))
+		logger.Log(ctx, libLog.LevelDebug, fmt.Sprintf("MongoDB document not found: %v", err))
 		return pkg.ValidateInternalError(constant.ErrNotFound, "")
 	}
 
 	// Duplicate key -> 409
 	if mongo.IsDuplicateKeyError(err) {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("MongoDB duplicate key error: %v", err))
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("MongoDB duplicate key error: %v", err))
 		return pkg.ValidateInternalError(constant.ErrConflict, "")
 	}
 
@@ -91,19 +91,19 @@ func MapMongoErrorToResponse(err error, ctx context.Context) error {
 	if errors.As(err, &cmdErr) {
 		switch cmdErr.Code {
 		case 13, 18: // Unauthorized / AuthenticationFailed
-			logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("MongoDB unauthorized error: %v", err))
+			logger.Log(ctx, libLog.LevelError, fmt.Sprintf("MongoDB unauthorized error: %v", err))
 			return pkg.ValidateInternalError(constant.ErrInternalServer, "")
 		case 50: // ExceededTimeLimit
-			logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("MongoDB exceeded time limit error: %v", err))
+			logger.Log(ctx, libLog.LevelError, fmt.Sprintf("MongoDB exceeded time limit error: %v", err))
 			return pkg.ValidateInternalError(constant.ErrServiceUnavailable, "")
 		case 6, 7, 89, 91: // HostUnreachable/HostNotFound/Shutdown
-			logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("MongoDB service unavailable error: %v", err))
+			logger.Log(ctx, libLog.LevelError, fmt.Sprintf("MongoDB service unavailable error: %v", err))
 			return pkg.ValidateInternalError(constant.ErrServiceUnavailable, "")
 		case 9: // FailedToParse
-			logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("MongoDB bad request error: %v", err))
+			logger.Log(ctx, libLog.LevelError, fmt.Sprintf("MongoDB bad request error: %v", err))
 			return pkg.ValidateInternalError(constant.ErrInternalServer, "")
 		case 26: // NamespaceNotFound
-			logger.Log(context.Background(), libLog.LevelDebug, fmt.Sprintf("MongoDB namespace not found error: %v", err))
+			logger.Log(ctx, libLog.LevelDebug, fmt.Sprintf("MongoDB namespace not found error: %v", err))
 			return pkg.ValidateInternalError(constant.ErrInternalServer, "")
 		}
 	}
@@ -113,12 +113,12 @@ func MapMongoErrorToResponse(err error, ctx context.Context) error {
 	if errors.As(err, &we) {
 		for _, e := range we.WriteErrors {
 			if e.Code == 11000 || e.Code == 11001 {
-				logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("MongoDB duplicate key error in write exception: %v", err))
+				logger.Log(ctx, libLog.LevelError, fmt.Sprintf("MongoDB duplicate key error in write exception: %v", err))
 				return pkg.ValidateInternalError(constant.ErrConflict, "")
 			}
 		}
 
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("MongoDB write exception error: %v", err))
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("MongoDB write exception error: %v", err))
 
 		return pkg.ValidateInternalError(constant.ErrInternalServer, "")
 	}
@@ -126,11 +126,11 @@ func MapMongoErrorToResponse(err error, ctx context.Context) error {
 	// Decode / BSON issues
 	var decodeErr bsoncodec.ValueDecoderError
 	if errors.As(err, &decodeErr) {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("MongoDB decode error: %v", err))
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("MongoDB decode error: %v", err))
 		return pkg.ValidateInternalError(constant.ErrInternalServer, "")
 	}
 
-	logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("MongoDB unknown error: %v", err))
+	logger.Log(ctx, libLog.LevelError, fmt.Sprintf("MongoDB unknown error: %v", err))
 
 	return pkg.ValidateInternalError(constant.ErrInternalServer, "")
 }
