@@ -117,6 +117,52 @@ func (jr *JobMongoDBRepository) EnsureIndexes(ctx context.Context) error {
 
 	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Successfully created %d indexes for %s collection: %v", len(indexNames), constant.MongoCollectionJob, indexNames))
 
+	// Create unique partial index for active job deduplication (pending/processing).
+	// This prevents duplicate jobs for the same org+hash while a job is still active,
+	// which is relied upon by create_fetcher_job.go (mongo.IsDuplicateKeyError checks).
+	uniqueActiveHashIndex := mongo.IndexModel{
+		Keys: bson.D{
+			{Key: "organization_id", Value: 1},
+			{Key: "request_hash", Value: 1},
+		},
+		Options: options.Index().
+			SetName("uniq_job_org_hash_active").
+			SetUnique(true).
+			SetPartialFilterExpression(bson.D{
+				{Key: "status", Value: bson.D{
+					{Key: "$in", Value: bson.A{model.JobStatusPending, model.JobStatusProcessing}},
+				}},
+			}),
+	}
+
+	logger.Log(ctx, libLog.LevelInfo, "Creating unique active hash index for job deduplication")
+
+	_, err = coll.Indexes().CreateOne(ctx, uniqueActiveHashIndex)
+	if err != nil {
+		if sharedMongo.IsIndexConflictError(err) {
+			logger.Log(ctx, libLog.LevelInfo, "Unique active hash index already exists")
+			return nil
+		}
+
+		if mongo.IsDuplicateKeyError(err) {
+			libOpentelemetry.HandleSpanError(span, "Cannot create unique active hash index: duplicate active jobs exist", err)
+			logger.Log(ctx, libLog.LevelError, fmt.Sprintf(
+				"Cannot create unique active hash index for %s: existing duplicate active jobs prevent index creation. "+
+					"Manual cleanup required — deduplicate jobs with same organization_id+request_hash in pending/processing status. Error: %v",
+				constant.MongoCollectionJob, err,
+			))
+
+			return err
+		}
+
+		libOpentelemetry.HandleSpanError(span, "Failed to create unique active hash index", err)
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to create unique active hash index for %s: %v", constant.MongoCollectionJob, err))
+
+		return err
+	}
+
+	logger.Log(ctx, libLog.LevelInfo, "Successfully created unique active hash index for job deduplication")
+
 	return nil
 }
 

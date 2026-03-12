@@ -779,7 +779,7 @@ func TestJobMongoDBRepository_FindActiveByRequestHash(t *testing.T) {
 	})
 }
 
-func TestEnsureIndexes_RemediatesDuplicateActiveJobs(t *testing.T) {
+func TestEnsureIndexes_DuplicateActiveJobsPreventsUniqueIndex(t *testing.T) {
 	repo := newJobRepository(t)
 	org := uuid.New()
 	hash := "dup-active-hash-123"
@@ -789,28 +789,20 @@ func TestEnsureIndexes_RemediatesDuplicateActiveJobs(t *testing.T) {
 	older.RequestHash = hash
 	older.Status = model.JobStatusPending
 	older.CreatedAt = time.Now().UTC().Add(-2 * time.Minute)
-	createdOlder := createJob(t, repo, older)
+	createJob(t, repo, older)
 
 	newer := jobFixture()
 	newer.OrganizationID = org
 	newer.RequestHash = hash
 	newer.Status = model.JobStatusProcessing
 	newer.CreatedAt = time.Now().UTC().Add(-1 * time.Minute)
-	createdNewer := createJob(t, repo, newer)
+	createJob(t, repo, newer)
 
-	require.NoError(t, repo.EnsureIndexes(context.Background()))
-
-	// In v4, EnsureIndexes only creates indexes without remediating existing duplicates.
-	// Both jobs should retain their original status.
-	updatedOlder, err := repo.FindByID(context.Background(), createdOlder.ID, org)
-	require.NoError(t, err)
-	require.NotNil(t, updatedOlder)
-	require.Equal(t, model.JobStatusPending, updatedOlder.Status)
-
-	updatedNewer, err := repo.FindByID(context.Background(), createdNewer.ID, org)
-	require.NoError(t, err)
-	require.NotNil(t, updatedNewer)
-	require.Equal(t, model.JobStatusProcessing, updatedNewer.Status)
+	// With the unique active hash index restored, EnsureIndexes returns an error
+	// when duplicate active jobs exist (same org_id + request_hash).
+	// Manual cleanup is required before the index can be created.
+	err := repo.EnsureIndexes(context.Background())
+	require.Error(t, err, "EnsureIndexes should fail when duplicate active jobs prevent unique index creation")
 }
 
 func TestJobMongoDBRepository_ExistsRunningByMappedFieldKey(t *testing.T) {
