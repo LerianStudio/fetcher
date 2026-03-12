@@ -286,7 +286,10 @@ func (s *ValidateSchema) getOrFetchSchema(
 	}
 
 	if isNilDataSource(ds) {
-		return nil, fmt.Errorf("failed to create datasource: datasource factory returned nil datasource")
+		factoryErr := fmt.Errorf("datasource factory returned nil datasource for config %s", conn.ConfigName)
+		libOpentelemetry.HandleSpanError(span, "datasource factory returned nil", factoryErr)
+
+		return nil, factoryErr
 	}
 	defer ds.Close(ctx)
 
