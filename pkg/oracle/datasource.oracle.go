@@ -841,11 +841,9 @@ func (ds *ExternalDataSource) QueryWithAdvancedFilters(ctx context.Context, sche
 
 	logger.Log(context.Background(), libLog.LevelDebug, fmt.Sprintf("Executing advanced filter SQL: %s", query))
 	logger.Log(context.Background(), libLog.LevelDebug, fmt.Sprintf("SQL args: %v", args))
-	logger.Log(context.Background(), libLog.LevelDebug, fmt.
+	logger.Log(context.Background(), libLog.LevelDebug, fmt.Sprintf("Original filter conditions: %+v", filter))
 
-		// Create timeout context for query execution (slower timeout for advanced filters)
-		Sprintf("Original filter conditions: %+v", filter))
-
+	// Create timeout context for query execution (slower timeout for advanced filters)
 	queryCtx, cancel := context.WithTimeout(ctx, constant.QueryTimeoutSlow)
 	defer cancel()
 
