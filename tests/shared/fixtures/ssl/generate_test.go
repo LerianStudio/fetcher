@@ -102,11 +102,11 @@ func TestWriteToDir(t *testing.T) {
 		// Key files should be readable only by owner
 		info, err := os.Stat(bundle.CAKeyPath)
 		require.NoError(t, err)
-		assert.Equal(t, os.FileMode(0600), info.Mode().Perm())
+		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 
 		info, err = os.Stat(bundle.ServerKeyPath)
 		require.NoError(t, err)
-		assert.Equal(t, os.FileMode(0600), info.Mode().Perm())
+		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 	})
 
 	t.Run("Files can be loaded back", func(t *testing.T) {

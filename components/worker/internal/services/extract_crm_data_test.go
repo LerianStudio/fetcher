@@ -1254,7 +1254,6 @@ func TestQueryPluginCRM_EmptyCollections(t *testing.T) {
 		result,
 		logger,
 	)
-
 	if err != nil {
 		t.Fatalf("expected no error for empty collections, got: %v", err)
 	}
@@ -1285,7 +1284,6 @@ func TestQueryPluginCRM_NilCollections(t *testing.T) {
 		result,
 		logger,
 	)
-
 	if err != nil {
 		t.Fatalf("expected no error for nil collections, got: %v", err)
 	}

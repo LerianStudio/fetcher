@@ -25,7 +25,6 @@ import (
 // - Success rate >= 95%
 // - P99 latency < 2s
 func TestManager_MongoDB_HighLatency(t *testing.T) {
-
 	ctx, cancel := context.WithTimeout(context.Background(), DefaultChaosTestTimeout)
 	defer cancel()
 
@@ -63,7 +62,6 @@ func TestManager_MongoDB_HighLatency(t *testing.T) {
 // - API should return graceful errors (HTTP 500)
 // - Requests should not hang indefinitely
 func TestManager_MongoDB_Timeout(t *testing.T) {
-
 	ctx, cancel := context.WithTimeout(context.Background(), DefaultChaosTestTimeout)
 	defer cancel()
 
@@ -109,7 +107,6 @@ func TestManager_MongoDB_Timeout(t *testing.T) {
 // - System should degrade during cut
 // - System MAY recover after restore (depends on MongoDB client retry behavior)
 func TestManager_MongoDB_Intermittent(t *testing.T) {
-
 	ctx, cancel := context.WithTimeout(context.Background(), DefaultChaosTestTimeout)
 	defer cancel()
 
@@ -167,7 +164,6 @@ func TestManager_MongoDB_Intermittent(t *testing.T) {
 // - Throughput should be degraded but functional
 // - Requests should eventually complete
 func TestManager_MongoDB_Bandwidth(t *testing.T) {
-
 	ctx, cancel := context.WithTimeout(context.Background(), DefaultChaosTestTimeout)
 	defer cancel()
 
@@ -215,7 +211,6 @@ func TestManager_MongoDB_Bandwidth(t *testing.T) {
 // TestManager_CRUD_UnderLatency verifies that CRUD operations complete
 // successfully under high latency conditions.
 func TestManager_CRUD_UnderLatency(t *testing.T) {
-
 	ctx, cancel := context.WithTimeout(context.Background(), DefaultChaosTestTimeout)
 	defer cancel()
 

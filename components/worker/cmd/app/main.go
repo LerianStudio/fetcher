@@ -9,6 +9,7 @@ import (
 
 func main() {
 	libCommons.InitLocalEnvConfig()
+
 	service, err := bootstrap.InitWorker()
 	if err != nil {
 		log.Fatal(err)

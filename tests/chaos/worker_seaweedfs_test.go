@@ -25,7 +25,6 @@ import (
 // - Job should fail gracefully
 // - Error should clearly indicate storage issue
 func TestWorker_SeaweedFS_Unavailable(t *testing.T) {
-
 	ctx, cancel := context.WithTimeout(context.Background(), DefaultChaosTestTimeout)
 	defer cancel()
 
@@ -116,7 +115,6 @@ done:
 // - Jobs complete successfully (bandwidth limit has no effect)
 // - Timing varies based on system load, not bandwidth limit
 func TestWorker_SeaweedFS_SlowUpload(t *testing.T) {
-
 	ctx, cancel := context.WithTimeout(context.Background(), LongChaosTestTimeout)
 	defer cancel()
 
@@ -192,7 +190,6 @@ func TestWorker_SeaweedFS_SlowUpload(t *testing.T) {
 // - Job should complete with delay
 // - Storage operations should eventually succeed
 func TestWorker_SeaweedFS_LatencySpike(t *testing.T) {
-
 	ctx, cancel := context.WithTimeout(context.Background(), LongChaosTestTimeout)
 	defer cancel()
 
@@ -244,7 +241,6 @@ func TestWorker_SeaweedFS_LatencySpike(t *testing.T) {
 // - Jobs should succeed after storage recovery
 // - Recovery should be automatic
 func TestWorker_SeaweedFS_Recovery(t *testing.T) {
-
 	ctx, cancel := context.WithTimeout(context.Background(), LongChaosTestTimeout)
 	defer cancel()
 

@@ -26,7 +26,6 @@ import (
 // - 90%+ jobs should complete successfully
 // - System should handle intermittent failures gracefully
 func TestE2E_FullLifecycle_IntermittentChaos(t *testing.T) {
-
 	ctx, cancel := context.WithTimeout(context.Background(), LongChaosTestTimeout)
 	defer cancel()
 
@@ -163,7 +162,6 @@ func TestE2E_FullLifecycle_IntermittentChaos(t *testing.T) {
 // - System should degrade gracefully
 // - Some jobs should still complete
 func TestE2E_FullLifecycle_MultipleFailures(t *testing.T) {
-
 	ctx, cancel := context.WithTimeout(context.Background(), LongChaosTestTimeout)
 	defer cancel()
 
@@ -238,7 +236,6 @@ func TestE2E_FullLifecycle_MultipleFailures(t *testing.T) {
 // - System should recover within SLO threshold (35s)
 // - First successful request marks recovery
 func TestE2E_FullLifecycle_RecoveryTime(t *testing.T) {
-
 	ctx, cancel := context.WithTimeout(context.Background(), LongChaosTestTimeout)
 	defer cancel()
 
@@ -287,7 +284,6 @@ func TestE2E_FullLifecycle_RecoveryTime(t *testing.T) {
 
 		fetcherReq2 := createBasicFetcherRequest(conn2.ConfigName)
 		resp2, err := apiClient.CreateFetcherJob(ctx, fetcherReq2)
-
 		if err != nil {
 			t.Logf("Probe %d: job creation failed - still recovering", i+1)
 			time.Sleep(3 * time.Second)

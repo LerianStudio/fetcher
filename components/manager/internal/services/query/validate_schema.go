@@ -260,6 +260,7 @@ func (s *ValidateSchema) getOrFetchSchema(
 		libOpentelemetry.HandleSpanError(span, "failed to create datasource", err)
 		return nil, fmt.Errorf("failed to create datasource: %w", err)
 	}
+
 	if isNilDataSource(ds) {
 		return nil, fmt.Errorf("failed to create datasource: datasource factory returned nil datasource")
 	}

@@ -434,7 +434,6 @@ func TestUpdateProduct_Execute_ApplyPatchEmptyName(t *testing.T) {
 	existing.Name = originalName
 	validName := "Valid Updated Name"
 	err = existing.ApplyPatch(&validName, nil, nil)
-
 	if err != nil {
 		t.Fatalf("expected no error for valid name patch, got %v", err)
 	}

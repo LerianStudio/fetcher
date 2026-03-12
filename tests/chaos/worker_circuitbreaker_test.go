@@ -36,7 +36,6 @@ import (
 // - Jobs may fail at creation (Manager can't test connection) OR
 // - Jobs succeed at creation but fail/succeed at processing (no proxy effect)
 func TestWorker_CircuitBreaker_Opens(t *testing.T) {
-
 	ctx, cancel := context.WithTimeout(context.Background(), LongChaosTestTimeout)
 	defer cancel()
 
@@ -93,7 +92,6 @@ func TestWorker_CircuitBreaker_Opens(t *testing.T) {
 
 		start := time.Now()
 		resp, err := apiClient.CreateFetcherJob(ctx, fetcherReq)
-
 		if err != nil {
 			t.Logf("Job %d creation failed at API level: %v", i, err)
 			metrics.RecordRequest(false, false, time.Since(start))
@@ -145,7 +143,6 @@ func TestWorker_CircuitBreaker_Opens(t *testing.T) {
 // - Circuit is open (failures in progress)
 // - After 30s cooldown, circuit allows one probe request
 func TestWorker_CircuitBreaker_HalfOpen(t *testing.T) {
-
 	ctx, cancel := context.WithTimeout(context.Background(), LongChaosTestTimeout)
 	defer cancel()
 
@@ -211,7 +208,6 @@ func TestWorker_CircuitBreaker_HalfOpen(t *testing.T) {
 // - After cooldown, probe succeeds
 // - Circuit closes and normal operation resumes
 func TestWorker_CircuitBreaker_Recovery(t *testing.T) {
-
 	ctx, cancel := context.WithTimeout(context.Background(), LongChaosTestTimeout)
 	defer cancel()
 
@@ -258,7 +254,6 @@ func TestWorker_CircuitBreaker_Recovery(t *testing.T) {
 		start := time.Now()
 		fetcherReq := createBasicFetcherRequest(connections[i].ConfigName)
 		resp, err := apiClient.CreateFetcherJob(ctx, fetcherReq)
-
 		if err != nil {
 			recoveryMetrics.RecordRequest(false, false, time.Since(start))
 			continue
@@ -296,7 +291,6 @@ func TestWorker_CircuitBreaker_Recovery(t *testing.T) {
 // - Retries with exponential backoff: 100ms, 200ms, 400ms, up to 2s max
 // - Maximum 3 retries per operation
 func TestWorker_ExponentialBackoff(t *testing.T) {
-
 	ctx, cancel := context.WithTimeout(context.Background(), LongChaosTestTimeout)
 	defer cancel()
 

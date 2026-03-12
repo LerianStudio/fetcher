@@ -134,6 +134,7 @@ func InitServers() (*Service, error) {
 	}
 
 	ctx := context.Background()
+
 	logger, telemetry, err := initLoggerAndTelemetryFn(cfg)
 	if err != nil {
 		return nil, err
@@ -217,7 +218,9 @@ func initMongoRepositories(ctx context.Context, cfg *Config, logger libLog.Logge
 	if err != nil {
 		return nil, wrapBootstrapError("create MongoDB connection repository", err)
 	}
+
 	logger.Log(ctx, libLog.LevelInfo, "Ensuring MongoDB indexes exist for connections...")
+
 	if err := connectionRepository.EnsureIndexes(ctx); err != nil {
 		return nil, wrapBootstrapError("ensure MongoDB connection indexes", err)
 	}
@@ -226,7 +229,9 @@ func initMongoRepositories(ctx context.Context, cfg *Config, logger libLog.Logge
 	if err != nil {
 		return nil, wrapBootstrapError("create MongoDB job repository", err)
 	}
+
 	logger.Log(ctx, libLog.LevelInfo, "Ensuring MongoDB indexes exist for jobs...")
+
 	if err := jobRepository.EnsureIndexes(ctx); err != nil {
 		return nil, wrapBootstrapError("ensure MongoDB job indexes", err)
 	}
@@ -235,7 +240,9 @@ func initMongoRepositories(ctx context.Context, cfg *Config, logger libLog.Logge
 	if err != nil {
 		return nil, wrapBootstrapError("create MongoDB product repository", err)
 	}
+
 	logger.Log(ctx, libLog.LevelInfo, "Ensuring MongoDB indexes exist for products...")
+
 	if err := productRepository.EnsureIndexes(ctx); err != nil {
 		return nil, wrapBootstrapError("ensure MongoDB product indexes", err)
 	}
@@ -257,6 +264,7 @@ func initCrypto(cfg *Config, logger libLog.Logger) (*managerCrypto, error) {
 	if err != nil {
 		return nil, wrapBootstrapError("initialize key deriver", err)
 	}
+
 	logger.Log(context.Background(), libLog.LevelInfo, "Key derivation initialized successfully")
 
 	cryptoService, err := crypto.NewAESGCMService(keyDeriver.GetCredentialKey(), cfg.AppEncryptionKeyVersion)

@@ -968,7 +968,6 @@ func TestParseMessage_WithNilError(t *testing.T) {
 
 	body, _ := json.Marshal(validMessage)
 	result, err := uc.parseMessage(ctx, body, nil, nil, logger)
-
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}

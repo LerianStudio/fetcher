@@ -42,6 +42,7 @@ type fakeChaos struct {
 func (f *fakeChaos) CreateProxy(context.Context, string, string) (ProxyRef, error) {
 	return ProxyRef{}, nil
 }
+
 func (f *fakeChaos) AddLatency(context.Context, string, time.Duration, time.Duration) error {
 	return nil
 }

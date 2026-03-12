@@ -188,43 +188,43 @@ func GenerateCertificates(opts GenerateOptions) (*CertificateBundle, error) {
 
 // WriteToDir writes all certificates to the specified directory.
 func (b *CertificateBundle) WriteToDir(dir string) error {
-	if err := os.MkdirAll(dir, 0700); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("failed to create directory %s: %w", dir, err)
 	}
 
 	// Write CA certificate
 	b.CACertPath = filepath.Join(dir, "ca.crt")
-	if err := os.WriteFile(b.CACertPath, []byte(b.CACertPEM), 0600); err != nil {
+	if err := os.WriteFile(b.CACertPath, []byte(b.CACertPEM), 0o600); err != nil {
 		return fmt.Errorf("failed to write CA cert: %w", err)
 	}
 
 	// Write CA key
 	b.CAKeyPath = filepath.Join(dir, "ca.key")
-	if err := os.WriteFile(b.CAKeyPath, []byte(b.CAKeyPEM), 0600); err != nil {
+	if err := os.WriteFile(b.CAKeyPath, []byte(b.CAKeyPEM), 0o600); err != nil {
 		return fmt.Errorf("failed to write CA key: %w", err)
 	}
 
 	// Write server certificate
 	b.ServerCertPath = filepath.Join(dir, "server.crt")
-	if err := os.WriteFile(b.ServerCertPath, []byte(b.ServerCertPEM), 0600); err != nil {
+	if err := os.WriteFile(b.ServerCertPath, []byte(b.ServerCertPEM), 0o600); err != nil {
 		return fmt.Errorf("failed to write server cert: %w", err)
 	}
 
 	// Write server key
 	b.ServerKeyPath = filepath.Join(dir, "server.key")
-	if err := os.WriteFile(b.ServerKeyPath, []byte(b.ServerKeyPEM), 0600); err != nil {
+	if err := os.WriteFile(b.ServerKeyPath, []byte(b.ServerKeyPEM), 0o600); err != nil {
 		return fmt.Errorf("failed to write server key: %w", err)
 	}
 
 	// Write client certificate (if generated)
 	if len(b.ClientCertPEM) > 0 {
 		b.ClientCertPath = filepath.Join(dir, "client.crt")
-		if err := os.WriteFile(b.ClientCertPath, []byte(b.ClientCertPEM), 0600); err != nil {
+		if err := os.WriteFile(b.ClientCertPath, []byte(b.ClientCertPEM), 0o600); err != nil {
 			return fmt.Errorf("failed to write client cert: %w", err)
 		}
 
 		b.ClientKeyPath = filepath.Join(dir, "client.key")
-		if err := os.WriteFile(b.ClientKeyPath, []byte(b.ClientKeyPEM), 0600); err != nil {
+		if err := os.WriteFile(b.ClientKeyPath, []byte(b.ClientKeyPEM), 0o600); err != nil {
 			return fmt.Errorf("failed to write client key: %w", err)
 		}
 	}

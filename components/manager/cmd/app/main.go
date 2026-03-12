@@ -15,6 +15,7 @@ import (
 // @BasePath					/
 func main() {
 	pkg.InitLocalEnvConfig()
+
 	service, err := bootstrap.InitServers()
 	if err != nil {
 		log.Fatal(err)
