@@ -2,6 +2,7 @@ package e2ekit
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 )
@@ -38,14 +39,6 @@ func TestBuildImageWithSecretsValidation(t *testing.T) {
 			wantErr: "has both Src and Env set",
 		},
 		{
-			name: "secret env missing",
-			cfg: BuildConfig{
-				ContextDir: t.TempDir(),
-				Secrets:    []BuildSecret{{ID: "github", Env: "GITHUB_TOKEN"}},
-			},
-			wantErr: "environment variable \"GITHUB_TOKEN\"",
-		},
-		{
 			name: "secret missing both src and env",
 			cfg: BuildConfig{
 				ContextDir: t.TempDir(),
@@ -67,6 +60,28 @@ func TestBuildImageWithSecretsValidation(t *testing.T) {
 				t.Fatalf("expected error containing %q, got %v", tt.wantErr, err)
 			}
 		})
+	}
+}
+
+func TestCreateSecretTempFile_AllowsMissingEnv(t *testing.T) {
+	t.Parallel()
+
+	path, err := createSecretTempFile(BuildSecret{ID: "github", Env: "GITHUB_TOKEN"})
+	if err != nil {
+		t.Fatalf("expected missing env to produce empty secret file, got %v", err)
+	}
+
+	t.Cleanup(func() {
+		_ = os.Remove(path)
+	})
+
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("expected to read secret temp file, got %v", err)
+	}
+
+	if len(contents) != 0 {
+		t.Fatalf("expected empty secret file for missing env, got %q", string(contents))
 	}
 }
 
