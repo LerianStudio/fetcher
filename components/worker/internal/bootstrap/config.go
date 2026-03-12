@@ -75,13 +75,22 @@ var (
 	applyTelemetryGlobals = func(telemetry *libOtel.Telemetry) error {
 		return telemetry.ApplyGlobals()
 	}
+	decodeMasterKey          = crypto.DecodeMasterKey
+	newKeyDeriver            = crypto.NewHKDFKeyDeriver
+	newWorkerCryptoService   = crypto.NewAESGCMService
+	newWorkerHMACSigner      = crypto.NewHMACSigner
+	newWorkerMongoClient     = libMongo.NewClient
+	newWorkerJobRepository   = job.NewJobMongoDBRepository
+	newWorkerConnectionRepo  = connection.NewConnectionMongoDBRepository
+	newWorkerConsumerRoutes  = rabbitmq.NewConsumerRoutes
+	newWorkerPublisherRoutes = rabbitmq.NewPublisherRoutes
 )
 
 // InitWorker initializes and configures the application's dependencies and returns the Service instance.
-func InitWorker() *Service {
+func InitWorker() (*Service, error) {
 	cfg := &Config{}
 	if err := setConfigFromEnvVars(cfg); err != nil {
-		panic(err)
+		return nil, err
 	}
 
 	logger, err := newZapLogger(libZap.Config{
@@ -90,7 +99,7 @@ func InitWorker() *Service {
 		OTelLibraryName: cfg.OtelLibraryName,
 	})
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 
 	telemetry, err := newTelemetry(libOtel.TelemetryConfig{
@@ -103,11 +112,11 @@ func InitWorker() *Service {
 		Logger:                    logger,
 	})
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 
 	if err := applyTelemetryGlobals(telemetry); err != nil {
-		panic(err)
+		return nil, err
 	}
 
 	// Init rabbitmq connection for consumer
@@ -142,29 +151,39 @@ func InitWorker() *Service {
 	}
 
 	// Init key deriver for cryptographic key segregation
-	masterKey, err := crypto.DecodeMasterKey(cfg.AppEncryptionKey)
-	must("decode master encryption key", err)
+	masterKey, err := decodeMasterKey(cfg.AppEncryptionKey)
+	if err != nil {
+		return nil, wrapBootstrapError("decode master encryption key", err)
+	}
 
-	keyDeriver, err := crypto.NewHKDFKeyDeriver(masterKey)
-	must("initialize key deriver", err)
+	keyDeriver, err := newKeyDeriver(masterKey)
+	if err != nil {
+		return nil, wrapBootstrapError("initialize key deriver", err)
+	}
 
 	logger.Log(context.Background(), libLog.LevelInfo, "Key derivation initialized successfully")
 
 	// Init crypto service with derived credential key
-	cryptoService, errCrypto := crypto.NewAESGCMService(keyDeriver.GetCredentialKey(), cfg.AppEncryptionKeyVersion)
-	must("initialize crypto service", errCrypto)
+	cryptoService, errCrypto := newWorkerCryptoService(keyDeriver.GetCredentialKey(), cfg.AppEncryptionKeyVersion)
+	if errCrypto != nil {
+		return nil, wrapBootstrapError("initialize crypto service", errCrypto)
+	}
 
 	// Init message signer for RabbitMQ with derived internal HMAC key
-	cryptoWithInternalHMAC, errSigner := crypto.NewHMACSigner(keyDeriver.GetInternalHMACKey(), crypto.SignatureVersion)
-	must("initialize message signer", errSigner)
+	cryptoWithInternalHMAC, errSigner := newWorkerHMACSigner(keyDeriver.GetInternalHMACKey(), crypto.SignatureVersion)
+	if errSigner != nil {
+		return nil, wrapBootstrapError("initialize message signer", errSigner)
+	}
 
 	// Init document signer for external verification with derived external HMAC key
-	cryptoWithExternalHMAC, errSigner := crypto.NewHMACSigner(keyDeriver.GetExternalHMACKey(), crypto.SignatureVersion)
-	must("initialize document signer", errSigner)
+	cryptoWithExternalHMAC, errSigner := newWorkerHMACSigner(keyDeriver.GetExternalHMACKey(), crypto.SignatureVersion)
+	if errSigner != nil {
+		return nil, wrapBootstrapError("initialize document signer", errSigner)
+	}
 
 	// Initialize RabbitMQ consumer and publisher with separate connections
-	consumerRoutes := rabbitmq.NewConsumerRoutes(consumerConnection, cfg.RabbitMQNumWorkers, logger, telemetry, cryptoWithInternalHMAC)
-	publisherRoutes := rabbitmq.NewPublisherRoutes(publisherConnection, logger, telemetry, cryptoWithExternalHMAC)
+	consumerRoutes := newWorkerConsumerRoutes(consumerConnection, cfg.RabbitMQNumWorkers, logger, telemetry, cryptoWithInternalHMAC)
+	publisherRoutes := newWorkerPublisherRoutes(publisherConnection, logger, telemetry, cryptoWithExternalHMAC)
 
 	// Config SeaweedFS connection
 	seaweedFSEndpoint := fmt.Sprintf("http://%s:%s", cfg.SeaweedFSHost, cfg.SeaweedFSFilerPort)
@@ -179,22 +198,28 @@ func InitWorker() *Service {
 		cfg.MaxPoolSize = 100
 	}
 
-	mongoConnection, errConnectMongo := libMongo.NewClient(context.Background(), libMongo.Config{
+	mongoConnection, errConnectMongo := newWorkerMongoClient(context.Background(), libMongo.Config{
 		URI:         mongoSource,
 		Database:    cfg.MongoDBName,
 		Logger:      logger,
 		MaxPoolSize: uint64(cfg.MaxPoolSize),
 	})
-	must("initialize MongoDB client", errConnectMongo)
+	if errConnectMongo != nil {
+		return nil, wrapBootstrapError("initialize MongoDB client", errConnectMongo)
+	}
 
 	externalDataSeaweedFSRepository := external.NewSimpleRepository(seaweedFSClient, constant.ExternalDataBucketName)
 
 	// Initialize MongoDB repositories
-	jobRepository, errJobRepo := job.NewJobMongoDBRepository(mongoConnection, cfg.MongoDBName)
-	must("initialize job repository", errJobRepo)
+	jobRepository, errJobRepo := newWorkerJobRepository(mongoConnection, cfg.MongoDBName)
+	if errJobRepo != nil {
+		return nil, wrapBootstrapError("initialize job repository", errJobRepo)
+	}
 
-	connectionRepository, errConnectRepo := connection.NewConnectionMongoDBRepository(mongoConnection, cfg.MongoDBName)
-	must("initialize connection repository", errConnectRepo)
+	connectionRepository, errConnectRepo := newWorkerConnectionRepo(mongoConnection, cfg.MongoDBName)
+	if errConnectRepo != nil {
+		return nil, wrapBootstrapError("initialize connection repository", errConnectRepo)
+	}
 
 	service := &services.UseCase{
 		ExternalDataSeaweedFS: externalDataSeaweedFSRepository,
@@ -226,7 +251,7 @@ func InitWorker() *Service {
 		MultiQueueConsumer: multiQueueConsumer,
 		Logger:             logger,
 		licenseShutdown:    licenseClient.GetLicenseManagerShutdown(),
-	}
+	}, nil
 }
 
 func resolveZapEnvironment(env string) libZap.Environment {
@@ -246,8 +271,10 @@ func resolveZapEnvironment(env string) libZap.Environment {
 	}
 }
 
-func must(action string, err error) {
+func wrapBootstrapError(action string, err error) error {
 	if err != nil {
-		panic(fmt.Errorf("%s: %w", action, err))
+		return fmt.Errorf("%s: %w", action, err)
 	}
+
+	return nil
 }

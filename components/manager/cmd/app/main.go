@@ -1,6 +1,8 @@
 package main
 
 import (
+	"log"
+
 	"github.com/LerianStudio/fetcher/components/manager/internal/bootstrap"
 	"github.com/LerianStudio/fetcher/pkg"
 )
@@ -13,5 +15,10 @@ import (
 // @BasePath					/
 func main() {
 	pkg.InitLocalEnvConfig()
-	bootstrap.InitServers().Run()
+	service, err := bootstrap.InitServers()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	service.Run()
 }

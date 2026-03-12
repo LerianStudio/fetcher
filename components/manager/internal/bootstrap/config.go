@@ -104,45 +104,86 @@ type managerPlatformDependencies struct {
 	schemaCache         cacheRepo.SchemaCacheRepository
 }
 
-// InitServers initiate http and grpc servers.
-func InitServers() *Service {
-	cfg := loadConfig()
-	ctx := context.Background()
-	logger, telemetry := initLoggerAndTelemetry(cfg)
-	repositories := initMongoRepositories(ctx, cfg, logger)
-	cryptoDependencies := initCrypto(cfg, logger)
-	platformDependencies := initPlatformDependencies(cfg, logger, cryptoDependencies.messageSigner)
+var (
+	setConfigFromEnvVars  = pkg.SetConfigFromEnvVars
+	newManagerLogger      = func(cfg zap.Config) (libLog.Logger, error) { return zap.New(cfg) }
+	newManagerTelemetry   = libOtel.NewTelemetry
+	applyTelemetryGlobals = func(telemetry *libOtel.Telemetry) error {
+		return telemetry.ApplyGlobals()
+	}
+	newManagerMongoClient   = libMongo.NewClient
+	newConnectionRepository = connection.NewConnectionMongoDBRepository
+	newJobRepository        = job.NewJobMongoDBRepository
+	newProductRepository    = product.NewProductMongoDBRepository
+	newSchemaCacheStore     = func(cfg redisCache.RedisConfig, logger libLog.Logger, ttl time.Duration, prefix string) (redisCache.Cache[model.DataSourceSchema], error) {
+		return redisCache.NewCacheWithFallback[model.DataSourceSchema](cfg, logger, ttl, prefix)
+	}
+	loadConfigFn               = loadConfig
+	initLoggerAndTelemetryFn   = initLoggerAndTelemetry
+	initMongoRepositoriesFn    = initMongoRepositories
+	initCryptoFn               = initCrypto
+	initPlatformDependenciesFn = initPlatformDependencies
+	assembleServiceFn          = assembleService
+)
 
-	return assembleService(
+// InitServers initiate http and grpc servers.
+func InitServers() (*Service, error) {
+	cfg, err := loadConfigFn()
+	if err != nil {
+		return nil, err
+	}
+
+	ctx := context.Background()
+	logger, telemetry, err := initLoggerAndTelemetryFn(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	repositories, err := initMongoRepositoriesFn(ctx, cfg, logger)
+	if err != nil {
+		return nil, err
+	}
+
+	cryptoDependencies, err := initCryptoFn(cfg, logger)
+	if err != nil {
+		return nil, err
+	}
+
+	platformDependencies, err := initPlatformDependenciesFn(cfg, logger, cryptoDependencies.messageSigner)
+	if err != nil {
+		return nil, err
+	}
+
+	return assembleServiceFn(
 		cfg,
 		logger,
 		telemetry,
 		repositories,
 		cryptoDependencies.service,
 		platformDependencies,
-	)
+	), nil
 }
 
-func loadConfig() *Config {
+func loadConfig() (*Config, error) {
 	cfg := &Config{}
-	if err := pkg.SetConfigFromEnvVars(cfg); err != nil {
-		panic(err)
+	if err := setConfigFromEnvVars(cfg); err != nil {
+		return nil, err
 	}
 
-	return cfg
+	return cfg, nil
 }
 
-func initLoggerAndTelemetry(cfg *Config) (libLog.Logger, *libOtel.Telemetry) {
-	logger, err := zap.New(zap.Config{
+func initLoggerAndTelemetry(cfg *Config) (libLog.Logger, *libOtel.Telemetry, error) {
+	logger, err := newManagerLogger(zap.Config{
 		Environment:     resolveZapEnvironment(cfg.EnvName),
 		Level:           cfg.LogLevel,
 		OTelLibraryName: cfg.OtelLibraryName,
 	})
 	if err != nil {
-		panic(err)
+		return nil, nil, err
 	}
 
-	telemetry, err := libOtel.NewTelemetry(libOtel.TelemetryConfig{
+	telemetry, err := newManagerTelemetry(libOtel.TelemetryConfig{
 		LibraryName:               cfg.OtelLibraryName,
 		ServiceName:               cfg.OtelServiceName,
 		ServiceVersion:            cfg.OtelServiceVersion,
@@ -152,67 +193,89 @@ func initLoggerAndTelemetry(cfg *Config) (libLog.Logger, *libOtel.Telemetry) {
 		Logger:                    logger,
 	})
 	if err != nil {
-		panic(err)
+		return nil, nil, err
 	}
 
-	if err := telemetry.ApplyGlobals(); err != nil {
-		panic(err)
+	if err := applyTelemetryGlobals(telemetry); err != nil {
+		return nil, nil, err
 	}
 
-	return logger, telemetry
+	return logger, telemetry, nil
 }
 
-func initMongoRepositories(ctx context.Context, cfg *Config, logger libLog.Logger) *managerRepositories {
-	mongoConnection, err := libMongo.NewClient(ctx, libMongo.Config{
+func initMongoRepositories(ctx context.Context, cfg *Config, logger libLog.Logger) (*managerRepositories, error) {
+	mongoConnection, err := newManagerMongoClient(ctx, libMongo.Config{
 		URI:      buildMongoSource(cfg),
 		Database: cfg.MongoDBName,
 		Logger:   logger,
 	})
-	must("initialize MongoDB client", err)
+	if err != nil {
+		return nil, wrapBootstrapError("initialize MongoDB client", err)
+	}
 
-	connectionRepository, err := connection.NewConnectionMongoDBRepository(mongoConnection, cfg.MongoDBName)
-	must("create MongoDB connection repository", err)
+	connectionRepository, err := newConnectionRepository(mongoConnection, cfg.MongoDBName)
+	if err != nil {
+		return nil, wrapBootstrapError("create MongoDB connection repository", err)
+	}
 	logger.Log(ctx, libLog.LevelInfo, "Ensuring MongoDB indexes exist for connections...")
-	must("ensure MongoDB connection indexes", connectionRepository.EnsureIndexes(ctx))
+	if err := connectionRepository.EnsureIndexes(ctx); err != nil {
+		return nil, wrapBootstrapError("ensure MongoDB connection indexes", err)
+	}
 
-	jobRepository, err := job.NewJobMongoDBRepository(mongoConnection, cfg.MongoDBName)
-	must("create MongoDB job repository", err)
+	jobRepository, err := newJobRepository(mongoConnection, cfg.MongoDBName)
+	if err != nil {
+		return nil, wrapBootstrapError("create MongoDB job repository", err)
+	}
 	logger.Log(ctx, libLog.LevelInfo, "Ensuring MongoDB indexes exist for jobs...")
-	must("ensure MongoDB job indexes", jobRepository.EnsureIndexes(ctx))
+	if err := jobRepository.EnsureIndexes(ctx); err != nil {
+		return nil, wrapBootstrapError("ensure MongoDB job indexes", err)
+	}
 
-	productRepository, err := product.NewProductMongoDBRepository(mongoConnection, cfg.MongoDBName)
-	must("create MongoDB product repository", err)
+	productRepository, err := newProductRepository(mongoConnection, cfg.MongoDBName)
+	if err != nil {
+		return nil, wrapBootstrapError("create MongoDB product repository", err)
+	}
 	logger.Log(ctx, libLog.LevelInfo, "Ensuring MongoDB indexes exist for products...")
-	must("ensure MongoDB product indexes", productRepository.EnsureIndexes(ctx))
+	if err := productRepository.EnsureIndexes(ctx); err != nil {
+		return nil, wrapBootstrapError("ensure MongoDB product indexes", err)
+	}
 
 	return &managerRepositories{
 		connection: connectionRepository,
 		job:        jobRepository,
 		product:    productRepository,
-	}
+	}, nil
 }
 
-func initCrypto(cfg *Config, logger libLog.Logger) *managerCrypto {
+func initCrypto(cfg *Config, logger libLog.Logger) (*managerCrypto, error) {
 	masterKey, err := crypto.DecodeMasterKey(cfg.AppEncryptionKey)
-	must("decode master encryption key", err)
+	if err != nil {
+		return nil, wrapBootstrapError("decode master encryption key", err)
+	}
 
 	keyDeriver, err := crypto.NewHKDFKeyDeriver(masterKey)
-	must("initialize key deriver", err)
+	if err != nil {
+		return nil, wrapBootstrapError("initialize key deriver", err)
+	}
 	logger.Log(context.Background(), libLog.LevelInfo, "Key derivation initialized successfully")
 
 	cryptoService, err := crypto.NewAESGCMService(keyDeriver.GetCredentialKey(), cfg.AppEncryptionKeyVersion)
-	must("initialize crypto service", err)
+	if err != nil {
+		return nil, wrapBootstrapError("initialize crypto service", err)
+	}
 
 	messageSigner, err := crypto.NewHMACSigner(keyDeriver.GetInternalHMACKey(), crypto.SignatureVersion)
-	must("initialize message signer", err)
+	if err != nil {
+		return nil, wrapBootstrapError("initialize message signer", err)
+	}
 
 	return &managerCrypto{
 		service:       cryptoService,
 		messageSigner: messageSigner,
-	}
+	}, nil
 }
 
-func initPlatformDependencies(cfg *Config, logger libLog.Logger, messageSigner crypto.Signer) *managerPlatformDependencies {
+func initPlatformDependencies(cfg *Config, logger libLog.Logger, messageSigner crypto.Signer) (*managerPlatformDependencies, error) {
 	rabbitMQConnection := &libRabbitmq.RabbitMQConnection{
 		ConnectionStringSource: buildRabbitMQSource(cfg),
 		HealthCheckURL:         cfg.RabbitMQHealthCheckURL,
@@ -231,7 +294,7 @@ func initPlatformDependencies(cfg *Config, logger libLog.Logger, messageSigner c
 	licenseLogger := libZapV2.InitializeLogger()
 	schemaCacheTTL := getSchemaCacheTTL(cfg.SchemaCacheTTLSeconds)
 
-	genericCache, errCache := redisCache.NewCacheWithFallback[model.DataSourceSchema](
+	genericCache, errCache := newSchemaCacheStore(
 		redisCache.RedisConfig{
 			Host:     cfg.RedisHost,
 			Port:     cfg.RedisPort,
@@ -242,7 +305,9 @@ func initPlatformDependencies(cfg *Config, logger libLog.Logger, messageSigner c
 		schemaCacheTTL,
 		"fetcher:schema:",
 	)
-	must("initialize schema cache", errCache)
+	if errCache != nil {
+		return nil, wrapBootstrapError("initialize schema cache", errCache)
+	}
 
 	return &managerPlatformDependencies{
 		rabbitAdapter: rabbitmq.NewRabbitMQAdapterWithOptions(rabbitMQConnection, rabbitMQOptions),
@@ -255,7 +320,7 @@ func initPlatformDependencies(cfg *Config, logger libLog.Logger, messageSigner c
 		),
 		connectionTestStore: ratelimit.New(10, time.Minute),
 		schemaCache:         cacheRepo.NewSchemaCache(genericCache, schemaCacheTTL),
-	}
+	}, nil
 }
 
 func assembleService(
@@ -393,8 +458,10 @@ func resolveZapEnvironment(env string) zap.Environment {
 	}
 }
 
-func must(action string, err error) {
+func wrapBootstrapError(action string, err error) error {
 	if err != nil {
-		panic(fmt.Errorf("%s: %w", action, err))
+		return fmt.Errorf("%s: %w", action, err)
 	}
+
+	return nil
 }
