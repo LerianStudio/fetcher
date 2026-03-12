@@ -176,28 +176,27 @@ type ProxiedAppEnv struct {
 }
 
 // buildProxiedAppEnv constructs environment configuration from infrastructure endpoints.
-// The infra HostPort() methods return network aliases when running in a shared Docker network,
-// enabling direct container-to-container communication through Toxiproxy.
+// ContainerHostPort preserves in-network proxy addresses for app containers while the
+// public HostPort contract remains host-usable for test code.
 func buildProxiedAppEnv() (*ProxiedAppEnv, error) {
-	// Note: For now, we use direct endpoints and the chaos tests
-	// will inject failures at the proxy level. The apps connect to
-	// infrastructure directly; chaos is injected via network manipulation.
-	mongoHost, mongoPort, err := chaosInfra.MongoDB.HostPort()
+	// The app containers must use the in-network endpoints so traffic flows
+	// through Toxiproxy when chaos mode is enabled.
+	mongoHost, mongoPort, err := chaosInfra.MongoDB.ContainerHostPort()
 	if err != nil {
 		return nil, fmt.Errorf("mongo host/port: %w", err)
 	}
 
-	rabbitHost, rabbitPort, err := chaosInfra.RabbitMQ.HostPort()
+	rabbitHost, rabbitPort, err := chaosInfra.RabbitMQ.ContainerHostPort()
 	if err != nil {
 		return nil, fmt.Errorf("rabbit host/port: %w", err)
 	}
 
-	redisHost, redisPort, err := chaosInfra.Redis.HostPort()
+	redisHost, redisPort, err := chaosInfra.Redis.ContainerHostPort()
 	if err != nil {
 		return nil, fmt.Errorf("redis host/port: %w", err)
 	}
 
-	seaweedHost, seaweedPort, err := chaosInfra.SeaweedFS.HostPort()
+	seaweedHost, seaweedPort, err := chaosInfra.SeaweedFS.ContainerHostPort()
 	if err != nil {
 		return nil, fmt.Errorf("seaweedfs host/port: %w", err)
 	}

@@ -1,9 +1,11 @@
 package itestkit
 
 import (
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -78,8 +80,8 @@ func HostGatewayIP() string {
 //   - localhost, 127.0.0.1, ::1 (loopback)
 //   - 0.0.0.0, :: (wildcard/all interfaces)
 //
-// This is automatically called by all infra HostPort() methods, so tests
-// don't need to manually handle this conversion.
+// Container-specific helpers call this so app containers can reach services
+// exposed on the Docker host.
 func NormalizeHost(host string) string {
 	switch host {
 	case "localhost", "127.0.0.1", "::1", "0.0.0.0", "::":
@@ -87,4 +89,51 @@ func NormalizeHost(host string) string {
 	default:
 		return host
 	}
+}
+
+// ParseHostPort parses host:port addresses used across itestkit endpoint helpers.
+func ParseHostPort(addr string) (host string, port int, err error) {
+	host, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "", 0, fmt.Errorf("invalid address format: %s: %w", addr, err)
+	}
+
+	port, err = strconv.Atoi(portStr)
+	if err != nil {
+		return "", 0, fmt.Errorf("invalid port: %s", portStr)
+	}
+
+	return host, port, nil
+}
+
+// ResolveHostHostPort returns the public, host-usable endpoint for an infra helper.
+// If a proxy is configured, proxyListen must be the host-mapped proxy endpoint.
+func ResolveHostHostPort(proxyListen, upstream string) (host string, port int, err error) {
+	if proxyListen != "" {
+		return ParseHostPort(proxyListen)
+	}
+
+	return ParseHostPort(upstream)
+}
+
+// ResolveContainerHostPort returns the endpoint that app containers should use.
+// Preference order:
+//  1. In-network proxy endpoint (toxiproxy alias) when chaos proxy is enabled
+//  2. Direct shared-network alias for the infra container
+//  3. Normalized host-mapped upstream when no shared network exists
+func ResolveContainerHostPort(proxyListenInNetwork, networkAlias string, internalPort int, upstream string) (host string, port int, err error) {
+	if proxyListenInNetwork != "" {
+		return ParseHostPort(proxyListenInNetwork)
+	}
+
+	if networkAlias != "" {
+		return networkAlias, internalPort, nil
+	}
+
+	host, port, err = ParseHostPort(upstream)
+	if err != nil {
+		return "", 0, err
+	}
+
+	return NormalizeHost(host), port, nil
 }

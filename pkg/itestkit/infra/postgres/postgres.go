@@ -3,8 +3,6 @@ package postgres
 import (
 	"context"
 	"fmt"
-	"net"
-	"strconv"
 
 	"github.com/testcontainers/testcontainers-go"
 	pg "github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -27,9 +25,10 @@ type PostgresConfig struct {
 }
 
 type PostgresEndpoint struct {
-	DSN         string
-	Upstream    string
-	ProxyListen string
+	DSN                  string
+	Upstream             string
+	ProxyListen          string
+	ProxyListenInNetwork string
 }
 
 type PostgresInfra struct {
@@ -117,8 +116,9 @@ func (p *PostgresInfra) Start(ctx context.Context, env *itestkit.Env) error {
 	}
 
 	upstream := fmt.Sprintf("%s:%s", host, port.Port())
-	finalAddr := upstream
+	hostAddr := upstream
 	proxyListen := ""
+	proxyListenInNetwork := ""
 
 	if p.cfg.EnableProxy && env != nil && env.Chaos != nil {
 		// Use the container's network alias for proxy upstream when in shared network
@@ -135,14 +135,16 @@ func (p *PostgresInfra) Start(ctx context.Context, env *itestkit.Env) error {
 			return err
 		}
 
-		finalAddr = ref.ListenAddr
+		hostAddr = ref.ListenAddr
 		proxyListen = ref.ListenAddr
+		proxyListenInNetwork = ref.InNetworkListenAddr
 	}
 
 	endpoint := PostgresEndpoint{
-		Upstream:    upstream,
-		ProxyListen: proxyListen,
-		DSN:         fmt.Sprintf("postgres://%s:%s@%s/%s?sslmode=disable", p.cfg.Username, p.cfg.Password, finalAddr, p.cfg.Database),
+		Upstream:             upstream,
+		ProxyListen:          proxyListen,
+		ProxyListenInNetwork: proxyListenInNetwork,
+		DSN:                  fmt.Sprintf("postgres://%s:%s@%s/%s?sslmode=disable", p.cfg.Username, p.cfg.Password, hostAddr, p.cfg.Database),
 	}
 	p.endpoint = &endpoint
 
@@ -166,10 +168,8 @@ func (p *PostgresInfra) DSN() (string, error) {
 	return endpoint.DSN, nil
 }
 
-// HostPort returns the host and port as separate values.
-// If a proxy is configured, returns the proxy address.
-// If in a shared network (no proxy), returns the network alias and internal port.
-// Otherwise returns the upstream address normalized for Docker access.
+// HostPort returns the public, host-usable endpoint.
+// Use ContainerHostPort when wiring app containers into a shared Docker network.
 func (p *PostgresInfra) HostPort() (host string, port int, err error) {
 	// If stub values are set, return them directly without normalization
 	if p.stubHost != "" {
@@ -181,35 +181,17 @@ func (p *PostgresInfra) HostPort() (host string, port int, err error) {
 		return "", 0, err
 	}
 
-	// If proxy is configured, return proxy address
-	if endpoint.ProxyListen != "" {
-		hostStr, portStr, err := net.SplitHostPort(endpoint.ProxyListen)
-		if err != nil {
-			return "", 0, fmt.Errorf("invalid proxy address: %s: %w", endpoint.ProxyListen, err)
-		}
+	return itestkit.ResolveHostHostPort(endpoint.ProxyListen, endpoint.Upstream)
+}
 
-		portNum, _ := strconv.Atoi(portStr)
-
-		return hostStr, portNum, nil
-	}
-
-	// If in shared network, return network alias and internal port
-	if p.networkAlias != "" {
-		return p.networkAlias, 5432, nil
-	}
-
-	// Fallback: return upstream address normalized for Docker access
-	hostStr, portStr, err := net.SplitHostPort(endpoint.Upstream)
+// ContainerHostPort returns the endpoint that app containers should use.
+func (p *PostgresInfra) ContainerHostPort() (host string, port int, err error) {
+	endpoint, err := p.Endpoint()
 	if err != nil {
-		return "", 0, fmt.Errorf("invalid address format: %s: %w", endpoint.Upstream, err)
+		return "", 0, err
 	}
 
-	portNum, err := strconv.Atoi(portStr)
-	if err != nil {
-		return "", 0, fmt.Errorf("invalid port: %s", portStr)
-	}
-
-	return itestkit.NormalizeHost(hostStr), portNum, nil
+	return itestkit.ResolveContainerHostPort(endpoint.ProxyListenInNetwork, p.networkAlias, 5432, endpoint.Upstream)
 }
 
 func (p *PostgresInfra) Terminate(ctx context.Context) error {
@@ -226,7 +208,6 @@ func (p *PostgresInfra) InfraName() string { return p.cfg.Name }
 // NewPostgresInfraStub creates a PostgresInfra with a pre-configured endpoint.
 // Use this when reusing existing infrastructure that was started separately.
 // The stub doesn't manage a container, just provides connection details.
-// Note: Sets networkAlias to empty to bypass NormalizeHost in HostPort().
 func NewPostgresInfraStub(cfg PostgresConfig, host string, port int) *PostgresInfra {
 	p := NewPostgresInfra(cfg)
 	upstream := fmt.Sprintf("%s:%d", host, port)
@@ -234,7 +215,7 @@ func NewPostgresInfraStub(cfg PostgresConfig, host string, port int) *PostgresIn
 		Upstream: upstream,
 		DSN:      fmt.Sprintf("postgres://%s:%s@%s/%s?sslmode=disable", cfg.Username, cfg.Password, upstream, cfg.Database),
 	}
-	// Store the raw host for HostPort() to return without normalization
+	// Store the raw host for HostPort() to return directly.
 	p.stubHost = host
 	p.stubPort = port
 

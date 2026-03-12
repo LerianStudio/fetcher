@@ -16,7 +16,7 @@ import (
 	"time"
 
 	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
-	libRabbitmq "github.com/LerianStudio/lib-commons/v2/commons/rabbitmq"
+	libRabbitmq "github.com/LerianStudio/lib-commons/v4/commons/rabbitmq"
 )
 
 // stressTestConfig groups the RabbitMQ configuration required for the integration test.

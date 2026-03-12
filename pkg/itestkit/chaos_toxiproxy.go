@@ -112,25 +112,26 @@ func (t *toxiproxyChaos) CreateProxy(ctx context.Context, name string, upstream 
 
 	t.proxies[name] = p
 
-	// If we have a network alias, use internal address for container-to-container communication
-	if t.networkAlias != "" {
-		internalAddr := fmt.Sprintf("%s:%d", t.networkAlias, internalPort)
-		t.proxyMappings[name] = internalAddr
-
-		return ProxyRef{Name: name, ListenAddr: internalAddr, Upstream: upstream}, nil
-	}
-
-	// Fallback: Get the mapped port on the host for this internal port
+	// Always resolve the mapped host port for public helpers.
 	mappedPort, err := t.container.MappedPort(ctx, nat.Port(fmt.Sprintf("%d/tcp", internalPort)))
 	if err != nil {
 		return ProxyRef{}, fmt.Errorf("get mapped port for proxy %s: %w", name, err)
 	}
 
-	// Store the mapping and return the host-accessible address
 	hostAddr := fmt.Sprintf("%s:%s", t.hostIP, mappedPort.Port())
 	t.proxyMappings[name] = hostAddr
 
-	return ProxyRef{Name: name, ListenAddr: hostAddr, Upstream: upstream}, nil
+	internalAddr := ""
+	if t.networkAlias != "" {
+		internalAddr = fmt.Sprintf("%s:%d", t.networkAlias, internalPort)
+	}
+
+	return ProxyRef{
+		Name:                name,
+		ListenAddr:          hostAddr,
+		InNetworkListenAddr: internalAddr,
+		Upstream:            upstream,
+	}, nil
 }
 
 func (t *toxiproxyChaos) AddLatency(ctx context.Context, proxyName string, latency, jitter time.Duration) error {
