@@ -243,21 +243,13 @@ test: test-unit ## Alias for unit test suite
 
 .PHONY: test-integration
 test-integration: ## Alias for integration (E2E) suite
-	@manager_image="$(MANAGER_IMAGE)"; \
-	worker_image="$(WORKER_IMAGE)"; \
-	has_manager=0; has_worker=0; \
-	if docker image inspect $$manager_image >/dev/null 2>&1; then has_manager=1; fi; \
-	if docker image inspect $$worker_image >/dev/null 2>&1; then has_worker=1; fi; \
-	if [ $$has_manager -eq 1 ] && [ $$has_worker -eq 1 ]; then \
-	  echo "Using pre-built images for integration tests"; \
-	  E2E_SKIP_BUILD=true $(MAKE) test-e2e; \
-	elif [ -n "$$GITHUB_TOKEN" ]; then \
-	  echo "Pre-built images not found. Building images for integration tests"; \
-	  E2E_SKIP_BUILD=false $(MAKE) test-e2e; \
-	else \
-	  echo "Skipping integration tests: missing pre-built images ($$manager_image, $$worker_image) and GITHUB_TOKEN is not set"; \
-	  echo "To run integration tests, either pre-build images or set GITHUB_TOKEN"; \
-	fi
+	@if [ -z "$$GITHUB_TOKEN" ]; then \
+	  echo "Integration tests require GITHUB_TOKEN to build current-branch images."; \
+	  echo "Refusing to reuse pre-built images because they may not match the current branch."; \
+	  exit 1; \
+	fi; \
+	echo "Building current-branch images for integration tests"; \
+	E2E_SKIP_BUILD=false $(MAKE) test-e2e
 
 .PHONY: test-unit
 test-unit: ## Run unit tests on all components

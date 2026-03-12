@@ -3,7 +3,6 @@ package shared
 import (
 	"context"
 	"fmt"
-	"os"
 	"strconv"
 	"testing"
 	"time"
@@ -58,26 +57,26 @@ type AppEnv struct {
 }
 
 // BuildAppEnv constructs environment variables from infrastructure endpoints.
-// The infra HostPort() methods return network aliases when running in a shared Docker network,
-// enabling direct container-to-container communication.
+// ContainerHostPort preserves shared-network addresses for app containers while public
+// helpers like HostPort keep returning host-usable endpoints for test code.
 // The network parameter should come from itestkit.Suite.Network().
 func BuildAppEnv(network string, mongo *mongodb.MongoDBInfra, rabbit *rabbitmq.RabbitInfra, redisInfra *redis.RedisInfra, seaweed *seaweedfs.SeaweedFSInfra) (*AppEnv, error) {
-	mongoHost, mongoPort, err := mongo.HostPort()
+	mongoHost, mongoPort, err := mongo.ContainerHostPort()
 	if err != nil {
 		return nil, fmt.Errorf("mongo host/port: %w", err)
 	}
 
-	rabbitHost, rabbitPort, err := rabbit.HostPort()
+	rabbitHost, rabbitPort, err := rabbit.ContainerHostPort()
 	if err != nil {
 		return nil, fmt.Errorf("rabbit host/port: %w", err)
 	}
 
-	redisHost, redisPort, err := redisInfra.HostPort()
+	redisHost, redisPort, err := redisInfra.ContainerHostPort()
 	if err != nil {
 		return nil, fmt.Errorf("redis host/port: %w", err)
 	}
 
-	seaweedHost, seaweedPort, err := seaweed.HostPort()
+	seaweedHost, seaweedPort, err := seaweed.ContainerHostPort()
 	if err != nil {
 		return nil, fmt.Errorf("seaweedfs host/port: %w", err)
 	}
@@ -98,15 +97,6 @@ func BuildAppEnv(network string, mongo *mongodb.MongoDBInfra, rabbit *rabbitmq.R
 		SeaweedFSHost:  seaweedHost,
 		SeaweedFSPort:  strconv.Itoa(seaweedPort),
 	}, nil
-}
-
-func githubTokenBuildArgs() map[string]*string {
-	token := os.Getenv("GITHUB_TOKEN")
-	if token == "" {
-		return nil
-	}
-
-	return map[string]*string{"GITHUB_TOKEN": &token}
 }
 
 // ManagerEnv returns the complete set of environment variables required by the Manager container.
@@ -215,7 +205,9 @@ func StartManager(t *testing.T, ctx context.Context, env *AppEnv, cfg AppStartCo
 			ContextDir: e2ekit.ProjectRoot(),
 			Dockerfile: "components/manager/Dockerfile",
 			Tag:        cfg.Image,
-			BuildArgs:  githubTokenBuildArgs(),
+			Secrets: []e2ekit.BuildSecret{
+				{ID: "github_token", Env: "GITHUB_TOKEN"},
+			},
 		})
 	}
 
@@ -260,7 +252,9 @@ func StartWorker(t *testing.T, ctx context.Context, env *AppEnv, cfg AppStartCon
 			ContextDir: e2ekit.ProjectRoot(),
 			Dockerfile: "components/worker/Dockerfile",
 			Tag:        cfg.Image,
-			BuildArgs:  githubTokenBuildArgs(),
+			Secrets: []e2ekit.BuildSecret{
+				{ID: "github_token", Env: "GITHUB_TOKEN"},
+			},
 		})
 	}
 
