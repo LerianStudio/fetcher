@@ -85,16 +85,54 @@ type Config struct {
 	SchemaCacheTTLSeconds string `env:"SCHEMA_CACHE_TTL_SECONDS"`
 }
 
+type managerRepositories struct {
+	connection *connection.ConnectionMongoDBRepository
+	job        *job.JobMongoDBRepository
+	product    *product.ProductMongoDBRepository
+}
+
+type managerCrypto struct {
+	service       *crypto.AESGCMService
+	messageSigner crypto.Signer
+}
+
+type managerPlatformDependencies struct {
+	rabbitAdapter       rabbitmq.Adapter
+	authClient          *middleware.AuthClient
+	licenseClient       *libLicense.LicenseClient
+	connectionTestStore *ratelimit.RateLimiter
+	schemaCache         cacheRepo.SchemaCacheRepository
+}
+
 // InitServers initiate http and grpc servers.
 func InitServers() *Service {
+	cfg := loadConfig()
+	ctx := context.Background()
+	logger, telemetry := initLoggerAndTelemetry(cfg)
+	repositories := initMongoRepositories(ctx, cfg, logger)
+	cryptoDependencies := initCrypto(cfg, logger)
+	platformDependencies := initPlatformDependencies(cfg, logger, cryptoDependencies.messageSigner)
+
+	return assembleService(
+		cfg,
+		logger,
+		telemetry,
+		repositories,
+		cryptoDependencies.service,
+		platformDependencies,
+	)
+}
+
+func loadConfig() *Config {
 	cfg := &Config{}
 	if err := pkg.SetConfigFromEnvVars(cfg); err != nil {
 		panic(err)
 	}
 
-	ctx := context.Background()
+	return cfg
+}
 
-	// Init Logger
+func initLoggerAndTelemetry(cfg *Config) (libLog.Logger, *libOtel.Telemetry) {
 	logger, err := zap.New(zap.Config{
 		Environment:     resolveZapEnvironment(cfg.EnvName),
 		Level:           cfg.LogLevel,
@@ -104,7 +142,6 @@ func InitServers() *Service {
 		panic(err)
 	}
 
-	// Init OpenTelemetry telemetry
 	telemetry, err := libOtel.NewTelemetry(libOtel.TelemetryConfig{
 		LibraryName:               cfg.OtelLibraryName,
 		ServiceName:               cfg.OtelServiceName,
@@ -122,88 +159,62 @@ func InitServers() *Service {
 		panic(err)
 	}
 
-	// Init MongoDB
-	escapedUser := url.PathEscape(cfg.MongoDBUser)
-	escapedPass := url.QueryEscape(cfg.MongoDBPassword)
-	mongoSource := fmt.Sprintf("%s://%s:%s@%s:%s",
-		cfg.MongoURI, escapedUser, escapedPass, cfg.MongoDBHost, cfg.MongoDBPort)
+	return logger, telemetry
+}
 
+func initMongoRepositories(ctx context.Context, cfg *Config, logger libLog.Logger) *managerRepositories {
 	mongoConnection, err := libMongo.NewClient(ctx, libMongo.Config{
-		URI:      mongoSource,
+		URI:      buildMongoSource(cfg),
 		Database: cfg.MongoDBName,
 		Logger:   logger,
 	})
-	if err != nil {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to initialize MongoDB client: %v", err))
-	}
+	must("initialize MongoDB client", err)
 
 	connectionRepository, err := connection.NewConnectionMongoDBRepository(mongoConnection, cfg.MongoDBName)
-	if err != nil {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to create MongoDB repository: %v", err))
-	}
+	must("create MongoDB connection repository", err)
+	logger.Log(ctx, libLog.LevelInfo, "Ensuring MongoDB indexes exist for connections...")
+	must("ensure MongoDB connection indexes", connectionRepository.EnsureIndexes(ctx))
 
-	logger.Log(context.Background(), libLog.LevelInfo, "Ensuring MongoDB indexes exist for connections...")
-
-	if errConnRepo := connectionRepository.EnsureIndexes(ctx); errConnRepo != nil {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to ensure MongoDB indexes: %v", errConnRepo))
-	}
-
-	// Init Job repository
 	jobRepository, err := job.NewJobMongoDBRepository(mongoConnection, cfg.MongoDBName)
-	if err != nil {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to create Job MongoDB repository: %v", err))
-	}
+	must("create MongoDB job repository", err)
+	logger.Log(ctx, libLog.LevelInfo, "Ensuring MongoDB indexes exist for jobs...")
+	must("ensure MongoDB job indexes", jobRepository.EnsureIndexes(ctx))
 
-	logger.Log(context.Background(), libLog.LevelInfo, "Ensuring MongoDB indexes exist for jobs...")
-
-	if errJobRepo := jobRepository.EnsureIndexes(ctx); errJobRepo != nil {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to ensure Job indexes: %v", errJobRepo))
-	}
-
-	// Init Product repository
 	productRepository, err := product.NewProductMongoDBRepository(mongoConnection, cfg.MongoDBName)
-	if err != nil {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to create Product MongoDB repository: %v", err))
+	must("create MongoDB product repository", err)
+	logger.Log(ctx, libLog.LevelInfo, "Ensuring MongoDB indexes exist for products...")
+	must("ensure MongoDB product indexes", productRepository.EnsureIndexes(ctx))
+
+	return &managerRepositories{
+		connection: connectionRepository,
+		job:        jobRepository,
+		product:    productRepository,
 	}
+}
 
-	logger.Log(context.Background(), libLog.LevelInfo, "Ensuring MongoDB indexes exist for products...")
-
-	if errProdRepo := productRepository.EnsureIndexes(ctx); errProdRepo != nil {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to ensure Product indexes: %v", errProdRepo))
-	}
-
-	// Init key deriver for cryptographic key segregation
+func initCrypto(cfg *Config, logger libLog.Logger) *managerCrypto {
 	masterKey, err := crypto.DecodeMasterKey(cfg.AppEncryptionKey)
-	if err != nil {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to decode master encryption key: %v", err))
-	}
+	must("decode master encryption key", err)
 
 	keyDeriver, err := crypto.NewHKDFKeyDeriver(masterKey)
-	if err != nil {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to initialize key deriver: %v", err))
-	}
-
+	must("initialize key deriver", err)
 	logger.Log(context.Background(), libLog.LevelInfo, "Key derivation initialized successfully")
 
-	// Init crypto service with derived credential key
 	cryptoService, err := crypto.NewAESGCMService(keyDeriver.GetCredentialKey(), cfg.AppEncryptionKeyVersion)
-	if err != nil {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to initialize crypto service: %v", err))
+	must("initialize crypto service", err)
+
+	messageSigner, err := crypto.NewHMACSigner(keyDeriver.GetInternalHMACKey(), crypto.SignatureVersion)
+	must("initialize message signer", err)
+
+	return &managerCrypto{
+		service:       cryptoService,
+		messageSigner: messageSigner,
 	}
+}
 
-	// Init message signer for RabbitMQ with derived internal HMAC key
-	cryptoWithInternalHMAC, err := crypto.NewHMACSigner(keyDeriver.GetInternalHMACKey(), crypto.SignatureVersion)
-	if err != nil {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to initialize message signer: %v", err))
-	}
-
-	// Init RabbitMQ
-	escapedUserRMQ := url.PathEscape(cfg.RabbitMQUser)
-	escapedPassRMQ := url.PathEscape(cfg.RabbitMQPass)
-	rabbitSource := fmt.Sprintf("%s://%s:%s@%s:%s", cfg.RabbitURI, escapedUserRMQ, escapedPassRMQ, cfg.RabbitMQHost, cfg.RabbitMQPortAMQP)
-
+func initPlatformDependencies(cfg *Config, logger libLog.Logger, messageSigner crypto.Signer) *managerPlatformDependencies {
 	rabbitMQConnection := &libRabbitmq.RabbitMQConnection{
-		ConnectionStringSource: rabbitSource,
+		ConnectionStringSource: buildRabbitMQSource(cfg),
 		HealthCheckURL:         cfg.RabbitMQHealthCheckURL,
 		Host:                   cfg.RabbitMQHost,
 		Port:                   cfg.RabbitMQPortHost,
@@ -214,63 +225,56 @@ func InitServers() *Service {
 	}
 
 	rabbitMQOptions := rabbitmq.DefaultOptions()
-	rabbitMQOptions.Signer = cryptoWithInternalHMAC
+	rabbitMQOptions.Signer = messageSigner
 
-	rabbitMQAdapter := rabbitmq.NewRabbitMQAdapterWithOptions(rabbitMQConnection, rabbitMQOptions)
-
-	// Init Auth middleware client
 	authLogger := libZapV2.InitializeLogger()
-	authClient := middleware.NewAuthClient(cfg.AuthAddress, cfg.AuthEnabled, &authLogger)
-
-	// Init License middleware client
 	licenseLogger := libZapV2.InitializeLogger()
-	licenseClient := libLicense.NewLicenseClient(
-		constant.ApplicationName,
-		cfg.LicenseKey,
-		cfg.OrganizationIDs,
-		&licenseLogger,
-	)
-
-	// Init rate limiter for connection tests
-	// 10 tokens per minute per connection
-	connectionTestStore := ratelimit.New(10, time.Minute)
-
-	// Init Redis and schema cache
 	schemaCacheTTL := getSchemaCacheTTL(cfg.SchemaCacheTTLSeconds)
 
-	var schemaCache cacheRepo.SchemaCacheRepository
-
-	redisConfig := redisCache.RedisConfig{
-		Host:     cfg.RedisHost,
-		Port:     cfg.RedisPort,
-		Password: cfg.RedisPassword,
-		DB:       getRedisDB(cfg.RedisDB),
-	}
-
-	// Use graceful degradation - if Redis fails, use memory-only cache
 	genericCache, errCache := redisCache.NewCacheWithFallback[model.DataSourceSchema](
-		redisConfig,
+		redisCache.RedisConfig{
+			Host:     cfg.RedisHost,
+			Port:     cfg.RedisPort,
+			Password: cfg.RedisPassword,
+			DB:       getRedisDB(cfg.RedisDB),
+		},
 		logger,
 		schemaCacheTTL,
 		"fetcher:schema:",
 	)
-	if errCache != nil {
-		// This should never happen as NewCacheWithFallback handles Redis failures gracefully
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to initialize cache: %v", errCache))
+	must("initialize schema cache", errCache)
+
+	return &managerPlatformDependencies{
+		rabbitAdapter: rabbitmq.NewRabbitMQAdapterWithOptions(rabbitMQConnection, rabbitMQOptions),
+		authClient:    middleware.NewAuthClient(cfg.AuthAddress, cfg.AuthEnabled, &authLogger),
+		licenseClient: libLicense.NewLicenseClient(
+			constant.ApplicationName,
+			cfg.LicenseKey,
+			cfg.OrganizationIDs,
+			&licenseLogger,
+		),
+		connectionTestStore: ratelimit.New(10, time.Minute),
+		schemaCache:         cacheRepo.NewSchemaCache(genericCache, schemaCacheTTL),
 	}
+}
 
-	schemaCache = cacheRepo.NewSchemaCache(genericCache, schemaCacheTTL)
-
-	// Init services and handlers
-	createConnectionCmd := connectionCommand.NewCreateConnection(connectionRepository, productRepository, cryptoService)
-	updateConnectionCmd := connectionCommand.NewUpdateConnection(connectionRepository, jobRepository, cryptoService)
-	deleteConnectionCmd := connectionCommand.NewDeleteConnection(connectionRepository, jobRepository)
-	getConnectionQuery := connectionQuery.NewGetConnection(connectionRepository)
-	listConnectionsQuery := connectionQuery.NewListConnections(connectionRepository, productRepository)
-	testConnectionQuery := connectionQuery.NewTestConnection(connectionRepository, cryptoService, connectionTestStore)
-	validateSchemaQuery := connectionQuery.NewValidateSchema(connectionRepository, cryptoService, schemaCache)
+func assembleService(
+	cfg *Config,
+	logger libLog.Logger,
+	telemetry *libOtel.Telemetry,
+	repositories *managerRepositories,
+	cryptoService *crypto.AESGCMService,
+	platformDependencies *managerPlatformDependencies,
+) *Service {
+	createConnectionCmd := connectionCommand.NewCreateConnection(repositories.connection, repositories.product, cryptoService)
+	updateConnectionCmd := connectionCommand.NewUpdateConnection(repositories.connection, repositories.job, cryptoService)
+	deleteConnectionCmd := connectionCommand.NewDeleteConnection(repositories.connection, repositories.job)
+	getConnectionQuery := connectionQuery.NewGetConnection(repositories.connection)
+	listConnectionsQuery := connectionQuery.NewListConnections(repositories.connection, repositories.product)
+	testConnectionQuery := connectionQuery.NewTestConnection(repositories.connection, cryptoService, platformDependencies.connectionTestStore)
+	validateSchemaQuery := connectionQuery.NewValidateSchema(repositories.connection, cryptoService, platformDependencies.schemaCache)
 	getConnectionSchemaQuery := connectionQuery.NewGetConnectionSchema(
-		connectionRepository,
+		repositories.connection,
 		cryptoService,
 		datasourceFactory.NewDataSourceFromConnectionWithLogger(logger),
 	)
@@ -286,48 +290,60 @@ func InitServers() *Service {
 		getConnectionSchemaQuery,
 	)
 
-	// Init Product services and handler
-	createProductCmd := connectionCommand.NewCreateProduct(productRepository)
-	updateProductCmd := connectionCommand.NewUpdateProduct(productRepository)
-	deleteProductCmd := connectionCommand.NewDeleteProduct(productRepository, connectionRepository)
-	getProductQuery := connectionQuery.NewGetProduct(productRepository)
-	listProductsQuery := connectionQuery.NewListProducts(productRepository)
-
 	productHandler := in2.NewProductHandler(
-		createProductCmd,
-		updateProductCmd,
-		deleteProductCmd,
-		getProductQuery,
-		listProductsQuery,
+		connectionCommand.NewCreateProduct(repositories.product),
+		connectionCommand.NewUpdateProduct(repositories.product),
+		connectionCommand.NewDeleteProduct(repositories.product, repositories.connection),
+		connectionQuery.NewGetProduct(repositories.product),
+		connectionQuery.NewListProducts(repositories.product),
 	)
 
-	// Init Migration services and handler
-	assignConnectionCmd := connectionCommand.NewAssignConnection(connectionRepository, productRepository)
-	listUnassignedQuery := connectionQuery.NewListUnassignedConnections(connectionRepository)
-
-	migrationHandler := in2.NewMigrationHandler(assignConnectionCmd, listUnassignedQuery)
-
-	// Init Fetcher services and handler
-	createFetcherJobCmd := connectionCommand.NewCreateFetcherJob(
-		connectionRepository,
-		jobRepository,
-		productRepository,
-		cryptoService,
-		rabbitMQAdapter,
-		cfg.RabbitMQGenerateReportQueue,
+	migrationHandler := in2.NewMigrationHandler(
+		connectionCommand.NewAssignConnection(repositories.connection, repositories.product),
+		connectionQuery.NewListUnassignedConnections(repositories.connection),
 	)
 
-	getJobQuery := connectionQuery.NewGetJob(jobRepository)
-	fetcherHandler := in2.NewFetcherHandler(createFetcherJobCmd, getJobQuery)
+	fetcherHandler := in2.NewFetcherHandler(
+		connectionCommand.NewCreateFetcherJob(
+			repositories.connection,
+			repositories.job,
+			repositories.product,
+			cryptoService,
+			platformDependencies.rabbitAdapter,
+			cfg.RabbitMQGenerateReportQueue,
+		),
+		connectionQuery.NewGetJob(repositories.job),
+	)
 
-	// Init HTTP server
-	httpApp := in2.NewRoutes(logger, telemetry, authClient, licenseClient, connectionHandler, productHandler, migrationHandler, fetcherHandler)
-	serverAPI := NewServer(cfg, httpApp, logger, telemetry, licenseClient)
+	httpApp := in2.NewRoutes(
+		logger,
+		telemetry,
+		platformDependencies.authClient,
+		platformDependencies.licenseClient,
+		connectionHandler,
+		productHandler,
+		migrationHandler,
+		fetcherHandler,
+	)
 
 	return &Service{
-		Server: serverAPI,
+		Server: NewServer(cfg, httpApp, logger, telemetry, platformDependencies.licenseClient),
 		Logger: logger,
 	}
+}
+
+func buildMongoSource(cfg *Config) string {
+	escapedUser := url.PathEscape(cfg.MongoDBUser)
+	escapedPass := url.QueryEscape(cfg.MongoDBPassword)
+
+	return fmt.Sprintf("%s://%s:%s@%s:%s", cfg.MongoURI, escapedUser, escapedPass, cfg.MongoDBHost, cfg.MongoDBPort)
+}
+
+func buildRabbitMQSource(cfg *Config) string {
+	escapedUser := url.PathEscape(cfg.RabbitMQUser)
+	escapedPass := url.PathEscape(cfg.RabbitMQPass)
+
+	return fmt.Sprintf("%s://%s:%s@%s:%s", cfg.RabbitURI, escapedUser, escapedPass, cfg.RabbitMQHost, cfg.RabbitMQPortAMQP)
 }
 
 // getSchemaCacheTTL parses the TTL from string and returns a time.Duration.
@@ -374,5 +390,11 @@ func resolveZapEnvironment(env string) zap.Environment {
 		return zap.EnvironmentLocal
 	default:
 		return zap.EnvironmentLocal
+	}
+}
+
+func must(action string, err error) {
+	if err != nil {
+		panic(fmt.Errorf("%s: %w", action, err))
 	}
 }
