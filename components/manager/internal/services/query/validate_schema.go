@@ -3,6 +3,7 @@ package query
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 
 	cacheRepo "github.com/LerianStudio/fetcher/components/manager/internal/adapters/cache"
@@ -259,6 +260,9 @@ func (s *ValidateSchema) getOrFetchSchema(
 		libOpentelemetry.HandleSpanError(span, "failed to create datasource", err)
 		return nil, fmt.Errorf("failed to create datasource: %w", err)
 	}
+	if isNilDataSource(ds) {
+		return nil, fmt.Errorf("failed to create datasource: datasource factory returned nil datasource")
+	}
 	defer ds.Close(ctx)
 
 	// Get schema info from datasource
@@ -291,6 +295,21 @@ func (s *ValidateSchema) getOrFetchSchema(
 	)
 
 	return schema, nil
+}
+
+func isNilDataSource(ds datasourceModel.DataSource) bool {
+	if ds == nil {
+		return true
+	}
+
+	rv := reflect.ValueOf(ds)
+
+	switch rv.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return rv.IsNil()
+	default:
+		return false
+	}
 }
 
 // validateTablesAgainstSchema validates tables against a DataSourceSchema.

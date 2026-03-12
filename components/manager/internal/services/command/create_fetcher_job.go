@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"time"
 
 	"github.com/LerianStudio/fetcher/pkg"
@@ -382,7 +383,7 @@ func (s *CreateFetcherJob) TestConnection(ctx context.Context, conn *model.Conne
 // publishToQueue publishes a job to the RabbitMQ queue.
 // If RabbitMQ is not configured (nil), this method does nothing and returns nil.
 func (s *CreateFetcherJob) publishToQueue(ctx context.Context, j *model.Job) error {
-	if s.rabbitMQ == nil {
+	if isNilRabbitMQAdapter(s.rabbitMQ) {
 		return nil
 	}
 
@@ -410,4 +411,23 @@ func (s *CreateFetcherJob) publishToQueue(ctx context.Context, j *model.Job) err
 	}
 
 	return s.rabbitMQ.ProducerDefault(ctx, "", s.queueName, messageBytes, &header)
+}
+
+func isNilRabbitMQAdapter(adapter rabbitmq.Adapter) bool {
+	if adapter == nil {
+		return true
+	}
+
+	return isNilReferenceValue(adapter)
+}
+
+func isNilReferenceValue(value any) bool {
+	rv := reflect.ValueOf(value)
+
+	switch rv.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return rv.IsNil()
+	default:
+		return false
+	}
 }

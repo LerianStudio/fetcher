@@ -915,6 +915,48 @@ func TestValidateSchema_NilSchemaFromDatasource(t *testing.T) {
 	assert.Equal(t, model.ErrTypeTableNotFound, resp.Errors[0].Type)
 }
 
+func TestValidateSchema_NilDatasourceFactoryResult(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockCrypto := crypto.NewMockCryptor(ctrl)
+	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
+
+	orgID := uuid.New()
+	connID := uuid.New()
+	conn := &model.Connection{ID: connID, ConfigName: "db1", Type: model.TypeMySQL, Host: "localhost", Port: 3306}
+
+	mockConnRepo.EXPECT().
+		FindByConfigNames(gomock.Any(), orgID, gomock.Any()).
+		Return([]*model.Connection{conn}, nil)
+
+	mockSchemaCache.EXPECT().
+		Get(gomock.Any(), "db1").
+		Return(nil, nil)
+
+	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache)
+	service.dataSource = func(context.Context, *model.Connection, crypto.Cryptor, libLog.Logger) (datasource.DataSource, error) {
+		return nil, nil
+	}
+
+	ctx := testContext()
+	request := model.SchemaValidationRequest{
+		MappedFields: map[string]map[string][]string{
+			"db1": {"users": {"id"}},
+		},
+	}
+
+	resp, err := service.Execute(ctx, orgID, request)
+
+	assert.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.Equal(t, "failure", resp.Status)
+	assert.Len(t, resp.Errors, 1)
+	assert.Equal(t, model.ErrTypeDataSourceDown, resp.Errors[0].Type)
+	assert.Equal(t, "db1", resp.Errors[0].DataSourceID)
+}
+
 // TestValidateSchema_EmptyConfigName tests validation with empty config name in request.
 func TestValidateSchema_EmptyConfigName(t *testing.T) {
 	ctrl := gomock.NewController(t)

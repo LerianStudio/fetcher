@@ -415,6 +415,27 @@ func TestNewCreateFetcherJob(t *testing.T) {
 	}
 }
 
+func TestCreateFetcherJob_publishToQueue_TypedNilAdapterIsIgnored(t *testing.T) {
+	var typedNilAdapter *rabbitmqMock.RabbitMQAdapter
+
+	svc := NewCreateFetcherJob(nil, nil, nil, nil, typedNilAdapter, "")
+	job := &model.Job{
+		ID:             uuid.New(),
+		OrganizationID: uuid.New(),
+		MappedFields: map[string]map[string][]string{
+			"datasource1": {
+				"users": {"id"},
+			},
+		},
+		Metadata:  map[string]any{"source": "test"},
+		CreatedAt: time.Now().UTC(),
+	}
+
+	if err := svc.publishToQueue(testContext(), job); err != nil {
+		t.Fatalf("expected typed-nil adapter to be ignored, got %v", err)
+	}
+}
+
 // TestCreateFetcherJob_Execute_PartialConnectionsFound tests that when only some datasources
 // have matching connections, a validation error is returned listing the missing ones.
 func TestCreateFetcherJob_Execute_PartialConnectionsFound(t *testing.T) {
