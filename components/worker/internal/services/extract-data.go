@@ -118,11 +118,7 @@ func (uc *UseCase) ExtractExternalData(ctx context.Context, body []byte, headers
 
 	// Update job status to completed in MongoDB with the resultPath and resultHMAC
 	if err := uc.JobRepository.UpdateStatus(ctx, message.JobID, message.OrganizationID, model.JobStatusCompleted, resultData.Path, resultData.HMAC, nil); err != nil {
-		libOtel.HandleSpanError(span, "Error updating job status to completed", err)
-		logger.Log(ctx, libLog.LevelError, "failed to update job status to completed",
-			libLog.String("job_id", message.JobID.String()),
-			libLog.Err(err),
-		)
+		return uc.handleErrorWithUpdate(ctx, message.JobID, message.OrganizationID, *message, span, "Error updating job status to completed", err, logger)
 	}
 
 	// Calculate execution metrics

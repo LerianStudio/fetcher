@@ -90,7 +90,7 @@ func TestExtractExternalData_NoConnectionsMarksFailed(t *testing.T) {
 	}
 }
 
-func TestExtractExternalData_SuccessWithNonFatalWarnings(t *testing.T) {
+func TestExtractExternalData_CompletedStatusUpdateFailureMarksJobFailed(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
@@ -139,12 +139,19 @@ func TestExtractExternalData_SuccessWithNonFatalWarnings(t *testing.T) {
 	mocks.jobRepo.EXPECT().
 		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusCompleted, "/external-data/"+jobID.String()+".json", "test-hmac", nil).
 		Return(errors.New("status update failed"))
+	mocks.jobRepo.EXPECT().
+		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, "", "", gomock.Any()).
+		Return(nil)
 	mocks.rabbitPublisher.EXPECT().
-		Publish(gomock.Any(), "test-exchange", "job.completed.test-service", gomock.Any()).
-		Return(errors.New("notification failed"))
+		Publish(gomock.Any(), "test-exchange", "job.failed.test-service", gomock.Any()).
+		Return(nil)
 
-	if err := uc.ExtractExternalData(ctx, body, nil); err != nil {
-		t.Fatalf("expected no fatal error, got %v", err)
+	err := uc.ExtractExternalData(ctx, body, nil)
+	if err == nil {
+		t.Fatal("expected error when completed status update fails")
+	}
+	if !strings.Contains(err.Error(), "status update failed") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
