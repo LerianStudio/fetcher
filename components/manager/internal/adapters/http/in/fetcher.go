@@ -3,6 +3,7 @@ package in
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/LerianStudio/fetcher/components/manager/internal/services/command"
 	"github.com/LerianStudio/fetcher/components/manager/internal/services/query"
@@ -111,7 +112,7 @@ func (h *FetcherHandler) CreateJob(c *fiber.Ctx) error {
 
 	// Validate source is a non-empty string
 	sourceStr, ok := source.(string)
-	if !ok || sourceStr == "" {
+	if !ok || strings.TrimSpace(sourceStr) == "" {
 		libOpentelemetry.HandleSpanError(span, "invalid metadata.source type or empty value", nil)
 
 		return httpUtils.WithError(c, pkg.ValidationError{

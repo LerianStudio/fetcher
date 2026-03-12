@@ -205,6 +205,55 @@ func TestFetcherHandler_CreateJob_ContentTypeValidation(t *testing.T) {
 	}
 }
 
+// TestFetcherHandler_CreateJob_MetadataSourceValidation tests required metadata.source validation.
+func TestFetcherHandler_CreateJob_MetadataSourceValidation(t *testing.T) {
+	app := setupTestApp()
+
+	handler := &FetcherHandler{CreateJobCmd: nil}
+	app.Post("/v1/fetcher", handler.CreateJob)
+
+	tests := []struct {
+		name     string
+		body     string
+		wantCode int
+	}{
+		{
+			name:     "missing metadata",
+			body:     `{"dataRequest":{"mappedFields":{"ds1":{"t1":["f1"]}}}}`,
+			wantCode: fiber.StatusBadRequest,
+		},
+		{
+			name:     "missing metadata source",
+			body:     `{"dataRequest":{"mappedFields":{"ds1":{"t1":["f1"]}}},"metadata":{}}`,
+			wantCode: fiber.StatusBadRequest,
+		},
+		{
+			name:     "whitespace metadata source",
+			body:     `{"dataRequest":{"mappedFields":{"ds1":{"t1":["f1"]}}},"metadata":{"source":"   "}}`,
+			wantCode: fiber.StatusBadRequest,
+		},
+		{
+			name:     "non-string metadata source",
+			body:     `{"dataRequest":{"mappedFields":{"ds1":{"t1":["f1"]}}},"metadata":{"source":123}}`,
+			wantCode: fiber.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("POST", "/v1/fetcher", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("X-Organization-Id", uuid.New().String())
+
+			resp, err := app.Test(req)
+			require.NoError(t, err)
+			defer resp.Body.Close()
+
+			assert.Equal(t, tt.wantCode, resp.StatusCode)
+		})
+	}
+}
+
 // createLargePayload generates a valid JSON payload of approximately the specified size.
 func createLargePayload(targetSize int) []byte {
 	// Build a JSON structure with enough data to exceed targetSize
