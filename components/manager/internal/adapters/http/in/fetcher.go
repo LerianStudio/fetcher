@@ -1,7 +1,6 @@
 package in
 
 import (
-	"context"
 	"fmt"
 	"strings"
 
@@ -125,7 +124,7 @@ func (h *FetcherHandler) CreateJob(c *fiber.Ctx) error {
 
 	result, err := h.CreateJobCmd.Execute(ctx, orgID, request)
 	if err != nil {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to execute create fetcher job command, Error: %s", err.Error()))
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to execute create fetcher job command, Error: %s", err.Error()))
 		libOpentelemetry.HandleSpanError(span, "failed to create fetcher job", err)
 
 		return httpUtils.WithError(c, err)
@@ -141,14 +140,14 @@ func (h *FetcherHandler) CreateJob(c *fiber.Ctx) error {
 	if result.IsDuplicate {
 		response.Message = "Duplicate request detected - returning existing job"
 
-		logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Duplicate fetcher job returned id=%s org=%s", result.Job.ID, orgID))
+		logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Duplicate fetcher job returned id=%s org=%s", result.Job.ID, orgID))
 
 		return httpUtils.OK(c, response)
 	}
 
 	response.Message = "Job created and queued for processing"
 
-	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Fetcher job created id=%s org=%s", result.Job.ID, orgID))
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Fetcher job created id=%s org=%s", result.Job.ID, orgID))
 
 	return httpUtils.Accepted(c, response)
 }
@@ -204,7 +203,7 @@ func (h *FetcherHandler) GetJob(c *fiber.Ctx) error {
 
 	job, err := h.GetJobQuery.Execute(ctx, orgID, id)
 	if err != nil {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to execute get job query, Error: %s", err.Error()))
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to execute get job query, Error: %s", err.Error()))
 		libOpentelemetry.HandleSpanError(span, "failed to get job", err)
 
 		return httpUtils.WithError(c, err)
@@ -212,7 +211,7 @@ func (h *FetcherHandler) GetJob(c *fiber.Ctx) error {
 
 	resp := model.NewJobResponseFrom(job)
 
-	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("job retrieved id=%s org=%s", id, orgID))
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("job retrieved id=%s org=%s", id, orgID))
 
 	return httpUtils.OK(c, resp)
 }

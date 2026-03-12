@@ -632,16 +632,16 @@ func (prmq *RabbitMQAdapter) ensureChannel(span trace.Span, logger libLog.Logger
 func (prmq *RabbitMQAdapter) ProducerDefault(ctx context.Context, exchange, key string, queueMessage []byte, header *map[string]any) error {
 	logger, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
 
-	logger.Log(context.Background(), libLog.LevelInfo, "Init sent message")
+	logger.Log(ctx, libLog.LevelInfo, "Init sent message")
 
 	if prmq.shutdown.Load() {
-		logger.Log(context.Background(), libLog.LevelInfo, "RabbitMQ adapter is shut down, cannot produce messages")
+		logger.Log(ctx, libLog.LevelInfo, "RabbitMQ adapter is shut down, cannot produce messages")
 		return errors.New("rabbitmq adapter is shut down")
 	}
 
 	// Check circuit breaker state
 	if !prmq.circuitBreaker.canExecute() {
-		logger.Log(context.Background(), libLog.LevelWarn, "Circuit breaker is open, rejecting publish request")
+		logger.Log(ctx, libLog.LevelWarn, "Circuit breaker is open, rejecting publish request")
 		prmq.recordPublishFailure(ctx,
 			attribute.String("exchange", exchange),
 			attribute.String("routing_key", key),
@@ -747,7 +747,7 @@ func (prmq *RabbitMQAdapter) ProducerDefault(ctx context.Context, exchange, key 
 				attribute.String("routing_key", key),
 			)
 			prmq.circuitBreaker.recordSuccess()
-			logger.Log(context.Background(), libLog.LevelInfo, "Messages sent successfully")
+			logger.Log(ctx, libLog.LevelInfo, "Messages sent successfully")
 
 			return nil
 		}
@@ -759,7 +759,7 @@ func (prmq *RabbitMQAdapter) ProducerDefault(ctx context.Context, exchange, key 
 		prmq.invalidateChannel(logger)
 
 		if attempt < prmq.options.MaxPublishAttempts {
-			logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("Publish attempt %d/%d failed, retrying with new channel: %v", attempt, prmq.options.MaxPublishAttempts, err))
+			logger.Log(ctx, libLog.LevelWarn, fmt.Sprintf("Publish attempt %d/%d failed, retrying with new channel: %v", attempt, prmq.options.MaxPublishAttempts, err))
 		}
 	}
 
@@ -770,7 +770,7 @@ func (prmq *RabbitMQAdapter) ProducerDefault(ctx context.Context, exchange, key 
 	)
 
 	libOpentelemetry.HandleSpanError(spanProducer, "Failed to publish message to queue", lastErr)
-	logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to publish message: %s", lastErr))
+	logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to publish message: %s", lastErr))
 
 	return fmt.Errorf("rabbitmq publish message after %d attempts: %w", prmq.options.MaxPublishAttempts, lastErr)
 }
@@ -779,7 +779,7 @@ func (prmq *RabbitMQAdapter) ProducerDefault(ctx context.Context, exchange, key 
 // The handler always receives headers (may be empty map if message has no headers).
 func (prmq *RabbitMQAdapter) ConsumerLoop(ctx context.Context, queue string, concurrency int, handler func(ctx context.Context, body []byte, headers map[string]any) error) error {
 	logger, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
-	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Starting consumer loop for queue=%s", queue))
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Starting consumer loop for queue=%s", queue))
 
 	if concurrency < 1 {
 		concurrency = 1
@@ -787,12 +787,12 @@ func (prmq *RabbitMQAdapter) ConsumerLoop(ctx context.Context, queue string, con
 
 	for {
 		if ctx.Err() != nil {
-			logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("Context canceled while running consumer loop: %v", ctx.Err()))
+			logger.Log(ctx, libLog.LevelWarn, fmt.Sprintf("Context canceled while running consumer loop: %v", ctx.Err()))
 			return ctx.Err()
 		}
 
 		if prmq.shutdown.Load() {
-			logger.Log(context.Background(), libLog.LevelInfo, "RabbitMQ adapter is shut down, exiting consumer loop")
+			logger.Log(ctx, libLog.LevelInfo, "RabbitMQ adapter is shut down, exiting consumer loop")
 			return errors.New("rabbitmq adapter is shut down")
 		}
 
@@ -806,9 +806,9 @@ func (prmq *RabbitMQAdapter) ConsumerLoop(ctx context.Context, queue string, con
 		}
 
 		if errors.Is(cycleErr, errDeliveriesClosed) {
-			logger.Log(context.Background(), libLog.LevelWarn, "Deliveries channel closed, attempting to reconnect")
+			logger.Log(ctx, libLog.LevelWarn, "Deliveries channel closed, attempting to reconnect")
 		} else {
-			logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("Consumer cycle finished with error: %v", cycleErr))
+			logger.Log(ctx, libLog.LevelWarn, fmt.Sprintf("Consumer cycle finished with error: %v", cycleErr))
 		}
 
 		time.Sleep(prmq.options.ConsumerReconnectDelay)
@@ -842,7 +842,7 @@ func (prmq *RabbitMQAdapter) runConsumerCycle(
 	// Set QoS for fair dispatch of messages among consumers based on concurrency
 	if errCh := channel.Qos(concurrency, 0, false); errCh != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to set RabbitMQ QoS", errCh)
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to set RabbitMQ QoS: %v", errCh))
+		logger.Log(ctxSpan, libLog.LevelError, fmt.Sprintf("Failed to set RabbitMQ QoS: %v", errCh))
 		prmq.invalidateChannel(logger)
 
 		return fmt.Errorf("rabbitmq set qos: %w", errCh)
@@ -861,7 +861,7 @@ func (prmq *RabbitMQAdapter) runConsumerCycle(
 	)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to start RabbitMQ consumer", err)
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to start RabbitMQ consumer: %v", err))
+		logger.Log(ctxSpan, libLog.LevelError, fmt.Sprintf("Failed to start RabbitMQ consumer: %v", err))
 		prmq.invalidateChannel(logger)
 
 		return fmt.Errorf("rabbitmq start consumer: %w", err)
@@ -902,7 +902,7 @@ func (prmq *RabbitMQAdapter) dispatchDeliveries(
 	cancelConsumer := func() {
 		cancelOnce.Do(func() {
 			if cancelErr := channel.Cancel(consumerTag, false); cancelErr != nil && !errors.Is(cancelErr, amqp.ErrClosed) {
-				logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("Failed to cancel RabbitMQ consumer: %v", cancelErr))
+				logger.Log(ctx, libLog.LevelWarn, fmt.Sprintf("Failed to cancel RabbitMQ consumer: %v", cancelErr))
 			}
 		})
 	}
@@ -989,7 +989,7 @@ func (prmq *RabbitMQAdapter) processDelivery(
 	logPrefix := requestIDStr + libConstants.LoggerDefaultSeparator
 
 	msgCtx := libCommons.ContextWithLogger(
-		libCommons.ContextWithHeaderID(context.Background(), requestIDStr),
+		libCommons.ContextWithHeaderID(ctx, requestIDStr),
 		logWithFields,
 	)
 
@@ -1020,12 +1020,12 @@ func (prmq *RabbitMQAdapter) processDelivery(
 	if prmq.options.Signer != nil && prmq.options.EnableSignatureVerification {
 		if err := prmq.verifyMessageSignature(d.Body, headers, logWithFields, hspan); err != nil {
 			if nackErr := d.Nack(false, false); nackErr != nil {
-				logWithFields.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("%sFailed to Nack message after signature verification failure: %v", logPrefix, nackErr))
+				logWithFields.Log(hctx, libLog.LevelWarn, fmt.Sprintf("%sFailed to Nack message after signature verification failure: %v", logPrefix, nackErr))
 			}
 
 			libOpentelemetry.HandleSpanError(hspan, "Message signature verification failed", err)
-			logWithFields.Log(context.Background(), libLog.LevelError, fmt.Sprintf("%sMessage signature verification failed: %v", logPrefix, err))
-			prmq.recordConsumeFailed(ctx,
+			logWithFields.Log(hctx, libLog.LevelError, fmt.Sprintf("%sMessage signature verification failed: %v", logPrefix, err))
+			prmq.recordConsumeFailed(hctx,
 				attribute.String("queue", queue),
 				attribute.String("reason", "signature_verification_failed"),
 			)
@@ -1039,13 +1039,13 @@ func (prmq *RabbitMQAdapter) processDelivery(
 	defer func() {
 		if r := recover(); r != nil {
 			if nackErr := d.Nack(false, false); nackErr != nil {
-				logWithFields.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("%sFailed to Nack message after panic: %v", logPrefix, nackErr))
+				logWithFields.Log(hctx, libLog.LevelWarn, fmt.Sprintf("%sFailed to Nack message after panic: %v", logPrefix, nackErr))
 			}
 
 			err := fmt.Errorf("%v", r)
-			logWithFields.Log(context.Background(), libLog.LevelError, fmt.Sprintf("%sPanic while processing message: %v", logPrefix, r))
+			logWithFields.Log(hctx, libLog.LevelError, fmt.Sprintf("%sPanic while processing message: %v", logPrefix, r))
 			libOpentelemetry.HandleSpanError(hspan, "Panic while processing message", err)
-			prmq.recordConsumeFailed(ctx,
+			prmq.recordConsumeFailed(hctx,
 				attribute.String("queue", queue),
 				attribute.String("reason", "panic"),
 			)
@@ -1054,12 +1054,12 @@ func (prmq *RabbitMQAdapter) processDelivery(
 
 	if err := handler(hctx, d.Body, headers); err != nil {
 		if nackErr := d.Nack(false, false); nackErr != nil {
-			logWithFields.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("%sFailed to Nack message after handler error: %v", logPrefix, nackErr))
+			logWithFields.Log(hctx, libLog.LevelWarn, fmt.Sprintf("%sFailed to Nack message after handler error: %v", logPrefix, nackErr))
 		}
 
 		libOpentelemetry.HandleSpanError(hspan, "Handler failed to process consumed message", err)
-		logWithFields.Log(context.Background(), libLog.LevelError, fmt.Sprintf("%sHandler failed to process consumed message: %v", logPrefix, err))
-		prmq.recordConsumeFailed(ctx,
+		logWithFields.Log(hctx, libLog.LevelError, fmt.Sprintf("%sHandler failed to process consumed message: %v", logPrefix, err))
+		prmq.recordConsumeFailed(hctx,
 			attribute.String("queue", queue),
 			attribute.String("reason", "handler_error"),
 		)
@@ -1069,10 +1069,10 @@ func (prmq *RabbitMQAdapter) processDelivery(
 
 	if err := d.Ack(false); err != nil {
 		libOpentelemetry.HandleSpanError(hspan, "Failed to ACK consumed message", err)
-		logWithFields.Log(context.Background(), libLog.LevelError, fmt.Sprintf("%sFailed to ACK consumed message: %v", logPrefix, err))
+		logWithFields.Log(hctx, libLog.LevelError, fmt.Sprintf("%sFailed to ACK consumed message: %v", logPrefix, err))
 	}
 
-	prmq.recordConsumeProcessed(ctx,
+	prmq.recordConsumeProcessed(hctx,
 		attribute.String("queue", queue),
 	)
 }
@@ -1106,23 +1106,23 @@ func (prmq *RabbitMQAdapter) Shutdown(ctx context.Context) error {
 	select {
 	case <-done:
 		// All consumers finished
-		logger.Log(context.Background(), libLog.LevelInfo, "All consumers finished processing")
+		logger.Log(ctx, libLog.LevelInfo, "All consumers finished processing")
 	case <-timeoutCtx.Done():
-		logger.Log(context.Background(), libLog.LevelWarn, "Shutdown timeout reached, some consumers may not have finished")
+		logger.Log(ctx, libLog.LevelWarn, "Shutdown timeout reached, some consumers may not have finished")
 	case <-ctx.Done():
-		logger.Log(context.Background(), libLog.LevelWarn, "Shutdown context canceled, some consumers may not have finished")
+		logger.Log(ctx, libLog.LevelWarn, "Shutdown context canceled, some consumers may not have finished")
 	}
 
 	// Invalidate and close the channel
 	prmq.invalidateChannel(logger)
 
 	if err := prmq.conn.Close(); err != nil {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to close RabbitMQ connection: %v", err))
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to close RabbitMQ connection: %v", err))
 
 		return fmt.Errorf("rabbitmq shutdown close connection: %w", err)
 	}
 
-	logger.Log(context.Background(), libLog.LevelInfo, "RabbitMQ repository shut down gracefully")
+	logger.Log(ctx, libLog.LevelInfo, "RabbitMQ repository shut down gracefully")
 
 	return nil
 }

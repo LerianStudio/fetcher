@@ -1,7 +1,6 @@
 package in
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/LerianStudio/fetcher/components/manager/internal/services/command"
@@ -108,14 +107,14 @@ func (h *ProductHandler) CreateProduct(c *fiber.Ctx) error {
 
 	product, err := h.CreateCmd.Execute(ctx, orgID, request)
 	if err != nil {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to execute create product command, Error: %s", err.Error()))
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to execute create product command, Error: %s", err.Error()))
 		libOpentelemetry.HandleSpanError(span, "failed to create product", err)
 
 		return httpUtils.WithError(c, err)
 	}
 
 	resp := model.NewProductResponseFrom(product)
-	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("product created id=%s org=%s code=%s", resp.ID, orgID, resp.Code))
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("product created id=%s org=%s code=%s", resp.ID, orgID, resp.Code))
 
 	return httpUtils.Created(c, resp)
 }
@@ -160,7 +159,7 @@ func (h *ProductHandler) ListProducts(c *fiber.Ctx) error {
 	headerParams, err := httpUtils.ValidateParameters(c.Queries())
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to validate query parameters", err)
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to validate query parameters, Error: %s", err.Error()))
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to validate query parameters, Error: %s", err.Error()))
 
 		return httpUtils.WithError(c, err)
 	}
@@ -172,7 +171,7 @@ func (h *ProductHandler) ListProducts(c *fiber.Ctx) error {
 
 	products, totalCount, err := h.ListQuery.Execute(ctx, orgID, *headerParams)
 	if err != nil {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to execute list products query, Error: %s", err.Error()))
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to execute list products query, Error: %s", err.Error()))
 		libOpentelemetry.HandleSpanError(span, "failed to list products", err)
 
 		return httpUtils.WithError(c, err)
@@ -183,7 +182,7 @@ func (h *ProductHandler) ListProducts(c *fiber.Ctx) error {
 		productResp = append(productResp, model.NewProductResponseFrom(p))
 	}
 
-	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("products listed org=%s count=%d", orgID, len(productResp)))
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("products listed org=%s count=%d", orgID, len(productResp)))
 
 	pagination.SetItems(productResp)
 	pagination.SetTotal(int(totalCount))
@@ -240,7 +239,7 @@ func (h *ProductHandler) GetProduct(c *fiber.Ctx) error {
 
 	product, err := h.GetQuery.Execute(ctx, orgID, id)
 	if err != nil {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to execute get product query, Error: %s", err.Error()))
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to execute get product query, Error: %s", err.Error()))
 		libOpentelemetry.HandleSpanError(span, "failed to get product", err)
 
 		return httpUtils.WithError(c, err)
@@ -248,7 +247,7 @@ func (h *ProductHandler) GetProduct(c *fiber.Ctx) error {
 
 	resp := model.NewProductResponseFrom(product)
 
-	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("product retrieved id=%s org=%s", id, orgID))
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("product retrieved id=%s org=%s", id, orgID))
 
 	return httpUtils.OK(c, resp)
 }
@@ -330,13 +329,13 @@ func (h *ProductHandler) UpdateProduct(c *fiber.Ctx) error {
 
 	product, err := h.UpdateCmd.Execute(ctx, orgID, id, request)
 	if err != nil {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to execute update product command, Error: %s", err.Error()))
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to execute update product command, Error: %s", err.Error()))
 		libOpentelemetry.HandleSpanError(span, "failed to update product", err)
 
 		return httpUtils.WithError(c, err)
 	}
 
-	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("product updated id=%s org=%s", id, orgID))
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("product updated id=%s org=%s", id, orgID))
 
 	return httpUtils.OK(c, model.NewProductResponseFrom(product))
 }
@@ -390,13 +389,13 @@ func (h *ProductHandler) DeleteProduct(c *fiber.Ctx) error {
 	span.SetAttributes(attribute.String("app.request.product_id", id.String()))
 
 	if err := h.DeleteCmd.Execute(ctx, orgID, id); err != nil {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to execute delete product command, Error: %s", err.Error()))
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to execute delete product command, Error: %s", err.Error()))
 		libOpentelemetry.HandleSpanError(span, "failed to delete product", err)
 
 		return httpUtils.WithError(c, err)
 	}
 
-	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("product deleted id=%s org=%s", id, orgID))
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("product deleted id=%s org=%s", id, orgID))
 
 	return c.Status(fiber.StatusNoContent).Send(nil)
 }

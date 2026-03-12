@@ -1,7 +1,6 @@
 package in
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/LerianStudio/fetcher/components/manager/internal/services/command"
@@ -74,7 +73,7 @@ func (h *MigrationHandler) ListUnassignedConnections(c *fiber.Ctx) error {
 	headerParams, err := httpUtils.ValidateParameters(c.Queries())
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to validate query parameters", err)
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to validate query parameters, Error: %s", err.Error()))
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to validate query parameters, Error: %s", err.Error()))
 
 		return httpUtils.WithError(c, err)
 	}
@@ -86,7 +85,7 @@ func (h *MigrationHandler) ListUnassignedConnections(c *fiber.Ctx) error {
 
 	conns, totalCount, err := h.ListUnassignedQry.Execute(ctx, orgID, *headerParams)
 	if err != nil {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to execute list unassigned connections query, Error: %s", err.Error()))
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to execute list unassigned connections query, Error: %s", err.Error()))
 		libOpentelemetry.HandleSpanError(span, "failed to list unassigned connections", err)
 
 		return httpUtils.WithError(c, err)
@@ -97,7 +96,7 @@ func (h *MigrationHandler) ListUnassignedConnections(c *fiber.Ctx) error {
 		connResp = append(connResp, model.NewConnectionResponseFrom(conn))
 	}
 
-	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("unassigned connections listed org=%s count=%d", orgID, len(connResp)))
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("unassigned connections listed org=%s count=%d", orgID, len(connResp)))
 
 	pagination.SetItems(connResp)
 	pagination.SetTotal(int(totalCount))
@@ -186,7 +185,7 @@ func (h *MigrationHandler) AssignConnectionToProduct(c *fiber.Ctx) error {
 
 	conn, err := h.AssignCmd.Execute(ctx, orgID, connectionID, productID)
 	if err != nil {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to assign connection to product, Error: %s", err.Error()))
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to assign connection to product, Error: %s", err.Error()))
 		libOpentelemetry.HandleSpanError(span, "failed to assign connection to product", err)
 
 		return httpUtils.WithError(c, err)
@@ -194,7 +193,7 @@ func (h *MigrationHandler) AssignConnectionToProduct(c *fiber.Ctx) error {
 
 	resp := model.NewConnectionResponseFrom(conn)
 
-	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("connection assigned to product connection_id=%s product_id=%s org=%s", connectionID, productID, orgID))
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("connection assigned to product connection_id=%s product_id=%s org=%s", connectionID, productID, orgID))
 
 	return httpUtils.OK(c, resp)
 }

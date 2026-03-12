@@ -1,7 +1,6 @@
 package in
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/LerianStudio/fetcher/components/manager/internal/services/command"
@@ -117,14 +116,14 @@ func (h *ConnectionHandler) CreateConnection(c *fiber.Ctx) error {
 
 	conn, err := h.CreateCmd.Execute(ctx, orgID, request)
 	if err != nil {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to execute create connection command, Error: %s", err.Error()))
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to execute create connection command, Error: %s", err.Error()))
 		libOpentelemetry.HandleSpanError(span, "failed to create connection", err)
 
 		return httpUtils.WithError(c, err)
 	}
 
 	resp := model.NewConnectionResponseFrom(conn)
-	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("connection created id=%s org=%s", resp.ID, orgID))
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("connection created id=%s org=%s", resp.ID, orgID))
 
 	return httpUtils.Created(c, resp)
 }
@@ -184,7 +183,7 @@ func (h *ConnectionHandler) ListConnections(c *fiber.Ctx) error {
 	headerParams, err := httpUtils.ValidateParameters(c.Queries())
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to validate query parameters", err)
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to validate query parameters, Error: %s", err.Error()))
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to validate query parameters, Error: %s", err.Error()))
 
 		return httpUtils.WithError(c, err)
 	}
@@ -196,7 +195,7 @@ func (h *ConnectionHandler) ListConnections(c *fiber.Ctx) error {
 
 	conns, totalCount, err := h.ListQuery.Execute(ctx, orgID, productID, *headerParams)
 	if err != nil {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to execute list connections query, Error: %s", err.Error()))
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to execute list connections query, Error: %s", err.Error()))
 		libOpentelemetry.HandleSpanError(span, "failed to list connections", err)
 
 		return httpUtils.WithError(c, err)
@@ -207,7 +206,7 @@ func (h *ConnectionHandler) ListConnections(c *fiber.Ctx) error {
 		connResp = append(connResp, model.NewConnectionResponseFrom(conn))
 	}
 
-	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("connections listed org=%s count=%d", orgID, len(connResp)))
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("connections listed org=%s count=%d", orgID, len(connResp)))
 
 	pagination.SetItems(connResp)
 	pagination.SetTotal(int(totalCount))
@@ -264,7 +263,7 @@ func (h *ConnectionHandler) GetConnection(c *fiber.Ctx) error {
 
 	conn, err := h.GetQuery.Execute(ctx, orgID, id)
 	if err != nil {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to execute get connection query, Error: %s", err.Error()))
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to execute get connection query, Error: %s", err.Error()))
 		libOpentelemetry.HandleSpanError(span, "failed to get connection", err)
 
 		return httpUtils.WithError(c, err)
@@ -272,7 +271,7 @@ func (h *ConnectionHandler) GetConnection(c *fiber.Ctx) error {
 
 	resp := model.NewConnectionResponseFrom(conn)
 
-	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("connection retrieved id=%s org=%s", id, orgID))
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("connection retrieved id=%s org=%s", id, orgID))
 
 	return httpUtils.OK(c, resp)
 }
@@ -329,13 +328,13 @@ func (h *ConnectionHandler) TestConnection(c *fiber.Ctx) error {
 
 	resp, err := h.TestQuery.Execute(ctx, orgID, id)
 	if err != nil {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to execute test connection query, Error: %s", err.Error()))
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to execute test connection query, Error: %s", err.Error()))
 		libOpentelemetry.HandleSpanError(span, "failed to test connection", err)
 
 		return httpUtils.WithError(c, err)
 	}
 
-	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("connection test successful id=%s org=%s latency_ms=%d", id, orgID, resp.LatencyMs))
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("connection test successful id=%s org=%s latency_ms=%d", id, orgID, resp.LatencyMs))
 
 	return httpUtils.OK(c, resp)
 }
@@ -418,13 +417,13 @@ func (h *ConnectionHandler) UpdateConnection(c *fiber.Ctx) error {
 
 	conn, err := h.UpdateCmd.Execute(ctx, orgID, id, request)
 	if err != nil {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to execute update connection command, Error: %s", err.Error()))
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to execute update connection command, Error: %s", err.Error()))
 		libOpentelemetry.HandleSpanError(span, "failed to update connection", err)
 
 		return httpUtils.WithError(c, err)
 	}
 
-	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("connection updated id=%s org=%s", id, orgID))
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("connection updated id=%s org=%s", id, orgID))
 
 	return httpUtils.OK(c, model.NewConnectionResponseFrom(conn))
 }
@@ -478,13 +477,13 @@ func (h *ConnectionHandler) DeleteConnection(c *fiber.Ctx) error {
 	span.SetAttributes(attribute.String("app.request.connection_id", id.String()))
 
 	if err := h.DeleteCmd.Execute(ctx, orgID, id); err != nil {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to execute delete connection command, Error: %s", err.Error()))
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to execute delete connection command, Error: %s", err.Error()))
 		libOpentelemetry.HandleSpanError(span, "failed to delete connection", err)
 
 		return httpUtils.WithError(c, err)
 	}
 
-	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("connection deleted id=%s org=%s", id, orgID))
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("connection deleted id=%s org=%s", id, orgID))
 
 	return c.Status(fiber.StatusNoContent).Send(nil)
 }
@@ -543,13 +542,13 @@ func (h *ConnectionHandler) ValidateSchema(c *fiber.Ctx) error {
 
 	resp, err := h.ValidateSchemaQuery.Execute(ctx, orgID, request)
 	if err != nil {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to execute validate schema query, Error: %s", err.Error()))
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to execute validate schema query, Error: %s", err.Error()))
 		libOpentelemetry.HandleSpanError(span, "failed to validate schema", err)
 
 		return httpUtils.WithError(c, err)
 	}
 
-	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("schema validation completed org=%s status=%s", orgID, resp.Status))
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("schema validation completed org=%s status=%s", orgID, resp.Status))
 
 	if resp.Status == model.StatusFailure {
 		return httpUtils.JSONResponse(c, fiber.StatusUnprocessableEntity, model.SchemaValidationErrorResponse{
@@ -614,13 +613,13 @@ func (h *ConnectionHandler) GetConnectionSchema(c *fiber.Ctx) error {
 
 	resp, err := h.GetSchemaQuery.Execute(ctx, orgID, id)
 	if err != nil {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to execute get connection schema query, Error: %s", err.Error()))
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to execute get connection schema query, Error: %s", err.Error()))
 		libOpentelemetry.HandleSpanError(span, "failed to get connection schema", err)
 
 		return httpUtils.WithError(c, err)
 	}
 
-	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("connection schema retrieved id=%s org=%s tables=%d", id, orgID, len(resp.Tables)))
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("connection schema retrieved id=%s org=%s tables=%d", id, orgID, len(resp.Tables)))
 
 	return httpUtils.OK(c, resp)
 }
