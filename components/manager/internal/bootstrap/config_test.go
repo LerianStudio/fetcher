@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/LerianStudio/fetcher/pkg"
 	cacheRepo "github.com/LerianStudio/fetcher/components/manager/internal/adapters/cache"
+	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	redisCache "github.com/LerianStudio/fetcher/pkg/redis"

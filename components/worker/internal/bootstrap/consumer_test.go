@@ -47,11 +47,11 @@ func (m *mockMultiTenantConsumer) Close() error {
 // that satisfies the log.Logger interface from lib-commons v4.
 type mockBootstrapLogger struct{}
 
-func (m *mockBootstrapLogger) Enabled(_ log.Level) bool                             { return true }
+func (m *mockBootstrapLogger) Enabled(_ log.Level) bool                                     { return true }
 func (m *mockBootstrapLogger) Log(_ context.Context, _ log.Level, _ string, _ ...log.Field) {}
-func (m *mockBootstrapLogger) With(_ ...log.Field) log.Logger                       { return m }
-func (m *mockBootstrapLogger) WithGroup(_ string) log.Logger                        { return m }
-func (m *mockBootstrapLogger) Sync(_ context.Context) error                         { return nil }
+func (m *mockBootstrapLogger) With(_ ...log.Field) log.Logger                               { return m }
+func (m *mockBootstrapLogger) WithGroup(_ string) log.Logger                                { return m }
+func (m *mockBootstrapLogger) Sync(_ context.Context) error                                 { return nil }
 
 func TestNewMultiQueueConsumerMultiTenant_SetsFields(t *testing.T) {
 	mockConsumer := &mockMultiTenantConsumer{}

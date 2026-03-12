@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	portDS "github.com/LerianStudio/fetcher/pkg/ports/datasource"
 	modelJob "github.com/LerianStudio/fetcher/pkg/model/job"
+	portDS "github.com/LerianStudio/fetcher/pkg/ports/datasource"
 	libCrypto "github.com/LerianStudio/lib-commons/v4/commons/crypto"
 	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
 	"github.com/google/uuid"

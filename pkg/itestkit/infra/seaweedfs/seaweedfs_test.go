@@ -60,10 +60,10 @@ func TestSeaweedFSHelpersWithoutDocker(t *testing.T) {
 				t.Parallel()
 
 				infra := &SeaweedFSInfra{endpoint: &SeaweedFSEndpoint{
-					URL:                  "http://127.0.0.1:18888",
-					Host:                 "127.0.0.1",
-					Port:                 "18888",
-					Upstream:             "127.0.0.1:18888",
+					URL:         "http://127.0.0.1:18888",
+					Host:        "127.0.0.1",
+					Port:        "18888",
+					Upstream:    "127.0.0.1:18888",
 					ProxyListen: "toxiproxy:10001",
 				}}
 
@@ -73,8 +73,8 @@ func TestSeaweedFSHelpersWithoutDocker(t *testing.T) {
 				}
 
 				// HostPort normalizes loopback addresses for Docker connectivity
-			expectedHost := itestkit.NormalizeHost("127.0.0.1")
-			if host != expectedHost || port != 18888 {
+				expectedHost := itestkit.NormalizeHost("127.0.0.1")
+				if host != expectedHost || port != 18888 {
 					t.Fatalf("unexpected host port: %s %d", host, port)
 				}
 
