@@ -152,7 +152,7 @@ func (s *CreateFetcherJob) Execute(ctx context.Context, organizationID uuid.UUID
 		return nil, err
 	}
 
-	if source, ok := request.Metadata["source"].(string); ok && source != "" {
+	if source, ok := request.Metadata["source"].(string); ok && strings.TrimSpace(source) != "" {
 		if err := s.validateProductOwnership(ctx, span, source, organizationID, connections); err != nil {
 			return nil, err
 		}

@@ -37,7 +37,10 @@ import (
 // into the appropriate DataSourceConfig implementation (MongoDB, PostgreSQL, Oracle, MySQL, or SQL Server).
 // The cryptor is required to decrypt the connection password before creating the data source.
 func NewDataSourceFromConnection(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor, logger libLog.Logger) (datasource.DataSource, error) {
-	_, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
+	ctxLogger, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
+	if logger == nil {
+		logger = ctxLogger
+	}
 
 	if logger == nil {
 		logger = libLog.NewNop()

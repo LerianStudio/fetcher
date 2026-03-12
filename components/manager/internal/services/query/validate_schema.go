@@ -275,6 +275,10 @@ func (s *ValidateSchema) getOrFetchSchema(
 	}
 
 	// Get datasource instance because schema is not in cache
+	if s.dsFactory == nil {
+		return nil, fmt.Errorf("failed to create datasource: datasource factory is nil")
+	}
+
 	ds, err := s.dsFactory(ctx, conn, s.cryptor)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "failed to create datasource", err)
