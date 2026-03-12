@@ -300,15 +300,6 @@ func (c *ManagerClient) ListConnections(ctx context.Context, params ListConnecti
 	return &result, nil
 }
 
-// ListConnectionsRaw retrieves connections and returns the raw *resty.Response for testing error scenarios.
-func (c *ManagerClient) ListConnectionsRaw(ctx context.Context, params ListConnectionsParams) (*resty.Response, error) {
-	path := "/v1/management/connections" + params.toQueryString()
-
-	return c.client.R().
-		SetContext(ctx).
-		Get(path)
-}
-
 // ConnectionUpdateInput represents the request body for PATCH /v1/management/connections/{id}.
 // All fields are pointers to support partial updates - nil values are omitted from the request,
 // allowing you to update only specific fields without affecting others.

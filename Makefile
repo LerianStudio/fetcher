@@ -243,13 +243,17 @@ test: test-unit ## Alias for unit test suite
 
 .PHONY: test-integration
 test-integration: ## Alias for integration (E2E) suite
-	@if [ -z "$$GITHUB_TOKEN" ]; then \
-	  echo "Integration tests require GITHUB_TOKEN to build current-branch images."; \
-	  echo "Refusing to reuse pre-built images because they may not match the current branch."; \
-	  exit 1; \
+	@skip_build="$${E2E_SKIP_BUILD:-true}"; \
+	if [ "$$skip_build" = "false" ]; then \
+	  if [ -z "$$GITHUB_TOKEN" ]; then \
+	    echo "Integration tests require GITHUB_TOKEN when E2E_SKIP_BUILD=false."; \
+	    exit 1; \
+	  fi; \
+	  echo "Building current-branch images for integration tests"; \
+	else \
+	  echo "Using pre-built images for integration tests (E2E_SKIP_BUILD=$$skip_build)"; \
 	fi; \
-	echo "Building current-branch images for integration tests"; \
-	E2E_SKIP_BUILD=false $(MAKE) test-e2e
+	E2E_SKIP_BUILD=$$skip_build $(MAKE) test-e2e
 
 .PHONY: test-unit
 test-unit: ## Run unit tests on all components
