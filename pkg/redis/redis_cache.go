@@ -3,6 +3,7 @@ package redis
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -29,9 +30,9 @@ type RedisCache[T any] struct {
 //   - conn: Redis connection
 //   - ttl: Default TTL for cache entries (uses DefaultCacheTTL if <= 0)
 //   - keyPrefix: Prefix for all cache keys (e.g., "fetcher:schema:")
-func NewRedisCache[T any](conn *RedisConnection, ttl time.Duration, keyPrefix string) *RedisCache[T] {
+func NewRedisCache[T any](conn *RedisConnection, ttl time.Duration, keyPrefix string) (*RedisCache[T], error) {
 	if conn == nil || conn.Client == nil {
-		panic("redis connection and client must not be nil")
+		return nil, fmt.Errorf("redis connection and client must not be nil")
 	}
 
 	if ttl <= 0 {
@@ -42,7 +43,7 @@ func NewRedisCache[T any](conn *RedisConnection, ttl time.Duration, keyPrefix st
 		client:    conn.Client,
 		ttl:       ttl,
 		keyPrefix: keyPrefix,
-	}
+	}, nil
 }
 
 // cacheKey generates the full Redis key.
@@ -174,10 +175,13 @@ func (c *RedisCache[T]) Clear(ctx context.Context) error {
 		attribute.String("app.request.request_id", reqID),
 	)
 
+	var deleteErrors []error
+
 	iter := c.client.Scan(ctx, 0, pattern, 0).Iterator()
 	for iter.Next(ctx) {
 		if err := c.client.Del(ctx, iter.Val()).Err(); err != nil {
 			logger.Log(ctx, libLog.LevelWarn, fmt.Sprintf("error deleting key %s: %v", iter.Val(), err))
+			deleteErrors = append(deleteErrors, fmt.Errorf("failed to delete key %s: %w", iter.Val(), err))
 		}
 	}
 
@@ -186,6 +190,14 @@ func (c *RedisCache[T]) Clear(ctx context.Context) error {
 		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("error scanning keys for clear: %v", err))
 
 		return fmt.Errorf("failed to clear cache: %w", err)
+	}
+
+	if len(deleteErrors) > 0 {
+		combined := errors.Join(deleteErrors...)
+		libOpentelemetry.HandleSpanError(span, "partial failure clearing cache keys", combined)
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("failed to delete %d keys during cache clear", len(deleteErrors)))
+
+		return fmt.Errorf("failed to clear cache: %w", combined)
 	}
 
 	logger.Log(ctx, libLog.LevelInfo, "cache cleared")

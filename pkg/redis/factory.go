@@ -41,7 +41,10 @@ func NewCacheWithFallback[T any](
 	}
 
 	// Redis connected successfully - create fallback cache
-	redisCache := NewRedisCache[T](redisConn, ttl, keyPrefix)
+	redisCache, err := NewRedisCache[T](redisConn, ttl, keyPrefix)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create redis cache: %w", err)
+	}
 
 	return NewFallbackCache(redisCache, logger, ttl), nil
 }
