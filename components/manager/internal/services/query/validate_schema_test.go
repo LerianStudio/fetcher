@@ -1,6 +1,7 @@
 package query
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -10,8 +11,10 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/model"
+	"github.com/LerianStudio/fetcher/pkg/model/datasource"
 	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -324,6 +327,7 @@ func TestValidateSchema_CacheError_ContinuesToFetch(t *testing.T) {
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
+	mockDataSource := datasource.NewMockDataSource(ctrl)
 
 	orgID := uuid.New()
 	connID := uuid.New()
@@ -340,16 +344,25 @@ func TestValidateSchema_CacheError_ContinuesToFetch(t *testing.T) {
 		Get(gomock.Any(), "db1").
 		Return(nil, cacheError)
 
-	// Mock Decrypt for when it tries to connect to actual datasource
-	mockCrypto.EXPECT().
-		Decrypt(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return("decrypted-password", nil).
-		AnyTimes()
-
-	// Note: The service will try to fetch from the actual datasource which will fail
-	// since we don't have a real database. This test verifies the cache error is handled gracefully.
+	mockDataSource.EXPECT().
+		GetSchemaInfo(gomock.Any(), gomock.Any()).
+		Return(&model.DataSourceSchema{
+			ConfigName: "db1",
+			Tables: map[string]*model.TableSchema{
+				"users": {TableName: "users", Columns: map[string]bool{"id": true}},
+			},
+		}, nil)
+	mockDataSource.EXPECT().Close(gomock.Any()).Return(nil)
+	mockSchemaCache.EXPECT().
+		Set(gomock.Any(), "db1", gomock.Any(), cacheRepo.DefaultSchemaCacheTTL).
+		Return(nil)
 
 	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache)
+	service.dataSource = func(_ context.Context, conn *model.Connection, cryptor crypto.Cryptor, _ libLog.Logger) (datasource.DataSource, error) {
+		assert.Equal(t, "db1", conn.ConfigName)
+		_ = cryptor
+		return mockDataSource, nil
+	}
 
 	ctx := testContext()
 	request := model.SchemaValidationRequest{
@@ -360,14 +373,10 @@ func TestValidateSchema_CacheError_ContinuesToFetch(t *testing.T) {
 
 	resp, err := service.Execute(ctx, orgID, request)
 
-	// The execution should complete (either success or failure due to datasource connection)
-	// but should not fail due to cache error
 	assert.NoError(t, err)
 	require.NotNil(t, resp)
-	// Since we can't connect to actual DB, it will report datasource down
-	assert.Equal(t, "failure", resp.Status)
-	assert.Len(t, resp.Errors, 1)
-	assert.Equal(t, model.ErrTypeDataSourceDown, resp.Errors[0].Type)
+	assert.Equal(t, "success", resp.Status)
+	assert.Empty(t, resp.Errors)
 }
 
 func TestValidateSchema_PartialConnectionsFound(t *testing.T) {
@@ -795,6 +804,7 @@ func TestValidateSchema_CacheSetError(t *testing.T) {
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
+	mockDataSource := datasource.NewMockDataSource(ctrl)
 
 	orgID := uuid.New()
 	connID := uuid.New()
@@ -810,16 +820,25 @@ func TestValidateSchema_CacheSetError(t *testing.T) {
 		Get(gomock.Any(), "db1").
 		Return(nil, nil)
 
-	// Mock Decrypt for datasource connection
-	mockCrypto.EXPECT().
-		Decrypt(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return("password", nil).
-		AnyTimes()
-
-	// The actual datasource connection will fail, so we expect DATA_SOURCE_DOWN error
-	// This test verifies the cache miss path is taken
+	mockDataSource.EXPECT().
+		GetSchemaInfo(gomock.Any(), gomock.Any()).
+		Return(&model.DataSourceSchema{
+			ConfigName: "db1",
+			Tables: map[string]*model.TableSchema{
+				"users": {TableName: "users", Columns: map[string]bool{"id": true}},
+			},
+		}, nil)
+	mockDataSource.EXPECT().Close(gomock.Any()).Return(nil)
+	mockSchemaCache.EXPECT().
+		Set(gomock.Any(), "db1", gomock.Any(), cacheRepo.DefaultSchemaCacheTTL).
+		Return(errors.New("cache set failed"))
 
 	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache)
+	service.dataSource = func(_ context.Context, conn *model.Connection, cryptor crypto.Cryptor, _ libLog.Logger) (datasource.DataSource, error) {
+		assert.Equal(t, "db1", conn.ConfigName)
+		_ = cryptor
+		return mockDataSource, nil
+	}
 
 	ctx := testContext()
 	request := model.SchemaValidationRequest{
@@ -830,12 +849,70 @@ func TestValidateSchema_CacheSetError(t *testing.T) {
 
 	resp, err := service.Execute(ctx, orgID, request)
 
-	// Should complete without error but with DATA_SOURCE_DOWN in response
+	assert.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.Equal(t, "success", resp.Status)
+	assert.Empty(t, resp.Errors)
+}
+
+func TestValidateSchema_NilSchemaFromDatasource(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockCrypto := crypto.NewMockCryptor(ctrl)
+	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
+	mockDataSource := datasource.NewMockDataSource(ctrl)
+
+	orgID := uuid.New()
+	connID := uuid.New()
+	conn := &model.Connection{ID: connID, ConfigName: "db1", Type: model.TypeMySQL, Host: "localhost", Port: 3306}
+
+	mockConnRepo.EXPECT().
+		FindByConfigNames(gomock.Any(), orgID, gomock.Any()).
+		Return([]*model.Connection{conn}, nil)
+
+	mockSchemaCache.EXPECT().
+		Get(gomock.Any(), "db1").
+		Return(nil, nil)
+
+	mockDataSource.EXPECT().
+		GetSchemaInfo(gomock.Any(), gomock.Any()).
+		Return(nil, nil)
+
+	mockDataSource.EXPECT().
+		Close(gomock.Any()).
+		Return(nil)
+
+	mockSchemaCache.EXPECT().
+		Set(gomock.Any(), "db1", gomock.Any(), cacheRepo.DefaultSchemaCacheTTL).
+		DoAndReturn(func(_ any, _ string, schema *model.DataSourceSchema, _ any) error {
+			require.NotNil(t, schema)
+			require.NotNil(t, schema.Tables)
+			assert.Empty(t, schema.Tables)
+
+			return nil
+		})
+
+	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache)
+	service.dataSource = func(_ context.Context, _ *model.Connection, _ crypto.Cryptor, _ libLog.Logger) (datasource.DataSource, error) {
+		return mockDataSource, nil
+	}
+
+	ctx := testContext()
+	request := model.SchemaValidationRequest{
+		MappedFields: map[string]map[string][]string{
+			"db1": {"users": {"id"}},
+		},
+	}
+
+	resp, err := service.Execute(ctx, orgID, request)
+
 	assert.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, "failure", resp.Status)
 	assert.Len(t, resp.Errors, 1)
-	assert.Equal(t, model.ErrTypeDataSourceDown, resp.Errors[0].Type)
+	assert.Equal(t, model.ErrTypeTableNotFound, resp.Errors[0].Type)
 }
 
 // TestValidateSchema_EmptyConfigName tests validation with empty config name in request.

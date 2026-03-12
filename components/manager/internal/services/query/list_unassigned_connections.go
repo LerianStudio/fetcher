@@ -7,8 +7,8 @@ import (
 	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 	"github.com/LerianStudio/fetcher/pkg/net/http"
 
-	"github.com/LerianStudio/lib-commons/v2/commons"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v4/commons"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
@@ -33,9 +33,9 @@ func (s *ListUnassignedConnections) Execute(ctx context.Context, organizationID 
 		attribute.String("app.request.organization_id", organizationID.String()),
 	)
 
-	err := libOpentelemetry.SetSpanAttributesFromStruct(&span, "app.request.payload", filters)
+	err := libOpentelemetry.SetSpanAttributesFromValue(span, "app.request.payload", filters, nil)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to convert fetcher input to JSON string", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to convert fetcher input to JSON string", err)
 	}
 
 	list, totalCount, err := s.connRepo.ListUnassigned(ctx, organizationID, filters)

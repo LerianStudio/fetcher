@@ -10,8 +10,8 @@ import (
 	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 	"github.com/LerianStudio/fetcher/pkg/mongodb/job"
 
-	"github.com/LerianStudio/lib-commons/v2/commons"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v4/commons"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
@@ -43,9 +43,9 @@ func (s *UpdateConnection) Execute(ctx context.Context, organizationID, connecti
 		attribute.String("app.request.connection_id", connectionID.String()),
 	)
 
-	err := libOpentelemetry.SetSpanAttributesFromStruct(&span, "app.request.payload", connInput.ToMapWithMask())
+	err := libOpentelemetry.SetSpanAttributesFromValue(span, "app.request.payload", connInput.ToMapWithMask(), nil)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to convert fetcher input to JSON string", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to convert fetcher input to JSON string", err)
 	}
 
 	current, err := s.connRepo.FindByID(ctx, connectionID, organizationID)

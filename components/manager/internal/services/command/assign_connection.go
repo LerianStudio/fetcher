@@ -2,7 +2,6 @@ package command
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
@@ -73,7 +72,11 @@ func (s *AssignConnection) Execute(ctx context.Context, organizationID, connecti
 		return nil, pkg.ValidateBusinessError(constant.ErrConnectionAlreadyAssigned, "connection")
 	}
 
-	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("connection assigned to product connection_id=%s product_id=%s org=%s", connectionID, productID, organizationID))
+	logger.Log(ctx, libLog.LevelInfo, "connection assigned to product",
+		libLog.String("connection_id", connectionID.String()),
+		libLog.String("product_id", productID.String()),
+		libLog.String("organization_id", organizationID.String()),
+	)
 
 	return updated, nil
 }

@@ -54,7 +54,7 @@ type CreateFetcherJob struct {
 	jobRepo          jobRepo.Repository
 	productRepo      productRepo.Repository
 	cryptor          crypto.Cryptor
-	rabbitMQ         *rabbitmq.RabbitMQAdapter
+	rabbitMQ         rabbitmq.Adapter
 	connectionTester ConnectionTester
 	queueName        string
 }
@@ -67,7 +67,7 @@ func NewCreateFetcherJob(
 	jobRepository jobRepo.Repository,
 	productRepository productRepo.Repository,
 	cryptor crypto.Cryptor,
-	rabbitMQ *rabbitmq.RabbitMQAdapter,
+	rabbitMQ rabbitmq.Adapter,
 	queueName string,
 ) *CreateFetcherJob {
 	svc := &CreateFetcherJob{
@@ -93,7 +93,7 @@ func NewCreateFetcherJobWithTester(
 	jobRepository jobRepo.Repository,
 	productRepository productRepo.Repository,
 	cryptor crypto.Cryptor,
-	rabbitMQ *rabbitmq.RabbitMQAdapter,
+	rabbitMQ rabbitmq.Adapter,
 	tester ConnectionTester,
 	queueName string,
 ) *CreateFetcherJob {
@@ -186,7 +186,10 @@ func (s *CreateFetcherJob) Execute(ctx context.Context, organizationID uuid.UUID
 	}
 
 	if existingJob != nil {
-		logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Duplicate request detected, returning existing job id=%s", existingJob.ID))
+		logger.Log(ctx, libLog.LevelInfo, "duplicate fetcher request detected",
+			libLog.String("job_id", existingJob.ID.String()),
+			libLog.String("organization_id", existingJob.OrganizationID.String()),
+		)
 		span.SetAttributes(
 			attribute.Bool("app.request.is_duplicate", true),
 			attribute.String("app.request.existing_job_id", existingJob.ID.String()),
@@ -266,18 +269,27 @@ func (s *CreateFetcherJob) Execute(ctx context.Context, organizationID uuid.UUID
 	}
 
 	span.SetAttributes(attribute.String("app.request.created_job_id", createdJob.ID.String()))
-	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Created fetcher job id=%s org=%s", createdJob.ID, organizationID))
+	logger.Log(ctx, libLog.LevelInfo, "created fetcher job",
+		libLog.String("job_id", createdJob.ID.String()),
+		libLog.String("organization_id", organizationID.String()),
+	)
 
 	if err := s.publishToQueue(ctx, createdJob); err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to publish job to queue", err)
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to publish job to queue id=%s: %v", createdJob.ID, err))
+		logger.Log(ctx, libLog.LevelError, "failed to publish job to queue",
+			libLog.String("job_id", createdJob.ID.String()),
+			libLog.Err(err),
+		)
 
 		createdJob.SetFailedStatus("process failed: unable to publish")
 
 		_, updateErr := s.jobRepo.Update(ctx, createdJob)
 		if updateErr != nil {
 			libOpentelemetry.HandleSpanError(span, "Failed to update job status to FAILED", updateErr)
-			logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to update job status to FAILED for job id=%s: %v", createdJob.ID, updateErr))
+			logger.Log(ctx, libLog.LevelError, "failed to update job status to failed",
+				libLog.String("job_id", createdJob.ID.String()),
+				libLog.Err(updateErr),
+			)
 		}
 
 		return nil, pkg.ValidateInternalError(err, "fetcher")
@@ -358,7 +370,10 @@ func (s *CreateFetcherJob) TestConnection(ctx context.Context, conn *model.Conne
 
 	// Close the connection after test
 	if err := ds.Close(testCtx); err != nil {
-		logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("Failed to close test connection for %s: %v", conn.ConfigName, err))
+		logger.Log(testCtx, libLog.LevelWarn, "failed to close test connection",
+			libLog.String("config_name", conn.ConfigName),
+			libLog.Err(err),
+		)
 	}
 
 	return nil

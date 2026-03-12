@@ -2,7 +2,6 @@ package command
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/LerianStudio/fetcher/pkg"
@@ -61,7 +60,11 @@ func (s *DeleteProduct) Execute(ctx context.Context, organizationID, productID u
 	}
 
 	if count > 0 {
-		logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Delete blocked: product id=%s has %d active connections", productID, count))
+		logger.Log(ctx, libLog.LevelInfo, "delete product blocked by active connections",
+			libLog.String("product_id", productID.String()),
+			libLog.String("organization_id", organizationID.String()),
+			libLog.Any("active_connections", count),
+		)
 		libOpentelemetry.HandleSpanError(span, "Product has active connections", constant.ErrProductHasConnections)
 
 		return pkg.ValidateBusinessError(
@@ -75,7 +78,10 @@ func (s *DeleteProduct) Execute(ctx context.Context, organizationID, productID u
 		return err
 	}
 
-	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Deleted product id=%s org=%s", productID, organizationID))
+	logger.Log(ctx, libLog.LevelInfo, "deleted product",
+		libLog.String("product_id", productID.String()),
+		libLog.String("organization_id", organizationID.String()),
+	)
 
 	return nil
 }

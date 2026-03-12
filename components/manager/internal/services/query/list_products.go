@@ -7,8 +7,8 @@ import (
 	productRepo "github.com/LerianStudio/fetcher/pkg/mongodb/product"
 	"github.com/LerianStudio/fetcher/pkg/net/http"
 
-	"github.com/LerianStudio/lib-commons/v2/commons"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v4/commons"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
@@ -33,9 +33,9 @@ func (s *ListProducts) Execute(ctx context.Context, organizationID uuid.UUID, fi
 		attribute.String("app.request.organization_id", organizationID.String()),
 	)
 
-	err := libOpentelemetry.SetSpanAttributesFromStruct(&span, "app.request.payload", filters)
+	err := libOpentelemetry.SetSpanAttributesFromValue(span, "app.request.payload", filters, nil)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to convert filters to JSON string", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to convert filters to JSON string", err)
 	}
 
 	list, totalCount, err := s.productRepo.List(ctx, organizationID, filters)

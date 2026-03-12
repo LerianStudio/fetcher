@@ -37,11 +37,14 @@ var pluginCRMTableMapping = map[string]string{
 	"aliases": "aliases",
 }
 
+type dataSourceFactory func(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor, logger libLog.Logger) (datasourceModel.DataSource, error)
+
 // ValidateSchema is the query service for validating schema references.
 type ValidateSchema struct {
 	connRepo    connRepo.Repository
 	cryptor     crypto.Cryptor
 	schemaCache cacheRepo.SchemaCacheRepository
+	dataSource  dataSourceFactory
 }
 
 // NewValidateSchema creates a new ValidateSchema service without rate limiting.
@@ -54,6 +57,7 @@ func NewValidateSchema(
 		connRepo:    connectionRepo,
 		cryptor:     cryptor,
 		schemaCache: schemaCache,
+		dataSource:  datasource.NewDataSourceFromConnection,
 	}
 }
 
@@ -84,7 +88,10 @@ func (s *ValidateSchema) Execute(
 	// Validate request payload structure and limits
 	if errValidation := spec.Validate(); errValidation != nil {
 		libOpentelemetry.HandleSpanError(span, "Invalid request payload", errValidation)
-		logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("schema validation request invalid org=%s: %v", organizationID, errValidation))
+		logger.Log(ctx, libLog.LevelWarn, "schema validation request invalid",
+			libLog.String("organization_id", organizationID.String()),
+			libLog.Err(errValidation),
+		)
 
 		return nil, errValidation
 	}
@@ -97,7 +104,10 @@ func (s *ValidateSchema) Execute(
 	connections, err := s.connRepo.FindByConfigNames(ctx, organizationID, configNames)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to find connections", err)
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("failed to find connections org=%s: %v", organizationID, err))
+		logger.Log(ctx, libLog.LevelError, "failed to find connections",
+			libLog.String("organization_id", organizationID.String()),
+			libLog.Err(err),
+		)
 
 		return nil, pkg.ValidateInternalError(err, "schema")
 	}
@@ -128,7 +138,10 @@ func (s *ValidateSchema) Execute(
 		conn, found := connMap[configName]
 		if !found {
 			validationErrors = append(validationErrors, model.NewDataSourceNotFoundError(configName))
-			logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("datasource not found config_name=%s org=%s", configName, organizationID))
+			logger.Log(ctx, libLog.LevelWarn, "datasource not found",
+				libLog.String("config_name", configName),
+				libLog.String("organization_id", organizationID.String()),
+			)
 
 			continue
 		}
@@ -141,7 +154,10 @@ func (s *ValidateSchema) Execute(
 		// Transform table names for plugin_crm to include organization ID suffix
 		if configName == pluginCRMConfigName {
 			tables, tableNameReverseMap = transformPluginCRMTables(tables, organizationID)
-			logger.Log(context.Background(), libLog.LevelDebug, fmt.Sprintf("transformed plugin_crm tables org=%s tables=%v", organizationID, tables))
+			logger.Log(ctx, libLog.LevelDebug, "transformed plugin_crm tables",
+				libLog.String("organization_id", organizationID.String()),
+				libLog.Any("tables", tables),
+			)
 		}
 
 		// Returns schemas only if they exist
@@ -163,7 +179,11 @@ func (s *ValidateSchema) Execute(
 		schema, err := s.getOrFetchSchema(ctx, conn, schemas)
 		if err != nil {
 			validationErrors = append(validationErrors, model.NewDataSourceDownError(configName))
-			logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("failed to get schema config_name=%s org=%s: %v", configName, organizationID, err))
+			logger.Log(ctx, libLog.LevelWarn, "failed to get schema",
+				libLog.String("config_name", configName),
+				libLog.String("organization_id", organizationID.String()),
+				libLog.Err(err),
+			)
 
 			continue
 		}
@@ -178,10 +198,16 @@ func (s *ValidateSchema) Execute(
 	if len(validationErrors) == 0 {
 		response = model.NewSuccessResponse()
 
-		logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("schema validation successful org=%s datasources=%d", organizationID, len(configNames)))
+		logger.Log(ctx, libLog.LevelInfo, "schema validation successful",
+			libLog.String("organization_id", organizationID.String()),
+			libLog.Int("datasource_count", len(configNames)),
+		)
 	} else {
 		response = model.NewFailureResponse(validationErrors)
-		logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("schema validation failed org=%s errors=%d", organizationID, len(validationErrors)))
+		logger.Log(ctx, libLog.LevelWarn, "schema validation failed",
+			libLog.String("organization_id", organizationID.String()),
+			libLog.Int("error_count", len(validationErrors)),
+		)
 	}
 
 	span.SetAttributes(
@@ -211,21 +237,24 @@ func (s *ValidateSchema) getOrFetchSchema(
 	// Check cache first
 	cachedSchema, err := s.schemaCache.Get(ctx, conn.ConfigName)
 	if err != nil {
-		logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("cache error for config_name=%s: %v", conn.ConfigName, err))
+		logger.Log(ctx, libLog.LevelWarn, "schema cache error",
+			libLog.String("config_name", conn.ConfigName),
+			libLog.Err(err),
+		)
 	}
 
 	if cachedSchema != nil {
 		span.SetAttributes(attribute.Bool("app.schema.cache_hit", true))
-		logger.Log(context.Background(), libLog.LevelDebug, fmt.Sprintf("schema cache hit config_name=%s", conn.ConfigName))
+		logger.Log(ctx, libLog.LevelDebug, "schema cache hit", libLog.String("config_name", conn.ConfigName))
 
 		return cachedSchema, nil
 	}
 
 	span.SetAttributes(attribute.Bool("app.schema.cache_hit", false))
-	logger.Log(context.Background(), libLog.LevelDebug, fmt.Sprintf("schema cache miss config_name=%s", conn.ConfigName))
+	logger.Log(ctx, libLog.LevelDebug, "schema cache miss", libLog.String("config_name", conn.ConfigName))
 
 	// Get datasource instance because schema is not in cache
-	ds, err := datasource.NewDataSourceFromConnection(ctx, conn, s.cryptor, logger)
+	ds, err := s.dataSource(ctx, conn, s.cryptor, logger)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "failed to create datasource", err)
 		return nil, fmt.Errorf("failed to create datasource: %w", err)
@@ -239,13 +268,27 @@ func (s *ValidateSchema) getOrFetchSchema(
 		return nil, fmt.Errorf("failed to get schema info: %w", err)
 	}
 
+	if schema == nil {
+		schema = model.NewDataSourceSchema(conn.ConfigName)
+	}
+
+	if schema.Tables == nil {
+		schema.Tables = map[string]*model.TableSchema{}
+	}
+
 	// Cache the fetched schema for future requests
 	if err := s.schemaCache.Set(ctx, conn.ConfigName, schema, cacheRepo.DefaultSchemaCacheTTL); err != nil {
-		logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("failed to cache schema config_name=%s: %v", conn.ConfigName, err))
+		logger.Log(ctx, libLog.LevelWarn, "failed to cache schema",
+			libLog.String("config_name", conn.ConfigName),
+			libLog.Err(err),
+		)
 	}
 
 	span.SetAttributes(attribute.Int("app.schema.tables_count", len(schema.Tables)))
-	logger.Log(context.Background(), libLog.LevelDebug, fmt.Sprintf("schema fetched and cached config_name=%s tables=%d", conn.ConfigName, len(schema.Tables)))
+	logger.Log(ctx, libLog.LevelDebug, "schema fetched and cached",
+		libLog.String("config_name", conn.ConfigName),
+		libLog.Int("table_count", len(schema.Tables)),
+	)
 
 	return schema, nil
 }

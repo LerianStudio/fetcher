@@ -2,7 +2,6 @@ package command
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
@@ -74,7 +73,11 @@ func (s *CreateProduct) Execute(ctx context.Context, organizationID uuid.UUID, i
 		return nil, err
 	}
 
-	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Created product id=%s code=%s org=%s", created.ID, created.Code, organizationID))
+	logger.Log(ctx, libLog.LevelInfo, "created product",
+		libLog.String("product_id", created.ID.String()),
+		libLog.String("product_code", created.Code),
+		libLog.String("organization_id", organizationID.String()),
+	)
 
 	return created, nil
 }

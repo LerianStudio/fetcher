@@ -16,6 +16,7 @@ import (
 	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 	jobRepo "github.com/LerianStudio/fetcher/pkg/mongodb/job"
 	productMock "github.com/LerianStudio/fetcher/pkg/mongodb/product"
+	rabbitmqMock "github.com/LerianStudio/fetcher/pkg/rabbitmq"
 
 	"github.com/google/uuid"
 	"go.uber.org/mock/gomock"
@@ -690,6 +691,91 @@ func TestCreateFetcherJob_Execute_MultipleConnectionsSuccess_WithoutProductRepo(
 	// Verify metadata is preserved
 	if result.Job.Metadata == nil || result.Job.Metadata["source"] != "test" {
 		t.Fatal("expected metadata to be preserved")
+	}
+}
+
+func TestCreateFetcherJob_Execute_PublishFailureMarksJobFailed(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockJobRepo := jobRepo.NewMockRepository(ctrl)
+	mockConnTester := NewMockConnectionTester(ctrl)
+	mockRabbitMQ := rabbitmqMock.NewMockAdapter(ctrl)
+
+	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, nil, nil, mockRabbitMQ, mockConnTester, "fetcher.extract-external-data.queue")
+
+	ctx := testContext()
+	orgID := uuid.New()
+	connID := uuid.New()
+	request := model.FetcherRequest{
+		DataRequest: model.DataRequest{
+			MappedFields: map[string]map[string][]string{
+				"postgres_db": {"transactions": {"id", "status"}},
+			},
+		},
+		Metadata: map[string]any{"source": "test"},
+	}
+
+	conn := &model.Connection{ID: connID, ConfigName: "postgres_db", Type: model.TypePostgreSQL}
+	publishErr := errors.New("publish failed")
+
+	mockJobRepo.EXPECT().
+		FindByRequestHashWithinWindow(gomock.Any(), orgID, gomock.Any(), DeduplicationWindowMinutes).
+		Return(nil, nil)
+
+	mockConnRepo.EXPECT().
+		FindByConfigNames(gomock.Any(), orgID, []string{"postgres_db"}).
+		Return([]*model.Connection{conn}, nil)
+
+	mockConnTester.EXPECT().
+		TestConnection(gomock.Any(), conn).
+		Return(nil)
+
+	mockJobRepo.EXPECT().
+		Create(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, job *model.Job) (*model.Job, error) {
+			return job, nil
+		})
+
+	mockRabbitMQ.EXPECT().
+		ProducerDefault(gomock.Any(), "", "fetcher.extract-external-data.queue", gomock.Any(), gomock.Any()).
+		Return(publishErr)
+
+	mockJobRepo.EXPECT().
+		Update(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, job *model.Job) (*model.Job, error) {
+			if job.Status != model.JobStatusFailed {
+				t.Fatalf("expected failed job status, got %s", job.Status)
+			}
+
+			if job.CompletedAt == nil {
+				t.Fatal("expected completedAt to be set after publish failure")
+			}
+
+			if got := job.Metadata["error"]; got != "process failed: unable to publish" {
+				t.Fatalf("expected failure metadata to be recorded, got %#v", got)
+			}
+
+			return job, nil
+		})
+
+	result, err := svc.Execute(ctx, orgID, request)
+	if result != nil {
+		t.Fatalf("expected nil result on publish failure, got %+v", result)
+	}
+
+	if err == nil {
+		t.Fatal("expected publish failure error, got nil")
+	}
+
+	var internalErr pkg.InternalServerError
+	if !errors.As(err, &internalErr) {
+		t.Fatalf("expected internal server error wrapper, got %T", err)
+	}
+
+	if internalErr.Err == nil || !strings.Contains(internalErr.Err.Error(), "publish failed") {
+		t.Fatalf("expected wrapped publish failure, got %v", internalErr.Err)
 	}
 }
 

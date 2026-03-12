@@ -32,9 +32,10 @@ type RateLimiterStore interface {
 }
 
 type TestConnection struct {
-	connRepo connRepo.Repository
-	store    RateLimiterStore
-	cryptor  crypto.Cryptor
+	connRepo   connRepo.Repository
+	store      RateLimiterStore
+	cryptor    crypto.Cryptor
+	dataSource dataSourceFactory
 }
 
 // NewTestConnection creates a new TestConnection service.
@@ -42,9 +43,10 @@ type TestConnection struct {
 // of the RateLimiterStore interface for backward compatibility.
 func NewTestConnection(connectionRepo connRepo.Repository, cryptor crypto.Cryptor, store RateLimiterStore) *TestConnection {
 	return &TestConnection{
-		connRepo: connectionRepo,
-		store:    store,
-		cryptor:  cryptor,
+		connRepo:   connectionRepo,
+		store:      store,
+		cryptor:    cryptor,
+		dataSource: datasource.NewDataSourceFromConnection,
 	}
 }
 
@@ -65,7 +67,11 @@ func (s *TestConnection) Execute(ctx context.Context, organizationID, connection
 	_, _, reset, ok, err := s.store.Take(ctx, key)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "connection test rate limiter error", err)
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("connection test rate limiter error id=%s org=%s: %v", connectionID, organizationID, err))
+		logger.Log(ctx, libLog.LevelError, "connection test rate limiter error",
+			libLog.String("connection_id", connectionID.String()),
+			libLog.String("organization_id", organizationID.String()),
+			libLog.Err(err),
+		)
 
 		return nil, pkg.ValidateInternalError(err, "connection")
 	} else if !ok {
@@ -84,7 +90,11 @@ func (s *TestConnection) Execute(ctx context.Context, organizationID, connection
 			waitSeconds = 1
 		}
 
-		logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("connection test rate limited id=%s org=%s", connectionID, organizationID))
+		logger.Log(ctx, libLog.LevelWarn, "connection test rate limited",
+			libLog.String("connection_id", connectionID.String()),
+			libLog.String("organization_id", organizationID.String()),
+			libLog.Int("wait_seconds", waitSeconds),
+		)
 
 		return nil, pkg.ResponseError{
 			Code:    http.StatusTooManyRequests,
@@ -111,10 +121,14 @@ func (s *TestConnection) Execute(ctx context.Context, organizationID, connection
 
 	start := time.Now()
 
-	ds, err := datasource.NewDataSourceFromConnection(testCtx, conn, s.cryptor, logger)
+	ds, err := s.dataSource(testCtx, conn, s.cryptor, logger)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "failed to establish datasource connection", err)
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("connection test failed id=%s org=%s", connectionID, organizationID))
+		logger.Log(testCtx, libLog.LevelError, "connection test failed",
+			libLog.String("connection_id", connectionID.String()),
+			libLog.String("organization_id", organizationID.String()),
+			libLog.Err(err),
+		)
 
 		return nil, pkg.ResponseError{
 			Code:    http.StatusInternalServerError,
@@ -127,7 +141,11 @@ func (s *TestConnection) Execute(ctx context.Context, organizationID, connection
 	span.SetAttributes(attribute.Int64("app.connection_test.latency_ms", latencyMs))
 
 	if err := ds.Close(testCtx); err != nil {
-		logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("connection test cleanup failed id=%s org=%s: %v", connectionID, organizationID, err))
+		logger.Log(testCtx, libLog.LevelWarn, "connection test cleanup failed",
+			libLog.String("connection_id", connectionID.String()),
+			libLog.String("organization_id", organizationID.String()),
+			libLog.Err(err),
+		)
 	}
 
 	return &model.ConnectionTestResponse{

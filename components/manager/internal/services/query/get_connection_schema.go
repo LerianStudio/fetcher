@@ -2,7 +2,6 @@ package query
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"sort"
 	"strings"
@@ -73,7 +72,10 @@ func (s *GetConnectionSchema) Execute(ctx context.Context, organizationID, conne
 	ds, err := s.dataSourceFactory(ctx, conn, s.cryptor)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "failed to create datasource", err)
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("failed to create datasource for connection %s: %v", connectionID, err))
+		logger.Log(ctx, libLog.LevelError, "failed to create datasource",
+			libLog.String("connection_id", connectionID.String()),
+			libLog.Err(err),
+		)
 
 		return nil, pkg.ResponseError{
 			Code:    http.StatusInternalServerError,
@@ -84,7 +86,10 @@ func (s *GetConnectionSchema) Execute(ctx context.Context, organizationID, conne
 
 	defer func() {
 		if closeErr := ds.Close(ctx); closeErr != nil {
-			logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("failed to close datasource for connection %s: %v", connectionID, closeErr))
+			logger.Log(ctx, libLog.LevelWarn, "failed to close datasource",
+				libLog.String("connection_id", connectionID.String()),
+				libLog.Err(closeErr),
+			)
 		}
 	}()
 
@@ -92,7 +97,10 @@ func (s *GetConnectionSchema) Execute(ctx context.Context, organizationID, conne
 	schema, err := ds.GetSchemaInfo(ctx, nil)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "failed to get schema info", err)
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("failed to get schema info for connection %s: %v", connectionID, err))
+		logger.Log(ctx, libLog.LevelError, "failed to get schema info",
+			libLog.String("connection_id", connectionID.String()),
+			libLog.Err(err),
+		)
 
 		return nil, pkg.ResponseError{
 			Code:    http.StatusInternalServerError,

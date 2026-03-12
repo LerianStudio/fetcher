@@ -1,6 +1,7 @@
 package query
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"testing"
@@ -9,10 +10,13 @@ import (
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/model"
+	datasourceModel "github.com/LerianStudio/fetcher/pkg/model/datasource"
 	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
 
@@ -196,6 +200,40 @@ func TestTestConnection_Execute_RateLimitError(t *testing.T) {
 	}
 }
 
+func TestTestConnection_Execute_Success(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockCrypto := crypto.NewMockCryptor(ctrl)
+	mockStore := NewMockRateLimiterStore(ctrl)
+	mockDataSource := datasourceModel.NewMockDataSource(ctrl)
+
+	orgID := uuid.New()
+	connID := uuid.New()
+	existingConn := newTestConnectionFixture(orgID, connID, model.TypePostgreSQL)
+
+	mockStore.EXPECT().Take(gomock.Any(), gomock.Any()).Return(uint64(1), uint64(10), uint64(time.Now().UTC().Add(time.Minute).UnixNano()), true, nil)
+	mockConnRepo.EXPECT().FindByID(gomock.Any(), connID, orgID).Return(existingConn, nil)
+	mockDataSource.EXPECT().Close(gomock.Any()).Return(nil)
+
+	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore)
+	svc.dataSource = func(_ context.Context, conn *model.Connection, cryptor crypto.Cryptor, _ libLog.Logger) (datasourceModel.DataSource, error) {
+		_ = cryptor
+		assert.Equal(t, existingConn, conn)
+		return mockDataSource, nil
+	}
+
+	ctx := testContext()
+	result, err := svc.Execute(ctx, orgID, connID)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "success", result.Status)
+	assert.Equal(t, "Connection successful", result.Message)
+	assert.GreaterOrEqual(t, result.LatencyMs, int64(0))
+}
+
 // TestTestConnection_Execute_RateLimited tests rate limit exceeded scenario.
 func TestTestConnection_Execute_RateLimited(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -290,8 +328,8 @@ func TestTestConnection_Execute_WithSSLConfiguration(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockCrypto := crypto.NewMockCryptor(ctrl)
-	mockCrypto.EXPECT().Decrypt(gomock.Any(), gomock.Any(), gomock.Any()).Return("test-password", nil)
 	mockStore := NewMockRateLimiterStore(ctrl)
+	mockDataSource := datasourceModel.NewMockDataSource(ctrl)
 	mockStore.EXPECT().Take(gomock.Any(), gomock.Any()).Return(uint64(1), uint64(10), uint64(time.Now().UTC().Add(time.Minute).UnixNano()), true, nil)
 
 	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore)
@@ -308,28 +346,23 @@ func TestTestConnection_Execute_WithSSLConfiguration(t *testing.T) {
 		Key:  "-----BEGIN PRIVATE KEY-----\ntest-key\n-----END PRIVATE KEY-----",
 	}
 
-	// Mock: connection found with SSL
 	mockConnRepo.EXPECT().
 		FindByID(gomock.Any(), connID, orgID).
 		Return(existingConn, nil)
+	mockDataSource.EXPECT().Close(gomock.Any()).Return(nil)
+
+	svc.dataSource = func(_ context.Context, conn *model.Connection, cryptor crypto.Cryptor, _ libLog.Logger) (datasourceModel.DataSource, error) {
+		_ = cryptor
+		require.NotNil(t, conn.SSL)
+		assert.Equal(t, "require", conn.SSL.Mode)
+		assert.Contains(t, conn.SSL.CA, "BEGIN CERTIFICATE")
+		return mockDataSource, nil
+	}
 
 	result, err := svc.Execute(ctx, orgID, connID)
-
-	// The datasource factory will fail because it tries to actually connect
-	// This test verifies that SSL configuration is properly passed through
-	if err == nil {
-		t.Fatal("expected error (datasource connection failure), got nil")
-	}
-
-	if result != nil {
-		t.Fatalf("expected nil result, got %+v", result)
-	}
-
-	// Verify it's a connection error, not a validation error
-	var responseErr pkg.ResponseError
-	if !errors.As(err, &responseErr) {
-		t.Fatalf("expected ResponseError (connection failure), got %T: %v", err, err)
-	}
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "success", result.Status)
 }
 
 // TestTestConnection_Execute_AllDatabaseTypes tests connection testing with all supported database types.
@@ -373,8 +406,8 @@ func TestTestConnection_Execute_AllDatabaseTypes(t *testing.T) {
 
 			mockConnRepo := connRepo.NewMockRepository(ctrl)
 			mockCrypto := crypto.NewMockCryptor(ctrl)
-			mockCrypto.EXPECT().Decrypt(gomock.Any(), gomock.Any(), gomock.Any()).Return("test-password", nil)
 			mockStore := NewMockRateLimiterStore(ctrl)
+			mockDataSource := datasourceModel.NewMockDataSource(ctrl)
 			mockStore.EXPECT().Take(gomock.Any(), gomock.Any()).Return(uint64(1), uint64(10), uint64(time.Now().UTC().Add(time.Minute).UnixNano()), true, nil)
 
 			svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore)
@@ -386,37 +419,22 @@ func TestTestConnection_Execute_AllDatabaseTypes(t *testing.T) {
 			existingConn := newTestConnectionFixture(orgID, connID, tt.dbType)
 			existingConn.Port = tt.port
 
-			// Mock: connection found
 			mockConnRepo.EXPECT().
 				FindByID(gomock.Any(), connID, orgID).
 				Return(existingConn, nil)
+			mockDataSource.EXPECT().Close(gomock.Any()).Return(nil)
+
+			svc.dataSource = func(_ context.Context, conn *model.Connection, cryptor crypto.Cryptor, _ libLog.Logger) (datasourceModel.DataSource, error) {
+				_ = cryptor
+				assert.Equal(t, tt.dbType, conn.Type)
+				assert.Equal(t, tt.port, conn.Port)
+				return mockDataSource, nil
+			}
 
 			result, err := svc.Execute(ctx, orgID, connID)
-
-			// The datasource factory will fail because it tries to actually connect
-			// to the database. This test verifies that each database type is handled.
-			if err == nil {
-				// If somehow the connection succeeds (unlikely in unit tests)
-				if result == nil {
-					t.Fatal("expected non-nil result when no error")
-				}
-				return
-			}
-
-			// Expect a connection error (ResponseError), not other types of errors
-			var responseErr pkg.ResponseError
-			if errors.As(err, &responseErr) {
-				// Expected: connection failure
-				return
-			}
-
-			// Could also be InternalServerError if decryption fails in connection
-			var internalErr pkg.InternalServerError
-			if errors.As(err, &internalErr) {
-				return
-			}
-
-			t.Fatalf("unexpected error type for %s: %T: %v", tt.name, err, err)
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			assert.Equal(t, "success", result.Status)
 		})
 	}
 }

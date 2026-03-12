@@ -2,7 +2,6 @@ package command
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
@@ -81,7 +80,10 @@ func (s *UpdateProduct) Execute(ctx context.Context, organizationID, productID u
 		)
 	}
 
-	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Updated product id=%s org=%s", productID, organizationID))
+	logger.Log(ctx, libLog.LevelInfo, "updated product",
+		libLog.String("product_id", productID.String()),
+		libLog.String("organization_id", organizationID.String()),
+	)
 
 	return updated, nil
 }

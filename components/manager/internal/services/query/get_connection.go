@@ -8,7 +8,7 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/model"
 	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 
-	"github.com/LerianStudio/lib-commons/v2/commons"
+	"github.com/LerianStudio/lib-commons/v4/commons"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
