@@ -6,10 +6,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/LerianStudio/fetcher/pkg/model"
+	"github.com/LerianStudio/fetcher/pkg/model/job"
 	e2eshared "github.com/LerianStudio/fetcher/tests/shared"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -36,7 +38,8 @@ func TestExtraction_InvalidConnectionName_Error(t *testing.T) {
 			},
 		},
 		Metadata: map[string]any{
-			"test": "invalid-connection-name",
+			"source": "any-product",
+			"test":   "invalid-connection-name",
 		},
 	}
 
@@ -54,26 +57,17 @@ func TestExtraction_InvalidConnectionName_Error(t *testing.T) {
 
 	if resp.StatusCode() == 200 || resp.StatusCode() == 202 {
 		// Job was created - it should fail during processing
-		t.Logf("Job created, checking for failure during processing")
+		t.Logf("Job created, polling for failure during processing")
 
-		// Parse response to get job ID
 		var fetcherResp model.FetcherResponse
 		err = json.Unmarshal(resp.Body(), &fetcherResp)
 		require.NoError(t, err, "parse response")
 
-		// Poll for job status - expect failure
 		jobID := fetcherResp.JobID.String()
 
-		// Wait with shorter timeout since we expect failure
-		job, err := apiClient.GetJob(ctx, jobID)
-		if err == nil {
-			// Job exists, check status
-			if job.Status == e2eshared.JobStatusFailed {
-				t.Logf("Job correctly failed: %v", job.Metadata)
-			} else if job.Status == e2eshared.JobStatusCompleted {
-				t.Errorf("Job should have failed for invalid connection, but completed")
-			}
-		}
+		job := e2eshared.AssertJobFailed(t, apiClient, jobID, e2eshared.DefaultJobTimeout)
+		assert.Equal(t, e2eshared.JobStatusFailed, job.Status, "job should fail for invalid connection name")
+		t.Logf("Job correctly failed for invalid connection: %v", job.Metadata)
 	}
 }
 
@@ -89,6 +83,8 @@ func TestExtraction_InvalidTableName_Error(t *testing.T) {
 	require.NoError(t, err, "get postgres host/port")
 
 	// Create valid connection
+	productName := e2eshared.GenerateProductName()
+
 	uniqueName := fmt.Sprintf("e2e-invalid-table-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
 		ConfigName:   uniqueName,
@@ -100,12 +96,15 @@ func TestExtraction_InvalidTableName_Error(t *testing.T) {
 		Password:     "testpass",
 	}
 
-	conn, err := apiClient.CreateConnection(ctx, connInput)
+	conn, err := apiClient.CreateConnection(ctx, productName, connInput)
 	require.NoError(t, err, "create connection")
 
 	t.Cleanup(func() {
 		_ = apiClient.DeleteConnection(context.Background(), conn.ID)
 	})
+
+	err = apiClient.WaitForConnectionAvailable(ctx, conn.ID, 10*time.Second)
+	require.NoError(t, err, "wait for connection to be available")
 
 	// Request data from non-existent table
 	fetcherReq := model.FetcherRequest{
@@ -117,7 +116,8 @@ func TestExtraction_InvalidTableName_Error(t *testing.T) {
 			},
 		},
 		Metadata: map[string]any{
-			"test": "invalid-table-name",
+			"source": productName,
+			"test":   "invalid-table-name",
 		},
 	}
 
@@ -136,13 +136,11 @@ func TestExtraction_InvalidTableName_Error(t *testing.T) {
 		require.NoError(t, err, "parse response")
 
 		jobID := fetcherResp.JobID.String()
-		t.Logf("Job created: %s, waiting for failure", jobID)
+		t.Logf("Job created: %s, polling for failure", jobID)
 
-		// Poll for status
-		job, err := apiClient.GetJob(ctx, jobID)
-		if err == nil && job.Status == e2eshared.JobStatusFailed {
-			t.Logf("Job correctly failed for invalid table")
-		}
+		job := e2eshared.AssertJobFailed(t, apiClient, jobID, e2eshared.DefaultJobTimeout)
+		assert.Equal(t, e2eshared.JobStatusFailed, job.Status, "job should fail for invalid table name")
+		t.Logf("Job correctly failed for invalid table: %v", job.Metadata)
 	}
 }
 
@@ -159,7 +157,8 @@ func TestExtraction_EmptyMappedFields_BadRequest(t *testing.T) {
 			MappedFields: map[string]map[string][]string{},
 		},
 		Metadata: map[string]any{
-			"test": "empty-mapped-fields",
+			"source": "any-product",
+			"test":   "empty-mapped-fields",
 		},
 	}
 
@@ -182,6 +181,8 @@ func TestExtraction_MissingFields_BadRequest(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
+	productName := e2eshared.GenerateProductName()
+
 	uniqueName := fmt.Sprintf("e2e-no-fields-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
 		ConfigName:   uniqueName,
@@ -193,12 +194,15 @@ func TestExtraction_MissingFields_BadRequest(t *testing.T) {
 		Password:     "testpass",
 	}
 
-	conn, err := apiClient.CreateConnection(ctx, connInput)
+	conn, err := apiClient.CreateConnection(ctx, productName, connInput)
 	require.NoError(t, err, "create connection")
 
 	t.Cleanup(func() {
 		_ = apiClient.DeleteConnection(context.Background(), conn.ID)
 	})
+
+	err = apiClient.WaitForConnectionAvailable(ctx, conn.ID, 10*time.Second)
+	require.NoError(t, err, "wait for connection to be available")
 
 	// Request with table but empty fields
 	fetcherReq := model.FetcherRequest{
@@ -210,7 +214,8 @@ func TestExtraction_MissingFields_BadRequest(t *testing.T) {
 			},
 		},
 		Metadata: map[string]any{
-			"test": "missing-fields",
+			"source": productName,
+			"test":   "missing-fields",
 		},
 	}
 
@@ -231,9 +236,12 @@ func TestExtraction_TooManyDatasources_BadRequest(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), e2eshared.DefaultTestTimeout)
 	defer cancel()
 
-	// Create mapped fields with more than maximum allowed datasources (10)
+	// maxDatasourcesLimit is the maximum number of datasources allowed per request.
+	const maxDatasourcesLimit = 10
+
+	// Create mapped fields exceeding the maximum allowed datasources
 	mappedFields := make(map[string]map[string][]string)
-	for i := 0; i < 12; i++ {
+	for i := 0; i < maxDatasourcesLimit+2; i++ {
 		dsName := fmt.Sprintf("datasource-%d", i)
 		mappedFields[dsName] = map[string][]string{
 			"table1": {"id", "name"},
@@ -245,7 +253,8 @@ func TestExtraction_TooManyDatasources_BadRequest(t *testing.T) {
 			MappedFields: mappedFields,
 		},
 		Metadata: map[string]any{
-			"test": "too-many-datasources",
+			"source": "any-product",
+			"test":   "too-many-datasources",
 		},
 	}
 
@@ -271,6 +280,8 @@ func TestExtraction_ConnectionWithWrongCredentials_Rejected(t *testing.T) {
 	require.NoError(t, err, "get postgres host/port")
 
 	// Create connection with wrong password
+	productName := e2eshared.GenerateProductName()
+
 	uniqueName := fmt.Sprintf("e2e-wrong-creds-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
 		ConfigName:   uniqueName,
@@ -282,7 +293,7 @@ func TestExtraction_ConnectionWithWrongCredentials_Rejected(t *testing.T) {
 		Password:     "wrong_password_should_fail",
 	}
 
-	conn, err := apiClient.CreateConnection(ctx, connInput)
+	conn, err := apiClient.CreateConnection(ctx, productName, connInput)
 	require.NoError(t, err, "create connection")
 
 	t.Cleanup(func() {
@@ -299,7 +310,7 @@ func TestExtraction_ConnectionWithWrongCredentials_Rejected(t *testing.T) {
 			},
 		},
 		Metadata: map[string]any{
-			"source": "reporter",
+			"source": productName,
 			"test":   "wrong-credentials",
 		},
 	}
@@ -325,33 +336,228 @@ func TestExtraction_ConnectionWithWrongCredentials_Rejected(t *testing.T) {
 		jobID := fetcherResp.JobID.String()
 		t.Logf("Created job with wrong credentials: %s", jobID)
 
-		// Poll for status - should fail
-		var finalStatus string
-		ticker := time.NewTicker(500 * time.Millisecond)
-		defer ticker.Stop()
-
-		for i := 0; i < 30; i++ {
-			select {
-			case <-ctx.Done():
-				t.Fatalf("context cancelled while waiting for job failure")
-			case <-ticker.C:
-				job, jobErr := apiClient.GetJob(ctx, jobID)
-				if jobErr != nil {
-					continue
-				}
-				finalStatus = job.Status
-				if job.Status == e2eshared.JobStatusFailed || job.Status == e2eshared.JobStatusCompleted {
-					goto done
-				}
-			}
-		}
-	done:
-
-		assert.Equal(t, e2eshared.JobStatusFailed, finalStatus, "job should fail with wrong credentials")
-		t.Logf("Job with wrong credentials correctly failed: status=%s", finalStatus)
+		job := e2eshared.AssertJobFailed(t, apiClient, jobID, e2eshared.DefaultJobTimeout)
+		assert.Equal(t, e2eshared.JobStatusFailed, job.Status, "job should fail with wrong credentials")
+		t.Logf("Job with wrong credentials correctly failed: status=%s", job.Status)
 		return
 	}
 
 	// Unexpected status code
 	t.Errorf("Unexpected status code: %d", resp.StatusCode())
+}
+
+// TestCreateJob_InvalidMetadata_BadRequest verifies that creating a fetcher job
+// with invalid or missing metadata fields is rejected with a 400 Bad Request error.
+func TestCreateJob_InvalidMetadata_BadRequest(t *testing.T) {
+	t.Parallel()
+
+	pgHost, pgPort, err := postgresInfra.HostPort()
+	require.NoError(t, err, "get postgres host/port")
+
+	tests := []struct {
+		name     string
+		metadata map[string]any
+	}{
+		{
+			name:     "missing_metadata",
+			metadata: nil,
+		},
+		{
+			name: "missing_source",
+			metadata: map[string]any{
+				"test": "value",
+			},
+		},
+		{
+			name: "empty_source",
+			metadata: map[string]any{
+				"source": "",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctx, cancel := context.WithTimeout(context.Background(), e2eshared.DefaultTestTimeout)
+			defer cancel()
+
+			productName := e2eshared.GenerateProductName()
+
+			connInput := e2eshared.ConnectionInput{
+				ConfigName:   fmt.Sprintf("e2e-meta-%s-%s", tt.name, uuid.New().String()[:8]),
+				Type:         e2eshared.DBTypePostgreSQL,
+				Host:         pgHost,
+				Port:         pgPort,
+				DatabaseName: "testdb",
+				Username:     "testuser",
+				Password:     "testpass",
+			}
+
+			conn := e2eshared.CreateTestConnection(t, apiClient, ctx, productName, connInput)
+
+			waitErr := apiClient.WaitForConnectionAvailable(ctx, conn.ID, 10*time.Second)
+			require.NoError(t, waitErr, "wait for connection to be available")
+
+			fetcherReq := model.FetcherRequest{
+				DataRequest: model.DataRequest{
+					MappedFields: map[string]map[string][]string{
+						conn.ConfigName: {
+							"transactions": {"id", "account_id", "amount"},
+						},
+					},
+				},
+				Metadata: tt.metadata,
+			}
+
+			resp, reqErr := apiClient.CreateFetcherJobRaw(ctx, fetcherReq)
+			require.NoError(t, reqErr, "request should succeed")
+
+			assert.Equal(t, 400, resp.StatusCode(),
+				"invalid metadata %q should return 400 Bad Request, got %d", tt.name, resp.StatusCode())
+			t.Logf("Invalid metadata %q correctly rejected with status %d", tt.name, resp.StatusCode())
+		})
+	}
+}
+
+// TestCreateFetcherJob_ProductMismatch_Rejected verifies that submitting a job
+// with metadata.source pointing to product A but referencing a connection owned
+// by product B is rejected with an appropriate error (product mismatch validation).
+func TestCreateFetcherJob_ProductMismatch_Rejected(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), e2eshared.DefaultTestTimeout)
+	defer cancel()
+
+	pgHost, pgPort, err := postgresInfra.HostPort()
+	require.NoError(t, err, "get postgres host/port")
+
+	// Create product A name (the one we'll reference in metadata.source)
+	productNameA := e2eshared.GenerateProductName()
+
+	// Create product B with its own connection
+	productNameB := e2eshared.GenerateProductName()
+
+	connInput := e2eshared.ConnectionInput{
+		ConfigName:   fmt.Sprintf("e2e-mismatch-%s", uuid.New().String()[:8]),
+		Type:         e2eshared.DBTypePostgreSQL,
+		Host:         pgHost,
+		Port:         pgPort,
+		DatabaseName: "testdb",
+		Username:     "testuser",
+		Password:     "testpass",
+	}
+
+	connB := e2eshared.CreateTestConnection(t, apiClient, ctx, productNameB, connInput)
+
+	// Wait for connection B to be available
+	err = apiClient.WaitForConnectionAvailable(ctx, connB.ID, 10*time.Second)
+	require.NoError(t, err, "wait for connection B to be available")
+
+	// Submit job with metadata.source = productNameA but reference connB (owned by product B)
+	fetcherReq := model.FetcherRequest{
+		DataRequest: model.DataRequest{
+			MappedFields: map[string]map[string][]string{
+				connB.ConfigName: {
+					"transactions": {"id", "account_id", "amount"},
+				},
+			},
+		},
+		Metadata: map[string]any{
+			"source": productNameA,
+			"test":   "product-mismatch-e2e",
+		},
+	}
+
+	resp, err := apiClient.CreateFetcherJobRaw(ctx, fetcherReq)
+	require.NoError(t, err, "request should succeed")
+
+	// Should be rejected with 400 (ValidationError) for product mismatch
+	assert.True(t, resp.StatusCode() == 400 || resp.StatusCode() == 409,
+		"product mismatch should return 400 or 409, got %d", resp.StatusCode())
+
+	body := string(resp.Body())
+	assert.True(t,
+		assert.ObjectsAreEqual(true, containsAny(body, "Product Mismatch", "does not belong", "FET-1016")),
+		"error should reference product mismatch: %s", body)
+
+	t.Logf("Product mismatch correctly rejected with status %d", resp.StatusCode())
+}
+
+// containsAny checks if s contains any of the given substrings.
+func containsAny(s string, substrings ...string) bool {
+	for _, sub := range substrings {
+		if strings.Contains(s, sub) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// TestCreateFetcherJob_InvalidFilterReferences_BadRequest verifies that submitting
+// a job with filters referencing a datasource not present in mappedFields is rejected.
+func TestCreateFetcherJob_InvalidFilterReferences_BadRequest(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), e2eshared.DefaultTestTimeout)
+	defer cancel()
+
+	pgHost, pgPort, err := postgresInfra.HostPort()
+	require.NoError(t, err, "get postgres host/port")
+
+	productName := e2eshared.GenerateProductName()
+
+	connInput := e2eshared.ConnectionInput{
+		ConfigName:   fmt.Sprintf("e2e-badfilter-%s", uuid.New().String()[:8]),
+		Type:         e2eshared.DBTypePostgreSQL,
+		Host:         pgHost,
+		Port:         pgPort,
+		DatabaseName: "testdb",
+		Username:     "testuser",
+		Password:     "testpass",
+	}
+
+	conn := e2eshared.CreateTestConnection(t, apiClient, ctx, productName, connInput)
+
+	err = apiClient.WaitForConnectionAvailable(ctx, conn.ID, 10*time.Second)
+	require.NoError(t, err, "wait for connection to be available")
+
+	// Submit job with filter referencing a datasource not in mappedFields
+	fetcherReq := model.FetcherRequest{
+		DataRequest: model.DataRequest{
+			MappedFields: map[string]map[string][]string{
+				conn.ConfigName: {
+					"transactions": {"id", "account_id", "amount", "status"},
+				},
+			},
+			Filters: model.NestedFilters{
+				// This datasource name does NOT exist in mappedFields
+				"nonexistent-datasource": {
+					"transactions": {
+						"status": job.FilterCondition{
+							Equals: []any{"completed"},
+						},
+					},
+				},
+			},
+		},
+		Metadata: map[string]any{
+			"source": productName,
+			"test":   "invalid-filter-references-e2e",
+		},
+	}
+
+	resp, err := apiClient.CreateFetcherJobRaw(ctx, fetcherReq)
+	require.NoError(t, err, "request should succeed")
+
+	assert.Equal(t, 400, resp.StatusCode(),
+		"invalid filter reference should return 400 Bad Request, got %d", resp.StatusCode())
+
+	body := string(resp.Body())
+	assert.True(t, containsAny(body, "nonexistent-datasource", "filter", "unknown datasource"),
+		"error should reference the invalid datasource: %s", body)
+
+	t.Logf("Invalid filter reference correctly rejected with status %d", resp.StatusCode())
 }

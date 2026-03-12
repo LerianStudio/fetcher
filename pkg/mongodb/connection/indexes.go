@@ -37,13 +37,13 @@ func (cr *ConnectionMongoDBRepository) EnsureIndexes(ctx context.Context) error 
 
 	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Creating indexes for %s collection", constant.MongoCollectionConnection))
 
-	db, err := cr.connection.Client(ctx)
+	db, err := cr.getDatabase(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to get database", err)
 		return err
 	}
 
-	coll := db.Database(strings.ToLower(cr.Database)).Collection(strings.ToLower(constant.MongoCollectionConnection))
+	coll := db.Collection(strings.ToLower(constant.MongoCollectionConnection))
 
 	indexes := []mongo.IndexModel{
 		{
@@ -154,13 +154,13 @@ func (cr *ConnectionMongoDBRepository) DropIndexes(ctx context.Context) error {
 
 	logger.Log(ctx, libLog.LevelWarn, fmt.Sprintf("Dropping all custom indexes for %s collection", constant.MongoCollectionConnection))
 
-	db, err := cr.connection.Client(ctx)
+	db, err := cr.getDatabase(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to get database", err)
 		return err
 	}
 
-	coll := db.Database(strings.ToLower(cr.Database)).Collection(strings.ToLower(constant.MongoCollectionConnection))
+	coll := db.Collection(strings.ToLower(constant.MongoCollectionConnection))
 
 	ctx, cancel := context.WithTimeout(ctx, indexDropTimeout)
 	defer cancel()

@@ -5,6 +5,7 @@ import (
 
 	"github.com/LerianStudio/fetcher/components/manager/internal/bootstrap"
 	"github.com/LerianStudio/fetcher/pkg"
+	"github.com/LerianStudio/fetcher/pkg/startup"
 )
 
 // @title					Fetcher Manager API
@@ -18,7 +19,7 @@ func main() {
 
 	service, err := bootstrap.InitServers()
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("failed to initialize manager service: %s", startup.SanitizeError(err))
 	}
 
 	service.Run()

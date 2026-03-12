@@ -2,48 +2,17 @@ package datasource
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
 	cryptoPkg "github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	modeldatasource "github.com/LerianStudio/fetcher/pkg/model/datasource"
-	"github.com/LerianStudio/fetcher/pkg/model/job"
-	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
-
-type stubDataSource struct {
-	config modeldatasource.DataSourceConfig
-}
-
-func (s *stubDataSource) GetConfig() modeldatasource.DataSourceConfig {
-	return s.config
-}
-
-func (s *stubDataSource) Connect(ctx context.Context, logger libLog.Logger) error {
-	return nil
-}
-
-func (s *stubDataSource) Close(ctx context.Context) error {
-	return nil
-}
-
-func (s *stubDataSource) GetType() string {
-	return s.config.Type
-}
-
-func (s *stubDataSource) Query(ctx context.Context, tables map[string][]string, filters map[string]map[string]job.FilterCondition, logger libLog.Logger) (map[string][]map[string]any, error) {
-	return nil, nil
-}
-
-func (s *stubDataSource) GetSchemaInfo(ctx context.Context, schemas []string) (*model.DataSourceSchema, error) {
-	return nil, nil
-}
 
 func TestNewDataSourceFromConnection(t *testing.T) {
 	t.Parallel()
@@ -52,7 +21,6 @@ func TestNewDataSourceFromConnection(t *testing.T) {
 		name          string
 		conn          *model.Connection
 		cryptor       func(t *testing.T) cryptoPkg.Cryptor
-		builders      map[model.DBType]dataSourceConfigBuilder
 		assertOutcome func(t *testing.T, got modeldatasource.DataSource, err error)
 	}{
 		{
@@ -85,46 +53,6 @@ func TestNewDataSourceFromConnection(t *testing.T) {
 				assert.Nil(t, got)
 			},
 		},
-		{
-			name:    "routes supported type through deterministic builder seam",
-			conn:    testConnection(model.TypePostgreSQL),
-			cryptor: func(t *testing.T) cryptoPkg.Cryptor { return newMockCryptor(t) },
-			builders: func() map[model.DBType]dataSourceConfigBuilder {
-				return map[model.DBType]dataSourceConfigBuilder{
-					model.TypePostgreSQL: func(ctx context.Context, base modeldatasource.DataSourceConfig, conn *model.Connection, cryptor cryptoPkg.Cryptor, logger libLog.Logger) (modeldatasource.DataSource, error) {
-						return &stubDataSource{config: base}, nil
-					},
-				}
-			}(),
-			assertOutcome: func(t *testing.T, got modeldatasource.DataSource, err error) {
-				require.NoError(t, err)
-				require.NotNil(t, got)
-				cfg := got.GetConfig()
-				assert.Equal(t, "POSTGRESQL", cfg.Type)
-				assert.Equal(t, "analytics", cfg.ConfigName)
-				assert.Equal(t, "db.internal", cfg.Host)
-				assert.Equal(t, "5432", cfg.Port)
-				assert.Equal(t, "warehouse", cfg.DatabaseName)
-				assert.Equal(t, "fetcher", cfg.Username)
-				assert.Equal(t, "enc-password", cfg.PasswordEncrypted)
-				assert.Empty(t, cfg.SSL.Mode)
-			},
-		},
-		{
-			name:    "propagates builder errors without downstream connection attempts",
-			conn:    testConnection(model.TypeMongoDB),
-			cryptor: func(t *testing.T) cryptoPkg.Cryptor { return newMockCryptor(t) },
-			builders: map[model.DBType]dataSourceConfigBuilder{
-				model.TypeMongoDB: func(ctx context.Context, base modeldatasource.DataSourceConfig, conn *model.Connection, cryptor cryptoPkg.Cryptor, logger libLog.Logger) (modeldatasource.DataSource, error) {
-					return nil, errors.New("deterministic constructor failure")
-				},
-			},
-			assertOutcome: func(t *testing.T, got modeldatasource.DataSource, err error) {
-				require.Error(t, err)
-				assert.EqualError(t, err, "deterministic constructor failure")
-				assert.Nil(t, got)
-			},
-		},
 	}
 
 	for _, tt := range tests {
@@ -132,109 +60,10 @@ func TestNewDataSourceFromConnection(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			builders := tt.builders
-			if builders == nil {
-				builders = map[model.DBType]dataSourceConfigBuilder{}
-			}
-
-			got, err := newDataSourceFromConnection(context.Background(), tt.conn, tt.cryptor(t), nil, builders)
+			got, err := NewDataSourceFromConnection(context.Background(), tt.conn, tt.cryptor(t), nil)
 			tt.assertOutcome(t, got, err)
 		})
 	}
-}
-
-func TestNewDataSourceFromConnection_DefaultDispatch(t *testing.T) {
-	tests := []struct {
-		name       string
-		dbType     model.DBType
-		override   func(dataSourceConfigBuilder) func()
-		expectType string
-	}{
-		{
-			name:       "mongodb uses default builder",
-			dbType:     model.TypeMongoDB,
-			expectType: "MONGODB",
-			override: func(builder dataSourceConfigBuilder) func() {
-				original := buildMongoDataSource
-				buildMongoDataSource = builder
-				return func() { buildMongoDataSource = original }
-			},
-		},
-		{
-			name:       "postgres uses default builder",
-			dbType:     model.TypePostgreSQL,
-			expectType: "POSTGRESQL",
-			override: func(builder dataSourceConfigBuilder) func() {
-				original := buildPostgresDataSource
-				buildPostgresDataSource = builder
-				return func() { buildPostgresDataSource = original }
-			},
-		},
-		{
-			name:       "oracle uses default builder",
-			dbType:     model.TypeOracle,
-			expectType: "ORACLE",
-			override: func(builder dataSourceConfigBuilder) func() {
-				original := buildOracleDataSource
-				buildOracleDataSource = builder
-				return func() { buildOracleDataSource = original }
-			},
-		},
-		{
-			name:       "mysql uses default builder",
-			dbType:     model.TypeMySQL,
-			expectType: "MYSQL",
-			override: func(builder dataSourceConfigBuilder) func() {
-				original := buildMySQLDataSource
-				buildMySQLDataSource = builder
-				return func() { buildMySQLDataSource = original }
-			},
-		},
-		{
-			name:       "sqlserver uses default builder",
-			dbType:     model.TypeSQLServer,
-			expectType: "SQL_SERVER",
-			override: func(builder dataSourceConfigBuilder) func() {
-				original := buildSQLServerDataSource
-				buildSQLServerDataSource = builder
-				return func() { buildSQLServerDataSource = original }
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		tt := tt
-		t.Run(tt.name, func(t *testing.T) {
-			cryptor := newMockCryptor(t)
-			called := false
-
-			restore := tt.override(func(ctx context.Context, base modeldatasource.DataSourceConfig, conn *model.Connection, cryptor cryptoPkg.Cryptor, logger libLog.Logger) (modeldatasource.DataSource, error) {
-				called = true
-				return &stubDataSource{config: base}, nil
-			})
-			defer restore()
-
-			got, err := NewDataSourceFromConnection(context.Background(), testConnection(tt.dbType), cryptor, nil)
-			require.NoError(t, err)
-			require.NotNil(t, got)
-			assert.True(t, called)
-			assert.Equal(t, tt.expectType, got.GetConfig().Type)
-		})
-	}
-}
-
-func TestNewDataSourceFromConnection_DefaultDispatchPropagatesBuilderErrors(t *testing.T) {
-	original := buildMongoDataSource
-	t.Cleanup(func() { buildMongoDataSource = original })
-
-	buildMongoDataSource = func(context.Context, modeldatasource.DataSourceConfig, *model.Connection, cryptoPkg.Cryptor, libLog.Logger) (modeldatasource.DataSource, error) {
-		return nil, errors.New("default mongodb builder failed")
-	}
-
-	got, err := NewDataSourceFromConnection(context.Background(), testConnection(model.TypeMongoDB), newMockCryptor(t), nil)
-	require.Error(t, err)
-	assert.EqualError(t, err, "default mongodb builder failed")
-	assert.Nil(t, got)
 }
 
 func testConnection(dbType model.DBType) *model.Connection {

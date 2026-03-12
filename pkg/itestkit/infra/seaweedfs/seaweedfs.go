@@ -9,7 +9,7 @@ import (
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/testcontainers/testcontainers-go"
-	tcnetwork "github.com/testcontainers/testcontainers-go/network"
+	"github.com/testcontainers/testcontainers-go/network"
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/LerianStudio/fetcher/pkg/itestkit"
@@ -35,12 +35,11 @@ type SeaweedFSConfig struct {
 
 // SeaweedFSEndpoint holds connection details for the SeaweedFS cluster.
 type SeaweedFSEndpoint struct {
-	URL                  string // http://host:port
-	Host                 string
-	Port                 string
-	Upstream             string // direct address without proxy
-	ProxyListen          string // host-usable proxy address (empty if proxy disabled)
-	ProxyListenInNetwork string // shared-network proxy address for app containers (empty if not available)
+	URL         string // http://host:port
+	Host        string
+	Port        string
+	Upstream    string // direct address without proxy
+	ProxyListen string // proxy address (empty if proxy disabled)
 }
 
 // SeaweedFSInfra manages a SeaweedFS cluster (master + volume + filer).
@@ -86,13 +85,14 @@ func (s *SeaweedFSInfra) Start(ctx context.Context, env *itestkit.Env) error {
 	}
 
 	// Create a dedicated network for inter-container communication
-	network, err := tcnetwork.New(ctx, tcnetwork.WithDriver("bridge"))
+	nw, err := network.New(ctx, network.WithDriver("bridge"))
 	if err != nil {
 		return fmt.Errorf("create network: %w", err)
 	}
 
-	s.network = network
-	networkName := network.Name
+	s.network = nw
+
+	networkName := nw.Name
 
 	masterAlias := fmt.Sprintf("seaweedfs-master-%s", s.cfg.Name)
 	volumeAlias := fmt.Sprintf("seaweedfs-volume-%s", s.cfg.Name)
@@ -185,9 +185,8 @@ func (s *SeaweedFSInfra) Start(ctx context.Context, env *itestkit.Env) error {
 	}
 
 	upstream := fmt.Sprintf("%s:%s", host, port.Port())
-	hostAddr := upstream
+	finalAddr := upstream
 	proxyListen := ""
-	proxyListenInNetwork := ""
 
 	// Create proxy if enabled and chaos interface is available
 	if s.cfg.EnableProxy && env != nil && env.Chaos != nil {
@@ -200,24 +199,22 @@ func (s *SeaweedFSInfra) Start(ctx context.Context, env *itestkit.Env) error {
 			return fmt.Errorf("create seaweedfs proxy: %w", err)
 		}
 
-		hostAddr = ref.ListenAddr
+		finalAddr = ref.ListenAddr
 		proxyListen = ref.ListenAddr
-		proxyListenInNetwork = ref.InNetworkListenAddr
 	}
 
 	// Parse final address for host/port (using net.SplitHostPort to handle IPv6)
-	finalHost, finalPort, err := net.SplitHostPort(hostAddr)
+	finalHost, finalPort, err := net.SplitHostPort(finalAddr)
 	if err != nil {
 		return fmt.Errorf("parse seaweedfs address: %w", err)
 	}
 
 	s.endpoint = &SeaweedFSEndpoint{
-		URL:                  fmt.Sprintf("http://%s", hostAddr),
-		Host:                 finalHost,
-		Port:                 finalPort,
-		Upstream:             upstream,
-		ProxyListen:          proxyListen,
-		ProxyListenInNetwork: proxyListenInNetwork,
+		URL:         fmt.Sprintf("http://%s", finalAddr),
+		Host:        finalHost,
+		Port:        finalPort,
+		Upstream:    upstream,
+		ProxyListen: proxyListen,
 	}
 
 	return nil
@@ -242,8 +239,9 @@ func (s *SeaweedFSInfra) URL() (string, error) {
 	return endpoint.URL, nil
 }
 
-// HostPort returns the public, host-usable endpoint.
-// Use ContainerHostPort when wiring app containers into Docker networks.
+// HostPort returns the host and port as separate values.
+// The host is automatically normalized so containers can reach it (localhost is replaced with
+// the Docker gateway IP).
 func (s *SeaweedFSInfra) HostPort() (host string, port int, err error) {
 	endpoint, err := s.Endpoint()
 	if err != nil {
@@ -256,17 +254,7 @@ func (s *SeaweedFSInfra) HostPort() (host string, port int, err error) {
 		return "", 0, fmt.Errorf("invalid port: %s", endpoint.Port)
 	}
 
-	return endpoint.Host, portNum, nil
-}
-
-// ContainerHostPort returns the endpoint that app containers should use.
-func (s *SeaweedFSInfra) ContainerHostPort() (host string, port int, err error) {
-	endpoint, err := s.Endpoint()
-	if err != nil {
-		return "", 0, err
-	}
-
-	return itestkit.ResolveContainerHostPort(endpoint.ProxyListenInNetwork, "", 8888, endpoint.Upstream)
+	return itestkit.NormalizeHost(endpoint.Host), portNum, nil
 }
 
 func (s *SeaweedFSInfra) Terminate(ctx context.Context) error {

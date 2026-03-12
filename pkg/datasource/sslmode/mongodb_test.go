@@ -14,7 +14,7 @@ func TestValidateMongoDBMode(t *testing.T) {
 		wantError bool
 	}{
 		// Valid modes - from MongoDB Go driver documentation
-		{name: "empty string is valid (uses driver defaults)", mode: "", wantError: false},
+		{name: "empty string is valid (driver default behavior)", mode: "", wantError: false},
 		{name: "disable is valid", mode: "disable", wantError: false},
 		{name: "false is valid", mode: "false", wantError: false},
 		{name: "true is valid", mode: "true", wantError: false},

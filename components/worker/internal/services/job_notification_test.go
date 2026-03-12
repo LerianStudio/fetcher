@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -113,13 +114,13 @@ func TestPublishJobNotification_PublisherNotConfigured(t *testing.T) {
 	mocks := newTestMocks(ctrl)
 	// Create UseCase without publisher
 	uc := &UseCase{
-		ExternalDataSeaweedFS: mocks.seaweedFS,
-		JobRepository:         mocks.jobRepo,
-		ConnectionRepository:  mocks.connRepo,
-		Cryptor:               mocks.cryptor,
-		FileTTL:               "1h",
-		RabbitMQPublisher:     nil, // No publisher
-		JobEventsExchange:     "",
+		ExternalDataStorage:  mocks.seaweedFS,
+		JobRepository:        mocks.jobRepo,
+		ConnectionRepository: mocks.connRepo,
+		Cryptor:              mocks.cryptor,
+		FileTTL:              "1h",
+		RabbitMQPublisher:    nil, // No publisher
+		JobEventsExchange:    "",
 	}
 
 	ctx := testContext()
@@ -299,13 +300,13 @@ func TestPublishJobNotification_EmptyExchange(t *testing.T) {
 	mocks := newTestMocks(ctrl)
 	// Create UseCase with empty exchange
 	uc := &UseCase{
-		ExternalDataSeaweedFS: mocks.seaweedFS,
-		JobRepository:         mocks.jobRepo,
-		ConnectionRepository:  mocks.connRepo,
-		Cryptor:               mocks.cryptor,
-		FileTTL:               "1h",
-		RabbitMQPublisher:     mocks.rabbitPublisher,
-		JobEventsExchange:     "", // Empty exchange
+		ExternalDataStorage:  mocks.seaweedFS,
+		JobRepository:        mocks.jobRepo,
+		ConnectionRepository: mocks.connRepo,
+		Cryptor:              mocks.cryptor,
+		FileTTL:              "1h",
+		RabbitMQPublisher:    mocks.rabbitPublisher,
+		JobEventsExchange:    "", // Empty exchange
 	}
 
 	ctx := testContext()
@@ -407,6 +408,30 @@ func TestPublishJobNotification_RoutingKeyGeneration(t *testing.T) {
 			status:             "failed",
 			metadata:           map[string]any{},
 			expectedRoutingKey: "job.failed.unknown",
+		},
+		{
+			name:               "completed with unsafe source chars",
+			status:             "completed",
+			metadata:           map[string]any{"source": "..Tenant/Prod@EU "},
+			expectedRoutingKey: "job.completed.tenant-prod-eu",
+		},
+		{
+			name:               "completed with oversized source",
+			status:             "completed",
+			metadata:           map[string]any{"source": strings.Repeat("A", 80)},
+			expectedRoutingKey: "job.completed." + strings.Repeat("a", 64),
+		},
+		{
+			name:               "source with only invalid characters",
+			status:             "completed",
+			metadata:           map[string]any{"source": "!@#$%^&*()"},
+			expectedRoutingKey: "job.completed.unknown",
+		},
+		{
+			name:               "source exactly at max length",
+			status:             "completed",
+			metadata:           map[string]any{"source": strings.Repeat("a", 64)},
+			expectedRoutingKey: "job.completed." + strings.Repeat("a", 64),
 		},
 	}
 

@@ -2,14 +2,17 @@ package command
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
-	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
-	"github.com/LerianStudio/fetcher/pkg/mongodb/job"
+	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
+	"github.com/LerianStudio/fetcher/pkg/ports/job"
 
 	"github.com/LerianStudio/lib-commons/v4/commons"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
@@ -28,7 +31,7 @@ func NewDeleteConnection(connectionRepo connRepo.Repository, jobRepo job.Reposit
 }
 
 func (s *DeleteConnection) Execute(ctx context.Context, organizationID, connectionID uuid.UUID) error {
-	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "service.delete_connection")
 	defer span.End()
@@ -41,10 +44,13 @@ func (s *DeleteConnection) Execute(ctx context.Context, organizationID, connecti
 
 	current, err := s.connRepo.FindByID(ctx, connectionID, organizationID)
 	if err != nil {
-		return err
+		libOpentelemetry.HandleSpanError(span, "Failed to find connection by ID", err)
+		return fmt.Errorf("failed to find connection by id: %w", err)
 	}
 
 	if current == nil {
+		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Connection not found", constant.ErrEntityNotFound)
+
 		return pkg.ValidateBusinessError(
 			constant.ErrEntityNotFound,
 			"connection",
@@ -53,16 +59,25 @@ func (s *DeleteConnection) Execute(ctx context.Context, organizationID, connecti
 
 	active, err := s.jobRepo.ExistsRunningByMappedFieldKey(ctx, organizationID, current.ConfigName)
 	if err != nil {
-		return err
+		libOpentelemetry.HandleSpanError(span, "Failed to check for active jobs", err)
+		return fmt.Errorf("failed to check for active jobs: %w", err)
 	}
 
 	if active {
+		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Connection has active jobs", constant.ErrJobInProgress)
+
 		return pkg.ValidateBusinessError(constant.ErrJobInProgress, "connection", "cannot delete connection with active jobs")
 	}
 
 	if err := s.connRepo.Delete(ctx, connectionID, organizationID, time.Now().UTC()); err != nil {
-		return err
+		libOpentelemetry.HandleSpanError(span, "Failed to delete connection", err)
+		return fmt.Errorf("failed to delete connection: %w", err)
 	}
+
+	logger.Log(ctx, libLog.LevelInfo, "deleted connection",
+		libLog.String("connection_id", connectionID.String()),
+		libLog.String("organization_id", organizationID.String()),
+	)
 
 	return nil
 }

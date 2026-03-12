@@ -149,7 +149,7 @@
         },
         "/v1/management/connections": {
             "get": {
-                "description": "List connections with pagination and filters. When X-Product-Id is provided, returns only connections associated with that product.",
+                "description": "List connections with pagination and filters. When X-Product-Name is provided, returns only connections associated with that product.",
                 "produces": [
                     "application/json"
                 ],
@@ -173,8 +173,8 @@
                     },
                     {
                         "type": "string",
-                        "description": "Product ID (UUID). When provided, filters connections by product.",
-                        "name": "X-Product-Id",
+                        "description": "Product name. When provided, filters connections by product.",
+                        "name": "X-Product-Name",
                         "in": "header"
                     },
                     {
@@ -292,7 +292,7 @@
                 }
             },
             "post": {
-                "description": "Create a new database connection for the organization. Optionally associate it with a product via productId. ConfigName must be unique per organization (and per product when assigned); password is encrypted and a UUID is generated on creation.",
+                "description": "Create a new database connection for the organization. The X-Product-Name header is required and identifies the product for this connection. ConfigName must be unique per organization (and per product when assigned); password is encrypted and a UUID is generated on creation.",
                 "consumes": [
                     "application/json"
                 ],
@@ -314,6 +314,13 @@
                         "type": "string",
                         "description": "Organization ID",
                         "name": "X-Organization-Id",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Product name (required, non-empty)",
+                        "name": "X-Product-Name",
                         "in": "header",
                         "required": true
                     },
@@ -718,10 +725,7 @@
         },
         "/v1/management/connections/{id}/assign": {
             "post": {
-                "description": "Associate an unassigned connection to a product. This is a one-time, irreversible operation for migration purposes. The productId must be provided in the request body.",
-                "consumes": [
-                    "application/json"
-                ],
+                "description": "Associate an unassigned connection to a product. This is a one-time, irreversible operation for migration purposes. The product name must be provided via the X-Product-Name header.",
                 "produces": [
                     "application/json"
                 ],
@@ -751,13 +755,11 @@
                         "required": true
                     },
                     {
-                        "description": "Assignment payload",
-                        "name": "body",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.AssignConnectionInput"
-                        }
+                        "type": "string",
+                        "description": "Product name to assign",
+                        "name": "X-Product-Name",
+                        "in": "header",
+                        "required": true
                     }
                 ],
                 "responses": {
@@ -920,368 +922,6 @@
                     }
                 }
             }
-        },
-        "/v1/management/products": {
-            "get": {
-                "description": "List products with pagination and filters.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Products"
-                ],
-                "summary": "List products",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "The authorization token in the 'Bearer access_token' format. Only required when auth plugin is enabled.",
-                        "name": "Authorization",
-                        "in": "header"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Organization ID",
-                        "name": "X-Organization-Id",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
-                        "type": "integer",
-                        "default": 1,
-                        "description": "Page number (minimum 1)",
-                        "name": "page",
-                        "in": "query"
-                    },
-                    {
-                        "type": "integer",
-                        "default": 50,
-                        "description": "Page size (default 50, max 1000)",
-                        "name": "limit",
-                        "in": "query"
-                    },
-                    {
-                        "enum": [
-                            "asc",
-                            "desc"
-                        ],
-                        "type": "string",
-                        "default": "desc",
-                        "description": "Sort order",
-                        "name": "sortOrder",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Filter by start date (YYYY-MM-DD)",
-                        "name": "startDate",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Filter by end date (YYYY-MM-DD)",
-                        "name": "endDate",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/Pagination"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "items": {
-                                            "type": "array",
-                                            "items": {
-                                                "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.ProductResponse"
-                                            }
-                                        },
-                                        "limit": {
-                                            "type": "integer"
-                                        },
-                                        "page": {
-                                            "type": "integer"
-                                        },
-                                        "total": {
-                                            "type": "integer"
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/pkg.HTTPError"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/pkg.HTTPError"
-                        }
-                    }
-                }
-            },
-            "post": {
-                "description": "Create a new product for the organization. Code must be unique per organization and is immutable after creation.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Products"
-                ],
-                "summary": "Create product",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "The authorization token in the 'Bearer access_token' format. Only required when auth plugin is enabled.",
-                        "name": "Authorization",
-                        "in": "header"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Organization ID",
-                        "name": "X-Organization-Id",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
-                        "description": "Product payload",
-                        "name": "product",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.ProductInput"
-                        }
-                    }
-                ],
-                "responses": {
-                    "201": {
-                        "description": "Created",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.ProductResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/pkg.HTTPError"
-                        }
-                    },
-                    "409": {
-                        "description": "Conflict",
-                        "schema": {
-                            "$ref": "#/definitions/pkg.HTTPError"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/pkg.HTTPError"
-                        }
-                    }
-                }
-            }
-        },
-        "/v1/management/products/{id}": {
-            "get": {
-                "description": "Get product details by ID for the given organization.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Products"
-                ],
-                "summary": "Get product",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "The authorization token in the 'Bearer access_token' format. Only required when auth plugin is enabled.",
-                        "name": "Authorization",
-                        "in": "header"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Organization ID",
-                        "name": "X-Organization-Id",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Product ID",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.ProductResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/pkg.HTTPError"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/pkg.HTTPError"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/pkg.HTTPError"
-                        }
-                    }
-                }
-            },
-            "delete": {
-                "description": "Soft delete a product. Returns 409 if the product has associated connections.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Products"
-                ],
-                "summary": "Delete product",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "The authorization token in the 'Bearer access_token' format. Only required when auth plugin is enabled.",
-                        "name": "Authorization",
-                        "in": "header"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Organization ID",
-                        "name": "X-Organization-Id",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Product ID",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "204": {
-                        "description": "No Content"
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/pkg.HTTPError"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/pkg.HTTPError"
-                        }
-                    },
-                    "409": {
-                        "description": "Conflict",
-                        "schema": {
-                            "$ref": "#/definitions/pkg.HTTPError"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/pkg.HTTPError"
-                        }
-                    }
-                }
-            },
-            "patch": {
-                "description": "Apply a partial update to a product. Code is immutable and cannot be changed. Only include fields you want to change.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Products"
-                ],
-                "summary": "Update product",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "The authorization token in the 'Bearer access_token' format. Only required when auth plugin is enabled.",
-                        "name": "Authorization",
-                        "in": "header"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Organization ID",
-                        "name": "X-Organization-Id",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Product ID",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "Fields to update (only include fields you want to change)",
-                        "name": "product",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.ProductUpdateInput"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.ProductResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/pkg.HTTPError"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/pkg.HTTPError"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/pkg.HTTPError"
-                        }
-                    }
-                }
-            }
         }
     },
     "definitions": {
@@ -1304,18 +944,6 @@
                 }
             }
         },
-        "github_com_LerianStudio_fetcher_pkg_model.AssignConnectionInput": {
-            "type": "object",
-            "required": [
-                "productId"
-            ],
-            "properties": {
-                "productId": {
-                    "type": "string",
-                    "example": "550e8400-e29b-41d4-a716-446655440000"
-                }
-            }
-        },
         "github_com_LerianStudio_fetcher_pkg_model.ConnectionInput": {
             "type": "object",
             "required": [
@@ -1324,7 +952,6 @@
                 "host",
                 "password",
                 "port",
-                "productId",
                 "type",
                 "userName"
             ],
@@ -1356,10 +983,6 @@
                     "maximum": 65535,
                     "minimum": 1,
                     "example": 5432
-                },
-                "productId": {
-                    "type": "string",
-                    "example": "01926b5e-7a1a-7000-8000-000000000001"
                 },
                 "ssl": {
                     "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.SSLInput"
@@ -1406,7 +1029,7 @@
                 "port": {
                     "type": "integer"
                 },
-                "productId": {
+                "productName": {
                     "type": "string"
                 },
                 "ssl": {
@@ -1613,83 +1236,6 @@
                     "additionalProperties": {
                         "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model_job.FilterCondition"
                     }
-                }
-            }
-        },
-        "github_com_LerianStudio_fetcher_pkg_model.ProductInput": {
-            "type": "object",
-            "required": [
-                "code",
-                "name"
-            ],
-            "properties": {
-                "code": {
-                    "type": "string",
-                    "maxLength": 50,
-                    "minLength": 2,
-                    "example": "reporter"
-                },
-                "description": {
-                    "type": "string",
-                    "maxLength": 500,
-                    "example": "Reporting product"
-                },
-                "metadata": {
-                    "type": "object",
-                    "additionalProperties": {}
-                },
-                "name": {
-                    "type": "string",
-                    "maxLength": 100,
-                    "minLength": 1,
-                    "example": "Reporter"
-                }
-            }
-        },
-        "github_com_LerianStudio_fetcher_pkg_model.ProductResponse": {
-            "type": "object",
-            "properties": {
-                "code": {
-                    "type": "string"
-                },
-                "createdAt": {
-                    "type": "string"
-                },
-                "description": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "metadata": {
-                    "type": "object",
-                    "additionalProperties": {}
-                },
-                "name": {
-                    "type": "string"
-                },
-                "updatedAt": {
-                    "type": "string"
-                }
-            }
-        },
-        "github_com_LerianStudio_fetcher_pkg_model.ProductUpdateInput": {
-            "type": "object",
-            "properties": {
-                "description": {
-                    "type": "string",
-                    "maxLength": 500,
-                    "example": "Reporting product"
-                },
-                "metadata": {
-                    "type": "object",
-                    "additionalProperties": {}
-                },
-                "name": {
-                    "type": "string",
-                    "maxLength": 100,
-                    "minLength": 1,
-                    "example": "Reporter"
                 }
             }
         },

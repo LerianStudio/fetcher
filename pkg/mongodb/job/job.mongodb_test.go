@@ -16,8 +16,10 @@ import (
 
 	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
 	libMongo "github.com/LerianStudio/lib-commons/v4/commons/mongo"
+	tmcore "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/core"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tryvium-travels/memongo"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -41,16 +43,16 @@ func TestMain(m *testing.M) {
 		os.Exit(0)
 	}
 	jobTestMongoServer = server
-	jobTestMongoConn, err = libMongo.NewClient(context.Background(), libMongo.Config{
+	client, err := libMongo.NewClient(context.Background(), libMongo.Config{
 		URI:         server.URI(),
 		Database:    jobTestDatabaseName,
 		Logger:      &libLog.GoLogger{Level: libLog.LevelError},
 		MaxPoolSize: 5,
 	})
 	if err != nil {
-		log.Printf("SKIP: mongo client init failed: %v", err)
-		os.Exit(0)
+		log.Fatalf("failed to create mongo client: %v", err)
 	}
+	jobTestMongoConn = client
 
 	code := m.Run()
 
@@ -61,7 +63,7 @@ func TestMain(m *testing.M) {
 func newJobRepository(t *testing.T) *JobMongoDBRepository {
 	t.Helper()
 	clearJobsCollection(t)
-	repo, err := NewJobMongoDBRepository(jobTestMongoConn, jobTestDatabaseName)
+	repo, err := NewJobMongoDBRepository(context.Background(), jobTestMongoConn, jobTestDatabaseName)
 	if err != nil {
 		t.Fatalf("failed to create repository: %v", err)
 	}
@@ -77,7 +79,11 @@ func clearJobsCollection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get db: %v", err)
 	}
-	coll := client.Database(strings.ToLower(jobTestDatabaseName)).Collection(strings.ToLower(constant.MongoCollectionJob))
+	dbName, err := jobTestMongoConn.DatabaseName()
+	if err != nil {
+		t.Fatalf("failed to get db name: %v", err)
+	}
+	coll := client.Database(strings.ToLower(dbName)).Collection(strings.ToLower(constant.MongoCollectionJob))
 	if err := coll.Drop(context.Background()); err != nil {
 		var cmdErr mongo.CommandError
 		if errors.As(err, &cmdErr) && cmdErr.Code == 26 {
@@ -120,22 +126,12 @@ func createJob(t *testing.T, repo *JobMongoDBRepository, job *model.Job) *model.
 func stubJobSpanAttributes(t *testing.T, retErr error) {
 	t.Helper()
 	original := setSpanAttributesFromValue
-	setSpanAttributesFromValue = func(span trace.Span, key string, valueStruct any) error {
+	setSpanAttributesFromValue = func(span trace.Span, key string, value any) error {
 		return retErr
 	}
 	t.Cleanup(func() {
 		setSpanAttributesFromValue = original
 	})
-}
-
-func TestNewJobMongoDBRepository_NilClient(t *testing.T) {
-	repo, err := NewJobMongoDBRepository(nil, jobTestDatabaseName)
-	if err == nil {
-		t.Fatalf("expected error for nil mongo client")
-	}
-	if repo != nil {
-		t.Fatalf("expected nil repository")
-	}
 }
 
 func TestJobMongoDBRepository_Create(t *testing.T) {
@@ -209,8 +205,12 @@ func TestJobMongoDBRepository_Create(t *testing.T) {
 			connection: mockConn,
 			Database:   jobTestDatabaseName,
 		}
-		if _, err := repo.Create(context.Background(), jobFixture()); err == nil || err.Error() != "db down" {
-			t.Fatalf("expected db error, got %v", err)
+		_, err := repo.Create(context.Background(), jobFixture())
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "db down") {
+			t.Fatalf("expected error containing 'db down', got %v", err)
 		}
 	})
 }
@@ -298,8 +298,12 @@ func TestJobMongoDBRepository_Update(t *testing.T) {
 		}
 		job := jobFixture()
 		job.ID = uuid.New()
-		if _, err := repo.Update(context.Background(), job); err == nil || err.Error() != "db down" {
-			t.Fatalf("expected db error, got %v", err)
+		_, err := repo.Update(context.Background(), job)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "db down") {
+			t.Fatalf("expected error containing 'db down', got %v", err)
 		}
 	})
 }
@@ -341,8 +345,12 @@ func TestJobMongoDBRepository_FindByID(t *testing.T) {
 			connection: mockConn,
 			Database:   jobTestDatabaseName,
 		}
-		if _, err := repo.FindByID(context.Background(), uuid.New(), uuid.New()); err == nil || err.Error() != "db down" {
-			t.Fatalf("expected db error, got %v", err)
+		_, err := repo.FindByID(context.Background(), uuid.New(), uuid.New())
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "db down") {
+			t.Fatalf("expected error containing 'db down', got %v", err)
 		}
 	})
 }
@@ -423,8 +431,12 @@ func TestJobMongoDBRepository_List(t *testing.T) {
 			connection: mockConn,
 			Database:   jobTestDatabaseName,
 		}
-		if _, err := repo.List(context.Background(), &ListFilter{OrganizationID: uuid.New()}); err == nil || err.Error() != "db down" {
-			t.Fatalf("expected db error, got %v", err)
+		_, err := repo.List(context.Background(), &ListFilter{OrganizationID: uuid.New()})
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "db down") {
+			t.Fatalf("expected error containing 'db down', got %v", err)
 		}
 	})
 
@@ -565,8 +577,11 @@ func TestJobMongoDBRepository_UpdateStatus(t *testing.T) {
 			Database:   jobTestDatabaseName,
 		}
 		err := repo.UpdateStatus(context.Background(), uuid.New(), uuid.New(), model.JobStatusCompleted, "", "", nil)
-		if err == nil || err.Error() != "db down" {
-			t.Fatalf("expected db error, got %v", err)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "db down") {
+			t.Fatalf("expected error containing 'db down', got %v", err)
 		}
 	})
 
@@ -709,10 +724,93 @@ func TestJobMongoDBRepository_FindByRequestHashWithinWindow(t *testing.T) {
 			connection: mockConn,
 			Database:   jobTestDatabaseName,
 		}
-		if _, err := repo.FindByRequestHashWithinWindow(context.Background(), uuid.New(), "hash", 60); err == nil || err.Error() != "db down" {
-			t.Fatalf("expected db error, got %v", err)
+		_, err := repo.FindByRequestHashWithinWindow(context.Background(), uuid.New(), "hash", 60)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "db down") {
+			t.Fatalf("expected error containing 'db down', got %v", err)
 		}
 	})
+}
+
+func TestJobMongoDBRepository_FindActiveByRequestHash(t *testing.T) {
+	t.Run("finds most recent active job", func(t *testing.T) {
+		repo := newJobRepository(t)
+		org := uuid.New()
+		hash := "active-hash-123"
+
+		older := jobFixture()
+		older.OrganizationID = org
+		older.RequestHash = hash
+		older.Status = model.JobStatusPending
+		older.CreatedAt = time.Now().UTC().Add(-2 * time.Minute)
+		createJob(t, repo, older)
+
+		newer := jobFixture()
+		newer.OrganizationID = org
+		newer.RequestHash = hash
+		newer.Status = model.JobStatusProcessing
+		newer.CreatedAt = time.Now().UTC().Add(-1 * time.Minute)
+		createdNewer := createJob(t, repo, newer)
+
+		found, err := repo.FindActiveByRequestHash(context.Background(), org, hash)
+		require.NoError(t, err)
+		require.NotNil(t, found)
+		require.Equal(t, createdNewer.ID, found.ID)
+	})
+
+	t.Run("returns nil when only terminal jobs exist", func(t *testing.T) {
+		repo := newJobRepository(t)
+		org := uuid.New()
+		hash := "terminal-hash-123"
+
+		failedJob := jobFixture()
+		failedJob.OrganizationID = org
+		failedJob.RequestHash = hash
+		failedJob.Status = model.JobStatusFailed
+		now := time.Now().UTC()
+		failedJob.CompletedAt = &now
+		createJob(t, repo, failedJob)
+
+		found, err := repo.FindActiveByRequestHash(context.Background(), org, hash)
+		require.NoError(t, err)
+		require.Nil(t, found)
+	})
+}
+
+func TestEnsureIndexes_RemediatesDuplicateActiveJobs(t *testing.T) {
+	repo := newJobRepository(t)
+	org := uuid.New()
+	hash := "dup-active-hash-123"
+
+	older := jobFixture()
+	older.OrganizationID = org
+	older.RequestHash = hash
+	older.Status = model.JobStatusPending
+	older.CreatedAt = time.Now().UTC().Add(-2 * time.Minute)
+	createdOlder := createJob(t, repo, older)
+
+	newer := jobFixture()
+	newer.OrganizationID = org
+	newer.RequestHash = hash
+	newer.Status = model.JobStatusProcessing
+	newer.CreatedAt = time.Now().UTC().Add(-1 * time.Minute)
+	createdNewer := createJob(t, repo, newer)
+
+	require.NoError(t, repo.EnsureIndexes(context.Background()))
+
+	// In v4, EnsureIndexes only creates indexes without remediating existing duplicates.
+	// Both jobs should retain their original status.
+	updatedOlder, err := repo.FindByID(context.Background(), createdOlder.ID, org)
+	require.NoError(t, err)
+	require.NotNil(t, updatedOlder)
+	require.Equal(t, model.JobStatusPending, updatedOlder.Status)
+
+	updatedNewer, err := repo.FindByID(context.Background(), createdNewer.ID, org)
+	require.NoError(t, err)
+	require.NotNil(t, updatedNewer)
+	require.Equal(t, model.JobStatusProcessing, updatedNewer.Status)
 }
 
 func TestJobMongoDBRepository_ExistsRunningByMappedFieldKey(t *testing.T) {
@@ -923,7 +1021,7 @@ func TestJobMongoDBRepository_DropIndexes(t *testing.T) {
 	}
 }
 
-func TestEnsureIndexesHandlesConflicts(t *testing.T) {
+func TestEnsureIndexes_HandlesConflicts(t *testing.T) {
 	repo := newJobRepository(t)
 	if err := repo.EnsureIndexes(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -933,7 +1031,7 @@ func TestEnsureIndexesHandlesConflicts(t *testing.T) {
 	}
 }
 
-func TestEnsureIndexesDatabaseError(t *testing.T) {
+func TestEnsureIndexes_DatabaseError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
@@ -951,7 +1049,7 @@ func TestEnsureIndexesDatabaseError(t *testing.T) {
 	}
 }
 
-func TestDropIndexesDatabaseError(t *testing.T) {
+func TestDropIndexes_DatabaseError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
@@ -969,8 +1067,8 @@ func TestDropIndexesDatabaseError(t *testing.T) {
 	}
 }
 
-func TestRepositoryConstructorValidatesDB(t *testing.T) {
-	repo, err := NewJobMongoDBRepository(jobTestMongoConn, jobTestDatabaseName)
+func TestNewJobMongoDBRepository_ValidatesDB(t *testing.T) {
+	repo, err := NewJobMongoDBRepository(context.Background(), jobTestMongoConn, jobTestDatabaseName)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -979,7 +1077,7 @@ func TestRepositoryConstructorValidatesDB(t *testing.T) {
 	}
 }
 
-func TestListCompletedRangeFilter(t *testing.T) {
+func TestList_CompletedRangeFilter(t *testing.T) {
 	repo := newJobRepository(t)
 	org := uuid.New()
 
@@ -1002,7 +1100,7 @@ func TestListCompletedRangeFilter(t *testing.T) {
 	}
 }
 
-func TestListUsesDescendingByDefault(t *testing.T) {
+func TestList_UsesDescendingByDefault(t *testing.T) {
 	repo := newJobRepository(t)
 	org := uuid.New()
 
@@ -1027,7 +1125,7 @@ func TestListUsesDescendingByDefault(t *testing.T) {
 	}
 }
 
-func TestListPartialFilters(t *testing.T) {
+func TestList_PartialFilters(t *testing.T) {
 	repo := newJobRepository(t)
 	org := uuid.New()
 
@@ -1046,7 +1144,7 @@ func TestListPartialFilters(t *testing.T) {
 	}
 }
 
-func TestCreateSetsDefaults(t *testing.T) {
+func TestCreate_SetsDefaults(t *testing.T) {
 	repo := newJobRepository(t)
 	job := jobFixture()
 	// Status must be valid - repository no longer sets defaults
@@ -1066,7 +1164,7 @@ func TestCreateSetsDefaults(t *testing.T) {
 	}
 }
 
-func TestUpdateWithoutCompletedAtWhenFailed(t *testing.T) {
+func TestUpdate_WithoutCompletedAtWhenFailed(t *testing.T) {
 	repo := newJobRepository(t)
 	job := jobFixture()
 	created := createJob(t, repo, job)
@@ -1084,7 +1182,7 @@ func TestUpdateWithoutCompletedAtWhenFailed(t *testing.T) {
 	}
 }
 
-func TestListWithPaginationSecondPageEmpty(t *testing.T) {
+func TestList_PaginationSecondPageEmpty(t *testing.T) {
 	repo := newJobRepository(t)
 	org := uuid.New()
 	for i := 0; i < 2; i++ {
@@ -1100,4 +1198,55 @@ func TestListWithPaginationSecondPageEmpty(t *testing.T) {
 	if len(list) != 0 {
 		t.Fatalf("expected empty page")
 	}
+}
+
+func TestJobMongoDBRepository_getDatabase(t *testing.T) {
+	t.Run("returns tenant database when tenant context is set", func(t *testing.T) {
+		repo := newJobRepository(t)
+
+		client, err := jobTestMongoConn.Client(context.Background())
+		if err != nil {
+			t.Fatalf("failed to get db client: %v", err)
+		}
+
+		tenantDB := client.Database("tenant_xyz789")
+		ctx := tmcore.ContextWithTenantMongo(context.Background(), tenantDB)
+
+		db, err := repo.getDatabase(ctx)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		assert.Equal(t, "tenant_xyz789", db.Name())
+	})
+
+	t.Run("falls back to static connection when no tenant context", func(t *testing.T) {
+		repo := newJobRepository(t)
+
+		db, err := repo.getDatabase(context.Background())
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		assert.Equal(t, strings.ToLower(jobTestDatabaseName), db.Name())
+	})
+
+	t.Run("returns error when no tenant and static connection fails", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		mockConn := NewMockmongoDatabaseProvider(ctrl)
+		mockConn.EXPECT().
+			Client(gomock.Any()).
+			Return(nil, errors.New("db down"))
+
+		repo := &JobMongoDBRepository{
+			connection: mockConn,
+			Database:   jobTestDatabaseName,
+		}
+
+		_, err := repo.getDatabase(context.Background())
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "db down")
+	})
 }

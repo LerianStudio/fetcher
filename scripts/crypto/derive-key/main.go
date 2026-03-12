@@ -1,6 +1,6 @@
 // Package main provides a CLI tool to derive the external HMAC key from a master key.
 // This enables external consumers to verify document HMACs as described in
-// docs/security/verification-guide.md.
+// scripts/crypto/derive-key/verification-guide.md.
 //
 // Usage (in order of precedence):
 //
@@ -50,7 +50,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Example:\n")
 		fmt.Fprintf(os.Stderr, "  $ APP_ENC_KEY=\"dGhpcy1pcy1hLTMyLWJ5dGUtbWFzdGVyLWtleTEyMzQ=\" go run scripts/crypto/derive-key/main.go\n")
 		fmt.Fprintf(os.Stderr, "  External HMAC Key (hex): <64-character-hex-string>\n\n")
-		fmt.Fprintf(os.Stderr, "See docs/security/verification-guide.md for complete verification instructions.\n")
+		fmt.Fprintf(os.Stderr, "See scripts/crypto/derive-key/verification-guide.md for complete verification instructions.\n")
 	}
 
 	flag.Parse()

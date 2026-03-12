@@ -293,6 +293,31 @@ func TestSetConfigFromEnvVars(t *testing.T) {
 		}
 	})
 
+	t.Run("returns error for nil", func(t *testing.T) {
+		err := SetConfigFromEnvVars(nil)
+
+		if err == nil {
+			t.Fatal("SetConfigFromEnvVars(nil) expected error, got nil")
+		}
+
+		if err.Error() != "s must be a non-nil pointer" {
+			t.Errorf("SetConfigFromEnvVars(nil) error = %q, want %q", err.Error(), "s must be a non-nil pointer")
+		}
+	})
+
+	t.Run("returns error for typed nil pointer", func(t *testing.T) {
+		var cfg *TestConfig // typed nil
+		err := SetConfigFromEnvVars(cfg)
+
+		if err == nil {
+			t.Fatal("SetConfigFromEnvVars(typed nil) expected error, got nil")
+		}
+
+		if err.Error() != "s must be a non-nil pointer" {
+			t.Errorf("SetConfigFromEnvVars(typed nil) error = %q, want %q", err.Error(), "s must be a non-nil pointer")
+		}
+	})
+
 	t.Run("returns error for non-pointer", func(t *testing.T) {
 		cfg := TestConfig{}
 		err := SetConfigFromEnvVars(cfg)
@@ -337,7 +362,11 @@ func TestEnsureConfigFromEnvVars(t *testing.T) {
 		defer os.Unsetenv("TEST_ENSURE_FIELD")
 
 		cfg := &TestConfig{}
-		result := EnsureConfigFromEnvVars(cfg)
+		result, err := EnsureConfigFromEnvVars(cfg)
+
+		if err != nil {
+			t.Fatalf("EnsureConfigFromEnvVars() unexpected error: %v", err)
+		}
 
 		if result != cfg {
 			t.Error("EnsureConfigFromEnvVars() should return same pointer")
@@ -347,14 +376,16 @@ func TestEnsureConfigFromEnvVars(t *testing.T) {
 		}
 	})
 
-	t.Run("panics on non-pointer", func(t *testing.T) {
-		defer func() {
-			if r := recover(); r == nil {
-				t.Error("EnsureConfigFromEnvVars() expected panic for non-pointer")
-			}
-		}()
-
+	t.Run("returns error on non-pointer", func(t *testing.T) {
 		cfg := TestConfig{}
-		EnsureConfigFromEnvVars(cfg)
+		result, err := EnsureConfigFromEnvVars(cfg)
+
+		if err == nil {
+			t.Error("EnsureConfigFromEnvVars() expected error for non-pointer, got nil")
+		}
+
+		if result != nil {
+			t.Errorf("EnsureConfigFromEnvVars() expected nil result on error, got %#v", result)
+		}
 	})
 }

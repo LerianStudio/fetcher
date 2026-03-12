@@ -11,7 +11,7 @@ BOLD='\033[1m'
 HOOKS_DIR=".git/hooks"
 PROJECT_ROOT=$(git rev-parse --show-toplevel)
 
-echo "${CYAN}Setting up git hooks for Midaz project...${NC}"
+echo "${CYAN}Setting up git hooks for Fetcher project...${NC}"
 
 # Check if .git directory exists
 if [ ! -d ".git" ]; then

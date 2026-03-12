@@ -14,7 +14,7 @@ func TestValidateMySQLMode(t *testing.T) {
 		wantError bool
 	}{
 		// Valid modes - from go-sql-driver/mysql documentation
-		{name: "empty string is valid (defaults to false)", mode: "", wantError: false},
+		{name: "empty string is valid (driver default behavior)", mode: "", wantError: false},
 		{name: "false is valid", mode: "false", wantError: false},
 		{name: "true is valid", mode: "true", wantError: false},
 		{name: "skip-verify is valid", mode: "skip-verify", wantError: false},

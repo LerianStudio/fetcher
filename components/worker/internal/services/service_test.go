@@ -1,0 +1,218 @@
+package services
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"github.com/LerianStudio/fetcher/pkg/crypto"
+	"github.com/LerianStudio/fetcher/pkg/model"
+	"github.com/LerianStudio/fetcher/pkg/model/datasource"
+	"github.com/google/uuid"
+	"go.uber.org/mock/gomock"
+)
+
+func TestSetStorageSecrets(t *testing.T) {
+	tests := []struct {
+		name       string
+		encryptKey string
+		hashKey    string
+	}{
+		{
+			name:       "sets both keys",
+			encryptKey: "my-encrypt-key",
+			hashKey:    "my-hash-key",
+		},
+		{
+			name:       "sets empty keys",
+			encryptKey: "",
+			hashKey:    "",
+		},
+		{
+			name:       "sets long keys",
+			encryptKey: "a-very-long-encryption-key-for-seaweedfs-data-at-rest",
+			hashKey:    "a-very-long-hash-key-for-seaweedfs-data-integrity-check",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			uc := &UseCase{}
+			uc.SetStorageSecrets(tt.encryptKey, tt.hashKey)
+
+			if uc.storageEncryptSecretKey != tt.encryptKey {
+				t.Errorf("storageEncryptSecretKey = %q, want %q", uc.storageEncryptSecretKey, tt.encryptKey)
+			}
+			if uc.storageHashSecretKey != tt.hashKey {
+				t.Errorf("storageHashSecretKey = %q, want %q", uc.storageHashSecretKey, tt.hashKey)
+			}
+		})
+	}
+}
+
+func TestSetCRMSecrets(t *testing.T) {
+	tests := []struct {
+		name       string
+		encryptKey string
+		hashKey    string
+	}{
+		{
+			name:       "sets both keys",
+			encryptKey: "crm-encrypt-key",
+			hashKey:    "crm-hash-key",
+		},
+		{
+			name:       "sets empty keys",
+			encryptKey: "",
+			hashKey:    "",
+		},
+		{
+			name:       "overwrites previously set keys",
+			encryptKey: "new-encrypt-key",
+			hashKey:    "new-hash-key",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			uc := &UseCase{}
+
+			// Set initial values for the overwrite test
+			if tt.name == "overwrites previously set keys" {
+				uc.SetCRMSecrets("old-encrypt", "old-hash")
+			}
+
+			uc.SetCRMSecrets(tt.encryptKey, tt.hashKey)
+
+			if uc.crmEncryptSecretKey != tt.encryptKey {
+				t.Errorf("crmEncryptSecretKey = %q, want %q", uc.crmEncryptSecretKey, tt.encryptKey)
+			}
+			if uc.crmHashSecretKey != tt.hashKey {
+				t.Errorf("crmHashSecretKey = %q, want %q", uc.crmHashSecretKey, tt.hashKey)
+			}
+		})
+	}
+}
+
+func TestSetDataSourceFactory(t *testing.T) {
+	t.Run("sets factory function", func(t *testing.T) {
+		uc := &UseCase{}
+
+		factory := func(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor) (datasource.DataSource, error) {
+			return nil, nil
+		}
+
+		uc.SetDataSourceFactory(factory)
+
+		if uc.dataSourceFactory == nil {
+			t.Fatal("dataSourceFactory should not be nil after SetDataSourceFactory")
+		}
+	})
+
+	t.Run("factory is callable after being set", func(t *testing.T) {
+		uc := &UseCase{}
+
+		called := false
+		factory := func(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor) (datasource.DataSource, error) {
+			called = true
+			return nil, nil
+		}
+
+		uc.SetDataSourceFactory(factory)
+
+		_, _ = uc.dataSourceFactory(context.Background(), nil, nil)
+		if !called {
+			t.Fatal("factory function was not called")
+		}
+	})
+}
+
+func TestCreateDataSource(t *testing.T) {
+	t.Run("delegates to factory with valid connection", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		mockDS := datasource.NewMockDataSource(ctrl)
+		mockCryptor := crypto.NewMockCryptor(ctrl)
+
+		conn := &model.Connection{
+			ID:             uuid.New(),
+			OrganizationID: uuid.New(),
+			ConfigName:     "test-conn",
+			Host:           "localhost",
+			Port:           5432,
+			DatabaseName:   "testdb",
+			Username:       "user",
+			Type:           model.TypePostgreSQL,
+		}
+
+		uc := &UseCase{
+			Cryptor: mockCryptor,
+		}
+
+		factoryCalled := false
+		uc.SetDataSourceFactory(func(ctx context.Context, c *model.Connection, cr crypto.Cryptor) (datasource.DataSource, error) {
+			factoryCalled = true
+			if c != conn {
+				t.Error("factory received wrong connection")
+			}
+			if cr != mockCryptor {
+				t.Error("factory received wrong cryptor")
+			}
+			return mockDS, nil
+		})
+
+		ctx := testContext()
+		ds, err := uc.CreateDataSource(ctx, conn)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if ds != mockDS {
+			t.Error("expected mock datasource to be returned")
+		}
+		if !factoryCalled {
+			t.Error("factory function was not called")
+		}
+	})
+
+	t.Run("returns error from factory", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		mockCryptor := crypto.NewMockCryptor(ctrl)
+		expectedErr := errors.New("factory error")
+
+		uc := &UseCase{
+			Cryptor: mockCryptor,
+		}
+
+		uc.SetDataSourceFactory(func(ctx context.Context, c *model.Connection, cr crypto.Cryptor) (datasource.DataSource, error) {
+			return nil, expectedErr
+		})
+
+		ctx := testContext()
+		ds, err := uc.CreateDataSource(ctx, &model.Connection{})
+		if err == nil {
+			t.Fatal("expected error from factory")
+		}
+		if !errors.Is(err, expectedErr) {
+			t.Errorf("expected error %v, got %v", expectedErr, err)
+		}
+		if ds != nil {
+			t.Error("expected nil datasource on error")
+		}
+	})
+
+	t.Run("panics with nil factory", func(t *testing.T) {
+		uc := &UseCase{}
+
+		defer func() {
+			if r := recover(); r == nil {
+				t.Fatal("expected panic when factory is nil")
+			}
+		}()
+
+		ctx := testContext()
+		_, _ = uc.CreateDataSource(ctx, &model.Connection{})
+	})
+}

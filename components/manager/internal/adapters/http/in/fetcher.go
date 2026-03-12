@@ -122,6 +122,7 @@ func (h *FetcherHandler) CreateJob(c *fiber.Ctx) error {
 		})
 	}
 
+
 	result, err := h.CreateJobCmd.Execute(ctx, orgID, request)
 	if err != nil {
 		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to execute create fetcher job command, Error: %s", err.Error()))

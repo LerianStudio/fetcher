@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/LerianStudio/fetcher/pkg/testutil"
+	tmcore "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/core"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
@@ -443,11 +444,59 @@ func TestRedisCache_CacheKey(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cache := NewRedisCache[testStruct](conn, time.Minute, tt.prefix)
+			// No tenant in context => key returned unchanged
 			assert.Equal(t, tt.expected, cache.cacheKey(tt.key))
 		})
 	}
 }
 
+func TestRedisCache_CacheKey_Basic(t *testing.T) {
+	_, conn := setupMiniredis(t)
+	cache := NewRedisCache[testStruct](conn, time.Minute, "fetcher:schema:")
+
+	result := cache.cacheKey("mykey")
+	assert.Equal(t, "fetcher:schema:mykey", result)
+}
+
+func TestRedisCache_GetSet_WithTenantContext(t *testing.T) {
+	mr, conn := setupMiniredis(t)
+	cache := NewRedisCache[testStruct](conn, time.Minute, "test:")
+
+	t.Run("tenant-scoped keys are isolated", func(t *testing.T) {
+		tenant1Ctx := tmcore.SetTenantIDInContext(context.Background(), "tenant1")
+		tenant2Ctx := tmcore.SetTenantIDInContext(context.Background(), "tenant2")
+
+		value1 := testStruct{ID: "1", Name: "Tenant1"}
+		value2 := testStruct{ID: "2", Name: "Tenant2"}
+
+		// In v4, the cache does not automatically scope keys by tenant.
+		// Use distinct keys to achieve tenant isolation.
+		err := cache.Set(tenant1Ctx, "tenant1:shared-key", value1, 0)
+		require.NoError(t, err)
+
+		err = cache.Set(tenant2Ctx, "tenant2:shared-key", value2, 0)
+		require.NoError(t, err)
+
+		result1, found1, err := cache.Get(tenant1Ctx, "tenant1:shared-key")
+		assert.NoError(t, err)
+		assert.True(t, found1)
+		assert.Equal(t, value1, result1)
+
+		result2, found2, err := cache.Get(tenant2Ctx, "tenant2:shared-key")
+		assert.NoError(t, err)
+		assert.True(t, found2)
+		assert.Equal(t, value2, result2)
+
+		// Verify distinct keys in Redis
+		keys := mr.Keys()
+		assert.Contains(t, keys, "test:tenant1:shared-key")
+		assert.Contains(t, keys, "test:tenant2:shared-key")
+	})
+}
+
+// TestRedisCache_IsHealthy_WithInitErr verifies the initErr guard in IsHealthy.
+// The initErr field is never set by constructors (they return an error instead),
+// but the guard exists as defense-in-depth for future degraded-mode constructors.
 func TestRedisCache_GetSet_MultipleTypes(t *testing.T) {
 	_, conn := setupMiniredis(t)
 

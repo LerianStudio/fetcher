@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/LerianStudio/fetcher/pkg/itestkit"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/go-connections/nat"
 )
@@ -63,7 +64,7 @@ func TestSeaweedFSHelpersWithoutDocker(t *testing.T) {
 					Host:                 "127.0.0.1",
 					Port:                 "18888",
 					Upstream:             "127.0.0.1:18888",
-					ProxyListenInNetwork: "toxiproxy:10001",
+					ProxyListen: "toxiproxy:10001",
 				}}
 
 				host, port, err := infra.HostPort()
@@ -71,17 +72,19 @@ func TestSeaweedFSHelpersWithoutDocker(t *testing.T) {
 					t.Fatalf("host port should parse: %v", err)
 				}
 
-				if host != "127.0.0.1" || port != 18888 {
+				// HostPort normalizes loopback addresses for Docker connectivity
+			expectedHost := itestkit.NormalizeHost("127.0.0.1")
+			if host != expectedHost || port != 18888 {
 					t.Fatalf("unexpected host port: %s %d", host, port)
 				}
 
-				containerHost, containerPort, err := infra.ContainerHostPort()
+				// Verify proxy listen is stored
+				ep, err := infra.Endpoint()
 				if err != nil {
-					t.Fatalf("container host port should resolve: %v", err)
+					t.Fatalf("endpoint should resolve: %v", err)
 				}
-
-				if containerHost != "toxiproxy" || containerPort != 10001 {
-					t.Fatalf("unexpected container host port: %s %d", containerHost, containerPort)
+				if ep.ProxyListen != "toxiproxy:10001" {
+					t.Fatalf("unexpected proxy listen: %s", ep.ProxyListen)
 				}
 			},
 		},

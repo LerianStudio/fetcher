@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/testcontainers/testcontainers-go"
-	tcnetwork "github.com/testcontainers/testcontainers-go/network"
+	"github.com/testcontainers/testcontainers-go/network"
 )
 
 type Suite struct {
@@ -29,8 +29,7 @@ type Builder struct {
 	chaosConf ChaosConfig
 }
 
-//nolint:thelper // t can be nil when called from TestMain bootstrap.
-func New(t *testing.T) *Builder {
+func New(t *testing.T) *Builder { //nolint:thelper // t can be nil when called from TestMain
 	if t != nil {
 		t.Helper()
 	}
@@ -74,20 +73,18 @@ func (b *Builder) Build(ctx context.Context) (*Suite, error) {
 		b.t.Helper()
 	}
 
-	// Create shared Docker network for container communication.
-	network, err := tcnetwork.New(ctx, tcnetwork.WithDriver("bridge"))
+	// Create shared Docker network for container communication
+	nw, err := network.New(ctx, network.WithDriver("bridge"))
 	if err != nil {
 		return nil, fmt.Errorf("create network: %w", err)
 	}
 
-	networkName := network.Name
-
 	var chaos ChaosInterface
 
 	if b.chaosConf.Enabled {
-		tc, err := NewToxiproxyChaos(ctx, b.chaosConf, networkName)
+		tc, err := NewToxiproxyChaos(ctx, b.chaosConf, nw.Name)
 		if err != nil {
-			_ = network.Remove(ctx)
+			_ = nw.Remove(ctx)
 			return nil, err
 		}
 
@@ -98,11 +95,11 @@ func (b *Builder) Build(ctx context.Context) (*Suite, error) {
 		t:       b.t,
 		infra:   b.infra,
 		chaos:   chaos,
-		network: network,
+		network: nw,
 		env: &Env{
 			Containers: map[string]ContainerEndpoint{},
 			Chaos:      chaos,
-			Network:    networkName,
+			Network:    nw.Name,
 		},
 	}
 

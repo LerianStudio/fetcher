@@ -3,6 +3,7 @@ package query
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"testing"
 	"time"
@@ -11,9 +12,9 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	datasourceModel "github.com/LerianStudio/fetcher/pkg/model/datasource"
-	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
+	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
 
-	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	tmcore "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/core"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -50,7 +51,7 @@ func TestTestConnection_Execute_NotFoundError(t *testing.T) {
 		Take(gomock.Any(), gomock.Any()).
 		Return(uint64(1), uint64(10), uint64(time.Now().UTC().Add(time.Minute).UnixNano()), true, nil)
 
-	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore)
+	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, nil)
 
 	ctx := testContext()
 	orgID := uuid.New()
@@ -90,7 +91,7 @@ func TestTestConnection_Execute_RepositoryError(t *testing.T) {
 		Take(gomock.Any(), gomock.Any()).
 		Return(uint64(1), uint64(10), uint64(time.Now().UTC().Add(time.Minute).UnixNano()), true, nil)
 
-	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore)
+	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, nil)
 
 	ctx := testContext()
 	orgID := uuid.New()
@@ -136,7 +137,16 @@ func TestTestConnection_Execute_DecryptionError(t *testing.T) {
 		Take(gomock.Any(), gomock.Any()).
 		Return(uint64(1), uint64(10), uint64(time.Now().UTC().Add(time.Minute).UnixNano()), true, nil)
 
-	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore)
+	// Provide a factory that calls cryptor.Decrypt to exercise the mock
+	testFactory := func(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor) (datasourceModel.DataSource, error) {
+		_, err := cryptor.Decrypt(ctx, conn.PasswordEncrypted, conn.EncryptionKeyVersion)
+		if err != nil {
+			return nil, fmt.Errorf("decryption failed: %w", err)
+		}
+		return nil, fmt.Errorf("connection failed")
+	}
+
+	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, testFactory)
 
 	ctx := testContext()
 	orgID := uuid.New()
@@ -178,7 +188,7 @@ func TestTestConnection_Execute_RateLimitError(t *testing.T) {
 		Take(gomock.Any(), gomock.Any()).
 		Return(uint64(0), uint64(0), uint64(0), false, limiterError)
 
-	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore)
+	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, nil)
 
 	ctx := testContext()
 	orgID := uuid.New()
@@ -217,12 +227,12 @@ func TestTestConnection_Execute_Success(t *testing.T) {
 	mockConnRepo.EXPECT().FindByID(gomock.Any(), connID, orgID).Return(existingConn, nil)
 	mockDataSource.EXPECT().Close(gomock.Any()).Return(nil)
 
-	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore)
-	svc.dataSource = func(_ context.Context, conn *model.Connection, cryptor crypto.Cryptor, _ libLog.Logger) (datasourceModel.DataSource, error) {
+	testFactory := func(_ context.Context, conn *model.Connection, cryptor crypto.Cryptor) (datasourceModel.DataSource, error) {
 		_ = cryptor
 		assert.Equal(t, existingConn, conn)
 		return mockDataSource, nil
 	}
+	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, testFactory)
 
 	ctx := testContext()
 	result, err := svc.Execute(ctx, orgID, connID)
@@ -248,7 +258,7 @@ func TestTestConnection_Execute_RateLimited(t *testing.T) {
 		Take(gomock.Any(), gomock.Any()).
 		Return(uint64(0), uint64(0), uint64(resetTime.UnixNano()), false, nil)
 
-	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore)
+	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, nil)
 
 	ctx := testContext()
 	orgID := uuid.New()
@@ -288,7 +298,7 @@ func TestTestConnection_Execute_OrganizationIsolation(t *testing.T) {
 	mockStore := NewMockRateLimiterStore(ctrl)
 	mockStore.EXPECT().Take(gomock.Any(), gomock.Any()).Return(uint64(1), uint64(10), uint64(time.Now().UTC().Add(time.Minute).UnixNano()), true, nil)
 
-	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore)
+	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, nil)
 
 	ctx := testContext()
 	orgID := uuid.New()
@@ -332,7 +342,14 @@ func TestTestConnection_Execute_WithSSLConfiguration(t *testing.T) {
 	mockDataSource := datasourceModel.NewMockDataSource(ctrl)
 	mockStore.EXPECT().Take(gomock.Any(), gomock.Any()).Return(uint64(1), uint64(10), uint64(time.Now().UTC().Add(time.Minute).UnixNano()), true, nil)
 
-	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore)
+	sslFactory := func(_ context.Context, conn *model.Connection, _ crypto.Cryptor) (datasourceModel.DataSource, error) {
+		require.NotNil(t, conn.SSL)
+		assert.Equal(t, "require", conn.SSL.Mode)
+		assert.Contains(t, conn.SSL.CA, "BEGIN CERTIFICATE")
+		return mockDataSource, nil
+	}
+
+	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, sslFactory)
 
 	ctx := testContext()
 	orgID := uuid.New()
@@ -350,14 +367,6 @@ func TestTestConnection_Execute_WithSSLConfiguration(t *testing.T) {
 		FindByID(gomock.Any(), connID, orgID).
 		Return(existingConn, nil)
 	mockDataSource.EXPECT().Close(gomock.Any()).Return(nil)
-
-	svc.dataSource = func(_ context.Context, conn *model.Connection, cryptor crypto.Cryptor, _ libLog.Logger) (datasourceModel.DataSource, error) {
-		_ = cryptor
-		require.NotNil(t, conn.SSL)
-		assert.Equal(t, "require", conn.SSL.Mode)
-		assert.Contains(t, conn.SSL.CA, "BEGIN CERTIFICATE")
-		return mockDataSource, nil
-	}
 
 	result, err := svc.Execute(ctx, orgID, connID)
 	require.NoError(t, err)
@@ -410,7 +419,13 @@ func TestTestConnection_Execute_AllDatabaseTypes(t *testing.T) {
 			mockDataSource := datasourceModel.NewMockDataSource(ctrl)
 			mockStore.EXPECT().Take(gomock.Any(), gomock.Any()).Return(uint64(1), uint64(10), uint64(time.Now().UTC().Add(time.Minute).UnixNano()), true, nil)
 
-			svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore)
+			dbTypeFactory := func(_ context.Context, conn *model.Connection, _ crypto.Cryptor) (datasourceModel.DataSource, error) {
+				assert.Equal(t, tt.dbType, conn.Type)
+				assert.Equal(t, tt.port, conn.Port)
+				return mockDataSource, nil
+			}
+
+			svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, dbTypeFactory)
 
 			ctx := testContext()
 			orgID := uuid.New()
@@ -423,13 +438,6 @@ func TestTestConnection_Execute_AllDatabaseTypes(t *testing.T) {
 				FindByID(gomock.Any(), connID, orgID).
 				Return(existingConn, nil)
 			mockDataSource.EXPECT().Close(gomock.Any()).Return(nil)
-
-			svc.dataSource = func(_ context.Context, conn *model.Connection, cryptor crypto.Cryptor, _ libLog.Logger) (datasourceModel.DataSource, error) {
-				_ = cryptor
-				assert.Equal(t, tt.dbType, conn.Type)
-				assert.Equal(t, tt.port, conn.Port)
-				return mockDataSource, nil
-			}
 
 			result, err := svc.Execute(ctx, orgID, connID)
 			require.NoError(t, err)
@@ -479,7 +487,7 @@ func TestTestConnection_Execute_MultipleRepositoryErrors(t *testing.T) {
 				Take(gomock.Any(), gomock.Any()).
 				Return(uint64(1), uint64(10), uint64(time.Now().UTC().Add(time.Minute).UnixNano()), true, nil)
 
-			svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore)
+			svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, nil)
 
 			ctx := testContext()
 			orgID := uuid.New()
@@ -517,7 +525,7 @@ func TestTestConnection_Execute_EmptyUUIDs(t *testing.T) {
 	mockStore := NewMockRateLimiterStore(ctrl)
 	mockStore.EXPECT().Take(gomock.Any(), gomock.Any()).Return(uint64(1), uint64(10), uint64(time.Now().UTC().Add(time.Minute).UnixNano()), true, nil)
 
-	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore)
+	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, nil)
 
 	ctx := testContext()
 	orgID := uuid.Nil
@@ -554,7 +562,7 @@ func TestNewTestConnection(t *testing.T) {
 	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockStore := NewMockRateLimiterStore(ctrl)
 
-	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore)
+	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, nil)
 
 	if svc == nil {
 		t.Fatal("expected non-nil service")
@@ -607,7 +615,7 @@ func TestTestConnection_Execute_RateLimitResetTime(t *testing.T) {
 			mockStore := NewMockRateLimiterStore(ctrl)
 			mockStore.EXPECT().Take(gomock.Any(), gomock.Any()).Return(uint64(0), uint64(0), uint64(tt.resetTime.UnixNano()), false, nil)
 
-			svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore)
+			svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, nil)
 
 			ctx := testContext()
 			orgID := uuid.New()
@@ -647,7 +655,14 @@ func TestTestConnection_Execute_DecryptionKeyVersionMismatch(t *testing.T) {
 	mockStore := NewMockRateLimiterStore(ctrl)
 	mockStore.EXPECT().Take(gomock.Any(), gomock.Any()).Return(uint64(1), uint64(10), uint64(time.Now().UTC().Add(time.Minute).UnixNano()), true, nil)
 
-	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore)
+	testFactory := func(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor) (datasourceModel.DataSource, error) {
+		_, err := cryptor.Decrypt(ctx, conn.PasswordEncrypted, conn.EncryptionKeyVersion)
+		if err != nil {
+			return nil, fmt.Errorf("decryption failed: %w", err)
+		}
+		return nil, fmt.Errorf("connection failed")
+	}
+	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, testFactory)
 
 	ctx := testContext()
 	orgID := uuid.New()
@@ -688,7 +703,14 @@ func TestTestConnection_Execute_ConnectionWithAllFields(t *testing.T) {
 	mockStore := NewMockRateLimiterStore(ctrl)
 	mockStore.EXPECT().Take(gomock.Any(), gomock.Any()).Return(uint64(1), uint64(10), uint64(time.Now().UTC().Add(time.Minute).UnixNano()), true, nil)
 
-	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore)
+	testFactory := func(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor) (datasourceModel.DataSource, error) {
+		_, err := cryptor.Decrypt(ctx, conn.PasswordEncrypted, conn.EncryptionKeyVersion)
+		if err != nil {
+			return nil, fmt.Errorf("decryption failed: %w", err)
+		}
+		return nil, fmt.Errorf("connection failed: unable to connect to database")
+	}
+	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, testFactory)
 
 	ctx := testContext()
 	orgID := uuid.New()
@@ -757,7 +779,7 @@ func TestTestConnection_Execute_DifferentOrganizations(t *testing.T) {
 	mockStore := NewMockRateLimiterStore(ctrl)
 	mockStore.EXPECT().Take(gomock.Any(), gomock.Any()).Return(uint64(1), uint64(10), uint64(time.Now().UTC().Add(time.Minute).UnixNano()), true, nil)
 
-	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore)
+	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, nil)
 
 	ctx := testContext()
 	requestingOrgID := uuid.New()
@@ -788,4 +810,112 @@ func TestTestConnection_Execute_DifferentOrganizations(t *testing.T) {
 
 	// The connection exists in connectionOrgID but not accessible from requestingOrgID
 	_ = connectionOrgID // Demonstrates the scenario
+}
+
+// TestTestConnection_Execute_RateLimitKeyTenantIsolation tests that rate limiter keys
+// are scoped per tenant, preventing cross-tenant rate limit interference.
+func TestTestConnection_Execute_RateLimitKeyTenantIsolation(t *testing.T) {
+	connID := uuid.New()
+
+	tests := []struct {
+		name        string
+		tenantA     string
+		tenantB     string
+		wantDiffKey bool
+	}{
+		{
+			name:        "different tenants produce different keys",
+			tenantA:     "tenant-aaa",
+			tenantB:     "tenant-bbb",
+			wantDiffKey: true,
+		},
+		{
+			name:        "same tenant produces same key",
+			tenantA:     "tenant-aaa",
+			tenantB:     "tenant-aaa",
+			wantDiffKey: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			var capturedKeys []string
+
+			mockConnRepo := connRepo.NewMockRepository(ctrl)
+			mockCrypto := crypto.NewMockCryptor(ctrl)
+			mockStore := NewMockRateLimiterStore(ctrl)
+			mockStore.EXPECT().
+				Take(gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, key string) (uint64, uint64, uint64, bool, error) {
+					capturedKeys = append(capturedKeys, key)
+					// Return rate limited to avoid needing repo mocks
+					return 0, 0, uint64(time.Now().UTC().Add(30 * time.Second).UnixNano()), false, nil
+				}).
+				Times(2)
+
+			svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, nil)
+			orgID := uuid.New()
+
+			// Execute with tenant A context
+			ctxA := testContext()
+			ctxA = tmcore.SetTenantIDInContext(ctxA, tt.tenantA)
+			_, errA := svc.Execute(ctxA, orgID, connID)
+			assert.Error(t, errA, "rate-limited request must return an error for tenant A")
+
+			// Execute with tenant B context
+			ctxB := testContext()
+			ctxB = tmcore.SetTenantIDInContext(ctxB, tt.tenantB)
+			_, errB := svc.Execute(ctxB, orgID, connID)
+			assert.Error(t, errB, "rate-limited request must return an error for tenant B")
+
+			assert.Len(t, capturedKeys, 2, "expected two rate limiter keys to be captured")
+
+			if tt.wantDiffKey {
+				assert.NotEqual(t, capturedKeys[0], capturedKeys[1],
+					"different tenants must produce different rate limiter keys")
+				assert.Contains(t, capturedKeys[0], tt.tenantA,
+					"key for tenant A must contain its tenant ID")
+				assert.Contains(t, capturedKeys[1], tt.tenantB,
+					"key for tenant B must contain its tenant ID")
+			} else {
+				assert.Equal(t, capturedKeys[0], capturedKeys[1],
+					"same tenant must produce identical rate limiter keys")
+			}
+		})
+	}
+}
+
+// TestTestConnection_Execute_RateLimitKeySingleTenant tests that without tenant context
+// (single-tenant mode), the rate limiter key is just the connection ID without prefix.
+func TestTestConnection_Execute_RateLimitKeySingleTenant(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	connID := uuid.New()
+	var capturedKey string
+
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockCrypto := crypto.NewMockCryptor(ctrl)
+	mockStore := NewMockRateLimiterStore(ctrl)
+	mockStore.EXPECT().
+		Take(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, key string) (uint64, uint64, uint64, bool, error) {
+			capturedKey = key
+			return 0, 0, uint64(time.Now().UTC().Add(30 * time.Second).UnixNano()), false, nil
+		})
+
+	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, nil)
+
+	// No tenant in context (single-tenant mode)
+	ctx := testContext()
+	orgID := uuid.New()
+
+	_, err := svc.Execute(ctx, orgID, connID)
+	assert.Error(t, err, "rate-limited request must return an error in single-tenant mode")
+
+	assert.Equal(t, connID.String(), capturedKey,
+		"single-tenant mode must use plain connection ID as rate limiter key")
 }

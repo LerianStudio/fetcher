@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -37,7 +36,7 @@ type BuildSecret struct {
 // This is necessary because testcontainers-go's FromDockerfile doesn't support BuildKit secrets.
 //
 // Returns the image tag that was built.
-func buildImageWithSecrets(ctx context.Context, cfg BuildConfig) (tag string, retErr error) {
+func buildImageWithSecrets(ctx context.Context, cfg BuildConfig) (string, error) {
 	if cfg.ContextDir == "" {
 		return "", fmt.Errorf("e2ekit: BuildConfig.ContextDir is required")
 	}
@@ -47,7 +46,7 @@ func buildImageWithSecrets(ctx context.Context, cfg BuildConfig) (tag string, re
 		dockerfile = "Dockerfile"
 	}
 
-	tag = cfg.Tag
+	tag := cfg.Tag
 	if tag == "" {
 		tag = generateImageTag()
 	}
@@ -72,25 +71,19 @@ func buildImageWithSecrets(ctx context.Context, cfg BuildConfig) (tag string, re
 	var tempFiles []string
 
 	defer func() {
-		var cleanupErr error
-
 		for _, f := range tempFiles {
-			cleanupErr = errors.Join(cleanupErr, os.Remove(f))
-		}
-
-		if cleanupErr != nil && retErr == nil {
-			retErr = fmt.Errorf("e2ekit: failed to clean up build secret temp files: %w", cleanupErr)
+			_ = os.Remove(f)
 		}
 	}()
 
 	for _, secret := range cfg.Secrets {
-		srcPath, tempFile, err := resolveBuildSecretSource(secret)
+		srcPath, tmpPath, err := resolveSecretSource(secret)
 		if err != nil {
 			return "", err
 		}
 
-		if tempFile != "" {
-			tempFiles = append(tempFiles, tempFile)
+		if tmpPath != "" {
+			tempFiles = append(tempFiles, tmpPath)
 		}
 
 		args = append(args, "--secret", fmt.Sprintf("id=%s,src=%s", secret.ID, srcPath))
@@ -113,7 +106,9 @@ func buildImageWithSecrets(ctx context.Context, cfg BuildConfig) (tag string, re
 	return tag, nil
 }
 
-func resolveBuildSecretSource(secret BuildSecret) (srcPath string, tempFile string, err error) {
+// resolveSecretSource determines the file path for a build secret.
+// It returns the source path for docker --secret, any temp file path that needs cleanup, and an error.
+func resolveSecretSource(secret BuildSecret) (srcPath, tmpPath string, err error) {
 	if secret.ID == "" {
 		return "", "", fmt.Errorf("e2ekit: BuildSecret.ID is required")
 	}
@@ -121,45 +116,49 @@ func resolveBuildSecretSource(secret BuildSecret) (srcPath string, tempFile stri
 	switch {
 	case secret.Src != "" && secret.Env != "":
 		return "", "", fmt.Errorf("e2ekit: BuildSecret %q has both Src and Env set; use only one", secret.ID)
+
 	case secret.Src != "":
 		return secret.Src, "", nil
+
 	case secret.Env != "":
-		return createBuildSecretTempFile(secret)
+		path, err := createSecretTempFile(secret)
+		if err != nil {
+			return "", "", err
+		}
+
+		return path, path, nil
+
 	default:
 		return "", "", fmt.Errorf("e2ekit: BuildSecret %q has neither Src nor Env set", secret.ID)
 	}
 }
 
-func createBuildSecretTempFile(secret BuildSecret) (srcPath string, tempFile string, err error) {
+// createSecretTempFile creates a temporary file containing the secret value from an environment variable.
+func createSecretTempFile(secret BuildSecret) (string, error) {
 	value := os.Getenv(secret.Env)
 	if value == "" {
-		return "", "", fmt.Errorf("e2ekit: environment variable %q for secret %q is empty or not set", secret.Env, secret.ID)
+		return "", fmt.Errorf("e2ekit: environment variable %q for secret %q is empty or not set", secret.Env, secret.ID)
 	}
 
 	tmpFile, err := os.CreateTemp("", fmt.Sprintf("e2ekit-secret-%s-*", secret.ID))
 	if err != nil {
-		return "", "", fmt.Errorf("e2ekit: failed to create temp file for secret %q: %w", secret.ID, err)
+		return "", fmt.Errorf("e2ekit: failed to create temp file for secret %q: %w", secret.ID, err)
 	}
 
 	if _, err := tmpFile.WriteString(value); err != nil {
-		cleanupErr := errors.Join(tmpFile.Close(), os.Remove(tmpFile.Name()))
-		if cleanupErr != nil {
-			return "", "", fmt.Errorf("e2ekit: failed to write secret %q to temp file: %w (cleanup error: %v)", secret.ID, err, cleanupErr)
-		}
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpFile.Name())
 
-		return "", "", fmt.Errorf("e2ekit: failed to write secret %q to temp file: %w", secret.ID, err)
+		return "", fmt.Errorf("e2ekit: failed to write secret %q to temp file: %w", secret.ID, err)
 	}
 
 	if err := tmpFile.Close(); err != nil {
-		cleanupErr := os.Remove(tmpFile.Name())
-		if cleanupErr != nil {
-			return "", "", fmt.Errorf("e2ekit: failed to close temp file for secret %q: %w (cleanup error: %v)", secret.ID, err, cleanupErr)
-		}
+		_ = os.Remove(tmpFile.Name())
 
-		return "", "", fmt.Errorf("e2ekit: failed to close temp file for secret %q: %w", secret.ID, err)
+		return "", fmt.Errorf("e2ekit: failed to close temp file for secret %q: %w", secret.ID, err)
 	}
 
-	return tmpFile.Name(), tmpFile.Name(), nil
+	return tmpFile.Name(), nil
 }
 
 // generateImageTag creates a unique image tag for builds.

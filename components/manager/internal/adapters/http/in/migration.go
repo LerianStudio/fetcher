@@ -78,12 +78,7 @@ func (h *MigrationHandler) ListUnassignedConnections(c *fiber.Ctx) error {
 		return httpUtils.WithError(c, err)
 	}
 
-	pagination := model.Pagination{
-		Limit: headerParams.Limit,
-		Page:  headerParams.Page,
-	}
-
-	conns, totalCount, err := h.ListUnassignedQry.Execute(ctx, orgID, *headerParams)
+	pagination, err := h.ListUnassignedQry.Execute(ctx, orgID, *headerParams)
 	if err != nil {
 		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to execute list unassigned connections query, Error: %s", err.Error()))
 		libOpentelemetry.HandleSpanError(span, "failed to list unassigned connections", err)
@@ -91,15 +86,7 @@ func (h *MigrationHandler) ListUnassignedConnections(c *fiber.Ctx) error {
 		return httpUtils.WithError(c, err)
 	}
 
-	connResp := make([]*model.ConnectionResponse, 0, len(conns))
-	for _, conn := range conns {
-		connResp = append(connResp, model.NewConnectionResponseFrom(conn))
-	}
-
-	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("unassigned connections listed org=%s count=%d", orgID, len(connResp)))
-
-	pagination.SetItems(connResp)
-	pagination.SetTotal(int(totalCount))
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("unassigned connections listed org=%s count=%d", orgID, pagination.Total))
 
 	return httpUtils.OK(c, pagination)
 }
@@ -107,14 +94,13 @@ func (h *MigrationHandler) ListUnassignedConnections(c *fiber.Ctx) error {
 // AssignConnectionToProduct assigns a legacy (unassigned) connection to a product.
 //
 //	@Summary		Assign connection to product
-//	@Description	Associate an unassigned connection to a product. This is a one-time, irreversible operation for migration purposes. The productId must be provided in the request body.
+//	@Description	Associate an unassigned connection to a product. This is a one-time, irreversible operation for migration purposes. The product name must be provided via the X-Product-Name header.
 //	@Tags			Migration
-//	@Accept			json
 //	@Produce		json
 //	@Param			Authorization		header		string							false	"The authorization token in the 'Bearer access_token' format. Only required when auth plugin is enabled."
 //	@Param			X-Organization-Id	header		string							true	"Organization ID"
 //	@Param			id					path		string							true	"Connection ID"
-//	@Param			body				model.AssignConnectionInput		true	"Assignment payload"
+//	@Param			X-Product-Name		header		string							true	"Product name to assign"
 //	@Success		200					{object}	model.ConnectionResponse
 //	@Failure		400					{object}	pkg.HTTPError
 //	@Failure		404					{object}	pkg.HTTPError
@@ -155,35 +141,15 @@ func (h *MigrationHandler) AssignConnectionToProduct(c *fiber.Ctx) error {
 		attribute.String("app.request.connection_id", connectionID.String()),
 	)
 
-	var request model.AssignConnectionInput
-	if errParser := c.BodyParser(&request); errParser != nil {
-		libOpentelemetry.HandleSpanError(span, "failed to parse payload", errParser)
-
-		return httpUtils.WithError(c, pkg.ValidationError{
-			EntityType: "connection",
-			Code:       constant.ErrBadRequest.Error(),
-			Title:      "Invalid payload",
-			Message:    "unable to parse request body",
-			Err:        errParser,
-		})
-	}
-
-	productID, err := uuid.Parse(request.ProductID)
+	productName, err := httpUtils.GetRequiredProductName(c)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(span, "invalid product id in body", err)
-
-		return httpUtils.WithError(c, pkg.ValidationError{
-			EntityType: "connection",
-			Code:       constant.ErrBadRequest.Error(),
-			Title:      "Invalid payload",
-			Message:    "productId must be a valid UUID",
-			Err:        err,
-		})
+		libOpentelemetry.HandleSpanError(span, "missing or invalid product name", err)
+		return httpUtils.WithError(c, err)
 	}
 
-	span.SetAttributes(attribute.String("app.request.product_id", productID.String()))
+	span.SetAttributes(attribute.String("app.request.product_name", productName))
 
-	conn, err := h.AssignCmd.Execute(ctx, orgID, connectionID, productID)
+	conn, err := h.AssignCmd.Execute(ctx, orgID, connectionID, productName)
 	if err != nil {
 		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to assign connection to product, Error: %s", err.Error()))
 		libOpentelemetry.HandleSpanError(span, "failed to assign connection to product", err)
@@ -193,7 +159,7 @@ func (h *MigrationHandler) AssignConnectionToProduct(c *fiber.Ctx) error {
 
 	resp := model.NewConnectionResponseFrom(conn)
 
-	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("connection assigned to product connection_id=%s product_id=%s org=%s", connectionID, productID, orgID))
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("connection assigned to product connection_id=%s product_name=%s org=%s", connectionID, productName, orgID))
 
 	return httpUtils.OK(c, resp)
 }

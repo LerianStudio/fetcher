@@ -6,17 +6,15 @@ import (
 	"reflect"
 	"strings"
 
-	cacheRepo "github.com/LerianStudio/fetcher/components/manager/internal/adapters/cache"
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/datasource"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	datasourceModel "github.com/LerianStudio/fetcher/pkg/model/datasource"
-	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
-	"github.com/LerianStudio/fetcher/pkg/postgres"
+	cacheRepo "github.com/LerianStudio/fetcher/pkg/ports/cache"
+	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
 	"github.com/LerianStudio/fetcher/pkg/schemautil"
-	"github.com/LerianStudio/fetcher/pkg/sqlserver"
 
 	"github.com/LerianStudio/lib-commons/v4/commons"
 	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
@@ -38,14 +36,12 @@ var pluginCRMTableMapping = map[string]string{
 	"aliases": "aliases",
 }
 
-type dataSourceFactory func(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor, logger libLog.Logger) (datasourceModel.DataSource, error)
-
 // ValidateSchema is the query service for validating schema references.
 type ValidateSchema struct {
 	connRepo    connRepo.Repository
 	cryptor     crypto.Cryptor
 	schemaCache cacheRepo.SchemaCacheRepository
-	dataSource  dataSourceFactory
+	dsFactory   datasource.DataSourceFactory
 }
 
 // NewValidateSchema creates a new ValidateSchema service without rate limiting.
@@ -53,12 +49,13 @@ func NewValidateSchema(
 	connectionRepo connRepo.Repository,
 	cryptor crypto.Cryptor,
 	schemaCache cacheRepo.SchemaCacheRepository,
+	factory datasource.DataSourceFactory,
 ) *ValidateSchema {
 	return &ValidateSchema{
 		connRepo:    connectionRepo,
 		cryptor:     cryptor,
 		schemaCache: schemaCache,
-		dataSource:  datasource.NewDataSourceFromConnection,
+		dsFactory:   factory,
 	}
 }
 
@@ -88,7 +85,7 @@ func (s *ValidateSchema) Execute(
 
 	// Validate request payload structure and limits
 	if errValidation := spec.Validate(); errValidation != nil {
-		libOpentelemetry.HandleSpanError(span, "Invalid request payload", errValidation)
+		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Invalid request payload", errValidation)
 		logger.Log(ctx, libLog.LevelWarn, "schema validation request invalid",
 			libLog.String("organization_id", organizationID.String()),
 			libLog.Err(errValidation),
@@ -114,7 +111,7 @@ func (s *ValidateSchema) Execute(
 	}
 
 	if len(connections) == 0 {
-		libOpentelemetry.HandleSpanError(span, "No connections found for the provided datasources", nil)
+		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "No connections found for the provided datasources", nil)
 
 		return nil, pkg.ValidationError{
 			EntityType: "schema",
@@ -255,7 +252,7 @@ func (s *ValidateSchema) getOrFetchSchema(
 	logger.Log(ctx, libLog.LevelDebug, "schema cache miss", libLog.String("config_name", conn.ConfigName))
 
 	// Get datasource instance because schema is not in cache
-	ds, err := s.dataSource(ctx, conn, s.cryptor, logger)
+	ds, err := s.dsFactory(ctx, conn, s.cryptor)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "failed to create datasource", err)
 		return nil, fmt.Errorf("failed to create datasource: %w", err)
@@ -371,13 +368,13 @@ func validateTablesAgainstSchema(
 func normalizeTableNameForValidation(tableName string, dbType model.DBType) string {
 	switch dbType {
 	case model.TypeSQLServer:
-		return schemautil.NormalizeTableNameForLookup(tableName, sqlserver.DefaultSchema)
+		return schemautil.NormalizeTableNameForLookup(tableName, schemautil.DefaultSchemaSQLServer)
 	case model.TypeOracle:
 		// Oracle stores table names in lowercase after normalization
 		// and uses the current user as default schema
 		return strings.ToLower(tableName)
 	case model.TypePostgreSQL:
-		return schemautil.NormalizeTableNameForLookup(tableName, postgres.DefaultSchema)
+		return schemautil.NormalizeTableNameForLookup(tableName, schemautil.DefaultSchemaPostgreSQL)
 	default:
 		return tableName
 	}
@@ -437,14 +434,14 @@ func ensureDefaultSchema(tables map[string][]string, schemas []string, defaultSc
 // if any table name is unqualified (has no schema prefix with a dot).
 // This ensures tables in the public schema are discoverable when mixed with schema-qualified tables.
 func ensureDefaultSchemaForPostgreSQL(tables map[string][]string, schemas []string) []string {
-	return ensureDefaultSchema(tables, schemas, postgres.DefaultSchema)
+	return ensureDefaultSchema(tables, schemas, schemautil.DefaultSchemaPostgreSQL)
 }
 
 // ensureDefaultSchemaForSQLServer adds the default "dbo" schema to the schemas list
 // if any table name is unqualified (has no schema prefix with a dot).
 // This ensures tables in the dbo schema are discoverable when mixed with schema-qualified tables.
 func ensureDefaultSchemaForSQLServer(tables map[string][]string, schemas []string) []string {
-	return ensureDefaultSchema(tables, schemas, sqlserver.DefaultSchema)
+	return ensureDefaultSchema(tables, schemas, schemautil.DefaultSchemaSQLServer)
 }
 
 // transformPluginCRMTables transforms table names for plugin_crm datasource.

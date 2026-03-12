@@ -113,8 +113,20 @@ func GenerateCertificates(opts GenerateOptions) (*CertificateBundle, error) {
 
 	bundle.CACert = caCertDER
 	bundle.CAKey = x509.MarshalPKCS1PrivateKey(caKey)
-	bundle.CACertPEM = string(pemEncode("CERTIFICATE", caCertDER))
-	bundle.CAKeyPEM = string(pemEncode("RSA PRIVATE KEY", bundle.CAKey))
+
+	caCertPEM, err := pemEncode("CERTIFICATE", caCertDER)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode CA certificate PEM: %w", err)
+	}
+
+	bundle.CACertPEM = string(caCertPEM)
+
+	caKeyPEM, err := pemEncode("RSA PRIVATE KEY", bundle.CAKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode CA key PEM: %w", err)
+	}
+
+	bundle.CAKeyPEM = string(caKeyPEM)
 
 	caCert, err := x509.ParseCertificate(caCertDER)
 	if err != nil {
@@ -149,8 +161,20 @@ func GenerateCertificates(opts GenerateOptions) (*CertificateBundle, error) {
 
 	bundle.ServerCert = serverCertDER
 	bundle.ServerKey = x509.MarshalPKCS1PrivateKey(serverKey)
-	bundle.ServerCertPEM = string(pemEncode("CERTIFICATE", serverCertDER))
-	bundle.ServerKeyPEM = string(pemEncode("RSA PRIVATE KEY", bundle.ServerKey))
+
+	serverCertPEM, err := pemEncode("CERTIFICATE", serverCertDER)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode server certificate PEM: %w", err)
+	}
+
+	bundle.ServerCertPEM = string(serverCertPEM)
+
+	serverKeyPEM, err := pemEncode("RSA PRIVATE KEY", bundle.ServerKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode server key PEM: %w", err)
+	}
+
+	bundle.ServerKeyPEM = string(serverKeyPEM)
 
 	// Generate Client Certificate (optional)
 	if opts.GenerateClientCert {
@@ -179,8 +203,20 @@ func GenerateCertificates(opts GenerateOptions) (*CertificateBundle, error) {
 
 		bundle.ClientCert = clientCertDER
 		bundle.ClientKey = x509.MarshalPKCS1PrivateKey(clientKey)
-		bundle.ClientCertPEM = string(pemEncode("CERTIFICATE", clientCertDER))
-		bundle.ClientKeyPEM = string(pemEncode("RSA PRIVATE KEY", bundle.ClientKey))
+
+		clientCertPEM, err := pemEncode("CERTIFICATE", clientCertDER)
+		if err != nil {
+			return nil, fmt.Errorf("failed to encode client certificate PEM: %w", err)
+		}
+
+		bundle.ClientCertPEM = string(clientCertPEM)
+
+		clientKeyPEM, err := pemEncode("RSA PRIVATE KEY", bundle.ClientKey)
+		if err != nil {
+			return nil, fmt.Errorf("failed to encode client key PEM: %w", err)
+		}
+
+		bundle.ClientKeyPEM = string(clientKeyPEM)
 	}
 
 	return bundle, nil
@@ -233,11 +269,11 @@ func (b *CertificateBundle) WriteToDir(dir string) error {
 }
 
 // pemEncode encodes data to PEM format.
-func pemEncode(blockType string, data []byte) []byte {
+func pemEncode(blockType string, data []byte) ([]byte, error) {
 	var buf bytes.Buffer
 	if err := pem.Encode(&buf, &pem.Block{Type: blockType, Bytes: data}); err != nil {
-		panic(err) // Should never happen with valid input
+		return nil, err
 	}
 
-	return buf.Bytes()
+	return buf.Bytes(), nil
 }

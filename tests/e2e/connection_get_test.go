@@ -24,6 +24,8 @@ func TestGetConnection_Exists_Success(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
+	productName := e2eshared.GenerateProductName()
+
 	uniqueName := fmt.Sprintf("e2e-get-exists-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
 		ConfigName:   uniqueName,
@@ -39,7 +41,7 @@ func TestGetConnection_Exists_Success(t *testing.T) {
 		},
 	}
 
-	created, err := apiClient.CreateConnection(ctx, connInput)
+	created, err := apiClient.CreateConnection(ctx, productName, connInput)
 	require.NoError(t, err, "create connection")
 
 	t.Cleanup(func() {
@@ -58,6 +60,7 @@ func TestGetConnection_Exists_Success(t *testing.T) {
 	assert.Equal(t, pgPort, retrieved.Port, "port should match")
 	assert.Equal(t, "testdb", retrieved.DatabaseName, "database name should match")
 	assert.Equal(t, "testuser", retrieved.Username, "username should match")
+	assert.Equal(t, productName, retrieved.ProductName, "product name should match")
 	assert.NotEmpty(t, retrieved.CreatedAt, "created_at should be set")
 	assert.NotEmpty(t, retrieved.UpdatedAt, "updated_at should be set")
 
@@ -91,9 +94,6 @@ func TestGetConnection_NotFound_404(t *testing.T) {
 func TestGetConnection_InvalidID_BadRequest(t *testing.T) {
 	t.Parallel()
 
-	ctx, cancel := context.WithTimeout(context.Background(), e2eshared.DefaultTestTimeout)
-	defer cancel()
-
 	invalidIDs := []string{
 		"not-a-uuid",
 		"12345",
@@ -107,6 +107,11 @@ func TestGetConnection_InvalidID_BadRequest(t *testing.T) {
 		}
 
 		t.Run(invalidID, func(t *testing.T) {
+			t.Parallel()
+
+			ctx, cancel := context.WithTimeout(context.Background(), e2eshared.DefaultTestTimeout)
+			defer cancel()
+
 			resp, err := apiClient.GetConnectionRaw(ctx, invalidID)
 			require.NoError(t, err, "request should succeed")
 

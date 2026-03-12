@@ -2,13 +2,14 @@ package command
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/model"
-	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
-	"github.com/LerianStudio/fetcher/pkg/mongodb/job"
+	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
+	"github.com/LerianStudio/fetcher/pkg/ports/job"
 
 	"github.com/LerianStudio/lib-commons/v4/commons"
 	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
@@ -50,10 +51,13 @@ func (s *UpdateConnection) Execute(ctx context.Context, organizationID, connecti
 
 	current, err := s.connRepo.FindByID(ctx, connectionID, organizationID)
 	if err != nil {
-		return nil, err
+		libOpentelemetry.HandleSpanError(span, "Failed to find connection by ID", err)
+		return nil, fmt.Errorf("failed to find connection by id: %w", err)
 	}
 
 	if current == nil {
+		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Connection not found", constant.ErrEntityNotFound)
+
 		return nil, pkg.ValidateBusinessError(
 			constant.ErrEntityNotFound,
 			"connection",
@@ -62,10 +66,13 @@ func (s *UpdateConnection) Execute(ctx context.Context, organizationID, connecti
 
 	active, err := s.jobRepo.ExistsRunningByMappedFieldKey(ctx, organizationID, current.ConfigName)
 	if err != nil {
-		return nil, err
+		libOpentelemetry.HandleSpanError(span, "Failed to check for active jobs", err)
+		return nil, fmt.Errorf("failed to check for active jobs: %w", err)
 	}
 
 	if active {
+		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Connection has active jobs", constant.ErrJobInProgress)
+
 		return nil, pkg.ValidateBusinessError(
 			constant.ErrJobInProgress,
 			"connection",
@@ -113,15 +120,19 @@ func (s *UpdateConnection) Execute(ctx context.Context, organizationID, connecti
 			return nil
 		}(),
 	); errPatch != nil {
-		return nil, errPatch
+		libOpentelemetry.HandleSpanError(span, "Failed to apply connection patch", errPatch)
+		return nil, fmt.Errorf("failed to apply connection patch: %w", errPatch)
 	}
 
 	updated, err := s.connRepo.Update(ctx, current)
 	if err != nil {
-		return nil, err
+		libOpentelemetry.HandleSpanError(span, "Failed to update connection", err)
+		return nil, fmt.Errorf("failed to update connection: %w", err)
 	}
 
 	if updated == nil {
+		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Updated connection not found", constant.ErrEntityNotFound)
+
 		return nil, pkg.ValidateBusinessError(
 			constant.ErrEntityNotFound,
 			"connection",

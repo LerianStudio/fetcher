@@ -12,15 +12,16 @@ import (
 	connectionCommand "github.com/LerianStudio/fetcher/components/manager/internal/services/command"
 	connectionQuery "github.com/LerianStudio/fetcher/components/manager/internal/services/query"
 
-	cacheRepo "github.com/LerianStudio/fetcher/components/manager/internal/adapters/cache"
+	cacheAdapter "github.com/LerianStudio/fetcher/components/manager/internal/adapters/cache"
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	datasourceFactory "github.com/LerianStudio/fetcher/pkg/datasource"
 	"github.com/LerianStudio/fetcher/pkg/model"
+	"github.com/LerianStudio/fetcher/pkg/mongodb"
 	"github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 	"github.com/LerianStudio/fetcher/pkg/mongodb/job"
-	"github.com/LerianStudio/fetcher/pkg/mongodb/product"
+	cacheRepo "github.com/LerianStudio/fetcher/pkg/ports/cache"
 	"github.com/LerianStudio/fetcher/pkg/rabbitmq"
 	"github.com/LerianStudio/fetcher/pkg/ratelimit"
 	redisCache "github.com/LerianStudio/fetcher/pkg/redis"
@@ -31,9 +32,18 @@ import (
 	libMongo "github.com/LerianStudio/lib-commons/v4/commons/mongo"
 	libOtel "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
 	libRabbitmq "github.com/LerianStudio/lib-commons/v4/commons/rabbitmq"
+	tmclient "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/client"
+	tmmiddleware "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/middleware"
+	tmmongo "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/mongo"
 	"github.com/LerianStudio/lib-commons/v4/commons/zap"
 	libLicense "github.com/LerianStudio/lib-license-go/v2/middleware"
+	"github.com/gofiber/fiber/v2"
 )
+
+// defaultMaxTenantPools is the fallback soft limit for tenant connection pools
+// when MULTI_TENANT_MAX_TENANT_POOLS is unset or zero. This prevents unbounded
+// pool growth. The value can be overridden via the environment variable.
+const defaultMaxTenantPools = 100
 
 // Config is the top-level configuration struct for the entire application.
 type Config struct {
@@ -83,12 +93,20 @@ type Config struct {
 	RedisDB       string `env:"REDIS_DB"`
 	// Schema cache TTL
 	SchemaCacheTTLSeconds string `env:"SCHEMA_CACHE_TTL_SECONDS"`
+	// Multi-Tenant configuration
+	MultiTenantEnabled bool   `env:"MULTI_TENANT_ENABLED"`
+	MultiTenantURL     string `env:"MULTI_TENANT_URL"`
+	// TODO(multi-tenant): Wire MultiTenantEnvironment into RabbitMQ lazy consumer when full multi-tenant RabbitMQ is implemented.
+	MultiTenantEnvironment              string `env:"MULTI_TENANT_ENVIRONMENT"`
+	MultiTenantMaxTenantPools           int    `env:"MULTI_TENANT_MAX_TENANT_POOLS"`
+	MultiTenantIdleTimeoutSec           int    `env:"MULTI_TENANT_IDLE_TIMEOUT_SEC"`
+	MultiTenantCircuitBreakerThreshold  int    `env:"MULTI_TENANT_CIRCUIT_BREAKER_THRESHOLD"`
+	MultiTenantCircuitBreakerTimeoutSec int    `env:"MULTI_TENANT_CIRCUIT_BREAKER_TIMEOUT_SEC"`
 }
 
 type managerRepositories struct {
 	connection *connection.ConnectionMongoDBRepository
 	job        *job.JobMongoDBRepository
-	product    *product.ProductMongoDBRepository
 }
 
 type managerCrypto struct {
@@ -114,7 +132,6 @@ var (
 	newManagerMongoClient   = libMongo.NewClient
 	newConnectionRepository = connection.NewConnectionMongoDBRepository
 	newJobRepository        = job.NewJobMongoDBRepository
-	newProductRepository    = product.NewProductMongoDBRepository
 	newSchemaCacheStore     = func(cfg redisCache.RedisConfig, logger libLog.Logger, ttl time.Duration, prefix string) (redisCache.Cache[model.DataSourceSchema], error) {
 		return redisCache.NewCacheWithFallback[model.DataSourceSchema](cfg, logger, ttl, prefix)
 	}
@@ -138,6 +155,12 @@ func InitServers() (*Service, error) {
 	logger, telemetry, err := initLoggerAndTelemetryFn(cfg)
 	if err != nil {
 		return nil, err
+	}
+
+	if cfg.MultiTenantEnabled {
+		logger.Log(ctx, libLog.LevelInfo, "Multi-tenant mode ENABLED")
+	} else {
+		logger.Log(ctx, libLog.LevelInfo, "Running in SINGLE-TENANT MODE")
 	}
 
 	repositories, err := initMongoRepositoriesFn(ctx, cfg, logger)
@@ -214,7 +237,12 @@ func initMongoRepositories(ctx context.Context, cfg *Config, logger libLog.Logge
 		return nil, wrapBootstrapError("initialize MongoDB client", err)
 	}
 
-	connectionRepository, err := newConnectionRepository(mongoConnection, cfg.MongoDBName)
+	// Wrap the MongoDB connection to implement multi-tenant checker.
+	// When multi-tenant mode is enabled, tenant context is required
+	// instead of silently falling back to the default DB.
+	mongoProvider := mongodb.NewMultiTenantMongoProvider(mongoConnection, cfg.MultiTenantEnabled)
+
+	connectionRepository, err := newConnectionRepository(ctx, mongoProvider, cfg.MongoDBName)
 	if err != nil {
 		return nil, wrapBootstrapError("create MongoDB connection repository", err)
 	}
@@ -225,7 +253,7 @@ func initMongoRepositories(ctx context.Context, cfg *Config, logger libLog.Logge
 		return nil, wrapBootstrapError("ensure MongoDB connection indexes", err)
 	}
 
-	jobRepository, err := newJobRepository(mongoConnection, cfg.MongoDBName)
+	jobRepository, err := newJobRepository(ctx, mongoProvider, cfg.MongoDBName)
 	if err != nil {
 		return nil, wrapBootstrapError("create MongoDB job repository", err)
 	}
@@ -236,21 +264,9 @@ func initMongoRepositories(ctx context.Context, cfg *Config, logger libLog.Logge
 		return nil, wrapBootstrapError("ensure MongoDB job indexes", err)
 	}
 
-	productRepository, err := newProductRepository(mongoConnection, cfg.MongoDBName)
-	if err != nil {
-		return nil, wrapBootstrapError("create MongoDB product repository", err)
-	}
-
-	logger.Log(ctx, libLog.LevelInfo, "Ensuring MongoDB indexes exist for products...")
-
-	if err := productRepository.EnsureIndexes(ctx); err != nil {
-		return nil, wrapBootstrapError("ensure MongoDB product indexes", err)
-	}
-
 	return &managerRepositories{
 		connection: connectionRepository,
 		job:        jobRepository,
-		product:    productRepository,
 	}, nil
 }
 
@@ -327,7 +343,7 @@ func initPlatformDependencies(cfg *Config, logger libLog.Logger, messageSigner c
 			&licenseLogger,
 		),
 		connectionTestStore: ratelimit.New(10, time.Minute),
-		schemaCache:         cacheRepo.NewSchemaCache(genericCache, schemaCacheTTL),
+		schemaCache:         cacheAdapter.NewSchemaCache(genericCache, schemaCacheTTL),
 	}, nil
 }
 
@@ -339,13 +355,13 @@ func assembleService(
 	cryptoService *crypto.AESGCMService,
 	platformDependencies *managerPlatformDependencies,
 ) *Service {
-	createConnectionCmd := connectionCommand.NewCreateConnection(repositories.connection, repositories.product, cryptoService)
+	createConnectionCmd := connectionCommand.NewCreateConnection(repositories.connection, cryptoService)
 	updateConnectionCmd := connectionCommand.NewUpdateConnection(repositories.connection, repositories.job, cryptoService)
 	deleteConnectionCmd := connectionCommand.NewDeleteConnection(repositories.connection, repositories.job)
 	getConnectionQuery := connectionQuery.NewGetConnection(repositories.connection)
-	listConnectionsQuery := connectionQuery.NewListConnections(repositories.connection, repositories.product)
-	testConnectionQuery := connectionQuery.NewTestConnection(repositories.connection, cryptoService, platformDependencies.connectionTestStore)
-	validateSchemaQuery := connectionQuery.NewValidateSchema(repositories.connection, cryptoService, platformDependencies.schemaCache)
+	listConnectionsQuery := connectionQuery.NewListConnections(repositories.connection)
+	testConnectionQuery := connectionQuery.NewTestConnection(repositories.connection, cryptoService, platformDependencies.connectionTestStore, datasourceFactory.NewDataSourceFromConnectionWithLogger(logger))
+	validateSchemaQuery := connectionQuery.NewValidateSchema(repositories.connection, cryptoService, platformDependencies.schemaCache, datasourceFactory.NewDataSourceFromConnectionWithLogger(logger))
 	getConnectionSchemaQuery := connectionQuery.NewGetConnectionSchema(
 		repositories.connection,
 		cryptoService,
@@ -363,30 +379,27 @@ func assembleService(
 		getConnectionSchemaQuery,
 	)
 
-	productHandler := in2.NewProductHandler(
-		connectionCommand.NewCreateProduct(repositories.product),
-		connectionCommand.NewUpdateProduct(repositories.product),
-		connectionCommand.NewDeleteProduct(repositories.product, repositories.connection),
-		connectionQuery.NewGetProduct(repositories.product),
-		connectionQuery.NewListProducts(repositories.product),
-	)
-
 	migrationHandler := in2.NewMigrationHandler(
-		connectionCommand.NewAssignConnection(repositories.connection, repositories.product),
+		connectionCommand.NewAssignConnection(repositories.connection),
 		connectionQuery.NewListUnassignedConnections(repositories.connection),
 	)
 
+	createFetcherJobCmd := connectionCommand.NewCreateFetcherJob(
+		repositories.connection,
+		repositories.job,
+		cryptoService,
+		platformDependencies.rabbitAdapter,
+		cfg.RabbitMQGenerateReportQueue,
+		datasourceFactory.NewDataSourceFromConnectionWithLogger(logger),
+	)
+
 	fetcherHandler := in2.NewFetcherHandler(
-		connectionCommand.NewCreateFetcherJob(
-			repositories.connection,
-			repositories.job,
-			repositories.product,
-			cryptoService,
-			platformDependencies.rabbitAdapter,
-			cfg.RabbitMQGenerateReportQueue,
-		),
+		createFetcherJobCmd,
 		connectionQuery.NewGetJob(repositories.job),
 	)
+
+	// Init multi-tenant middleware (nil if disabled)
+	tenantHandler := initMultiTenantMiddleware(cfg, logger)
 
 	httpApp := in2.NewRoutes(
 		logger,
@@ -394,15 +407,92 @@ func assembleService(
 		platformDependencies.authClient,
 		platformDependencies.licenseClient,
 		connectionHandler,
-		productHandler,
 		migrationHandler,
 		fetcherHandler,
+		tenantHandler,
 	)
 
 	return &Service{
 		Server: NewServer(cfg, httpApp, logger, telemetry, platformDependencies.licenseClient),
 		Logger: logger,
 	}
+}
+
+// initMultiTenantMiddleware creates a TenantMiddleware Fiber handler if multi-tenant
+// mode is enabled and configured. Returns nil when multi-tenant is disabled (single-tenant mode).
+// The middleware resolves tenant-specific MongoDB connections from JWT claims.
+//
+// Per multi-tenant.md standards:
+//   - Circuit breaker is MANDATORY for the Tenant Manager client
+//   - Uses constant.ApplicationName and constant.ModuleManager for service/module identity
+//   - WithMongoManager configures MongoDB connection pool management
+func initMultiTenantMiddleware(cfg *Config, logger libLog.Logger) fiber.Handler {
+	if !cfg.MultiTenantEnabled || cfg.MultiTenantURL == "" {
+		return nil
+	}
+
+	// Create Tenant Manager HTTP client with circuit breaker (MANDATORY per multi-tenant.md).
+	// Default: 5 consecutive failures, 30s half-open timeout.
+	var clientOpts []tmclient.ClientOption
+
+	// Allow plaintext HTTP for local/dev environments where TLS is not configured.
+	if strings.HasPrefix(cfg.MultiTenantURL, "http://") {
+		clientOpts = append(clientOpts, tmclient.WithAllowInsecureHTTP())
+	}
+
+	if cfg.MultiTenantCircuitBreakerThreshold > 0 {
+		clientOpts = append(clientOpts,
+			tmclient.WithCircuitBreaker(
+				cfg.MultiTenantCircuitBreakerThreshold,
+				time.Duration(cfg.MultiTenantCircuitBreakerTimeoutSec)*time.Second,
+			),
+		)
+	} else {
+		clientOpts = append(clientOpts,
+			tmclient.WithCircuitBreaker(5, 30*time.Second),
+		)
+	}
+
+	tmClient, err := tmclient.NewClient(cfg.MultiTenantURL, logger, clientOpts...)
+	if err != nil {
+		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to create tenant manager client: %v", err))
+
+		return nil
+	}
+
+	// Create MongoDB Manager for tenant connection pool management
+	var mongoOpts []tmmongo.Option
+
+	mongoOpts = append(mongoOpts,
+		tmmongo.WithModule(constant.ModuleManager),
+		tmmongo.WithLogger(logger),
+	)
+
+	// Apply tenant pool limit. Use configured value if > 0, otherwise apply a sensible
+	// default to prevent unbounded pool growth. The value matches the value in .env.example.
+	maxTenantPools := cfg.MultiTenantMaxTenantPools
+	if maxTenantPools <= 0 {
+		maxTenantPools = defaultMaxTenantPools
+	}
+
+	mongoOpts = append(mongoOpts, tmmongo.WithMaxTenantPools(maxTenantPools))
+
+	if cfg.MultiTenantIdleTimeoutSec > 0 {
+		mongoOpts = append(mongoOpts, tmmongo.WithIdleTimeout(
+			time.Duration(cfg.MultiTenantIdleTimeoutSec)*time.Second,
+		))
+	}
+
+	mongoManager := tmmongo.NewManager(tmClient, constant.ApplicationName, mongoOpts...)
+
+	// Create TenantMiddleware with MongoDB manager (fetcher uses MongoDB only for internal DB)
+	tenantMid := tmmiddleware.NewTenantMiddleware(
+		tmmiddleware.WithMongoManager(mongoManager),
+	)
+
+	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Multi-tenant middleware initialized: url=%s, module=%s", cfg.MultiTenantURL, constant.ModuleManager))
+
+	return tenantMid.WithTenantDB
 }
 
 func buildMongoSource(cfg *Config) string {

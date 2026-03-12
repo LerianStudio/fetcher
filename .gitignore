@@ -43,8 +43,7 @@ scripts/node_modules
 .claude
 .agent
 .docs
-*.http
-/docs/
+artifacts
 
 # ----------------------------------------
 # Git Worktrees

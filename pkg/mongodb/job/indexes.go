@@ -37,13 +37,13 @@ func (jr *JobMongoDBRepository) EnsureIndexes(ctx context.Context) error {
 
 	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Creating indexes for %s collection", constant.MongoCollectionJob))
 
-	db, err := jr.connection.Client(ctx)
+	db, err := jr.getDatabase(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to get database", err)
 		return err
 	}
 
-	coll := db.Database(strings.ToLower(jr.Database)).Collection(strings.ToLower(constant.MongoCollectionJob))
+	coll := db.Collection(strings.ToLower(constant.MongoCollectionJob))
 
 	indexes := []mongo.IndexModel{
 		{
@@ -134,13 +134,13 @@ func (jr *JobMongoDBRepository) DropIndexes(ctx context.Context) error {
 
 	logger.Log(ctx, libLog.LevelWarn, fmt.Sprintf("Dropping all custom indexes for %s collection", constant.MongoCollectionJob))
 
-	db, err := jr.connection.Client(ctx)
+	db, err := jr.getDatabase(ctx)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to get database", err)
 		return err
 	}
 
-	coll := db.Database(strings.ToLower(jr.Database)).Collection(strings.ToLower(constant.MongoCollectionJob))
+	coll := db.Collection(strings.ToLower(constant.MongoCollectionJob))
 
 	ctx, cancel := context.WithTimeout(ctx, indexDropTimeout)
 	defer cancel()

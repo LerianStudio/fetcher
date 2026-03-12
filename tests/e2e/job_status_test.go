@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/LerianStudio/fetcher/pkg/model"
 	e2eshared "github.com/LerianStudio/fetcher/tests/shared"
@@ -14,9 +15,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestGetJob_Pending_Success verifies that a newly created job
-// can be retrieved and shows pending status.
-func TestGetJob_Pending_Success(t *testing.T) {
+// TestGetJob_AfterCreation_Success verifies that a newly created job
+// can be retrieved via GET and has valid fields.
+// Note: We do not assert on a specific status (pending/processing/completed)
+// because the worker may process jobs faster than the test can observe
+// transient states. Instead, we verify the job exists and has valid structure.
+func TestGetJob_AfterCreation_Success(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithTimeout(context.Background(), e2eshared.DefaultTestTimeout)
@@ -25,8 +29,10 @@ func TestGetJob_Pending_Success(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
-	// Create connection
-	uniqueName := fmt.Sprintf("e2e-job-pending-%s", uuid.New().String()[:8])
+	// Generate product name and create connection
+	productName := e2eshared.GenerateProductName()
+
+	uniqueName := fmt.Sprintf("e2e-job-get-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypePostgreSQL,
@@ -37,16 +43,16 @@ func TestGetJob_Pending_Success(t *testing.T) {
 		Password:     "testpass",
 	}
 
-	conn, err := apiClient.CreateConnection(ctx, connInput)
+	conn, err := apiClient.CreateConnection(ctx, productName, connInput)
 	require.NoError(t, err, "create connection")
 
 	t.Cleanup(func() {
 		_ = apiClient.DeleteConnection(context.Background(), conn.ID)
 	})
 
-	// Create job - intentionally use a slow query or large dataset to catch pending state
-	// Note: In practice, the job may process very quickly, so this test may see
-	// processing or completed status instead of pending.
+	err = apiClient.WaitForConnectionAvailable(ctx, conn.ID, 10*time.Second)
+	require.NoError(t, err, "wait for connection to be available")
+
 	fetcherReq := model.FetcherRequest{
 		DataRequest: model.DataRequest{
 			MappedFields: map[string]map[string][]string{
@@ -56,33 +62,27 @@ func TestGetJob_Pending_Success(t *testing.T) {
 			},
 		},
 		Metadata: map[string]any{
-			"source": "reporter",
-			"test":   "job-pending-status",
+			"source": productName,
+			"test":   "job-get-after-creation",
 		},
 	}
 
 	fetcherResp, err := apiClient.CreateFetcherJob(ctx, fetcherReq)
 	require.NoError(t, err, "create fetcher job")
+	require.NotEmpty(t, fetcherResp.JobID, "job ID should be set in creation response")
 
 	jobID := fetcherResp.JobID.String()
-	t.Logf("Created job: %s, initial status: %s", jobID, fetcherResp.Status)
 
-	// Immediately get job status
+	// Retrieve job via GET endpoint
 	job, err := apiClient.GetJob(ctx, jobID)
-	require.NoError(t, err, "get job")
+	require.NoError(t, err, "get job should succeed")
 
-	// Job should be in one of the valid states
-	validStatuses := []string{
-		e2eshared.JobStatusPending,
-		e2eshared.JobStatusProcessing,
-		e2eshared.JobStatusCompleted,
-	}
-
-	assert.Contains(t, validStatuses, job.Status, "job should be in a valid state")
-	assert.NotEmpty(t, job.ID, "job ID should be set")
+	// Assert structural fields are present (not transient status)
+	assert.Equal(t, jobID, job.ID.String(), "job ID should match creation response")
 	assert.NotEmpty(t, job.CreatedAt, "created_at should be set")
+	assert.NotEmpty(t, job.Status, "status should not be empty")
 
-	t.Logf("Job state: status=%s, id=%s", job.Status, job.ID)
+	t.Logf("Job retrieved: id=%s, status=%s", job.ID, job.Status)
 }
 
 // TestGetJob_Completed_Success verifies that a completed job
@@ -96,7 +96,9 @@ func TestGetJob_Completed_Success(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
-	// Create connection
+	// Generate product name and create connection
+	productName := e2eshared.GenerateProductName()
+
 	uniqueName := fmt.Sprintf("e2e-job-complete-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
 		ConfigName:   uniqueName,
@@ -108,12 +110,15 @@ func TestGetJob_Completed_Success(t *testing.T) {
 		Password:     "testpass",
 	}
 
-	conn, err := apiClient.CreateConnection(ctx, connInput)
+	conn, err := apiClient.CreateConnection(ctx, productName, connInput)
 	require.NoError(t, err, "create connection")
 
 	t.Cleanup(func() {
 		_ = apiClient.DeleteConnection(context.Background(), conn.ID)
 	})
+
+	err = apiClient.WaitForConnectionAvailable(ctx, conn.ID, 10*time.Second)
+	require.NoError(t, err, "wait for connection to be available")
 
 	// Create job
 	fetcherReq := model.FetcherRequest{
@@ -125,7 +130,7 @@ func TestGetJob_Completed_Success(t *testing.T) {
 			},
 		},
 		Metadata: map[string]any{
-			"source": "reporter",
+			"source": productName,
 			"test":   "job-completed-status",
 		},
 	}
@@ -176,7 +181,9 @@ func TestCreateJob_DuplicateRequest_ReturnsExisting(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
-	// Create connection
+	// Generate product name and create connection
+	productName := e2eshared.GenerateProductName()
+
 	uniqueName := fmt.Sprintf("e2e-job-dup-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
 		ConfigName:   uniqueName,
@@ -188,14 +195,17 @@ func TestCreateJob_DuplicateRequest_ReturnsExisting(t *testing.T) {
 		Password:     "testpass",
 	}
 
-	conn, err := apiClient.CreateConnection(ctx, connInput)
+	conn, err := apiClient.CreateConnection(ctx, productName, connInput)
 	require.NoError(t, err, "create connection")
 
 	t.Cleanup(func() {
 		_ = apiClient.DeleteConnection(context.Background(), conn.ID)
 	})
 
-	// Create identical request
+	err = apiClient.WaitForConnectionAvailable(ctx, conn.ID, 10*time.Second)
+	require.NoError(t, err, "wait for connection to be available")
+
+	// Create a request with fixed metadata (no unique requestId) for idempotency testing
 	fetcherReq := model.FetcherRequest{
 		DataRequest: model.DataRequest{
 			MappedFields: map[string]map[string][]string{
@@ -205,59 +215,34 @@ func TestCreateJob_DuplicateRequest_ReturnsExisting(t *testing.T) {
 			},
 		},
 		Metadata: map[string]any{
-			"source":    "reporter",
-			"test":      "job-duplicate",
-			"requestId": uuid.New().String(), // This makes metadata different but same data request
-		},
-	}
-
-	// Create first job
-	resp1, err := apiClient.CreateFetcherJob(ctx, fetcherReq)
-	require.NoError(t, err, "create first job")
-
-	job1ID := resp1.JobID.String()
-	t.Logf("First job created: %s", job1ID)
-
-	// Note: Because metadata includes a unique requestId, the hash will be different.
-	// For true idempotency testing, we need to use the exact same request.
-	fetcherReqSame := model.FetcherRequest{
-		DataRequest: model.DataRequest{
-			MappedFields: map[string]map[string][]string{
-				uniqueName: {
-					"transactions": {"id", "account_id", "amount"},
-				},
-			},
-		},
-		Metadata: map[string]any{
-			"source": "reporter",
+			"source": productName,
 			"test":   "job-duplicate-same",
 		},
 	}
 
-	// Create first job with same metadata
-	resp2, err := apiClient.CreateFetcherJob(ctx, fetcherReqSame)
+	// Create first job
+	resp2, err := apiClient.CreateFetcherJob(ctx, fetcherReq)
 	require.NoError(t, err, "create first job")
 
+	t.Logf("First job created: %s", resp2.JobID)
+
 	// Create duplicate job with exact same request
-	resp3, err := apiClient.CreateFetcherJob(ctx, fetcherReqSame)
+	resp3, err := apiClient.CreateFetcherJob(ctx, fetcherReq)
 	require.NoError(t, err, "create duplicate job")
 
-	// If idempotency is implemented, both should return the same job ID
-	// If not, they will be different jobs
-	if resp2.JobID == resp3.JobID {
-		t.Logf("Idempotency working: duplicate request returned same job %s", resp2.JobID)
-	} else {
-		t.Logf("No idempotency: requests created different jobs %s and %s", resp2.JobID, resp3.JobID)
-	}
+	// The API deduplicates requests with the same hash within a time window.
+	// Both requests have identical DataRequest and Metadata, so the second should
+	// return the same job as the first (HTTP 200 instead of 202).
+	assert.Equal(t, resp2.JobID, resp3.JobID,
+		"duplicate request should return the same job ID (idempotency)")
+
+	t.Logf("Idempotency verified: both requests returned job %s", resp2.JobID)
 }
 
 // TestGetJob_InvalidID_BadRequest verifies that requesting a job
 // with an invalid ID format returns an appropriate error.
 func TestGetJob_InvalidID_BadRequest(t *testing.T) {
 	t.Parallel()
-
-	ctx, cancel := context.WithTimeout(context.Background(), e2eshared.DefaultTestTimeout)
-	defer cancel()
 
 	invalidIDs := []string{
 		"not-a-uuid",
@@ -267,6 +252,11 @@ func TestGetJob_InvalidID_BadRequest(t *testing.T) {
 
 	for _, invalidID := range invalidIDs {
 		t.Run(invalidID, func(t *testing.T) {
+			t.Parallel()
+
+			ctx, cancel := context.WithTimeout(context.Background(), e2eshared.DefaultTestTimeout)
+			defer cancel()
+
 			resp, err := apiClient.GetJobRaw(ctx, invalidID)
 			require.NoError(t, err, "request should succeed")
 

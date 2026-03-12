@@ -11,6 +11,7 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/lib-commons/v4/commons"
 	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	tmcore "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/core"
 	"go.mongodb.org/mongo-driver/bson/bsoncodec"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/readpref"
@@ -128,6 +129,22 @@ func MapMongoErrorToResponse(err error, ctx context.Context) error {
 	if errors.As(err, &decodeErr) {
 		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("MongoDB decode error: %v", err))
 		return pkg.ValidateInternalError(constant.ErrInternalServer, "")
+	}
+
+	// Multi-tenant sentinel errors
+	if errors.Is(err, tmcore.ErrTenantContextRequired) {
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("MongoDB tenant context required: %v", err))
+		return pkg.ValidateBusinessError(constant.ErrTenantContextRequired, "tenant")
+	}
+
+	if errors.Is(err, tmcore.ErrTenantNotFound) {
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("MongoDB tenant not found: %v", err))
+		return pkg.ValidateBusinessError(constant.ErrTenantNotFound, "tenant")
+	}
+
+	if errors.Is(err, tmcore.ErrCircuitBreakerOpen) {
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("MongoDB tenant circuit breaker open: %v", err))
+		return pkg.ValidateBusinessError(constant.ErrTenantCircuitBreaker, "tenant")
 	}
 
 	logger.Log(ctx, libLog.LevelError, fmt.Sprintf("MongoDB unknown error: %v", err))

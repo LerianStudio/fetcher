@@ -10,7 +10,6 @@ import (
 	workerCrypto "github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	modelDatasource "github.com/LerianStudio/fetcher/pkg/model/datasource"
-	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
 	"go.uber.org/mock/gomock"
 )
 
@@ -73,6 +72,9 @@ func TestExtractExternalData_NoConnectionsMarksFailed(t *testing.T) {
 	pendingJob := &model.Job{ID: jobID, Status: model.JobStatusPending}
 	mocks.jobRepo.EXPECT().FindByID(gomock.Any(), jobID, orgID).Return(pendingJob, nil)
 	mocks.jobRepo.EXPECT().FindByID(gomock.Any(), jobID, orgID).Return(pendingJob, nil)
+	mocks.jobRepo.EXPECT().
+		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusProcessing, "", "", nil).
+		Return(nil)
 	mocks.connRepo.EXPECT().FindByConfigNames(gomock.Any(), orgID, []string{"postgres_db"}).Return([]*model.Connection{}, nil)
 	mocks.jobRepo.EXPECT().
 		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any(), gomock.Any(), gomock.Any()).
@@ -94,20 +96,18 @@ func TestExtractExternalData_CompletedStatusUpdateFailureMarksJobFailed(t *testi
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	originalFactory := newDataSourceFromConnection
-	t.Cleanup(func() {
-		newDataSourceFromConnection = originalFactory
-	})
-
 	mocks := newTestMocks(ctrl)
 	uc := newTestUseCase(mocks)
 	uc.DocumentSigner = workerCrypto.NewMockSigner(ctrl)
+	// Override with valid hex-encoded 32-byte keys required by lib-commons v4 crypto.
+	uc.SetStorageSecrets(
+		"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		"fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+	)
 
 	ctx := testContext()
 	jobID := newTestJobID()
 	orgID := newTestOrgID()
-	t.Setenv("CRYPTO_ENCRYPT_SECRET_KEY_SEAWEEDFS", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
-	t.Setenv("CRYPTO_HASH_SECRET_KEY_SEAWEEDFS", "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210")
 
 	body := mustMarshalMessage(t, ExtractExternalDataMessage{
 		JobID:          jobID,
@@ -122,12 +122,15 @@ func TestExtractExternalData_CompletedStatusUpdateFailureMarksJobFailed(t *testi
 	connection := &model.Connection{ConfigName: "postgres_db", Type: model.TypePostgreSQL}
 	mockDataSource := modelDatasource.NewMockDataSource(ctrl)
 
-	newDataSourceFromConnection = func(context.Context, *model.Connection, workerCrypto.Cryptor, libLog.Logger) (modelDatasource.DataSource, error) {
+	uc.SetDataSourceFactory(func(_ context.Context, _ *model.Connection, _ workerCrypto.Cryptor) (modelDatasource.DataSource, error) {
 		return mockDataSource, nil
-	}
+	})
 
 	mocks.jobRepo.EXPECT().FindByID(gomock.Any(), jobID, orgID).Return(pendingJob, nil)
 	mocks.jobRepo.EXPECT().FindByID(gomock.Any(), jobID, orgID).Return(pendingJob, nil)
+	mocks.jobRepo.EXPECT().
+		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusProcessing, "", "", nil).
+		Return(nil)
 	mocks.connRepo.EXPECT().FindByConfigNames(gomock.Any(), orgID, []string{"postgres_db"}).Return([]*model.Connection{connection}, nil)
 	mockDataSource.EXPECT().Connect(gomock.Any(), gomock.Any()).Return(nil)
 	mockDataSource.EXPECT().Query(gomock.Any(), map[string][]string{"users": {"id", "name"}}, nil, gomock.Any()).
@@ -175,11 +178,6 @@ func TestQueryDatabase_DataSourceFactoryAndLifecycleErrors(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			defer ctrl.Finish()
 
-			originalFactory := newDataSourceFromConnection
-			t.Cleanup(func() {
-				newDataSourceFromConnection = originalFactory
-			})
-
 			mocks := newTestMocks(ctrl)
 			uc := newTestUseCase(mocks)
 			ctx := testContext()
@@ -188,12 +186,12 @@ func TestQueryDatabase_DataSourceFactoryAndLifecycleErrors(t *testing.T) {
 			connection := &model.Connection{ConfigName: "postgres_db", Type: model.TypePostgreSQL}
 			mockDataSource := modelDatasource.NewMockDataSource(ctrl)
 
-			newDataSourceFromConnection = func(context.Context, *model.Connection, workerCrypto.Cryptor, libLog.Logger) (modelDatasource.DataSource, error) {
+			uc.SetDataSourceFactory(func(_ context.Context, _ *model.Connection, _ workerCrypto.Cryptor) (modelDatasource.DataSource, error) {
 				if tt.factoryErr != nil {
 					return nil, tt.factoryErr
 				}
 				return mockDataSource, nil
-			}
+			})
 
 			if tt.factoryErr == nil {
 				mockDataSource.EXPECT().Connect(gomock.Any(), gomock.Any()).Return(tt.connectErr)
@@ -246,7 +244,7 @@ func TestSaveExternalDataToSeaweedFS_DocumentSignerError(t *testing.T) {
 	signer := uc.DocumentSigner.(*workerCrypto.MockSigner)
 	signer.EXPECT().SignReader(gomock.Any()).Return("", errors.New("sign failed"))
 
-	resultData, err := uc.saveExternalDataToSeaweedFS(ctx, testTracer(), message, result, nil, logger)
+	resultData, err := uc.saveExternalData(ctx, testTracer(), message, result, nil, logger)
 	if err == nil {
 		t.Fatal("expected error when document signing fails")
 	}

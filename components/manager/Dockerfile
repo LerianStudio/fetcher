@@ -1,6 +1,6 @@
-# syntax=docker/dockerfile:1.4
+# syntax=docker/dockerfile:1.4 
 
-FROM golang:1.25-alpine AS builder
+FROM golang:1.26-alpine AS builder
 
 # Install required packages: git is needed for private modules
 RUN apk add --no-cache git
@@ -31,13 +31,13 @@ FROM alpine:3.23
 
 WORKDIR /app
 
-# Install certificates/timezone data required by the manager binary
-RUN apk add --no-cache ca-certificates tzdata && \
-    update-ca-certificates
+# Install certificates/timezone data and curl for health checks
+RUN apk add --no-cache ca-certificates tzdata curl && \
+  update-ca-certificates
 
 # Create a non-root user for security
 RUN addgroup -g 1001 -S appgroup && \
-    adduser -u 1001 -S appuser -G appgroup
+  adduser -u 1001 -S appuser -G appgroup
 
 # Copy the binary from the builder stage
 COPY --from=builder /manager /app/manager
@@ -50,6 +50,10 @@ USER appuser
 
 # Expose the application port
 EXPOSE 4006
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD curl -f http://localhost:4006/health || exit 1
 
 # Set the entrypoint to the manager binary
 ENTRYPOINT ["/app/manager"]

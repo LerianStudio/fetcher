@@ -1,0 +1,26 @@
+{
+  "tool_versions": {
+    "golangci-lint": "Error: unknown flag: --format",
+    "gosec": "dev",
+    "staticcheck": "2026.1"
+  },
+  "findings": [
+    {
+      "tool": "gosec",
+      "rule": "G115",
+      "severity": "high",
+      "file": "components/worker/internal/bootstrap/config.go",
+      "line": 186,
+      "column": 22,
+      "message": "integer overflow conversion int -\u003e uint64",
+      "category": "security"
+    }
+  ],
+  "summary": {
+    "critical": 0,
+    "high": 1,
+    "warning": 0,
+    "info": 0,
+    "unknown": 0
+  }
+}

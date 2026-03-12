@@ -322,9 +322,7 @@ func TestRabbitMQAdapter_CalculateBackoff_ExponentialGrowth(t *testing.T) {
 			opts.BaseRetryDelay = tt.baseDelay
 			opts.MaxRetryDelay = tt.maxDelay
 
-			adapter := &RabbitMQAdapter{options: opts}
-
-			backoff := adapter.calculateBackoff(tt.attempt)
+			backoff := calculateBackoff(tt.attempt, opts.BaseRetryDelay, opts.MaxRetryDelay)
 
 			assert.GreaterOrEqual(t, backoff, tt.minExpected, "backoff should be at least base delay")
 			assert.LessOrEqual(t, backoff, tt.maxExpected, "backoff should not exceed expected max with jitter")
@@ -363,9 +361,7 @@ func TestRabbitMQAdapter_CalculateBackoff_CapsAtMaxDelay(t *testing.T) {
 			opts.BaseRetryDelay = tt.baseDelay
 			opts.MaxRetryDelay = tt.maxDelay
 
-			adapter := &RabbitMQAdapter{options: opts}
-
-			backoff := adapter.calculateBackoff(tt.attempt)
+			backoff := calculateBackoff(tt.attempt, opts.BaseRetryDelay, opts.MaxRetryDelay)
 
 			// Max expected is maxDelay + 25% jitter
 			maxExpected := tt.maxDelay + tt.maxDelay/4
@@ -955,6 +951,8 @@ type testAcknowledger struct {
 // newTestAdapter creates a properly initialized RabbitMQAdapter for testing.
 func newTestAdapter(conn rabbitConnection) *RabbitMQAdapter {
 	opts := DefaultOptions()
+	opts.EnableSignatureVerification = false
+	opts.EnableMessageSigning = false
 	return &RabbitMQAdapter{
 		conn:           conn,
 		options:        opts,
@@ -965,6 +963,8 @@ func newTestAdapter(conn rabbitConnection) *RabbitMQAdapter {
 // newTestAdapterWithChannel creates a properly initialized RabbitMQAdapter with a channel for testing.
 func newTestAdapterWithChannel(conn rabbitConnection, channel amqpChannel) *RabbitMQAdapter {
 	opts := DefaultOptions()
+	opts.EnableSignatureVerification = false
+	opts.EnableMessageSigning = false
 	return &RabbitMQAdapter{
 		conn:           conn,
 		channel:        channel,
@@ -1828,9 +1828,8 @@ func TestRabbitMQAdapter_CalculateBackoff_ZeroAttempt(t *testing.T) {
 	t.Parallel()
 
 	opts := DefaultOptions()
-	adapter := &RabbitMQAdapter{options: opts}
 
-	backoff := adapter.calculateBackoff(0)
+	backoff := calculateBackoff(0, opts.BaseRetryDelay, opts.MaxRetryDelay)
 
 	// With attempt 0 or negative, shiftAmount should be 0
 	assert.GreaterOrEqual(t, backoff, opts.BaseRetryDelay)
@@ -1841,9 +1840,8 @@ func TestRabbitMQAdapter_CalculateBackoff_NegativeAttempt(t *testing.T) {
 	t.Parallel()
 
 	opts := DefaultOptions()
-	adapter := &RabbitMQAdapter{options: opts}
 
-	backoff := adapter.calculateBackoff(-1)
+	backoff := calculateBackoff(-1, opts.BaseRetryDelay, opts.MaxRetryDelay)
 
 	// With negative attempt, shiftAmount should be clamped to 0
 	assert.GreaterOrEqual(t, backoff, opts.BaseRetryDelay)

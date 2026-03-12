@@ -14,7 +14,7 @@ func TestValidatePostgreSQLMode(t *testing.T) {
 		wantError bool
 	}{
 		// Valid modes - from PostgreSQL documentation
-		{name: "empty string is valid (defaults to disable)", mode: "", wantError: false},
+		{name: "empty string is valid (driver default behavior)", mode: "", wantError: false},
 		{name: "disable is valid", mode: "disable", wantError: false},
 		{name: "allow is valid", mode: "allow", wantError: false},
 		{name: "prefer is valid", mode: "prefer", wantError: false},

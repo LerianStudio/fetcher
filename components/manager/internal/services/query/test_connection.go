@@ -9,13 +9,15 @@ import (
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
-	"github.com/LerianStudio/fetcher/pkg/datasource"
+	ds "github.com/LerianStudio/fetcher/pkg/datasource"
 	"github.com/LerianStudio/fetcher/pkg/model"
-	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
+	"github.com/LerianStudio/fetcher/pkg/model/datasource"
+	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
 
 	"github.com/LerianStudio/lib-commons/v4/commons"
 	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
 	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
+	valkey "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/valkey"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
@@ -32,21 +34,21 @@ type RateLimiterStore interface {
 }
 
 type TestConnection struct {
-	connRepo   connRepo.Repository
-	store      RateLimiterStore
-	cryptor    crypto.Cryptor
-	dataSource dataSourceFactory
+	connRepo  connRepo.Repository
+	store     RateLimiterStore
+	cryptor   crypto.Cryptor
+	dsFactory ds.DataSourceFactory
 }
 
 // NewTestConnection creates a new TestConnection service.
 // The store parameter accepts either *ratelimit.RateLimiter or any implementation
 // of the RateLimiterStore interface for backward compatibility.
-func NewTestConnection(connectionRepo connRepo.Repository, cryptor crypto.Cryptor, store RateLimiterStore) *TestConnection {
+func NewTestConnection(connectionRepo connRepo.Repository, cryptor crypto.Cryptor, store RateLimiterStore, factory ds.DataSourceFactory) *TestConnection {
 	return &TestConnection{
-		connRepo:   connectionRepo,
-		store:      store,
-		cryptor:    cryptor,
-		dataSource: datasource.NewDataSourceFromConnection,
+		connRepo:  connectionRepo,
+		store:     store,
+		cryptor:   cryptor,
+		dsFactory: factory,
 	}
 }
 
@@ -62,7 +64,7 @@ func (s *TestConnection) Execute(ctx context.Context, organizationID, connection
 		attribute.String("app.request.connection_id", connectionID.String()),
 	)
 
-	key := connectionID.String()
+	key, _ := valkey.GetKeyFromContext(ctx, connectionID.String())
 
 	_, _, reset, ok, err := s.store.Take(ctx, key)
 	if err != nil {
@@ -106,7 +108,7 @@ func (s *TestConnection) Execute(ctx context.Context, organizationID, connection
 	conn, err := s.connRepo.FindByID(ctx, connectionID, organizationID)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "failed to find connection", err)
-		return nil, err
+		return nil, fmt.Errorf("failed to find connection by id: %w", err)
 	}
 
 	if conn == nil {
@@ -121,7 +123,9 @@ func (s *TestConnection) Execute(ctx context.Context, organizationID, connection
 
 	start := time.Now()
 
-	ds, err := s.dataSource(testCtx, conn, s.cryptor, logger)
+	var connDS datasource.DataSource
+
+	connDS, err = s.dsFactory(testCtx, conn, s.cryptor)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "failed to establish datasource connection", err)
 		logger.Log(testCtx, libLog.LevelError, "connection test failed",
@@ -140,7 +144,7 @@ func (s *TestConnection) Execute(ctx context.Context, organizationID, connection
 	latencyMs := time.Since(start).Milliseconds()
 	span.SetAttributes(attribute.Int64("app.connection_test.latency_ms", latencyMs))
 
-	if err := ds.Close(testCtx); err != nil {
+	if err := connDS.Close(testCtx); err != nil {
 		logger.Log(testCtx, libLog.LevelWarn, "connection test cleanup failed",
 			libLog.String("connection_id", connectionID.String()),
 			libLog.String("organization_id", organizationID.String()),

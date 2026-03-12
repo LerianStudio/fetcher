@@ -9,8 +9,10 @@ services:
         - github_token
     env_file:
       - .env
-    volumes:
-      - .:/usr/src/worker
+    deploy:
+      resources:
+        limits:
+          memory: 512M
     networks:
       - fetcher-infra-network
 

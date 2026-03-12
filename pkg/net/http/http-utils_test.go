@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mongodb.org/mongo-driver/bson"
+
 )
 
 func TestToOffsetPagination(t *testing.T) {
@@ -105,7 +105,7 @@ func TestValidateParameters(t *testing.T) {
 			check: func(t *testing.T, qh *QueryHeader) {
 				assert.True(t, qh.UseMetadata)
 				assert.NotNil(t, qh.Metadata)
-				assert.Len(t, *qh.Metadata, 2)
+				assert.Len(t, qh.Metadata, 2)
 			},
 		},
 		{
@@ -635,7 +635,7 @@ func TestQueryHeaderMetadata(t *testing.T) {
 		assert.NoError(t, err)
 		require.NotNil(t, qh.Metadata)
 		assert.True(t, qh.UseMetadata)
-		assert.Contains(t, *qh.Metadata, "metadata.customKey")
+		assert.Contains(t, qh.Metadata, "metadata.customKey")
 	})
 
 	t.Run("unknown keys do not enable metadata", func(t *testing.T) {
@@ -672,9 +672,9 @@ func TestPaginationStruct(t *testing.T) {
 
 func TestQueryHeaderStruct(t *testing.T) {
 	t.Run("query header with all fields", func(t *testing.T) {
-		metadata := bson.M{"key": "value"}
+		metadata := map[string]string{"key": "value"}
 		qh := QueryHeader{
-			Metadata:    &metadata,
+			Metadata:    metadata,
 			Limit:       50,
 			Page:        2,
 			Cursor:      "cursor",

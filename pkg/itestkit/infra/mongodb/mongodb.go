@@ -3,6 +3,8 @@ package mongodb
 import (
 	"context"
 	"fmt"
+	"net"
+	"strconv"
 
 	"github.com/testcontainers/testcontainers-go"
 	tcmongo "github.com/testcontainers/testcontainers-go/modules/mongodb"
@@ -24,10 +26,9 @@ type MongoDBConfig struct {
 }
 
 type MongoDBEndpoint struct {
-	URI                  string
-	Upstream             string
-	ProxyListen          string
-	ProxyListenInNetwork string
+	URI         string
+	Upstream    string
+	ProxyListen string
 }
 
 type MongoDBInfra struct {
@@ -107,9 +108,8 @@ func (m *MongoDBInfra) Start(ctx context.Context, env *itestkit.Env) error {
 	}
 
 	upstream := fmt.Sprintf("%s:%s", host, port.Port())
-	hostAddr := upstream
+	finalAddr := upstream
 	proxyListen := ""
-	proxyListenInNetwork := ""
 
 	if m.cfg.EnableProxy && env != nil && env.Chaos != nil {
 		// Use the container's network alias for proxy upstream when in shared network
@@ -126,23 +126,21 @@ func (m *MongoDBInfra) Start(ctx context.Context, env *itestkit.Env) error {
 			return err
 		}
 
-		hostAddr = ref.ListenAddr
+		finalAddr = ref.ListenAddr
 		proxyListen = ref.ListenAddr
-		proxyListenInNetwork = ref.InNetworkListenAddr
 	}
 
 	var uri string
 	if m.cfg.Username != "" && m.cfg.Password != "" {
-		uri = fmt.Sprintf("mongodb://%s:%s@%s", m.cfg.Username, m.cfg.Password, hostAddr)
+		uri = fmt.Sprintf("mongodb://%s:%s@%s", m.cfg.Username, m.cfg.Password, finalAddr)
 	} else {
-		uri = fmt.Sprintf("mongodb://%s", hostAddr)
+		uri = fmt.Sprintf("mongodb://%s", finalAddr)
 	}
 
 	endpoint := MongoDBEndpoint{
-		Upstream:             upstream,
-		ProxyListen:          proxyListen,
-		ProxyListenInNetwork: proxyListenInNetwork,
-		URI:                  uri,
+		Upstream:    upstream,
+		ProxyListen: proxyListen,
+		URI:         uri,
 	}
 	m.endpoint = &endpoint
 
@@ -166,8 +164,10 @@ func (m *MongoDBInfra) URI() (string, error) {
 	return endpoint.URI, nil
 }
 
-// HostPort returns the public, host-usable endpoint.
-// Use ContainerHostPort when wiring app containers into a shared Docker network.
+// HostPort returns the host and port as separate values.
+// If a proxy is configured, returns the proxy address.
+// If in a shared network (no proxy), returns the network alias and internal port.
+// Otherwise returns the upstream address normalized for Docker access.
 func (m *MongoDBInfra) HostPort() (host string, port int, err error) {
 	// If stub values are set, return them directly without normalization
 	if m.stubHost != "" {
@@ -179,17 +179,38 @@ func (m *MongoDBInfra) HostPort() (host string, port int, err error) {
 		return "", 0, err
 	}
 
-	return itestkit.ResolveHostHostPort(endpoint.ProxyListen, endpoint.Upstream)
-}
+	// If proxy is configured, return proxy address
+	if endpoint.ProxyListen != "" {
+		hostStr, portStr, err := net.SplitHostPort(endpoint.ProxyListen)
+		if err != nil {
+			return "", 0, fmt.Errorf("invalid proxy address: %s: %w", endpoint.ProxyListen, err)
+		}
 
-// ContainerHostPort returns the endpoint that app containers should use.
-func (m *MongoDBInfra) ContainerHostPort() (host string, port int, err error) {
-	endpoint, err := m.Endpoint()
-	if err != nil {
-		return "", 0, err
+		portNum, parseErr := strconv.Atoi(portStr)
+		if parseErr != nil {
+			return "", 0, fmt.Errorf("invalid proxy port %q: %w", portStr, parseErr)
+		}
+
+		return hostStr, portNum, nil
 	}
 
-	return itestkit.ResolveContainerHostPort(endpoint.ProxyListenInNetwork, m.networkAlias, 27017, endpoint.Upstream)
+	// If in shared network, return network alias and internal port
+	if m.networkAlias != "" {
+		return m.networkAlias, 27017, nil
+	}
+
+	// Fallback: return upstream address normalized for Docker access
+	hostStr, portStr, err := net.SplitHostPort(endpoint.Upstream)
+	if err != nil {
+		return "", 0, fmt.Errorf("invalid address format: %s: %w", endpoint.Upstream, err)
+	}
+
+	portNum, err := strconv.Atoi(portStr)
+	if err != nil {
+		return "", 0, fmt.Errorf("invalid port: %s", portStr)
+	}
+
+	return itestkit.NormalizeHost(hostStr), portNum, nil
 }
 
 func (m *MongoDBInfra) Terminate(ctx context.Context) error {
@@ -221,7 +242,7 @@ func NewMongoDBInfraStub(cfg MongoDBConfig, host string, port int) *MongoDBInfra
 		Upstream: upstream,
 		URI:      uri,
 	}
-	// Store the raw host for HostPort() to return directly.
+	// Store the raw host for HostPort() to return without normalization
 	m.stubHost = host
 	m.stubPort = port
 

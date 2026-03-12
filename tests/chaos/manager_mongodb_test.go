@@ -237,7 +237,7 @@ func TestManager_CRUD_UnderLatency(t *testing.T) {
 	}
 
 	start := time.Now()
-	conn, err := apiClient.CreateConnection(ctx, connInput)
+	conn, err := apiClient.CreateConnection(ctx, "fetcher", connInput)
 	createLatency := time.Since(start)
 	require.NoError(t, err, "create connection should succeed under latency")
 	t.Logf("Create latency: %v", createLatency)

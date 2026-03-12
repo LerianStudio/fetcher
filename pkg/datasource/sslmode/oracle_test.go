@@ -15,7 +15,7 @@ func TestValidateOracleMode(t *testing.T) {
 	}{
 		// Valid modes - from go-ora documentation
 		// The go-ora driver uses "ssl" and "ssl verify" URL parameters
-		{name: "empty string is valid (SSL disabled)", mode: "", wantError: false},
+		{name: "empty string is valid (driver default behavior)", mode: "", wantError: false},
 		{name: "disable is valid", mode: "disable", wantError: false},
 		{name: "false is valid", mode: "false", wantError: false},
 		{name: "true is valid (SSL enabled)", mode: "true", wantError: false},

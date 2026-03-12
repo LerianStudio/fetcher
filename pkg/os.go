@@ -1,7 +1,7 @@
 package pkg
 
 import (
-	"fmt"
+	"log"
 	"os"
 	"reflect"
 	"strconv"
@@ -71,13 +71,13 @@ func InitLocalEnvConfig() *LocalEnvConfig {
 	if envName == "local" {
 		localEnvConfigOnce.Do(func() {
 			if err := godotenv.Load(); err != nil {
-				fmt.Println("Skipping \u001B[31m.env\u001B[0m file, using env", envName)
+				log.Printf("Skipping .env file, using env %s", envName)
 
 				localEnvConfig = &LocalEnvConfig{
 					Initialized: false,
 				}
 			} else {
-				fmt.Println("Env vars loaded from .env file on process", os.Getpid())
+				log.Printf("Env vars loaded from .env file on process %d", os.Getpid())
 
 				localEnvConfig = &LocalEnvConfig{
 					Initialized: true,
@@ -93,11 +93,15 @@ func InitLocalEnvConfig() *LocalEnvConfig {
 // Constraints: s any - must be an initialized pointer
 // Supported types: String, Boolean, Int, Int8, Int16, Int32 and Int64.
 func SetConfigFromEnvVars(s any) error {
+	if s == nil {
+		return errors.New("s must be a non-nil pointer")
+	}
+
 	v := reflect.ValueOf(s)
 
 	t := v.Type()
-	if t.Kind() != reflect.Ptr {
-		return errors.New("s must be an pointer")
+	if t.Kind() != reflect.Ptr || v.IsNil() {
+		return errors.New("s must be a non-nil pointer")
 	}
 
 	e := t.Elem()
@@ -124,11 +128,11 @@ func SetConfigFromEnvVars(s any) error {
 	return nil
 }
 
-// EnsureConfigFromEnvVars ensures that an interface will be settled using SetConfigFromEnvVars anyway.
-func EnsureConfigFromEnvVars(s any) any {
+// EnsureConfigFromEnvVars populates the config struct from env vars and returns explicit errors.
+func EnsureConfigFromEnvVars(s any) (any, error) {
 	if err := SetConfigFromEnvVars(s); err != nil {
-		panic(err)
+		return nil, err
 	}
 
-	return s
+	return s, nil
 }

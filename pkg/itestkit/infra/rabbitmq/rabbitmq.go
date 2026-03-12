@@ -3,6 +3,8 @@ package rabbitmq
 import (
 	"context"
 	"fmt"
+	"net"
+	"strconv"
 
 	"github.com/testcontainers/testcontainers-go"
 	rmq "github.com/testcontainers/testcontainers-go/modules/rabbitmq"
@@ -24,10 +26,9 @@ type RabbitConfig struct {
 }
 
 type RabbitEndpoint struct {
-	AMQPURL              string
-	Upstream             string
-	ProxyListen          string
-	ProxyListenInNetwork string
+	AMQPURL     string
+	Upstream    string
+	ProxyListen string
 }
 
 type RabbitInfra struct {
@@ -111,9 +112,8 @@ func (r *RabbitInfra) Start(ctx context.Context, env *itestkit.Env) error {
 	}
 
 	upstream := fmt.Sprintf("%s:%s", host, amqpPort.Port())
-	hostAddr := upstream
+	finalAddr := upstream
 	proxyListen := ""
-	proxyListenInNetwork := ""
 
 	if r.cfg.EnableProxy && env != nil && env.Chaos != nil {
 		// Use the container's network alias for proxy upstream when in shared network
@@ -130,16 +130,14 @@ func (r *RabbitInfra) Start(ctx context.Context, env *itestkit.Env) error {
 			return err
 		}
 
-		hostAddr = ref.ListenAddr
+		finalAddr = ref.ListenAddr
 		proxyListen = ref.ListenAddr
-		proxyListenInNetwork = ref.InNetworkListenAddr
 	}
 
 	endpoint := RabbitEndpoint{
-		Upstream:             upstream,
-		ProxyListen:          proxyListen,
-		ProxyListenInNetwork: proxyListenInNetwork,
-		AMQPURL:              fmt.Sprintf("amqp://%s:%s@%s%s", r.cfg.Username, r.cfg.Password, hostAddr, r.cfg.VHost),
+		Upstream:    upstream,
+		ProxyListen: proxyListen,
+		AMQPURL:     fmt.Sprintf("amqp://%s:%s@%s%s", r.cfg.Username, r.cfg.Password, finalAddr, r.cfg.VHost),
 	}
 	r.endpoint = &endpoint
 
@@ -163,25 +161,45 @@ func (r *RabbitInfra) AMQPURL() (string, error) {
 	return endpoint.AMQPURL, nil
 }
 
-// HostPort returns the public, host-usable endpoint.
-// Use ContainerHostPort when wiring app containers into a shared Docker network.
+// HostPort returns the host and port as separate values.
+// If a proxy is configured, returns the proxy address.
+// If in a shared network (no proxy), returns the network alias and internal port.
+// Otherwise returns the upstream address normalized for Docker access.
 func (r *RabbitInfra) HostPort() (host string, port int, err error) {
 	endpoint, err := r.Endpoint()
 	if err != nil {
 		return "", 0, err
 	}
 
-	return itestkit.ResolveHostHostPort(endpoint.ProxyListen, endpoint.Upstream)
-}
+	// If proxy is configured, return proxy address
+	if endpoint.ProxyListen != "" {
+		hostStr, portStr, err := net.SplitHostPort(endpoint.ProxyListen)
+		if err != nil {
+			return "", 0, fmt.Errorf("invalid proxy address: %s: %w", endpoint.ProxyListen, err)
+		}
 
-// ContainerHostPort returns the endpoint that app containers should use.
-func (r *RabbitInfra) ContainerHostPort() (host string, port int, err error) {
-	endpoint, err := r.Endpoint()
-	if err != nil {
-		return "", 0, err
+		portNum, _ := strconv.Atoi(portStr)
+
+		return hostStr, portNum, nil
 	}
 
-	return itestkit.ResolveContainerHostPort(endpoint.ProxyListenInNetwork, r.networkAlias, 5672, endpoint.Upstream)
+	// If in shared network, return network alias and internal port
+	if r.networkAlias != "" {
+		return r.networkAlias, 5672, nil
+	}
+
+	// Fallback: return upstream address normalized for Docker access
+	hostStr, portStr, err := net.SplitHostPort(endpoint.Upstream)
+	if err != nil {
+		return "", 0, fmt.Errorf("invalid address format: %s: %w", endpoint.Upstream, err)
+	}
+
+	portNum, err := strconv.Atoi(portStr)
+	if err != nil {
+		return "", 0, fmt.Errorf("invalid port: %s", portStr)
+	}
+
+	return itestkit.NormalizeHost(hostStr), portNum, nil
 }
 
 func (r *RabbitInfra) Terminate(ctx context.Context) error {

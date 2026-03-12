@@ -24,6 +24,8 @@ func TestDeleteConnection_Success(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
+	productName := e2eshared.GenerateProductName()
+
 	// Create connection
 	uniqueName := fmt.Sprintf("e2e-delete-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
@@ -36,7 +38,7 @@ func TestDeleteConnection_Success(t *testing.T) {
 		Password:     "testpass",
 	}
 
-	conn, err := apiClient.CreateConnection(ctx, connInput)
+	conn, err := apiClient.CreateConnection(ctx, productName, connInput)
 	require.NoError(t, err, "create connection")
 
 	// Delete connection
@@ -77,6 +79,8 @@ func TestDeleteConnection_Idempotent(t *testing.T) {
 	pgHost, pgPort, err := postgresInfra.HostPort()
 	require.NoError(t, err, "get postgres host/port")
 
+	productName := e2eshared.GenerateProductName()
+
 	// Create connection
 	uniqueName := fmt.Sprintf("e2e-delete-idempotent-%s", uuid.New().String()[:8])
 	connInput := e2eshared.ConnectionInput{
@@ -89,7 +93,7 @@ func TestDeleteConnection_Idempotent(t *testing.T) {
 		Password:     "testpass",
 	}
 
-	conn, err := apiClient.CreateConnection(ctx, connInput)
+	conn, err := apiClient.CreateConnection(ctx, productName, connInput)
 	require.NoError(t, err, "create connection")
 
 	// First delete should succeed

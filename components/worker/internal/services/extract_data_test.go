@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/LerianStudio/fetcher/pkg/model"
 	modelJob "github.com/LerianStudio/fetcher/pkg/model/job"
@@ -124,8 +125,25 @@ func TestParseMessage_InvalidJSONWithJobIDInHeaders(t *testing.T) {
 
 	// Expect job status update to failed due to parse error
 	mocks.jobRepo.EXPECT().
-		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(nil)
+		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, "", "", gomock.Any()).
+		DoAndReturn(func(_ context.Context, _, _ uuid.UUID, _ model.JobStatus, resultPath, resultHMAC string, metadata map[string]any) error {
+			if resultPath != "" {
+				t.Errorf("expected empty resultPath, got %q", resultPath)
+			}
+			if resultHMAC != "" {
+				t.Errorf("expected empty resultHMAC, got %q", resultHMAC)
+			}
+
+			errValue, ok := metadata["error"].(string)
+			if !ok {
+				t.Fatalf("expected metadata.error as string, got %T", metadata["error"])
+			}
+			if !strings.Contains(errValue, "Failed to parse message") {
+				t.Fatalf("expected metadata.error to contain parse message details, got %q", errValue)
+			}
+
+			return nil
+		})
 
 	result, err := uc.parseMessage(ctx, invalidBody, headers, nil, logger)
 	if err == nil {
@@ -154,7 +172,7 @@ func TestExtractJobIDFromMultipleSources_FromHeaders(t *testing.T) {
 		"organizationId": orgID.String(),
 	}
 
-	resultJobID, resultOrgID := uc.extractJobIDFromMultipleSources(context.Background(), nil, headers, logger)
+	resultJobID, resultOrgID := uc.extractJobIDFromMultipleSources(nil, headers, logger)
 
 	if resultJobID != jobID {
 		t.Fatalf("expected jobID %s, got %s", jobID, resultJobID)
@@ -180,7 +198,7 @@ func TestExtractJobIDFromMultipleSources_FromPartialJSON(t *testing.T) {
 	// Partial JSON with valid jobId and organizationId
 	body := []byte(`{"jobId": "` + jobID.String() + `", "organizationId": "` + orgID.String() + `", "invalid": }`)
 
-	resultJobID, resultOrgID := uc.extractJobIDFromMultipleSources(context.Background(), body, nil, logger)
+	resultJobID, resultOrgID := uc.extractJobIDFromMultipleSources(body, nil, logger)
 
 	if resultJobID != jobID {
 		t.Fatalf("expected jobID %s, got %s", jobID, resultJobID)
@@ -202,7 +220,7 @@ func TestExtractJobIDFromMultipleSources_NoIDs(t *testing.T) {
 
 	body := []byte(`{"invalid": "data"}`)
 
-	resultJobID, resultOrgID := uc.extractJobIDFromMultipleSources(context.Background(), body, nil, logger)
+	resultJobID, resultOrgID := uc.extractJobIDFromMultipleSources(body, nil, logger)
 
 	if resultJobID != uuid.Nil {
 		t.Fatalf("expected nil jobID, got %s", resultJobID)
@@ -339,7 +357,7 @@ func TestShouldSkipProcessing(t *testing.T) {
 			wantSkip: false,
 		},
 		{
-			name: "job currently processing - should not skip",
+			name: "job currently processing - should skip",
 			setupMocks: func(mocks *testMocks, jobID, orgID uuid.UUID) {
 				mocks.jobRepo.EXPECT().
 					FindByID(gomock.Any(), jobID, orgID).
@@ -348,7 +366,7 @@ func TestShouldSkipProcessing(t *testing.T) {
 						Status: model.JobStatusProcessing,
 					}, nil)
 			},
-			wantSkip: false,
+			wantSkip: true,
 		},
 	}
 
@@ -567,7 +585,7 @@ func TestExtractJobIDFromPartialJSON(t *testing.T) {
 			uc := newTestUseCase(mocks)
 			logger := testLogger()
 
-			jobID, orgID := uc.extractJobIDFromPartialJSON(context.Background(), tt.body, logger)
+			jobID, orgID := uc.extractJobIDFromPartialJSON(tt.body, logger)
 
 			if tt.wantJobID && jobID == uuid.Nil {
 				t.Errorf("expected non-nil jobID, got nil - %s", tt.description)
@@ -666,7 +684,7 @@ func TestExtractJobIDFromMultipleSources_EdgeCases(t *testing.T) {
 			uc := newTestUseCase(mocks)
 			logger := testLogger()
 
-			jobID, orgID := uc.extractJobIDFromMultipleSources(context.Background(), tt.body, tt.headers, logger)
+			jobID, orgID := uc.extractJobIDFromMultipleSources(tt.body, tt.headers, logger)
 
 			if tt.wantJobID && jobID == uuid.Nil {
 				t.Errorf("expected non-nil jobID, got nil")
@@ -966,7 +984,11 @@ func TestParseMessage_WithNilError(t *testing.T) {
 		},
 	}
 
-	body, _ := json.Marshal(validMessage)
+	body, marshalErr := json.Marshal(validMessage)
+	if marshalErr != nil {
+		t.Fatalf("failed to marshal test message: %v", marshalErr)
+	}
+
 	result, err := uc.parseMessage(ctx, body, nil, nil, logger)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -988,7 +1010,7 @@ func TestExtractJobIDFromPartialJSON_RegexFallback(t *testing.T) {
 	// Malformed JSON that will fail decoder but has valid UUID in regex pattern
 	body := []byte(`{bad json but "jobId":"550e8400-e29b-41d4-a716-446655440000"}`)
 
-	jobID, orgID := uc.extractJobIDFromPartialJSON(context.Background(), body, logger)
+	jobID, orgID := uc.extractJobIDFromPartialJSON(body, logger)
 
 	if jobID == uuid.Nil {
 		t.Error("expected non-nil jobID from regex extraction")
@@ -1072,52 +1094,46 @@ func TestExtractConfigNamesFromMappedFields_WithComplexStructure(t *testing.T) {
 	}
 }
 
-// TestEncryptDataForSeaweedFS tests the encryption function for SeaweedFS.
-func TestEncryptDataForSeaweedFS(t *testing.T) {
+// TestEncryptData tests the encryption function for storage.
+func TestEncryptData(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
 	mocks := newTestMocks(ctrl)
-	uc := newTestUseCase(mocks)
 	logger := testLogger()
 
 	tests := []struct {
-		name          string
-		data          []byte
-		envEncryptKey string
-		envHashKey    string
-		wantErr       bool
-		errContains   string
+		name        string
+		data        []byte
+		encryptKey  string
+		hashKey     string
+		wantErr     bool
+		errContains string
 	}{
 		{
-			name:          "missing encrypt secret key returns error",
-			data:          []byte(`{"test": "data"}`),
-			envEncryptKey: "",
-			envHashKey:    "",
-			wantErr:       true,
-			errContains:   "CRYPTO_ENCRYPT_SECRET_KEY_SEAWEEDFS environment variable not set",
+			name:        "missing encrypt secret key returns error",
+			data:        []byte(`{"test": "data"}`),
+			encryptKey:  "",
+			hashKey:     "",
+			wantErr:     true,
+			errContains: "storage encrypt secret key not configured",
 		},
 		{
-			name:          "missing hash secret key returns error",
-			data:          []byte(`{"test": "data"}`),
-			envEncryptKey: "test-encrypt-key",
-			envHashKey:    "",
-			wantErr:       true,
-			errContains:   "CRYPTO_HASH_SECRET_KEY_SEAWEEDFS environment variable not set",
+			name:        "missing hash secret key returns error",
+			data:        []byte(`{"test": "data"}`),
+			encryptKey:  "test-encrypt-key",
+			hashKey:     "",
+			wantErr:     true,
+			errContains: "storage hash secret key not configured",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Set env vars
-			if tt.envEncryptKey != "" {
-				t.Setenv("CRYPTO_ENCRYPT_SECRET_KEY_SEAWEEDFS", tt.envEncryptKey)
-			}
-			if tt.envHashKey != "" {
-				t.Setenv("CRYPTO_HASH_SECRET_KEY_SEAWEEDFS", tt.envHashKey)
-			}
+			uc := newTestUseCase(mocks)
+			uc.SetStorageSecrets(tt.encryptKey, tt.hashKey)
 
-			result, err := uc.encryptDataForSeaweedFS(tt.data, logger)
+			result, err := uc.encryptData(tt.data, logger)
 
 			if tt.wantErr {
 				if err == nil {
@@ -1206,8 +1222,25 @@ func TestExtractExternalData_JobRepositoryFindError(t *testing.T) {
 
 	// Expect job status to be updated to failed
 	mocks.jobRepo.EXPECT().
-		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(nil)
+		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, "", "", gomock.Any()).
+		DoAndReturn(func(_ context.Context, _, _ uuid.UUID, _ model.JobStatus, resultPath, resultHMAC string, metadata map[string]any) error {
+			if resultPath != "" {
+				t.Errorf("expected empty resultPath, got %q", resultPath)
+			}
+			if resultHMAC != "" {
+				t.Errorf("expected empty resultHMAC, got %q", resultHMAC)
+			}
+
+			errValue, ok := metadata["error"].(string)
+			if !ok {
+				t.Fatalf("expected metadata.error as string, got %T", metadata["error"])
+			}
+			if !strings.Contains(errValue, "database error") {
+				t.Fatalf("expected metadata.error to contain repository failure details, got %q", errValue)
+			}
+
+			return nil
+		})
 
 	// Expect failure notification
 	mocks.rabbitPublisher.EXPECT().
@@ -1282,7 +1315,7 @@ func TestExtractJobIDFromPartialJSON_ValidJobIDInvalidOrgID(t *testing.T) {
 	// Valid jobId with invalid organizationId format
 	body := []byte(`{"jobId": "550e8400-e29b-41d4-a716-446655440000", "organizationId": "not-a-uuid"}`)
 
-	jobID, orgID := uc.extractJobIDFromPartialJSON(context.Background(), body, logger)
+	jobID, orgID := uc.extractJobIDFromPartialJSON(body, logger)
 
 	if jobID == uuid.Nil {
 		t.Error("expected valid jobID")
@@ -1317,6 +1350,216 @@ func TestParseMessage_EmptyBody(t *testing.T) {
 	}
 }
 
+// TestParseMessage_NullPayload tests parseMessage with JSON null payload.
+func TestParseMessage_NullPayload(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+
+	ctx := testContext()
+	logger := testLogger()
+	jobID := newTestJobID()
+	orgID := newTestOrgID()
+
+	headers := map[string]any{
+		"jobId":          jobID.String(),
+		"organizationId": orgID.String(),
+	}
+
+	mocks.jobRepo.EXPECT().
+		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, "", "", gomock.Any()).
+		DoAndReturn(func(_ context.Context, _, _ uuid.UUID, _ model.JobStatus, resultPath, resultHMAC string, metadata map[string]any) error {
+			if resultPath != "" {
+				t.Errorf("expected empty resultPath, got %q", resultPath)
+			}
+			if resultHMAC != "" {
+				t.Errorf("expected empty resultHMAC, got %q", resultHMAC)
+			}
+
+			errValue, ok := metadata["error"].(string)
+			if !ok {
+				t.Fatalf("expected metadata.error as string, got %T", metadata["error"])
+			}
+			if !strings.Contains(errValue, "empty message payload") {
+				t.Fatalf("expected metadata.error to contain empty payload message, got %q", errValue)
+			}
+
+			return nil
+		})
+
+	result, err := uc.parseMessage(ctx, []byte(`null`), headers, nil, logger)
+	if err == nil {
+		t.Fatal("expected error for null payload, got nil")
+	}
+
+	if !strings.Contains(err.Error(), "empty message payload") {
+		t.Fatalf("expected empty payload error, got: %v", err)
+	}
+
+	if result != nil {
+		t.Fatalf("expected nil result for null payload, got %+v", result)
+	}
+}
+
+// TestParseMessage_MissingMappedFields tests parseMessage with missing mappedFields.
+func TestParseMessage_MissingMappedFields(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+
+	ctx := testContext()
+	logger := testLogger()
+	jobID := newTestJobID()
+	orgID := newTestOrgID()
+
+	body := []byte(`{"jobId":"` + jobID.String() + `","organizationId":"` + orgID.String() + `"}`)
+
+	mocks.jobRepo.EXPECT().
+		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, "", "", gomock.Any()).
+		DoAndReturn(func(_ context.Context, _, _ uuid.UUID, _ model.JobStatus, resultPath, resultHMAC string, metadata map[string]any) error {
+			if resultPath != "" {
+				t.Errorf("expected empty resultPath, got %q", resultPath)
+			}
+			if resultHMAC != "" {
+				t.Errorf("expected empty resultHMAC, got %q", resultHMAC)
+			}
+
+			errValue, ok := metadata["error"].(string)
+			if !ok {
+				t.Fatalf("expected metadata.error as string, got %T", metadata["error"])
+			}
+			if !strings.Contains(errValue, "mappedFields is required") {
+				t.Fatalf("expected metadata.error to contain mappedFields message, got %q", errValue)
+			}
+
+			return nil
+		})
+
+	result, err := uc.parseMessage(ctx, body, nil, nil, logger)
+	if err == nil {
+		t.Fatal("expected error for missing mappedFields, got nil")
+	}
+
+	if !strings.Contains(err.Error(), "mappedFields is required") {
+		t.Fatalf("expected mappedFields validation error, got: %v", err)
+	}
+
+	if result != nil {
+		t.Fatalf("expected nil result for invalid payload, got %+v", result)
+	}
+}
+
+// TestParseMessage_MissingJobID tests parseMessage with missing jobId.
+func TestParseMessage_MissingJobID(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+
+	ctx := testContext()
+	logger := testLogger()
+	jobID := newTestJobID()
+	orgID := newTestOrgID()
+
+	body := []byte(`{"organizationId":"` + orgID.String() + `","mappedFields":{"datasource1":{"table1":["field1"]}}}`)
+	headers := map[string]any{
+		"jobId": jobID.String(),
+	}
+
+	mocks.jobRepo.EXPECT().
+		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, "", "", gomock.Any()).
+		DoAndReturn(func(_ context.Context, _, _ uuid.UUID, _ model.JobStatus, resultPath, resultHMAC string, metadata map[string]any) error {
+			if resultPath != "" {
+				t.Errorf("expected empty resultPath, got %q", resultPath)
+			}
+			if resultHMAC != "" {
+				t.Errorf("expected empty resultHMAC, got %q", resultHMAC)
+			}
+
+			errValue, ok := metadata["error"].(string)
+			if !ok {
+				t.Fatalf("expected metadata.error as string, got %T", metadata["error"])
+			}
+			if !strings.Contains(errValue, "jobId is required") {
+				t.Fatalf("expected metadata.error to contain jobId message, got %q", errValue)
+			}
+
+			return nil
+		})
+
+	result, err := uc.parseMessage(ctx, body, headers, nil, logger)
+	if err == nil {
+		t.Fatal("expected error for missing jobId, got nil")
+	}
+
+	if !strings.Contains(err.Error(), "jobId is required") {
+		t.Fatalf("expected jobId validation error, got: %v", err)
+	}
+
+	if result != nil {
+		t.Fatalf("expected nil result for invalid payload, got %+v", result)
+	}
+}
+
+// TestParseMessage_MissingOrganizationID tests parseMessage with missing organizationId.
+func TestParseMessage_MissingOrganizationID(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+
+	ctx := testContext()
+	logger := testLogger()
+	jobID := newTestJobID()
+	orgID := newTestOrgID()
+
+	body := []byte(`{"jobId":"` + jobID.String() + `","mappedFields":{"datasource1":{"table1":["field1"]}}}`)
+	headers := map[string]any{
+		"jobId":          jobID.String(),
+		"organizationId": orgID.String(),
+	}
+
+	mocks.jobRepo.EXPECT().
+		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, "", "", gomock.Any()).
+		DoAndReturn(func(_ context.Context, _, _ uuid.UUID, _ model.JobStatus, resultPath, resultHMAC string, metadata map[string]any) error {
+			if resultPath != "" {
+				t.Errorf("expected empty resultPath, got %q", resultPath)
+			}
+			if resultHMAC != "" {
+				t.Errorf("expected empty resultHMAC, got %q", resultHMAC)
+			}
+
+			errValue, ok := metadata["error"].(string)
+			if !ok {
+				t.Fatalf("expected metadata.error as string, got %T", metadata["error"])
+			}
+			if !strings.Contains(errValue, "organizationId is required") {
+				t.Fatalf("expected metadata.error to contain organizationId message, got %q", errValue)
+			}
+
+			return nil
+		})
+
+	result, err := uc.parseMessage(ctx, body, headers, nil, logger)
+	if err == nil {
+		t.Fatal("expected error for missing organizationId, got nil")
+	}
+
+	if !strings.Contains(err.Error(), "organizationId is required") {
+		t.Fatalf("expected organizationId validation error, got: %v", err)
+	}
+
+	if result != nil {
+		t.Fatalf("expected nil result for invalid payload, got %+v", result)
+	}
+}
+
 // TestExtractJobIDFromMultipleSources_HeaderPrecedence tests that headers take precedence over body.
 func TestExtractJobIDFromMultipleSources_HeaderPrecedence(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -1335,7 +1578,7 @@ func TestExtractJobIDFromMultipleSources_HeaderPrecedence(t *testing.T) {
 		"jobId": headerJobID.String(),
 	}
 
-	resultJobID, _ := uc.extractJobIDFromMultipleSources(context.Background(), body, headers, logger)
+	resultJobID, _ := uc.extractJobIDFromMultipleSources(body, headers, logger)
 
 	if resultJobID != headerJobID {
 		t.Errorf("expected header jobID %s to take precedence, got %s", headerJobID, resultJobID)
@@ -1489,8 +1732,8 @@ func TestQueryDatabase_ConnectionFoundButDifferentConfigName(t *testing.T) {
 	}
 }
 
-// TestSaveExternalDataToSeaweedFS_MarshalError tests saveExternalDataToSeaweedFS with data that can't be marshaled.
-func TestSaveExternalDataToSeaweedFS_MarshalError(t *testing.T) {
+// TestSaveExternalData_MarshalError tests saveExternalData with data that can't be marshaled.
+func TestSaveExternalData_MarshalError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
@@ -1518,14 +1761,14 @@ func TestSaveExternalDataToSeaweedFS_MarshalError(t *testing.T) {
 		},
 	}
 
-	_, err := uc.saveExternalDataToSeaweedFS(ctx, testTracer(), message, result, nil, logger)
+	_, err := uc.saveExternalData(ctx, testTracer(), message, result, nil, logger)
 	if err == nil {
 		t.Fatal("expected error when marshaling fails")
 	}
 }
 
-// TestSaveExternalDataToSeaweedFS_MissingEnvVars tests saveExternalDataToSeaweedFS with missing environment variables.
-func TestSaveExternalDataToSeaweedFS_MissingEnvVars(t *testing.T) {
+// TestSaveExternalData_MissingEnvVars tests saveExternalData with missing environment variables.
+func TestSaveExternalData_MissingEnvVars(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
@@ -1552,16 +1795,16 @@ func TestSaveExternalDataToSeaweedFS_MissingEnvVars(t *testing.T) {
 	}
 
 	// Ensure environment variables are not set
-	// Note: This will fail because CRYPTO_ENCRYPT_SECRET_KEY_SEAWEEDFS is not set
+	// Note: This will fail because CRYPTO_ENCRYPT_FILE_STORAGE is not set
 
-	_, err := uc.saveExternalDataToSeaweedFS(ctx, testTracer(), message, result, nil, logger)
+	_, err := uc.saveExternalData(ctx, testTracer(), message, result, nil, logger)
 	if err == nil {
 		t.Fatal("expected error when env vars are missing")
 	}
 }
 
-// TestSaveExternalDataToSeaweedFS_SeaweedFSPutError tests saveExternalDataToSeaweedFS when SeaweedFS put fails.
-func TestSaveExternalDataToSeaweedFS_SeaweedFSPutError(t *testing.T) {
+// TestSaveExternalData_StoragePutError tests saveExternalData when storage put fails.
+func TestSaveExternalData_StoragePutError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
@@ -1573,9 +1816,11 @@ func TestSaveExternalDataToSeaweedFS_SeaweedFSPutError(t *testing.T) {
 	jobID := newTestJobID()
 	orgID := newTestOrgID()
 
-	// Set required environment variables for encryption
-	t.Setenv("CRYPTO_ENCRYPT_SECRET_KEY_SEAWEEDFS", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
-	t.Setenv("CRYPTO_HASH_SECRET_KEY_SEAWEEDFS", "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210")
+	// Set valid encryption keys on the UseCase
+	uc.SetStorageSecrets(
+		"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		"fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+	)
 
 	message := ExtractExternalDataMessage{
 		JobID:          jobID,
@@ -1591,20 +1836,20 @@ func TestSaveExternalDataToSeaweedFS_SeaweedFSPutError(t *testing.T) {
 		},
 	}
 
-	// Mock SeaweedFS to return error
+	// Mock storage to return error
 	expectedObjectName := jobID.String() + ".json"
 	mocks.seaweedFS.EXPECT().
 		Put(gomock.Any(), expectedObjectName, gomock.Any()).
-		Return(errors.New("seaweedfs connection failed"))
+		Return(errors.New("storage connection failed"))
 
-	_, err := uc.saveExternalDataToSeaweedFS(ctx, testTracer(), message, result, nil, logger)
+	_, err := uc.saveExternalData(ctx, testTracer(), message, result, nil, logger)
 	if err == nil {
-		t.Fatal("expected error when SeaweedFS put fails")
+		t.Fatal("expected error when storage put fails")
 	}
 }
 
-// TestSaveExternalDataToSeaweedFS_Success tests saveExternalDataToSeaweedFS happy path.
-func TestSaveExternalDataToSeaweedFS_Success(t *testing.T) {
+// TestSaveExternalData_Success tests saveExternalData happy path.
+func TestSaveExternalData_Success(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
@@ -1616,9 +1861,11 @@ func TestSaveExternalDataToSeaweedFS_Success(t *testing.T) {
 	jobID := newTestJobID()
 	orgID := newTestOrgID()
 
-	// Set required environment variables for encryption
-	t.Setenv("CRYPTO_ENCRYPT_SECRET_KEY_SEAWEEDFS", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
-	t.Setenv("CRYPTO_HASH_SECRET_KEY_SEAWEEDFS", "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210")
+	// Set valid encryption keys on the UseCase
+	uc.SetStorageSecrets(
+		"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		"fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+	)
 
 	message := ExtractExternalDataMessage{
 		JobID:          jobID,
@@ -1638,13 +1885,13 @@ func TestSaveExternalDataToSeaweedFS_Success(t *testing.T) {
 		},
 	}
 
-	// Mock SeaweedFS to succeed
+	// Mock storage to succeed
 	expectedObjectName := jobID.String() + ".json"
 	mocks.seaweedFS.EXPECT().
 		Put(gomock.Any(), expectedObjectName, gomock.Any()).
 		Return(nil)
 
-	resultData, err := uc.saveExternalDataToSeaweedFS(ctx, testTracer(), message, result, nil, logger)
+	resultData, err := uc.saveExternalData(ctx, testTracer(), message, result, nil, logger)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -1760,6 +2007,11 @@ func TestExtractExternalData_ConnectionRepositoryError(t *testing.T) {
 		FindByConfigNames(gomock.Any(), orgID, []string{"postgres_db"}).
 		Return(nil, errors.New("database connection failed"))
 
+	// Expect job transition to processing before extraction
+	mocks.jobRepo.EXPECT().
+		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusProcessing, "", "", nil).
+		Return(nil)
+
 	// Expect job status to be updated to failed
 	mocks.jobRepo.EXPECT().
 		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any(), gomock.Any(), gomock.Any()).
@@ -1773,6 +2025,107 @@ func TestExtractExternalData_ConnectionRepositoryError(t *testing.T) {
 	err = uc.ExtractExternalData(ctx, body, nil)
 	if err == nil {
 		t.Fatal("expected error when connection repository fails, got nil")
+	}
+}
+
+// TestExtractExternalData_ProcessingStatusUpdateError tests failure when transitioning to processing.
+func TestExtractExternalData_ProcessingStatusUpdateError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+
+	ctx := testContext()
+	jobID := newTestJobID()
+	orgID := newTestOrgID()
+
+	validMessage := ExtractExternalDataMessage{
+		JobID:          jobID,
+		OrganizationID: orgID,
+		MappedFields: map[string]map[string][]string{
+			"postgres_db": {"users": {"id", "name"}},
+		},
+		Metadata: map[string]any{"source": "test-service"},
+	}
+
+	body, err := json.Marshal(validMessage)
+	if err != nil {
+		t.Fatalf("failed to marshal test message: %v", err)
+	}
+
+	mocks.jobRepo.EXPECT().
+		FindByID(gomock.Any(), jobID, orgID).
+		Return(&model.Job{ID: jobID, Status: model.JobStatusPending}, nil)
+
+	mocks.jobRepo.EXPECT().
+		FindByID(gomock.Any(), jobID, orgID).
+		Return(&model.Job{ID: jobID, Status: model.JobStatusPending}, nil)
+
+	mocks.jobRepo.EXPECT().
+		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusProcessing, "", "", nil).
+		Return(errors.New("processing update failed"))
+
+	mocks.jobRepo.EXPECT().
+		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil)
+
+	mocks.rabbitPublisher.EXPECT().
+		Publish(gomock.Any(), "test-exchange", "job.failed.test-service", gomock.Any()).
+		Return(nil)
+
+	err = uc.ExtractExternalData(ctx, body, nil)
+	if err == nil {
+		t.Fatal("expected error when processing status update fails, got nil")
+	}
+}
+
+// TestCompleteJob_CompletedStatusUpdateError tests completed status persistence failure path.
+func TestCompleteJob_CompletedStatusUpdateError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+
+	ctx := testContext()
+	tracer := testTracer()
+	ctx, span := tracer.Start(ctx, "test.complete_job")
+	defer span.End()
+
+	jobID := newTestJobID()
+	orgID := newTestOrgID()
+	logger := testLogger()
+
+	message := ExtractExternalDataMessage{
+		JobID:          jobID,
+		OrganizationID: orgID,
+		Metadata:       map[string]any{"source": "test-service"},
+	}
+
+	resultData := &JobResultData{
+		Path:      "/external-data/result.json",
+		SizeBytes: 10,
+		RowCount:  1,
+		Format:    "json",
+		HMAC:      "hmac",
+	}
+
+	mocks.jobRepo.EXPECT().
+		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusCompleted, resultData.Path, resultData.HMAC, nil).
+		Return(errors.New("completed update failed"))
+
+	mocks.jobRepo.EXPECT().
+		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil)
+
+	mocks.rabbitPublisher.EXPECT().
+		Publish(gomock.Any(), "test-exchange", "job.failed.test-service", gomock.Any()).
+		Return(nil)
+
+	err := uc.completeJob(ctx, tracer, message, resultData, time.Now().Add(-time.Second), span, logger)
+	if err == nil {
+		t.Fatal("expected error when completed status update fails, got nil")
 	}
 }
 
@@ -1846,8 +2199,8 @@ func TestQueryExternalData_WithConnections(t *testing.T) {
 	}
 }
 
-// TestEncryptDataForSeaweedFS_InvalidCipherInitialization tests cipher initialization failure.
-func TestEncryptDataForSeaweedFS_InvalidCipherInitialization(t *testing.T) {
+// TestEncryptData_InvalidCipherInitialization tests cipher initialization failure.
+func TestEncryptData_InvalidCipherInitialization(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
@@ -1856,19 +2209,18 @@ func TestEncryptDataForSeaweedFS_InvalidCipherInitialization(t *testing.T) {
 	logger := testLogger()
 
 	// Set invalid keys that will cause cipher initialization to fail
-	t.Setenv("CRYPTO_ENCRYPT_SECRET_KEY_SEAWEEDFS", "invalid-short-key")
-	t.Setenv("CRYPTO_HASH_SECRET_KEY_SEAWEEDFS", "invalid-short-key")
+	uc.SetStorageSecrets("invalid-short-key", "invalid-short-key")
 
 	data := []byte(`{"test": "data"}`)
 
-	_, err := uc.encryptDataForSeaweedFS(data, logger)
+	_, err := uc.encryptData(data, logger)
 	if err == nil {
 		t.Error("expected error with invalid keys")
 	}
 }
 
-// TestEncryptDataForSeaweedFS_Success tests successful encryption.
-func TestEncryptDataForSeaweedFS_Success(t *testing.T) {
+// TestEncryptData_Success tests successful encryption.
+func TestEncryptData_Success(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
@@ -1876,13 +2228,15 @@ func TestEncryptDataForSeaweedFS_Success(t *testing.T) {
 	uc := newTestUseCase(mocks)
 	logger := testLogger()
 
-	// Set valid 32-byte hex keys
-	t.Setenv("CRYPTO_ENCRYPT_SECRET_KEY_SEAWEEDFS", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
-	t.Setenv("CRYPTO_HASH_SECRET_KEY_SEAWEEDFS", "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210")
+	// Set valid 32-byte hex keys on the UseCase struct
+	uc.SetStorageSecrets(
+		"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		"fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+	)
 
 	data := []byte(`{"test": "data"}`)
 
-	result, err := uc.encryptDataForSeaweedFS(data, logger)
+	result, err := uc.encryptData(data, logger)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -1935,8 +2289,8 @@ func TestQueryExternalData_MultipleDatabase(t *testing.T) {
 	}
 }
 
-// TestSaveExternalDataToSeaweedFS_EmptyResult tests saveExternalDataToSeaweedFS with empty result.
-func TestSaveExternalDataToSeaweedFS_EmptyResult(t *testing.T) {
+// TestSaveExternalData_EmptyResult tests saveExternalData with empty result.
+func TestSaveExternalData_EmptyResult(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
@@ -1948,9 +2302,11 @@ func TestSaveExternalDataToSeaweedFS_EmptyResult(t *testing.T) {
 	jobID := newTestJobID()
 	orgID := newTestOrgID()
 
-	// Set required environment variables for encryption
-	t.Setenv("CRYPTO_ENCRYPT_SECRET_KEY_SEAWEEDFS", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
-	t.Setenv("CRYPTO_HASH_SECRET_KEY_SEAWEEDFS", "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210")
+	// Set valid encryption keys on the UseCase
+	uc.SetStorageSecrets(
+		"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		"fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+	)
 
 	message := ExtractExternalDataMessage{
 		JobID:          jobID,
@@ -1961,13 +2317,13 @@ func TestSaveExternalDataToSeaweedFS_EmptyResult(t *testing.T) {
 	// Empty result
 	result := map[string]map[string][]map[string]any{}
 
-	// Mock SeaweedFS to succeed
+	// Mock storage to succeed
 	expectedObjectName := jobID.String() + ".json"
 	mocks.seaweedFS.EXPECT().
 		Put(gomock.Any(), expectedObjectName, gomock.Any()).
 		Return(nil)
 
-	resultData, err := uc.saveExternalDataToSeaweedFS(ctx, testTracer(), message, result, nil, logger)
+	resultData, err := uc.saveExternalData(ctx, testTracer(), message, result, nil, logger)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -2050,5 +2406,331 @@ func TestQueryExternalData_NilConnections(t *testing.T) {
 	err := uc.queryExternalData(ctx, message, nil, result)
 	if err == nil {
 		t.Fatal("expected error with nil connections")
+	}
+}
+
+// TestCompleteJob_NotificationFailure_StillReturnsNil verifies the persist-before-notify
+// contract: when the DB update succeeds but notification publish fails, completeJob
+// returns nil (success) because the DB is the source of truth.
+func TestCompleteJob_NotificationFailure_StillReturnsNil(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+
+	ctx := testContext()
+	tracer := testTracer()
+	ctx, span := tracer.Start(ctx, "test.complete_job_notify_fail")
+	defer span.End()
+
+	jobID := newTestJobID()
+	orgID := newTestOrgID()
+	logger := testLogger()
+
+	message := ExtractExternalDataMessage{
+		JobID:          jobID,
+		OrganizationID: orgID,
+		Metadata:       map[string]any{"source": "test-service"},
+	}
+
+	resultData := &JobResultData{
+		Path:      "/external-data/result.json",
+		SizeBytes: 1024,
+		RowCount:  50,
+		Format:    "json",
+		HMAC:      "test-hmac",
+	}
+
+	// DB update succeeds
+	mocks.jobRepo.EXPECT().
+		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusCompleted, resultData.Path, resultData.HMAC, nil).
+		Return(nil)
+
+	// Notification publish fails
+	mocks.rabbitPublisher.EXPECT().
+		Publish(gomock.Any(), "test-exchange", "job.completed.test-service", gomock.Any()).
+		Return(errors.New("connection refused"))
+
+	err := uc.completeJob(ctx, tracer, message, resultData, time.Now().Add(-time.Second), span, logger)
+	if err != nil {
+		t.Fatalf("expected nil error (DB is source of truth), got: %v", err)
+	}
+}
+
+// TestCompleteJob_NilResultData verifies that completeJob handles nil resultData
+// by failing the job instead of panicking.
+func TestCompleteJob_NilResultData(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+
+	ctx := testContext()
+	tracer := testTracer()
+	ctx, span := tracer.Start(ctx, "test.complete_job_nil_result")
+	defer span.End()
+
+	jobID := newTestJobID()
+	orgID := newTestOrgID()
+	logger := testLogger()
+
+	message := ExtractExternalDataMessage{
+		JobID:          jobID,
+		OrganizationID: orgID,
+		Metadata:       map[string]any{"source": "test-service"},
+	}
+
+	// Expect job to be marked as failed due to nil result data
+	mocks.jobRepo.EXPECT().
+		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, "", "", gomock.Any()).
+		DoAndReturn(func(_ context.Context, _, _ uuid.UUID, _ model.JobStatus, resultPath, resultHMAC string, metadata map[string]any) error {
+			errValue, ok := metadata["error"].(string)
+			if !ok {
+				t.Fatalf("expected metadata.error as string, got %T", metadata["error"])
+			}
+			if !strings.Contains(errValue, "result data is nil") {
+				t.Fatalf("expected error about nil result data, got %q", errValue)
+			}
+
+			return nil
+		})
+
+	// Expect failure notification
+	mocks.rabbitPublisher.EXPECT().
+		Publish(gomock.Any(), "test-exchange", "job.failed.test-service", gomock.Any()).
+		Return(nil)
+
+	err := uc.completeJob(ctx, tracer, message, nil, time.Now().Add(-time.Second), span, logger)
+	if err == nil {
+		t.Fatal("expected error for nil resultData, got nil")
+	}
+
+	if !strings.Contains(err.Error(), "result data is nil") {
+		t.Fatalf("expected nil result data error, got: %v", err)
+	}
+}
+
+// TestEncryptData_InvalidKeyLength verifies that cipher initialization
+// fails with invalid (too short) encryption keys.
+// newTestUseCase sets storageEncryptSecretKey to "test-seaweedfs-encrypt-key" (28 bytes)
+// which is not a valid AES key length (16, 24, or 32 bytes), triggering the cipher init error.
+func TestEncryptData_InvalidKeyLength(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+	logger := testLogger()
+
+	_, err := uc.encryptData([]byte(`{"test": "data"}`), logger)
+	if err == nil {
+		t.Fatal("expected error for invalid cipher initialization")
+	}
+
+	if !strings.Contains(err.Error(), "initialize cipher") {
+		t.Fatalf("expected cipher initialization error, got: %v", err)
+	}
+}
+
+// TestParseMessage_MissingOrgIDInAllSources verifies the warning branch when
+// organizationId cannot be extracted from either body or headers.
+// When orgID is uuid.Nil, UpdateStatus is NOT called (the code only updates
+// when both jobID and orgID are non-nil). Instead it logs a warning:
+// "Could not extract complete job identifiers from payload"
+func TestParseMessage_MissingOrgIDInAllSources(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+
+	ctx := testContext()
+	logger := testLogger()
+
+	// Body with only jobId, no organizationId
+	jobID := newTestJobID()
+	body := []byte(`{"jobId":"` + jobID.String() + `","mappedFields":{"db":{"t":["f"]}}}`)
+
+	// No headers — orgID cannot be extracted from any source.
+	// Because orgID == uuid.Nil, the code takes the else branch at line 221
+	// and does NOT call UpdateStatus. No mock expectations needed.
+
+	result, err := uc.parseMessage(ctx, body, nil, nil, logger)
+	if err == nil {
+		t.Fatal("expected error for missing orgID in all sources")
+	}
+
+	if !strings.Contains(err.Error(), "organizationId is required") {
+		t.Fatalf("expected organizationId required error, got: %v", err)
+	}
+
+	if result != nil {
+		t.Fatalf("expected nil result, got %+v", result)
+	}
+}
+
+// TestSanitizeErrorForNotification verifies that URI patterns are redacted
+// in error messages before they are published to notification consumers.
+func TestSanitizeErrorForNotification(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "redacts mongodb connection string",
+			input:    "failed to connect: mongodb://admin:secret@db.internal:27017/prod",
+			expected: "failed to connect: [redacted]",
+		},
+		{
+			name:     "redacts amqp connection string",
+			input:    "dial: amqp://guest:guest@rabbitmq.svc:5672/",
+			expected: "dial: [redacted]",
+		},
+		{
+			name:     "preserves message without URIs",
+			input:    "connection not found for database: postgres_db",
+			expected: "connection not found for database: postgres_db",
+		},
+		{
+			name:     "redacts multiple URIs",
+			input:    "sources: mongodb://u:p@h1 and amqp://u:p@h2",
+			expected: "sources: [redacted] and [redacted]",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sanitizeErrorForNotification(tt.input)
+			if got != tt.expected {
+				t.Errorf("sanitizeErrorForNotification() = %q, want %q", got, tt.expected)
+			}
+		})
+	}
+}
+
+// TestExtractExternalData_NonPendingJobSkipsProcessing verifies the CAS-style
+// guard: if the job has moved past PENDING status (e.g. another worker already
+// picked it up), processing is skipped instead of re-processing.
+func TestExtractExternalData_NonPendingJobSkipsProcessing(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+
+	ctx := testContext()
+	jobID := newTestJobID()
+	orgID := newTestOrgID()
+
+	validMessage := ExtractExternalDataMessage{
+		JobID:          jobID,
+		OrganizationID: orgID,
+		MappedFields: map[string]map[string][]string{
+			"datasource1": {"table1": {"field1"}},
+		},
+		Metadata: map[string]any{"source": "test-service"},
+	}
+
+	body, err := json.Marshal(validMessage)
+	if err != nil {
+		t.Fatalf("failed to marshal test message: %v", err)
+	}
+
+	// shouldSkipProcessing: job is FAILED (not completed/processing) -> don't skip
+	mocks.jobRepo.EXPECT().
+		FindByID(gomock.Any(), jobID, orgID).
+		Return(&model.Job{
+			ID:     jobID,
+			Status: model.JobStatusFailed,
+		}, nil)
+
+	// FindByID for job validation: returns job in FAILED status
+	mocks.jobRepo.EXPECT().
+		FindByID(gomock.Any(), jobID, orgID).
+		Return(&model.Job{
+			ID:     jobID,
+			Status: model.JobStatusFailed,
+		}, nil)
+
+	// CAS guard: job.Status != PENDING -> skip (no UpdateStatus, no further processing)
+	// No further mock expectations needed -- the function returns nil early.
+
+	err = uc.ExtractExternalData(ctx, body, nil)
+	if err != nil {
+		t.Fatalf("expected nil (skip), got error: %v", err)
+	}
+}
+
+// TestValidateExtractExternalDataMessage_EmptyTables verifies that mappedFields
+// entries with present database keys but empty table maps are rejected.
+// This catches the silent no-op where a db entry exists but has no tables to query.
+func TestValidateExtractExternalDataMessage_EmptyTables(t *testing.T) {
+	tests := []struct {
+		name        string
+		message     *ExtractExternalDataMessage
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name: "db entry with empty tables map is rejected",
+			message: &ExtractExternalDataMessage{
+				JobID:          newTestJobID(),
+				OrganizationID: newTestOrgID(),
+				MappedFields: map[string]map[string][]string{
+					"mydb": {}, // empty inner map
+				},
+			},
+			wantErr:     true,
+			errContains: `mappedFields["mydb"] has no tables`,
+		},
+		{
+			name: "one valid db and one empty db is rejected",
+			message: &ExtractExternalDataMessage{
+				JobID:          newTestJobID(),
+				OrganizationID: newTestOrgID(),
+				MappedFields: map[string]map[string][]string{
+					"gooddb":  {"users": {"id", "name"}},
+					"emptydb": {},
+				},
+			},
+			wantErr:     true,
+			errContains: `mappedFields["emptydb"] has no tables`,
+		},
+		{
+			name: "all dbs with tables is accepted",
+			message: &ExtractExternalDataMessage{
+				JobID:          newTestJobID(),
+				OrganizationID: newTestOrgID(),
+				MappedFields: map[string]map[string][]string{
+					"db1": {"t1": {"col1"}},
+					"db2": {"t2": {"col2"}},
+				},
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateExtractExternalDataMessage(tt.message)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+
+				if !strings.Contains(err.Error(), tt.errContains) {
+					t.Fatalf("expected error containing %q, got: %v", tt.errContains, err)
+				}
+
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("expected no error, got: %v", err)
+			}
+		})
 	}
 }

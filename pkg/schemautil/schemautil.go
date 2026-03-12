@@ -6,6 +6,12 @@ import (
 	"strings"
 )
 
+// Default schema names for supported database types.
+const (
+	DefaultSchemaPostgreSQL = "public"
+	DefaultSchemaSQLServer  = "dbo"
+)
+
 // Errors returned by ParseQualifiedTableName.
 var (
 	ErrEmptyTableName   = errors.New("table name cannot be empty")

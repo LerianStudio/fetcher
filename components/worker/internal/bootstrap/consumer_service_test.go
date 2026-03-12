@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -45,7 +46,7 @@ func TestNewMultiQueueConsumerRegistersQueue(t *testing.T) {
 	routes := workerRabbitMQ.NewConsumerRoutesWithAdapter(adapter, 2, testBootstrapLogger(), &libOtel.Telemetry{})
 	useCase := &services.UseCase{}
 
-	consumer := NewMultiQueueConsumer(routes, useCase)
+	consumer := NewMultiQueueConsumer(routes, useCase, "worker.jobs", testBootstrapLogger(), nil)
 
 	if consumer.UseCase != useCase {
 		t.Fatal("expected use case to be assigned")
@@ -136,7 +137,7 @@ func TestMultiQueueConsumerRun(t *testing.T) {
 		adapter.EXPECT().Shutdown(gomock.Any()).Return(nil)
 
 		routes := workerRabbitMQ.NewConsumerRoutesWithAdapter(adapter, 2, testBootstrapLogger(), &libOtel.Telemetry{})
-		consumer := NewMultiQueueConsumer(routes, &services.UseCase{})
+		consumer := NewMultiQueueConsumer(routes, &services.UseCase{}, "worker.jobs", testBootstrapLogger(), nil)
 
 		if err := consumer.Run(nil); err != nil {
 			t.Fatalf("expected no error, got %v", err)
@@ -157,10 +158,10 @@ func TestMultiQueueConsumerRun(t *testing.T) {
 		adapter.EXPECT().Shutdown(gomock.Any()).Return(errors.New("shutdown failed"))
 
 		routes := workerRabbitMQ.NewConsumerRoutesWithAdapter(adapter, 2, testBootstrapLogger(), &libOtel.Telemetry{})
-		consumer := NewMultiQueueConsumer(routes, &services.UseCase{})
+		consumer := NewMultiQueueConsumer(routes, &services.UseCase{}, "worker.jobs", testBootstrapLogger(), nil)
 
 		err := consumer.Run(nil)
-		if err == nil || err.Error() != "shutdown failed" {
+		if err == nil || !strings.Contains(err.Error(), "shutdown failed") {
 			t.Fatalf("expected shutdown failed error, got %v", err)
 		}
 	})

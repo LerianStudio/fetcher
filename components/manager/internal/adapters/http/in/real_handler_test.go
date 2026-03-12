@@ -6,7 +6,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	cacheRepo "github.com/LerianStudio/fetcher/components/manager/internal/adapters/cache"
 	commandSvc "github.com/LerianStudio/fetcher/components/manager/internal/services/command"
@@ -15,9 +14,8 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	datasourceModel "github.com/LerianStudio/fetcher/pkg/model/datasource"
-	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
+	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
 	jobRepo "github.com/LerianStudio/fetcher/pkg/mongodb/job"
-	productRepo "github.com/LerianStudio/fetcher/pkg/mongodb/product"
 	nethttp "github.com/LerianStudio/fetcher/pkg/net/http"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -25,51 +23,31 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
-func createTestProduct(id, orgID uuid.UUID) *model.Product {
-	now := time.Now().UTC()
-	return &model.Product{
-		ID:             id,
-		OrganizationID: orgID,
-		Code:           "reporter",
-		Name:           "Reporter",
-		Description:    "Reporting product",
-		CreatedAt:      now,
-		UpdatedAt:      now,
-	}
-}
-
 func TestConnectionHandler_CreateConnection_RealHandlerSuccess(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
 	app := setupConnectionTestApp()
 	orgID := uuid.New()
-	productID := uuid.New()
-	product := createTestProduct(productID, orgID)
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockProductRepo := productRepo.NewMockRepository(ctrl)
 	mockCryptor := crypto.NewMockCryptor(ctrl)
 
-	mockProductRepo.EXPECT().FindByID(gomock.Any(), productID, orgID).Return(product, nil)
 	mockCryptor.EXPECT().Encrypt(gomock.Any(), "secretpassword").Return("encrypted-password", "v1", nil)
 	mockConnRepo.EXPECT().FindByOrganizationAndName(gomock.Any(), orgID, "test-connection").Return(nil, nil)
 	mockConnRepo.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, conn *model.Connection) (*model.Connection, error) {
 		assert.Equal(t, orgID, conn.OrganizationID)
-		require.NotNil(t, conn.ProductID)
-		assert.Equal(t, productID, *conn.ProductID)
 		assert.Equal(t, "test-connection", conn.ConfigName)
 		assert.Equal(t, model.TypePostgreSQL, conn.Type)
 		return conn, nil
 	})
 
 	handler := &ConnectionHandler{
-		CreateCmd: commandSvc.NewCreateConnection(mockConnRepo, mockProductRepo, mockCryptor),
+		CreateCmd: commandSvc.NewCreateConnection(mockConnRepo, mockCryptor),
 	}
 	app.Post("/v1/management/connections", handler.CreateConnection)
 
 	req := httptest.NewRequest("POST", "/v1/management/connections", strings.NewReader(`{
-		"productId":"`+productID.String()+`",
 		"configName":"test-connection",
 		"type":"POSTGRESQL",
 		"host":"localhost",
@@ -80,6 +58,7 @@ func TestConnectionHandler_CreateConnection_RealHandlerSuccess(t *testing.T) {
 	}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Organization-Id", orgID.String())
+	req.Header.Set("X-Product-Name", "test-product")
 
 	resp, err := app.Test(req)
 	require.NoError(t, err)
@@ -90,8 +69,6 @@ func TestConnectionHandler_CreateConnection_RealHandlerSuccess(t *testing.T) {
 	var body model.ConnectionResponse
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
 	assert.Equal(t, "test-connection", body.ConfigName)
-	require.NotNil(t, body.ProductID)
-	assert.Equal(t, productID, *body.ProductID)
 }
 
 func TestConnectionHandler_ListConnections_RealHandlerSuccess(t *testing.T) {
@@ -112,7 +89,7 @@ func TestConnectionHandler_ListConnections_RealHandlerSuccess(t *testing.T) {
 	})
 
 	handler := &ConnectionHandler{
-		ListQuery: querySvc.NewListConnections(mockConnRepo, nil),
+		ListQuery: querySvc.NewListConnections(mockConnRepo),
 	}
 	app.Get("/v1/management/connections", handler.ListConnections)
 
@@ -125,12 +102,12 @@ func TestConnectionHandler_ListConnections_RealHandlerSuccess(t *testing.T) {
 
 	assert.Equal(t, 200, resp.StatusCode)
 
-	var body map[string]any
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
-	items, ok := body["items"].([]any)
+	var respBody map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&respBody))
+	items, ok := respBody["items"].([]any)
 	require.True(t, ok)
 	assert.Len(t, items, 2)
-	assert.EqualValues(t, 2, body["total"])
+	assert.EqualValues(t, 2, respBody["total"])
 }
 
 func TestConnectionHandler_UpdateConnection_RealHandlerSuccess(t *testing.T) {
@@ -170,10 +147,10 @@ func TestConnectionHandler_UpdateConnection_RealHandlerSuccess(t *testing.T) {
 	defer resp.Body.Close()
 
 	assert.Equal(t, 200, resp.StatusCode)
-	var body model.ConnectionResponse
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
-	assert.Equal(t, "new-host", body.Host)
-	assert.Equal(t, 5433, body.Port)
+	var respBody model.ConnectionResponse
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&respBody))
+	assert.Equal(t, "new-host", respBody.Host)
+	assert.Equal(t, 5433, respBody.Port)
 }
 
 func TestConnectionHandler_ValidateSchema_RealHandlerFailureResponse(t *testing.T) {
@@ -193,7 +170,7 @@ func TestConnectionHandler_ValidateSchema_RealHandlerFailureResponse(t *testing.
 	mockSchemaCache.EXPECT().Get(gomock.Any(), "db1").Return(model.NewDataSourceSchema("db1"), nil)
 
 	handler := &ConnectionHandler{
-		ValidateSchemaQuery: querySvc.NewValidateSchema(mockConnRepo, nil, mockSchemaCache),
+		ValidateSchemaQuery: querySvc.NewValidateSchema(mockConnRepo, nil, mockSchemaCache, nil),
 	}
 	app.Post("/v1/management/connections/validate-schema", handler.ValidateSchema)
 
@@ -208,11 +185,11 @@ func TestConnectionHandler_ValidateSchema_RealHandlerFailureResponse(t *testing.
 	defer resp.Body.Close()
 
 	assert.Equal(t, 422, resp.StatusCode)
-	var body model.SchemaValidationErrorResponse
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
-	assert.Equal(t, constant.ErrSchemaValidationFailed.Error(), body.Code)
-	require.Len(t, body.Errors, 1)
-	assert.Equal(t, model.ErrTypeTableNotFound, body.Errors[0].Type)
+	var respBody model.SchemaValidationErrorResponse
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&respBody))
+	assert.Equal(t, constant.ErrSchemaValidationFailed.Error(), respBody.Code)
+	require.Len(t, respBody.Errors, 1)
+	assert.Equal(t, model.ErrTypeTableNotFound, respBody.Errors[0].Type)
 }
 
 func TestConnectionHandler_GetConnectionSchema_RealHandlerSuccess(t *testing.T) {
@@ -247,72 +224,10 @@ func TestConnectionHandler_GetConnectionSchema_RealHandlerSuccess(t *testing.T) 
 	defer resp.Body.Close()
 
 	assert.Equal(t, 200, resp.StatusCode)
-	var body model.ConnectionSchemaResponse
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
-	assert.Len(t, body.Tables, 1)
-	assert.Equal(t, "users", body.Tables[0].Name)
-}
-
-func TestProductHandler_CreateProduct_RealHandlerSuccess(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	app := setupConnectionTestApp()
-	orgID := uuid.New()
-	mockProductRepo := productRepo.NewMockRepository(ctrl)
-
-	mockProductRepo.EXPECT().FindByCode(gomock.Any(), "reporter", orgID).Return(nil, nil)
-	mockProductRepo.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, product *model.Product) (*model.Product, error) {
-		assert.Equal(t, orgID, product.OrganizationID)
-		assert.Equal(t, "reporter", product.Code)
-		return product, nil
-	})
-
-	handler := &ProductHandler{CreateCmd: commandSvc.NewCreateProduct(mockProductRepo)}
-	app.Post("/v1/management/products", handler.CreateProduct)
-
-	req := httptest.NewRequest("POST", "/v1/management/products", strings.NewReader(`{"code":"reporter","name":"Reporter"}`))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Organization-Id", orgID.String())
-
-	resp, err := app.Test(req)
-	require.NoError(t, err)
-	defer resp.Body.Close()
-
-	assert.Equal(t, 201, resp.StatusCode)
-	var body model.ProductResponse
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
-	assert.Equal(t, "reporter", body.Code)
-	assert.Equal(t, "Reporter", body.Name)
-}
-
-func TestProductHandler_ListProducts_RealHandlerSuccess(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	app := setupConnectionTestApp()
-	orgID := uuid.New()
-	product := createTestProduct(uuid.New(), orgID)
-	mockProductRepo := productRepo.NewMockRepository(ctrl)
-
-	mockProductRepo.EXPECT().List(gomock.Any(), orgID, gomock.Any()).Return([]*model.Product{product}, int64(1), nil)
-
-	handler := &ProductHandler{ListQuery: querySvc.NewListProducts(mockProductRepo)}
-	app.Get("/v1/management/products", handler.ListProducts)
-
-	req := httptest.NewRequest("GET", "/v1/management/products?limit=10&page=1", nil)
-	req.Header.Set("X-Organization-Id", orgID.String())
-
-	resp, err := app.Test(req)
-	require.NoError(t, err)
-	defer resp.Body.Close()
-
-	assert.Equal(t, 200, resp.StatusCode)
-	var body map[string]any
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
-	items, ok := body["items"].([]any)
-	require.True(t, ok)
-	assert.Len(t, items, 1)
+	var respBody model.ConnectionSchemaResponse
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&respBody))
+	assert.Len(t, respBody.Tables, 1)
+	assert.Equal(t, "users", respBody.Tables[0].Name)
 }
 
 func TestMigrationHandler_ListUnassignedConnections_RealHandlerSuccess(t *testing.T) {
@@ -337,9 +252,9 @@ func TestMigrationHandler_ListUnassignedConnections_RealHandlerSuccess(t *testin
 	defer resp.Body.Close()
 
 	assert.Equal(t, 200, resp.StatusCode)
-	var body map[string]any
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
-	items, ok := body["items"].([]any)
+	var respBody map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&respBody))
+	items, ok := respBody["items"].([]any)
 	require.True(t, ok)
 	assert.Len(t, items, 1)
 }
@@ -351,33 +266,30 @@ func TestMigrationHandler_AssignConnectionToProduct_RealHandlerSuccess(t *testin
 	app := setupConnectionTestApp()
 	orgID := uuid.New()
 	connID := uuid.New()
-	productID := uuid.New()
-	product := createTestProduct(productID, orgID)
+	productName := "my-product"
 	conn := createTestConnection(connID, orgID)
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockProductRepo := productRepo.NewMockRepository(ctrl)
 
-	mockProductRepo.EXPECT().FindByID(gomock.Any(), productID, orgID).Return(product, nil)
 	mockConnRepo.EXPECT().FindByID(gomock.Any(), connID, orgID).Return(conn, nil)
-	mockConnRepo.EXPECT().AssignProduct(gomock.Any(), connID, orgID, productID).DoAndReturn(func(_ context.Context, _ uuid.UUID, _ uuid.UUID, pid uuid.UUID) (*model.Connection, error) {
-		conn.ProductID = &pid
+	mockConnRepo.EXPECT().AssignProductName(gomock.Any(), connID, orgID, productName).DoAndReturn(func(_ context.Context, _ uuid.UUID, _ uuid.UUID, name string) (*model.Connection, error) {
+		conn.ProductName = name
 		return conn, nil
 	})
 
-	handler := &MigrationHandler{AssignCmd: commandSvc.NewAssignConnection(mockConnRepo, mockProductRepo)}
+	handler := &MigrationHandler{AssignCmd: commandSvc.NewAssignConnection(mockConnRepo)}
 	app.Post("/v1/management/connections/:id/assign", handler.AssignConnectionToProduct)
 
-	req := httptest.NewRequest("POST", "/v1/management/connections/"+connID.String()+"/assign", strings.NewReader(`{"productId":"`+productID.String()+`"}`))
+	req := httptest.NewRequest("POST", "/v1/management/connections/"+connID.String()+"/assign", nil)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Organization-Id", orgID.String())
+	req.Header.Set("X-Product-Name", productName)
 
 	resp, err := app.Test(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
 	assert.Equal(t, 200, resp.StatusCode)
-	var body model.ConnectionResponse
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
-	require.NotNil(t, body.ProductID)
-	assert.Equal(t, productID, *body.ProductID)
+	var respBody model.ConnectionResponse
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&respBody))
+	assert.Equal(t, productName, respBody.ProductName)
 }

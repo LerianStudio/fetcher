@@ -246,8 +246,10 @@ func setup(ctx context.Context) error {
 		return fmt.Errorf("build suite: %w", err)
 	}
 
-	// 9. Build app environment with connection details for container-to-container communication
-	appEnv, err := e2eshared.BuildAppEnv(suite.Network(), coreInfra.MongoDB, coreInfra.RabbitMQ, coreInfra.Redis, coreInfra.SeaweedFS)
+	// 9. Build app environment with connection details for container-to-container communication.
+	// coreInfra.Minio is non-nil when E2E_ENABLE_S3=true; passing it configures the Worker
+	// to use the S3 storage provider instead of SeaweedFS.
+	appEnv, err := e2eshared.BuildAppEnv(suite.Network(), coreInfra.MongoDB, coreInfra.RabbitMQ, coreInfra.Redis, coreInfra.SeaweedFS, coreInfra.Minio)
 	if err != nil {
 		return fmt.Errorf("build app env: %w", err)
 	}
@@ -267,6 +269,9 @@ func setup(ctx context.Context) error {
 		log.Println("  Redis:      localhost:5707")
 		log.Println("  SeaweedFS:  localhost:8889")
 		log.Println("  PostgreSQL: localhost:5432")
+		if coreInfra.Minio != nil {
+			log.Println("  MinIO (S3): localhost:9000  [E2E_ENABLE_S3=true]")
+		}
 		log.Println("")
 		log.Println("  Start Manager/Worker in VS Code, then press Ctrl+C to exit.")
 		log.Println("═══════════════════════════════════════════════════════════════")

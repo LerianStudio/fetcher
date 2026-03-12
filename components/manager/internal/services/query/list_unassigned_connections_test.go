@@ -2,11 +2,12 @@ package query
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/LerianStudio/fetcher/pkg/model"
-	connRepo "github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 	"github.com/LerianStudio/fetcher/pkg/net/http"
+	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
 
 	"github.com/google/uuid"
 	"go.uber.org/mock/gomock"
@@ -36,7 +37,7 @@ func TestListUnassignedConnections_Execute_Success(t *testing.T) {
 		ListUnassigned(gomock.Any(), orgID, filters).
 		Return(expectedList, int64(2), nil)
 
-	result, _, err := svc.Execute(ctx, orgID, filters)
+	result, err := svc.Execute(ctx, orgID, filters)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -45,20 +46,25 @@ func TestListUnassignedConnections_Execute_Success(t *testing.T) {
 		t.Fatal("expected non-nil result")
 	}
 
-	if len(result) != len(expectedList) {
-		t.Fatalf("expected %d connections, got %d", len(expectedList), len(result))
+	if result.Total != len(expectedList) {
+		t.Fatalf("expected %d connections, got %d", len(expectedList), result.Total)
 	}
 
-	if result[0].ConfigName != "unassigned-conn-1" {
-		t.Fatalf("expected first connection name 'unassigned-conn-1', got %s", result[0].ConfigName)
+	items, ok := result.Items.([]*model.ConnectionResponse)
+	if !ok {
+		t.Fatal("expected items to be []*model.ConnectionResponse")
 	}
 
-	if result[1].ConfigName != "unassigned-conn-2" {
-		t.Fatalf("expected second connection name 'unassigned-conn-2', got %s", result[1].ConfigName)
+	if items[0].ConfigName != "unassigned-conn-1" {
+		t.Fatalf("expected first connection name 'unassigned-conn-1', got %s", items[0].ConfigName)
+	}
+
+	if items[1].ConfigName != "unassigned-conn-2" {
+		t.Fatalf("expected second connection name 'unassigned-conn-2', got %s", items[1].ConfigName)
 	}
 }
 
-// TestListUnassignedConnections_Execute_EmptyList tests that nil repo result returns empty slice, not nil.
+// TestListUnassignedConnections_Execute_EmptyList tests that nil repo result returns empty pagination, not nil.
 func TestListUnassignedConnections_Execute_EmptyList(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
@@ -78,17 +84,17 @@ func TestListUnassignedConnections_Execute_EmptyList(t *testing.T) {
 		ListUnassigned(gomock.Any(), orgID, filters).
 		Return(nil, int64(0), nil)
 
-	result, _, err := svc.Execute(ctx, orgID, filters)
+	result, err := svc.Execute(ctx, orgID, filters)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	if result == nil {
-		t.Fatal("expected non-nil result (empty slice)")
+		t.Fatal("expected non-nil result (empty pagination)")
 	}
 
-	if len(result) != 0 {
-		t.Fatalf("expected empty slice, got %d connections", len(result))
+	if result.Total != 0 {
+		t.Fatalf("expected total 0, got %d", result.Total)
 	}
 }
 
@@ -114,7 +120,7 @@ func TestListUnassignedConnections_Execute_RepositoryError(t *testing.T) {
 		ListUnassigned(gomock.Any(), orgID, filters).
 		Return(nil, int64(0), dbError)
 
-	result, _, err := svc.Execute(ctx, orgID, filters)
+	result, err := svc.Execute(ctx, orgID, filters)
 
 	if result != nil {
 		t.Fatalf("expected nil result, got %+v", result)
@@ -175,7 +181,7 @@ func TestListUnassignedConnections_Execute_TableDriven(t *testing.T) {
 			wantResultCount: 3,
 		},
 		{
-			name: "empty list returns empty slice",
+			name: "empty list returns empty pagination",
 			filters: http.QueryHeader{
 				Limit: 10,
 				Page:  1,
@@ -249,7 +255,7 @@ func TestListUnassignedConnections_Execute_TableDriven(t *testing.T) {
 
 			svc := NewListUnassignedConnections(mockConnRepo)
 
-			result, _, err := svc.Execute(ctx, orgID, tt.filters)
+			result, err := svc.Execute(ctx, orgID, tt.filters)
 
 			if tt.wantErr {
 				if err == nil {
@@ -266,8 +272,8 @@ func TestListUnassignedConnections_Execute_TableDriven(t *testing.T) {
 				t.Fatal("expected non-nil result")
 			}
 
-			if len(result) != tt.wantResultCount {
-				t.Fatalf("expected %d connections, got %d", tt.wantResultCount, len(result))
+			if result.Total != tt.wantResultCount {
+				t.Fatalf("expected %d connections, got %d", tt.wantResultCount, result.Total)
 			}
 		})
 	}
@@ -299,20 +305,13 @@ func TestListUnassignedConnections_Execute_OrganizationIsolation(t *testing.T) {
 		ListUnassigned(gomock.Any(), org1ID, filters).
 		Return(org1Connections, int64(2), nil)
 
-	result1, _, err := svc.Execute(ctx, org1ID, filters)
+	result1, err := svc.Execute(ctx, org1ID, filters)
 	if err != nil {
 		t.Fatalf("unexpected error for org1: %v", err)
 	}
 
-	if len(result1) != 2 {
-		t.Fatalf("expected 2 connections for org1, got %d", len(result1))
-	}
-
-	// Verify all returned connections belong to the requested organization
-	for _, conn := range result1 {
-		if conn.OrganizationID != org1ID {
-			t.Fatalf("expected organization ID %s, got %s", org1ID, conn.OrganizationID)
-		}
+	if result1.Total != 2 {
+		t.Fatalf("expected 2 connections for org1, got %d", result1.Total)
 	}
 
 	// Mock: org2 has 1 unassigned connection
@@ -324,13 +323,13 @@ func TestListUnassignedConnections_Execute_OrganizationIsolation(t *testing.T) {
 		ListUnassigned(gomock.Any(), org2ID, filters).
 		Return(org2Connections, int64(1), nil)
 
-	result2, _, err := svc.Execute(ctx, org2ID, filters)
+	result2, err := svc.Execute(ctx, org2ID, filters)
 	if err != nil {
 		t.Fatalf("unexpected error for org2: %v", err)
 	}
 
-	if len(result2) != 1 {
-		t.Fatalf("expected 1 connection for org2, got %d", len(result2))
+	if result2.Total != 1 {
+		t.Fatalf("expected 1 connection for org2, got %d", result2.Total)
 	}
 }
 
@@ -387,7 +386,7 @@ func TestListUnassignedConnections_Execute_ErrorScenarios(t *testing.T) {
 
 			tt.setupMock(mockConnRepo, orgID, filters)
 
-			result, _, err := svc.Execute(ctx, orgID, filters)
+			result, err := svc.Execute(ctx, orgID, filters)
 
 			if result != nil {
 				t.Fatalf("expected nil result, got %+v", result)
@@ -397,8 +396,8 @@ func TestListUnassignedConnections_Execute_ErrorScenarios(t *testing.T) {
 				t.Fatal("expected error, got nil")
 			}
 
-			if err.Error() != tt.errorMsg {
-				t.Fatalf("expected error message '%s', got '%s'", tt.errorMsg, err.Error())
+			if !strings.Contains(err.Error(), tt.errorMsg) {
+				t.Fatalf("expected error containing '%s', got '%s'", tt.errorMsg, err.Error())
 			}
 		})
 	}

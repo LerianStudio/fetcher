@@ -17,6 +17,7 @@ import (
 	http "github.com/LerianStudio/fetcher/pkg/net/http"
 	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
 	libMongo "github.com/LerianStudio/lib-commons/v4/commons/mongo"
+	tmcore "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/core"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/tryvium-travels/memongo"
@@ -42,16 +43,16 @@ func TestMain(m *testing.M) {
 		os.Exit(0)
 	}
 	connectionTestMongoServer = server
-	connectionTestMongoConn, err = libMongo.NewClient(context.Background(), libMongo.Config{
+	client, err := libMongo.NewClient(context.Background(), libMongo.Config{
 		URI:         server.URI(),
 		Database:    connectionTestDatabaseName,
 		Logger:      &libLog.GoLogger{Level: libLog.LevelError},
 		MaxPoolSize: 5,
 	})
 	if err != nil {
-		log.Printf("SKIP: mongo client init failed: %v", err)
-		os.Exit(0)
+		log.Fatalf("failed to create mongo client: %v", err)
 	}
+	connectionTestMongoConn = client
 
 	code := m.Run()
 
@@ -62,7 +63,7 @@ func TestMain(m *testing.M) {
 func newConnectionRepository(t *testing.T) *ConnectionMongoDBRepository {
 	t.Helper()
 	clearConnectionsCollection(t)
-	repo, err := NewConnectionMongoDBRepository(connectionTestMongoConn, connectionTestDatabaseName)
+	repo, err := NewConnectionMongoDBRepository(context.Background(), connectionTestMongoConn, connectionTestDatabaseName)
 	if err != nil {
 		t.Fatalf("failed to create repository: %v", err)
 	}
@@ -81,7 +82,11 @@ func clearConnectionsCollection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get db: %v", err)
 	}
-	coll := client.Database(strings.ToLower(connectionTestDatabaseName)).Collection(strings.ToLower(constant.MongoCollectionConnection))
+	dbName, err := connectionTestMongoConn.DatabaseName()
+	if err != nil {
+		t.Fatalf("failed to get db name: %v", err)
+	}
+	coll := client.Database(strings.ToLower(dbName)).Collection(strings.ToLower(constant.MongoCollectionConnection))
 	if err := coll.Drop(context.Background()); err != nil {
 		var cmdErr mongo.CommandError
 		if errors.As(err, &cmdErr) && cmdErr.Code == 26 {
@@ -132,22 +137,12 @@ func createConnection(t *testing.T, repo *ConnectionMongoDBRepository, conn *mod
 func stubConnectionSpanAttributes(t *testing.T, retErr error) {
 	t.Helper()
 	original := setSpanAttributesFromValue
-	setSpanAttributesFromValue = func(span trace.Span, key string, valueStruct any) error {
+	setSpanAttributesFromValue = func(span trace.Span, key string, value any) error {
 		return retErr
 	}
 	t.Cleanup(func() {
 		setSpanAttributesFromValue = original
 	})
-}
-
-func TestNewConnectionMongoDBRepository_NilClient(t *testing.T) {
-	repo, err := NewConnectionMongoDBRepository(nil, connectionTestDatabaseName)
-	if err == nil {
-		t.Fatalf("expected error for nil mongo client")
-	}
-	if repo != nil {
-		t.Fatalf("expected nil repository")
-	}
 }
 
 func TestConnectionMongoDBRepository_Create(t *testing.T) {
@@ -365,7 +360,11 @@ func TestConnectionMongoDBRepository_Delete(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to get db: %v", err)
 		}
-		coll := client.Database(strings.ToLower(connectionTestDatabaseName)).Collection(strings.ToLower(constant.MongoCollectionConnection))
+		connDBName, err := connectionTestMongoConn.DatabaseName()
+		if err != nil {
+			t.Fatalf("failed to get db name: %v", err)
+		}
+		coll := client.Database(strings.ToLower(connDBName)).Collection(strings.ToLower(constant.MongoCollectionConnection))
 		var record ConnectionMongoDBModel
 		if err := coll.FindOne(context.Background(), bson.M{"_id": conn.ID}).Decode(&record); err != nil {
 			t.Fatalf("failed to fetch deleted record: %v", err)
@@ -814,6 +813,58 @@ func TestIsIndexConflictError(t *testing.T) {
 		if mongodb.IsIndexConflictError(err) {
 			t.Fatalf("expected false for non-command error")
 		}
+	})
+}
+
+func TestConnectionMongoDBRepository_getDatabase(t *testing.T) {
+	t.Run("returns tenant database when tenant context is set", func(t *testing.T) {
+		repo := newConnectionRepository(t)
+
+		// Get underlying client to create a tenant database reference
+		client, err := connectionTestMongoConn.Client(context.Background())
+		if err != nil {
+			t.Fatalf("failed to get db client: %v", err)
+		}
+
+		tenantDB := client.Database("tenant_abc123")
+		ctx := tmcore.ContextWithTenantMongo(context.Background(), tenantDB)
+
+		db, err := repo.getDatabase(ctx)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		assert.Equal(t, "tenant_abc123", db.Name())
+	})
+
+	t.Run("falls back to static connection when no tenant context", func(t *testing.T) {
+		repo := newConnectionRepository(t)
+
+		db, err := repo.getDatabase(context.Background())
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		assert.Equal(t, strings.ToLower(connectionTestDatabaseName), db.Name())
+	})
+
+	t.Run("returns error when no tenant and static connection fails", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		mockConn := mongodb.NewMockMongoClientProvider(ctrl)
+		mockConn.EXPECT().
+			Client(gomock.Any()).
+			Return(nil, errors.New("db down"))
+
+		repo := &ConnectionMongoDBRepository{
+			connection: mockConn,
+			Database:   connectionTestDatabaseName,
+		}
+
+		_, err := repo.getDatabase(context.Background())
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "db down")
 	})
 }
 

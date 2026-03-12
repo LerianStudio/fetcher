@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"os"
 	"strconv"
 	"time"
 
@@ -46,6 +47,10 @@ type ManagerClient struct {
 // NewManagerClient creates a new Manager API client configured with the given base URL
 // and organization ID. The organization ID is sent in the X-Organization-Id header
 // with every request, as required by the Manager API for multi-tenancy.
+//
+// Debug logging can be enabled by setting E2E_DEBUG_LOG=true in the environment.
+// When enabled, all HTTP requests and responses (including headers and bodies)
+// are printed to stderr, which is useful for diagnosing test failures.
 func NewManagerClient(baseURL, organizationID string) *ManagerClient {
 	client := resty.New().
 		SetBaseURL(baseURL).
@@ -53,11 +58,16 @@ func NewManagerClient(baseURL, organizationID string) *ManagerClient {
 		SetHeader("Content-Type", "application/json").
 		SetHeader("X-Organization-Id", organizationID)
 
+	if os.Getenv("E2E_DEBUG_LOG") == "true" {
+		client.SetDebug(true)
+	}
+
 	return &ManagerClient{client: client}
 }
 
 // ConnectionInput represents the request body for creating a new database connection.
-// All fields except Metadata are required.
+// All fields except Metadata are required. The product name is sent via the X-Product-Name
+// header, not in the request body.
 type ConnectionInput struct {
 	// ConfigName is a unique identifier for this connection within the organization.
 	ConfigName string `json:"configName"`
@@ -82,6 +92,8 @@ type ConnectionInput struct {
 type ConnectionResponse struct {
 	// ID is the server-generated unique identifier (UUID).
 	ID string `json:"id"`
+	// ProductName is the product name this connection belongs to.
+	ProductName string `json:"productName,omitempty"`
 	// ConfigName is the unique connection name within the organization.
 	ConfigName string `json:"configName"`
 	// Type is the database type.
@@ -118,12 +130,14 @@ func checkStatus(resp *resty.Response, method string, expected ...int) error {
 }
 
 // CreateConnection creates a new database connection via POST /v1/management/connections.
+// The productName is sent via the X-Product-Name header.
 // Returns the created connection with its server-generated ID on success (201 or 200).
-func (c *ManagerClient) CreateConnection(ctx context.Context, input ConnectionInput) (*ConnectionResponse, error) {
+func (c *ManagerClient) CreateConnection(ctx context.Context, productName string, input ConnectionInput) (*ConnectionResponse, error) {
 	var result ConnectionResponse
 
 	resp, err := c.client.R().
 		SetContext(ctx).
+		SetHeader("X-Product-Name", productName).
 		SetBody(input).
 		SetResult(&result).
 		Post("/v1/management/connections")
@@ -223,6 +237,9 @@ func (c *ManagerClient) GetJobRaw(ctx context.Context, jobID string) (*resty.Res
 
 // ListConnectionsParams holds query parameters for the list connections endpoint.
 // All fields are optional; zero values are omitted from the query string.
+//
+// Note: The API does not support filtering by host or type via query parameters.
+// Use ListConnectionsWithProductName to filter by product (via X-Product-Name header).
 type ListConnectionsParams struct {
 	// Page is the page number for pagination (1-based).
 	Page int
@@ -230,10 +247,6 @@ type ListConnectionsParams struct {
 	Limit int
 	// SortOrder specifies the sort direction: "asc" or "desc".
 	SortOrder string
-	// Type filters connections by database type (e.g., "POSTGRESQL").
-	Type string
-	// Host filters connections by hostname.
-	Host string
 }
 
 // toQueryString builds the URL query string from the non-zero parameter values.
@@ -250,14 +263,6 @@ func (p ListConnectionsParams) toQueryString() string {
 
 	if p.SortOrder != "" {
 		query.Set("sortOrder", p.SortOrder)
-	}
-
-	if p.Type != "" {
-		query.Set("type", p.Type)
-	}
-
-	if p.Host != "" {
-		query.Set("host", p.Host)
 	}
 
 	if len(query) == 0 {
@@ -298,6 +303,15 @@ func (c *ManagerClient) ListConnections(ctx context.Context, params ListConnecti
 	}
 
 	return &result, nil
+}
+
+// ListConnectionsRaw retrieves connections and returns the raw *resty.Response for testing error scenarios.
+func (c *ManagerClient) ListConnectionsRaw(ctx context.Context, params ListConnectionsParams) (*resty.Response, error) {
+	path := "/v1/management/connections" + params.toQueryString()
+
+	return c.client.R().
+		SetContext(ctx).
+		Get(path)
 }
 
 // ConnectionUpdateInput represents the request body for PATCH /v1/management/connections/{id}.
@@ -472,9 +486,11 @@ func (c *ManagerClient) ValidateSchemaRaw(ctx context.Context, request SchemaVal
 }
 
 // CreateConnectionRaw creates a connection and returns the raw response for testing error scenarios.
-func (c *ManagerClient) CreateConnectionRaw(ctx context.Context, input ConnectionInput) (*resty.Response, error) {
+// The productName is sent via the X-Product-Name header.
+func (c *ManagerClient) CreateConnectionRaw(ctx context.Context, productName string, input ConnectionInput) (*resty.Response, error) {
 	return c.client.R().
 		SetContext(ctx).
+		SetHeader("X-Product-Name", productName).
 		SetBody(input).
 		Post("/v1/management/connections")
 }
@@ -499,4 +515,142 @@ func (c *ManagerClient) CreateFetcherJobRaw(ctx context.Context, request model.F
 		SetContext(ctx).
 		SetBody(request).
 		Post("/v1/fetcher")
+}
+
+// ############################################################################
+// Connection Assignment and Schema Types and Methods
+// ############################################################################
+
+// AssignConnection assigns a connection to a product via POST /v1/management/connections/{id}/assign.
+// The productName is sent via the X-Product-Name header.
+func (c *ManagerClient) AssignConnection(ctx context.Context, connectionID string, productName string) (*ConnectionResponse, error) {
+	var result ConnectionResponse
+
+	resp, err := c.client.R().
+		SetContext(ctx).
+		SetHeader("X-Product-Name", productName).
+		SetResult(&result).
+		Post("/v1/management/connections/" + connectionID + "/assign")
+	if err != nil {
+		return nil, fmt.Errorf("AssignConnection: %w", err)
+	}
+
+	if err := checkStatus(resp, "AssignConnection", 200); err != nil {
+		return nil, err
+	}
+
+	return &result, nil
+}
+
+// AssignConnectionRaw assigns a connection and returns the raw response for testing error scenarios.
+// The productName is sent via the X-Product-Name header.
+func (c *ManagerClient) AssignConnectionRaw(ctx context.Context, connectionID string, productName string) (*resty.Response, error) {
+	return c.client.R().
+		SetContext(ctx).
+		SetHeader("X-Product-Name", productName).
+		Post("/v1/management/connections/" + connectionID + "/assign")
+}
+
+// ListUnassignedConnections retrieves connections without a product assignment
+// via GET /v1/management/connections/unassigned.
+func (c *ManagerClient) ListUnassignedConnections(ctx context.Context, params ListConnectionsParams) (*ListConnectionsResponse, error) {
+	var result ListConnectionsResponse
+
+	path := "/v1/management/connections/unassigned" + params.toQueryString()
+
+	resp, err := c.client.R().
+		SetContext(ctx).
+		SetResult(&result).
+		Get(path)
+	if err != nil {
+		return nil, fmt.Errorf("ListUnassignedConnections: %w", err)
+	}
+
+	if err := checkStatus(resp, "ListUnassignedConnections", 200); err != nil {
+		return nil, err
+	}
+
+	return &result, nil
+}
+
+// ListUnassignedConnectionsRaw retrieves unassigned connections and returns the raw response.
+func (c *ManagerClient) ListUnassignedConnectionsRaw(ctx context.Context, params ListConnectionsParams) (*resty.Response, error) {
+	path := "/v1/management/connections/unassigned" + params.toQueryString()
+
+	return c.client.R().
+		SetContext(ctx).
+		Get(path)
+}
+
+// ConnectionSchemaTable represents a table/collection in the schema response.
+type ConnectionSchemaTable struct {
+	// Name is the table or collection name.
+	Name string `json:"name"`
+	// Fields contains the column/field names.
+	Fields []string `json:"fields"`
+}
+
+// ConnectionSchemaResponse represents the response from GET /v1/management/connections/{id}/schema.
+type ConnectionSchemaResponse struct {
+	// Tables contains the database tables/collections and their fields.
+	Tables []ConnectionSchemaTable `json:"tables"`
+}
+
+// GetConnectionSchema retrieves the database schema for a connection
+// via GET /v1/management/connections/{id}/schema.
+func (c *ManagerClient) GetConnectionSchema(ctx context.Context, connectionID string) (*ConnectionSchemaResponse, error) {
+	var result ConnectionSchemaResponse
+
+	resp, err := c.client.R().
+		SetContext(ctx).
+		SetResult(&result).
+		Get("/v1/management/connections/" + connectionID + "/schema")
+	if err != nil {
+		return nil, fmt.Errorf("GetConnectionSchema: %w", err)
+	}
+
+	if err := checkStatus(resp, "GetConnectionSchema", 200); err != nil {
+		return nil, err
+	}
+
+	return &result, nil
+}
+
+// GetConnectionSchemaRaw retrieves schema and returns the raw response for testing error scenarios.
+func (c *ManagerClient) GetConnectionSchemaRaw(ctx context.Context, connectionID string) (*resty.Response, error) {
+	return c.client.R().
+		SetContext(ctx).
+		Get("/v1/management/connections/" + connectionID + "/schema")
+}
+
+// ListConnectionsWithProductName retrieves connections filtered by product name using the X-Product-Name header.
+func (c *ManagerClient) ListConnectionsWithProductName(ctx context.Context, productName string, params ListConnectionsParams) (*ListConnectionsResponse, error) {
+	var result ListConnectionsResponse
+
+	path := "/v1/management/connections" + params.toQueryString()
+
+	resp, err := c.client.R().
+		SetContext(ctx).
+		SetHeader("X-Product-Name", productName).
+		SetResult(&result).
+		Get(path)
+	if err != nil {
+		return nil, fmt.Errorf("ListConnectionsWithProductName: %w", err)
+	}
+
+	if err := checkStatus(resp, "ListConnectionsWithProductName", 200); err != nil {
+		return nil, err
+	}
+
+	return &result, nil
+}
+
+// ListConnectionsWithProductNameRaw retrieves connections by product name and returns the raw response.
+func (c *ManagerClient) ListConnectionsWithProductNameRaw(ctx context.Context, productName string, params ListConnectionsParams) (*resty.Response, error) {
+	path := "/v1/management/connections" + params.toQueryString()
+
+	return c.client.R().
+		SetContext(ctx).
+		SetHeader("X-Product-Name", productName).
+		Get(path)
 }

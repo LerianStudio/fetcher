@@ -4,16 +4,23 @@ import (
 	"log"
 
 	"github.com/LerianStudio/fetcher/components/worker/internal/bootstrap"
-	libCommons "github.com/LerianStudio/lib-commons/v2/commons"
+	"github.com/LerianStudio/fetcher/pkg/startup"
+	libCommons "github.com/LerianStudio/lib-commons/v4/commons"
 )
 
 func main() {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Fatalf("worker service terminated due to unexpected panic: %v", r)
+		}
+	}()
+
 	libCommons.InitLocalEnvConfig()
 
-	service, err := bootstrap.InitWorker()
+	app, err := bootstrap.InitWorker()
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("failed to initialize worker service: %s", startup.SanitizeError(err))
 	}
 
-	service.Run()
+	app.Run()
 }
