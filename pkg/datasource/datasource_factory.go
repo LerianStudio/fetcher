@@ -345,8 +345,8 @@ func newDataSourceConfigOracle(ctx context.Context, base datasource.DataSourceCo
 	}
 
 	if errConnect := oraConnection.Connect(); errConnect != nil {
-		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to connect to Oracle [%s] with service name [%s]: %v", conn.ConfigName, conn.DatabaseName, errConnect))
-		return nil, fmt.Errorf("failed to connect to Oracle with service name '%s': %w. Verify that the service name is correct and registered with the Oracle listener", conn.DatabaseName, errConnect)
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to connect to Oracle [%s] with service name [%s]: %v", conn.ConfigName, serviceName, errConnect))
+		return nil, fmt.Errorf("failed to connect to Oracle with service name '%s': %w. Verify that the service name is correct and registered with the Oracle listener", serviceName, errConnect)
 	}
 
 	// Create repository
