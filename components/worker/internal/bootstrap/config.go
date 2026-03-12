@@ -18,6 +18,7 @@ import (
 	portStorage "github.com/LerianStudio/fetcher/pkg/ports/storage"
 	pkgStorage "github.com/LerianStudio/fetcher/pkg/storage"
 
+	libZapV2 "github.com/LerianStudio/lib-commons/v2/commons/zap"
 	libCommons "github.com/LerianStudio/lib-commons/v4/commons"
 	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
 	mongoDB "github.com/LerianStudio/lib-commons/v4/commons/mongo"
@@ -29,7 +30,6 @@ import (
 	tmmongo "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/mongo"
 	tmrabbitmq "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/rabbitmq"
 	libZap "github.com/LerianStudio/lib-commons/v4/commons/zap"
-	libZapV2 "github.com/LerianStudio/lib-commons/v2/commons/zap"
 	libLicense "github.com/LerianStudio/lib-license-go/v2/middleware"
 )
 
@@ -115,10 +115,10 @@ type Config struct {
 }
 
 var (
-	setConfigFromEnvVars = libCommons.SetConfigFromEnvVars
-	newZapLogger         = func(cfg libZap.Config) (libLog.Logger, error) { return libZap.New(cfg) }
-	newTelemetry         = libOtel.NewTelemetry
-	newMongoClient       = mongoDB.NewClient
+	setConfigFromEnvVars  = libCommons.SetConfigFromEnvVars
+	newZapLogger          = func(cfg libZap.Config) (libLog.Logger, error) { return libZap.New(cfg) }
+	newTelemetry          = libOtel.NewTelemetry
+	newMongoClient        = mongoDB.NewClient
 	applyTelemetryGlobals = func(telemetry *libOtel.Telemetry) error {
 		return telemetry.ApplyGlobals()
 	}
@@ -331,22 +331,22 @@ func validateMultiTenantConfig(cfg *Config, logger libLog.Logger) error {
 func initCryptoServices(cfg *Config) (*crypto.AESGCMService, *crypto.HMACSigner, *crypto.HKDFKeyDeriver, error) {
 	masterKey, err := decodeMasterKey(cfg.AppEncryptionKey)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("decode master encryption key: %w", err)
+		return nil, nil, nil, wrapBootstrapError("decode master encryption key", err)
 	}
 
 	keyDeriver, err := newKeyDeriver(masterKey)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("initialize key deriver: %w", err)
+		return nil, nil, nil, wrapBootstrapError("initialize key deriver", err)
 	}
 
 	cryptoService, errCrypto := crypto.NewAESGCMService(keyDeriver.GetCredentialKey(), cfg.AppEncryptionKeyVersion)
 	if errCrypto != nil {
-		return nil, nil, nil, fmt.Errorf("initialize crypto service: %w", errCrypto)
+		return nil, nil, nil, wrapBootstrapError("initialize crypto service", errCrypto)
 	}
 
 	cryptoWithExternalHMAC, errSigner := crypto.NewHMACSigner(keyDeriver.GetExternalHMACKey(), crypto.SignatureVersion)
 	if errSigner != nil {
-		return nil, nil, nil, fmt.Errorf("initialize external document signer: %w", errSigner)
+		return nil, nil, nil, wrapBootstrapError("initialize external document signer", errSigner)
 	}
 
 	return cryptoService, cryptoWithExternalHMAC, keyDeriver, nil
