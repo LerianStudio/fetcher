@@ -2,7 +2,6 @@ package bootstrap
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"os/signal"
 	"sync"
@@ -17,6 +16,13 @@ import (
 	"github.com/LerianStudio/lib-commons/v4/commons"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
+)
+
+var (
+	notifySignals       = signal.Notify
+	extractExternalData = func(uc *services.UseCase, ctx context.Context, body []byte, headers map[string]any) error {
+		return uc.ExtractExternalData(ctx, body, headers)
+	}
 )
 
 // MultiQueueConsumer represents a multi-queue consumer.
@@ -58,11 +64,13 @@ func (mq *MultiQueueConsumer) Run(l *commons.Launcher) error {
 	wg := &sync.WaitGroup{}
 
 	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
+
+	notifySignals(sigs, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigs)
 
 	go func() {
 		<-sigs
-		mq.consumerRoutes.Log(context.Background(), libLog.LevelInfo, "Received shutdown signal, starting graceful shutdown...")
+		mq.consumerRoutes.Log(baseCtx, libLog.LevelInfo, "received shutdown signal, starting graceful shutdown")
 		cancel()
 	}()
 
@@ -77,7 +85,7 @@ func (mq *MultiQueueConsumer) Run(l *commons.Launcher) error {
 	defer shutdownCancel()
 
 	if err := mq.consumerRoutes.Shutdown(shutdownCtx); err != nil {
-		mq.consumerRoutes.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Error during ConsumerRoutes shutdown: %v", err))
+		mq.consumerRoutes.Log(shutdownCtx, libLog.LevelError, "error during consumer routes shutdown", libLog.Err(err))
 		return err
 	}
 
@@ -95,13 +103,13 @@ func (mq *MultiQueueConsumer) handlerGenerateReport(ctx context.Context, body []
 		attribute.String("app.request.request_id", reqID),
 	)
 
-	logger.Log(context.Background(), libLog.LevelInfo, "Processing message from generate report queue")
+	logger.Log(spanCtx, libLog.LevelInfo, "processing message from generate report queue")
 
-	err := mq.UseCase.ExtractExternalData(spanCtx, body, headers)
+	err := extractExternalData(mq.UseCase, spanCtx, body, headers)
 	if err != nil {
 		opentelemetry.HandleSpanError(span, "Error generating report.", err)
 
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Error generating report: %v", err))
+		logger.Log(spanCtx, libLog.LevelError, "error generating report", libLog.Err(err))
 
 		return err
 	}

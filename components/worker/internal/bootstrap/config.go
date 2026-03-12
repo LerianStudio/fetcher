@@ -68,14 +68,23 @@ type Config struct {
 	AppEncryptionKeyVersion string `env:"APP_ENC_KEY_VERSION"`
 }
 
+var (
+	setConfigFromEnvVars  = libCommons.SetConfigFromEnvVars
+	newZapLogger          = func(cfg libZap.Config) (libLog.Logger, error) { return libZap.New(cfg) }
+	newTelemetry          = libOtel.NewTelemetry
+	applyTelemetryGlobals = func(telemetry *libOtel.Telemetry) error {
+		return telemetry.ApplyGlobals()
+	}
+)
+
 // InitWorker initializes and configures the application's dependencies and returns the Service instance.
 func InitWorker() *Service {
 	cfg := &Config{}
-	if err := libCommons.SetConfigFromEnvVars(cfg); err != nil {
+	if err := setConfigFromEnvVars(cfg); err != nil {
 		panic(err)
 	}
 
-	logger, err := libZap.New(libZap.Config{
+	logger, err := newZapLogger(libZap.Config{
 		Environment:     resolveZapEnvironment(cfg.EnvName),
 		Level:           cfg.LogLevel,
 		OTelLibraryName: cfg.OtelLibraryName,
@@ -84,7 +93,7 @@ func InitWorker() *Service {
 		panic(err)
 	}
 
-	telemetry, err := libOtel.NewTelemetry(libOtel.TelemetryConfig{
+	telemetry, err := newTelemetry(libOtel.TelemetryConfig{
 		LibraryName:               cfg.OtelLibraryName,
 		ServiceName:               cfg.OtelServiceName,
 		ServiceVersion:            cfg.OtelServiceVersion,
@@ -97,7 +106,7 @@ func InitWorker() *Service {
 		panic(err)
 	}
 
-	if err := telemetry.ApplyGlobals(); err != nil {
+	if err := applyTelemetryGlobals(telemetry); err != nil {
 		panic(err)
 	}
 
@@ -134,34 +143,24 @@ func InitWorker() *Service {
 
 	// Init key deriver for cryptographic key segregation
 	masterKey, err := crypto.DecodeMasterKey(cfg.AppEncryptionKey)
-	if err != nil {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to decode master encryption key: %v", err))
-	}
+	must("decode master encryption key", err)
 
 	keyDeriver, err := crypto.NewHKDFKeyDeriver(masterKey)
-	if err != nil {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to initialize key deriver: %v", err))
-	}
+	must("initialize key deriver", err)
 
 	logger.Log(context.Background(), libLog.LevelInfo, "Key derivation initialized successfully")
 
 	// Init crypto service with derived credential key
 	cryptoService, errCrypto := crypto.NewAESGCMService(keyDeriver.GetCredentialKey(), cfg.AppEncryptionKeyVersion)
-	if errCrypto != nil {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to initialize crypto service: %v", errCrypto))
-	}
+	must("initialize crypto service", errCrypto)
 
 	// Init message signer for RabbitMQ with derived internal HMAC key
 	cryptoWithInternalHMAC, errSigner := crypto.NewHMACSigner(keyDeriver.GetInternalHMACKey(), crypto.SignatureVersion)
-	if errSigner != nil {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to initialize message signer: %v", errSigner))
-	}
+	must("initialize message signer", errSigner)
 
 	// Init document signer for external verification with derived external HMAC key
 	cryptoWithExternalHMAC, errSigner := crypto.NewHMACSigner(keyDeriver.GetExternalHMACKey(), crypto.SignatureVersion)
-	if errSigner != nil {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to initialize document signer: %v", errSigner))
-	}
+	must("initialize document signer", errSigner)
 
 	// Initialize RabbitMQ consumer and publisher with separate connections
 	consumerRoutes := rabbitmq.NewConsumerRoutes(consumerConnection, cfg.RabbitMQNumWorkers, logger, telemetry, cryptoWithInternalHMAC)
@@ -186,22 +185,16 @@ func InitWorker() *Service {
 		Logger:      logger,
 		MaxPoolSize: uint64(cfg.MaxPoolSize),
 	})
-	if errConnectMongo != nil {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to initialize MongoDB client: %v", errConnectMongo))
-	}
+	must("initialize MongoDB client", errConnectMongo)
 
 	externalDataSeaweedFSRepository := external.NewSimpleRepository(seaweedFSClient, constant.ExternalDataBucketName)
 
 	// Initialize MongoDB repositories
 	jobRepository, errJobRepo := job.NewJobMongoDBRepository(mongoConnection, cfg.MongoDBName)
-	if errJobRepo != nil {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to initialize job repository: %v", errJobRepo))
-	}
+	must("initialize job repository", errJobRepo)
 
 	connectionRepository, errConnectRepo := connection.NewConnectionMongoDBRepository(mongoConnection, cfg.MongoDBName)
-	if errConnectRepo != nil {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to initialize connection repository: %v", errConnectRepo))
-	}
+	must("initialize connection repository", errConnectRepo)
 
 	service := &services.UseCase{
 		ExternalDataSeaweedFS: externalDataSeaweedFSRepository,
@@ -250,5 +243,11 @@ func resolveZapEnvironment(env string) libZap.Environment {
 		return libZap.EnvironmentLocal
 	default:
 		return libZap.EnvironmentLocal
+	}
+}
+
+func must(action string, err error) {
+	if err != nil {
+		panic(fmt.Errorf("%s: %w", action, err))
 	}
 }

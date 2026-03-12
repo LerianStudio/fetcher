@@ -7,6 +7,13 @@ import (
 	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
 )
 
+var runLauncher = func(logger libLog.Logger, consumer *MultiQueueConsumer) {
+	commons.NewLauncher(
+		commons.WithLogger(logger),
+		commons.RunApp("RabbitMQ Consumer", consumer),
+	).Run()
+}
+
 type licenseTerminator interface {
 	Terminate(msg string)
 }
@@ -22,10 +29,7 @@ type Service struct {
 // Run starts the application.
 // This is the only necessary code to run an app in main.go
 func (app *Service) Run() {
-	commons.NewLauncher(
-		commons.WithLogger(app.Logger),
-		commons.RunApp("RabbitMQ Consumer", app.MultiQueueConsumer),
-	).Run()
+	runLauncher(app.Logger, app.MultiQueueConsumer)
 
 	// Graceful shutdown
 	app.Log(context.Background(), libLog.LevelInfo,
