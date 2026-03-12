@@ -290,6 +290,7 @@ func (s *CreateFetcherJob) checkDuplicateJob(ctx context.Context, span trace.Spa
 		logger.Log(ctx, libLog.LevelInfo, "existing failed job found, allowing retry",
 			libLog.String("job_id", existingJob.ID.String()),
 		)
+
 		return nil, nil
 	}
 

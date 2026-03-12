@@ -682,7 +682,7 @@ func (prmq *RabbitMQAdapter) ensureChannel(span trace.Span, logger libLog.Logger
 func (prmq *RabbitMQAdapter) ProducerDefault(ctx context.Context, exchange, key string, queueMessage []byte, header *map[string]any) error {
 	logger, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
 
-	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Init sent message"))
+	logger.Log(context.Background(), libLog.LevelInfo, "Init sent message")
 
 	if prmq.shutdown.Load() {
 		logger.Log(context.Background(), libLog.LevelInfo, "RabbitMQ adapter is shut down, cannot produce messages")
@@ -691,7 +691,7 @@ func (prmq *RabbitMQAdapter) ProducerDefault(ctx context.Context, exchange, key 
 
 	// Check circuit breaker state
 	if !prmq.circuitBreaker.canExecute() {
-		logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("Circuit breaker is open, rejecting publish request"))
+		logger.Log(context.Background(), libLog.LevelWarn, "Circuit breaker is open, rejecting publish request")
 		prmq.recordPublishFailure(ctx,
 			attribute.String("exchange", exchange),
 			attribute.String("routing_key", key),
@@ -909,7 +909,7 @@ func (prmq *RabbitMQAdapter) runConsumerCycle(
 
 	// Check circuit breaker before attempting to connect
 	if !prmq.circuitBreaker.canExecute() {
-		logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("Circuit breaker is open, skipping consumer cycle"))
+		logger.Log(context.Background(), libLog.LevelWarn, "Circuit breaker is open, skipping consumer cycle")
 		return ErrCircuitOpen
 	}
 
@@ -1049,12 +1049,14 @@ func (prmq *RabbitMQAdapter) processDelivery(
 	// Extract request ID from headers or generate new one
 	requestID, found := headers[libConstants.HeaderID]
 	if !found {
-		id, _ := libCommons.GenerateUUIDv7(); requestID = id.String()
+		id, _ := libCommons.GenerateUUIDv7()
+		requestID = id.String()
 	}
 
 	requestIDStr, ok := requestID.(string)
 	if !ok {
-		id2, _ := libCommons.GenerateUUIDv7(); requestIDStr = id2.String()
+		id2, _ := libCommons.GenerateUUIDv7()
+		requestIDStr = id2.String()
 	}
 
 	// Create context with request ID and logger
@@ -1095,7 +1097,7 @@ func (prmq *RabbitMQAdapter) processDelivery(
 			}
 
 			libOpentelemetry.HandleSpanError(hspan, "Signature verification is enabled but signer is not configured", ErrSignatureVerifierNotConfigured)
-			logWithFields.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Signature verification is enabled but signer is not configured"))
+			logWithFields.Log(context.Background(), libLog.LevelError, "Signature verification is enabled but signer is not configured")
 			prmq.recordConsumeFailed(ctx,
 				attribute.String("queue", queue),
 				attribute.String("reason", "signature_verifier_not_configured"),
