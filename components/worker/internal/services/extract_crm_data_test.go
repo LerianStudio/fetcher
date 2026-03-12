@@ -1776,6 +1776,140 @@ func TestProcessPluginCRMCollection_WithValidOrganization(t *testing.T) {
 	}
 }
 
+func TestProcessPluginCRMCollection_TransformsCollectionAndDecryptsResult(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	originalQuery := queryMongoCollection
+	t.Cleanup(func() {
+		queryMongoCollection = originalQuery
+	})
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+	ctx := testContext()
+	logger := testLogger()
+	orgID := uuid.MustParse("019b9df1-34eb-7dd0-afd5-53f859667e51")
+	result := make(map[string]map[string][]map[string]any)
+
+	hashKey := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	encryptKey := "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+	t.Setenv("CRYPTO_HASH_SECRET_KEY_PLUGIN_CRM", hashKey)
+	t.Setenv("CRYPTO_ENCRYPT_SECRET_KEY_PLUGIN_CRM", encryptKey)
+
+	pluginCRMCrypto := &libCrypto.Crypto{
+		HashSecretKey:    hashKey,
+		EncryptSecretKey: encryptKey,
+		Logger:           logger,
+	}
+	if err := pluginCRMCrypto.InitializeCipher(); err != nil {
+		t.Fatalf("failed to initialize plugin CRM crypto: %v", err)
+	}
+
+	plainDocument := "12345678900"
+	encryptedDocument, err := pluginCRMCrypto.Encrypt(&plainDocument)
+	if err != nil {
+		t.Fatalf("failed to encrypt document: %v", err)
+	}
+
+	queryMongoCollection = func(_ context.Context, _ *datasourceMongoConfig.DataSourceConfigMongoDB, collection string, fields []string) ([]map[string]any, error) {
+		expectedCollection := "holders_" + orgID.String()
+		if collection != expectedCollection {
+			t.Fatalf("expected collection %s, got %s", expectedCollection, collection)
+		}
+		if len(fields) != 1 || fields[0] != "document" {
+			t.Fatalf("unexpected fields: %v", fields)
+		}
+
+		return []map[string]any{{"document": *encryptedDocument}}, nil
+	}
+
+	err = uc.processPluginCRMCollection(ctx, nil, "holders", []string{"document"}, nil, orgID, result, logger)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	rows := result["plugin_crm"]["holders"]
+	if len(rows) != 1 {
+		t.Fatalf("expected one row, got %+v", rows)
+	}
+	if got := rows[0]["document"]; got != plainDocument {
+		t.Fatalf("expected decrypted document %q, got %#v", plainDocument, got)
+	}
+}
+
+func TestQueryPluginCRM_WithFilters_TransformsAdvancedFilters(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	originalAdvancedQuery := queryMongoCollectionWithAdvancedFilters
+	t.Cleanup(func() {
+		queryMongoCollectionWithAdvancedFilters = originalAdvancedQuery
+	})
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+	ctx := testContext()
+	logger := testLogger()
+	orgID := uuid.MustParse("019b9df1-34eb-7dd0-afd5-53f859667e51")
+	result := make(map[string]map[string][]map[string]any)
+
+	hashKey := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	encryptKey := "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+	t.Setenv("CRYPTO_HASH_SECRET_KEY_PLUGIN_CRM", hashKey)
+	t.Setenv("CRYPTO_ENCRYPT_SECRET_KEY_PLUGIN_CRM", encryptKey)
+
+	hasher := &libCrypto.Crypto{HashSecretKey: hashKey, Logger: logger}
+	plainDocument := "12345678900"
+	expectedHash := hasher.GenerateHash(&plainDocument)
+
+	queryMongoCollectionWithAdvancedFilters = func(_ context.Context, _ *datasourceMongoConfig.DataSourceConfigMongoDB, collection string, fields []string, filter map[string]modelJob.FilterCondition) ([]map[string]any, error) {
+		expectedCollection := "holders_" + orgID.String()
+		if collection != expectedCollection {
+			t.Fatalf("expected collection %s, got %s", expectedCollection, collection)
+		}
+		if len(fields) != 1 || fields[0] != "document" {
+			t.Fatalf("unexpected fields: %v", fields)
+		}
+
+		condition, ok := filter["search.document"]
+		if !ok {
+			t.Fatalf("expected transformed search.document filter, got %+v", filter)
+		}
+		if len(condition.Equals) != 1 || condition.Equals[0] != expectedHash {
+			t.Fatalf("expected hashed document filter %q, got %+v", expectedHash, condition.Equals)
+		}
+
+		return []map[string]any{}, nil
+	}
+
+	err := uc.QueryPluginCRM(
+		ctx,
+		nil,
+		"plugin_crm",
+		map[string][]string{"holders": {"document"}},
+		map[string]map[string]modelJob.FilterCondition{
+			"holders": {
+				"document": {Equals: []any{plainDocument}},
+			},
+		},
+		orgID,
+		result,
+		logger,
+	)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	rows, ok := result["plugin_crm"]["holders"]
+	if !ok {
+		t.Fatalf("expected holders collection in result, got %+v", result)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("expected empty result set, got %+v", rows)
+	}
+}
+
 // TestGetTableFilters_WithDeepNesting tests filter extraction with complex nested structure.
 func TestGetTableFilters_WithDeepNesting(t *testing.T) {
 	dbFilters := map[string]map[string]modelJob.FilterCondition{

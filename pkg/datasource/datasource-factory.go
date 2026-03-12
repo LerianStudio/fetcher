@@ -30,21 +30,39 @@ import (
 
 type dataSourceConfigBuilder func(ctx context.Context, base datasource.DataSourceConfig, conn *model.Connection, cryptor crypto.Cryptor, logger libLog.Logger) (datasource.DataSource, error)
 
+var (
+	buildMongoDataSource dataSourceConfigBuilder = func(ctx context.Context, base datasource.DataSourceConfig, conn *model.Connection, cryptor crypto.Cryptor, logger libLog.Logger) (datasource.DataSource, error) {
+		return newDataSourceConfigMongoDB(ctx, base, conn, cryptor, logger)
+	}
+	buildPostgresDataSource dataSourceConfigBuilder = func(ctx context.Context, base datasource.DataSourceConfig, conn *model.Connection, cryptor crypto.Cryptor, logger libLog.Logger) (datasource.DataSource, error) {
+		return newDataSourceConfigPostgres(ctx, base, conn, cryptor, logger)
+	}
+	buildOracleDataSource dataSourceConfigBuilder = func(ctx context.Context, base datasource.DataSourceConfig, conn *model.Connection, cryptor crypto.Cryptor, logger libLog.Logger) (datasource.DataSource, error) {
+		return newDataSourceConfigOracle(ctx, base, conn, cryptor, logger)
+	}
+	buildMySQLDataSource dataSourceConfigBuilder = func(ctx context.Context, base datasource.DataSourceConfig, conn *model.Connection, cryptor crypto.Cryptor, logger libLog.Logger) (datasource.DataSource, error) {
+		return newDataSourceConfigMySQL(ctx, base, conn, cryptor, logger)
+	}
+	buildSQLServerDataSource dataSourceConfigBuilder = func(ctx context.Context, base datasource.DataSourceConfig, conn *model.Connection, cryptor crypto.Cryptor, logger libLog.Logger) (datasource.DataSource, error) {
+		return newDataSourceConfigSQLServer(ctx, base, conn, cryptor, logger)
+	}
+)
+
 var defaultDataSourceConfigBuilders = map[model.DBType]dataSourceConfigBuilder{
 	model.TypeMongoDB: func(ctx context.Context, base datasource.DataSourceConfig, conn *model.Connection, cryptor crypto.Cryptor, logger libLog.Logger) (datasource.DataSource, error) {
-		return newDataSourceConfigMongoDB(ctx, base, conn, cryptor, logger)
+		return buildMongoDataSource(ctx, base, conn, cryptor, logger)
 	},
 	model.TypePostgreSQL: func(ctx context.Context, base datasource.DataSourceConfig, conn *model.Connection, cryptor crypto.Cryptor, logger libLog.Logger) (datasource.DataSource, error) {
-		return newDataSourceConfigPostgres(ctx, base, conn, cryptor, logger)
+		return buildPostgresDataSource(ctx, base, conn, cryptor, logger)
 	},
 	model.TypeOracle: func(ctx context.Context, base datasource.DataSourceConfig, conn *model.Connection, cryptor crypto.Cryptor, logger libLog.Logger) (datasource.DataSource, error) {
-		return newDataSourceConfigOracle(ctx, base, conn, cryptor, logger)
+		return buildOracleDataSource(ctx, base, conn, cryptor, logger)
 	},
 	model.TypeMySQL: func(ctx context.Context, base datasource.DataSourceConfig, conn *model.Connection, cryptor crypto.Cryptor, logger libLog.Logger) (datasource.DataSource, error) {
-		return newDataSourceConfigMySQL(ctx, base, conn, cryptor, logger)
+		return buildMySQLDataSource(ctx, base, conn, cryptor, logger)
 	},
 	model.TypeSQLServer: func(ctx context.Context, base datasource.DataSourceConfig, conn *model.Connection, cryptor crypto.Cryptor, logger libLog.Logger) (datasource.DataSource, error) {
-		return newDataSourceConfigSQLServer(ctx, base, conn, cryptor, logger)
+		return buildSQLServerDataSource(ctx, base, conn, cryptor, logger)
 	},
 }
 

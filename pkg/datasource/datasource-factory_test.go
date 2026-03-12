@@ -143,6 +143,100 @@ func TestNewDataSourceFromConnection(t *testing.T) {
 	}
 }
 
+func TestNewDataSourceFromConnection_DefaultDispatch(t *testing.T) {
+	tests := []struct {
+		name       string
+		dbType     model.DBType
+		override   func(dataSourceConfigBuilder) func()
+		expectType string
+	}{
+		{
+			name:       "mongodb uses default builder",
+			dbType:     model.TypeMongoDB,
+			expectType: "MONGODB",
+			override: func(builder dataSourceConfigBuilder) func() {
+				original := buildMongoDataSource
+				buildMongoDataSource = builder
+				return func() { buildMongoDataSource = original }
+			},
+		},
+		{
+			name:       "postgres uses default builder",
+			dbType:     model.TypePostgreSQL,
+			expectType: "POSTGRESQL",
+			override: func(builder dataSourceConfigBuilder) func() {
+				original := buildPostgresDataSource
+				buildPostgresDataSource = builder
+				return func() { buildPostgresDataSource = original }
+			},
+		},
+		{
+			name:       "oracle uses default builder",
+			dbType:     model.TypeOracle,
+			expectType: "ORACLE",
+			override: func(builder dataSourceConfigBuilder) func() {
+				original := buildOracleDataSource
+				buildOracleDataSource = builder
+				return func() { buildOracleDataSource = original }
+			},
+		},
+		{
+			name:       "mysql uses default builder",
+			dbType:     model.TypeMySQL,
+			expectType: "MYSQL",
+			override: func(builder dataSourceConfigBuilder) func() {
+				original := buildMySQLDataSource
+				buildMySQLDataSource = builder
+				return func() { buildMySQLDataSource = original }
+			},
+		},
+		{
+			name:       "sqlserver uses default builder",
+			dbType:     model.TypeSQLServer,
+			expectType: "SQL_SERVER",
+			override: func(builder dataSourceConfigBuilder) func() {
+				original := buildSQLServerDataSource
+				buildSQLServerDataSource = builder
+				return func() { buildSQLServerDataSource = original }
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			cryptor := newMockCryptor(t)
+			called := false
+
+			restore := tt.override(func(ctx context.Context, base modeldatasource.DataSourceConfig, conn *model.Connection, cryptor cryptoPkg.Cryptor, logger libLog.Logger) (modeldatasource.DataSource, error) {
+				called = true
+				return &stubDataSource{config: base}, nil
+			})
+			defer restore()
+
+			got, err := NewDataSourceFromConnection(context.Background(), testConnection(tt.dbType), cryptor, nil)
+			require.NoError(t, err)
+			require.NotNil(t, got)
+			assert.True(t, called)
+			assert.Equal(t, tt.expectType, got.GetConfig().Type)
+		})
+	}
+}
+
+func TestNewDataSourceFromConnection_DefaultDispatchPropagatesBuilderErrors(t *testing.T) {
+	original := buildMongoDataSource
+	t.Cleanup(func() { buildMongoDataSource = original })
+
+	buildMongoDataSource = func(context.Context, modeldatasource.DataSourceConfig, *model.Connection, cryptoPkg.Cryptor, libLog.Logger) (modeldatasource.DataSource, error) {
+		return nil, errors.New("default mongodb builder failed")
+	}
+
+	got, err := NewDataSourceFromConnection(context.Background(), testConnection(model.TypeMongoDB), newMockCryptor(t), nil)
+	require.Error(t, err)
+	assert.EqualError(t, err, "default mongodb builder failed")
+	assert.Nil(t, got)
+}
+
 func testConnection(dbType model.DBType) *model.Connection {
 	return &model.Connection{
 		ID:                uuid.MustParse("11111111-1111-1111-1111-111111111111"),
