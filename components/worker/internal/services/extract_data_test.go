@@ -83,6 +83,26 @@ func TestParseMessage_InvalidJSON(t *testing.T) {
 	}
 }
 
+func TestParseMessage_JSONNull(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+
+	ctx := testContext()
+	logger := testLogger()
+
+	result, err := uc.parseMessage(ctx, []byte(`null`), nil, nil, logger)
+	if err == nil {
+		t.Fatal("expected error for null JSON payload, got nil")
+	}
+
+	if result != nil {
+		t.Fatalf("expected nil result for null JSON payload, got %+v", result)
+	}
+}
+
 // TestParseMessage_InvalidJSONWithJobIDInHeaders tests that jobID can be extracted from headers.
 func TestParseMessage_InvalidJSONWithJobIDInHeaders(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -134,7 +154,7 @@ func TestExtractJobIDFromMultipleSources_FromHeaders(t *testing.T) {
 		"organizationId": orgID.String(),
 	}
 
-	resultJobID, resultOrgID := uc.extractJobIDFromMultipleSources(nil, headers, logger)
+	resultJobID, resultOrgID := uc.extractJobIDFromMultipleSources(context.Background(), nil, headers, logger)
 
 	if resultJobID != jobID {
 		t.Fatalf("expected jobID %s, got %s", jobID, resultJobID)
@@ -160,7 +180,7 @@ func TestExtractJobIDFromMultipleSources_FromPartialJSON(t *testing.T) {
 	// Partial JSON with valid jobId and organizationId
 	body := []byte(`{"jobId": "` + jobID.String() + `", "organizationId": "` + orgID.String() + `", "invalid": }`)
 
-	resultJobID, resultOrgID := uc.extractJobIDFromMultipleSources(body, nil, logger)
+	resultJobID, resultOrgID := uc.extractJobIDFromMultipleSources(context.Background(), body, nil, logger)
 
 	if resultJobID != jobID {
 		t.Fatalf("expected jobID %s, got %s", jobID, resultJobID)
@@ -182,7 +202,7 @@ func TestExtractJobIDFromMultipleSources_NoIDs(t *testing.T) {
 
 	body := []byte(`{"invalid": "data"}`)
 
-	resultJobID, resultOrgID := uc.extractJobIDFromMultipleSources(body, nil, logger)
+	resultJobID, resultOrgID := uc.extractJobIDFromMultipleSources(context.Background(), body, nil, logger)
 
 	if resultJobID != uuid.Nil {
 		t.Fatalf("expected nil jobID, got %s", resultJobID)
@@ -547,7 +567,7 @@ func TestExtractJobIDFromPartialJSON(t *testing.T) {
 			uc := newTestUseCase(mocks)
 			logger := testLogger()
 
-			jobID, orgID := uc.extractJobIDFromPartialJSON(tt.body, logger)
+			jobID, orgID := uc.extractJobIDFromPartialJSON(context.Background(), tt.body, logger)
 
 			if tt.wantJobID && jobID == uuid.Nil {
 				t.Errorf("expected non-nil jobID, got nil - %s", tt.description)
@@ -646,7 +666,7 @@ func TestExtractJobIDFromMultipleSources_EdgeCases(t *testing.T) {
 			uc := newTestUseCase(mocks)
 			logger := testLogger()
 
-			jobID, orgID := uc.extractJobIDFromMultipleSources(tt.body, tt.headers, logger)
+			jobID, orgID := uc.extractJobIDFromMultipleSources(context.Background(), tt.body, tt.headers, logger)
 
 			if tt.wantJobID && jobID == uuid.Nil {
 				t.Errorf("expected non-nil jobID, got nil")
@@ -969,7 +989,7 @@ func TestExtractJobIDFromPartialJSON_RegexFallback(t *testing.T) {
 	// Malformed JSON that will fail decoder but has valid UUID in regex pattern
 	body := []byte(`{bad json but "jobId":"550e8400-e29b-41d4-a716-446655440000"}`)
 
-	jobID, orgID := uc.extractJobIDFromPartialJSON(body, logger)
+	jobID, orgID := uc.extractJobIDFromPartialJSON(context.Background(), body, logger)
 
 	if jobID == uuid.Nil {
 		t.Error("expected non-nil jobID from regex extraction")
@@ -1263,7 +1283,7 @@ func TestExtractJobIDFromPartialJSON_ValidJobIDInvalidOrgID(t *testing.T) {
 	// Valid jobId with invalid organizationId format
 	body := []byte(`{"jobId": "550e8400-e29b-41d4-a716-446655440000", "organizationId": "not-a-uuid"}`)
 
-	jobID, orgID := uc.extractJobIDFromPartialJSON(body, logger)
+	jobID, orgID := uc.extractJobIDFromPartialJSON(context.Background(), body, logger)
 
 	if jobID == uuid.Nil {
 		t.Error("expected valid jobID")
@@ -1316,7 +1336,7 @@ func TestExtractJobIDFromMultipleSources_HeaderPrecedence(t *testing.T) {
 		"jobId": headerJobID.String(),
 	}
 
-	resultJobID, _ := uc.extractJobIDFromMultipleSources(body, headers, logger)
+	resultJobID, _ := uc.extractJobIDFromMultipleSources(context.Background(), body, headers, logger)
 
 	if resultJobID != headerJobID {
 		t.Errorf("expected header jobID %s to take precedence, got %s", headerJobID, resultJobID)

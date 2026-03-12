@@ -85,7 +85,7 @@ func (uc *UseCase) publishJobNotification(
 	// Skip if publisher is not configured
 	if uc.RabbitMQPublisher == nil || uc.JobEventsExchange == "" {
 		if logger != nil {
-			logger.Log(context.Background(), libLog.LevelDebug, "RabbitMQ publisher not configured, skipping job notification")
+			logger.Log(ctx, libLog.LevelDebug, "rabbitmq publisher not configured, skipping job notification")
 		}
 
 		return nil
@@ -138,22 +138,30 @@ func (uc *UseCase) publishJobNotification(
 	notificationJSON, err := json.Marshal(notification)
 	if err != nil {
 		libOtel.HandleSpanError(notifySpan, "Error marshalling job notification", err)
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Error marshalling job notification: %s", err.Error()))
+		logger.Log(ctx, libLog.LevelError, "error marshalling job notification", libLog.Err(err))
 
 		return fmt.Errorf("marshalling job notification: %w", err)
 	}
 
-	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Publishing job notification: jobId=%s, status=%s, routingKey=%s, exchange=%s",
-		message.JobID, status, routingKey, uc.JobEventsExchange))
+	logger.Log(ctx, libLog.LevelInfo, "publishing job notification",
+		libLog.String("job_id", message.JobID.String()),
+		libLog.String("status", status),
+		libLog.String("routing_key", routingKey),
+		libLog.String("exchange", uc.JobEventsExchange),
+	)
 
 	if err := uc.RabbitMQPublisher.Publish(ctx, uc.JobEventsExchange, routingKey, notificationJSON); err != nil {
 		libOtel.HandleSpanError(notifySpan, "Error publishing job notification to RabbitMQ", err)
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Error publishing job notification to RabbitMQ: %s", err.Error()))
+		logger.Log(ctx, libLog.LevelError, "error publishing job notification to RabbitMQ", libLog.Err(err))
 
 		return fmt.Errorf("publishing job notification: %w", err)
 	}
 
-	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Successfully published job notification: jobId=%s, status=%s, routingKey=%s", message.JobID, status, routingKey))
+	logger.Log(ctx, libLog.LevelInfo, "published job notification successfully",
+		libLog.String("job_id", message.JobID.String()),
+		libLog.String("status", status),
+		libLog.String("routing_key", routingKey),
+	)
 
 	return nil
 }

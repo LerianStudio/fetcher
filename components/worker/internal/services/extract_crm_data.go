@@ -17,6 +17,42 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 )
 
+var (
+	processPluginCRMCollectionFn = func(
+		uc *UseCase,
+		ctx context.Context,
+		dataSource *datasourceMongoConfig.DataSourceConfigMongoDB,
+		collection string,
+		fields []string,
+		collectionFilters map[string]modelJob.FilterCondition,
+		organizationID uuid.UUID,
+		result map[string]map[string][]map[string]any,
+		logger libLog.Logger,
+	) error {
+		return uc.processPluginCRMCollection(ctx, dataSource, collection, fields, collectionFilters, organizationID, result, logger)
+	}
+	queryPluginCRMCollectionWithFiltersFn = func(
+		uc *UseCase,
+		ctx context.Context,
+		dataSource *datasourceMongoConfig.DataSourceConfigMongoDB,
+		collection string,
+		fields []string,
+		collectionFilters map[string]modelJob.FilterCondition,
+		logger libLog.Logger,
+	) ([]map[string]any, error) {
+		return uc.queryPluginCRMCollectionWithFilters(ctx, dataSource, collection, fields, collectionFilters, logger)
+	}
+	decryptPluginCRMDataFn = func(uc *UseCase, logger libLog.Logger, collectionResult []map[string]any, fields []string) ([]map[string]any, error) {
+		return uc.decryptPluginCRMData(logger, collectionResult, fields)
+	}
+	queryMongoCollection = func(ctx context.Context, dataSource *datasourceMongoConfig.DataSourceConfigMongoDB, collection string, fields []string) ([]map[string]any, error) {
+		return dataSource.MongoDBRepository.Query(ctx, collection, fields, nil)
+	}
+	queryMongoCollectionWithAdvancedFilters = func(ctx context.Context, dataSource *datasourceMongoConfig.DataSourceConfigMongoDB, collection string, fields []string, filter map[string]modelJob.FilterCondition) ([]map[string]any, error) {
+		return dataSource.MongoDBRepository.QueryWithAdvancedFilters(ctx, collection, fields, filter)
+	}
+)
+
 // QueryPluginCRM handles querying MongoDB plugin_crm database with special processing.
 func (uc *UseCase) QueryPluginCRM(
 	ctx context.Context,
@@ -42,7 +78,7 @@ func (uc *UseCase) QueryPluginCRM(
 	for collection, fields := range collections {
 		collectionFilters := getTableFilters(databaseFilters, collection)
 
-		if err := uc.processPluginCRMCollection(ctx, dataSource, collection, fields, collectionFilters, organizationID, result, logger); err != nil {
+		if err := processPluginCRMCollectionFn(uc, ctx, dataSource, collection, fields, collectionFilters, organizationID, result, logger); err != nil {
 			libOtel.HandleSpanError(span, "Error processing plugin_crm collection", err)
 			return err
 		}
@@ -67,7 +103,7 @@ func (uc *UseCase) processPluginCRMCollection(
 	newCollection := collection + "_" + organizationID.String()
 	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Transformed plugin_crm collection: %s -> %s", collection, newCollection))
 
-	collectionResult, err := uc.queryPluginCRMCollectionWithFilters(ctx, dataSource, newCollection, fields, collectionFilters, logger)
+	collectionResult, err := queryPluginCRMCollectionWithFiltersFn(uc, ctx, dataSource, newCollection, fields, collectionFilters, logger)
 	if err != nil {
 		return err
 	}
@@ -78,7 +114,7 @@ func (uc *UseCase) processPluginCRMCollection(
 
 	result["plugin_crm"][collection] = collectionResult
 
-	decryptedResult, err := uc.decryptPluginCRMData(logger, result["plugin_crm"][collection], fields)
+	decryptedResult, err := decryptPluginCRMDataFn(uc, logger, result["plugin_crm"][collection], fields)
 	if err != nil {
 		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Error decrypting data for collection %s: %s", collection, err.Error()))
 		return fmt.Errorf("error decrypting data for collection %s: %w", collection, err)
@@ -109,9 +145,9 @@ func (uc *UseCase) queryPluginCRMCollectionWithFilters(
 			return nil, fmt.Errorf("error transforming advanced filters for collection %s: %w", collection, err)
 		}
 
-		queryResult, errQueryResult = dataSource.MongoDBRepository.QueryWithAdvancedFilters(ctx, collection, fields, transformedFilter)
+		queryResult, errQueryResult = queryMongoCollectionWithAdvancedFilters(ctx, dataSource, collection, fields, transformedFilter)
 	} else {
-		queryResult, errQueryResult = dataSource.MongoDBRepository.Query(ctx, collection, fields, nil)
+		queryResult, errQueryResult = queryMongoCollection(ctx, dataSource, collection, fields)
 	}
 
 	if errQueryResult != nil {

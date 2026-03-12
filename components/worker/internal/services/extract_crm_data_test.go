@@ -1,10 +1,15 @@
 package services
 
 import (
+	"context"
+	"errors"
+	"strings"
 	"testing"
 
+	datasourceMongoConfig "github.com/LerianStudio/fetcher/pkg/model/datasource/mongodb"
 	modelJob "github.com/LerianStudio/fetcher/pkg/model/job"
 	libCrypto "github.com/LerianStudio/lib-commons/v4/commons/crypto"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
 	"github.com/google/uuid"
 	"go.uber.org/mock/gomock"
 )
@@ -1081,6 +1086,13 @@ func TestProcessPluginCRMCollection_WithOrganizationID(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
+	originalQuery := queryPluginCRMCollectionWithFiltersFn
+	originalDecrypt := decryptPluginCRMDataFn
+	t.Cleanup(func() {
+		queryPluginCRMCollectionWithFiltersFn = originalQuery
+		decryptPluginCRMDataFn = originalDecrypt
+	})
+
 	mocks := newTestMocks(ctrl)
 	uc := newTestUseCase(mocks)
 
@@ -1089,25 +1101,41 @@ func TestProcessPluginCRMCollection_WithOrganizationID(t *testing.T) {
 
 	orgID := uuid.MustParse("019b9df1-34eb-7dd0-afd5-53f859667e51")
 	result := make(map[string]map[string][]map[string]any)
+	expectedRows := []map[string]any{{"id": "123", "name": "Ada"}}
+	decryptedRows := []map[string]any{{"id": "123", "name": "Ada Lovelace"}}
 
-	// With nil data source, we expect a panic when trying to query
-	// This test validates that the function accepts organizationID parameter
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("expected panic with nil data source")
+	queryPluginCRMCollectionWithFiltersFn = func(_ *UseCase, _ context.Context, _ *datasourceMongoConfig.DataSourceConfigMongoDB, collection string, fields []string, filters map[string]modelJob.FilterCondition, _ libLog.Logger) ([]map[string]any, error) {
+		if collection != "holders_"+orgID.String() {
+			t.Fatalf("unexpected collection name: %s", collection)
 		}
-	}()
+		if len(fields) != 2 || fields[0] != "id" || fields[1] != "name" {
+			t.Fatalf("unexpected fields: %v", fields)
+		}
+		if filters != nil {
+			t.Fatalf("expected nil filters, got %+v", filters)
+		}
+		return expectedRows, nil
+	}
 
-	_ = uc.processPluginCRMCollection(
-		ctx,
-		nil, // nil dataSource will cause panic
-		"holders",
-		[]string{"id", "name"},
-		nil,
-		orgID,
-		result,
-		logger,
-	)
+	decryptPluginCRMDataFn = func(_ *UseCase, _ libLog.Logger, collectionResult []map[string]any, fields []string) ([]map[string]any, error) {
+		if len(collectionResult) != 1 || collectionResult[0]["name"] != "Ada" {
+			t.Fatalf("unexpected collection result: %+v", collectionResult)
+		}
+		if len(fields) != 2 {
+			t.Fatalf("unexpected fields: %v", fields)
+		}
+		return decryptedRows, nil
+	}
+
+	err := uc.processPluginCRMCollection(ctx, nil, "holders", []string{"id", "name"}, nil, orgID, result, logger)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	got := result["plugin_crm"]["holders"]
+	if len(got) != 1 || got[0]["name"] != "Ada Lovelace" {
+		t.Fatalf("unexpected stored result: %+v", got)
+	}
 }
 
 // TestQueryPluginCRMCollectionWithFilters_NoFilters tests querying without filters.
@@ -1115,31 +1143,34 @@ func TestQueryPluginCRMCollectionWithFilters_NoFilters(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
+	originalQuery := queryMongoCollection
+	t.Cleanup(func() {
+		queryMongoCollection = originalQuery
+	})
+
 	mocks := newTestMocks(ctrl)
 	uc := newTestUseCase(mocks)
-
-	// This test validates the function signature and basic behavior
-	// A full test would require a mock MongoDB data source
-
 	ctx := testContext()
 	logger := testLogger()
+	wantRows := []map[string]any{{"id": "123"}}
 
-	// With nil data source, we expect a nil pointer error
-	// This is intentional to verify error handling
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("expected panic with nil data source")
+	queryMongoCollection = func(_ context.Context, _ *datasourceMongoConfig.DataSourceConfigMongoDB, collection string, fields []string) ([]map[string]any, error) {
+		if collection != "collection_test" {
+			t.Fatalf("unexpected collection: %s", collection)
 		}
-	}()
+		if len(fields) != 2 {
+			t.Fatalf("unexpected fields: %v", fields)
+		}
+		return wantRows, nil
+	}
 
-	_, _ = uc.queryPluginCRMCollectionWithFilters(
-		ctx,
-		nil, // nil data source should cause panic
-		"collection_test",
-		[]string{"id", "name"},
-		nil,
-		logger,
-	)
+	got, err := uc.queryPluginCRMCollectionWithFilters(ctx, nil, "collection_test", []string{"id", "name"}, nil, logger)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(got) != 1 || got[0]["id"] != "123" {
+		t.Fatalf("unexpected rows: %+v", got)
+	}
 }
 
 // TestDecryptPluginCRMData_MissingHashSecretKey tests error when hash secret key is missing.
@@ -1261,44 +1292,48 @@ func TestQueryPluginCRM_NilCollections(t *testing.T) {
 }
 
 // TestQueryPluginCRM_WithOrganizationOnly tests QueryPluginCRM with only organization in collections.
-// Note: The implementation processes organization as a collection, which requires a valid data source.
-// This test documents that behavior - organization is NOT skipped but processed as a collection.
 func TestQueryPluginCRM_WithOrganizationOnly(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
+
+	originalProcess := processPluginCRMCollectionFn
+	t.Cleanup(func() {
+		processPluginCRMCollectionFn = originalProcess
+	})
 
 	mocks := newTestMocks(ctrl)
 	uc := newTestUseCase(mocks)
 
 	ctx := testContext()
 	logger := testLogger()
-
 	result := make(map[string]map[string][]map[string]any)
-
-	// Only organization - but it's still processed as a collection
-	collections := map[string][]string{
-		"organization": {"id", "name"},
-	}
-
+	collections := map[string][]string{"organization": {"id", "name"}}
 	orgID := uuid.MustParse("019b9df1-34eb-7dd0-afd5-53f859667e51")
 
-	// This will panic because nil dataSource is passed and organization is processed
-	defer func() {
-		if r := recover(); r != nil {
-			t.Logf("Expected panic occurred due to nil dataSource: %v", r)
+	called := false
+	processPluginCRMCollectionFn = func(_ *UseCase, _ context.Context, _ *datasourceMongoConfig.DataSourceConfigMongoDB, collection string, fields []string, filters map[string]modelJob.FilterCondition, gotOrgID uuid.UUID, _ map[string]map[string][]map[string]any, _ libLog.Logger) error {
+		called = true
+		if collection != "organization" {
+			t.Fatalf("unexpected collection: %s", collection)
 		}
-	}()
+		if len(fields) != 2 {
+			t.Fatalf("unexpected fields: %v", fields)
+		}
+		if filters != nil {
+			t.Fatalf("expected nil filters, got %+v", filters)
+		}
+		if gotOrgID != orgID {
+			t.Fatalf("unexpected org ID: %s", gotOrgID)
+		}
+		return nil
+	}
 
-	_ = uc.QueryPluginCRM(
-		ctx,
-		nil, // nil dataSource will cause panic when processing organization
-		"plugin_crm",
-		collections,
-		nil,
-		orgID,
-		result,
-		logger,
-	)
+	if err := uc.QueryPluginCRM(ctx, nil, "plugin_crm", collections, nil, orgID, result, logger); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if !called {
+		t.Fatal("expected collection processor to be called")
+	}
 }
 
 // TestDecryptRecord_WithAllFieldTypes tests decryptRecord with various field types.
@@ -1639,47 +1674,45 @@ func TestQueryPluginCRM_WithFilters(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
+	originalProcess := processPluginCRMCollectionFn
+	t.Cleanup(func() {
+		processPluginCRMCollectionFn = originalProcess
+	})
+
 	mocks := newTestMocks(ctrl)
 	uc := newTestUseCase(mocks)
 
 	ctx := testContext()
 	logger := testLogger()
-
 	result := make(map[string]map[string][]map[string]any)
-
-	// Collections with organization
 	collections := map[string][]string{
 		"organization": {"id", "name"},
 		"counterparty": {"id", "document"},
 	}
-
-	// Filters for counterparty
 	filters := map[string]map[string]modelJob.FilterCondition{
 		"counterparty": {
 			"status": {Equals: []any{"active"}},
 		},
 	}
-
 	orgID := uuid.MustParse("019b9df1-34eb-7dd0-afd5-53f859667e51")
 
-	// This will fail due to nil dataSource, but we're testing the filter handling path
-	defer func() {
-		if r := recover(); r != nil {
-			// Expected panic due to nil dataSource
-			t.Logf("Expected panic occurred: %v", r)
+	seenCounterparty := false
+	processPluginCRMCollectionFn = func(_ *UseCase, _ context.Context, _ *datasourceMongoConfig.DataSourceConfigMongoDB, collection string, _ []string, collectionFilters map[string]modelJob.FilterCondition, _ uuid.UUID, _ map[string]map[string][]map[string]any, _ libLog.Logger) error {
+		if collection == "counterparty" {
+			seenCounterparty = true
+			if collectionFilters["status"].Equals[0] != "active" {
+				t.Fatalf("unexpected filters: %+v", collectionFilters)
+			}
 		}
-	}()
+		return nil
+	}
 
-	_ = uc.QueryPluginCRM(
-		ctx,
-		nil, // nil dataSource will cause panic when processing counterparty
-		"plugin_crm",
-		collections,
-		filters,
-		orgID,
-		result,
-		logger,
-	)
+	if err := uc.QueryPluginCRM(ctx, nil, "plugin_crm", collections, filters, orgID, result, logger); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if !seenCounterparty {
+		t.Fatal("expected counterparty collection to be processed")
+	}
 }
 
 // TestDecryptFieldValue_WithValidEncryptedValue tests decryption with properly encrypted value.
@@ -1712,37 +1745,35 @@ func TestDecryptFieldValue_WithValidEncryptedValue(t *testing.T) {
 	}
 }
 
-// TestProcessPluginCRMCollection_WithValidOrganization tests with valid organization.
+// TestProcessPluginCRMCollection_WithValidOrganization tests query errors are returned deterministically.
 func TestProcessPluginCRMCollection_WithValidOrganization(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
+
+	originalQuery := queryPluginCRMCollectionWithFiltersFn
+	t.Cleanup(func() {
+		queryPluginCRMCollectionWithFiltersFn = originalQuery
+	})
 
 	mocks := newTestMocks(ctrl)
 	uc := newTestUseCase(mocks)
 
 	ctx := testContext()
 	logger := testLogger()
-
 	orgID := uuid.MustParse("019b9df1-34eb-7dd0-afd5-53f859667e51")
 	result := make(map[string]map[string][]map[string]any)
 
-	// This will panic due to nil dataSource, but tests the organization validation path
-	defer func() {
-		if r := recover(); r != nil {
-			t.Logf("Expected panic due to nil dataSource: %v", r)
+	queryPluginCRMCollectionWithFiltersFn = func(_ *UseCase, _ context.Context, _ *datasourceMongoConfig.DataSourceConfigMongoDB, collection string, _ []string, _ map[string]modelJob.FilterCondition, _ libLog.Logger) ([]map[string]any, error) {
+		if collection != "counterparty_"+orgID.String() {
+			t.Fatalf("unexpected collection: %s", collection)
 		}
-	}()
+		return nil, errors.New("query failed")
+	}
 
-	_ = uc.processPluginCRMCollection(
-		ctx,
-		nil, // nil dataSource will cause panic
-		"counterparty",
-		[]string{"id", "name"},
-		nil,
-		orgID,
-		result,
-		logger,
-	)
+	err := uc.processPluginCRMCollection(ctx, nil, "counterparty", []string{"id", "name"}, nil, orgID, result, logger)
+	if err == nil || !strings.Contains(err.Error(), "query failed") {
+		t.Fatalf("expected query failure, got %v", err)
+	}
 }
 
 // TestGetTableFilters_WithDeepNesting tests filter extraction with complex nested structure.

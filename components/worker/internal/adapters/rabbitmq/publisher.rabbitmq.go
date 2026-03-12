@@ -3,7 +3,6 @@ package rabbitmq
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/rabbitmq"
@@ -51,31 +50,39 @@ func NewPublisherRoutesWithAdapter(adapter rabbitmq.Adapter, logger libLog.Logge
 
 // Publish sends a message to the specified exchange with the given routing key.
 func (pr *PublisherRoutes) Publish(ctx context.Context, exchange, routingKey string, body []byte) error {
-	pr.Log(context.Background(), libLog.LevelDebug, fmt.Sprintf("Publishing message to exchange=%s, routingKey=%s", exchange, routingKey))
+	pr.Log(ctx, libLog.LevelDebug, "publishing message",
+		libLog.String("exchange", exchange),
+		libLog.String("routing_key", routingKey),
+	)
 
 	if err := pr.adapter.ProducerDefault(ctx, exchange, routingKey, body, nil); err != nil {
-		pr.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Error publishing message to exchange %s with routing key %s: %v", exchange, routingKey, err))
+		pr.Log(ctx, libLog.LevelError, "error publishing message",
+			libLog.String("exchange", exchange),
+			libLog.String("routing_key", routingKey),
+			libLog.Err(err),
+		)
+
 		return err
 	}
 
-	pr.Log(context.Background(), libLog.LevelDebug, fmt.Sprintf("Successfully published message to exchange=%s, routingKey=%s", exchange, routingKey))
+	pr.Log(ctx, libLog.LevelDebug, "message published successfully",
+		libLog.String("exchange", exchange),
+		libLog.String("routing_key", routingKey),
+	)
 
 	return nil
 }
 
 // Shutdown gracefully shuts down the RabbitMQ adapter.
 func (pr *PublisherRoutes) Shutdown(ctx context.Context) error {
-	pr.Log(context.Background(), libLog.LevelInfo,
-
-		// Shutdown the RabbitMQ adapter
-		"Shutting down PublisherRoutes...")
+	pr.Log(ctx, libLog.LevelInfo, "shutting down publisher routes")
 
 	if err := pr.adapter.Shutdown(ctx); err != nil {
-		pr.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Error shutting down RabbitMQ adapter: %v", err))
+		pr.Log(ctx, libLog.LevelError, "error shutting down RabbitMQ adapter", libLog.Err(err))
 		return err
 	}
 
-	pr.Log(context.Background(), libLog.LevelInfo, "PublisherRoutes shutdown complete")
+	pr.Log(ctx, libLog.LevelInfo, "publisher routes shutdown complete")
 
 	return nil
 }

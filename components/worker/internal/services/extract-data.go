@@ -46,6 +46,8 @@ type ExtractExternalDataMessage struct {
 	Metadata map[string]any `json:"metadata"`
 }
 
+var newDataSourceFromConnection = datasource.NewDataSourceFromConnection
+
 // ExtractExternalData handles the extraction of data from external sources.
 func (uc *UseCase) ExtractExternalData(ctx context.Context, body []byte, headers map[string]any) error {
 	startTime := time.Now() // Track execution start time
@@ -57,7 +59,7 @@ func (uc *UseCase) ExtractExternalData(ctx context.Context, body []byte, headers
 
 	message, err := uc.parseMessage(ctx, body, headers, span, logger)
 	if err != nil {
-		jobID, orgID := uc.extractJobIDFromMultipleSources(body, headers, logger)
+		jobID, orgID := uc.extractJobIDFromMultipleSources(ctx, body, headers, logger)
 		if jobID != uuid.Nil {
 			notificationMessage := ExtractExternalDataMessage{
 				JobID:          jobID,
@@ -69,7 +71,7 @@ func (uc *UseCase) ExtractExternalData(ctx context.Context, body []byte, headers
 				"message": err.Error(),
 			}
 			if errNotify := uc.publishJobNotification(ctx, tracer, notificationMessage, "failed", errorMetadata, nil, logger); errNotify != nil {
-				logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("Failed to publish job failure notification after parse error: %v", errNotify))
+				logger.Log(ctx, libLog.LevelWarn, "failed to publish job failure notification after parse error", libLog.Err(errNotify))
 			}
 		}
 
@@ -117,7 +119,10 @@ func (uc *UseCase) ExtractExternalData(ctx context.Context, body []byte, headers
 	// Update job status to completed in MongoDB with the resultPath and resultHMAC
 	if err := uc.JobRepository.UpdateStatus(ctx, message.JobID, message.OrganizationID, model.JobStatusCompleted, resultData.Path, resultData.HMAC, nil); err != nil {
 		libOtel.HandleSpanError(span, "Error updating job status to completed", err)
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to update job status to completed: %v", err))
+		logger.Log(ctx, libLog.LevelError, "failed to update job status to completed",
+			libLog.String("job_id", message.JobID.String()),
+			libLog.Err(err),
+		)
 	}
 
 	// Calculate execution metrics
@@ -133,7 +138,10 @@ func (uc *UseCase) ExtractExternalData(ctx context.Context, body []byte, headers
 
 	if err := uc.publishJobNotification(ctx, tracer, *message, "completed", nil, notificationOpts, logger); err != nil {
 		libOtel.HandleSpanError(span, "Error publishing job completion notification", err)
-		logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("Failed to publish job completion notification: %v", err))
+		logger.Log(ctx, libLog.LevelWarn, "failed to publish job completion notification",
+			libLog.String("job_id", message.JobID.String()),
+			libLog.Err(err),
+		)
 	}
 
 	return nil
@@ -145,20 +153,29 @@ func (uc *UseCase) parseMessage(ctx context.Context, body []byte, headers map[st
 	var message *ExtractExternalDataMessage
 
 	err := json.Unmarshal(body, &message)
+	if err == nil && message == nil {
+		err = fmt.Errorf("empty message payload")
+	}
+
 	if err != nil {
 		libOtel.HandleSpanError(span, "Error unmarshalling message.", err)
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Error unmarshalling message: %s", err.Error()))
+		logger.Log(ctx, libLog.LevelError, "error unmarshalling message", libLog.Err(err))
 
-		jobID, orgID := uc.extractJobIDFromMultipleSources(body, headers, logger)
+		jobID, orgID := uc.extractJobIDFromMultipleSources(ctx, body, headers, logger)
 		if jobID != uuid.Nil {
 			updateErr := uc.updateJobWithErrors(ctx, jobID, orgID, fmt.Sprintf("Failed to parse message: %v", err))
 			if updateErr != nil {
-				logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to update job status after parse error: %v", updateErr))
+				logger.Log(ctx, libLog.LevelError, "failed to update job status after parse error",
+					libLog.String("job_id", jobID.String()),
+					libLog.Err(updateErr),
+				)
 			} else {
-				logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Updated job %s to failed status due to parse error", jobID))
+				logger.Log(ctx, libLog.LevelInfo, "updated job to failed status due to parse error",
+					libLog.String("job_id", jobID.String()),
+				)
 			}
 		} else {
-			logger.Log(context.Background(), libLog.LevelWarn, "Could not extract jobID from headers or partial JSON, job status will not be updated")
+			logger.Log(ctx, libLog.LevelWarn, "could not extract job id from headers or partial json; job status will not be updated")
 		}
 
 		return nil, fmt.Errorf("failed to parse message: %w", err)
@@ -168,13 +185,13 @@ func (uc *UseCase) parseMessage(ctx context.Context, body []byte, headers map[st
 }
 
 // extractJobIDFromMultipleSources attempts to extract jobID and organizationID from multiple sources.
-func (uc *UseCase) extractJobIDFromMultipleSources(body []byte, headers map[string]any, logger libLog.Logger) (uuid.UUID, uuid.UUID) {
+func (uc *UseCase) extractJobIDFromMultipleSources(ctx context.Context, body []byte, headers map[string]any, logger libLog.Logger) (uuid.UUID, uuid.UUID) {
 	if headers != nil {
 		if jobIDHeader, exists := headers[constant.HeaderJobID]; exists {
 			if jobIDStr, ok := jobIDHeader.(string); ok {
 				jobID, err := uuid.Parse(jobIDStr)
 				if err == nil {
-					logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Extracted jobID from header: %s", jobID))
+					logger.Log(ctx, libLog.LevelInfo, "extracted job id from header", libLog.String("job_id", jobID.String()))
 
 					var orgID uuid.UUID
 
@@ -190,7 +207,7 @@ func (uc *UseCase) extractJobIDFromMultipleSources(body []byte, headers map[stri
 		}
 	}
 
-	jobID, orgID := uc.extractJobIDFromPartialJSON(body, logger)
+	jobID, orgID := uc.extractJobIDFromPartialJSON(ctx, body, logger)
 	if jobID != uuid.Nil {
 		return jobID, orgID
 	}
@@ -200,7 +217,7 @@ func (uc *UseCase) extractJobIDFromMultipleSources(body []byte, headers map[stri
 
 // extractJobIDFromPartialJSON attempts to extract jobID and organizationID from a potentially malformed JSON.
 // Uses regex to find UUIDs in the JSON structure, looking for "jobId" and "organizationId" fields.
-func (uc *UseCase) extractJobIDFromPartialJSON(body []byte, logger libLog.Logger) (uuid.UUID, uuid.UUID) {
+func (uc *UseCase) extractJobIDFromPartialJSON(ctx context.Context, body []byte, logger libLog.Logger) (uuid.UUID, uuid.UUID) {
 	bodyStr := string(body)
 
 	var partial struct {
@@ -215,7 +232,7 @@ func (uc *UseCase) extractJobIDFromPartialJSON(body []byte, logger libLog.Logger
 	if partial.JobID != nil {
 		jobID, err := uuid.Parse(*partial.JobID)
 		if err == nil {
-			logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Extracted jobID from partial JSON: %s", jobID))
+			logger.Log(ctx, libLog.LevelInfo, "extracted job id from partial json", libLog.String("job_id", jobID.String()))
 
 			var orgID uuid.UUID
 			if partial.OrganizationID != nil {
@@ -233,7 +250,7 @@ func (uc *UseCase) extractJobIDFromPartialJSON(body []byte, logger libLog.Logger
 	if len(matches) > 1 {
 		jobID, err := uuid.Parse(matches[1])
 		if err == nil {
-			logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Extracted jobID from regex: %s", jobID))
+			logger.Log(ctx, libLog.LevelInfo, "extracted job id from regex", libLog.String("job_id", jobID.String()))
 
 			orgIDRegex := regexp.MustCompile(`"organizationId"\s{0,10}:\s{0,10}"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"`)
 			orgMatches := orgIDRegex.FindStringSubmatch(bodyStr)
@@ -266,17 +283,20 @@ func (uc *UseCase) handleErrorWithUpdate(
 
 	if errUpdate := uc.updateJobWithErrors(ctx, jobID, orgID, err.Error()); errUpdate != nil {
 		libOtel.HandleSpanError(span, "Error to update report status with error.", errUpdate)
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Error update report status with error: %s", errUpdate.Error()))
+		logger.Log(ctx, libLog.LevelError, "error updating report status with error",
+			libLog.String("job_id", jobID.String()),
+			libLog.Err(errUpdate),
+		)
 
 		return errUpdate
 	}
 
 	libOtel.HandleSpanError(span, errorMsg, err)
-	logger.Log(context.Background(), libLog.LevelError,
-
-		// Publish job failure notification to RabbitMQ topic exchange
-		// Use the full message to preserve source and other metadata
-		fmt.Sprintf("%s: %s", errorMsg, err.Error()))
+	logger.Log(ctx, libLog.LevelError, errorMsg,
+		libLog.String("job_id", jobID.String()),
+		libLog.String("organization_id", orgID.String()),
+		libLog.Err(err),
+	)
 
 	errorMetadata := map[string]any{
 		"message": err.Error(),
@@ -287,7 +307,10 @@ func (uc *UseCase) handleErrorWithUpdate(
 	message.OrganizationID = orgID
 
 	if errNotify := uc.publishJobNotification(ctx, nil, message, "failed", errorMetadata, nil, logger); errNotify != nil {
-		logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("Failed to publish job failure notification: %v", errNotify))
+		logger.Log(ctx, libLog.LevelWarn, "failed to publish job failure notification",
+			libLog.String("job_id", jobID.String()),
+			libLog.Err(errNotify),
+		)
 	}
 
 	return err
@@ -339,10 +362,7 @@ func (uc *UseCase) queryDatabase(
 	ctx, dbSpan := tracer.Start(ctx, "service.extract_external_data.query_external_data.database")
 	defer dbSpan.End()
 
-	logger.Log(context.Background(), libLog.LevelInfo,
-
-		// Find the connection for this database
-		fmt.Sprintf("Querying database %s", databaseName))
+	logger.Log(ctx, libLog.LevelInfo, "querying database", libLog.String("database_name", databaseName))
 
 	var foundConnection *model.Connection
 
@@ -361,7 +381,7 @@ func (uc *UseCase) queryDatabase(
 	}
 
 	// Create DataSource using factory pattern
-	dataSource, err := datasource.NewDataSourceFromConnection(ctx, foundConnection, uc.Cryptor, logger)
+	dataSource, err := newDataSourceFromConnection(ctx, foundConnection, uc.Cryptor, logger)
 	if err != nil {
 		libOtel.HandleSpanError(dbSpan, "Error creating data source", err)
 		return fmt.Errorf("failed to create data source for %s: %w", databaseName, err)
@@ -376,7 +396,10 @@ func (uc *UseCase) queryDatabase(
 	// Ensure connection is closed after query
 	defer func() {
 		if closeErr := dataSource.Close(ctx); closeErr != nil {
-			logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("Error closing connection for %s: %v", databaseName, closeErr))
+			logger.Log(ctx, libLog.LevelWarn, "error closing connection",
+				libLog.String("database_name", databaseName),
+				libLog.Err(closeErr),
+			)
 		}
 	}()
 
@@ -436,7 +459,7 @@ func (uc *UseCase) saveExternalDataToSeaweedFS(
 	jsonData, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
 		libOtel.HandleSpanError(span, "Error marshalling result to JSON", err)
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Error marshalling result to JSON: %s", err.Error()))
+		logger.Log(ctx, libLog.LevelError, "error marshalling result to json", libLog.Err(err))
 
 		return nil, fmt.Errorf("marshalling result to JSON: %w", err)
 	}
@@ -452,25 +475,25 @@ func (uc *UseCase) saveExternalDataToSeaweedFS(
 		// Document signing is disabled (DocumentSigner not configured).
 		// This is expected when external HMAC verification is not required.
 		// To enable, configure the external HMAC key in worker bootstrap.
-		logger.Log(context.Background(), libLog.LevelInfo, "Document signing skipped: DocumentSigner not configured (HMAC verification disabled)")
+		logger.Log(ctx, libLog.LevelInfo, "document signing skipped; document signer not configured")
 	} else {
 		hmac, errHMAC := uc.DocumentSigner.SignReader(bytes.NewReader(jsonData))
 		if errHMAC != nil {
 			libOtel.HandleSpanError(span, "Error computing document HMAC", errHMAC)
-			logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Error computing document HMAC: %s", errHMAC.Error()))
+			logger.Log(ctx, libLog.LevelError, "error computing document hmac", libLog.Err(errHMAC))
 
 			return nil, fmt.Errorf("computing document HMAC: %w", errHMAC)
 		}
 
 		documentHMAC = hmac
 
-		logger.Log(context.Background(), libLog.LevelInfo, "Document HMAC computed successfully for job result")
+		logger.Log(ctx, libLog.LevelInfo, "document hmac computed successfully for job result")
 	}
 
 	encryptedData, err := uc.encryptDataForSeaweedFS(jsonData, logger)
 	if err != nil {
 		libOtel.HandleSpanError(span, "Error encrypting data for SeaweedFS", err)
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Error encrypting data for SeaweedFS: %s", err.Error()))
+		logger.Log(ctx, libLog.LevelError, "error encrypting data for seaweedfs", libLog.Err(err))
 
 		return nil, fmt.Errorf("encrypting data for SeaweedFS: %w", err)
 	}
@@ -478,15 +501,18 @@ func (uc *UseCase) saveExternalDataToSeaweedFS(
 	objectName := fmt.Sprintf("%s.json", message.JobID.String())
 	if err := uc.ExternalDataSeaweedFS.Put(ctx, objectName, encryptedData); err != nil {
 		libOtel.HandleSpanError(span, "Error saving external data to SeaweedFS", err)
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Error saving external data to SeaweedFS: %s", err.Error()))
+		logger.Log(ctx, libLog.LevelError, "error saving external data to seaweedfs", libLog.Err(err))
 
 		return nil, fmt.Errorf("saving external data to SeaweedFS: %w", err)
 	}
 
 	// Construct the full result path for job status updates
 	resultPath := fmt.Sprintf("/%s/%s", constant.ExternalDataBucketName, objectName)
-	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Successfully saved encrypted external data to SeaweedFS: %s (size=%d bytes, rows=%d)",
-		resultPath, sizeBytes, rowCount))
+	logger.Log(ctx, libLog.LevelInfo, "saved encrypted external data to seaweedfs",
+		libLog.String("result_path", resultPath),
+		libLog.Any("size_bytes", sizeBytes),
+		libLog.Any("row_count", rowCount),
+	)
 
 	return &JobResultData{
 		Path:      resultPath,
@@ -534,7 +560,7 @@ func (uc *UseCase) shouldSkipProcessing(ctx context.Context, jobID, organization
 	jobStatus, err := uc.checkReportStatus(ctx, jobID, organizationID, logger)
 	if err == nil {
 		if jobStatus == model.JobStatusCompleted {
-			logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Job %s is already completed, skipping reprocessing", jobID))
+			logger.Log(ctx, libLog.LevelInfo, "job already completed; skipping reprocessing", libLog.String("job_id", jobID.String()))
 			return true
 		}
 	}
@@ -546,16 +572,23 @@ func (uc *UseCase) shouldSkipProcessing(ctx context.Context, jobID, organization
 func (uc *UseCase) checkReportStatus(ctx context.Context, jobID, organizationID uuid.UUID, logger libLog.Logger) (model.JobStatus, error) {
 	jobData, err := uc.JobRepository.FindByID(ctx, jobID, organizationID)
 	if err != nil {
-		logger.Log(context.Background(), libLog.LevelDebug, fmt.Sprintf("Could not check job status for %s (may be first attempt): %v", jobID, err))
+		logger.Log(ctx, libLog.LevelDebug, "could not check job status; may be first attempt",
+			libLog.String("job_id", jobID.String()),
+			libLog.Err(err),
+		)
+
 		return "", err
 	}
 
 	if jobData == nil {
-		logger.Log(context.Background(), libLog.LevelDebug, fmt.Sprintf("No job data found for %s", jobID))
+		logger.Log(ctx, libLog.LevelDebug, "no job data found", libLog.String("job_id", jobID.String()))
 		return "", fmt.Errorf("no job data found for %s", jobID)
 	}
 
-	logger.Log(context.Background(), libLog.LevelDebug, fmt.Sprintf("Report %s current status: %s", jobID, jobData.Status))
+	logger.Log(ctx, libLog.LevelDebug, "current job status",
+		libLog.String("job_id", jobID.String()),
+		libLog.String("status", string(jobData.Status)),
+	)
 
 	return jobData.Status, nil
 }

@@ -3,7 +3,6 @@ package rabbitmq
 
 import (
 	"context"
-	"fmt"
 	"sync"
 
 	"github.com/LerianStudio/fetcher/pkg/crypto"
@@ -70,7 +69,9 @@ func (cr *ConsumerRoutes) Register(queueName string, handler QueueHandlerFunc) {
 // RunConsumers starts consumers for all registered queues using RabbitMQAdapter.
 func (cr *ConsumerRoutes) RunConsumers(ctx context.Context, wg *sync.WaitGroup) error {
 	for queueName, handler := range cr.routes {
-		cr.Log(context.Background(), libLog.LevelInfo, fmt.Sprint("Starting consumer for queue "+queueName))
+		cr.Log(ctx, libLog.LevelInfo, "starting consumer for queue",
+			libLog.String("queue", queueName),
+		)
 
 		queueName := queueName
 		handler := handler
@@ -84,7 +85,10 @@ func (cr *ConsumerRoutes) RunConsumers(ctx context.Context, wg *sync.WaitGroup) 
 
 			err := cr.adapter.ConsumerLoop(ctx, queueName, cr.numWorkers, handler)
 			if err != nil && ctx.Err() == nil {
-				cr.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Consumer loop for queue %s exited with error: %v", queueName, err))
+				cr.Log(ctx, libLog.LevelError, "consumer loop exited with error",
+					libLog.String("queue", queueName),
+					libLog.Err(err),
+				)
 			}
 		}()
 	}
@@ -94,17 +98,17 @@ func (cr *ConsumerRoutes) RunConsumers(ctx context.Context, wg *sync.WaitGroup) 
 
 // Shutdown gracefully shuts down all consumers and the RabbitMQ adapter.
 func (cr *ConsumerRoutes) Shutdown(ctx context.Context) error {
-	cr.Log(context.Background(), libLog.LevelInfo, "Shutting down ConsumerRoutes...")
+	cr.Log(ctx, libLog.LevelInfo, "shutting down consumer routes")
 
 	cr.shutdownWg.Wait()
 
 	// Shutdown the RabbitMQ adapter
 	if err := cr.adapter.Shutdown(ctx); err != nil {
-		cr.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Error shutting down RabbitMQ adapter: %v", err))
+		cr.Log(ctx, libLog.LevelError, "error shutting down RabbitMQ adapter", libLog.Err(err))
 		return err
 	}
 
-	cr.Log(context.Background(), libLog.LevelInfo, "ConsumerRoutes shutdown complete")
+	cr.Log(ctx, libLog.LevelInfo, "consumer routes shutdown complete")
 
 	return nil
 }
