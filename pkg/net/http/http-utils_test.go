@@ -109,6 +109,19 @@ func TestValidateParameters(t *testing.T) {
 			},
 		},
 		{
+			name: "unknown parameters are ignored",
+			params: map[string]string{
+				"name":  "acme",
+				"limit": "10",
+			},
+			wantErr: false,
+			check: func(t *testing.T, qh *QueryHeader) {
+				assert.Nil(t, qh.Metadata)
+				assert.False(t, qh.UseMetadata)
+				assert.Equal(t, 10, qh.Limit)
+			},
+		},
+		{
 			name: "with sort order asc",
 			params: map[string]string{
 				"sortOrder": "asc",
@@ -624,6 +637,17 @@ func TestQueryHeaderMetadata(t *testing.T) {
 		assert.True(t, qh.UseMetadata)
 		assert.Contains(t, *qh.Metadata, "metadata.customKey")
 	})
+
+	t.Run("unknown keys do not enable metadata", func(t *testing.T) {
+		params := map[string]string{
+			"product_name": "customValue",
+		}
+
+		qh, err := ValidateParameters(params)
+		assert.NoError(t, err)
+		assert.Nil(t, qh.Metadata)
+		assert.False(t, qh.UseMetadata)
+	})
 }
 
 func TestPaginationStruct(t *testing.T) {
@@ -794,7 +818,7 @@ func TestValidateParametersNonMetadataKeys(t *testing.T) {
 		os.Unsetenv("MAX_PAGINATION_MONTH_DATE_RANGE")
 	}()
 
-	t.Run("keys without metadata prefix are captured as metadata", func(t *testing.T) {
+	t.Run("keys without metadata prefix are ignored", func(t *testing.T) {
 		params := map[string]string{
 			"status":   "active",
 			"category": "finance",
@@ -802,9 +826,7 @@ func TestValidateParametersNonMetadataKeys(t *testing.T) {
 
 		qh, err := ValidateParameters(params)
 		assert.NoError(t, err)
-		assert.True(t, qh.UseMetadata)
-		assert.NotNil(t, qh.Metadata)
-		assert.Contains(t, *qh.Metadata, "status")
-		assert.Contains(t, *qh.Metadata, "category")
+		assert.False(t, qh.UseMetadata)
+		assert.Nil(t, qh.Metadata)
 	})
 }

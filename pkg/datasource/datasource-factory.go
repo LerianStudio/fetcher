@@ -28,11 +28,35 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
+type dataSourceConfigBuilder func(ctx context.Context, base datasource.DataSourceConfig, conn *model.Connection, cryptor crypto.Cryptor, logger libLog.Logger) (datasource.DataSource, error)
+
+var defaultDataSourceConfigBuilders = map[model.DBType]dataSourceConfigBuilder{
+	model.TypeMongoDB: func(ctx context.Context, base datasource.DataSourceConfig, conn *model.Connection, cryptor crypto.Cryptor, logger libLog.Logger) (datasource.DataSource, error) {
+		return newDataSourceConfigMongoDB(ctx, base, conn, cryptor, logger)
+	},
+	model.TypePostgreSQL: func(ctx context.Context, base datasource.DataSourceConfig, conn *model.Connection, cryptor crypto.Cryptor, logger libLog.Logger) (datasource.DataSource, error) {
+		return newDataSourceConfigPostgres(ctx, base, conn, cryptor, logger)
+	},
+	model.TypeOracle: func(ctx context.Context, base datasource.DataSourceConfig, conn *model.Connection, cryptor crypto.Cryptor, logger libLog.Logger) (datasource.DataSource, error) {
+		return newDataSourceConfigOracle(ctx, base, conn, cryptor, logger)
+	},
+	model.TypeMySQL: func(ctx context.Context, base datasource.DataSourceConfig, conn *model.Connection, cryptor crypto.Cryptor, logger libLog.Logger) (datasource.DataSource, error) {
+		return newDataSourceConfigMySQL(ctx, base, conn, cryptor, logger)
+	},
+	model.TypeSQLServer: func(ctx context.Context, base datasource.DataSourceConfig, conn *model.Connection, cryptor crypto.Cryptor, logger libLog.Logger) (datasource.DataSource, error) {
+		return newDataSourceConfigSQLServer(ctx, base, conn, cryptor, logger)
+	},
+}
+
 // NewDataSourceFromConnection creates a DataSource implementation based on the connection type.
 // This factory function encapsulates the logic for converting a Connection entity
 // into the appropriate DataSourceConfig implementation (MongoDB, PostgreSQL, Oracle, MySQL, or SQL Server).
 // The cryptor is required to decrypt the connection password before creating the data source.
 func NewDataSourceFromConnection(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor, logger libLog.Logger) (datasource.DataSource, error) {
+	return newDataSourceFromConnection(ctx, conn, cryptor, logger, defaultDataSourceConfigBuilders)
+}
+
+func newDataSourceFromConnection(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor, logger libLog.Logger, builders map[model.DBType]dataSourceConfigBuilder) (datasource.DataSource, error) {
 	if conn == nil {
 		return nil, fmt.Errorf("connection cannot be nil")
 	}
@@ -42,20 +66,13 @@ func NewDataSourceFromConnection(ctx context.Context, conn *model.Connection, cr
 	}
 
 	baseConfig := newDataSourceConfigFromConnection(conn)
-	switch conn.Type {
-	case model.TypeMongoDB:
-		return newDataSourceConfigMongoDB(ctx, baseConfig, conn, cryptor, logger)
-	case model.TypePostgreSQL:
-		return newDataSourceConfigPostgres(ctx, baseConfig, conn, cryptor, logger)
-	case model.TypeOracle:
-		return newDataSourceConfigOracle(ctx, baseConfig, conn, cryptor, logger)
-	case model.TypeMySQL:
-		return newDataSourceConfigMySQL(ctx, baseConfig, conn, cryptor, logger)
-	case model.TypeSQLServer:
-		return newDataSourceConfigSQLServer(ctx, baseConfig, conn, cryptor, logger)
-	default:
+
+	builder, ok := builders[conn.Type]
+	if !ok {
 		return nil, fmt.Errorf("unsupported database type: %s", conn.Type)
 	}
+
+	return builder(ctx, baseConfig, conn, cryptor, logger)
 }
 
 // newDataSourceConfigFromConnection creates a base DataSourceConfig from a Connection entity.
@@ -142,14 +159,14 @@ func newDataSourceConfigMongoDB(ctx context.Context, base datasource.DataSourceC
 
 	client, errConnect := mongo.Connect(testCtx, clientOpts)
 	if errConnect != nil {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to connect to MongoDB [%s]: %v", conn.ConfigName, errConnect))
+		logger.Log(testCtx, libLog.LevelError, fmt.Sprintf("Failed to connect to MongoDB [%s]: %v", conn.ConfigName, errConnect))
 		return nil, fmt.Errorf("failed to connect to MongoDB: %w", errConnect)
 	}
 
 	if errPing := client.Ping(testCtx, nil); errPing != nil {
 		_ = client.Disconnect(testCtx)
 
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to ping MongoDB [%s]: %v", conn.ConfigName, errPing))
+		logger.Log(testCtx, libLog.LevelError, fmt.Sprintf("Failed to ping MongoDB [%s]: %v", conn.ConfigName, errPing))
 
 		return nil, fmt.Errorf("failed to ping MongoDB: %w", errPing)
 	}
@@ -207,7 +224,7 @@ func newDataSourceConfigPostgres(ctx context.Context, base datasource.DataSource
 	}
 
 	if errConnect := pgConnection.Connect(); errConnect != nil {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to connect to Postgres [%s]: %v", conn.ConfigName, errConnect))
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to connect to Postgres [%s]: %v", conn.ConfigName, errConnect))
 		return nil, fmt.Errorf("failed to connect to PostgreSQL: %w", errConnect)
 	}
 
@@ -261,9 +278,9 @@ func newDataSourceConfigOracle(ctx context.Context, base datasource.DataSourceCo
 		serviceName,
 	)
 
-	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Attempting Oracle connection [%s] - Service: %s, Username: %s (will access schema: %s)",
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Attempting Oracle connection [%s] - Service: %s, Username: %s (will access schema: %s)",
 		conn.ConfigName, serviceName, conn.Username, strings.ToUpper(conn.Username)))
-	logger.Log(context.Background(), libLog.LevelDebug, fmt.Sprintf("Oracle connection string: oracle://%s:***@%s:%d/%s", conn.Username, conn.Host, conn.Port, serviceName))
+	logger.Log(ctx, libLog.LevelDebug, fmt.Sprintf("Oracle connection string: oracle://%s:***@%s:%d/%s", conn.Username, conn.Host, conn.Port, serviceName))
 
 	oraConnection := &oracle.Connection{
 		ConnectionString:   connectionString,
@@ -274,7 +291,7 @@ func newDataSourceConfigOracle(ctx context.Context, base datasource.DataSourceCo
 	}
 
 	if errConnect := oraConnection.Connect(); errConnect != nil {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to connect to Oracle [%s] with service name [%s]: %v", conn.ConfigName, conn.DatabaseName, errConnect))
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to connect to Oracle [%s] with service name [%s]: %v", conn.ConfigName, conn.DatabaseName, errConnect))
 		return nil, fmt.Errorf("failed to connect to Oracle with service name '%s': %w. Verify that the service name is correct and registered with the Oracle listener", conn.DatabaseName, errConnect)
 	}
 
@@ -329,7 +346,7 @@ func newDataSourceConfigMySQL(ctx context.Context, base datasource.DataSourceCon
 	}
 
 	if errConnect := mysqlConnection.Connect(); errConnect != nil {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to connect to MySQL [%s]: %v", conn.ConfigName, errConnect))
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to connect to MySQL [%s]: %v", conn.ConfigName, errConnect))
 		return nil, fmt.Errorf("failed to connect to MySQL: %w", errConnect)
 	}
 
@@ -407,7 +424,7 @@ func newDataSourceConfigSQLServer(ctx context.Context, base datasource.DataSourc
 	}
 
 	if errConnect := sqlServerConnection.Connect(); errConnect != nil {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to connect to SQL Server [%s]: %v", conn.ConfigName, errConnect))
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to connect to SQL Server [%s]: %v", conn.ConfigName, errConnect))
 		return nil, fmt.Errorf("failed to connect to SQL Server: %w", errConnect)
 	}
 
