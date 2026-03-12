@@ -63,7 +63,7 @@ func (h *FetcherHandler) CreateJob(c *fiber.Ctx) error {
 
 	orgID, err := httpUtils.GetOrganizationID(c)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(span, "missing or invalid org id", err)
+		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "missing or invalid org id", err)
 		return httpUtils.WithError(c, err)
 	}
 
@@ -74,7 +74,7 @@ func (h *FetcherHandler) CreateJob(c *fiber.Ctx) error {
 
 	var request model.FetcherRequest
 	if errParser := c.BodyParser(&request); errParser != nil {
-		libOpentelemetry.HandleSpanError(span, "failed to parse payload", errParser)
+		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "failed to parse payload", errParser)
 
 		return httpUtils.WithError(c, pkg.ValidationError{
 			EntityType: "fetcher",
@@ -87,7 +87,7 @@ func (h *FetcherHandler) CreateJob(c *fiber.Ctx) error {
 
 	// Validate required metadata.source field
 	if request.Metadata == nil {
-		libOpentelemetry.HandleSpanError(span, "missing required metadata", nil)
+		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "missing required metadata", nil)
 
 		return httpUtils.WithError(c, pkg.ValidationError{
 			EntityType: "fetcher",
@@ -99,7 +99,7 @@ func (h *FetcherHandler) CreateJob(c *fiber.Ctx) error {
 
 	source, hasSource := request.Metadata["source"]
 	if !hasSource || source == nil {
-		libOpentelemetry.HandleSpanError(span, "missing required metadata.source", nil)
+		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "missing required metadata.source", nil)
 
 		return httpUtils.WithError(c, pkg.ValidationError{
 			EntityType: "fetcher",
@@ -112,7 +112,7 @@ func (h *FetcherHandler) CreateJob(c *fiber.Ctx) error {
 	// Validate source is a non-empty string
 	sourceStr, ok := source.(string)
 	if !ok || strings.TrimSpace(sourceStr) == "" {
-		libOpentelemetry.HandleSpanError(span, "invalid metadata.source type or empty value", nil)
+		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "invalid metadata.source type or empty value", nil)
 
 		return httpUtils.WithError(c, pkg.ValidationError{
 			EntityType: "fetcher",
@@ -177,7 +177,7 @@ func (h *FetcherHandler) GetJob(c *fiber.Ctx) error {
 
 	orgID, err := httpUtils.GetOrganizationID(c)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(span, "missing or invalid org id", err)
+		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "missing or invalid org id", err)
 		return httpUtils.WithError(c, err)
 	}
 
@@ -188,7 +188,7 @@ func (h *FetcherHandler) GetJob(c *fiber.Ctx) error {
 
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		libOpentelemetry.HandleSpanError(span, "invalid job id parameter", err)
+		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "invalid job id parameter", err)
 
 		return httpUtils.WithError(c, pkg.ValidationError{
 			EntityType: "job",

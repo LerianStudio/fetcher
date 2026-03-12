@@ -32,8 +32,7 @@ func TestExtractExternalData_JobNotFoundMarksFailed(t *testing.T) {
 		Metadata: map[string]any{"source": "test-service"},
 	})
 
-	mocks.jobRepo.EXPECT().FindByID(gomock.Any(), jobID, orgID).Return(nil, nil)
-	mocks.jobRepo.EXPECT().FindByID(gomock.Any(), jobID, orgID).Return(nil, nil)
+	mocks.jobRepo.EXPECT().FindByID(gomock.Any(), jobID, orgID).Return(nil, nil).Times(2)
 	mocks.jobRepo.EXPECT().
 		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil)
@@ -70,8 +69,7 @@ func TestExtractExternalData_NoConnectionsMarksFailed(t *testing.T) {
 	})
 
 	pendingJob := &model.Job{ID: jobID, Status: model.JobStatusPending}
-	mocks.jobRepo.EXPECT().FindByID(gomock.Any(), jobID, orgID).Return(pendingJob, nil)
-	mocks.jobRepo.EXPECT().FindByID(gomock.Any(), jobID, orgID).Return(pendingJob, nil)
+	mocks.jobRepo.EXPECT().FindByID(gomock.Any(), jobID, orgID).Return(pendingJob, nil).Times(2)
 	mocks.jobRepo.EXPECT().
 		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusProcessing, "", "", nil).
 		Return(nil)
@@ -126,8 +124,7 @@ func TestExtractExternalData_CompletedStatusUpdateFailureMarksJobFailed(t *testi
 		return mockDataSource, nil
 	})
 
-	mocks.jobRepo.EXPECT().FindByID(gomock.Any(), jobID, orgID).Return(pendingJob, nil)
-	mocks.jobRepo.EXPECT().FindByID(gomock.Any(), jobID, orgID).Return(pendingJob, nil)
+	mocks.jobRepo.EXPECT().FindByID(gomock.Any(), jobID, orgID).Return(pendingJob, nil).Times(2)
 	mocks.jobRepo.EXPECT().
 		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusProcessing, "", "", nil).
 		Return(nil)

@@ -953,6 +953,44 @@ func TestValidateSchema_NilDatasourceFactoryResult(t *testing.T) {
 	assert.Equal(t, "db1", resp.Errors[0].DataSourceID)
 }
 
+func TestValidateSchema_NilDatasourceFactory_ReturnsInternalError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockCrypto := crypto.NewMockCryptor(ctrl)
+	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
+
+	orgID := uuid.New()
+	connID := uuid.New()
+	conn := &model.Connection{ID: connID, ConfigName: "db1", Type: model.TypeMySQL, Host: "localhost", Port: 3306}
+
+	mockConnRepo.EXPECT().
+		FindByConfigNames(gomock.Any(), orgID, gomock.Any()).
+		Return([]*model.Connection{conn}, nil)
+
+	mockSchemaCache.EXPECT().
+		Get(gomock.Any(), "db1").
+		Return(nil, nil)
+
+	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil)
+
+	ctx := testContext()
+	request := model.SchemaValidationRequest{
+		MappedFields: map[string]map[string][]string{
+			"db1": {"users": {"id"}},
+		},
+	}
+
+	resp, err := service.Execute(ctx, orgID, request)
+
+	assert.Nil(t, resp)
+	require.Error(t, err)
+
+	var internalErr pkg.InternalServerError
+	require.True(t, errors.As(err, &internalErr), "expected InternalServerError, got %T: %v", err, err)
+}
+
 // TestValidateSchema_EmptyConfigName tests validation with empty config name in request.
 func TestValidateSchema_EmptyConfigName(t *testing.T) {
 	ctrl := gomock.NewController(t)

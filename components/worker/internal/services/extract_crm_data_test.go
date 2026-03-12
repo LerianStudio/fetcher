@@ -891,7 +891,7 @@ func TestTransformPluginCRMAdvancedFilters(t *testing.T) {
 			uc := newTestUseCase(mocks)
 			uc.SetCRMSecrets("test-crm-encrypt-key", tt.hashKey)
 
-			result, err := uc.transformPluginCRMAdvancedFilters(tt.filter, logger)
+			result, err := uc.transformPluginCRMAdvancedFilters(testContext(), tt.filter, logger)
 
 			if tt.wantErr {
 				if err == nil {
@@ -997,7 +997,7 @@ func TestTransformPluginCRMAdvancedFilters_FieldMappings(t *testing.T) {
 				tt.inputField: {Equals: []any{"test-value"}},
 			}
 
-			result, err := uc.transformPluginCRMAdvancedFilters(filter, logger)
+			result, err := uc.transformPluginCRMAdvancedFilters(testContext(), filter, logger)
 			if err != nil {
 				t.Fatalf("expected no error, got: %v", err)
 			}
@@ -1034,7 +1034,7 @@ func TestTransformPluginCRMAdvancedFilters_AllConditionTypes(t *testing.T) {
 		},
 	}
 
-	result, err := uc.transformPluginCRMAdvancedFilters(filter, logger)
+	result, err := uc.transformPluginCRMAdvancedFilters(testContext(), filter, logger)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -1624,7 +1624,7 @@ func TestTransformPluginCRMAdvancedFilters_WithEncryptedFields(t *testing.T) {
 		"document": {Equals: []any{"12345678900"}},
 	}
 
-	result, err := uc.transformPluginCRMAdvancedFilters(filter, logger)
+	result, err := uc.transformPluginCRMAdvancedFilters(testContext(), filter, logger)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}

@@ -140,6 +140,18 @@ func TestCreateFetcherJob_Execute_ValidationError(t *testing.T) {
 			},
 			wantErr: "metadata.source must be a non-empty string",
 		},
+		{
+			name: "metadata with whitespace-only source",
+			request: model.FetcherRequest{
+				DataRequest: model.DataRequest{
+					MappedFields: map[string]map[string][]string{
+						"ds1": {"table1": {"field1"}},
+					},
+				},
+				Metadata: map[string]any{"source": "   \t\n  "},
+			},
+			wantErr: "metadata.source must be a non-empty string",
+		},
 	}
 
 	for _, tt := range tests {

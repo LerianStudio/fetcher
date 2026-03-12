@@ -69,7 +69,7 @@ func (c *Connection) Connect() error {
 func (oc *Connection) GetDB() (*sql.DB, error) {
 	if oc.ConnectionDB == nil {
 		if err := oc.Connect(); err != nil {
-			oc.Logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("ERRCONECT %s", err))
+			oc.Logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to connect to Oracle [%s]: %v", oc.DBName, err))
 			return nil, err
 		}
 	}

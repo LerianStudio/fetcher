@@ -2,6 +2,7 @@ package query
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -35,6 +36,8 @@ var pluginCRMTableMapping = map[string]string{
 	"holders": "holders",
 	"aliases": "aliases",
 }
+
+var errDataSourceFactoryNotConfigured = errors.New("datasource factory is not configured")
 
 // ValidateSchema is the query service for validating schema references.
 type ValidateSchema struct {
@@ -176,6 +179,17 @@ func (s *ValidateSchema) Execute(
 		// Get or fetch schema for the connection
 		schema, err := s.getOrFetchSchema(ctx, conn, schemas)
 		if err != nil {
+			if errors.Is(err, errDataSourceFactoryNotConfigured) {
+				libOpentelemetry.HandleSpanError(span, "schema validation datasource factory misconfiguration", err)
+				logger.Log(ctx, libLog.LevelError, "schema validation datasource factory misconfiguration",
+					libLog.String("config_name", configName),
+					libLog.String("organization_id", organizationID.String()),
+					libLog.Err(err),
+				)
+
+				return nil, pkg.ValidateInternalError(err, "schema")
+			}
+
 			validationErrors = append(validationErrors, model.NewDataSourceDownError(configName))
 			logger.Log(ctx, libLog.LevelWarn, "failed to get schema",
 				libLog.String("config_name", configName),
@@ -250,6 +264,15 @@ func (s *ValidateSchema) getOrFetchSchema(
 
 	span.SetAttributes(attribute.Bool("app.schema.cache_hit", false))
 	logger.Log(ctx, libLog.LevelDebug, "schema cache miss", libLog.String("config_name", conn.ConfigName))
+
+	if s.dsFactory == nil {
+		libOpentelemetry.HandleSpanError(span, "datasource factory not configured", errDataSourceFactoryNotConfigured)
+		logger.Log(ctx, libLog.LevelError, "datasource factory not configured",
+			libLog.String("config_name", conn.ConfigName),
+		)
+
+		return nil, errDataSourceFactoryNotConfigured
+	}
 
 	// Get datasource instance because schema is not in cache
 	ds, err := s.dsFactory(ctx, conn, s.cryptor)

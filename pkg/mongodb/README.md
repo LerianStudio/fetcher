@@ -336,7 +336,7 @@ graph TB
     end
 
     subgraph "Shared Libraries"
-        LibCommons[lib-commons/v2]
+        LibCommons[lib-commons/v4]
         Crypto[pkg/crypto]
     end
 

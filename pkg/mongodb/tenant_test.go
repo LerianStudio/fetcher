@@ -33,6 +33,18 @@ func TestGetDatabaseForContext(t *testing.T) {
 		wantErrMsg    string
 	}{
 		{
+			name: "nil provider returns error",
+			setupCtx: func() context.Context {
+				return context.Background()
+			},
+			setupProvider: func(ctrl *gomock.Controller) MongoClientProvider {
+				return nil
+			},
+			dbName:     "test_db",
+			wantErr:    true,
+			wantErrMsg: "mongo client provider is nil",
+		},
+		{
 			name: "single-tenant fallback when provider errors",
 			setupCtx: func() context.Context {
 				return context.Background()
@@ -47,6 +59,22 @@ func TestGetDatabaseForContext(t *testing.T) {
 			dbName:     "test_db",
 			wantErr:    true,
 			wantErrMsg: "connection failed",
+		},
+		{
+			name: "single-tenant returns error when provider returns nil client",
+			setupCtx: func() context.Context {
+				return context.Background()
+			},
+			setupProvider: func(ctrl *gomock.Controller) MongoClientProvider {
+				mock := NewMockMongoClientProvider(ctrl)
+				mock.EXPECT().
+					Client(gomock.Any()).
+					Return(nil, nil)
+				return mock
+			},
+			dbName:     "test_db",
+			wantErr:    true,
+			wantErrMsg: "mongo client is nil",
 		},
 		{
 			name: "multi-tenant returns ErrTenantContextRequired when no tenant in context",
@@ -150,4 +178,30 @@ func TestGetDatabaseForContext(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMultiTenantMongoProviderNilGuards(t *testing.T) {
+	t.Run("client returns error when provider is nil", func(t *testing.T) {
+		var provider *MultiTenantMongoProvider
+
+		client, err := provider.Client(context.Background())
+		require.Error(t, err)
+		assert.Nil(t, client)
+		assert.Contains(t, err.Error(), "mongo client provider is nil")
+	})
+
+	t.Run("client returns error when inner provider is nil", func(t *testing.T) {
+		provider := NewMultiTenantMongoProvider(nil, true)
+
+		client, err := provider.Client(context.Background())
+		require.Error(t, err)
+		assert.Nil(t, client)
+		assert.Contains(t, err.Error(), "mongo client provider is nil")
+		assert.True(t, provider.IsMultiTenant())
+	})
+
+	t.Run("is multi-tenant is safe on nil receiver", func(t *testing.T) {
+		var provider *MultiTenantMongoProvider
+		assert.False(t, provider.IsMultiTenant())
+	})
 }

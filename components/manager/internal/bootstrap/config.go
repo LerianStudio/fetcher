@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/url"
 	"strconv"
 	"strings"
@@ -132,6 +133,7 @@ var (
 	newManagerMongoClient   = libMongo.NewClient
 	newConnectionRepository = connection.NewConnectionMongoDBRepository
 	newJobRepository        = job.NewJobMongoDBRepository
+	newTenantManagerClient  = tmclient.NewClient
 	newSchemaCacheStore     = func(cfg redisCache.RedisConfig, logger libLog.Logger, ttl time.Duration, prefix string) (redisCache.Cache[model.DataSourceSchema], error) {
 		return redisCache.NewCacheWithFallback[model.DataSourceSchema](cfg, logger, ttl, prefix)
 	}
@@ -185,7 +187,7 @@ func InitServers() (*Service, error) {
 		repositories,
 		cryptoDependencies.service,
 		platformDependencies,
-	), nil
+	)
 }
 
 func loadConfig() (*Config, error) {
@@ -354,7 +356,7 @@ func assembleService(
 	repositories *managerRepositories,
 	cryptoService *crypto.AESGCMService,
 	platformDependencies *managerPlatformDependencies,
-) *Service {
+) (*Service, error) {
 	createConnectionCmd := connectionCommand.NewCreateConnection(repositories.connection, cryptoService)
 	updateConnectionCmd := connectionCommand.NewUpdateConnection(repositories.connection, repositories.job, cryptoService)
 	deleteConnectionCmd := connectionCommand.NewDeleteConnection(repositories.connection, repositories.job)
@@ -399,7 +401,10 @@ func assembleService(
 	)
 
 	// Init multi-tenant middleware (nil if disabled)
-	tenantHandler := initMultiTenantMiddleware(cfg, logger)
+	tenantHandler, err := initMultiTenantMiddleware(cfg, logger)
+	if err != nil {
+		return nil, err
+	}
 
 	httpApp := in2.NewRoutes(
 		logger,
@@ -415,7 +420,7 @@ func assembleService(
 	return &Service{
 		Server: NewServer(cfg, httpApp, logger, telemetry, platformDependencies.licenseClient),
 		Logger: logger,
-	}
+	}, nil
 }
 
 // initMultiTenantMiddleware creates a TenantMiddleware Fiber handler if multi-tenant
@@ -426,9 +431,9 @@ func assembleService(
 //   - Circuit breaker is MANDATORY for the Tenant Manager client
 //   - Uses constant.ApplicationName and constant.ModuleManager for service/module identity
 //   - WithMongoManager configures MongoDB connection pool management
-func initMultiTenantMiddleware(cfg *Config, logger libLog.Logger) fiber.Handler {
+func initMultiTenantMiddleware(cfg *Config, logger libLog.Logger) (fiber.Handler, error) {
 	if !cfg.MultiTenantEnabled || cfg.MultiTenantURL == "" {
-		return nil
+		return nil, nil
 	}
 
 	// Create Tenant Manager HTTP client with circuit breaker (MANDATORY per multi-tenant.md).
@@ -453,11 +458,11 @@ func initMultiTenantMiddleware(cfg *Config, logger libLog.Logger) fiber.Handler 
 		)
 	}
 
-	tmClient, err := tmclient.NewClient(cfg.MultiTenantURL, logger, clientOpts...)
+	tmClient, err := newTenantManagerClient(cfg.MultiTenantURL, logger, clientOpts...)
 	if err != nil {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to create tenant manager client: %v", err))
+		logger.Log(context.Background(), libLog.LevelError, "failed to create tenant manager client", libLog.Err(err))
 
-		return nil
+		return nil, wrapBootstrapError("create tenant manager client", err)
 	}
 
 	// Create MongoDB Manager for tenant connection pool management
@@ -492,21 +497,31 @@ func initMultiTenantMiddleware(cfg *Config, logger libLog.Logger) fiber.Handler 
 
 	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Multi-tenant middleware initialized: url=%s, module=%s", cfg.MultiTenantURL, constant.ModuleManager))
 
-	return tenantMid.WithTenantDB
+	return tenantMid.WithTenantDB, nil
 }
 
 func buildMongoSource(cfg *Config) string {
-	escapedUser := url.PathEscape(cfg.MongoDBUser)
-	escapedPass := url.QueryEscape(cfg.MongoDBPassword)
-
-	return fmt.Sprintf("%s://%s:%s@%s:%s", cfg.MongoURI, escapedUser, escapedPass, cfg.MongoDBHost, cfg.MongoDBPort)
+	return buildCredentialURL(cfg.MongoURI, cfg.MongoDBUser, cfg.MongoDBPassword, cfg.MongoDBHost, cfg.MongoDBPort)
 }
 
 func buildRabbitMQSource(cfg *Config) string {
-	escapedUser := url.PathEscape(cfg.RabbitMQUser)
-	escapedPass := url.PathEscape(cfg.RabbitMQPass)
+	return buildCredentialURL(cfg.RabbitURI, cfg.RabbitMQUser, cfg.RabbitMQPass, cfg.RabbitMQHost, cfg.RabbitMQPortAMQP)
+}
 
-	return fmt.Sprintf("%s://%s:%s@%s:%s", cfg.RabbitURI, escapedUser, escapedPass, cfg.RabbitMQHost, cfg.RabbitMQPortAMQP)
+func buildCredentialURL(scheme, user, password, host, port string) string {
+	targetURL := &url.URL{Scheme: scheme}
+
+	if user != "" || password != "" {
+		targetURL.User = url.UserPassword(user, password)
+	}
+
+	if port != "" {
+		targetURL.Host = net.JoinHostPort(host, port)
+	} else {
+		targetURL.Host = host
+	}
+
+	return targetURL.String()
 }
 
 // getSchemaCacheTTL parses the TTL from string and returns a time.Duration.

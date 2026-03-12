@@ -64,7 +64,17 @@ func (s *TestConnection) Execute(ctx context.Context, organizationID, connection
 		attribute.String("app.request.connection_id", connectionID.String()),
 	)
 
-	key, _ := valkey.GetKeyFromContext(ctx, connectionID.String())
+	key, err := valkey.GetKeyFromContext(ctx, connectionID.String())
+	if err != nil {
+		libOpentelemetry.HandleSpanError(span, "connection test rate limiter key derivation error", err)
+		logger.Log(ctx, libLog.LevelError, "connection test rate limiter key derivation error",
+			libLog.String("connection_id", connectionID.String()),
+			libLog.String("organization_id", organizationID.String()),
+			libLog.Err(err),
+		)
+
+		return nil, pkg.ValidateInternalError(err, "connection")
+	}
 
 	_, _, reset, ok, err := s.store.Take(ctx, key)
 	if err != nil {

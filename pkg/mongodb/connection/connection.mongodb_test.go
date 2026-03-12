@@ -534,10 +534,11 @@ func TestConnectionMongoDBRepository_FindByOrganizationAndDatabaseName(t *testin
 		if _, err := repo.FindByOrganizationAndDatabaseName(context.Background(), uuid.New(), ""); err == nil {
 			t.Fatalf("expected error")
 		} else {
-			var internal pkg.InternalServerError
-			if !errors.As(err, &internal) {
-				t.Fatalf("expected internal server error, got %v", err)
+			var validation pkg.ValidationError
+			if !errors.As(err, &validation) {
+				t.Fatalf("expected validation error, got %T: %v", err, err)
 			}
+			assert.Equal(t, constant.ErrInvalidDataRequest.Error(), validation.Code)
 		}
 	})
 

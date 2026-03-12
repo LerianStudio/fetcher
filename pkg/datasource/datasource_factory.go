@@ -39,6 +39,10 @@ import (
 func NewDataSourceFromConnection(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor, logger libLog.Logger) (datasource.DataSource, error) {
 	_, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
 
+	if logger == nil {
+		logger = libLog.NewNop()
+	}
+
 	ctx, span := tracer.Start(ctx, "factory.datasource.create")
 	defer span.End()
 

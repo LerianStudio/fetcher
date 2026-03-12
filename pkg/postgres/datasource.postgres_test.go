@@ -1220,7 +1220,7 @@ func TestScanRows(t *testing.T) {
 		defer resultRows.Close()
 
 		logger := testLogger()
-		result, err := scanRows(resultRows, logger)
+		result, err := scanRows(context.Background(), resultRows, logger)
 
 		require.NoError(t, err)
 		assert.Len(t, result, 2)
@@ -1245,7 +1245,7 @@ func TestScanRows(t *testing.T) {
 		defer resultRows.Close()
 
 		logger := testLogger()
-		result, err := scanRows(resultRows, logger)
+		result, err := scanRows(context.Background(), resultRows, logger)
 
 		require.NoError(t, err)
 		assert.Len(t, result, 1)
@@ -1266,7 +1266,7 @@ func TestScanRows(t *testing.T) {
 		defer resultRows.Close()
 
 		logger := testLogger()
-		result, err := scanRows(resultRows, logger)
+		result, err := scanRows(context.Background(), resultRows, logger)
 
 		require.NoError(t, err)
 		assert.Len(t, result, 1)
@@ -1289,7 +1289,7 @@ func TestScanRows(t *testing.T) {
 		defer resultRows.Close()
 
 		logger := testLogger()
-		result, err := scanRows(resultRows, logger)
+		result, err := scanRows(context.Background(), resultRows, logger)
 
 		require.NoError(t, err)
 		assert.Len(t, result, 0)

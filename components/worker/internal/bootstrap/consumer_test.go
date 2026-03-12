@@ -23,6 +23,7 @@ type mockMultiTenantConsumer struct {
 	registeredHandlers []tmconsumer.HandlerFunc
 	runCalled          bool
 	closeCalled        bool
+	registerErr        error
 	runErr             error
 	closeErr           error
 }
@@ -30,7 +31,7 @@ type mockMultiTenantConsumer struct {
 func (m *mockMultiTenantConsumer) Register(queueName string, handler tmconsumer.HandlerFunc) error {
 	m.registeredQueues = append(m.registeredQueues, queueName)
 	m.registeredHandlers = append(m.registeredHandlers, handler)
-	return nil
+	return m.registerErr
 }
 
 func (m *mockMultiTenantConsumer) Run(_ context.Context) error {
@@ -299,6 +300,30 @@ func TestNewMultiQueueConsumerMultiTenant_RegistersHandler(t *testing.T) {
 	assert.Equal(t, 1, len(mockConsumer.registeredQueues))
 	assert.Equal(t, "test-queue", mockConsumer.registeredQueues[0])
 	assert.NotNil(t, mockConsumer.registeredHandlers[0])
+	assert.NoError(t, mqConsumer.initErr)
+}
+
+func TestNewMultiQueueConsumerMultiTenant_StoresRegistrationError(t *testing.T) {
+	mockConsumer := &mockMultiTenantConsumer{registerErr: errors.New("register failed")}
+	logger := &mockBootstrapLogger{}
+
+	consumer := NewMultiQueueConsumerMultiTenant(mockConsumer, nil, "test-queue", logger, nil)
+
+	require.Error(t, consumer.initErr)
+	assert.Contains(t, consumer.initErr.Error(), "register multi-tenant handler")
+	assert.Contains(t, consumer.initErr.Error(), "register failed")
+	assert.False(t, mockConsumer.runCalled)
+}
+
+func TestMultiQueueConsumerRun_ReturnsDeferredRegistrationError(t *testing.T) {
+	consumer := &MultiQueueConsumer{
+		logger:  &mockBootstrapLogger{},
+		initErr: errors.New("register failed"),
+	}
+
+	err := consumer.Run(nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "register failed")
 }
 
 func TestHandlerGenerateReportDelivery_NilMongoManager_SkipsResolution(t *testing.T) {

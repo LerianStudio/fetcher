@@ -422,9 +422,9 @@ func (cr *ConnectionMongoDBRepository) FindByOrganizationAndDatabaseName(ctx con
 
 	if databaseName == "" {
 		err := errors.New("database_name cannot be empty")
-		libOpentelemetry.HandleSpanError(span, "Invalid database_name", err)
+		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Invalid database_name", err)
 
-		return nil, pkg.ValidateInternalError(err, "connection")
+		return nil, pkg.ValidateBusinessError(constant.ErrInvalidDataRequest, "connection", err.Error())
 	}
 
 	db, err := cr.getDatabase(ctx)

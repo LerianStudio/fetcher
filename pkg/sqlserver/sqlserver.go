@@ -61,7 +61,7 @@ func (c *Connection) Connect() error {
 func (sc *Connection) GetDB() (*sql.DB, error) {
 	if sc.ConnectionDB == nil {
 		if err := sc.Connect(); err != nil {
-			sc.Logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("ERRCONECT %s", err))
+			sc.Logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to connect to SQL Server [%s]: %v", sc.DBName, err))
 			return nil, err
 		}
 	}

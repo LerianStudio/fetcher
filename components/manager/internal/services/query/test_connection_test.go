@@ -21,6 +21,8 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
+type testConnectionContextKey string
+
 // newTestConnectionFixture creates a valid Connection for testing TestConnection service.
 func newTestConnectionFixture(orgID, connID uuid.UUID, dbType model.DBType) *model.Connection {
 	return &model.Connection{
@@ -139,6 +141,9 @@ func TestTestConnection_Execute_DecryptionError(t *testing.T) {
 
 	// Provide a factory that calls cryptor.Decrypt to exercise the mock
 	testFactory := func(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor) (datasourceModel.DataSource, error) {
+		require.Equal(t, mockCrypto, cryptor)
+		assert.Equal(t, "trace-value", ctx.Value(testConnectionContextKey("trace-key")))
+		assert.Equal(t, "tenant-decrypt", tmcore.GetTenantIDFromContext(ctx))
 		_, err := cryptor.Decrypt(ctx, conn.PasswordEncrypted, conn.EncryptionKeyVersion)
 		if err != nil {
 			return nil, fmt.Errorf("decryption failed: %w", err)
@@ -148,7 +153,8 @@ func TestTestConnection_Execute_DecryptionError(t *testing.T) {
 
 	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, testFactory)
 
-	ctx := testContext()
+	ctx := context.WithValue(testContext(), testConnectionContextKey("trace-key"), "trace-value")
+	ctx = tmcore.SetTenantIDInContext(ctx, "tenant-decrypt")
 	orgID := uuid.New()
 	connID := uuid.New()
 	existingConn := newTestConnectionFixture(orgID, connID, model.TypePostgreSQL)
@@ -223,18 +229,42 @@ func TestTestConnection_Execute_Success(t *testing.T) {
 	connID := uuid.New()
 	existingConn := newTestConnectionFixture(orgID, connID, model.TypePostgreSQL)
 
-	mockStore.EXPECT().Take(gomock.Any(), gomock.Any()).Return(uint64(1), uint64(10), uint64(time.Now().UTC().Add(time.Minute).UnixNano()), true, nil)
-	mockConnRepo.EXPECT().FindByID(gomock.Any(), connID, orgID).Return(existingConn, nil)
-	mockDataSource.EXPECT().Close(gomock.Any()).Return(nil)
+	mockStore.EXPECT().
+		Take(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(ctx context.Context, key string) (uint64, uint64, uint64, bool, error) {
+			assert.Equal(t, "trace-value", ctx.Value(testConnectionContextKey("trace-key")))
+			assert.Equal(t, "tenant-success", tmcore.GetTenantIDFromContext(ctx))
+			assert.Contains(t, key, "tenant-success")
+			return uint64(1), uint64(10), uint64(time.Now().UTC().Add(time.Minute).UnixNano()), true, nil
+		})
+	mockConnRepo.EXPECT().
+		FindByID(gomock.Any(), connID, orgID).
+		DoAndReturn(func(ctx context.Context, gotConnID, gotOrgID uuid.UUID) (*model.Connection, error) {
+			assert.Equal(t, "trace-value", ctx.Value(testConnectionContextKey("trace-key")))
+			assert.Equal(t, "tenant-success", tmcore.GetTenantIDFromContext(ctx))
+			assert.Equal(t, connID, gotConnID)
+			assert.Equal(t, orgID, gotOrgID)
+			return existingConn, nil
+		})
+	mockDataSource.EXPECT().
+		Close(gomock.Any()).
+		DoAndReturn(func(ctx context.Context) error {
+			assert.Equal(t, "trace-value", ctx.Value(testConnectionContextKey("trace-key")))
+			assert.Equal(t, "tenant-success", tmcore.GetTenantIDFromContext(ctx))
+			return nil
+		})
 
-	testFactory := func(_ context.Context, conn *model.Connection, cryptor crypto.Cryptor) (datasourceModel.DataSource, error) {
-		_ = cryptor
+	testFactory := func(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor) (datasourceModel.DataSource, error) {
+		assert.Equal(t, mockCrypto, cryptor)
+		assert.Equal(t, "trace-value", ctx.Value(testConnectionContextKey("trace-key")))
+		assert.Equal(t, "tenant-success", tmcore.GetTenantIDFromContext(ctx))
 		assert.Equal(t, existingConn, conn)
 		return mockDataSource, nil
 	}
 	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, testFactory)
 
-	ctx := testContext()
+	ctx := context.WithValue(testContext(), testConnectionContextKey("trace-key"), "trace-value")
+	ctx = tmcore.SetTenantIDInContext(ctx, "tenant-success")
 	result, err := svc.Execute(ctx, orgID, connID)
 
 	require.NoError(t, err)
@@ -242,6 +272,30 @@ func TestTestConnection_Execute_Success(t *testing.T) {
 	assert.Equal(t, "success", result.Status)
 	assert.Equal(t, "Connection successful", result.Message)
 	assert.GreaterOrEqual(t, result.LatencyMs, int64(0))
+}
+
+func TestTestConnection_Execute_RateLimitKeyDerivationError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockCrypto := crypto.NewMockCryptor(ctrl)
+	mockStore := NewMockRateLimiterStore(ctrl)
+
+	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, nil)
+
+	ctx := testContext()
+	ctx = tmcore.SetTenantIDInContext(ctx, "tenant:invalid")
+	orgID := uuid.New()
+	connID := uuid.New()
+
+	result, err := svc.Execute(ctx, orgID, connID)
+
+	assert.Nil(t, result)
+	require.Error(t, err)
+
+	var internalErr pkg.InternalServerError
+	require.True(t, errors.As(err, &internalErr), "expected InternalServerError, got %T: %v", err, err)
 }
 
 // TestTestConnection_Execute_RateLimited tests rate limit exceeded scenario.

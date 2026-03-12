@@ -38,7 +38,7 @@ func (ds *DataSourceConfigMySQL) GetType() string {
 // This method is a no-op as the connection is established during factory creation.
 func (ds *DataSourceConfigMySQL) Connect(ctx context.Context, logger libLog.Logger) error {
 	ds.Status = libConstant.DataSourceStatusAvailable
-	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("MySQL connection ready for %s", ds.ConfigName))
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("MySQL connection ready for %s", ds.ConfigName))
 
 	return nil
 }
@@ -62,7 +62,7 @@ func (ds *DataSourceConfigMySQL) Query(ctx context.Context, tables map[string][]
 
 	schemaResult, err := ds.MySQLRepository.GetDatabaseSchema(ctx)
 	if err != nil {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Error getting database schema: %s", err.Error()))
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Error getting database schema: %s", err.Error()))
 		return nil, err
 	}
 
@@ -82,7 +82,7 @@ func (ds *DataSourceConfigMySQL) Query(ctx context.Context, tables map[string][]
 		}
 
 		if errQuery != nil {
-			logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Error querying table %s: %s", table, errQuery.Error()))
+			logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Error querying table %s: %s", table, errQuery.Error()))
 			return nil, errQuery
 		}
 

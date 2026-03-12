@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
 
@@ -137,6 +138,30 @@ func TestPublishJobNotification_PublisherNotConfigured(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error when publisher not configured, got: %v", err)
 	}
+}
+
+func TestPublishJobNotification_NilLoggerFallsBackSafely(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+
+	ctx := testContext()
+	message := ExtractExternalDataMessage{
+		JobID:          newTestJobID(),
+		OrganizationID: newTestOrgID(),
+		Metadata:       map[string]any{"source": "test-service"},
+	}
+
+	mocks.rabbitPublisher.EXPECT().
+		Publish(gomock.Any(), "test-exchange", "job.completed.test-service", gomock.Any()).
+		Return(nil)
+
+	require.NotPanics(t, func() {
+		err := uc.publishJobNotification(ctx, nil, message, "completed", nil, nil, nil)
+		require.NoError(t, err)
+	})
 }
 
 // TestPublishJobNotification_PublishError tests error handling when publish fails.

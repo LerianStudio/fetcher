@@ -1,6 +1,8 @@
 package itestkit
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -8,12 +10,31 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 var (
 	hostGatewayIPOnce sync.Once
 	hostGatewayIP     string
 )
+
+const dockerProbeTimeout = 2 * time.Second
+
+func runDockerProbe(args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), dockerProbeTimeout)
+	defer cancel()
+
+	out, err := exec.CommandContext(ctx, "docker", args...).Output()
+	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return "", fmt.Errorf("docker %s timed out after %s", strings.Join(args, " "), dockerProbeTimeout)
+		}
+
+		return "", err
+	}
+
+	return strings.TrimSpace(string(out)), nil
+}
 
 // HostGatewayIP returns the address that containers should use to reach the host.
 // This is used to connect from containers to services running on the host.
@@ -34,9 +55,8 @@ func HostGatewayIP() string {
 		}
 
 		// Check if running on Docker Desktop
-		out, err := exec.Command("docker", "info", "-f", "{{.OperatingSystem}}").Output()
+		osName, err := runDockerProbe("info", "-f", "{{.OperatingSystem}}")
 		if err == nil {
-			osName := strings.TrimSpace(string(out))
 			if strings.Contains(strings.ToLower(osName), "docker desktop") {
 				// Docker Desktop: use host.docker.internal directly
 				// This works because e2ekit adds "host.docker.internal:host-gateway" as extraHost
@@ -46,9 +66,8 @@ func HostGatewayIP() string {
 		}
 
 		// Linux: Try to get the Docker bridge gateway IP
-		out, err = exec.Command("docker", "network", "inspect", "bridge", "-f", "{{range .IPAM.Config}}{{.Gateway}}{{end}}").Output()
+		ip, err := runDockerProbe("network", "inspect", "bridge", "-f", "{{range .IPAM.Config}}{{.Gateway}}{{end}}")
 		if err == nil {
-			ip := strings.TrimSpace(string(out))
 			if ip != "" && net.ParseIP(ip) != nil {
 				hostGatewayIP = ip
 				return

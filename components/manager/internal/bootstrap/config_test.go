@@ -13,6 +13,7 @@ import (
 	redisCache "github.com/LerianStudio/fetcher/pkg/redis"
 	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
 	libOtel "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
+	tmclient "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/client"
 	"github.com/LerianStudio/lib-commons/v4/commons/zap"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -158,8 +159,8 @@ func TestInitServers_ReturnsAssembledService(t *testing.T) {
 	initPlatformDependenciesFn = func(*Config, libLog.Logger, crypto.Signer) (*managerPlatformDependencies, error) {
 		return &managerPlatformDependencies{}, nil
 	}
-	assembleServiceFn = func(*Config, libLog.Logger, *libOtel.Telemetry, *managerRepositories, *crypto.AESGCMService, *managerPlatformDependencies) *Service {
-		return expectedService
+	assembleServiceFn = func(*Config, libLog.Logger, *libOtel.Telemetry, *managerRepositories, *crypto.AESGCMService, *managerPlatformDependencies) (*Service, error) {
+		return expectedService, nil
 	}
 
 	service, err := InitServers()
@@ -170,9 +171,17 @@ func TestInitServers_ReturnsAssembledService(t *testing.T) {
 func TestInitServers_PropagatesHelperErrors(t *testing.T) {
 	originalLoadConfig := loadConfigFn
 	originalLoggerAndTelemetry := initLoggerAndTelemetryFn
+	originalMongoRepos := initMongoRepositoriesFn
+	originalCrypto := initCryptoFn
+	originalPlatform := initPlatformDependenciesFn
+	originalAssemble := assembleServiceFn
 	t.Cleanup(func() {
 		loadConfigFn = originalLoadConfig
 		initLoggerAndTelemetryFn = originalLoggerAndTelemetry
+		initMongoRepositoriesFn = originalMongoRepos
+		initCryptoFn = originalCrypto
+		initPlatformDependenciesFn = originalPlatform
+		assembleServiceFn = originalAssemble
 	})
 
 	loadConfigFn = func() (*Config, error) {
@@ -195,6 +204,30 @@ func TestInitServers_PropagatesHelperErrors(t *testing.T) {
 	assert.Nil(t, service)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "logger init failed")
+
+	loadConfigFn = func() (*Config, error) {
+		return &Config{}, nil
+	}
+	initLoggerAndTelemetryFn = func(*Config) (libLog.Logger, *libOtel.Telemetry, error) {
+		return testManagerBootstrapLogger(), &libOtel.Telemetry{}, nil
+	}
+	initMongoRepositoriesFn = func(context.Context, *Config, libLog.Logger) (*managerRepositories, error) {
+		return &managerRepositories{}, nil
+	}
+	initCryptoFn = func(*Config, libLog.Logger) (*managerCrypto, error) {
+		return &managerCrypto{service: &crypto.AESGCMService{}}, nil
+	}
+	initPlatformDependenciesFn = func(*Config, libLog.Logger, crypto.Signer) (*managerPlatformDependencies, error) {
+		return &managerPlatformDependencies{}, nil
+	}
+	assembleServiceFn = func(*Config, libLog.Logger, *libOtel.Telemetry, *managerRepositories, *crypto.AESGCMService, *managerPlatformDependencies) (*Service, error) {
+		return nil, errors.New("tenant middleware init failed")
+	}
+
+	service, err = InitServers()
+	assert.Nil(t, service)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "tenant middleware init failed")
 }
 
 func TestConfig_LoadFromEnvVars(t *testing.T) {
@@ -495,12 +528,18 @@ func TestGetRedisDB(t *testing.T) {
 }
 
 func TestInitMultiTenantMiddleware(t *testing.T) {
-	logger, _ := zap.New(zap.Config{})
+	logger := testManagerBootstrapLogger()
+
+	originalNewTenantManagerClient := newTenantManagerClient
+	t.Cleanup(func() {
+		newTenantManagerClient = originalNewTenantManagerClient
+	})
 
 	tests := []struct {
 		name        string
 		cfg         *Config
 		wantNil     bool
+		wantErr     string
 		description string
 	}{
 		{
@@ -545,11 +584,37 @@ func TestInitMultiTenantMiddleware(t *testing.T) {
 			wantNil:     false,
 			description: "zero threshold should apply default circuit breaker (5 failures, 30s timeout)",
 		},
+		{
+			name: "returns error when tenant manager client initialization fails",
+			cfg: &Config{
+				MultiTenantEnabled: true,
+				MultiTenantURL:     "http://tenant-manager:8080",
+			},
+			wantNil:     true,
+			wantErr:     "tenant client init failed",
+			description: "configured multi-tenant must fail fast when client creation fails",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			handler := initMultiTenantMiddleware(tt.cfg, logger)
+			newTenantManagerClient = originalNewTenantManagerClient
+			if tt.wantErr != "" {
+				newTenantManagerClient = func(string, libLog.Logger, ...tmclient.ClientOption) (*tmclient.Client, error) {
+					return nil, errors.New(tt.wantErr)
+				}
+			}
+
+			handler, err := initMultiTenantMiddleware(tt.cfg, logger)
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "create tenant manager client")
+				assert.Contains(t, err.Error(), tt.wantErr)
+				assert.Nil(t, handler)
+				return
+			}
+
+			require.NoError(t, err)
 			if tt.wantNil {
 				if handler != nil {
 					t.Errorf("initMultiTenantMiddleware() = non-nil, want nil: %s", tt.description)

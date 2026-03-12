@@ -88,11 +88,11 @@ func (uc *UseCase) publishJobNotification(
 	opts *JobNotificationOptions,
 	logger libLog.Logger,
 ) error {
+	logger = normalizeJobNotificationLogger(ctx, logger)
+
 	// Skip if publisher is not configured
 	if uc.RabbitMQPublisher == nil || uc.JobEventsExchange == "" {
-		if logger != nil {
-			logger.Log(ctx, libLog.LevelDebug, "rabbitmq publisher not configured, skipping job notification")
-		}
+		logger.Log(ctx, libLog.LevelDebug, "rabbitmq publisher not configured, skipping job notification")
 
 		return nil
 	}
@@ -170,6 +170,19 @@ func (uc *UseCase) publishJobNotification(
 	)
 
 	return nil
+}
+
+func normalizeJobNotificationLogger(ctx context.Context, logger libLog.Logger) libLog.Logger {
+	if logger != nil {
+		return logger
+	}
+
+	ctxLogger, _, _, _ := libCommons.NewTrackingFromContext(ctx)
+	if ctxLogger != nil {
+		return ctxLogger
+	}
+
+	return &libLog.GoLogger{Level: libLog.LevelError}
 }
 
 func sanitizeRoutingSourceSegment(source string) string {

@@ -94,7 +94,7 @@ func (uc *UseCase) processPluginCRMCollection(
 	// Transform collection name by appending organization ID suffix
 	// e.g., "holders" becomes "holders_019b9df1-34eb-7dd0-afd5-53f859667e51"
 	newCollection := collection + "_" + organizationID.String()
-	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Transformed plugin_crm collection: %s -> %s", collection, newCollection))
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Transformed plugin_crm collection: %s -> %s", collection, newCollection))
 
 	collectionResult, err := queryPluginCRMCollectionWithFiltersFn(uc, ctx, dataSource, newCollection, fields, collectionFilters, logger)
 	if err != nil {
@@ -109,7 +109,7 @@ func (uc *UseCase) processPluginCRMCollection(
 
 	decryptedResult, err := decryptPluginCRMDataFn(uc, logger, result["plugin_crm"][collection], fields)
 	if err != nil {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Error decrypting data for collection %s: %s", collection, err.Error()))
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Error decrypting data for collection %s: %s", collection, err.Error()))
 		return fmt.Errorf("error decrypting data for collection %s: %w", collection, err)
 	}
 
@@ -133,7 +133,7 @@ func (uc *UseCase) queryPluginCRMCollectionWithFilters(
 	)
 
 	if len(collectionFilters) > 0 {
-		transformedFilter, err := uc.transformPluginCRMAdvancedFilters(collectionFilters, logger)
+		transformedFilter, err := uc.transformPluginCRMAdvancedFilters(ctx, collectionFilters, logger)
 		if err != nil {
 			return nil, fmt.Errorf("error transforming advanced filters for collection %s: %w", collection, err)
 		}
@@ -144,7 +144,7 @@ func (uc *UseCase) queryPluginCRMCollectionWithFilters(
 	}
 
 	if errQueryResult != nil {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Error querying collection %s: %s", collection, errQueryResult.Error()))
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Error querying collection %s: %s", collection, errQueryResult.Error()))
 		return nil, fmt.Errorf("failed to query collection %s: %w", collection, errQueryResult)
 	}
 
@@ -152,7 +152,7 @@ func (uc *UseCase) queryPluginCRMCollectionWithFilters(
 }
 
 // transformPluginCRMAdvancedFilters transforms advanced FilterCondition filters for plugin_crm to use search fields.
-func (uc *UseCase) transformPluginCRMAdvancedFilters(filter map[string]modelJob.FilterCondition, logger libLog.Logger) (map[string]modelJob.FilterCondition, error) {
+func (uc *UseCase) transformPluginCRMAdvancedFilters(ctx context.Context, filter map[string]modelJob.FilterCondition, logger libLog.Logger) (map[string]modelJob.FilterCondition, error) {
 	if filter == nil {
 		return nil, nil
 	}
@@ -220,7 +220,7 @@ func (uc *UseCase) transformPluginCRMAdvancedFilters(filter map[string]modelJob.
 
 			transformedFilter[searchField] = transformedCondition
 
-			logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Transformed advanced filter: %s -> %s", fieldName, searchField))
+			logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Transformed advanced filter: %s -> %s", fieldName, searchField))
 		} else {
 			transformedFilter[fieldName] = condition
 		}

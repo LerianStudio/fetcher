@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/LerianStudio/fetcher/pkg"
@@ -533,7 +534,7 @@ func validateMetadataSource(span trace.Span, metadata map[string]any) error {
 	}
 
 	sourceStr, ok := source.(string)
-	if !ok || sourceStr == "" {
+	if !ok || strings.TrimSpace(sourceStr) == "" {
 		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Invalid metadata.source type or empty value", nil)
 
 		return pkg.ValidationError{

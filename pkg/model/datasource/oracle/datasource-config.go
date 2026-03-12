@@ -39,7 +39,7 @@ func (ds *DataSourceConfigOracle) GetType() string {
 // This method is a no-op as the connection is established during factory creation.
 func (ds *DataSourceConfigOracle) Connect(ctx context.Context, logger libLog.Logger) error {
 	ds.Status = libConstant.DataSourceStatusAvailable
-	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Oracle connection ready for %s", ds.ConfigName))
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Oracle connection ready for %s", ds.ConfigName))
 
 	return nil
 }
@@ -66,7 +66,7 @@ func (ds *DataSourceConfigOracle) Query(ctx context.Context, tables map[string][
 
 	schemaResult, err := ds.OracleRepository.GetDatabaseSchema(ctx, schemas)
 	if err != nil {
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Error getting database schema: %s", err.Error()))
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Error getting database schema: %s", err.Error()))
 		return nil, err
 	}
 
@@ -85,13 +85,13 @@ func (ds *DataSourceConfigOracle) Query(ctx context.Context, tables map[string][
 		}
 
 		if errQuery != nil {
-			logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Error querying table %s: %s", table, errQuery.Error()))
+			logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Error querying table %s: %s", table, errQuery.Error()))
 			return nil, errQuery
 		}
 
 		tableResult, ok := queryResult.([]map[string]any)
 		if !ok {
-			logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Unexpected query result type for table %s", table))
+			logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Unexpected query result type for table %s", table))
 			return nil, fmt.Errorf("unexpected query result type for table %s", table)
 		}
 

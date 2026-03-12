@@ -48,6 +48,7 @@ type MultiQueueConsumer struct {
 	logger         libLog.Logger
 	queueName      string           // Stored for multi-tenant handler registration
 	mongoManager   *tmmongo.Manager // For per-tenant MongoDB resolution (nil in single-tenant mode)
+	initErr        error            // Deferred initialization error for multi-tenant handler registration
 }
 
 // NewMultiQueueConsumer creates a new instance of MultiQueueConsumer for single-tenant mode.
@@ -92,6 +93,7 @@ func NewMultiQueueConsumerMultiTenant(
 	// The handler signature is tmconsumer.HandlerFunc: func(ctx, amqp.Delivery) error
 	if mtConsumer != nil {
 		if err := mtConsumer.Register(queueName, consumer.handlerGenerateReportDelivery); err != nil {
+			consumer.initErr = fmt.Errorf("register multi-tenant handler for queue %s: %w", queueName, err)
 			logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("MultiTenantConsumer: failed to register handler for queue %s: %v", queueName, err))
 		} else {
 			logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("MultiTenantConsumer: handler registered for queue %s", queueName))
@@ -133,6 +135,10 @@ func (mq *MultiQueueConsumer) Run(l *commons.Launcher) error {
 
 	notifySignals(sigs, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(sigs)
+
+	if mq.initErr != nil {
+		return mq.initErr
+	}
 
 	go func() {
 		<-sigs

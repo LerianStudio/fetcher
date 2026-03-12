@@ -1,7 +1,6 @@
 package http
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"runtime/debug"
@@ -46,18 +45,19 @@ func WithRecover(opts ...RecoverMiddlewareOption) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		defer func() {
 			if r := recover(); r != nil {
+				reqCtx := c.UserContext()
 				logger := mid.Logger
 
-				if ctxLogger := libCommons.NewLoggerFromContext(c.UserContext()); ctxLogger != nil {
+				if ctxLogger := libCommons.NewLoggerFromContext(reqCtx); ctxLogger != nil {
 					logger = ctxLogger
 				}
 
 				stack := debug.Stack()
 				panicErr := fmt.Errorf("panic recovered: %v", r)
 
-				logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Panic recovered: %v\nStack trace:\n%s", r, string(stack)))
+				logger.Log(reqCtx, libLog.LevelError, fmt.Sprintf("Panic recovered: %v\nStack trace:\n%s", r, string(stack)))
 
-				span := trace.SpanFromContext(c.UserContext())
+				span := trace.SpanFromContext(reqCtx)
 				if span.IsRecording() {
 					span.RecordError(panicErr)
 					span.SetStatus(codes.Error, fmt.Sprintf("Panic: %v", r))

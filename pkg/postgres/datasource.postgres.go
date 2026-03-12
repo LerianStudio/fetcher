@@ -241,7 +241,7 @@ func (ds *ExternalDataSource) Query(ctx context.Context, schema []TableSchema, t
 		libOpentelemetry.HandleSpanError(span, "Failed to convert repository filter to JSON string", err)
 	}
 
-	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Querying %s table with fields %v", table, fields))
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Querying %s table with fields %v", table, fields))
 
 	// Validate requested table and fields
 	queriedFields, err := ds.ValidateTableAndFields(ctx, table, fields, schema)
@@ -260,7 +260,7 @@ func (ds *ExternalDataSource) Query(ctx context.Context, schema []TableSchema, t
 		return nil, fmt.Errorf("error generating SQL: %w", err)
 	}
 
-	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Executing SQL: %s with args: %v", query, args))
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Executing SQL: %s with args: %v", query, args))
 
 	// Create timeout context for query execution
 	queryCtx, cancel := context.WithTimeout(ctx, constant.QueryTimeoutMedium)
@@ -276,7 +276,7 @@ func (ds *ExternalDataSource) Query(ctx context.Context, schema []TableSchema, t
 	}
 	defer rows.Close()
 
-	return scanRows(rows, logger)
+	return scanRows(ctx, rows, logger)
 }
 
 // GetDatabaseSchema retrieves all tables and their column details from the database.
@@ -315,7 +315,7 @@ func (ds *ExternalDataSource) GetDatabaseSchema(ctx context.Context, schemas []s
 		attribute.String("app.request.request_id", reqId),
 	)
 
-	logger.Log(context.Background(), libLog.LevelInfo, "Retrieving database schema information")
+	logger.Log(ctx, libLog.LevelInfo, "Retrieving database schema information")
 
 	schemaCtx, cancel := context.WithTimeout(ctx, constant.SchemaDiscoveryTimeout)
 	defer cancel()
@@ -335,7 +335,7 @@ func (ds *ExternalDataSource) GetDatabaseSchema(ctx context.Context, schemas []s
 		return nil, err
 	}
 
-	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Retrieved schema for %d tables", len(schema)))
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Retrieved schema for %d tables", len(schema)))
 
 	return schema, nil
 }
@@ -562,7 +562,7 @@ func (ds *ExternalDataSource) buildTableSchema(ctx context.Context, tableName st
 	}
 	defer colRows.Close()
 
-	columns, err := ds.scanColumns(colRows, tableName, primaryKeys, logger)
+	columns, err := ds.scanColumns(ctx, colRows, tableName, primaryKeys, logger)
 	if err != nil {
 		return TableSchema{}, err
 	}
@@ -639,14 +639,14 @@ func normalizeTableNameForLookup(tableName string) string {
 //	rows, _ := db.QueryContext(ctx, columnQuery, schemaName, tableName)
 //	defer rows.Close()
 //	columns, err := ds.scanColumns(rows, "users", primaryKeys, logger)
-func (ds *ExternalDataSource) scanColumns(colRows *sql.Rows, tableName string, primaryKeys map[string]map[string]bool, logger libLog.Logger) ([]ColumnInformation, error) {
+func (ds *ExternalDataSource) scanColumns(ctx context.Context, colRows *sql.Rows, tableName string, primaryKeys map[string]map[string]bool, logger libLog.Logger) ([]ColumnInformation, error) {
 	var columns []ColumnInformation
 
 	for colRows.Next() {
 		var col ColumnInformation
 		if err := colRows.Scan(&col.Name, &col.DataType, &col.IsNullable); err != nil {
 			if closeErr := colRows.Close(); closeErr != nil {
-				logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("error closing rows after scan error: %v", closeErr))
+				logger.Log(ctx, libLog.LevelWarn, fmt.Sprintf("error closing rows after scan error: %v", closeErr))
 			}
 
 			return nil, fmt.Errorf("error scanning column info: %w", err)
@@ -660,7 +660,7 @@ func (ds *ExternalDataSource) scanColumns(colRows *sql.Rows, tableName string, p
 	}
 
 	if err := colRows.Close(); err != nil {
-		logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("error closing column rows: %v", err))
+		logger.Log(ctx, libLog.LevelWarn, fmt.Sprintf("error closing column rows: %v", err))
 	}
 
 	return columns, nil
@@ -689,7 +689,7 @@ func (ds *ExternalDataSource) scanColumns(colRows *sql.Rows, tableName string, p
 //	defer rows.Close()
 //	results, err := scanRows(rows, logger)
 //	// results[0] = map[string]any{"id": "uuid-...", "name": "John"}
-func scanRows(rows *sql.Rows, logger libLog.Logger) ([]map[string]any, error) {
+func scanRows(ctx context.Context, rows *sql.Rows, logger libLog.Logger) ([]map[string]any, error) {
 	columns, err := rows.Columns()
 	if err != nil {
 		return nil, fmt.Errorf("error getting column names: %w", err)
@@ -709,7 +709,7 @@ func scanRows(rows *sql.Rows, logger libLog.Logger) ([]map[string]any, error) {
 			return nil, err
 		}
 
-		rowMap := createRowMap(columns, values, logger)
+		rowMap := createRowMap(ctx, columns, values, logger)
 		result = append(result, rowMap)
 	}
 
@@ -734,12 +734,12 @@ func scanRows(rows *sql.Rows, logger libLog.Logger) ([]map[string]any, error) {
 //	values := []any{"123", "John", []byte(`{"role": "admin"}`)}
 //	rowMap := createRowMap(columns, values, logger)
 //	// rowMap = {"id": "123", "name": "John", "metadata": map[string]any{"role": "admin"}}
-func createRowMap(columns []string, values []any, logger libLog.Logger) map[string]any {
+func createRowMap(ctx context.Context, columns []string, values []any, logger libLog.Logger) map[string]any {
 	rowMap := make(map[string]any)
 
 	for i, column := range columns {
 		// Attempt to parse any value that could be JSONB
-		rowMap[column] = parseJSONBField(values[i], logger)
+		rowMap[column] = parseJSONBField(ctx, values[i], logger)
 	}
 
 	return rowMap
@@ -766,7 +766,7 @@ func createRowMap(columns []string, values []any, logger libLog.Logger) map[stri
 //	// JSONB array
 //	result := parseJSONBField([]byte(`[1, 2, 3]`), logger)
 //	// result = []any{1, 2, 3}
-func parseJSONBField(value any, logger libLog.Logger) any {
+func parseJSONBField(ctx context.Context, value any, logger libLog.Logger) any {
 	if value == nil {
 		return nil
 	}
@@ -793,7 +793,7 @@ func parseJSONBField(value any, logger libLog.Logger) any {
 		}
 
 		// If all attempts fail, log a warning and return the original value
-		logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("Failed to unmarshal potential JSONB data for value: %v", string(byteData)))
+		logger.Log(ctx, libLog.LevelWarn, fmt.Sprintf("Failed to unmarshal potential JSONB data for value: %v", string(byteData)))
 	}
 
 	return value
@@ -848,7 +848,7 @@ func (ds *ExternalDataSource) ValidateTableAndFields(ctx context.Context, tableN
 		libOpentelemetry.HandleSpanError(span, "Failed to convert repository filter to JSON string", err)
 	}
 
-	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Validating table '%s' and fields %v", tableName, requestedFields))
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Validating table '%s' and fields %v", tableName, requestedFields))
 
 	// Check if table exists
 	var tableFound bool
@@ -905,7 +905,7 @@ func (ds *ExternalDataSource) ValidateTableAndFields(ctx context.Context, tableN
 		return nil, fmt.Errorf("no valid fields specified for table '%s'", tableName)
 	}
 
-	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Successfully validated table '%s' and fields %v", tableName, validFields))
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Successfully validated table '%s' and fields %v", tableName, validFields))
 
 	return validFields, nil
 }
@@ -1039,7 +1039,7 @@ func (ds *ExternalDataSource) QueryWithAdvancedFilters(ctx context.Context, sche
 		libOpentelemetry.HandleSpanError(span, "Failed to convert repository filter to JSON string", err)
 	}
 
-	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Querying %s table with advanced filters on fields %v", table, fields))
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Querying %s table with advanced filters on fields %v", table, fields))
 
 	// Validate requested table and fields
 	queriedFields, err := ds.ValidateTableAndFields(ctx, table, fields, schema)
@@ -1061,7 +1061,7 @@ func (ds *ExternalDataSource) QueryWithAdvancedFilters(ctx context.Context, sche
 		return nil, fmt.Errorf("error generating SQL: %w", err)
 	}
 
-	logger.Log(context.Background(), libLog.LevelDebug, fmt.Sprintf("Executing advanced filter SQL: %s with args: %v", query, args))
+	logger.Log(ctx, libLog.LevelDebug, fmt.Sprintf("Executing advanced filter SQL: %s with args: %v", query, args))
 
 	// Create timeout context for query execution (slower timeout for advanced filters)
 	queryCtx, cancel := context.WithTimeout(ctx, constant.QueryTimeoutSlow)
@@ -1077,7 +1077,7 @@ func (ds *ExternalDataSource) QueryWithAdvancedFilters(ctx context.Context, sche
 	}
 	defer rows.Close()
 
-	return scanRows(rows, logger)
+	return scanRows(ctx, rows, logger)
 }
 
 // buildAdvancedFilters applies [job.FilterCondition] criteria to the query builder.
