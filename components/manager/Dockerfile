@@ -35,7 +35,7 @@ FROM alpine:3.23
 WORKDIR /app
 
 # Install certificates/timezone data and curl for health checks
-RUN apk add --no-cache ca-certificates tzdata curl && \
+RUN apk add --no-cache --upgrade zlib ca-certificates tzdata curl && \
   update-ca-certificates
 
 # Create a non-root user for security

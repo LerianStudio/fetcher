@@ -36,7 +36,7 @@ FROM alpine:3.23
 WORKDIR /app
 
 # Install certificates/timezone data required for TLS connections
-RUN apk add --no-cache ca-certificates tzdata && \
+RUN apk add --no-cache --upgrade zlib ca-certificates tzdata && \
   update-ca-certificates
 
 # Create a non-root user for security
