@@ -274,11 +274,6 @@ func (s *ValidateSchema) getOrFetchSchema(
 		return nil, errDataSourceFactoryNotConfigured
 	}
 
-	// Get datasource instance because schema is not in cache
-	if s.dsFactory == nil {
-		return nil, fmt.Errorf("failed to create datasource: datasource factory is nil")
-	}
-
 	ds, err := s.dsFactory(ctx, conn, s.cryptor)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "failed to create datasource", err)
@@ -310,17 +305,18 @@ func (s *ValidateSchema) getOrFetchSchema(
 
 	// Cache the fetched schema for future requests
 	if err := s.schemaCache.Set(ctx, conn.ConfigName, schema, cacheRepo.DefaultSchemaCacheTTL); err != nil {
-		logger.Log(ctx, libLog.LevelWarn, "failed to cache schema",
+		logger.Log(ctx, libLog.LevelWarn, "schema fetched but failed to cache",
 			libLog.String("config_name", conn.ConfigName),
 			libLog.Err(err),
+		)
+	} else {
+		logger.Log(ctx, libLog.LevelDebug, "schema fetched and cached",
+			libLog.String("config_name", conn.ConfigName),
+			libLog.Int("table_count", len(schema.Tables)),
 		)
 	}
 
 	span.SetAttributes(attribute.Int("app.schema.tables_count", len(schema.Tables)))
-	logger.Log(ctx, libLog.LevelDebug, "schema fetched and cached",
-		libLog.String("config_name", conn.ConfigName),
-		libLog.Int("table_count", len(schema.Tables)),
-	)
 
 	return schema, nil
 }
@@ -350,7 +346,7 @@ func validateTablesAgainstSchema(
 	reverseMap map[string]string,
 	dbType model.DBType,
 ) []model.SchemaValidationError {
-	var errors []model.SchemaValidationError
+	var validationErrors []model.SchemaValidationError
 
 	for tableName, fields := range tables {
 		// Determine the display name for error messages
@@ -366,7 +362,7 @@ func validateTablesAgainstSchema(
 
 		// Check if table exists in schema
 		if !schema.HasTable(lookupName) {
-			errors = append(errors, model.SchemaValidationError{
+			validationErrors = append(validationErrors, model.SchemaValidationError{
 				Type:         model.ErrTypeTableNotFound,
 				DataSourceID: configName,
 				Table:        displayName,
@@ -379,7 +375,7 @@ func validateTablesAgainstSchema(
 		for _, fieldName := range fields {
 			lookupFieldName := normalizeFieldNameForValidation(fieldName, dbType)
 			if !schema.HasField(lookupName, lookupFieldName) {
-				errors = append(errors, model.SchemaValidationError{
+				validationErrors = append(validationErrors, model.SchemaValidationError{
 					Type:         model.ErrTypeFieldNotFound,
 					DataSourceID: configName,
 					Table:        displayName,
@@ -389,7 +385,7 @@ func validateTablesAgainstSchema(
 		}
 	}
 
-	return errors
+	return validationErrors
 }
 
 // normalizeTableNameForValidation normalizes a table name for schema lookup

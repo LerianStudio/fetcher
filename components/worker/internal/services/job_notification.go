@@ -177,7 +177,7 @@ func normalizeJobNotificationLogger(ctx context.Context, logger libLog.Logger) l
 		return logger
 	}
 
-	ctxLogger, _, _, _ := libCommons.NewTrackingFromContext(ctx)
+	ctxLogger := libCommons.NewLoggerFromContext(ctx)
 	if ctxLogger != nil {
 		return ctxLogger
 	}
