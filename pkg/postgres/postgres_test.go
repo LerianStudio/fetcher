@@ -1,7 +1,6 @@
 package postgres
 
 import (
-	"context"
 	"testing"
 
 	"github.com/LerianStudio/fetcher/pkg/model/job"
@@ -783,7 +782,7 @@ func TestCreateRowMap(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := createRowMap(context.Background(), tt.columns, tt.values, mockLogger)
+			got := createRowMap(testutil.TestContext(), tt.columns, tt.values, mockLogger)
 
 			if len(got) != len(tt.want) {
 				t.Errorf("createRowMap() returned map with %d keys, want %d", len(got), len(tt.want))
@@ -1683,7 +1682,7 @@ func TestParseJSONBField(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// We need a mock logger for this test
 			mockLogger := testMockLogger()
-			got := parseJSONBField(context.Background(), tt.value, mockLogger)
+			got := parseJSONBField(testutil.TestContext(), tt.value, mockLogger)
 
 			// For map comparisons, we need to do a deep comparison
 			if gotMap, ok := got.(map[string]any); ok {

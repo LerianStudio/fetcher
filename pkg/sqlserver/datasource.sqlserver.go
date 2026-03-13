@@ -58,7 +58,7 @@ func NewDataSourceRepository(pc *Connection) (*ExternalDataSource, error) {
 		connection: pc,
 	}
 
-	_, err := c.connection.GetDB()
+	_, err := c.connection.GetDB(context.Background())
 	if err != nil {
 		pc.Logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to establish SQL Server connection: %v", err))
 		return nil, fmt.Errorf("failed to establish SQL Server connection: %w", err)

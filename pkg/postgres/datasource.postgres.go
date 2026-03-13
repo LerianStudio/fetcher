@@ -14,7 +14,6 @@ import (
 
 	libCommons "github.com/LerianStudio/lib-commons/v4/commons"
 	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
 	"github.com/Masterminds/squirrel"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
@@ -225,23 +224,23 @@ func (ds *ExternalDataSource) CloseConnection() error {
 func (ds *ExternalDataSource) Query(ctx context.Context, schema []TableSchema, table string, fields []string, filter map[string][]any) ([]map[string]any, error) {
 	logger, tracer, reqId, _ := libCommons.NewTrackingFromContext(ctx)
 
-	_, span := tracer.Start(ctx, "postgres.data_source.query")
+	ctx, span := tracer.Start(ctx, "postgres.data_source.query")
 	defer span.End()
 
 	span.SetAttributes(
 		attribute.String("app.request.request_id", reqId),
 	)
 
-	err := libOpentelemetry.SetSpanAttributesFromValue(span, "app.request.repository_filter", map[string]any{
-		"table":  table,
-		"fields": fields,
-		"filter": filter,
-	}, nil)
-	if err != nil {
-		libOpentelemetry.HandleSpanError(span, "Failed to convert repository filter to JSON string", err)
-	}
+	span.SetAttributes(
+		attribute.String("app.query.table", table),
+		attribute.Int("app.query.fields_count", len(fields)),
+		attribute.Int("app.query.filter_count", len(filter)),
+	)
 
-	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Querying %s table with fields %v", table, fields))
+	logger.Log(ctx, libLog.LevelInfo, "querying table",
+		libLog.String("table", table),
+		libLog.Int("fields_count", len(fields)),
+	)
 
 	// Validate requested table and fields
 	queriedFields, err := ds.ValidateTableAndFields(ctx, table, fields, schema)
@@ -260,7 +259,10 @@ func (ds *ExternalDataSource) Query(ctx context.Context, schema []TableSchema, t
 		return nil, fmt.Errorf("error generating SQL: %w", err)
 	}
 
-	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Executing SQL: %s with args: %v", query, args))
+	logger.Log(ctx, libLog.LevelDebug, "executing SQL query",
+		libLog.String("table", table),
+		libLog.Int("args_count", len(args)),
+	)
 
 	// Create timeout context for query execution
 	queryCtx, cancel := context.WithTimeout(ctx, constant.QueryTimeoutMedium)
@@ -308,7 +310,7 @@ func (ds *ExternalDataSource) Query(ctx context.Context, schema []TableSchema, t
 func (ds *ExternalDataSource) GetDatabaseSchema(ctx context.Context, schemas []string) ([]TableSchema, error) {
 	logger, tracer, reqId, _ := libCommons.NewTrackingFromContext(ctx)
 
-	_, span := tracer.Start(ctx, "postgres.data_source.get_database_schema")
+	ctx, span := tracer.Start(ctx, "postgres.data_source.get_database_schema")
 	defer span.End()
 
 	span.SetAttributes(
@@ -827,7 +829,7 @@ func parseJSONBField(ctx context.Context, value any, logger libLog.Logger) any {
 func (ds *ExternalDataSource) ValidateTableAndFields(ctx context.Context, tableName string, requestedFields []string, schema []TableSchema) ([]string, error) {
 	logger, tracer, reqId, _ := libCommons.NewTrackingFromContext(ctx)
 
-	_, span := tracer.Start(ctx, "postgres.data_source.validate_table_and_fields")
+	ctx, span := tracer.Start(ctx, "postgres.data_source.validate_table_and_fields")
 	defer span.End()
 
 	span.SetAttributes(
@@ -839,16 +841,16 @@ func (ds *ExternalDataSource) ValidateTableAndFields(ctx context.Context, tableN
 	// schemas and "transactions" for public schema tables.
 	lookupName := normalizeTableNameForLookup(tableName)
 
-	err := libOpentelemetry.SetSpanAttributesFromValue(span, "app.request.repository_filter", map[string]any{
-		"table":  tableName,
-		"fields": requestedFields,
-		"schema": schema,
-	}, nil)
-	if err != nil {
-		libOpentelemetry.HandleSpanError(span, "Failed to convert repository filter to JSON string", err)
-	}
+	span.SetAttributes(
+		attribute.String("app.validate.table", tableName),
+		attribute.Int("app.validate.fields_count", len(requestedFields)),
+		attribute.Int("app.validate.schema_tables", len(schema)),
+	)
 
-	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Validating table '%s' and fields %v", tableName, requestedFields))
+	logger.Log(ctx, libLog.LevelInfo, "validating table and fields",
+		libLog.String("table", tableName),
+		libLog.Int("fields_count", len(requestedFields)),
+	)
 
 	// Check if table exists
 	var tableFound bool
@@ -1023,23 +1025,23 @@ func applyFilter(queryBuilder squirrel.SelectBuilder, fieldName string, values [
 func (ds *ExternalDataSource) QueryWithAdvancedFilters(ctx context.Context, schema []TableSchema, table string, fields []string, filter map[string]job.FilterCondition) ([]map[string]any, error) {
 	logger, tracer, reqId, _ := libCommons.NewTrackingFromContext(ctx)
 
-	_, span := tracer.Start(ctx, "postgres.data_source.query_with_advanced_filters")
+	ctx, span := tracer.Start(ctx, "postgres.data_source.query_with_advanced_filters")
 	defer span.End()
 
 	span.SetAttributes(
 		attribute.String("app.request.request_id", reqId),
 	)
 
-	err := libOpentelemetry.SetSpanAttributesFromValue(span, "app.request.repository_filter", map[string]any{
-		"table":  table,
-		"fields": fields,
-		"filter": filter,
-	}, nil)
-	if err != nil {
-		libOpentelemetry.HandleSpanError(span, "Failed to convert repository filter to JSON string", err)
-	}
+	span.SetAttributes(
+		attribute.String("app.query.table", table),
+		attribute.Int("app.query.fields_count", len(fields)),
+		attribute.Int("app.query.filter_count", len(filter)),
+	)
 
-	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Querying %s table with advanced filters on fields %v", table, fields))
+	logger.Log(ctx, libLog.LevelInfo, "querying table with advanced filters",
+		libLog.String("table", table),
+		libLog.Int("fields_count", len(fields)),
+	)
 
 	// Validate requested table and fields
 	queriedFields, err := ds.ValidateTableAndFields(ctx, table, fields, schema)
@@ -1061,7 +1063,10 @@ func (ds *ExternalDataSource) QueryWithAdvancedFilters(ctx context.Context, sche
 		return nil, fmt.Errorf("error generating SQL: %w", err)
 	}
 
-	logger.Log(ctx, libLog.LevelDebug, fmt.Sprintf("Executing advanced filter SQL: %s with args: %v", query, args))
+	logger.Log(ctx, libLog.LevelDebug, "executing advanced filter SQL query",
+		libLog.String("table", table),
+		libLog.Int("args_count", len(args)),
+	)
 
 	// Create timeout context for query execution (slower timeout for advanced filters)
 	queryCtx, cancel := context.WithTimeout(ctx, constant.QueryTimeoutSlow)

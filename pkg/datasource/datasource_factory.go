@@ -477,7 +477,7 @@ func newDataSourceConfigSQLServer(ctx context.Context, base datasource.DataSourc
 		MaxIdleConnections: constant.SQLServerMaxIdleConns,
 	}
 
-	if errConnect := sqlServerConnection.Connect(); errConnect != nil {
+	if errConnect := sqlServerConnection.Connect(ctx); errConnect != nil {
 		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to connect to SQL Server [%s]: %v", conn.ConfigName, errConnect))
 		return nil, fmt.Errorf("failed to connect to SQL Server: %w", errConnect)
 	}

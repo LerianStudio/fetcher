@@ -23,22 +23,32 @@ type Connection struct {
 }
 
 // Connect initializes the connection with the SQL Server DB.
-func (c *Connection) Connect() error {
-	c.Logger.Log(context.Background(), libLog.LevelInfo, "Connecting to SQL Server...")
+func (c *Connection) Connect(ctx context.Context) error {
+	c.Logger.Log(ctx, libLog.LevelInfo, "Connecting to SQL Server...")
 
 	db, err := sql.Open("sqlserver", c.ConnectionString)
 	if err != nil {
-		c.Logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Error opening connection: %v", err))
+		c.Logger.Log(ctx, libLog.LevelError, "error opening SQL Server connection",
+			libLog.String("db_name", c.DBName),
+			libLog.Err(err),
+		)
+
 		return err
 	}
 
-	if err := db.Ping(); err != nil {
+	if err := db.PingContext(ctx); err != nil {
 		closeErr := db.Close()
 		if closeErr != nil {
-			c.Logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Error closing connection: %v", closeErr))
+			c.Logger.Log(ctx, libLog.LevelError, "error closing SQL Server connection after ping failure",
+				libLog.String("db_name", c.DBName),
+				libLog.Err(closeErr),
+			)
 		}
 
-		c.Logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Error pinging SQL Server: %v", err))
+		c.Logger.Log(ctx, libLog.LevelError, "error pinging SQL Server",
+			libLog.String("db_name", c.DBName),
+			libLog.Err(err),
+		)
 
 		return err
 	}
@@ -51,17 +61,21 @@ func (c *Connection) Connect() error {
 	c.ConnectionDB = db
 	c.Connected = true
 
-	c.Logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Connected to SQL Server [%s] with pool settings (maxOpen: %d, maxIdle: %d, maxLifetime: %v, maxIdleTime: %v)",
+	c.Logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Connected to SQL Server [%s] with pool settings (maxOpen: %d, maxIdle: %d, maxLifetime: %v, maxIdleTime: %v)",
 		c.DBName, c.MaxOpenConnections, c.MaxIdleConnections, constant.SQLServerConnMaxLifetime, constant.SQLServerConnMaxIdleTime))
 
 	return nil
 }
 
 // GetDB returns a pointer to the SQL Server connection, initializing it if necessary.
-func (sc *Connection) GetDB() (*sql.DB, error) {
+func (sc *Connection) GetDB(ctx context.Context) (*sql.DB, error) {
 	if sc.ConnectionDB == nil {
-		if err := sc.Connect(); err != nil {
-			sc.Logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to connect to SQL Server [%s]: %v", sc.DBName, err))
+		if err := sc.Connect(ctx); err != nil {
+			sc.Logger.Log(ctx, libLog.LevelError, "failed to connect to SQL Server",
+				libLog.String("db_name", sc.DBName),
+				libLog.Err(err),
+			)
+
 			return nil, err
 		}
 	}
