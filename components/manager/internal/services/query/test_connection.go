@@ -14,9 +14,10 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/model/datasource"
 	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
 
-	"github.com/LerianStudio/lib-commons/v3/commons"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v3/commons/opentelemetry"
-	valkey "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/valkey"
+	"github.com/LerianStudio/lib-commons/v4/commons"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
+	valkey "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/valkey"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
@@ -63,12 +64,26 @@ func (s *TestConnection) Execute(ctx context.Context, organizationID, connection
 		attribute.String("app.request.connection_id", connectionID.String()),
 	)
 
-	key := valkey.GetKeyFromContext(ctx, connectionID.String())
+	key, err := valkey.GetKeyFromContext(ctx, connectionID.String())
+	if err != nil {
+		libOpentelemetry.HandleSpanError(span, "connection test rate limiter key derivation error", err)
+		logger.Log(ctx, libLog.LevelError, "connection test rate limiter key derivation error",
+			libLog.String("connection_id", connectionID.String()),
+			libLog.String("organization_id", organizationID.String()),
+			libLog.Err(err),
+		)
+
+		return nil, pkg.ValidateInternalError(err, "connection")
+	}
 
 	_, _, reset, ok, err := s.store.Take(ctx, key)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "connection test rate limiter error", err)
-		logger.Errorf("connection test rate limiter error id=%s org=%s: %v", connectionID, organizationID, err)
+		libOpentelemetry.HandleSpanError(span, "connection test rate limiter error", err)
+		logger.Log(ctx, libLog.LevelError, "connection test rate limiter error",
+			libLog.String("connection_id", connectionID.String()),
+			libLog.String("organization_id", organizationID.String()),
+			libLog.Err(err),
+		)
 
 		return nil, pkg.ValidateInternalError(err, "connection")
 	} else if !ok {
@@ -87,7 +102,11 @@ func (s *TestConnection) Execute(ctx context.Context, organizationID, connection
 			waitSeconds = 1
 		}
 
-		logger.Warnf("connection test rate limited id=%s org=%s", connectionID, organizationID)
+		logger.Log(ctx, libLog.LevelWarn, "connection test rate limited",
+			libLog.String("connection_id", connectionID.String()),
+			libLog.String("organization_id", organizationID.String()),
+			libLog.Int("wait_seconds", waitSeconds),
+		)
 
 		return nil, pkg.ResponseError{
 			Code:    http.StatusTooManyRequests,
@@ -98,7 +117,7 @@ func (s *TestConnection) Execute(ctx context.Context, organizationID, connection
 
 	conn, err := s.connRepo.FindByID(ctx, connectionID, organizationID)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "failed to find connection", err)
+		libOpentelemetry.HandleSpanError(span, "failed to find connection", err)
 		return nil, fmt.Errorf("failed to find connection by id: %w", err)
 	}
 
@@ -118,8 +137,12 @@ func (s *TestConnection) Execute(ctx context.Context, organizationID, connection
 
 	connDS, err = s.dsFactory(testCtx, conn, s.cryptor)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "failed to establish datasource connection", err)
-		logger.Errorf("connection test failed id=%s org=%s", connectionID, organizationID)
+		libOpentelemetry.HandleSpanError(span, "failed to establish datasource connection", err)
+		logger.Log(testCtx, libLog.LevelError, "connection test failed",
+			libLog.String("connection_id", connectionID.String()),
+			libLog.String("organization_id", organizationID.String()),
+			libLog.Err(err),
+		)
 
 		return nil, pkg.ResponseError{
 			Code:    http.StatusInternalServerError,
@@ -132,7 +155,11 @@ func (s *TestConnection) Execute(ctx context.Context, organizationID, connection
 	span.SetAttributes(attribute.Int64("app.connection_test.latency_ms", latencyMs))
 
 	if err := connDS.Close(testCtx); err != nil {
-		logger.Warnf("connection test cleanup failed id=%s org=%s: %v", connectionID, organizationID, err)
+		logger.Log(testCtx, libLog.LevelWarn, "connection test cleanup failed",
+			libLog.String("connection_id", connectionID.String()),
+			libLog.String("organization_id", organizationID.String()),
+			libLog.Err(err),
+		)
 	}
 
 	return &model.ConnectionTestResponse{

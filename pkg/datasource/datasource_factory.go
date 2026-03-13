@@ -23,9 +23,9 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/oracle"
 	"github.com/LerianStudio/fetcher/pkg/postgres"
 	"github.com/LerianStudio/fetcher/pkg/sqlserver"
-	libCommons "github.com/LerianStudio/lib-commons/v3/commons"
-	"github.com/LerianStudio/lib-commons/v3/commons/log"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v3/commons/opentelemetry"
+	libCommons "github.com/LerianStudio/lib-commons/v4/commons"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
 
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -36,8 +36,15 @@ import (
 // This factory function encapsulates the logic for converting a Connection entity
 // into the appropriate DataSourceConfig implementation (MongoDB, PostgreSQL, Oracle, MySQL, or SQL Server).
 // The cryptor is required to decrypt the connection password before creating the data source.
-func NewDataSourceFromConnection(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor, logger log.Logger) (datasource.DataSource, error) {
-	_, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
+func NewDataSourceFromConnection(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor, logger libLog.Logger) (datasource.DataSource, error) {
+	ctxLogger, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
+	if logger == nil {
+		logger = ctxLogger
+	}
+
+	if logger == nil {
+		logger = libLog.NewNop()
+	}
 
 	ctx, span := tracer.Start(ctx, "factory.datasource.create")
 	defer span.End()
@@ -46,7 +53,7 @@ func NewDataSourceFromConnection(ctx context.Context, conn *model.Connection, cr
 
 	if conn == nil {
 		err := fmt.Errorf("connection cannot be nil")
-		libOpentelemetry.HandleSpanError(&span, "nil connection", err)
+		libOpentelemetry.HandleSpanError(span, "nil connection", err)
 
 		return nil, err
 	}
@@ -55,7 +62,7 @@ func NewDataSourceFromConnection(ctx context.Context, conn *model.Connection, cr
 
 	if cryptor == nil {
 		err := fmt.Errorf("cryptor cannot be nil")
-		libOpentelemetry.HandleSpanError(&span, "nil cryptor", err)
+		libOpentelemetry.HandleSpanError(span, "nil cryptor", err)
 
 		return nil, err
 	}
@@ -82,7 +89,7 @@ func NewDataSourceFromConnection(ctx context.Context, conn *model.Connection, cr
 	}
 
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "failed to create datasource", err)
+		libOpentelemetry.HandleSpanError(span, "failed to create datasource", err)
 		return nil, err
 	}
 
@@ -112,7 +119,7 @@ func newDataSourceConfigFromConnection(conn *model.Connection) datasource.DataSo
 }
 
 // newDataSourceConfigMongoDB creates a MongoDB-specific DataSourceConfig.
-func newDataSourceConfigMongoDB(ctx context.Context, base datasource.DataSourceConfig, conn *model.Connection, cryptor crypto.Cryptor, logger log.Logger) (*datasourceMongoConfig.DataSourceConfigMongoDB, error) {
+func newDataSourceConfigMongoDB(ctx context.Context, base datasource.DataSourceConfig, conn *model.Connection, cryptor crypto.Cryptor, logger libLog.Logger) (*datasourceMongoConfig.DataSourceConfigMongoDB, error) {
 	// Decrypt password before using it in connection string
 	password, err := conn.GetPasswordDecrypted(ctx, cryptor)
 	if err != nil {
@@ -204,7 +211,7 @@ func appendMongoDBSSLParams(mongoURI string, conn *model.Connection) string {
 
 // testMongoDBConnection verifies connectivity to a MongoDB instance by performing
 // a connect and ping operation, then immediately disconnects.
-func testMongoDBConnection(ctx context.Context, mongoURI, configName string, logger log.Logger) error {
+func testMongoDBConnection(ctx context.Context, mongoURI, configName string, logger libLog.Logger) error {
 	testCtx, cancel := context.WithTimeout(ctx, constant.ConnectionTimeout)
 	defer cancel()
 
@@ -218,14 +225,14 @@ func testMongoDBConnection(ctx context.Context, mongoURI, configName string, log
 
 	client, errConnect := mongo.Connect(testCtx, clientOpts)
 	if errConnect != nil {
-		logger.Errorf("Failed to connect to MongoDB [%s]: %v", configName, errConnect)
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to connect to MongoDB [%s]: %v", configName, errConnect))
 		return fmt.Errorf("failed to connect to MongoDB: %w", errConnect)
 	}
 
 	if errPing := client.Ping(testCtx, nil); errPing != nil {
 		_ = client.Disconnect(testCtx)
 
-		logger.Errorf("Failed to ping MongoDB [%s]: %v", configName, errPing)
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to ping MongoDB [%s]: %v", configName, errPing))
 
 		return fmt.Errorf("failed to ping MongoDB: %w", errPing)
 	}
@@ -236,7 +243,7 @@ func testMongoDBConnection(ctx context.Context, mongoURI, configName string, log
 }
 
 // newDataSourceConfigPostgres creates a PostgreSQL-specific DataSourceConfig.
-func newDataSourceConfigPostgres(ctx context.Context, base datasource.DataSourceConfig, conn *model.Connection, cryptor crypto.Cryptor, logger log.Logger) (*datasourcePostgresConfig.DataSourceConfigPostgres, error) {
+func newDataSourceConfigPostgres(ctx context.Context, base datasource.DataSourceConfig, conn *model.Connection, cryptor crypto.Cryptor, logger libLog.Logger) (*datasourcePostgresConfig.DataSourceConfigPostgres, error) {
 	// Decrypt password before using it in connection string
 	password, err := conn.GetPasswordDecrypted(ctx, cryptor)
 	if err != nil {
@@ -272,7 +279,7 @@ func newDataSourceConfigPostgres(ctx context.Context, base datasource.DataSource
 	}
 
 	if errConnect := pgConnection.Connect(); errConnect != nil {
-		logger.Errorf("Failed to connect to Postgres [%s]: %v", conn.ConfigName, errConnect)
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to connect to Postgres [%s]: %v", conn.ConfigName, errConnect))
 		return nil, fmt.Errorf("failed to connect to PostgreSQL: %w", errConnect)
 	}
 
@@ -291,7 +298,7 @@ func newDataSourceConfigPostgres(ctx context.Context, base datasource.DataSource
 }
 
 // newDataSourceConfigOracle creates an Oracle-specific DataSourceConfig.
-func newDataSourceConfigOracle(ctx context.Context, base datasource.DataSourceConfig, conn *model.Connection, cryptor crypto.Cryptor, logger log.Logger) (*datasourceOracleConfig.DataSourceConfigOracle, error) {
+func newDataSourceConfigOracle(ctx context.Context, base datasource.DataSourceConfig, conn *model.Connection, cryptor crypto.Cryptor, logger libLog.Logger) (*datasourceOracleConfig.DataSourceConfigOracle, error) {
 	// Decrypt password before using it in connection string
 	password, err := conn.GetPasswordDecrypted(ctx, cryptor)
 	if err != nil {
@@ -326,9 +333,8 @@ func newDataSourceConfigOracle(ctx context.Context, base datasource.DataSourceCo
 		serviceName,
 	)
 
-	logger.Debugf("Attempting Oracle connection [%s] - Service: %s, Username: %s (will access schema: %s)",
-		conn.ConfigName, serviceName, conn.Username, strings.ToUpper(conn.Username))
-	logger.Debugf("Oracle connection string: oracle://%s:***@%s:%d/%s", conn.Username, conn.Host, conn.Port, serviceName)
+	logger.Log(ctx, libLog.LevelDebug, fmt.Sprintf("Attempting Oracle connection [%s] - Service: %s, Username: %s (will access schema: %s)", conn.ConfigName, serviceName, conn.Username, strings.ToUpper(conn.Username)))
+	logger.Log(ctx, libLog.LevelDebug, fmt.Sprintf("Oracle connection string: oracle://%s:***@%s:%d/%s", conn.Username, conn.Host, conn.Port, serviceName))
 
 	oraConnection := &oracle.Connection{
 		ConnectionString:   connectionString,
@@ -339,8 +345,8 @@ func newDataSourceConfigOracle(ctx context.Context, base datasource.DataSourceCo
 	}
 
 	if errConnect := oraConnection.Connect(); errConnect != nil {
-		logger.Errorf("Failed to connect to Oracle [%s] with service name [%s]: %v", conn.ConfigName, conn.DatabaseName, errConnect)
-		return nil, fmt.Errorf("failed to connect to Oracle with service name '%s': %w. Verify that the service name is correct and registered with the Oracle listener", conn.DatabaseName, errConnect)
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to connect to Oracle [%s] with service name [%s]: %v", conn.ConfigName, serviceName, errConnect))
+		return nil, fmt.Errorf("failed to connect to Oracle with service name '%s': %w. Verify that the service name is correct and registered with the Oracle listener", serviceName, errConnect)
 	}
 
 	// Create repository
@@ -358,7 +364,7 @@ func newDataSourceConfigOracle(ctx context.Context, base datasource.DataSourceCo
 }
 
 // newDataSourceConfigMySQL creates a MySQL-specific DataSourceConfig.
-func newDataSourceConfigMySQL(ctx context.Context, base datasource.DataSourceConfig, conn *model.Connection, cryptor crypto.Cryptor, logger log.Logger) (*datasourceMySQLConfig.DataSourceConfigMySQL, error) {
+func newDataSourceConfigMySQL(ctx context.Context, base datasource.DataSourceConfig, conn *model.Connection, cryptor crypto.Cryptor, logger libLog.Logger) (*datasourceMySQLConfig.DataSourceConfigMySQL, error) {
 	// Decrypt password before using it in connection string
 	password, err := conn.GetPasswordDecrypted(ctx, cryptor)
 	if err != nil {
@@ -394,7 +400,7 @@ func newDataSourceConfigMySQL(ctx context.Context, base datasource.DataSourceCon
 	}
 
 	if errConnect := mysqlConnection.Connect(); errConnect != nil {
-		logger.Errorf("Failed to connect to MySQL [%s]: %v", conn.ConfigName, errConnect)
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to connect to MySQL [%s]: %v", conn.ConfigName, errConnect))
 		return nil, fmt.Errorf("failed to connect to MySQL: %w", errConnect)
 	}
 
@@ -413,7 +419,7 @@ func newDataSourceConfigMySQL(ctx context.Context, base datasource.DataSourceCon
 }
 
 // newDataSourceConfigSQLServer creates a SQL Server-specific DataSourceConfig.
-func newDataSourceConfigSQLServer(ctx context.Context, base datasource.DataSourceConfig, conn *model.Connection, cryptor crypto.Cryptor, logger log.Logger) (*datasourceSQLServerConfig.DataSourceConfigSQLServer, error) {
+func newDataSourceConfigSQLServer(ctx context.Context, base datasource.DataSourceConfig, conn *model.Connection, cryptor crypto.Cryptor, logger libLog.Logger) (*datasourceSQLServerConfig.DataSourceConfigSQLServer, error) {
 	// Decrypt password before using it in connection string
 	password, err := conn.GetPasswordDecrypted(ctx, cryptor)
 	if err != nil {
@@ -471,8 +477,8 @@ func newDataSourceConfigSQLServer(ctx context.Context, base datasource.DataSourc
 		MaxIdleConnections: constant.SQLServerMaxIdleConns,
 	}
 
-	if errConnect := sqlServerConnection.Connect(); errConnect != nil {
-		logger.Errorf("Failed to connect to SQL Server [%s]: %v", conn.ConfigName, errConnect)
+	if errConnect := sqlServerConnection.Connect(ctx); errConnect != nil {
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to connect to SQL Server [%s]: %v", conn.ConfigName, errConnect))
 		return nil, fmt.Errorf("failed to connect to SQL Server: %w", errConnect)
 	}
 
@@ -497,7 +503,7 @@ type DataSourceFactory func(ctx context.Context, conn *model.Connection, cryptor
 // NewDataSourceFromConnectionWithLogger returns a factory function that creates DataSource
 // implementations with a pre-configured logger. This is useful for dependency injection
 // where the logger needs to be captured at initialization time.
-func NewDataSourceFromConnectionWithLogger(logger log.Logger) func(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor) (datasource.DataSource, error) {
+func NewDataSourceFromConnectionWithLogger(logger libLog.Logger) func(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor) (datasource.DataSource, error) {
 	return func(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor) (datasource.DataSource, error) {
 		return NewDataSourceFromConnection(ctx, conn, cryptor, logger)
 	}

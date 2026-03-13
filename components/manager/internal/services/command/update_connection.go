@@ -11,8 +11,8 @@ import (
 	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
 	"github.com/LerianStudio/fetcher/pkg/ports/job"
 
-	"github.com/LerianStudio/lib-commons/v3/commons"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v3/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v4/commons"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
@@ -44,19 +44,19 @@ func (s *UpdateConnection) Execute(ctx context.Context, organizationID, connecti
 		attribute.String("app.request.connection_id", connectionID.String()),
 	)
 
-	err := libOpentelemetry.SetSpanAttributesFromStruct(&span, "app.request.payload", connInput.ToMapWithMask())
+	err := libOpentelemetry.SetSpanAttributesFromValue(span, "app.request.payload", connInput.ToMapWithMask(), nil)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to convert fetcher input to JSON string", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to convert fetcher input to JSON string", err)
 	}
 
 	current, err := s.connRepo.FindByID(ctx, connectionID, organizationID)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to find connection by ID", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to find connection by ID", err)
 		return nil, fmt.Errorf("failed to find connection by id: %w", err)
 	}
 
 	if current == nil {
-		libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "Connection not found", constant.ErrEntityNotFound)
+		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Connection not found", constant.ErrEntityNotFound)
 
 		return nil, pkg.ValidateBusinessError(
 			constant.ErrEntityNotFound,
@@ -66,12 +66,12 @@ func (s *UpdateConnection) Execute(ctx context.Context, organizationID, connecti
 
 	active, err := s.jobRepo.ExistsRunningByMappedFieldKey(ctx, organizationID, current.ConfigName)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to check for active jobs", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to check for active jobs", err)
 		return nil, fmt.Errorf("failed to check for active jobs: %w", err)
 	}
 
 	if active {
-		libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "Connection has active jobs", constant.ErrJobInProgress)
+		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Connection has active jobs", constant.ErrJobInProgress)
 
 		return nil, pkg.ValidateBusinessError(
 			constant.ErrJobInProgress,
@@ -120,18 +120,18 @@ func (s *UpdateConnection) Execute(ctx context.Context, organizationID, connecti
 			return nil
 		}(),
 	); errPatch != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to apply connection patch", errPatch)
+		libOpentelemetry.HandleSpanError(span, "Failed to apply connection patch", errPatch)
 		return nil, fmt.Errorf("failed to apply connection patch: %w", errPatch)
 	}
 
 	updated, err := s.connRepo.Update(ctx, current)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to update connection", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to update connection", err)
 		return nil, fmt.Errorf("failed to update connection: %w", err)
 	}
 
 	if updated == nil {
-		libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "Updated connection not found", constant.ErrEntityNotFound)
+		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Updated connection not found", constant.ErrEntityNotFound)
 
 		return nil, pkg.ValidateBusinessError(
 			constant.ErrEntityNotFound,

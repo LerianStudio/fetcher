@@ -1,10 +1,15 @@
 package services
 
 import (
+	"context"
+	"errors"
+	"strings"
 	"testing"
 
 	modelJob "github.com/LerianStudio/fetcher/pkg/model/job"
-	libCrypto "github.com/LerianStudio/lib-commons/v3/commons/crypto"
+	portDS "github.com/LerianStudio/fetcher/pkg/ports/datasource"
+	libCrypto "github.com/LerianStudio/lib-commons/v4/commons/crypto"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
 	"github.com/google/uuid"
 	"go.uber.org/mock/gomock"
 )
@@ -886,7 +891,7 @@ func TestTransformPluginCRMAdvancedFilters(t *testing.T) {
 			uc := newTestUseCase(mocks)
 			uc.SetCRMSecrets("test-crm-encrypt-key", tt.hashKey)
 
-			result, err := uc.transformPluginCRMAdvancedFilters(tt.filter, logger)
+			result, err := uc.transformPluginCRMAdvancedFilters(testContext(), tt.filter, logger)
 
 			if tt.wantErr {
 				if err == nil {
@@ -992,7 +997,7 @@ func TestTransformPluginCRMAdvancedFilters_FieldMappings(t *testing.T) {
 				tt.inputField: {Equals: []any{"test-value"}},
 			}
 
-			result, err := uc.transformPluginCRMAdvancedFilters(filter, logger)
+			result, err := uc.transformPluginCRMAdvancedFilters(testContext(), filter, logger)
 			if err != nil {
 				t.Fatalf("expected no error, got: %v", err)
 			}
@@ -1029,7 +1034,7 @@ func TestTransformPluginCRMAdvancedFilters_AllConditionTypes(t *testing.T) {
 		},
 	}
 
-	result, err := uc.transformPluginCRMAdvancedFilters(filter, logger)
+	result, err := uc.transformPluginCRMAdvancedFilters(testContext(), filter, logger)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -1072,6 +1077,13 @@ func TestProcessPluginCRMCollection_WithOrganizationID(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
+	originalQuery := queryPluginCRMCollectionWithFiltersFn
+	originalDecrypt := decryptPluginCRMDataFn
+	t.Cleanup(func() {
+		queryPluginCRMCollectionWithFiltersFn = originalQuery
+		decryptPluginCRMDataFn = originalDecrypt
+	})
+
 	mocks := newTestMocks(ctrl)
 	uc := newTestUseCase(mocks)
 
@@ -1080,25 +1092,41 @@ func TestProcessPluginCRMCollection_WithOrganizationID(t *testing.T) {
 
 	orgID := uuid.MustParse("019b9df1-34eb-7dd0-afd5-53f859667e51")
 	result := make(map[string]map[string][]map[string]any)
+	expectedRows := []map[string]any{{"id": "123", "name": "Ada"}}
+	decryptedRows := []map[string]any{{"id": "123", "name": "Ada Lovelace"}}
 
-	// With nil data source, we expect a panic when trying to query
-	// This test validates that the function accepts organizationID parameter
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("expected panic with nil data source")
+	queryPluginCRMCollectionWithFiltersFn = func(_ *UseCase, _ context.Context, _ portDS.CRMQueryable, collection string, fields []string, filters map[string]modelJob.FilterCondition, _ libLog.Logger) ([]map[string]any, error) {
+		if collection != "holders_"+orgID.String() {
+			t.Fatalf("unexpected collection name: %s", collection)
 		}
-	}()
+		if len(fields) != 2 || fields[0] != "id" || fields[1] != "name" {
+			t.Fatalf("unexpected fields: %v", fields)
+		}
+		if filters != nil {
+			t.Fatalf("expected nil filters, got %+v", filters)
+		}
+		return expectedRows, nil
+	}
 
-	_ = uc.processPluginCRMCollection(
-		ctx,
-		nil, // nil dataSource will cause panic
-		"holders",
-		[]string{"id", "name"},
-		nil,
-		orgID,
-		result,
-		logger,
-	)
+	decryptPluginCRMDataFn = func(_ *UseCase, _ libLog.Logger, collectionResult []map[string]any, fields []string) ([]map[string]any, error) {
+		if len(collectionResult) != 1 || collectionResult[0]["name"] != "Ada" {
+			t.Fatalf("unexpected collection result: %+v", collectionResult)
+		}
+		if len(fields) != 2 {
+			t.Fatalf("unexpected fields: %v", fields)
+		}
+		return decryptedRows, nil
+	}
+
+	err := uc.processPluginCRMCollection(ctx, nil, "holders", []string{"id", "name"}, nil, orgID, result, logger)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	got := result["plugin_crm"]["holders"]
+	if len(got) != 1 || got[0]["name"] != "Ada Lovelace" {
+		t.Fatalf("unexpected stored result: %+v", got)
+	}
 }
 
 // TestQueryPluginCRMCollectionWithFilters_NoFilters tests querying without filters.
@@ -1108,29 +1136,22 @@ func TestQueryPluginCRMCollectionWithFilters_NoFilters(t *testing.T) {
 
 	mocks := newTestMocks(ctrl)
 	uc := newTestUseCase(mocks)
-
-	// This test validates the function signature and basic behavior
-	// A full test would require a mock MongoDB data source
-
 	ctx := testContext()
 	logger := testLogger()
+	wantRows := []map[string]any{{"id": "123"}}
 
-	// With nil data source, we expect a nil pointer error
-	// This is intentional to verify error handling
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("expected panic with nil data source")
-		}
-	}()
+	mockDS := portDS.NewMockCRMQueryable(ctrl)
+	mockDS.EXPECT().
+		QueryCollection(gomock.Any(), "collection_test", []string{"id", "name"}, gomock.Nil()).
+		Return(wantRows, nil)
 
-	_, _ = uc.queryPluginCRMCollectionWithFilters(
-		ctx,
-		nil, // nil data source should cause panic
-		"collection_test",
-		[]string{"id", "name"},
-		nil,
-		logger,
-	)
+	got, err := uc.queryPluginCRMCollectionWithFilters(ctx, mockDS, "collection_test", []string{"id", "name"}, nil, logger)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(got) != 1 || got[0]["id"] != "123" {
+		t.Fatalf("unexpected rows: %+v", got)
+	}
 }
 
 // TestDecryptPluginCRMData_MissingHashSecretKey tests error when hash secret key is missing.
@@ -1212,7 +1233,6 @@ func TestQueryPluginCRM_EmptyCollections(t *testing.T) {
 		result,
 		logger,
 	)
-
 	if err != nil {
 		t.Fatalf("expected no error for empty collections, got: %v", err)
 	}
@@ -1243,51 +1263,54 @@ func TestQueryPluginCRM_NilCollections(t *testing.T) {
 		result,
 		logger,
 	)
-
 	if err != nil {
 		t.Fatalf("expected no error for nil collections, got: %v", err)
 	}
 }
 
 // TestQueryPluginCRM_WithOrganizationOnly tests QueryPluginCRM with only organization in collections.
-// Note: The implementation processes organization as a collection, which requires a valid data source.
-// This test documents that behavior - organization is NOT skipped but processed as a collection.
 func TestQueryPluginCRM_WithOrganizationOnly(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
+
+	originalProcess := processPluginCRMCollectionFn
+	t.Cleanup(func() {
+		processPluginCRMCollectionFn = originalProcess
+	})
 
 	mocks := newTestMocks(ctrl)
 	uc := newTestUseCase(mocks)
 
 	ctx := testContext()
 	logger := testLogger()
-
 	result := make(map[string]map[string][]map[string]any)
-
-	// Only organization - but it's still processed as a collection
-	collections := map[string][]string{
-		"organization": {"id", "name"},
-	}
-
+	collections := map[string][]string{"organization": {"id", "name"}}
 	orgID := uuid.MustParse("019b9df1-34eb-7dd0-afd5-53f859667e51")
 
-	// This will panic because nil dataSource is passed and organization is processed
-	defer func() {
-		if r := recover(); r != nil {
-			t.Logf("Expected panic occurred due to nil dataSource: %v", r)
+	called := false
+	processPluginCRMCollectionFn = func(_ *UseCase, _ context.Context, _ portDS.CRMQueryable, collection string, fields []string, filters map[string]modelJob.FilterCondition, gotOrgID uuid.UUID, _ map[string]map[string][]map[string]any, _ libLog.Logger) error {
+		called = true
+		if collection != "organization" {
+			t.Fatalf("unexpected collection: %s", collection)
 		}
-	}()
+		if len(fields) != 2 {
+			t.Fatalf("unexpected fields: %v", fields)
+		}
+		if filters != nil {
+			t.Fatalf("expected nil filters, got %+v", filters)
+		}
+		if gotOrgID != orgID {
+			t.Fatalf("unexpected org ID: %s", gotOrgID)
+		}
+		return nil
+	}
 
-	_ = uc.QueryPluginCRM(
-		ctx,
-		nil, // nil dataSource will cause panic when processing organization
-		"plugin_crm",
-		collections,
-		nil,
-		orgID,
-		result,
-		logger,
-	)
+	if err := uc.QueryPluginCRM(ctx, nil, "plugin_crm", collections, nil, orgID, result, logger); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if !called {
+		t.Fatal("expected collection processor to be called")
+	}
 }
 
 // TestDecryptRecord_WithAllFieldTypes tests decryptRecord with various field types.
@@ -1601,7 +1624,7 @@ func TestTransformPluginCRMAdvancedFilters_WithEncryptedFields(t *testing.T) {
 		"document": {Equals: []any{"12345678900"}},
 	}
 
-	result, err := uc.transformPluginCRMAdvancedFilters(filter, logger)
+	result, err := uc.transformPluginCRMAdvancedFilters(testContext(), filter, logger)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -1628,47 +1651,45 @@ func TestQueryPluginCRM_WithFilters(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
+	originalProcess := processPluginCRMCollectionFn
+	t.Cleanup(func() {
+		processPluginCRMCollectionFn = originalProcess
+	})
+
 	mocks := newTestMocks(ctrl)
 	uc := newTestUseCase(mocks)
 
 	ctx := testContext()
 	logger := testLogger()
-
 	result := make(map[string]map[string][]map[string]any)
-
-	// Collections with organization
 	collections := map[string][]string{
 		"organization": {"id", "name"},
 		"counterparty": {"id", "document"},
 	}
-
-	// Filters for counterparty
 	filters := map[string]map[string]modelJob.FilterCondition{
 		"counterparty": {
 			"status": {Equals: []any{"active"}},
 		},
 	}
-
 	orgID := uuid.MustParse("019b9df1-34eb-7dd0-afd5-53f859667e51")
 
-	// This will fail due to nil dataSource, but we're testing the filter handling path
-	defer func() {
-		if r := recover(); r != nil {
-			// Expected panic due to nil dataSource
-			t.Logf("Expected panic occurred: %v", r)
+	seenCounterparty := false
+	processPluginCRMCollectionFn = func(_ *UseCase, _ context.Context, _ portDS.CRMQueryable, collection string, _ []string, collectionFilters map[string]modelJob.FilterCondition, _ uuid.UUID, _ map[string]map[string][]map[string]any, _ libLog.Logger) error {
+		if collection == "counterparty" {
+			seenCounterparty = true
+			if collectionFilters["status"].Equals[0] != "active" {
+				t.Fatalf("unexpected filters: %+v", collectionFilters)
+			}
 		}
-	}()
+		return nil
+	}
 
-	_ = uc.QueryPluginCRM(
-		ctx,
-		nil, // nil dataSource will cause panic when processing counterparty
-		"plugin_crm",
-		collections,
-		filters,
-		orgID,
-		result,
-		logger,
-	)
+	if err := uc.QueryPluginCRM(ctx, nil, "plugin_crm", collections, filters, orgID, result, logger); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if !seenCounterparty {
+		t.Fatal("expected counterparty collection to be processed")
+	}
 }
 
 // TestDecryptFieldValue_WithValidEncryptedValue tests decryption with properly encrypted value.
@@ -1701,37 +1722,153 @@ func TestDecryptFieldValue_WithValidEncryptedValue(t *testing.T) {
 	}
 }
 
-// TestProcessPluginCRMCollection_WithValidOrganization tests with valid organization.
+// TestProcessPluginCRMCollection_WithValidOrganization tests query errors are returned deterministically.
 func TestProcessPluginCRMCollection_WithValidOrganization(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
+
+	originalQuery := queryPluginCRMCollectionWithFiltersFn
+	t.Cleanup(func() {
+		queryPluginCRMCollectionWithFiltersFn = originalQuery
+	})
 
 	mocks := newTestMocks(ctrl)
 	uc := newTestUseCase(mocks)
 
 	ctx := testContext()
 	logger := testLogger()
-
 	orgID := uuid.MustParse("019b9df1-34eb-7dd0-afd5-53f859667e51")
 	result := make(map[string]map[string][]map[string]any)
 
-	// This will panic due to nil dataSource, but tests the organization validation path
-	defer func() {
-		if r := recover(); r != nil {
-			t.Logf("Expected panic due to nil dataSource: %v", r)
+	queryPluginCRMCollectionWithFiltersFn = func(_ *UseCase, _ context.Context, _ portDS.CRMQueryable, collection string, _ []string, _ map[string]modelJob.FilterCondition, _ libLog.Logger) ([]map[string]any, error) {
+		if collection != "counterparty_"+orgID.String() {
+			t.Fatalf("unexpected collection: %s", collection)
 		}
-	}()
+		return nil, errors.New("query failed")
+	}
 
-	_ = uc.processPluginCRMCollection(
+	err := uc.processPluginCRMCollection(ctx, nil, "counterparty", []string{"id", "name"}, nil, orgID, result, logger)
+	if err == nil || !strings.Contains(err.Error(), "query failed") {
+		t.Fatalf("expected query failure, got %v", err)
+	}
+}
+
+func TestProcessPluginCRMCollection_TransformsCollectionAndDecryptsResult(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	originalQueryFn := queryPluginCRMCollectionWithFiltersFn
+	originalDecryptFn := decryptPluginCRMDataFn
+	t.Cleanup(func() {
+		queryPluginCRMCollectionWithFiltersFn = originalQueryFn
+		decryptPluginCRMDataFn = originalDecryptFn
+	})
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+	ctx := testContext()
+	logger := testLogger()
+	orgID := uuid.MustParse("019b9df1-34eb-7dd0-afd5-53f859667e51")
+	result := make(map[string]map[string][]map[string]any)
+
+	hashKey := strings.Repeat("01", 32)
+	encryptKey := strings.Repeat("fe", 32)
+	t.Setenv("CRYPTO_HASH_SECRET_KEY_PLUGIN_CRM", hashKey)
+	t.Setenv("CRYPTO_ENCRYPT_SECRET_KEY_PLUGIN_CRM", encryptKey)
+
+	plainDocument := "12345678900"
+
+	queryPluginCRMCollectionWithFiltersFn = func(_ *UseCase, _ context.Context, _ portDS.CRMQueryable, collection string, fields []string, _ map[string]modelJob.FilterCondition, _ libLog.Logger) ([]map[string]any, error) {
+		expectedCollection := "holders_" + orgID.String()
+		if collection != expectedCollection {
+			t.Fatalf("expected collection %s, got %s", expectedCollection, collection)
+		}
+		if len(fields) != 1 || fields[0] != "document" {
+			t.Fatalf("unexpected fields: %v", fields)
+		}
+		return []map[string]any{{"document": "encrypted-doc"}}, nil
+	}
+
+	decryptPluginCRMDataFn = func(_ *UseCase, _ libLog.Logger, collectionResult []map[string]any, _ []string) ([]map[string]any, error) {
+		return []map[string]any{{"document": plainDocument}}, nil
+	}
+
+	mockDS := portDS.NewMockCRMQueryable(ctrl)
+	err := uc.processPluginCRMCollection(ctx, mockDS, "holders", []string{"document"}, nil, orgID, result, logger)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	rows := result["plugin_crm"]["holders"]
+	if len(rows) != 1 {
+		t.Fatalf("expected one row, got %+v", rows)
+	}
+	if got := rows[0]["document"]; got != plainDocument {
+		t.Fatalf("expected decrypted document %q, got %#v", plainDocument, got)
+	}
+}
+
+func TestQueryPluginCRM_WithFilters_TransformsAdvancedFilters(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	originalProcessFn := processPluginCRMCollectionFn
+	t.Cleanup(func() {
+		processPluginCRMCollectionFn = originalProcessFn
+	})
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+	ctx := testContext()
+	logger := testLogger()
+	orgID := uuid.MustParse("019b9df1-34eb-7dd0-afd5-53f859667e51")
+	result := make(map[string]map[string][]map[string]any)
+
+	hashKey := strings.Repeat("01", 32)
+	encryptKey := strings.Repeat("fe", 32)
+	t.Setenv("CRYPTO_HASH_SECRET_KEY_PLUGIN_CRM", hashKey)
+	t.Setenv("CRYPTO_ENCRYPT_SECRET_KEY_PLUGIN_CRM", encryptKey)
+
+	processPluginCRMCollectionFn = func(_ *UseCase, _ context.Context, _ portDS.CRMQueryable, collection string, _ []string, collectionFilters map[string]modelJob.FilterCondition, _ uuid.UUID, res map[string]map[string][]map[string]any, _ libLog.Logger) error {
+		if collectionFilters == nil {
+			t.Fatal("expected non-nil filters")
+		}
+		if _, ok := collectionFilters["document"]; !ok {
+			t.Fatalf("expected document filter, got %+v", collectionFilters)
+		}
+		if res["plugin_crm"] == nil {
+			res["plugin_crm"] = make(map[string][]map[string]any)
+		}
+		res["plugin_crm"][collection] = []map[string]any{}
+		return nil
+	}
+
+	mockDS := portDS.NewMockCRMQueryable(ctrl)
+	err := uc.QueryPluginCRM(
 		ctx,
-		nil, // nil dataSource will cause panic
-		"counterparty",
-		[]string{"id", "name"},
-		nil,
+		mockDS,
+		"plugin_crm",
+		map[string][]string{"holders": {"document"}},
+		map[string]map[string]modelJob.FilterCondition{
+			"holders": {
+				"document": {Equals: []any{"12345678900"}},
+			},
+		},
 		orgID,
 		result,
 		logger,
 	)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	rows, ok := result["plugin_crm"]["holders"]
+	if !ok {
+		t.Fatalf("expected holders collection in result, got %+v", result)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("expected empty result set, got %+v", rows)
+	}
 }
 
 // TestGetTableFilters_WithDeepNesting tests filter extraction with complex nested structure.

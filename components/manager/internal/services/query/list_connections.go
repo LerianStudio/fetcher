@@ -8,8 +8,8 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/net/http"
 	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
 
-	"github.com/LerianStudio/lib-commons/v3/commons"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v3/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v4/commons"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
@@ -40,14 +40,14 @@ func (s *ListConnections) Execute(ctx context.Context, organizationID uuid.UUID,
 		filters.ProductName = productName
 	}
 
-	err := libOpentelemetry.SetSpanAttributesFromStruct(&span, "app.request.payload", filters)
+	err := libOpentelemetry.SetSpanAttributesFromValue(span, "app.request.payload", filters, nil)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to convert fetcher input to JSON string", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to convert fetcher input to JSON string", err)
 	}
 
 	list, totalCount, err := s.connRepo.List(ctx, organizationID, filters)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to list connections", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to list connections", err)
 		return nil, fmt.Errorf("failed to list connections: %w", err)
 	}
 

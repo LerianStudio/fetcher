@@ -14,9 +14,9 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/mongodb"
 
-	libLog "github.com/LerianStudio/lib-commons/v3/commons/log"
-	libMongo "github.com/LerianStudio/lib-commons/v3/commons/mongo"
-	tmcore "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/core"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	libMongo "github.com/LerianStudio/lib-commons/v4/commons/mongo"
+	tmcore "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/core"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -29,7 +29,7 @@ import (
 
 var (
 	jobTestMongoServer *memongo.Server
-	jobTestMongoConn   *libMongo.MongoConnection
+	jobTestMongoConn   *libMongo.Client
 )
 
 const jobTestDatabaseName = "fetcher_job_test"
@@ -43,12 +43,16 @@ func TestMain(m *testing.M) {
 		os.Exit(0)
 	}
 	jobTestMongoServer = server
-	jobTestMongoConn = &libMongo.MongoConnection{
-		ConnectionStringSource: server.URI(),
-		Database:               jobTestDatabaseName,
-		Logger:                 &libLog.GoLogger{Level: libLog.ErrorLevel},
-		MaxPoolSize:            5,
+	client, err := libMongo.NewClient(context.Background(), libMongo.Config{
+		URI:         server.URI(),
+		Database:    jobTestDatabaseName,
+		Logger:      &libLog.GoLogger{Level: libLog.LevelError},
+		MaxPoolSize: 5,
+	})
+	if err != nil {
+		log.Fatalf("failed to create mongo client: %v", err)
 	}
+	jobTestMongoConn = client
 
 	code := m.Run()
 
@@ -71,11 +75,15 @@ func clearJobsCollection(t *testing.T) {
 	if jobTestMongoConn == nil {
 		t.Fatalf("mongo connection not initialized")
 	}
-	client, err := jobTestMongoConn.GetDB(context.Background())
+	client, err := jobTestMongoConn.Client(context.Background())
 	if err != nil {
 		t.Fatalf("failed to get db: %v", err)
 	}
-	coll := client.Database(strings.ToLower(jobTestMongoConn.Database)).Collection(strings.ToLower(constant.MongoCollectionJob))
+	dbName, err := jobTestMongoConn.DatabaseName()
+	if err != nil {
+		t.Fatalf("failed to get db name: %v", err)
+	}
+	coll := client.Database(strings.ToLower(dbName)).Collection(strings.ToLower(constant.MongoCollectionJob))
 	if err := coll.Drop(context.Background()); err != nil {
 		var cmdErr mongo.CommandError
 		if errors.As(err, &cmdErr) && cmdErr.Code == 26 {
@@ -117,12 +125,12 @@ func createJob(t *testing.T, repo *JobMongoDBRepository, job *model.Job) *model.
 
 func stubJobSpanAttributes(t *testing.T, retErr error) {
 	t.Helper()
-	original := setSpanAttributesFromStruct
-	setSpanAttributesFromStruct = func(span *trace.Span, key string, valueStruct any) error {
+	original := setSpanAttributesFromValue
+	setSpanAttributesFromValue = func(span trace.Span, key string, value any) error {
 		return retErr
 	}
 	t.Cleanup(func() {
-		setSpanAttributesFromStruct = original
+		setSpanAttributesFromValue = original
 	})
 }
 
@@ -190,7 +198,7 @@ func TestJobMongoDBRepository_Create(t *testing.T) {
 
 		mockConn := mongodb.NewMockMongoClientProvider(ctrl)
 		mockConn.EXPECT().
-			GetDB(gomock.Any()).
+			Client(gomock.Any()).
 			Return(nil, errors.New("db down"))
 
 		repo := &JobMongoDBRepository{
@@ -281,7 +289,7 @@ func TestJobMongoDBRepository_Update(t *testing.T) {
 
 		mockConn := mongodb.NewMockMongoClientProvider(ctrl)
 		mockConn.EXPECT().
-			GetDB(gomock.Any()).
+			Client(gomock.Any()).
 			Return(nil, errors.New("db down"))
 
 		repo := &JobMongoDBRepository{
@@ -330,7 +338,7 @@ func TestJobMongoDBRepository_FindByID(t *testing.T) {
 
 		mockConn := mongodb.NewMockMongoClientProvider(ctrl)
 		mockConn.EXPECT().
-			GetDB(gomock.Any()).
+			Client(gomock.Any()).
 			Return(nil, errors.New("db down"))
 
 		repo := &JobMongoDBRepository{
@@ -416,7 +424,7 @@ func TestJobMongoDBRepository_List(t *testing.T) {
 
 		mockConn := mongodb.NewMockMongoClientProvider(ctrl)
 		mockConn.EXPECT().
-			GetDB(gomock.Any()).
+			Client(gomock.Any()).
 			Return(nil, errors.New("db down"))
 
 		repo := &JobMongoDBRepository{
@@ -561,7 +569,7 @@ func TestJobMongoDBRepository_UpdateStatus(t *testing.T) {
 
 		mockConn := mongodb.NewMockMongoClientProvider(ctrl)
 		mockConn.EXPECT().
-			GetDB(gomock.Any()).
+			Client(gomock.Any()).
 			Return(nil, errors.New("db down"))
 
 		repo := &JobMongoDBRepository{
@@ -709,7 +717,7 @@ func TestJobMongoDBRepository_FindByRequestHashWithinWindow(t *testing.T) {
 
 		mockConn := mongodb.NewMockMongoClientProvider(ctrl)
 		mockConn.EXPECT().
-			GetDB(gomock.Any()).
+			Client(gomock.Any()).
 			Return(nil, errors.New("db down"))
 
 		repo := &JobMongoDBRepository{
@@ -771,7 +779,7 @@ func TestJobMongoDBRepository_FindActiveByRequestHash(t *testing.T) {
 	})
 }
 
-func TestEnsureIndexes_RemediatesDuplicateActiveJobs(t *testing.T) {
+func TestEnsureIndexes_DuplicateActiveJobsPreventsUniqueIndex(t *testing.T) {
 	repo := newJobRepository(t)
 	org := uuid.New()
 	hash := "dup-active-hash-123"
@@ -781,38 +789,20 @@ func TestEnsureIndexes_RemediatesDuplicateActiveJobs(t *testing.T) {
 	older.RequestHash = hash
 	older.Status = model.JobStatusPending
 	older.CreatedAt = time.Now().UTC().Add(-2 * time.Minute)
-	createdOlder := createJob(t, repo, older)
+	createJob(t, repo, older)
 
 	newer := jobFixture()
 	newer.OrganizationID = org
 	newer.RequestHash = hash
 	newer.Status = model.JobStatusProcessing
 	newer.CreatedAt = time.Now().UTC().Add(-1 * time.Minute)
-	createdNewer := createJob(t, repo, newer)
+	createJob(t, repo, newer)
 
-	require.NoError(t, repo.EnsureIndexes(context.Background()))
-
-	updatedOlder, err := repo.FindByID(context.Background(), createdOlder.ID, org)
-	require.NoError(t, err)
-	require.NotNil(t, updatedOlder)
-	require.Equal(t, model.JobStatusFailed, updatedOlder.Status)
-	require.NotNil(t, updatedOlder.CompletedAt)
-
-	// Verify the newer (surviving) job is still in its original active status
-	updatedNewer, err := repo.FindByID(context.Background(), createdNewer.ID, org)
-	require.NoError(t, err)
-	require.NotNil(t, updatedNewer)
-	require.Equal(t, model.JobStatusProcessing, updatedNewer.Status, "newer job should survive remediation in its original status")
-
-	duplicateAttempt := jobFixture()
-	duplicateAttempt.OrganizationID = org
-	duplicateAttempt.RequestHash = hash
-	duplicateAttempt.Status = model.JobStatusPending
-	duplicateAttempt.CreatedAt = time.Now().UTC()
-
-	_, createErr := repo.Create(context.Background(), duplicateAttempt)
-	require.Error(t, createErr)
-	require.True(t, mongo.IsDuplicateKeyError(createErr), "expected duplicate key after unique active index creation")
+	// With the unique active hash index restored, EnsureIndexes returns an error
+	// when duplicate active jobs exist (same org_id + request_hash).
+	// Manual cleanup is required before the index can be created.
+	err := repo.EnsureIndexes(context.Background())
+	require.Error(t, err, "EnsureIndexes should fail when duplicate active jobs prevent unique index creation")
 }
 
 func TestJobMongoDBRepository_ExistsRunningByMappedFieldKey(t *testing.T) {
@@ -962,7 +952,7 @@ func TestJobMongoDBRepository_ExistsRunningByMappedFieldKey(t *testing.T) {
 
 		mockConn := mongodb.NewMockMongoClientProvider(ctrl)
 		mockConn.EXPECT().
-			GetDB(gomock.Any()).
+			Client(gomock.Any()).
 			Return(nil, errors.New("db down"))
 
 		repo := &JobMongoDBRepository{
@@ -1039,7 +1029,7 @@ func TestEnsureIndexes_DatabaseError(t *testing.T) {
 
 	mockConn := mongodb.NewMockMongoClientProvider(ctrl)
 	mockConn.EXPECT().
-		GetDB(gomock.Any()).
+		Client(gomock.Any()).
 		Return(nil, errors.New("db down"))
 
 	repo := &JobMongoDBRepository{
@@ -1057,7 +1047,7 @@ func TestDropIndexes_DatabaseError(t *testing.T) {
 
 	mockConn := mongodb.NewMockMongoClientProvider(ctrl)
 	mockConn.EXPECT().
-		GetDB(gomock.Any()).
+		Client(gomock.Any()).
 		Return(nil, errors.New("db down"))
 
 	repo := &JobMongoDBRepository{
@@ -1206,7 +1196,7 @@ func TestJobMongoDBRepository_getDatabase(t *testing.T) {
 	t.Run("returns tenant database when tenant context is set", func(t *testing.T) {
 		repo := newJobRepository(t)
 
-		client, err := jobTestMongoConn.GetDB(context.Background())
+		client, err := jobTestMongoConn.Client(context.Background())
 		if err != nil {
 			t.Fatalf("failed to get db client: %v", err)
 		}
@@ -1239,7 +1229,7 @@ func TestJobMongoDBRepository_getDatabase(t *testing.T) {
 
 		mockConn := NewMockmongoDatabaseProvider(ctrl)
 		mockConn.EXPECT().
-			GetDB(gomock.Any()).
+			Client(gomock.Any()).
 			Return(nil, errors.New("db down"))
 
 		repo := &JobMongoDBRepository{

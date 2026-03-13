@@ -2,13 +2,15 @@ package connection
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	sharedMongo "github.com/LerianStudio/fetcher/pkg/mongodb"
-	"github.com/LerianStudio/lib-commons/v3/commons"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v3/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v4/commons"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -33,11 +35,11 @@ func (cr *ConnectionMongoDBRepository) EnsureIndexes(ctx context.Context) error 
 		attribute.String("app.request.collection", constant.MongoCollectionConnection),
 	)
 
-	logger.Infof("Creating indexes for %s collection", constant.MongoCollectionConnection)
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Creating indexes for %s collection", constant.MongoCollectionConnection))
 
 	db, err := cr.getDatabase(ctx)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to get database", err)
 		return err
 	}
 
@@ -76,7 +78,7 @@ func (cr *ConnectionMongoDBRepository) EnsureIndexes(ctx context.Context) error 
 		{
 			Keys: bson.D{
 				{Key: "organization_id", Value: 1},
-				{Key: "product_name", Value: 1},
+				{Key: "product_id", Value: 1},
 				{Key: "config_name", Value: 1},
 			},
 			Options: options.Index().
@@ -84,13 +86,13 @@ func (cr *ConnectionMongoDBRepository) EnsureIndexes(ctx context.Context) error 
 				SetUnique(true).
 				SetPartialFilterExpression(bson.D{
 					{Key: "deleted_at", Value: nil},
-					{Key: "product_name", Value: bson.D{{Key: "$gt", Value: ""}}},
+					{Key: "product_id", Value: bson.D{{Key: "$type", Value: "binData"}}},
 				}),
 		},
 		{
 			Keys: bson.D{
 				{Key: "organization_id", Value: 1},
-				{Key: "product_name", Value: 1},
+				{Key: "product_id", Value: 1},
 				{Key: "created_at", Value: -1},
 			},
 			Options: options.Index().
@@ -100,13 +102,13 @@ func (cr *ConnectionMongoDBRepository) EnsureIndexes(ctx context.Context) error 
 		{
 			Keys: bson.D{
 				{Key: "organization_id", Value: 1},
-				{Key: "product_name", Value: 1},
+				{Key: "product_id", Value: 1},
 			},
 			Options: options.Index().
 				SetName("idx_connection_unassigned").
 				SetPartialFilterExpression(bson.D{
 					{Key: "deleted_at", Value: nil},
-					{Key: "product_name", Value: ""},
+					{Key: "product_id", Value: nil},
 				}),
 		},
 	}
@@ -118,22 +120,22 @@ func (cr *ConnectionMongoDBRepository) EnsureIndexes(ctx context.Context) error 
 	ctx, cancel := context.WithTimeout(ctx, indexCreateTimeout)
 	defer cancel()
 
-	logger.Infof("Attempting to create %d indexes for %s collection", len(indexes), constant.MongoCollectionConnection)
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Attempting to create %d indexes for %s collection", len(indexes), constant.MongoCollectionConnection))
 
 	indexNames, err := coll.Indexes().CreateMany(ctx, indexes)
 	if err != nil {
 		if sharedMongo.IsIndexConflictError(err) {
-			logger.Infof("Indexes for %s already exist", constant.MongoCollectionConnection)
+			logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Indexes for %s already exist", constant.MongoCollectionConnection))
 			return nil
 		}
 
-		libOpentelemetry.HandleSpanError(&span, "Failed to create connection indexes", err)
-		logger.Errorf("Failed to create indexes for %s: %v", constant.MongoCollectionConnection, err)
+		libOpentelemetry.HandleSpanError(span, "Failed to create connection indexes", err)
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to create indexes for %s: %v", constant.MongoCollectionConnection, err))
 
 		return err
 	}
 
-	logger.Infof("Successfully created %d indexes for %s collection: %v", len(indexNames), constant.MongoCollectionConnection, indexNames)
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Successfully created %d indexes for %s collection: %v", len(indexNames), constant.MongoCollectionConnection, indexNames))
 
 	return nil
 }
@@ -150,11 +152,11 @@ func (cr *ConnectionMongoDBRepository) DropIndexes(ctx context.Context) error {
 		attribute.String("app.request.collection", constant.MongoCollectionConnection),
 	)
 
-	logger.Warnf("Dropping all custom indexes for %s collection", constant.MongoCollectionConnection)
+	logger.Log(ctx, libLog.LevelWarn, fmt.Sprintf("Dropping all custom indexes for %s collection", constant.MongoCollectionConnection))
 
 	db, err := cr.getDatabase(ctx)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to get database", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to get database", err)
 		return err
 	}
 
@@ -165,14 +167,14 @@ func (cr *ConnectionMongoDBRepository) DropIndexes(ctx context.Context) error {
 
 	droppedIndexes, err := coll.Indexes().DropAll(ctx)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to drop connection indexes", err)
-		logger.Errorf("Failed to drop indexes for %s: %v", constant.MongoCollectionConnection, err)
+		libOpentelemetry.HandleSpanError(span, "Failed to drop connection indexes", err)
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to drop indexes for %s: %v", constant.MongoCollectionConnection, err))
 
 		return err
 	}
 
-	logger.Infof("Dropped indexes: %v", droppedIndexes)
-	logger.Infof("Successfully dropped all custom indexes for %s collection", constant.MongoCollectionConnection)
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Dropped indexes: %v", droppedIndexes))
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Successfully dropped all custom indexes for %s collection", constant.MongoCollectionConnection))
 
 	return nil
 }

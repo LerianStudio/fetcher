@@ -45,7 +45,7 @@ func WithPGInitFile(hostPath string, containerFileName string) PostgresOption {
 				testcontainers.ContainerFile{
 					HostFilePath:      hostPath,
 					ContainerFilePath: "/docker-entrypoint-initdb.d/" + containerFileName,
-					FileMode:          0755,
+					FileMode:          0o755,
 				},
 			),
 		)

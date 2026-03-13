@@ -84,6 +84,26 @@ func TestParseMessage_InvalidJSON(t *testing.T) {
 	}
 }
 
+func TestParseMessage_JSONNull(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+
+	ctx := testContext()
+	logger := testLogger()
+
+	result, err := uc.parseMessage(ctx, []byte(`null`), nil, nil, logger)
+	if err == nil {
+		t.Fatal("expected error for null JSON payload, got nil")
+	}
+
+	if result != nil {
+		t.Fatalf("expected nil result for null JSON payload, got %+v", result)
+	}
+}
+
 // TestParseMessage_InvalidJSONWithJobIDInHeaders tests that jobID can be extracted from headers.
 func TestParseMessage_InvalidJSONWithJobIDInHeaders(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -970,7 +990,6 @@ func TestParseMessage_WithNilError(t *testing.T) {
 	}
 
 	result, err := uc.parseMessage(ctx, body, nil, nil, logger)
-
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -1363,8 +1382,8 @@ func TestParseMessage_NullPayload(t *testing.T) {
 			if !ok {
 				t.Fatalf("expected metadata.error as string, got %T", metadata["error"])
 			}
-			if !strings.Contains(errValue, "message payload is null") {
-				t.Fatalf("expected metadata.error to contain null payload message, got %q", errValue)
+			if !strings.Contains(errValue, "empty message payload") {
+				t.Fatalf("expected metadata.error to contain empty payload message, got %q", errValue)
 			}
 
 			return nil
@@ -1375,8 +1394,8 @@ func TestParseMessage_NullPayload(t *testing.T) {
 		t.Fatal("expected error for null payload, got nil")
 	}
 
-	if !strings.Contains(err.Error(), "message payload is null") {
-		t.Fatalf("expected null payload error, got: %v", err)
+	if !strings.Contains(err.Error(), "empty message payload") {
+		t.Fatalf("expected empty payload error, got: %v", err)
 	}
 
 	if result != nil {
@@ -2104,7 +2123,7 @@ func TestCompleteJob_CompletedStatusUpdateError(t *testing.T) {
 		Publish(gomock.Any(), "test-exchange", "job.failed.test-service", gomock.Any()).
 		Return(nil)
 
-	err := uc.completeJob(ctx, tracer, message, resultData, time.Now().Add(-time.Second), &span, logger)
+	err := uc.completeJob(ctx, tracer, message, resultData, time.Now().Add(-time.Second), span, logger)
 	if err == nil {
 		t.Fatal("expected error when completed status update fails, got nil")
 	}
@@ -2433,7 +2452,7 @@ func TestCompleteJob_NotificationFailure_StillReturnsNil(t *testing.T) {
 		Publish(gomock.Any(), "test-exchange", "job.completed.test-service", gomock.Any()).
 		Return(errors.New("connection refused"))
 
-	err := uc.completeJob(ctx, tracer, message, resultData, time.Now().Add(-time.Second), &span, logger)
+	err := uc.completeJob(ctx, tracer, message, resultData, time.Now().Add(-time.Second), span, logger)
 	if err != nil {
 		t.Fatalf("expected nil error (DB is source of truth), got: %v", err)
 	}
@@ -2483,7 +2502,7 @@ func TestCompleteJob_NilResultData(t *testing.T) {
 		Publish(gomock.Any(), "test-exchange", "job.failed.test-service", gomock.Any()).
 		Return(nil)
 
-	err := uc.completeJob(ctx, tracer, message, nil, time.Now().Add(-time.Second), &span, logger)
+	err := uc.completeJob(ctx, tracer, message, nil, time.Now().Add(-time.Second), span, logger)
 	if err == nil {
 		t.Fatal("expected error for nil resultData, got nil")
 	}

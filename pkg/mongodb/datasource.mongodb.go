@@ -9,12 +9,11 @@ import (
 
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/model/job"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	libMongo "github.com/LerianStudio/lib-commons/v4/commons/mongo"
 
-	"github.com/LerianStudio/lib-commons/v3/commons/log"
-
-	libCommons "github.com/LerianStudio/lib-commons/v3/commons"
-	libMongo "github.com/LerianStudio/lib-commons/v3/commons/mongo"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v3/commons/opentelemetry"
+	libCommons "github.com/LerianStudio/lib-commons/v4/commons"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
 	"github.com/google/uuid"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -47,46 +46,51 @@ type FieldInformation struct {
 
 // ExternalDataSource provides an interface for interacting with a MongoDB database connection.
 type ExternalDataSource struct {
-	connection *libMongo.MongoConnection
+	connection *libMongo.Client
 	Database   string
+	logger     libLog.Logger
 }
 
 // NewDataSourceRepository creates a new ExternalDataSource instance using the provided MongoDB connection string and database name.
 // Returns nil and error if connection fails.
-func NewDataSourceRepository(mongoURI string, dbName string, logger log.Logger) (*ExternalDataSource, error) {
-	mongoConnection := &libMongo.MongoConnection{
-		ConnectionStringSource: mongoURI,
-		Database:               dbName,
-		MaxPoolSize:            100,
-		Logger:                 logger,
-	}
-
-	if _, err := mongoConnection.GetDB(context.Background()); err != nil {
-		logger.Errorf("Failed to establish MongoDB connection: %v", err)
+func NewDataSourceRepository(mongoURI string, dbName string, logger libLog.Logger) (*ExternalDataSource, error) {
+	mongoConnection, err := libMongo.NewClient(context.Background(), libMongo.Config{
+		URI:         mongoURI,
+		Database:    dbName,
+		MaxPoolSize: 100,
+		Logger:      logger,
+	})
+	if err != nil {
+		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to establish MongoDB connection: %v", err))
 		return nil, fmt.Errorf("failed to establish MongoDB connection: %w", err)
 	}
 
 	return &ExternalDataSource{
 		connection: mongoConnection,
 		Database:   dbName,
+		logger:     logger,
 	}, nil
 }
 
 // CloseConnection close the connection with MongoDB.
 func (ds *ExternalDataSource) CloseConnection(ctx context.Context) error {
-	if ds.connection.DB != nil {
-		ds.connection.Logger.Info("Closing MongoDB connection...")
-
-		err := ds.connection.DB.Disconnect(ctx)
-		if err != nil {
-			ds.connection.Logger.Errorf("Error closing MongoDB connection: %v", err)
-			return fmt.Errorf("failed to close MongoDB connection: %w", err)
+	if ds.connection != nil {
+		if ds.logger != nil {
+			ds.logger.Log(ctx, libLog.LevelInfo, "Closing MongoDB connection...")
 		}
 
-		ds.connection.DB = nil
-		ds.connection.Connected = false
+		err := ds.connection.Close(ctx)
+		if err != nil {
+			if ds.logger != nil {
+				ds.logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Error closing MongoDB connection: %v", err))
+			}
 
-		ds.connection.Logger.Info("MongoDB connection closed successfully.")
+			return err
+		}
+
+		if ds.logger != nil {
+			ds.logger.Log(ctx, libLog.LevelInfo, "MongoDB connection closed successfully.")
+		}
 	}
 
 	return nil
@@ -96,25 +100,25 @@ func (ds *ExternalDataSource) CloseConnection(ctx context.Context) error {
 func (ds *ExternalDataSource) Query(ctx context.Context, collection string, fields []string, filter map[string][]any) ([]map[string]any, error) {
 	logger, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
 
-	logger.Infof("Querying %s collection with fields %v", collection, fields)
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Querying %s collection with fields %v", collection, fields))
 
-	ctx, span := tracer.Start(ctx, "mongodb.data_source.query")
+	_, span := tracer.Start(ctx, "mongodb.data_source.query")
 	defer span.End()
 
 	span.SetAttributes(
 		attribute.String("app.request.request_id", reqID),
 	)
 
-	err := libOpentelemetry.SetSpanAttributesFromStruct(&span, "app.request.repository_filter", map[string]any{
+	err := libOpentelemetry.SetSpanAttributesFromValue(span, "app.request.repository_filter", map[string]any{
 		"collection": collection,
 		"fields":     fields,
 		"filter":     filter,
-	})
+	}, nil)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to convert repository filter to JSON string", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to convert repository filter to JSON string", err)
 	}
 
-	client, err := ds.connection.GetDB(ctx)
+	client, err := ds.connection.Client(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -166,7 +170,7 @@ func (ds *ExternalDataSource) Query(ctx context.Context, collection string, fiel
 	for cursor.Next(queryCtx) {
 		var result bson.M
 		if err := cursor.Decode(&result); err != nil {
-			logger.Warnf("Error decoding document: %v", err)
+			logger.Log(queryCtx, libLog.LevelWarn, fmt.Sprintf("Error decoding document: %v", err))
 			continue
 		}
 
@@ -255,20 +259,20 @@ func convertBsonValue(value any) any {
 func (ds *ExternalDataSource) GetDatabaseSchema(ctx context.Context) ([]CollectionSchema, error) {
 	logger, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
 
-	ctx, span := tracer.Start(ctx, "mongodb.data_source.get_database_schema")
+	_, span := tracer.Start(ctx, "mongodb.data_source.get_database_schema")
 	defer span.End()
 
 	span.SetAttributes(
 		attribute.String("app.request.request_id", reqID),
 	)
 
-	logger.Info("Retrieving MongoDB schema information using hybrid approach")
+	logger.Log(ctx, libLog.LevelInfo, "Retrieving MongoDB schema information using hybrid approach")
 
 	// Create timeout context for schema discovery (longer timeout for this operation)
 	schemaCtx, cancel := context.WithTimeout(ctx, constant.SchemaDiscoveryTimeout)
 	defer cancel()
 
-	client, err := ds.connection.GetDB(ctx)
+	client, err := ds.connection.Client(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -289,18 +293,18 @@ func (ds *ExternalDataSource) GetDatabaseSchema(ctx context.Context) ([]Collecti
 	for _, collName := range collections {
 		coll := database.Collection(collName)
 
-		logger.Infof("Analyzing collection: %s", collName)
+		logger.Log(schemaCtx, libLog.LevelInfo, fmt.Sprintf("Analyzing collection: %s", collName))
 
 		allFields, err := ds.discoverAllFieldsWithAggregation(schemaCtx, coll)
 		if err != nil {
-			logger.Warnf("Aggregation failed for collection %s, falling back to sampling: %v", collName, err)
+			logger.Log(schemaCtx, libLog.LevelWarn, fmt.Sprintf("Aggregation failed for collection %s, falling back to sampling: %v", collName, err))
 
 			allFields = make(map[string]bool)
 		}
 
 		fieldTypes, additionalFields, err := ds.sampleMultipleDocuments(schemaCtx, coll)
 		if err != nil {
-			logger.Warnf("Document sampling failed for collection %s: %v", collName, err)
+			logger.Log(schemaCtx, libLog.LevelWarn, fmt.Sprintf("Document sampling failed for collection %s: %v", collName, err))
 
 			fieldTypes = make(map[string]string)
 			additionalFields = make(map[string]bool)
@@ -327,11 +331,11 @@ func (ds *ExternalDataSource) GetDatabaseSchema(ctx context.Context) ([]Collecti
 			})
 		}
 
-		logger.Infof("Discovered %d fields in collection %s", len(collSchema.Fields), collName)
+		logger.Log(schemaCtx, libLog.LevelInfo, fmt.Sprintf("Discovered %d fields in collection %s", len(collSchema.Fields), collName))
 		schema = append(schema, collSchema)
 	}
 
-	logger.Infof("Retrieved schema for %d collections", len(schema))
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Retrieved schema for %d collections", len(schema)))
 
 	return schema, nil
 }
@@ -578,25 +582,25 @@ func (ds *ExternalDataSource) isMoreSpecificType(newType, currentType string) bo
 func (ds *ExternalDataSource) QueryWithAdvancedFilters(ctx context.Context, collection string, fields []string, filter map[string]job.FilterCondition) ([]map[string]any, error) {
 	logger, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
 
-	logger.Infof("Querying %s collection with advanced filters on fields %v", collection, fields)
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Querying %s collection with advanced filters on fields %v", collection, fields))
 
-	ctx, span := tracer.Start(ctx, "mongodb.data_source.query_with_advanced_filters")
+	_, span := tracer.Start(ctx, "mongodb.data_source.query_with_advanced_filters")
 	defer span.End()
 
 	span.SetAttributes(
 		attribute.String("app.request.request_id", reqID),
 	)
 
-	err := libOpentelemetry.SetSpanAttributesFromStruct(&span, "app.request.repository_filter", map[string]any{
+	err := libOpentelemetry.SetSpanAttributesFromValue(span, "app.request.repository_filter", map[string]any{
 		"collection": collection,
 		"fields":     fields,
 		"filter":     filter,
-	})
+	}, nil)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to convert repository filter to JSON string", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to convert repository filter to JSON string", err)
 	}
 
-	client, err := ds.connection.GetDB(ctx)
+	client, err := ds.connection.Client(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -687,14 +691,14 @@ func (ds *ExternalDataSource) processQueryResults(
 	queryCtx context.Context,
 	cursor *mongo.Cursor,
 	collection string,
-	logger log.Logger,
+	logger libLog.Logger,
 ) ([]map[string]any, error) {
 	var results []map[string]any
 
 	for cursor.Next(queryCtx) {
 		var result bson.M
 		if err := cursor.Decode(&result); err != nil {
-			logger.Warnf("Error decoding document: %v", err)
+			logger.Log(queryCtx, libLog.LevelWarn, fmt.Sprintf("Error decoding document: %v", err))
 			continue
 		}
 

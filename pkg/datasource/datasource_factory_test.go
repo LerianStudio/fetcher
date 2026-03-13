@@ -7,14 +7,14 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/model/datasource"
-	"github.com/LerianStudio/lib-commons/v3/commons/log"
+	"github.com/LerianStudio/lib-commons/v4/commons/log"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
 
-func testConnection(dbType model.DBType) *model.Connection {
+func testConnectionV2(dbType model.DBType) *model.Connection {
 	return &model.Connection{
 		ID:                   uuid.New(),
 		OrganizationID:       uuid.New(),
@@ -38,7 +38,7 @@ func TestNewDataSourceFromConnection_NilConnection(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockCryptor := crypto.NewMockCryptor(ctrl)
-	logger := &log.GoLogger{Level: log.DebugLevel}
+	logger := &log.GoLogger{Level: log.LevelDebug}
 
 	ds, err := NewDataSourceFromConnection(context.Background(), nil, mockCryptor, logger)
 	assert.Nil(t, ds)
@@ -47,8 +47,8 @@ func TestNewDataSourceFromConnection_NilConnection(t *testing.T) {
 }
 
 func TestNewDataSourceFromConnection_NilCryptor(t *testing.T) {
-	conn := testConnection(model.TypePostgreSQL)
-	logger := &log.GoLogger{Level: log.DebugLevel}
+	conn := testConnectionV2(model.TypePostgreSQL)
+	logger := &log.GoLogger{Level: log.LevelDebug}
 
 	ds, err := NewDataSourceFromConnection(context.Background(), conn, nil, logger)
 	assert.Nil(t, ds)
@@ -65,9 +65,9 @@ func TestNewDataSourceFromConnection_UnsupportedType(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockCryptor := crypto.NewMockCryptor(ctrl)
-	logger := &log.GoLogger{Level: log.DebugLevel}
+	logger := &log.GoLogger{Level: log.LevelDebug}
 
-	conn := testConnection(model.DBType("CASSANDRA"))
+	conn := testConnectionV2(model.DBType("CASSANDRA"))
 
 	ds, err := NewDataSourceFromConnection(context.Background(), conn, mockCryptor, logger)
 	assert.Nil(t, ds)
@@ -80,7 +80,7 @@ func TestNewDataSourceFromConnection_UnsupportedType(t *testing.T) {
 // ============================================================================
 
 func TestNewDataSourceConfigFromConnection(t *testing.T) {
-	conn := testConnection(model.TypePostgreSQL)
+	conn := testConnectionV2(model.TypePostgreSQL)
 	conn.Port = 5432
 
 	config := newDataSourceConfigFromConnection(conn)
@@ -97,7 +97,7 @@ func TestNewDataSourceConfigFromConnection(t *testing.T) {
 }
 
 func TestNewDataSourceConfigFromConnection_WithSSL(t *testing.T) {
-	conn := testConnection(model.TypePostgreSQL)
+	conn := testConnectionV2(model.TypePostgreSQL)
 	conn.SSL = &model.SSLConfig{
 		Mode: "require",
 	}
@@ -108,7 +108,7 @@ func TestNewDataSourceConfigFromConnection_WithSSL(t *testing.T) {
 }
 
 func TestNewDataSourceConfigFromConnection_NilSSL(t *testing.T) {
-	conn := testConnection(model.TypePostgreSQL)
+	conn := testConnectionV2(model.TypePostgreSQL)
 	conn.SSL = nil
 
 	config := newDataSourceConfigFromConnection(conn)
@@ -127,9 +127,9 @@ func TestNewDataSourceFromConnection_DispatchesMongoDB(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockCryptor := crypto.NewMockCryptor(ctrl)
-	logger := &log.GoLogger{Level: log.DebugLevel}
+	logger := &log.GoLogger{Level: log.LevelDebug}
 
-	conn := testConnection(model.TypeMongoDB)
+	conn := testConnectionV2(model.TypeMongoDB)
 	conn.Port = 27017
 
 	// Decrypt returns a password so the code proceeds past decryption to the connection attempt
@@ -147,9 +147,9 @@ func TestNewDataSourceFromConnection_DispatchesPostgreSQL(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockCryptor := crypto.NewMockCryptor(ctrl)
-	logger := &log.GoLogger{Level: log.DebugLevel}
+	logger := &log.GoLogger{Level: log.LevelDebug}
 
-	conn := testConnection(model.TypePostgreSQL)
+	conn := testConnectionV2(model.TypePostgreSQL)
 
 	mockCryptor.EXPECT().Decrypt(gomock.Any(), "encrypted", "v1").Return("password123", nil)
 
@@ -165,9 +165,9 @@ func TestNewDataSourceFromConnection_DispatchesMySQL(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockCryptor := crypto.NewMockCryptor(ctrl)
-	logger := &log.GoLogger{Level: log.DebugLevel}
+	logger := &log.GoLogger{Level: log.LevelDebug}
 
-	conn := testConnection(model.TypeMySQL)
+	conn := testConnectionV2(model.TypeMySQL)
 	conn.Port = 3306
 
 	mockCryptor.EXPECT().Decrypt(gomock.Any(), "encrypted", "v1").Return("password123", nil)
@@ -184,9 +184,9 @@ func TestNewDataSourceFromConnection_DispatchesOracle(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockCryptor := crypto.NewMockCryptor(ctrl)
-	logger := &log.GoLogger{Level: log.DebugLevel}
+	logger := &log.GoLogger{Level: log.LevelDebug}
 
-	conn := testConnection(model.TypeOracle)
+	conn := testConnectionV2(model.TypeOracle)
 	conn.Port = 1521
 	meta := map[string]any{"serviceName": "ORCL"}
 	conn.Metadata = &meta
@@ -205,9 +205,9 @@ func TestNewDataSourceFromConnection_DispatchesSQLServer(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockCryptor := crypto.NewMockCryptor(ctrl)
-	logger := &log.GoLogger{Level: log.DebugLevel}
+	logger := &log.GoLogger{Level: log.LevelDebug}
 
-	conn := testConnection(model.TypeSQLServer)
+	conn := testConnectionV2(model.TypeSQLServer)
 	conn.Port = 1433
 
 	mockCryptor.EXPECT().Decrypt(gomock.Any(), "encrypted", "v1").Return("password123", nil)
@@ -228,9 +228,9 @@ func TestNewDataSourceFromConnection_OracleMissingServiceName(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockCryptor := crypto.NewMockCryptor(ctrl)
-	logger := &log.GoLogger{Level: log.DebugLevel}
+	logger := &log.GoLogger{Level: log.LevelDebug}
 
-	conn := testConnection(model.TypeOracle)
+	conn := testConnectionV2(model.TypeOracle)
 	conn.Port = 1521
 	conn.Metadata = nil // No metadata
 
@@ -251,9 +251,9 @@ func TestNewDataSourceFromConnection_PostgreSQLInvalidSSLMode(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockCryptor := crypto.NewMockCryptor(ctrl)
-	logger := &log.GoLogger{Level: log.DebugLevel}
+	logger := &log.GoLogger{Level: log.LevelDebug}
 
-	conn := testConnection(model.TypePostgreSQL)
+	conn := testConnectionV2(model.TypePostgreSQL)
 	conn.SSL = &model.SSLConfig{
 		Mode: "invalid-mode; DROP TABLE users;--",
 	}
@@ -270,9 +270,9 @@ func TestNewDataSourceFromConnection_MySQLInvalidSSLMode(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockCryptor := crypto.NewMockCryptor(ctrl)
-	logger := &log.GoLogger{Level: log.DebugLevel}
+	logger := &log.GoLogger{Level: log.LevelDebug}
 
-	conn := testConnection(model.TypeMySQL)
+	conn := testConnectionV2(model.TypeMySQL)
 	conn.Port = 3306
 	conn.SSL = &model.SSLConfig{
 		Mode: "malicious-mode",
@@ -290,9 +290,9 @@ func TestNewDataSourceFromConnection_MongoDBInvalidSSLMode(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockCryptor := crypto.NewMockCryptor(ctrl)
-	logger := &log.GoLogger{Level: log.DebugLevel}
+	logger := &log.GoLogger{Level: log.LevelDebug}
 
-	conn := testConnection(model.TypeMongoDB)
+	conn := testConnectionV2(model.TypeMongoDB)
 	conn.Port = 27017
 	conn.SSL = &model.SSLConfig{
 		Mode: "inject; evil",
@@ -310,7 +310,7 @@ func TestNewDataSourceFromConnection_MongoDBInvalidSSLMode(t *testing.T) {
 // ============================================================================
 
 func TestNewDataSourceFromConnectionWithLogger(t *testing.T) {
-	logger := &log.GoLogger{Level: log.DebugLevel}
+	logger := &log.GoLogger{Level: log.LevelDebug}
 
 	factory := NewDataSourceFromConnectionWithLogger(logger)
 	require.NotNil(t, factory)
@@ -327,7 +327,7 @@ func TestNewDataSourceFromConnectionWithLogger(t *testing.T) {
 // ============================================================================
 
 func TestDataSourceFactory_TypeSignature(t *testing.T) {
-	logger := &log.GoLogger{Level: log.DebugLevel}
+	logger := &log.GoLogger{Level: log.LevelDebug}
 
 	// Verify NewDataSourceFromConnectionWithLogger returns a compatible function
 	var factory DataSourceFactory = NewDataSourceFromConnectionWithLogger(logger)

@@ -14,8 +14,9 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/model"
 	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
 
-	"github.com/LerianStudio/lib-commons/v3/commons"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v3/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v4/commons"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
@@ -57,7 +58,7 @@ func (s *GetConnectionSchema) Execute(ctx context.Context, organizationID, conne
 	// Find connection by ID
 	conn, err := s.connRepo.FindByID(ctx, connectionID, organizationID)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "failed to find connection", err)
+		libOpentelemetry.HandleSpanError(span, "failed to find connection", err)
 		return nil, fmt.Errorf("failed to find connection by id: %w", err)
 	}
 
@@ -71,8 +72,11 @@ func (s *GetConnectionSchema) Execute(ctx context.Context, organizationID, conne
 	// Create datasource
 	ds, err := s.dataSourceFactory(ctx, conn, s.cryptor)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "failed to create datasource", err)
-		logger.Errorf("failed to create datasource for connection %s: %v", connectionID, err)
+		libOpentelemetry.HandleSpanError(span, "failed to create datasource", err)
+		logger.Log(ctx, libLog.LevelError, "failed to create datasource",
+			libLog.String("connection_id", connectionID.String()),
+			libLog.Err(err),
+		)
 
 		return nil, pkg.ResponseError{
 			Code:    http.StatusInternalServerError,
@@ -83,15 +87,21 @@ func (s *GetConnectionSchema) Execute(ctx context.Context, organizationID, conne
 
 	defer func() {
 		if closeErr := ds.Close(ctx); closeErr != nil {
-			logger.Warnf("failed to close datasource for connection %s: %v", connectionID, closeErr)
+			logger.Log(ctx, libLog.LevelWarn, "failed to close datasource",
+				libLog.String("connection_id", connectionID.String()),
+				libLog.Err(closeErr),
+			)
 		}
 	}()
 
 	// Get schema info
 	schema, err := ds.GetSchemaInfo(ctx, nil)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "failed to get schema info", err)
-		logger.Errorf("failed to get schema info for connection %s: %v", connectionID, err)
+		libOpentelemetry.HandleSpanError(span, "failed to get schema info", err)
+		logger.Log(ctx, libLog.LevelError, "failed to get schema info",
+			libLog.String("connection_id", connectionID.String()),
+			libLog.Err(err),
+		)
 
 		return nil, pkg.ResponseError{
 			Code:    http.StatusInternalServerError,

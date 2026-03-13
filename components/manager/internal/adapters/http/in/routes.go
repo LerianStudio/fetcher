@@ -3,9 +3,9 @@ package in
 import (
 	"github.com/LerianStudio/fetcher/pkg/net/http"
 	middlewareAuth "github.com/LerianStudio/lib-auth/v2/auth/middleware"
-	"github.com/LerianStudio/lib-commons/v3/commons/log"
-	commonsHttp "github.com/LerianStudio/lib-commons/v3/commons/net/http"
-	"github.com/LerianStudio/lib-commons/v3/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v4/commons/log"
+	commonsHttp "github.com/LerianStudio/lib-commons/v4/commons/net/http"
+	"github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
 	libLicense "github.com/LerianStudio/lib-license-go/v2/middleware"
 
 	"github.com/gofiber/fiber/v2"
@@ -35,7 +35,7 @@ func NewRoutes(
 	f := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
 		ErrorHandler: func(ctx *fiber.Ctx, err error) error {
-			return commonsHttp.HandleFiberError(ctx, err)
+			return commonsHttp.FiberErrorHandler(ctx, err)
 		},
 	})
 	tlMid := commonsHttp.NewTelemetryMiddleware(tl)

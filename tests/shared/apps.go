@@ -287,7 +287,7 @@ func StartManager(t *testing.T, ctx context.Context, env *AppEnv, cfg AppStartCo
 //   - SkipBuild=false: Builds the image from components/worker/Dockerfile using BuildKit secrets
 //
 // The container is configured with:
-//   - Log-based readiness detection (waits for "Starting consumer for queue" message)
+//   - Log-based readiness detection (waits for the worker consumer startup log message)
 //   - Shared Docker network for container-to-container communication
 //   - All required environment variables from AppEnv
 //
@@ -306,7 +306,7 @@ func StartWorker(t *testing.T, ctx context.Context, env *AppEnv, cfg AppStartCon
 	builder := e2ekit.New(t).
 		WithContext(ctx).
 		WithEnv(env.WorkerEnv()).
-		WithWait(e2ekit.WaitLog("Starting consumer for queue", 60*time.Second))
+		WithWait(e2ekit.WaitLog("starting consumer for queue", 60*time.Second))
 
 	// Add to shared network for container-to-container communication
 	if env.Network != "" {

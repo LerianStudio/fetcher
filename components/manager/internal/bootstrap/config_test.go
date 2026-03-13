@@ -1,33 +1,233 @@
 package bootstrap
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
 
-	"github.com/LerianStudio/fetcher/pkg"
-	"github.com/LerianStudio/lib-commons/v3/commons/zap"
-
 	cacheRepo "github.com/LerianStudio/fetcher/components/manager/internal/adapters/cache"
+	"github.com/LerianStudio/fetcher/pkg"
+	"github.com/LerianStudio/fetcher/pkg/crypto"
+	"github.com/LerianStudio/fetcher/pkg/model"
+	redisCache "github.com/LerianStudio/fetcher/pkg/redis"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	libOtel "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
+	tmclient "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/client"
+	"github.com/LerianStudio/lib-commons/v4/commons/zap"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func TestConfig_StructFields(t *testing.T) {
-	cfg := &Config{
-		EnvName:       "test",
-		ServerAddress: "localhost:8080",
-		LogLevel:      "info",
+func testManagerBootstrapLogger() *libLog.GoLogger {
+	return &libLog.GoLogger{Level: libLog.LevelError}
+}
+
+type stubSchemaCacheStore struct{}
+
+func (stubSchemaCacheStore) Get(context.Context, string) (model.DataSourceSchema, bool, error) {
+	return model.DataSourceSchema{}, false, nil
+}
+
+func (stubSchemaCacheStore) Set(context.Context, string, model.DataSourceSchema, time.Duration) error {
+	return nil
+}
+
+func (stubSchemaCacheStore) Delete(context.Context, string) error {
+	return nil
+}
+
+func (stubSchemaCacheStore) Clear(context.Context) error {
+	return nil
+}
+
+func (stubSchemaCacheStore) IsHealthy(context.Context) bool {
+	return true
+}
+
+func TestConfigStruct(t *testing.T) {
+	cfg := &Config{EnvName: "test", ServerAddress: "localhost:8080", LogLevel: "info"}
+	assert.Equal(t, "test", cfg.EnvName)
+	assert.Equal(t, "localhost:8080", cfg.ServerAddress)
+	assert.Equal(t, "info", cfg.LogLevel)
+}
+
+func TestResolveZapEnvironment(t *testing.T) {
+	assert.Equal(t, zap.EnvironmentProduction, resolveZapEnvironment("prod"))
+	assert.Equal(t, zap.EnvironmentStaging, resolveZapEnvironment("stage"))
+	assert.Equal(t, zap.EnvironmentDevelopment, resolveZapEnvironment("dev"))
+	assert.Equal(t, zap.EnvironmentLocal, resolveZapEnvironment("unknown"))
+}
+
+func TestWrapBootstrapError(t *testing.T) {
+	assert.NoError(t, wrapBootstrapError("noop", nil))
+
+	err := wrapBootstrapError("decode key", errors.New("boom"))
+	require.Error(t, err)
+	assert.EqualError(t, err, "decode key: boom")
+}
+
+func TestLoadConfig_ReturnsError(t *testing.T) {
+	original := setConfigFromEnvVars
+	t.Cleanup(func() { setConfigFromEnvVars = original })
+
+	setConfigFromEnvVars = func(any) error {
+		return errors.New("config load failed")
 	}
 
-	if cfg.EnvName != "test" {
-		t.Errorf("Expected EnvName to be 'test', got '%s'", cfg.EnvName)
+	cfg, err := loadConfig()
+	assert.Nil(t, cfg)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "config load failed")
+}
+
+func TestInitLoggerAndTelemetry_ReturnsApplyGlobalsError(t *testing.T) {
+	originalLogger := newManagerLogger
+	originalTelemetry := newManagerTelemetry
+	originalApply := applyTelemetryGlobals
+	t.Cleanup(func() {
+		newManagerLogger = originalLogger
+		newManagerTelemetry = originalTelemetry
+		applyTelemetryGlobals = originalApply
+	})
+
+	newManagerLogger = func(zap.Config) (libLog.Logger, error) {
+		return testManagerBootstrapLogger(), nil
+	}
+	newManagerTelemetry = func(libOtel.TelemetryConfig) (*libOtel.Telemetry, error) {
+		return &libOtel.Telemetry{}, nil
+	}
+	applyTelemetryGlobals = func(*libOtel.Telemetry) error {
+		return errors.New("apply globals failed")
 	}
 
-	if cfg.ServerAddress != "localhost:8080" {
-		t.Errorf("Expected ServerAddress to be 'localhost:8080', got '%s'", cfg.ServerAddress)
+	logger, telemetry, err := initLoggerAndTelemetry(&Config{EnvName: "local", LogLevel: "debug"})
+	assert.Nil(t, logger)
+	assert.Nil(t, telemetry)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "apply globals failed")
+}
+
+func TestInitCrypto_ReturnsWrappedError(t *testing.T) {
+	deps, err := initCrypto(&Config{AppEncryptionKey: "invalid", AppEncryptionKeyVersion: "v1"}, testManagerBootstrapLogger())
+	assert.Nil(t, deps)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "decode master encryption key")
+}
+
+func TestInitPlatformDependencies_ReturnsCacheError(t *testing.T) {
+	original := newSchemaCacheStore
+	t.Cleanup(func() { newSchemaCacheStore = original })
+
+	newSchemaCacheStore = func(redisCache.RedisConfig, libLog.Logger, time.Duration, string) (redisCache.Cache[model.DataSourceSchema], error) {
+		return nil, errors.New("cache init failed")
 	}
 
-	if cfg.LogLevel != "info" {
-		t.Errorf("Expected LogLevel to be 'info', got '%s'", cfg.LogLevel)
+	deps, err := initPlatformDependencies(&Config{}, testManagerBootstrapLogger(), nil)
+	assert.Nil(t, deps)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "initialize schema cache")
+}
+
+func TestInitServers_ReturnsAssembledService(t *testing.T) {
+	originalLoadConfig := loadConfigFn
+	originalLoggerAndTelemetry := initLoggerAndTelemetryFn
+	originalMongoRepos := initMongoRepositoriesFn
+	originalCrypto := initCryptoFn
+	originalPlatform := initPlatformDependenciesFn
+	originalAssemble := assembleServiceFn
+	t.Cleanup(func() {
+		loadConfigFn = originalLoadConfig
+		initLoggerAndTelemetryFn = originalLoggerAndTelemetry
+		initMongoRepositoriesFn = originalMongoRepos
+		initCryptoFn = originalCrypto
+		initPlatformDependenciesFn = originalPlatform
+		assembleServiceFn = originalAssemble
+	})
+
+	expectedService := &Service{}
+	loadConfigFn = func() (*Config, error) { return &Config{}, nil }
+	initLoggerAndTelemetryFn = func(*Config) (libLog.Logger, *libOtel.Telemetry, error) {
+		return testManagerBootstrapLogger(), &libOtel.Telemetry{}, nil
 	}
+	initMongoRepositoriesFn = func(context.Context, *Config, libLog.Logger) (*managerRepositories, error) {
+		return &managerRepositories{}, nil
+	}
+	initCryptoFn = func(*Config, libLog.Logger) (*managerCrypto, error) {
+		return &managerCrypto{service: &crypto.AESGCMService{}}, nil
+	}
+	initPlatformDependenciesFn = func(*Config, libLog.Logger, crypto.Signer) (*managerPlatformDependencies, error) {
+		return &managerPlatformDependencies{}, nil
+	}
+	assembleServiceFn = func(*Config, libLog.Logger, *libOtel.Telemetry, *managerRepositories, *crypto.AESGCMService, *managerPlatformDependencies) (*Service, error) {
+		return expectedService, nil
+	}
+
+	service, err := InitServers()
+	require.NoError(t, err)
+	assert.Same(t, expectedService, service)
+}
+
+func TestInitServers_PropagatesHelperErrors(t *testing.T) {
+	originalLoadConfig := loadConfigFn
+	originalLoggerAndTelemetry := initLoggerAndTelemetryFn
+	originalMongoRepos := initMongoRepositoriesFn
+	originalCrypto := initCryptoFn
+	originalPlatform := initPlatformDependenciesFn
+	originalAssemble := assembleServiceFn
+	t.Cleanup(func() {
+		loadConfigFn = originalLoadConfig
+		initLoggerAndTelemetryFn = originalLoggerAndTelemetry
+		initMongoRepositoriesFn = originalMongoRepos
+		initCryptoFn = originalCrypto
+		initPlatformDependenciesFn = originalPlatform
+		assembleServiceFn = originalAssemble
+	})
+
+	loadConfigFn = func() (*Config, error) {
+		return nil, errors.New("config load failed")
+	}
+
+	service, err := InitServers()
+	assert.Nil(t, service)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "config load failed")
+
+	loadConfigFn = func() (*Config, error) {
+		return &Config{}, nil
+	}
+	initLoggerAndTelemetryFn = func(*Config) (libLog.Logger, *libOtel.Telemetry, error) {
+		return nil, nil, errors.New("logger init failed")
+	}
+
+	service, err = InitServers()
+	assert.Nil(t, service)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "logger init failed")
+
+	loadConfigFn = func() (*Config, error) {
+		return &Config{}, nil
+	}
+	initLoggerAndTelemetryFn = func(*Config) (libLog.Logger, *libOtel.Telemetry, error) {
+		return testManagerBootstrapLogger(), &libOtel.Telemetry{}, nil
+	}
+	initMongoRepositoriesFn = func(context.Context, *Config, libLog.Logger) (*managerRepositories, error) {
+		return &managerRepositories{}, nil
+	}
+	initCryptoFn = func(*Config, libLog.Logger) (*managerCrypto, error) {
+		return &managerCrypto{service: &crypto.AESGCMService{}}, nil
+	}
+	initPlatformDependenciesFn = func(*Config, libLog.Logger, crypto.Signer) (*managerPlatformDependencies, error) {
+		return &managerPlatformDependencies{}, nil
+	}
+	assembleServiceFn = func(*Config, libLog.Logger, *libOtel.Telemetry, *managerRepositories, *crypto.AESGCMService, *managerPlatformDependencies) (*Service, error) {
+		return nil, errors.New("tenant middleware init failed")
+	}
+
+	service, err = InitServers()
+	assert.Nil(t, service)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "tenant middleware init failed")
 }
 
 func TestConfig_LoadFromEnvVars(t *testing.T) {
@@ -328,12 +528,18 @@ func TestGetRedisDB(t *testing.T) {
 }
 
 func TestInitMultiTenantMiddleware(t *testing.T) {
-	logger := zap.InitializeLogger()
+	logger := testManagerBootstrapLogger()
+
+	originalNewTenantManagerClient := newTenantManagerClient
+	t.Cleanup(func() {
+		newTenantManagerClient = originalNewTenantManagerClient
+	})
 
 	tests := []struct {
 		name        string
 		cfg         *Config
 		wantNil     bool
+		wantErr     string
 		description string
 	}{
 		{
@@ -378,11 +584,37 @@ func TestInitMultiTenantMiddleware(t *testing.T) {
 			wantNil:     false,
 			description: "zero threshold should apply default circuit breaker (5 failures, 30s timeout)",
 		},
+		{
+			name: "returns error when tenant manager client initialization fails",
+			cfg: &Config{
+				MultiTenantEnabled: true,
+				MultiTenantURL:     "http://tenant-manager:8080",
+			},
+			wantNil:     true,
+			wantErr:     "tenant client init failed",
+			description: "configured multi-tenant must fail fast when client creation fails",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			handler := initMultiTenantMiddleware(tt.cfg, logger)
+			newTenantManagerClient = originalNewTenantManagerClient
+			if tt.wantErr != "" {
+				newTenantManagerClient = func(string, libLog.Logger, ...tmclient.ClientOption) (*tmclient.Client, error) {
+					return nil, errors.New(tt.wantErr)
+				}
+			}
+
+			handler, err := initMultiTenantMiddleware(tt.cfg, logger)
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "create tenant manager client")
+				assert.Contains(t, err.Error(), tt.wantErr)
+				assert.Nil(t, handler)
+				return
+			}
+
+			require.NoError(t, err)
 			if tt.wantNil {
 				if handler != nil {
 					t.Errorf("initMultiTenantMiddleware() = non-nil, want nil: %s", tt.description)

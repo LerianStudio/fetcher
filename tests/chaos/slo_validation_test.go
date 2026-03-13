@@ -33,7 +33,6 @@ import (
 // - Success Rate: >= 95%
 // - P99 Latency: < 2s
 func TestSLO_ManagerAPI_UnderLatencyChaos(t *testing.T) {
-
 	ctx, cancel := context.WithTimeout(context.Background(), DefaultChaosTestTimeout)
 	defer cancel()
 
@@ -100,7 +99,6 @@ func TestSLO_ManagerAPI_UnderLatencyChaos(t *testing.T) {
 // - Job Success Rate: >= 90%
 // - P99 Duration: < 60s
 func TestSLO_WorkerProcessing_UnderChaos(t *testing.T) {
-
 	ctx, cancel := context.WithTimeout(context.Background(), LongChaosTestTimeout)
 	defer cancel()
 
@@ -184,7 +182,6 @@ func TestSLO_WorkerProcessing_UnderChaos(t *testing.T) {
 // SLO Threshold:
 // - Recovery Time: < 35s
 func TestSLO_SystemRecovery_AfterChaos(t *testing.T) {
-
 	ctx, cancel := context.WithTimeout(context.Background(), LongChaosTestTimeout)
 	defer cancel()
 
@@ -260,7 +257,6 @@ func TestSLO_SystemRecovery_AfterChaos(t *testing.T) {
 //
 // Purpose: Ensure observability and debugging capabilities
 func TestSLO_ErrorClassification(t *testing.T) {
-
 	ctx, cancel := context.WithTimeout(context.Background(), DefaultChaosTestTimeout)
 	defer cancel()
 

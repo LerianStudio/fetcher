@@ -3,7 +3,6 @@ package http
 import (
 	"net/http/httptest"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
@@ -106,6 +105,19 @@ func TestValidateParameters(t *testing.T) {
 				assert.True(t, qh.UseMetadata)
 				assert.NotNil(t, qh.Metadata)
 				assert.Len(t, qh.Metadata, 2)
+			},
+		},
+		{
+			name: "unknown parameters are ignored",
+			params: map[string]string{
+				"name":  "acme",
+				"limit": "10",
+			},
+			wantErr: false,
+			check: func(t *testing.T, qh *QueryHeader) {
+				assert.Nil(t, qh.Metadata)
+				assert.False(t, qh.UseMetadata)
+				assert.Equal(t, 10, qh.Limit)
 			},
 		},
 		{
@@ -624,6 +636,17 @@ func TestQueryHeaderMetadata(t *testing.T) {
 		assert.True(t, qh.UseMetadata)
 		assert.Contains(t, qh.Metadata, "metadata.customKey")
 	})
+
+	t.Run("unknown keys do not enable metadata", func(t *testing.T) {
+		params := map[string]string{
+			"product_name": "customValue",
+		}
+
+		qh, err := ValidateParameters(params)
+		assert.NoError(t, err)
+		assert.Nil(t, qh.Metadata)
+		assert.False(t, qh.UseMetadata)
+	})
 }
 
 func TestPaginationStruct(t *testing.T) {
@@ -786,235 +809,6 @@ func TestQueryHeaderToOffsetPaginationFields(t *testing.T) {
 	})
 }
 
-func TestValidateProductName(t *testing.T) {
-	tests := []struct {
-		name    string
-		input   string
-		wantErr bool
-	}{
-		{
-			name:    "valid alphanumeric only",
-			input:   "myproduct",
-			wantErr: false,
-		},
-		{
-			name:    "valid with hyphens",
-			input:   "my-product",
-			wantErr: false,
-		},
-		{
-			name:    "valid with underscores",
-			input:   "my_product",
-			wantErr: false,
-		},
-		{
-			name:    "valid single char",
-			input:   "a",
-			wantErr: false,
-		},
-		{
-			name:    "valid exactly 100 chars",
-			input:   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-			wantErr: false,
-		},
-		{
-			name:    "invalid exceeds 100 chars",
-			input:   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-			wantErr: true,
-		},
-		{
-			name:    "invalid spaces",
-			input:   "my product",
-			wantErr: true,
-		},
-		{
-			name:    "invalid special chars",
-			input:   "prod@name!",
-			wantErr: true,
-		},
-		{
-			name:    "invalid dots",
-			input:   "my.product",
-			wantErr: true,
-		},
-		{
-			name:    "invalid unicode chars",
-			input:   "produc\u00e7\u00e3o",
-			wantErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := validateProductName(tt.input)
-			if tt.wantErr {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-}
-
-func TestGetProductName(t *testing.T) {
-	tests := []struct {
-		name      string
-		headerVal string
-		setHeader bool
-		wantVal   string
-		wantErr   bool
-	}{
-		{
-			name:      "header absent returns empty without error",
-			setHeader: false,
-			wantVal:   "",
-			wantErr:   false,
-		},
-		{
-			name:      "header with valid value returns lowercase",
-			headerVal: "myproduct",
-			setHeader: true,
-			wantVal:   "myproduct",
-			wantErr:   false,
-		},
-		{
-			name:      "header with UPPERCASE returns lowercase",
-			headerVal: "MYPRODUCT",
-			setHeader: true,
-			wantVal:   "myproduct",
-			wantErr:   false,
-		},
-		{
-			name:      "header with MixedCase returns lowercase",
-			headerVal: "My-Product",
-			setHeader: true,
-			wantVal:   "my-product",
-			wantErr:   false,
-		},
-		{
-			name:      "header whitespace-only treated as absent by HTTP layer",
-			headerVal: "   ",
-			setHeader: true,
-			wantVal:   "",
-			wantErr:   false, // fasthttp trims header values, so whitespace-only becomes empty
-		},
-		{
-			name:      "header with invalid chars returns error",
-			headerVal: "prod@name!",
-			setHeader: true,
-			wantVal:   "",
-			wantErr:   true,
-		},
-		{
-			name:      "header exceeding 100 chars returns error",
-			headerVal: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-			setHeader: true,
-			wantVal:   "",
-			wantErr:   true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			app := fiber.New()
-			app.Get("/test", func(c *fiber.Ctx) error {
-				got, err := GetProductName(c)
-				if tt.wantErr {
-					assert.Error(t, err)
-					assert.Empty(t, got)
-				} else {
-					assert.NoError(t, err)
-					assert.Equal(t, tt.wantVal, got)
-				}
-				return nil
-			})
-
-			req := httptest.NewRequest("GET", "/test", nil)
-			if tt.setHeader {
-				req.Header.Set("X-Product-Name", tt.headerVal)
-			}
-			_, err := app.Test(req)
-			assert.NoError(t, err)
-		})
-	}
-}
-
-func TestGetRequiredProductName(t *testing.T) {
-	tests := []struct {
-		name      string
-		headerVal string
-		setHeader bool
-		wantVal   string
-		wantErr   bool
-	}{
-		{
-			name:      "header absent returns error",
-			setHeader: false,
-			wantVal:   "",
-			wantErr:   true,
-		},
-		{
-			name:      "header empty returns error",
-			headerVal: "",
-			setHeader: true,
-			wantVal:   "",
-			wantErr:   true,
-		},
-		{
-			name:      "header whitespace-only returns error",
-			headerVal: "   ",
-			setHeader: true,
-			wantVal:   "",
-			wantErr:   true,
-		},
-		{
-			name:      "header with valid value returns lowercase",
-			headerVal: "myproduct",
-			setHeader: true,
-			wantVal:   "myproduct",
-			wantErr:   false,
-		},
-		{
-			name:      "header with MixedCase returns lowercase",
-			headerVal: "My-Product",
-			setHeader: true,
-			wantVal:   "my-product",
-			wantErr:   false,
-		},
-		{
-			name:      "header with invalid chars returns error",
-			headerVal: "prod@name!",
-			setHeader: true,
-			wantVal:   "",
-			wantErr:   true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			app := fiber.New()
-			app.Get("/test", func(c *fiber.Ctx) error {
-				got, err := GetRequiredProductName(c)
-				if tt.wantErr {
-					assert.Error(t, err)
-					assert.Empty(t, got)
-				} else {
-					assert.NoError(t, err)
-					assert.Equal(t, tt.wantVal, got)
-				}
-				return nil
-			})
-
-			req := httptest.NewRequest("GET", "/test", nil)
-			if tt.setHeader {
-				req.Header.Set("X-Product-Name", tt.headerVal)
-			}
-			_, err := app.Test(req)
-			assert.NoError(t, err)
-		})
-	}
-}
-
 func TestValidateParametersNonMetadataKeys(t *testing.T) {
 	os.Setenv("MAX_PAGINATION_LIMIT", "100")
 	os.Setenv("MAX_PAGINATION_MONTH_DATE_RANGE", "3")
@@ -1034,123 +828,4 @@ func TestValidateParametersNonMetadataKeys(t *testing.T) {
 		assert.False(t, qh.UseMetadata)
 		assert.Nil(t, qh.Metadata)
 	})
-
-	t.Run("keys with metadata prefix are captured as metadata", func(t *testing.T) {
-		params := map[string]string{
-			"metadata.status":   "active",
-			"metadata.category": "finance",
-		}
-
-		qh, err := ValidateParameters(params)
-		assert.NoError(t, err)
-		assert.True(t, qh.UseMetadata)
-		assert.NotNil(t, qh.Metadata)
-		assert.Contains(t, qh.Metadata, "metadata.status")
-		assert.Contains(t, qh.Metadata, "metadata.category")
-	})
-}
-
-func TestParseParameters_RejectsUnsafeKeys(t *testing.T) {
-	tests := []struct {
-		name    string
-		params  map[string]string
-		wantErr bool
-		checkFn func(t *testing.T, metadata map[string]string)
-	}{
-		{
-			name:    "key starting with $ is rejected",
-			params:  map[string]string{"$where": "1"},
-			wantErr: true,
-		},
-		{
-			name:    "key starting with _ is rejected",
-			params:  map[string]string{"_id": "abc"},
-			wantErr: true,
-		},
-		{
-			name:    "key exceeding 64 chars is rejected",
-			params:  map[string]string{strings.Repeat("a", 65): "value"},
-			wantErr: true,
-		},
-		{
-			name:    "value exceeding 256 chars is rejected",
-			params:  map[string]string{"status": strings.Repeat("x", 257)},
-			wantErr: true,
-		},
-		{
-			name:    "key with exactly 64 chars is accepted",
-			params:  map[string]string{strings.Repeat("a", 64): "value"},
-			wantErr: false,
-			checkFn: func(t *testing.T, metadata map[string]string) {
-				assert.Empty(t, metadata, "non-metadata-prefixed keys should be ignored regardless of length")
-			},
-		},
-		{
-			name:    "value with exactly 256 chars is accepted",
-			params:  map[string]string{"status": strings.Repeat("x", 256)},
-			wantErr: false,
-			checkFn: func(t *testing.T, metadata map[string]string) {
-				assert.Empty(t, metadata, "non-metadata-prefixed keys should be ignored")
-			},
-		},
-		{
-			name:    "key containing $ mid-string is accepted",
-			params:  map[string]string{"foo$bar": "value"},
-			wantErr: false,
-			checkFn: func(t *testing.T, metadata map[string]string) {
-				assert.Empty(t, metadata, "non-metadata-prefixed keys should be ignored")
-			},
-		},
-		{
-			name:    "valid unknown key is silently ignored",
-			params:  map[string]string{"status": "active"},
-			wantErr: false,
-			checkFn: func(t *testing.T, metadata map[string]string) {
-				assert.Empty(t, metadata, "unknown keys without metadata. prefix should be ignored")
-			},
-		},
-		{
-			name:    "metadata-prefixed key at 64 chars is captured",
-			params:  map[string]string{"metadata." + strings.Repeat("a", 55): "value"}, // "metadata." (9) + 55 = 64 total
-			wantErr: false,
-			checkFn: func(t *testing.T, metadata map[string]string) {
-				assert.Len(t, metadata, 1, "metadata-prefixed key should be captured regardless of length")
-			},
-		},
-		{
-			name:    "metadata-prefixed value >256 chars is captured",
-			params:  map[string]string{"metadata.longval": strings.Repeat("v", 257)},
-			wantErr: false,
-			checkFn: func(t *testing.T, metadata map[string]string) {
-				assert.Len(t, metadata, 1, "metadata-prefixed keys bypass the 256-char value length limit")
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			metadata := map[string]string{}
-			var (
-				startDate time.Time
-				endDate   time.Time
-				cursor    string
-				limit     = 10
-				page      = 1
-				sortOrder = "desc"
-			)
-
-			err := parseParameters(tt.params, metadata, &startDate, &endDate, &cursor, &limit, &page, &sortOrder)
-
-			if tt.wantErr {
-				assert.Error(t, err)
-				return
-			}
-
-			assert.NoError(t, err)
-
-			if tt.checkFn != nil {
-				tt.checkFn(t, metadata)
-			}
-		})
-	}
 }

@@ -8,12 +8,42 @@ import (
 
 	modelJob "github.com/LerianStudio/fetcher/pkg/model/job"
 	portDS "github.com/LerianStudio/fetcher/pkg/ports/datasource"
-	libCommons "github.com/LerianStudio/lib-commons/v3/commons"
-	libCrypto "github.com/LerianStudio/lib-commons/v3/commons/crypto"
-	"github.com/LerianStudio/lib-commons/v3/commons/log"
-	libOtel "github.com/LerianStudio/lib-commons/v3/commons/opentelemetry"
+	libCommons "github.com/LerianStudio/lib-commons/v4/commons"
+	libCrypto "github.com/LerianStudio/lib-commons/v4/commons/crypto"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	libOtel "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
+)
+
+var (
+	processPluginCRMCollectionFn = func(
+		uc *UseCase,
+		ctx context.Context,
+		dataSource portDS.CRMQueryable,
+		collection string,
+		fields []string,
+		collectionFilters map[string]modelJob.FilterCondition,
+		organizationID uuid.UUID,
+		result map[string]map[string][]map[string]any,
+		logger libLog.Logger,
+	) error {
+		return uc.processPluginCRMCollection(ctx, dataSource, collection, fields, collectionFilters, organizationID, result, logger)
+	}
+	queryPluginCRMCollectionWithFiltersFn = func(
+		uc *UseCase,
+		ctx context.Context,
+		dataSource portDS.CRMQueryable,
+		collection string,
+		fields []string,
+		collectionFilters map[string]modelJob.FilterCondition,
+		logger libLog.Logger,
+	) ([]map[string]any, error) {
+		return uc.queryPluginCRMCollectionWithFilters(ctx, dataSource, collection, fields, collectionFilters, logger)
+	}
+	decryptPluginCRMDataFn = func(uc *UseCase, logger libLog.Logger, collectionResult []map[string]any, fields []string) ([]map[string]any, error) {
+		return uc.decryptPluginCRMData(logger, collectionResult, fields)
+	}
 )
 
 // QueryPluginCRM handles querying MongoDB plugin_crm database with special processing.
@@ -25,7 +55,7 @@ func (uc *UseCase) QueryPluginCRM(
 	databaseFilters map[string]map[string]modelJob.FilterCondition,
 	organizationID uuid.UUID,
 	result map[string]map[string][]map[string]any,
-	logger log.Logger,
+	logger libLog.Logger,
 ) error {
 	_, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
 
@@ -41,8 +71,8 @@ func (uc *UseCase) QueryPluginCRM(
 	for collection, fields := range collections {
 		collectionFilters := getTableFilters(databaseFilters, collection)
 
-		if err := uc.processPluginCRMCollection(ctx, dataSource, collection, fields, collectionFilters, organizationID, result, logger); err != nil {
-			libOtel.HandleSpanError(&span, "Error processing plugin_crm collection", err)
+		if err := processPluginCRMCollectionFn(uc, ctx, dataSource, collection, fields, collectionFilters, organizationID, result, logger); err != nil {
+			libOtel.HandleSpanError(span, "Error processing plugin_crm collection", err)
 			return fmt.Errorf("failed to process plugin_crm collection %s: %w", collection, err)
 		}
 	}
@@ -59,14 +89,14 @@ func (uc *UseCase) processPluginCRMCollection(
 	collectionFilters map[string]modelJob.FilterCondition,
 	organizationID uuid.UUID,
 	result map[string]map[string][]map[string]any,
-	logger log.Logger,
+	logger libLog.Logger,
 ) error {
 	// Transform collection name by appending organization ID suffix
 	// e.g., "holders" becomes "holders_019b9df1-34eb-7dd0-afd5-53f859667e51"
 	newCollection := collection + "_" + organizationID.String()
-	logger.Infof("Transformed plugin_crm collection: %s -> %s", collection, newCollection)
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Transformed plugin_crm collection: %s -> %s", collection, newCollection))
 
-	collectionResult, err := uc.queryPluginCRMCollectionWithFilters(ctx, dataSource, newCollection, fields, collectionFilters, logger)
+	collectionResult, err := queryPluginCRMCollectionWithFiltersFn(uc, ctx, dataSource, newCollection, fields, collectionFilters, logger)
 	if err != nil {
 		return fmt.Errorf("failed to process plugin_crm collection %s: %w", collection, err)
 	}
@@ -77,9 +107,9 @@ func (uc *UseCase) processPluginCRMCollection(
 
 	result["plugin_crm"][collection] = collectionResult
 
-	decryptedResult, err := uc.decryptPluginCRMData(logger, result["plugin_crm"][collection], fields)
+	decryptedResult, err := decryptPluginCRMDataFn(uc, logger, result["plugin_crm"][collection], fields)
 	if err != nil {
-		logger.Errorf("Error decrypting data for collection %s: %s", collection, err.Error())
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Error decrypting data for collection %s: %s", collection, err.Error()))
 		return fmt.Errorf("error decrypting data for collection %s: %w", collection, err)
 	}
 
@@ -95,7 +125,7 @@ func (uc *UseCase) queryPluginCRMCollectionWithFilters(
 	collection string,
 	fields []string,
 	collectionFilters map[string]modelJob.FilterCondition,
-	logger log.Logger,
+	logger libLog.Logger,
 ) ([]map[string]any, error) {
 	var (
 		queryResult    []map[string]any
@@ -103,7 +133,7 @@ func (uc *UseCase) queryPluginCRMCollectionWithFilters(
 	)
 
 	if len(collectionFilters) > 0 {
-		transformedFilter, err := uc.transformPluginCRMAdvancedFilters(collectionFilters, logger)
+		transformedFilter, err := uc.transformPluginCRMAdvancedFilters(ctx, collectionFilters, logger)
 		if err != nil {
 			return nil, fmt.Errorf("error transforming advanced filters for collection %s: %w", collection, err)
 		}
@@ -114,7 +144,7 @@ func (uc *UseCase) queryPluginCRMCollectionWithFilters(
 	}
 
 	if errQueryResult != nil {
-		logger.Errorf("Error querying collection %s: %s", collection, errQueryResult.Error())
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Error querying collection %s: %s", collection, errQueryResult.Error()))
 		return nil, fmt.Errorf("failed to query collection %s: %w", collection, errQueryResult)
 	}
 
@@ -122,7 +152,7 @@ func (uc *UseCase) queryPluginCRMCollectionWithFilters(
 }
 
 // transformPluginCRMAdvancedFilters transforms advanced FilterCondition filters for plugin_crm to use search fields.
-func (uc *UseCase) transformPluginCRMAdvancedFilters(filter map[string]modelJob.FilterCondition, logger log.Logger) (map[string]modelJob.FilterCondition, error) {
+func (uc *UseCase) transformPluginCRMAdvancedFilters(ctx context.Context, filter map[string]modelJob.FilterCondition, logger libLog.Logger) (map[string]modelJob.FilterCondition, error) {
 	if filter == nil {
 		return nil, nil
 	}
@@ -190,7 +220,7 @@ func (uc *UseCase) transformPluginCRMAdvancedFilters(filter map[string]modelJob.
 
 			transformedFilter[searchField] = transformedCondition
 
-			logger.Infof("Transformed advanced filter: %s -> %s", fieldName, searchField)
+			logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Transformed advanced filter: %s -> %s", fieldName, searchField))
 		} else {
 			transformedFilter[fieldName] = condition
 		}
@@ -216,7 +246,9 @@ func (uc *UseCase) hashFilterValues(values []any, crypto *libCrypto.Crypto) []an
 }
 
 // decryptPluginCRMData decrypts sensitive fields for plugin_crm database.
-func (uc *UseCase) decryptPluginCRMData(logger log.Logger, collectionResult []map[string]any, fields []string) ([]map[string]any, error) {
+// Note: ctx is intentionally omitted as the crypto layer receives its logger at construction time.
+// Add ctx if trace propagation is needed in the future.
+func (uc *UseCase) decryptPluginCRMData(logger libLog.Logger, collectionResult []map[string]any, fields []string) ([]map[string]any, error) {
 	needsDecryption := false
 
 	for _, field := range fields {

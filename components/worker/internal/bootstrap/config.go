@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/LerianStudio/fetcher/components/worker/internal/adapters/rabbitmq"
@@ -13,22 +14,21 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/datasource"
 	"github.com/LerianStudio/fetcher/pkg/mongodb"
 	"github.com/LerianStudio/fetcher/pkg/mongodb/connection"
-	mongoDB "github.com/LerianStudio/lib-commons/v3/commons/mongo"
-
 	"github.com/LerianStudio/fetcher/pkg/mongodb/job"
 	portStorage "github.com/LerianStudio/fetcher/pkg/ports/storage"
 	pkgStorage "github.com/LerianStudio/fetcher/pkg/storage"
 
-	libCommons "github.com/LerianStudio/lib-commons/v3/commons"
-	"github.com/LerianStudio/lib-commons/v3/commons/log"
-	libOtel "github.com/LerianStudio/lib-commons/v3/commons/opentelemetry"
-	libRabbitMQ "github.com/LerianStudio/lib-commons/v3/commons/rabbitmq"
-	libRedis "github.com/LerianStudio/lib-commons/v3/commons/redis"
-	tmclient "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/client"
-	tmconsumer "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/consumer"
-	tmmongo "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/mongo"
-	tmrabbitmq "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/rabbitmq"
-	libZap "github.com/LerianStudio/lib-commons/v3/commons/zap"
+	libCommons "github.com/LerianStudio/lib-commons/v4/commons"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	mongoDB "github.com/LerianStudio/lib-commons/v4/commons/mongo"
+	libOtel "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
+	libRabbitMQ "github.com/LerianStudio/lib-commons/v4/commons/rabbitmq"
+	libRedis "github.com/LerianStudio/lib-commons/v4/commons/redis"
+	tmclient "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/client"
+	tmconsumer "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/consumer"
+	tmmongo "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/mongo"
+	tmrabbitmq "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/rabbitmq"
+	libZap "github.com/LerianStudio/lib-commons/v4/commons/zap"
 	libLicense "github.com/LerianStudio/lib-license-go/v2/middleware"
 )
 
@@ -113,16 +113,32 @@ type Config struct {
 	RedisProtocol int    `env:"REDIS_PROTOCOL"`
 }
 
+var (
+	setConfigFromEnvVars  = libCommons.SetConfigFromEnvVars
+	newZapLogger          = func(cfg libZap.Config) (libLog.Logger, error) { return libZap.New(cfg) }
+	newTelemetry          = libOtel.NewTelemetry
+	newMongoClient        = mongoDB.NewClient
+	applyTelemetryGlobals = func(telemetry *libOtel.Telemetry) error {
+		return telemetry.ApplyGlobals()
+	}
+	decodeMasterKey = crypto.DecodeMasterKey
+	newKeyDeriver   = crypto.NewHKDFKeyDeriver
+)
+
 // InitWorker initializes and configures the application's dependencies and returns the Service instance.
 func InitWorker() (*Service, error) {
 	cfg := &Config{}
-	if err := libCommons.SetConfigFromEnvVars(cfg); err != nil {
+	if err := setConfigFromEnvVars(cfg); err != nil {
 		return nil, fmt.Errorf("load environment configuration: %w", err)
 	}
 
 	ctx := context.Background()
 
-	logger, err := libZap.InitializeLoggerWithError()
+	logger, err := newZapLogger(libZap.Config{
+		Environment:     resolveZapEnvironment(cfg.EnvName),
+		Level:           cfg.LogLevel,
+		OTelLibraryName: cfg.OtelLibraryName,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize logger: %w", err)
 	}
@@ -131,7 +147,7 @@ func InitWorker() (*Service, error) {
 		return nil, err
 	}
 
-	telemetry, err := libOtel.InitializeTelemetryWithError(&libOtel.TelemetryConfig{
+	telemetry, err := newTelemetry(libOtel.TelemetryConfig{
 		LibraryName:               cfg.OtelLibraryName,
 		ServiceName:               cfg.OtelServiceName,
 		ServiceVersion:            cfg.OtelServiceVersion,
@@ -144,24 +160,34 @@ func InitWorker() (*Service, error) {
 		return nil, fmt.Errorf("initialize telemetry: %w", err)
 	}
 
+	if err := applyTelemetryGlobals(telemetry); err != nil {
+		return nil, err
+	}
+
 	cryptoService, cryptoWithExternalHMAC, keyDeriver, err := initCryptoServices(cfg)
 	if err != nil {
 		return nil, err
 	}
 
-	logger.Info("Key derivation initialized successfully")
+	logger.Log(ctx, libLog.LevelInfo, "Key derivation initialized successfully")
 
 	storageRepository, err := initStorageRepository(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
 
-	logger.Infof("Storage initialized with provider: %s", cfg.StorageProvider)
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Storage initialized with provider: %s", cfg.StorageProvider))
 
-	mongoConnection := initMongoConnection(cfg, logger)
+	mongoConnection, err := initMongoConnection(ctx, cfg, logger)
+	if err != nil {
+		return nil, fmt.Errorf("initialize MongoDB client: %w", err)
+	}
 
 	// Initialize multi-tenant managers (nil when MULTI_TENANT_ENABLED=false)
-	mongoManager, rabbitMQManager := initMultiTenantManagers(cfg, logger)
+	mongoManager, rabbitMQManager, err := initMultiTenantManagers(cfg, logger)
+	if err != nil {
+		return nil, fmt.Errorf("initialize multi-tenant managers: %w", err)
+	}
 
 	// Wrap the MongoDB connection to implement tmcore.MultiTenantChecker.
 	// When multi-tenant mode is enabled, this causes tmcore.ResolveMongo to return
@@ -170,12 +196,12 @@ func InitWorker() (*Service, error) {
 	mongoProvider := mongodb.NewMultiTenantMongoProvider(mongoConnection, cfg.MultiTenantEnabled)
 
 	// Initialize MongoDB repositories
-	jobRepository, errJobRepo := job.NewJobMongoDBRepository(ctx, mongoProvider, mongoConnection.Database)
+	jobRepository, errJobRepo := job.NewJobMongoDBRepository(ctx, mongoProvider, cfg.MongoDBName)
 	if errJobRepo != nil {
 		return nil, fmt.Errorf("initialize job repository: %w", errJobRepo)
 	}
 
-	connectionRepository, errConnectRepo := connection.NewConnectionMongoDBRepository(ctx, mongoProvider, mongoConnection.Database)
+	connectionRepository, errConnectRepo := connection.NewConnectionMongoDBRepository(ctx, mongoProvider, cfg.MongoDBName)
 	if errConnectRepo != nil {
 		return nil, fmt.Errorf("initialize connection repository: %w", errConnectRepo)
 	}
@@ -196,11 +222,22 @@ func InitWorker() (*Service, error) {
 
 	logFileTTL(logger, cfg)
 
+	licenseLoggerV4, licenseLogErr := libZap.New(libZap.Config{
+		Environment:     resolveZapEnvironment(cfg.EnvName),
+		Level:           cfg.LogLevel,
+		OTelLibraryName: constant.ApplicationName + "-license",
+	})
+	if licenseLogErr != nil {
+		return nil, wrapBootstrapError("initialize license logger", licenseLogErr)
+	}
+
+	var licenseLogger libLog.Logger = licenseLoggerV4
+
 	licenseClient := libLicense.NewLicenseClient(
 		constant.ApplicationName,
 		cfg.LicenseKey,
 		cfg.OrganizationIDs,
-		&logger,
+		&licenseLogger,
 	)
 
 	// Branch: multi-tenant mode uses tmconsumer.MultiTenantConsumer with per-tenant vhosts
@@ -285,15 +322,15 @@ func InitWorker() (*Service, error) {
 }
 
 // validateMultiTenantConfig validates multi-tenant configuration and logs the mode.
-func validateMultiTenantConfig(cfg *Config, logger log.Logger) error {
+func validateMultiTenantConfig(cfg *Config, logger libLog.Logger) error {
 	if cfg.MultiTenantEnabled {
-		logger.Info("Multi-tenant mode ENABLED")
+		logger.Log(context.Background(), libLog.LevelInfo, "Multi-tenant mode ENABLED")
 
 		if cfg.RedisHost == "" {
 			return fmt.Errorf("REDIS_HOST is required when MULTI_TENANT_ENABLED=true (used for tenant discovery cache)")
 		}
 	} else {
-		logger.Info("Running in SINGLE-TENANT MODE")
+		logger.Log(context.Background(), libLog.LevelInfo, "Running in SINGLE-TENANT MODE")
 	}
 
 	return nil
@@ -301,24 +338,24 @@ func validateMultiTenantConfig(cfg *Config, logger log.Logger) error {
 
 // initCryptoServices initializes the key deriver, crypto service, and external HMAC signer.
 func initCryptoServices(cfg *Config) (*crypto.AESGCMService, *crypto.HMACSigner, *crypto.HKDFKeyDeriver, error) {
-	masterKey, err := crypto.DecodeMasterKey(cfg.AppEncryptionKey)
+	masterKey, err := decodeMasterKey(cfg.AppEncryptionKey)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("decode master encryption key: %w", err)
+		return nil, nil, nil, wrapBootstrapError("decode master encryption key", err)
 	}
 
-	keyDeriver, err := crypto.NewHKDFKeyDeriver(masterKey)
+	keyDeriver, err := newKeyDeriver(masterKey)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("initialize key deriver: %w", err)
+		return nil, nil, nil, wrapBootstrapError("initialize key deriver", err)
 	}
 
 	cryptoService, errCrypto := crypto.NewAESGCMService(keyDeriver.GetCredentialKey(), cfg.AppEncryptionKeyVersion)
 	if errCrypto != nil {
-		return nil, nil, nil, fmt.Errorf("initialize crypto service: %w", errCrypto)
+		return nil, nil, nil, wrapBootstrapError("initialize crypto service", errCrypto)
 	}
 
 	cryptoWithExternalHMAC, errSigner := crypto.NewHMACSigner(keyDeriver.GetExternalHMACKey(), crypto.SignatureVersion)
 	if errSigner != nil {
-		return nil, nil, nil, fmt.Errorf("initialize external document signer: %w", errSigner)
+		return nil, nil, nil, wrapBootstrapError("initialize external document signer", errSigner)
 	}
 
 	return cryptoService, cryptoWithExternalHMAC, keyDeriver, nil
@@ -346,8 +383,8 @@ func initStorageRepository(ctx context.Context, cfg *Config) (portStorage.Reposi
 	})
 }
 
-// initMongoConnection creates and returns a MongoDB connection configuration.
-func initMongoConnection(cfg *Config, logger log.Logger) *mongoDB.MongoConnection {
+// initMongoConnection creates and returns a MongoDB client.
+func initMongoConnection(ctx context.Context, cfg *Config, logger libLog.Logger) (*mongoDB.Client, error) {
 	escapedPass := url.QueryEscape(cfg.MongoDBPassword)
 	mongoSource := fmt.Sprintf("%s://%s:%s@%s:%s",
 		cfg.MongoURI, cfg.MongoDBUser, escapedPass, cfg.MongoDBHost, cfg.MongoDBPort)
@@ -356,26 +393,43 @@ func initMongoConnection(cfg *Config, logger log.Logger) *mongoDB.MongoConnectio
 		cfg.MaxPoolSize = 100
 	}
 
-	return &mongoDB.MongoConnection{
-		ConnectionStringSource: mongoSource,
-		Database:               cfg.MongoDBName,
-		Logger:                 logger,
-		MaxPoolSize:            uint64(cfg.MaxPoolSize),
-	}
+	return newMongoClient(ctx, mongoDB.Config{
+		URI:         mongoSource,
+		Database:    cfg.MongoDBName,
+		Logger:      logger,
+		MaxPoolSize: uint64(cfg.MaxPoolSize),
+	})
 }
 
 // logFileTTL logs the configured file TTL for storage.
-func logFileTTL(logger log.Logger, cfg *Config) {
+func logFileTTL(logger libLog.Logger, cfg *Config) {
 	if cfg.SeaweedFSTTL != "" {
-		logger.Infof("Reports will expire after: %s", cfg.SeaweedFSTTL)
+		logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Reports will expire after: %s", cfg.SeaweedFSTTL))
 	} else {
-		logger.Infof("Reports will be stored permanently (no TTL)")
+		logger.Log(context.Background(), libLog.LevelInfo, "Reports will be stored permanently (no TTL)")
+	}
+}
+
+func resolveZapEnvironment(env string) libZap.Environment {
+	switch strings.ToLower(strings.TrimSpace(env)) {
+	case "production", "prod":
+		return libZap.EnvironmentProduction
+	case "staging", "stage":
+		return libZap.EnvironmentStaging
+	case "uat":
+		return libZap.EnvironmentUAT
+	case "development", "dev":
+		return libZap.EnvironmentDevelopment
+	case "local":
+		return libZap.EnvironmentLocal
+	default:
+		return libZap.EnvironmentLocal
 	}
 }
 
 // initTenantManagerClient creates a Tenant Manager HTTP client with circuit breaker.
 // This is shared across MongoDB manager and MultiTenantConsumer to avoid duplicate instances.
-func initTenantManagerClient(cfg *Config, logger log.Logger) *tmclient.Client {
+func initTenantManagerClient(cfg *Config, logger libLog.Logger) (*tmclient.Client, error) {
 	var clientOpts []tmclient.ClientOption
 
 	if cfg.MultiTenantCircuitBreakerThreshold > 0 {
@@ -392,7 +446,12 @@ func initTenantManagerClient(cfg *Config, logger log.Logger) *tmclient.Client {
 		)
 	}
 
-	return tmclient.NewClient(cfg.MultiTenantURL, logger, clientOpts...)
+	client, err := tmclient.NewClient(cfg.MultiTenantURL, logger, clientOpts...)
+	if err != nil {
+		return nil, fmt.Errorf("create tenant manager client: %w", err)
+	}
+
+	return client, nil
 }
 
 // resolvedMaxTenantPools returns the configured value if > 0, or the default.
@@ -405,19 +464,16 @@ func resolvedMaxTenantPools(cfg *Config) int {
 }
 
 // initMultiTenantManagers creates the Tenant Manager client and MongoDB manager when
-// multi-tenant mode is enabled and configured. Returns (nil, nil, nil) when multi-tenant is disabled.
-//
-// Per multi-tenant.md standards:
-//   - Circuit breaker is MANDATORY for the Tenant Manager client
-//   - Uses constant.ApplicationName and constant.ModuleWorker for service/module identity
-//   - WithMongoManager configures MongoDB connection pool management
-//   - A single tmrabbitmq.Manager is shared between consumer and publisher
-func initMultiTenantManagers(cfg *Config, logger log.Logger) (*tmmongo.Manager, *tmrabbitmq.Manager) {
+// multi-tenant mode is enabled and configured. Returns (nil, nil) when multi-tenant is disabled.
+func initMultiTenantManagers(cfg *Config, logger libLog.Logger) (*tmmongo.Manager, *tmrabbitmq.Manager, error) {
 	if !cfg.MultiTenantEnabled || cfg.MultiTenantURL == "" {
-		return nil, nil
+		return nil, nil, nil
 	}
 
-	tmClient := initTenantManagerClient(cfg, logger)
+	tmClient, err := initTenantManagerClient(cfg, logger)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	maxPools := resolvedMaxTenantPools(cfg)
 
@@ -456,42 +512,44 @@ func initMultiTenantManagers(cfg *Config, logger log.Logger) (*tmmongo.Manager, 
 
 	rabbitManager := tmrabbitmq.NewManager(tmClient, constant.ApplicationName, rabbitOpts...)
 
-	logger.Infof("Multi-tenant managers initialized: url=%s, module=%s", cfg.MultiTenantURL, constant.ModuleWorker)
+	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Multi-tenant managers initialized: url=%s, module=%s", cfg.MultiTenantURL, constant.ModuleWorker))
 
-	return mongoManager, rabbitManager
+	return mongoManager, rabbitManager, nil
 }
 
 // initMultiTenantConsumer creates the tmconsumer.MultiTenantConsumer for per-tenant
-// vhost isolation with lazy initialization. This is the preferred pattern for multi-tenant
-// RabbitMQ consumption as it dynamically discovers tenants from Redis cache and spawns
-// consumer goroutines per-tenant vhost.
-//
-// Returns:
-//   - mtConsumer: the MultiTenantConsumer instance to register handlers and run
-//   - cleanup: a function to close Redis and MultiTenantConsumer resources
-//   - error: if Redis connection or consumer creation fails
+// vhost isolation with lazy initialization.
 func initMultiTenantConsumer(
 	ctx context.Context,
 	cfg *Config,
-	logger log.Logger,
+	logger libLog.Logger,
 	tenantMongoManager *tmmongo.Manager,
 	rabbitMQManager *tmrabbitmq.Manager,
 ) (*tmconsumer.MultiTenantConsumer, func(), error) {
 	// Create Redis connection for tenant discovery cache
-	redisConn := &libRedis.RedisConnection{
-		Address:  []string{cfg.RedisHost},
-		Password: cfg.RedisPassword,
-		DB:       cfg.RedisDB,
-		Protocol: cfg.RedisProtocol,
-		Logger:   logger,
-	}
-
-	redisClient, err := redisConn.GetClient(ctx)
+	redisConn, err := libRedis.New(ctx, libRedis.Config{
+		Topology: libRedis.Topology{
+			Standalone: &libRedis.StandaloneTopology{
+				Address: cfg.RedisHost,
+			},
+		},
+		Auth: libRedis.Auth{
+			StaticPassword: &libRedis.StaticPasswordAuth{
+				Password: cfg.RedisPassword,
+			},
+		},
+		Logger: logger,
+	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to connect to Redis for tenant discovery: %w", err)
 	}
 
-	logger.Infof("Redis connected for multi-tenant consumer (host: %s, db: %d)", cfg.RedisHost, cfg.RedisDB)
+	redisClient, err := redisConn.GetClient(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get Redis client for tenant discovery: %w", err)
+	}
+
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Redis connected for multi-tenant consumer (host: %s, db: %d)", cfg.RedisHost, cfg.RedisDB))
 
 	// Configure MultiTenantConsumer
 	mtConfig := tmconsumer.DefaultMultiTenantConfig()
@@ -517,23 +575,26 @@ func initMultiTenantConsumer(
 	}
 
 	// Create MultiTenantConsumer
-	mtConsumer := tmconsumer.NewMultiTenantConsumer(
+	mtConsumer, err := tmconsumer.NewMultiTenantConsumerWithError(
 		rabbitMQManager,
 		redisClient,
 		mtConfig,
 		logger,
 		consumerOpts...,
 	)
+	if err != nil {
+		return nil, nil, fmt.Errorf("create multi-tenant consumer: %w", err)
+	}
 
-	logger.Info("MultiTenantConsumer initialized with per-tenant vhost isolation")
+	logger.Log(ctx, libLog.LevelInfo, "MultiTenantConsumer initialized with per-tenant vhost isolation")
 
 	// Cleanup function to close Redis connection only.
 	// mtConsumer.Close() is handled by MultiQueueConsumer.Run() on context cancellation.
 	cleanup := func() {
-		logger.Info("Cleanup: closing Redis connection")
+		logger.Log(context.Background(), libLog.LevelInfo, "Cleanup: closing Redis connection")
 
 		if closeErr := redisConn.Close(); closeErr != nil {
-			logger.Errorf("Cleanup: failed to close Redis connection: %v", closeErr)
+			logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Cleanup: failed to close Redis connection: %v", closeErr))
 		}
 	}
 
@@ -553,4 +614,12 @@ func newRabbitMQManagerAdapter(manager *tmrabbitmq.Manager) *rabbitMQManagerAdap
 // to the RabbitMQChannel interface.
 func (a *rabbitMQManagerAdapter) GetChannel(ctx context.Context, tenantID string) (rabbitmq.RabbitMQChannel, error) {
 	return a.manager.GetChannel(ctx, tenantID)
+}
+
+func wrapBootstrapError(action string, err error) error {
+	if err != nil {
+		return fmt.Errorf("%s: %w", action, err)
+	}
+
+	return nil
 }

@@ -614,7 +614,6 @@ func TestNewJob(t *testing.T) {
 			createdAt,
 			nil,
 		)
-
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}

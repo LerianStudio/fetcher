@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/LerianStudio/lib-commons/v3/commons/log"
+	"github.com/LerianStudio/lib-commons/v4/commons/log"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
@@ -22,20 +22,20 @@ func TestNewLoggerFromContext(t *testing.T) {
 			name: "returns logger when set in context",
 			setupContext: func() context.Context {
 				ctx := context.Background()
-				logger := &log.NoneLogger{}
+				logger := &log.NopLogger{}
 				return ContextWithLogger(ctx, logger)
 			},
 			expectNilType: false,
 		},
 		{
-			name: "returns NoneLogger when context has no custom value",
+			name: "returns NopLogger when context has no custom value",
 			setupContext: func() context.Context {
 				return context.Background()
 			},
 			expectNilType: true,
 		},
 		{
-			name: "returns NoneLogger when custom context value has nil logger",
+			name: "returns NopLogger when custom context value has nil logger",
 			setupContext: func() context.Context {
 				ctx := context.Background()
 				return context.WithValue(ctx, CustomContextKey, &CustomContextKeyValue{Logger: nil})
@@ -43,7 +43,7 @@ func TestNewLoggerFromContext(t *testing.T) {
 			expectNilType: true,
 		},
 		{
-			name: "returns NoneLogger when context value is wrong type",
+			name: "returns NopLogger when context value is wrong type",
 			setupContext: func() context.Context {
 				ctx := context.Background()
 				return context.WithValue(ctx, CustomContextKey, "wrong-type")
@@ -60,8 +60,8 @@ func TestNewLoggerFromContext(t *testing.T) {
 			require.NotNil(t, logger, "logger should never be nil")
 
 			if tt.expectNilType {
-				_, ok := logger.(*log.NoneLogger)
-				assert.True(t, ok, "expected NoneLogger when no valid logger in context")
+				_, ok := logger.(*log.NopLogger)
+				assert.True(t, ok, "expected NopLogger when no valid logger in context")
 			}
 		})
 	}
@@ -132,16 +132,16 @@ func TestContextWithLogger(t *testing.T) {
 			setupContext: func() context.Context {
 				return context.Background()
 			},
-			logger: &log.NoneLogger{},
+			logger: &log.NopLogger{},
 		},
 		{
 			name: "replaces existing logger in context",
 			setupContext: func() context.Context {
 				ctx := context.Background()
-				oldLogger := &log.NoneLogger{}
+				oldLogger := &log.NopLogger{}
 				return ContextWithLogger(ctx, oldLogger)
 			},
-			logger: &log.NoneLogger{},
+			logger: &log.NopLogger{},
 		},
 		{
 			name: "preserves tracer when adding logger",
@@ -150,7 +150,7 @@ func TestContextWithLogger(t *testing.T) {
 				tracer := noop.NewTracerProvider().Tracer("test-tracer")
 				return ContextWithTracer(ctx, tracer)
 			},
-			logger: &log.NoneLogger{},
+			logger: &log.NopLogger{},
 		},
 		{
 			name: "handles nil custom context value",
@@ -158,7 +158,7 @@ func TestContextWithLogger(t *testing.T) {
 				ctx := context.Background()
 				return context.WithValue(ctx, CustomContextKey, nil)
 			},
-			logger: &log.NoneLogger{},
+			logger: &log.NopLogger{},
 		},
 	}
 
@@ -201,7 +201,7 @@ func TestContextWithTracer(t *testing.T) {
 			name: "preserves logger when adding tracer",
 			setupContext: func() context.Context {
 				ctx := context.Background()
-				logger := &log.NoneLogger{}
+				logger := &log.NopLogger{}
 				return ContextWithLogger(ctx, logger)
 			},
 			tracer: noop.NewTracerProvider().Tracer("test-tracer"),
@@ -232,7 +232,7 @@ func TestContextWithTracer(t *testing.T) {
 func TestContextWithLoggerAndTracer_Combined(t *testing.T) {
 	t.Run("both logger and tracer can be set independently", func(t *testing.T) {
 		ctx := context.Background()
-		logger := &log.NoneLogger{}
+		logger := &log.NopLogger{}
 		tracer := noop.NewTracerProvider().Tracer("test-tracer")
 
 		// Set logger first, then tracer
@@ -248,7 +248,7 @@ func TestContextWithLoggerAndTracer_Combined(t *testing.T) {
 
 	t.Run("setting tracer first then logger preserves both", func(t *testing.T) {
 		ctx := context.Background()
-		logger := &log.NoneLogger{}
+		logger := &log.NopLogger{}
 		tracer := noop.NewTracerProvider().Tracer("test-tracer")
 
 		// Set tracer first, then logger
@@ -268,7 +268,7 @@ func TestCustomContextKeyValue_Integration(t *testing.T) {
 		ctx := context.Background()
 
 		// Set up logger and tracer
-		logger := &log.NoneLogger{}
+		logger := &log.NopLogger{}
 		tracer := noop.NewTracerProvider().Tracer("integration-test")
 
 		ctx = ContextWithLogger(ctx, logger)
@@ -291,7 +291,7 @@ func TestCustomContextKey_Type(t *testing.T) {
 		// Using a regular string key should not conflict
 		regularKey := "custom_context"
 		ctx = context.WithValue(ctx, regularKey, "some-value")
-		ctx = ContextWithLogger(ctx, &log.NoneLogger{})
+		ctx = ContextWithLogger(ctx, &log.NopLogger{})
 
 		// String key value should still be accessible
 		assert.Equal(t, "some-value", ctx.Value(regularKey))

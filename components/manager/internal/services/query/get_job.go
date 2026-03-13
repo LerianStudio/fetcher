@@ -10,8 +10,8 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/model"
 	jobRepo "github.com/LerianStudio/fetcher/pkg/ports/job"
 
-	"github.com/LerianStudio/lib-commons/v3/commons"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v3/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v4/commons"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
@@ -39,7 +39,7 @@ func (s *GetJob) Execute(ctx context.Context, organizationID, jobID uuid.UUID) (
 
 	job, err := s.jobRepo.FindByID(ctx, jobID, organizationID)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to find job by ID", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to find job by ID", err)
 		return nil, fmt.Errorf("failed to find job by id: %w", err)
 	}
 

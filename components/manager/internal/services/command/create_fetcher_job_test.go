@@ -17,8 +17,9 @@ import (
 	jobRepo "github.com/LerianStudio/fetcher/pkg/mongodb/job"
 	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
 	"github.com/LerianStudio/fetcher/pkg/ports/messaging"
+	pkgRabbitMQ "github.com/LerianStudio/fetcher/pkg/rabbitmq"
 
-	tmcore "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/core"
+	tmcore "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/core"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -136,6 +137,18 @@ func TestCreateFetcherJob_Execute_ValidationError(t *testing.T) {
 					},
 				},
 				Metadata: map[string]any{"source": ""},
+			},
+			wantErr: "metadata.source must be a non-empty string",
+		},
+		{
+			name: "metadata with whitespace-only source",
+			request: model.FetcherRequest{
+				DataRequest: model.DataRequest{
+					MappedFields: map[string]map[string][]string{
+						"ds1": {"table1": {"field1"}},
+					},
+				},
+				Metadata: map[string]any{"source": "   \t\n  "},
 			},
 			wantErr: "metadata.source must be a non-empty string",
 		},
@@ -455,6 +468,26 @@ func TestNewCreateFetcherJob(t *testing.T) {
 	if svc.jobRepo == nil {
 		t.Fatal("expected jobRepo to be set")
 	}
+}
+
+func TestCreateFetcherJob_publishToQueue_TypedNilAdapterIsIgnored(t *testing.T) {
+	var typedNilAdapter *pkgRabbitMQ.RabbitMQAdapter
+
+	svc := NewCreateFetcherJob(nil, nil, nil, typedNilAdapter, "", nil)
+	job := &model.Job{
+		ID:             uuid.New(),
+		OrganizationID: uuid.New(),
+		MappedFields: map[string]map[string][]string{
+			"datasource1": {
+				"users": {"id"},
+			},
+		},
+		Metadata:  map[string]any{"source": "test"},
+		CreatedAt: time.Now().UTC(),
+	}
+
+	err := svc.publishToQueue(testContext(), job)
+	require.NoError(t, err)
 }
 
 // TestCreateFetcherJob_Execute_PartialConnectionsFound tests that when only some datasources
@@ -971,6 +1004,73 @@ func TestCreateFetcherJob_Execute_MultipleConnectionsSuccess_WithoutProductRepo(
 	if result.Job.Metadata == nil || result.Job.Metadata["source"] != "test" {
 		t.Fatal("expected metadata to be preserved")
 	}
+}
+
+func TestCreateFetcherJob_Execute_PublishFailureMarksJobFailed(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockJobRepo := jobRepo.NewMockRepository(ctrl)
+	mockConnTester := NewMockConnectionTester(ctrl)
+	mockRabbitMQ := messaging.NewMockMessagePublisher(ctrl)
+
+	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, nil, mockRabbitMQ, mockConnTester, "fetcher.extract-external-data.queue", nil)
+
+	ctx := testContext()
+	orgID := uuid.New()
+	connID := uuid.New()
+	request := model.FetcherRequest{
+		DataRequest: model.DataRequest{
+			MappedFields: map[string]map[string][]string{
+				"postgres_db": {"transactions": {"id", "status"}},
+			},
+		},
+		Metadata: map[string]any{"source": "test"},
+	}
+
+	conn := &model.Connection{ID: connID, ConfigName: "postgres_db", Type: model.TypePostgreSQL, ProductName: "test"}
+	publishErr := errors.New("publish failed")
+
+	mockJobRepo.EXPECT().
+		FindByRequestHashWithinWindow(gomock.Any(), orgID, gomock.Any(), DeduplicationWindowMinutes).
+		Return(nil, nil)
+
+	mockConnRepo.EXPECT().
+		FindByConfigNames(gomock.Any(), orgID, []string{"postgres_db"}).
+		Return([]*model.Connection{conn}, nil)
+
+	mockConnTester.EXPECT().
+		TestConnection(gomock.Any(), conn).
+		Return(nil)
+
+	mockJobRepo.EXPECT().
+		Create(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, job *model.Job) (*model.Job, error) {
+			return job, nil
+		})
+
+	mockRabbitMQ.EXPECT().
+		ProducerDefault(gomock.Any(), "", "fetcher.extract-external-data.queue", gomock.Any(), gomock.Any()).
+		Return(publishErr)
+
+	mockJobRepo.EXPECT().
+		Update(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, job *model.Job) (*model.Job, error) {
+			assert.Equal(t, model.JobStatusFailed, job.Status)
+			assert.NotNil(t, job.CompletedAt)
+			assert.Equal(t, "process failed: unable to publish", job.Metadata["error"])
+
+			return job, nil
+		})
+
+	result, err := svc.Execute(ctx, orgID, request)
+	require.Nil(t, result)
+	require.Error(t, err)
+
+	var internalErr pkg.InternalServerError
+	require.ErrorAs(t, err, &internalErr)
+	require.ErrorContains(t, internalErr.Err, "publish failed")
 }
 
 // TestCreateFetcherJob_Execute_FiltersWithMultipleDatasources tests filter transformation with multiple datasources.

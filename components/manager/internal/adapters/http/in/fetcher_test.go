@@ -18,8 +18,8 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/ports/messaging"
 
-	libCommons "github.com/LerianStudio/lib-commons/v3/commons"
-	libLog "github.com/LerianStudio/lib-commons/v3/commons/log"
+	libCommons "github.com/LerianStudio/lib-commons/v4/commons"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -36,7 +36,7 @@ func setupTestApp() *fiber.App {
 
 	// Middleware to inject test context with logger and tracer
 	app.Use(func(c *fiber.Ctx) error {
-		logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+		logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 		values := &libCommons.CustomContextKeyValue{
 			HeaderID: "test-request-id",
 			Logger:   logger,
@@ -232,6 +232,86 @@ func TestFetcherHandler_CreateJob_ContentTypeValidation(t *testing.T) {
 			assert.Equal(t, tt.wantCode, resp.StatusCode)
 		})
 	}
+}
+
+// TestFetcherHandler_CreateJob_MetadataSourceValidation tests required metadata.source validation.
+func TestFetcherHandler_CreateJob_MetadataSourceValidation(t *testing.T) {
+	app := setupTestApp()
+
+	handler := &FetcherHandler{CreateJobCmd: nil}
+	app.Post("/v1/fetcher", handler.CreateJob)
+
+	tests := []struct {
+		name     string
+		body     string
+		wantCode int
+	}{
+		{
+			name:     "missing metadata",
+			body:     `{"dataRequest":{"mappedFields":{"ds1":{"t1":["f1"]}}}}`,
+			wantCode: fiber.StatusBadRequest,
+		},
+		{
+			name:     "missing metadata source",
+			body:     `{"dataRequest":{"mappedFields":{"ds1":{"t1":["f1"]}}},"metadata":{}}`,
+			wantCode: fiber.StatusBadRequest,
+		},
+		{
+			name:     "whitespace metadata source",
+			body:     `{"dataRequest":{"mappedFields":{"ds1":{"t1":["f1"]}}},"metadata":{"source":"   "}}`,
+			wantCode: fiber.StatusBadRequest,
+		},
+		{
+			name:     "non-string metadata source",
+			body:     `{"dataRequest":{"mappedFields":{"ds1":{"t1":["f1"]}}},"metadata":{"source":123}}`,
+			wantCode: fiber.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("POST", "/v1/fetcher", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("X-Organization-Id", uuid.New().String())
+
+			resp, err := app.Test(req)
+			require.NoError(t, err)
+			defer resp.Body.Close()
+
+			assert.Equal(t, tt.wantCode, resp.StatusCode)
+		})
+	}
+}
+
+// createLargePayload generates a valid JSON payload of approximately the specified size.
+func createLargePayload(targetSize int) []byte {
+	// Build a JSON structure with enough data to exceed targetSize
+	var sb strings.Builder
+	sb.WriteString(`{"dataRequest":{"mappedFields":{`)
+
+	// Add datasources until we reach target size
+	datasourceNum := 0
+	for sb.Len() < targetSize-100 { // Leave room for closing braces
+		if datasourceNum > 0 {
+			sb.WriteString(",")
+		}
+		sb.WriteString(`"datasource`)
+		sb.WriteString(strings.Repeat("x", 50)) // Pad datasource name
+		sb.WriteString(`_`)
+		sb.WriteString(string(rune('0' + (datasourceNum % 10))))
+		sb.WriteString(`":{"table1":["field1","field2","field3","field4","field5","field6","field7","field8","field9","field10"]}`)
+		datasourceNum++
+	}
+
+	sb.WriteString(`}},"metadata":{"padding":"`)
+	// Add padding to reach exact size
+	remaining := targetSize - sb.Len() - 5 // Account for closing characters
+	if remaining > 0 {
+		sb.WriteString(strings.Repeat("x", remaining))
+	}
+	sb.WriteString(`"}}`)
+
+	return []byte(sb.String())
 }
 
 // ============================================================================

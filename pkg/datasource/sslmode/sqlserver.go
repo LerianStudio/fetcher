@@ -20,6 +20,7 @@ import (
 // Note: The go-mssqldb driver also uses trustServerCertificate parameter
 // to skip certificate verification when encrypt=true.
 var validSQLServerModes = map[string]struct{}{
+	"":        {}, // Driver default (same as false)
 	"disable": {}, // Explicitly disable encryption
 	"false":   {}, // Disable encryption (default)
 	"true":    {}, // Enable encryption with certificate verification

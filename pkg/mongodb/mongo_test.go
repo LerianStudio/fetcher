@@ -283,13 +283,13 @@ func TestPingMongo(t *testing.T) {
 		assert.Contains(t, err.Error(), "provider is nil")
 	})
 
-	t.Run("returns error when GetDB fails", func(t *testing.T) {
+	t.Run("returns error when client retrieval fails", func(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		defer ctrl.Finish()
 
 		provider := NewMockMongoClientProvider(ctrl)
 		provider.EXPECT().
-			GetDB(gomock.Any()).
+			Client(gomock.Any()).
 			Return(nil, errors.New("connection failed"))
 
 		err := PingMongo(context.Background(), provider, time.Second)
@@ -305,11 +305,11 @@ func TestPingMongo(t *testing.T) {
 
 		provider := NewMockMongoClientProvider(ctrl)
 		provider.EXPECT().
-			GetDB(gomock.Any()).
+			Client(gomock.Any()).
 			Return(nil, errors.New("connection failed"))
 
 		err := PingMongo(context.Background(), provider, 0)
-		assert.Error(t, err) // Will fail at GetDB, but timeout code path is exercised
+		assert.Error(t, err) // Will fail at client retrieval, but timeout code path is exercised
 	})
 
 	t.Run("uses default timeout when timeout is negative", func(t *testing.T) {
@@ -318,7 +318,7 @@ func TestPingMongo(t *testing.T) {
 
 		provider := NewMockMongoClientProvider(ctrl)
 		provider.EXPECT().
-			GetDB(gomock.Any()).
+			Client(gomock.Any()).
 			Return(nil, errors.New("connection failed"))
 
 		err := PingMongo(context.Background(), provider, -1*time.Second)

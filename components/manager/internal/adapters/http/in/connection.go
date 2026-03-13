@@ -1,6 +1,8 @@
 package in
 
 import (
+	"fmt"
+
 	"github.com/LerianStudio/fetcher/components/manager/internal/services/command"
 	"github.com/LerianStudio/fetcher/components/manager/internal/services/query"
 
@@ -9,8 +11,9 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/model"
 	httpUtils "github.com/LerianStudio/fetcher/pkg/net/http"
 
-	"github.com/LerianStudio/lib-commons/v3/commons"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v3/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v4/commons"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -77,13 +80,13 @@ func (h *ConnectionHandler) CreateConnection(c *fiber.Ctx) error {
 
 	orgID, err := httpUtils.GetOrganizationID(c)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "missing or invalid org id", err)
+		libOpentelemetry.HandleSpanError(span, "missing or invalid org id", err)
 		return httpUtils.WithError(c, err)
 	}
 
 	productName, err := httpUtils.GetRequiredProductName(c)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "missing or invalid product name", err)
+		libOpentelemetry.HandleSpanError(span, "missing or invalid product name", err)
 		return httpUtils.WithError(c, err)
 	}
 
@@ -95,7 +98,7 @@ func (h *ConnectionHandler) CreateConnection(c *fiber.Ctx) error {
 
 	var request model.ConnectionInput
 	if errParser := c.BodyParser(&request); errParser != nil {
-		libOpentelemetry.HandleSpanError(&span, "failed to parse payload", errParser)
+		libOpentelemetry.HandleSpanError(span, "failed to parse payload", errParser)
 
 		return httpUtils.WithError(c, pkg.ValidationError{
 			EntityType: "connection",
@@ -114,21 +117,21 @@ func (h *ConnectionHandler) CreateConnection(c *fiber.Ctx) error {
 			Message:    "empty request body",
 		}
 
-		libOpentelemetry.HandleSpanError(&span, "empty request body", err)
+		libOpentelemetry.HandleSpanError(span, "empty request body", err)
 
 		return httpUtils.WithError(c, err)
 	}
 
 	conn, err := h.CreateCmd.Execute(ctx, orgID, request, productName)
 	if err != nil {
-		logger.Errorf("Failed to execute create connection command, Error: %s", err.Error())
-		libOpentelemetry.HandleSpanError(&span, "failed to create connection", err)
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to execute create connection command, Error: %s", err.Error()))
+		libOpentelemetry.HandleSpanError(span, "failed to create connection", err)
 
 		return httpUtils.WithError(c, err)
 	}
 
 	resp := model.NewConnectionResponseFrom(conn)
-	logger.Infof("connection created id=%s org=%s", resp.ID, orgID)
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("connection created id=%s org=%s", resp.ID, orgID))
 
 	return httpUtils.Created(c, resp)
 }
@@ -166,13 +169,13 @@ func (h *ConnectionHandler) ListConnections(c *fiber.Ctx) error {
 
 	orgID, err := httpUtils.GetOrganizationID(c)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "missing or invalid org id", err)
+		libOpentelemetry.HandleSpanError(span, "missing or invalid org id", err)
 		return httpUtils.WithError(c, err)
 	}
 
 	productName, err := httpUtils.GetProductName(c)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "invalid product name", err)
+		libOpentelemetry.HandleSpanError(span, "invalid product name", err)
 		return httpUtils.WithError(c, err)
 	}
 
@@ -187,21 +190,21 @@ func (h *ConnectionHandler) ListConnections(c *fiber.Ctx) error {
 
 	headerParams, err := httpUtils.ValidateParameters(c.Queries())
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to validate query parameters", err)
-		logger.Errorf("Failed to validate query parameters, Error: %s", err.Error())
+		libOpentelemetry.HandleSpanError(span, "Failed to validate query parameters", err)
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to validate query parameters, Error: %s", err.Error()))
 
 		return httpUtils.WithError(c, err)
 	}
 
 	pagination, err := h.ListQuery.Execute(ctx, orgID, productName, *headerParams)
 	if err != nil {
-		logger.Errorf("Failed to execute list connections query, Error: %s", err.Error())
-		libOpentelemetry.HandleSpanError(&span, "failed to list connections", err)
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to execute list connections query, Error: %s", err.Error()))
+		libOpentelemetry.HandleSpanError(span, "failed to list connections", err)
 
 		return httpUtils.WithError(c, err)
 	}
 
-	logger.Infof("connections listed org=%s count=%d", orgID, pagination.Total)
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("connections listed org=%s count=%d", orgID, pagination.Total))
 
 	return httpUtils.OK(c, pagination)
 }
@@ -231,7 +234,7 @@ func (h *ConnectionHandler) GetConnection(c *fiber.Ctx) error {
 
 	orgID, err := httpUtils.GetOrganizationID(c)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "missing or invalid org id", err)
+		libOpentelemetry.HandleSpanError(span, "missing or invalid org id", err)
 		return httpUtils.WithError(c, err)
 	}
 
@@ -255,15 +258,15 @@ func (h *ConnectionHandler) GetConnection(c *fiber.Ctx) error {
 
 	conn, err := h.GetQuery.Execute(ctx, orgID, id)
 	if err != nil {
-		logger.Errorf("Failed to execute get connection query, Error: %s", err.Error())
-		libOpentelemetry.HandleSpanError(&span, "failed to get connection", err)
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to execute get connection query, Error: %s", err.Error()))
+		libOpentelemetry.HandleSpanError(span, "failed to get connection", err)
 
 		return httpUtils.WithError(c, err)
 	}
 
 	resp := model.NewConnectionResponseFrom(conn)
 
-	logger.Infof("connection retrieved id=%s org=%s", id, orgID)
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("connection retrieved id=%s org=%s", id, orgID))
 
 	return httpUtils.OK(c, resp)
 }
@@ -294,7 +297,7 @@ func (h *ConnectionHandler) TestConnection(c *fiber.Ctx) error {
 
 	orgID, err := httpUtils.GetOrganizationID(c)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "missing or invalid org id", err)
+		libOpentelemetry.HandleSpanError(span, "missing or invalid org id", err)
 		return httpUtils.WithError(c, err)
 	}
 
@@ -305,7 +308,7 @@ func (h *ConnectionHandler) TestConnection(c *fiber.Ctx) error {
 
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "invalid connection id parameter", err)
+		libOpentelemetry.HandleSpanError(span, "invalid connection id parameter", err)
 
 		return httpUtils.WithError(c, pkg.ValidationError{
 			EntityType: "connection",
@@ -320,13 +323,13 @@ func (h *ConnectionHandler) TestConnection(c *fiber.Ctx) error {
 
 	resp, err := h.TestQuery.Execute(ctx, orgID, id)
 	if err != nil {
-		logger.Errorf("Failed to execute test connection query, Error: %s", err.Error())
-		libOpentelemetry.HandleSpanError(&span, "failed to test connection", err)
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to execute test connection query, Error: %s", err.Error()))
+		libOpentelemetry.HandleSpanError(span, "failed to test connection", err)
 
 		return httpUtils.WithError(c, err)
 	}
 
-	logger.Infof("connection test successful id=%s org=%s latency_ms=%d", id, orgID, resp.LatencyMs)
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("connection test successful id=%s org=%s latency_ms=%d", id, orgID, resp.LatencyMs))
 
 	return httpUtils.OK(c, resp)
 }
@@ -359,7 +362,7 @@ func (h *ConnectionHandler) UpdateConnection(c *fiber.Ctx) error {
 
 	orgID, err := httpUtils.GetOrganizationID(c)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "missing or invalid org id", err)
+		libOpentelemetry.HandleSpanError(span, "missing or invalid org id", err)
 		return httpUtils.WithError(c, err)
 	}
 
@@ -383,7 +386,7 @@ func (h *ConnectionHandler) UpdateConnection(c *fiber.Ctx) error {
 
 	var request model.ConnectionUpdateInput
 	if errParser := c.BodyParser(&request); errParser != nil {
-		libOpentelemetry.HandleSpanError(&span, "failed to parse payload", errParser)
+		libOpentelemetry.HandleSpanError(span, "failed to parse payload", errParser)
 
 		return httpUtils.WithError(c, pkg.ValidationError{
 			EntityType: "connection",
@@ -402,20 +405,20 @@ func (h *ConnectionHandler) UpdateConnection(c *fiber.Ctx) error {
 			Message:    "empty request body",
 		}
 
-		libOpentelemetry.HandleSpanError(&span, "empty request body", err)
+		libOpentelemetry.HandleSpanError(span, "empty request body", err)
 
 		return httpUtils.WithError(c, err)
 	}
 
 	conn, err := h.UpdateCmd.Execute(ctx, orgID, id, request)
 	if err != nil {
-		logger.Errorf("Failed to execute update connection command, Error: %s", err.Error())
-		libOpentelemetry.HandleSpanError(&span, "failed to update connection", err)
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to execute update connection command, Error: %s", err.Error()))
+		libOpentelemetry.HandleSpanError(span, "failed to update connection", err)
 
 		return httpUtils.WithError(c, err)
 	}
 
-	logger.Infof("connection updated id=%s org=%s", id, orgID)
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("connection updated id=%s org=%s", id, orgID))
 
 	return httpUtils.OK(c, model.NewConnectionResponseFrom(conn))
 }
@@ -446,7 +449,7 @@ func (h *ConnectionHandler) DeleteConnection(c *fiber.Ctx) error {
 
 	orgID, err := httpUtils.GetOrganizationID(c)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "missing or invalid org id", err)
+		libOpentelemetry.HandleSpanError(span, "missing or invalid org id", err)
 		return httpUtils.WithError(c, err)
 	}
 
@@ -469,13 +472,13 @@ func (h *ConnectionHandler) DeleteConnection(c *fiber.Ctx) error {
 	span.SetAttributes(attribute.String("app.request.connection_id", id.String()))
 
 	if err := h.DeleteCmd.Execute(ctx, orgID, id); err != nil {
-		logger.Errorf("Failed to execute delete connection command, Error: %s", err.Error())
-		libOpentelemetry.HandleSpanError(&span, "failed to delete connection", err)
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to execute delete connection command, Error: %s", err.Error()))
+		libOpentelemetry.HandleSpanError(span, "failed to delete connection", err)
 
 		return httpUtils.WithError(c, err)
 	}
 
-	logger.Infof("connection deleted id=%s org=%s", id, orgID)
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("connection deleted id=%s org=%s", id, orgID))
 
 	return c.Status(fiber.StatusNoContent).Send(nil)
 }
@@ -510,7 +513,7 @@ func (h *ConnectionHandler) ValidateSchema(c *fiber.Ctx) error {
 
 	orgID, err := httpUtils.GetOrganizationID(c)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "missing or invalid org id", err)
+		libOpentelemetry.HandleSpanError(span, "missing or invalid org id", err)
 		return httpUtils.WithError(c, err)
 	}
 
@@ -521,7 +524,7 @@ func (h *ConnectionHandler) ValidateSchema(c *fiber.Ctx) error {
 
 	var request model.SchemaValidationRequest
 	if errParser := c.BodyParser(&request); errParser != nil {
-		libOpentelemetry.HandleSpanError(&span, "failed to parse payload", errParser)
+		libOpentelemetry.HandleSpanError(span, "failed to parse payload", errParser)
 
 		return httpUtils.WithError(c, pkg.ValidationError{
 			EntityType: "schema",
@@ -534,13 +537,13 @@ func (h *ConnectionHandler) ValidateSchema(c *fiber.Ctx) error {
 
 	resp, err := h.ValidateSchemaQuery.Execute(ctx, orgID, request)
 	if err != nil {
-		logger.Errorf("Failed to execute validate schema query, Error: %s", err.Error())
-		libOpentelemetry.HandleSpanError(&span, "failed to validate schema", err)
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to execute validate schema query, Error: %s", err.Error()))
+		libOpentelemetry.HandleSpanError(span, "failed to validate schema", err)
 
 		return httpUtils.WithError(c, err)
 	}
 
-	logger.Infof("schema validation completed org=%s status=%s", orgID, resp.Status)
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("schema validation completed org=%s status=%s", orgID, resp.Status))
 
 	if resp.Status == model.StatusFailure {
 		return httpUtils.JSONResponse(c, fiber.StatusUnprocessableEntity, model.SchemaValidationErrorResponse{
@@ -579,7 +582,7 @@ func (h *ConnectionHandler) GetConnectionSchema(c *fiber.Ctx) error {
 
 	orgID, err := httpUtils.GetOrganizationID(c)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "missing or invalid org id", err)
+		libOpentelemetry.HandleSpanError(span, "missing or invalid org id", err)
 		return httpUtils.WithError(c, err)
 	}
 
@@ -590,7 +593,7 @@ func (h *ConnectionHandler) GetConnectionSchema(c *fiber.Ctx) error {
 
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "invalid connection id parameter", err)
+		libOpentelemetry.HandleSpanError(span, "invalid connection id parameter", err)
 
 		return httpUtils.WithError(c, pkg.ValidationError{
 			EntityType: "connection",
@@ -605,13 +608,13 @@ func (h *ConnectionHandler) GetConnectionSchema(c *fiber.Ctx) error {
 
 	resp, err := h.GetSchemaQuery.Execute(ctx, orgID, id)
 	if err != nil {
-		logger.Errorf("Failed to execute get connection schema query, Error: %s", err.Error())
-		libOpentelemetry.HandleSpanError(&span, "failed to get connection schema", err)
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to execute get connection schema query, Error: %s", err.Error()))
+		libOpentelemetry.HandleSpanError(span, "failed to get connection schema", err)
 
 		return httpUtils.WithError(c, err)
 	}
 
-	logger.Infof("connection schema retrieved id=%s org=%s tables=%d", id, orgID, len(resp.Tables))
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("connection schema retrieved id=%s org=%s tables=%d", id, orgID, len(resp.Tables)))
 
 	return httpUtils.OK(c, resp)
 }

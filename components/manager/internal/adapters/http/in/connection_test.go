@@ -20,8 +20,8 @@ import (
 
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 
-	libCommons "github.com/LerianStudio/lib-commons/v3/commons"
-	libLog "github.com/LerianStudio/lib-commons/v3/commons/log"
+	libCommons "github.com/LerianStudio/lib-commons/v4/commons"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -38,7 +38,7 @@ func setupConnectionTestApp() *fiber.App {
 
 	// Middleware to inject test context with logger and tracer
 	app.Use(func(c *fiber.Ctx) error {
-		logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+		logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 		values := &libCommons.CustomContextKeyValue{
 			HeaderID: "test-request-id",
 			Logger:   logger,
@@ -1203,14 +1203,15 @@ func TestConnectionHandler_ValidateSchema_Success(t *testing.T) {
 	// ValidateSchema service:
 	// 1. Find connections by config names
 	mockConnRepo.EXPECT().FindByConfigNames(gomock.Any(), orgID, gomock.Any()).Return([]*model.Connection{testConn}, nil)
-	// 2. Cache miss -> decrypt password -> attempt real DB connection
-	mockCryptor.EXPECT().Decrypt(gomock.Any(), "encrypted-password", "v1").Return("secretpassword", nil)
-	// NOTE: After this, the service will try to connect to a real database.
-	// Since no real DB is available, the service returns a DataSourceDown error,
-	// which results in a 422 (validation failure) rather than the success path.
-	// This is expected when mocking at the repository level.
+	// 2. Cache miss -> factory creates datasource (which fails because no real DB is available).
+	// The factory is called with the connection and cryptor; decryption happens inside.
+	// Since no real DB is available, the factory returns an error -> treated as DataSourceDown -> 422.
 
-	validateSchemaQuery := query.NewValidateSchema(mockConnRepo, mockCryptor, mockCache)
+	// Provide a factory that simulates a datasource-down scenario (no real DB available).
+	failingFactory := func(_ context.Context, _ *model.Connection, _ crypto.Cryptor) (datasource.DataSource, error) {
+		return nil, fmt.Errorf("connection refused")
+	}
+	validateSchemaQuery := query.NewValidateSchema(mockConnRepo, mockCryptor, mockCache, failingFactory)
 	handler := &ConnectionHandler{ValidateSchemaQuery: validateSchemaQuery}
 
 	app := setupConnectionTestApp()
@@ -1272,10 +1273,12 @@ func TestConnectionHandler_ValidateSchema_Failure_DataSourceNotFound(t *testing.
 	mockConnRepo.EXPECT().FindByConfigNames(gomock.Any(), orgID, gomock.Any()).Return([]*model.Connection{existingConn}, nil)
 	// The service will try to fetch schema for "existing_ds" (which connects to real DB and fails)
 	// and also detect "unknown_ds" as not found.
-	// The decrypt is called for the existing_ds schema fetch attempt
-	mockCryptor.EXPECT().Decrypt(gomock.Any(), "encrypted-password", "v1").Return("secretpassword", nil)
+	// Provide a factory that simulates datasource-down for existing connections.
+	failingFactory := func(_ context.Context, _ *model.Connection, _ crypto.Cryptor) (datasource.DataSource, error) {
+		return nil, fmt.Errorf("connection refused")
+	}
 
-	validateSchemaQuery := query.NewValidateSchema(mockConnRepo, mockCryptor, mockCache)
+	validateSchemaQuery := query.NewValidateSchema(mockConnRepo, mockCryptor, mockCache, failingFactory)
 	handler := &ConnectionHandler{ValidateSchemaQuery: validateSchemaQuery}
 
 	app := setupConnectionTestApp()
@@ -1413,7 +1416,7 @@ func TestConnectionHandler_ValidateSchema_InternalError(t *testing.T) {
 	// FindByConfigNames returns an error -> internal server error
 	mockConnRepo.EXPECT().FindByConfigNames(gomock.Any(), orgID, gomock.Any()).Return(nil, assert.AnError)
 
-	validateSchemaQuery := query.NewValidateSchema(mockConnRepo, mockCryptor, mockCache)
+	validateSchemaQuery := query.NewValidateSchema(mockConnRepo, mockCryptor, mockCache, nil)
 	handler := &ConnectionHandler{ValidateSchemaQuery: validateSchemaQuery}
 
 	app := setupConnectionTestApp()

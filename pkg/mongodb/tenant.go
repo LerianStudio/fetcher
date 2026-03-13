@@ -2,8 +2,10 @@ package mongodb
 
 import (
 	"context"
+	"errors"
+	"strings"
 
-	tmcore "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/core"
+	tmcore "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/core"
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
@@ -17,5 +19,29 @@ import (
 // silently falling back. In single-tenant mode (no tenant in context), it uses
 // the static provider and database name.
 func GetDatabaseForContext(ctx context.Context, conn MongoClientProvider, dbName string) (*mongo.Database, error) {
-	return tmcore.ResolveMongo(ctx, conn, dbName)
+	if conn == nil {
+		return nil, errors.New("mongo client provider is nil")
+	}
+
+	// Check if there is a tenant-specific database in context
+	if db := tmcore.GetMongoFromContext(ctx); db != nil {
+		return db, nil
+	}
+
+	// If the provider is multi-tenant aware, require tenant context
+	if checker, ok := conn.(interface{ IsMultiTenant() bool }); ok && checker.IsMultiTenant() {
+		return nil, tmcore.ErrTenantContextRequired
+	}
+
+	// Single-tenant fallback
+	client, err := conn.Client(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if client == nil {
+		return nil, errors.New("mongo client is nil")
+	}
+
+	return client.Database(strings.ToLower(dbName)), nil
 }

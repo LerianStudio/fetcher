@@ -30,7 +30,6 @@ import (
 // - Jobs complete successfully (latency injection has no effect)
 // - Timing varies based on system load, not injected latency
 func TestWorker_PostgreSQL_HighLatency(t *testing.T) {
-
 	ctx, cancel := context.WithTimeout(context.Background(), LongChaosTestTimeout)
 	defer cancel()
 
@@ -105,7 +104,6 @@ func TestWorker_PostgreSQL_HighLatency(t *testing.T) {
 // - Job may succeed but processing fails
 // - Worker should not crash
 func TestWorker_PostgreSQL_Timeout(t *testing.T) {
-
 	ctx, cancel := context.WithTimeout(context.Background(), DefaultChaosTestTimeout)
 	defer cancel()
 
@@ -208,7 +206,6 @@ done:
 // - Job should fail or retry
 // - Partial data should not be left in inconsistent state
 func TestWorker_PostgreSQL_PartialFailure(t *testing.T) {
-
 	ctx, cancel := context.WithTimeout(context.Background(), LongChaosTestTimeout)
 	defer cancel()
 
@@ -284,7 +281,6 @@ done:
 // - Jobs should succeed after recovery
 // - Recovery should happen within SLO threshold
 func TestWorker_Database_Recovery(t *testing.T) {
-
 	ctx, cancel := context.WithTimeout(context.Background(), LongChaosTestTimeout)
 	defer cancel()
 
@@ -320,7 +316,6 @@ func TestWorker_Database_Recovery(t *testing.T) {
 		fetcherReq := createBasicFetcherRequest(conn.ConfigName)
 		start := time.Now()
 		resp, err := apiClient.CreateFetcherJob(ctx, fetcherReq)
-
 		if err != nil {
 			t.Logf("Job %d creation failed: %v", i+1, err)
 			metrics.RecordRequest(false, false, time.Since(start))
@@ -362,7 +357,6 @@ func TestWorker_Database_Recovery(t *testing.T) {
 // - Jobs should complete but take longer
 // - Throughput should be degraded
 func TestWorker_Database_SlowQuery(t *testing.T) {
-
 	ctx, cancel := context.WithTimeout(context.Background(), LongChaosTestTimeout)
 	defer cancel()
 

@@ -1,6 +1,8 @@
 package in
 
 import (
+	"fmt"
+
 	"github.com/LerianStudio/fetcher/components/manager/internal/services/command"
 	"github.com/LerianStudio/fetcher/components/manager/internal/services/query"
 
@@ -9,8 +11,9 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/model"
 	httpUtils "github.com/LerianStudio/fetcher/pkg/net/http"
 
-	"github.com/LerianStudio/lib-commons/v3/commons"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v3/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v4/commons"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -58,7 +61,7 @@ func (h *MigrationHandler) ListUnassignedConnections(c *fiber.Ctx) error {
 
 	orgID, err := httpUtils.GetOrganizationID(c)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "missing or invalid org id", err)
+		libOpentelemetry.HandleSpanError(span, "missing or invalid org id", err)
 		return httpUtils.WithError(c, err)
 	}
 
@@ -69,21 +72,21 @@ func (h *MigrationHandler) ListUnassignedConnections(c *fiber.Ctx) error {
 
 	headerParams, err := httpUtils.ValidateParameters(c.Queries())
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to validate query parameters", err)
-		logger.Errorf("Failed to validate query parameters, Error: %s", err.Error())
+		libOpentelemetry.HandleSpanError(span, "Failed to validate query parameters", err)
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to validate query parameters, Error: %s", err.Error()))
 
 		return httpUtils.WithError(c, err)
 	}
 
 	pagination, err := h.ListUnassignedQry.Execute(ctx, orgID, *headerParams)
 	if err != nil {
-		logger.Errorf("Failed to execute list unassigned connections query, Error: %s", err.Error())
-		libOpentelemetry.HandleSpanError(&span, "failed to list unassigned connections", err)
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to execute list unassigned connections query, Error: %s", err.Error()))
+		libOpentelemetry.HandleSpanError(span, "failed to list unassigned connections", err)
 
 		return httpUtils.WithError(c, err)
 	}
 
-	logger.Infof("unassigned connections listed org=%s count=%d", orgID, pagination.Total)
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("unassigned connections listed org=%s count=%d", orgID, pagination.Total))
 
 	return httpUtils.OK(c, pagination)
 }
@@ -115,13 +118,13 @@ func (h *MigrationHandler) AssignConnectionToProduct(c *fiber.Ctx) error {
 
 	orgID, err := httpUtils.GetOrganizationID(c)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "missing or invalid org id", err)
+		libOpentelemetry.HandleSpanError(span, "missing or invalid org id", err)
 		return httpUtils.WithError(c, err)
 	}
 
 	connectionID, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "invalid connection id parameter", err)
+		libOpentelemetry.HandleSpanError(span, "invalid connection id parameter", err)
 
 		return httpUtils.WithError(c, pkg.ValidationError{
 			EntityType: "connection",
@@ -140,7 +143,7 @@ func (h *MigrationHandler) AssignConnectionToProduct(c *fiber.Ctx) error {
 
 	productName, err := httpUtils.GetRequiredProductName(c)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "missing or invalid product name", err)
+		libOpentelemetry.HandleSpanError(span, "missing or invalid product name", err)
 		return httpUtils.WithError(c, err)
 	}
 
@@ -148,15 +151,15 @@ func (h *MigrationHandler) AssignConnectionToProduct(c *fiber.Ctx) error {
 
 	conn, err := h.AssignCmd.Execute(ctx, orgID, connectionID, productName)
 	if err != nil {
-		logger.Errorf("Failed to assign connection to product, Error: %s", err.Error())
-		libOpentelemetry.HandleSpanError(&span, "failed to assign connection to product", err)
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to assign connection to product, Error: %s", err.Error()))
+		libOpentelemetry.HandleSpanError(span, "failed to assign connection to product", err)
 
 		return httpUtils.WithError(c, err)
 	}
 
 	resp := model.NewConnectionResponseFrom(conn)
 
-	logger.Infof("connection assigned to product connection_id=%s product_name=%s org=%s", connectionID, productName, orgID)
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("connection assigned to product connection_id=%s product_name=%s org=%s", connectionID, productName, orgID))
 
 	return httpUtils.OK(c, resp)
 }

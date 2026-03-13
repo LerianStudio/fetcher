@@ -9,10 +9,10 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/model/datasource"
 	"github.com/LerianStudio/fetcher/pkg/model/job"
 	"github.com/LerianStudio/fetcher/pkg/oracle"
-	"github.com/LerianStudio/lib-commons/v3/commons"
-	libConstant "github.com/LerianStudio/lib-commons/v3/commons/constants"
-	"github.com/LerianStudio/lib-commons/v3/commons/log"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v3/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v4/commons"
+	libConstant "github.com/LerianStudio/lib-commons/v4/commons/constants"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -37,9 +37,9 @@ func (ds *DataSourceConfigOracle) GetType() string {
 
 // Connect establishes a connection to Oracle.
 // This method is a no-op as the connection is established during factory creation.
-func (ds *DataSourceConfigOracle) Connect(ctx context.Context, logger log.Logger) error {
+func (ds *DataSourceConfigOracle) Connect(ctx context.Context, logger libLog.Logger) error {
 	ds.Status = libConstant.DataSourceStatusAvailable
-	logger.Infof("Oracle connection ready for %s", ds.ConfigName)
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Oracle connection ready for %s", ds.ConfigName))
 
 	return nil
 }
@@ -58,7 +58,7 @@ func (ds *DataSourceConfigOracle) Close(ctx context.Context) error {
 }
 
 // Query executes queries on multiple Oracle tables.
-func (ds *DataSourceConfigOracle) Query(ctx context.Context, tables map[string][]string, filters map[string]map[string]job.FilterCondition, logger log.Logger) (map[string][]map[string]any, error) {
+func (ds *DataSourceConfigOracle) Query(ctx context.Context, tables map[string][]string, filters map[string]map[string]job.FilterCondition, logger libLog.Logger) (map[string][]map[string]any, error) {
 	result := make(map[string][]map[string]any)
 
 	// Extract unique schemas from table names
@@ -66,7 +66,7 @@ func (ds *DataSourceConfigOracle) Query(ctx context.Context, tables map[string][
 
 	schemaResult, err := ds.OracleRepository.GetDatabaseSchema(ctx, schemas)
 	if err != nil {
-		logger.Errorf("Error getting database schema: %s", err.Error())
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Error getting database schema: %s", err.Error()))
 		return nil, err
 	}
 
@@ -85,13 +85,13 @@ func (ds *DataSourceConfigOracle) Query(ctx context.Context, tables map[string][
 		}
 
 		if errQuery != nil {
-			logger.Errorf("Error querying table %s: %s", table, errQuery.Error())
+			logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Error querying table %s: %s", table, errQuery.Error()))
 			return nil, errQuery
 		}
 
 		tableResult, ok := queryResult.([]map[string]any)
 		if !ok {
-			logger.Errorf("Unexpected query result type for table %s", table)
+			logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Unexpected query result type for table %s", table))
 			return nil, fmt.Errorf("unexpected query result type for table %s", table)
 		}
 
@@ -124,7 +124,7 @@ func (ds *DataSourceConfigOracle) GetSchemaInfo(ctx context.Context, schemas []s
 
 	schemaResult, err := ds.OracleRepository.GetDatabaseSchema(ctx, schemas)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "failed to get database schema", err)
+		libOpentelemetry.HandleSpanError(span, "failed to get database schema", err)
 		return nil, fmt.Errorf("failed to get Oracle schema: %w", err)
 	}
 

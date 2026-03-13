@@ -10,8 +10,9 @@ import (
 
 	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
 
-	"github.com/LerianStudio/lib-commons/v3/commons"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v3/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v4/commons"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
@@ -39,7 +40,7 @@ func (s *AssignConnection) Execute(ctx context.Context, organizationID, connecti
 	)
 
 	if productName == "" {
-		libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "empty product name", constant.ErrBadRequest)
+		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "empty product name", constant.ErrBadRequest)
 
 		return nil, pkg.ValidateBadRequestFieldsError(
 			map[string]string{"product_name": "product name is required"},
@@ -52,28 +53,32 @@ func (s *AssignConnection) Execute(ctx context.Context, organizationID, connecti
 	// Validate connection exists
 	conn, err := s.connRepo.FindByID(ctx, connectionID, organizationID)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to find connection by ID", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to find connection by ID", err)
 		return nil, fmt.Errorf("failed to find connection by id: %w", err)
 	}
 
 	if conn == nil {
-		libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "Connection not found", constant.ErrEntityNotFound)
+		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Connection not found", constant.ErrEntityNotFound)
 		return nil, pkg.ValidateBusinessError(constant.ErrEntityNotFound, "connection")
 	}
 
 	// Persist the assignment (atomic guard: repo uses product_name: {$eq: ""} filter)
 	updated, err := s.connRepo.AssignProductName(ctx, connectionID, organizationID, productName)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to assign product to connection", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to assign product to connection", err)
 		return nil, fmt.Errorf("failed to assign product to connection: %w", err)
 	}
 
 	if updated == nil {
-		libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "Connection already assigned to a product", constant.ErrConnectionAlreadyAssigned)
+		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Connection already assigned to a product", constant.ErrConnectionAlreadyAssigned)
 		return nil, pkg.ValidateBusinessError(constant.ErrConnectionAlreadyAssigned, "connection")
 	}
 
-	logger.Infof("connection assigned to product connection_id=%s product_name=%s org=%s", connectionID, productName, organizationID)
+	logger.Log(ctx, libLog.LevelInfo, "connection assigned to product",
+		libLog.String("connection_id", connectionID.String()),
+		libLog.String("product_name", productName),
+		libLog.String("organization_id", organizationID.String()),
+	)
 
 	return updated, nil
 }

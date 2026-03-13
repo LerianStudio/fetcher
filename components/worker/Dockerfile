@@ -12,11 +12,14 @@ WORKDIR /fetcher
 # Copy only go.mod and go.sum first to cache dependencies
 COPY go.mod go.sum ./
 
-# Download Go modules using GitHub token from BuildKit secret
-RUN --mount=type=secret,id=github_token \
-  GITHUB_TOKEN=$(cat /run/secrets/github_token) && \
-  printf "machine github.com\nlogin x-oauth-basic\npassword %s\n" "$GITHUB_TOKEN" > ~/.netrc && \
-  go mod download && rm ~/.netrc
+# Download Go modules, using the GitHub token secret only when it is available.
+RUN --mount=type=secret,id=github_token,required=false \
+  if [ -f /run/secrets/github_token ] && [ -s /run/secrets/github_token ]; then \
+    GITHUB_TOKEN=$(cat /run/secrets/github_token) && \
+    printf "machine github.com\nlogin x-oauth-basic\npassword %s\n" "$GITHUB_TOKEN" > ~/.netrc; \
+  fi && \
+  go mod download && \
+  rm -f ~/.netrc
 
 # Copy only necessary source files for worker component
 COPY pkg/ pkg/
@@ -33,7 +36,7 @@ FROM alpine:3.23
 WORKDIR /app
 
 # Install certificates/timezone data required for TLS connections
-RUN apk add --no-cache ca-certificates tzdata && \
+RUN apk add --no-cache --upgrade zlib ca-certificates tzdata && \
   update-ca-certificates
 
 # Create a non-root user for security

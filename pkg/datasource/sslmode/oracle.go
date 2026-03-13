@@ -23,6 +23,7 @@ import (
 //   - ssl=true|enable enables SSL
 //   - ssl_verify=false with ssl=true enables skip-verify mode
 var validOracleModes = map[string]struct{}{
+	"":            {}, // Default: SSL disabled
 	"disable":     {}, // Explicitly disable SSL
 	"false":       {}, // Disable SSL (same as disable)
 	"true":        {}, // Enable SSL with verification

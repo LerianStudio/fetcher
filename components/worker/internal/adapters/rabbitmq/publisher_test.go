@@ -6,8 +6,9 @@ import (
 	"testing"
 
 	"github.com/LerianStudio/fetcher/pkg/rabbitmq"
-	"github.com/LerianStudio/lib-commons/v3/commons/opentelemetry"
-	tmcore "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/core"
+	"github.com/LerianStudio/lib-commons/v4/commons/log"
+	"github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
+	tmcore "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/core"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -53,14 +54,14 @@ func TestNewPublisherRoutes(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockAdapter := rabbitmq.NewMockAdapter(ctrl)
-	logger := &mockLogger{}
+	nopLogger := log.NewNop()
 	telemetry := &opentelemetry.Telemetry{}
 
-	pr := NewPublisherRoutesWithAdapter(mockAdapter, logger, telemetry)
+	pr := NewPublisherRoutesWithAdapter(mockAdapter, nopLogger, telemetry)
 	assert.NotNil(t, pr)
 	assert.Equal(t, mockAdapter, pr.adapter)
 
-	prNilTelemetry := NewPublisherRoutesWithAdapter(mockAdapter, logger, nil)
+	prNilTelemetry := NewPublisherRoutesWithAdapter(mockAdapter, nopLogger, nil)
 	assert.NotNil(t, prNilTelemetry)
 }
 
@@ -69,7 +70,7 @@ func TestPublisherRoutes_Publish(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockAdapter := rabbitmq.NewMockAdapter(ctrl)
-	logger := &mockLogger{}
+	nopLogger := log.NewNop()
 	telemetry := &opentelemetry.Telemetry{}
 	ctx := context.Background()
 
@@ -78,7 +79,7 @@ func TestPublisherRoutes_Publish(t *testing.T) {
 			ProducerDefault(gomock.Any(), "test-exchange", "test-key", gomock.Any(), nil).
 			Return(nil)
 
-		pr := NewPublisherRoutesWithAdapter(mockAdapter, logger, telemetry)
+		pr := NewPublisherRoutesWithAdapter(mockAdapter, nopLogger, telemetry)
 		err := pr.Publish(ctx, "test-exchange", "test-key", []byte("test body"))
 		assert.NoError(t, err)
 	})
@@ -88,7 +89,7 @@ func TestPublisherRoutes_Publish(t *testing.T) {
 			ProducerDefault(gomock.Any(), "test-exchange", "test-key", gomock.Any(), nil).
 			Return(errors.New("publish error"))
 
-		pr := NewPublisherRoutesWithAdapter(mockAdapter, logger, telemetry)
+		pr := NewPublisherRoutesWithAdapter(mockAdapter, nopLogger, telemetry)
 		err := pr.Publish(ctx, "test-exchange", "test-key", []byte("test body"))
 		assert.Error(t, err)
 	})
@@ -99,14 +100,14 @@ func TestPublisherRoutes_Shutdown(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockAdapter := rabbitmq.NewMockAdapter(ctrl)
-	logger := &mockLogger{}
+	nopLogger := log.NewNop()
 	telemetry := &opentelemetry.Telemetry{}
 	ctx := context.Background()
 
 	t.Run("successful shutdown", func(t *testing.T) {
 		mockAdapter.EXPECT().Shutdown(gomock.Any()).Return(nil)
 
-		pr := NewPublisherRoutesWithAdapter(mockAdapter, logger, telemetry)
+		pr := NewPublisherRoutesWithAdapter(mockAdapter, nopLogger, telemetry)
 		err := pr.Shutdown(ctx)
 		assert.NoError(t, err)
 	})
@@ -114,7 +115,7 @@ func TestPublisherRoutes_Shutdown(t *testing.T) {
 	t.Run("shutdown error", func(t *testing.T) {
 		mockAdapter.EXPECT().Shutdown(gomock.Any()).Return(errors.New("shutdown error"))
 
-		pr := NewPublisherRoutesWithAdapter(mockAdapter, logger, telemetry)
+		pr := NewPublisherRoutesWithAdapter(mockAdapter, nopLogger, telemetry)
 		err := pr.Shutdown(ctx)
 		assert.Error(t, err)
 	})
@@ -146,7 +147,7 @@ func TestPublisherRoutes_Publish_TenantIDPropagation(t *testing.T) {
 			defer ctrl.Finish()
 
 			mockAdapter := rabbitmq.NewMockAdapter(ctrl)
-			logger := &mockLogger{}
+			logger := log.NewNop()
 			telemetry := &opentelemetry.Telemetry{}
 
 			ctx := context.Background()
@@ -183,7 +184,7 @@ func TestPublish_MultiTenant_RequiresTenantID(t *testing.T) {
 	t.Parallel()
 
 	mockMgr := &mockRabbitMQManager{channel: &mockChannel{}}
-	logger := &mockLogger{}
+	logger := log.NewNop()
 	publisher := NewPublisherRoutesMultiTenant(mockMgr, logger, nil)
 
 	err := publisher.Publish(context.Background(), "test-exchange", "test.key", []byte(`{}`))
@@ -197,7 +198,7 @@ func TestPublish_MultiTenant_Success(t *testing.T) {
 
 	mockCh := &mockChannel{}
 	mockMgr := &mockRabbitMQManager{channel: mockCh}
-	logger := &mockLogger{}
+	logger := log.NewNop()
 	publisher := NewPublisherRoutesMultiTenant(mockMgr, logger, nil)
 
 	ctx := tmcore.SetTenantIDInContext(context.Background(), "tenant-123")
@@ -211,7 +212,7 @@ func TestPublish_MultiTenant_GetChannelError(t *testing.T) {
 	t.Parallel()
 
 	mockMgr := &mockRabbitMQManager{getChannelErr: errors.New("vhost connection failed")}
-	logger := &mockLogger{}
+	logger := log.NewNop()
 	publisher := NewPublisherRoutesMultiTenant(mockMgr, logger, nil)
 
 	ctx := tmcore.SetTenantIDInContext(context.Background(), "tenant-123")
@@ -226,7 +227,7 @@ func TestPublish_MultiTenant_ExchangeDeclareError(t *testing.T) {
 
 	mockCh := &mockChannel{exchangeDeclareErr: errors.New("exchange declare failed")}
 	mockMgr := &mockRabbitMQManager{channel: mockCh}
-	logger := &mockLogger{}
+	logger := log.NewNop()
 	publisher := NewPublisherRoutesMultiTenant(mockMgr, logger, nil)
 
 	ctx := tmcore.SetTenantIDInContext(context.Background(), "tenant-123")
@@ -241,7 +242,7 @@ func TestShutdown_MultiTenant_NilAdapter(t *testing.T) {
 
 	// In multi-tenant mode, adapter is nil — Shutdown must not panic
 	mockMgr := &mockRabbitMQManager{channel: &mockChannel{}}
-	logger := &mockLogger{}
+	logger := log.NewNop()
 	publisher := NewPublisherRoutesMultiTenant(mockMgr, logger, nil)
 
 	err := publisher.Shutdown(context.Background())
@@ -252,7 +253,7 @@ func TestNewPublisherRoutesMultiTenant_SetsFields(t *testing.T) {
 	t.Parallel()
 
 	mockMgr := &mockRabbitMQManager{channel: &mockChannel{}}
-	logger := &mockLogger{}
+	logger := log.NewNop()
 	publisher := NewPublisherRoutesMultiTenant(mockMgr, logger, nil)
 
 	assert.NotNil(t, publisher)
@@ -265,7 +266,7 @@ func TestPublish_MultiTenant_PublishError(t *testing.T) {
 
 	mockCh := &mockChannel{publishErr: errors.New("publish failed")}
 	mockMgr := &mockRabbitMQManager{channel: mockCh}
-	logger := &mockLogger{}
+	logger := log.NewNop()
 	publisher := NewPublisherRoutesMultiTenant(mockMgr, logger, nil)
 
 	ctx := tmcore.SetTenantIDInContext(context.Background(), "tenant-123")

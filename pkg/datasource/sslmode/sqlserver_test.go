@@ -14,7 +14,7 @@ func TestValidateSQLServerMode(t *testing.T) {
 		wantError bool
 	}{
 		// Valid modes - from go-mssqldb documentation
-		{name: "empty string is invalid (must use explicit mode)", mode: "", wantError: true},
+		{name: "empty string is valid (driver default behavior)", mode: "", wantError: false},
 		{name: "disable is valid", mode: "disable", wantError: false},
 		{name: "false is valid", mode: "false", wantError: false},
 		{name: "true is valid", mode: "true", wantError: false},
@@ -59,6 +59,6 @@ func TestGetValidSQLServerModes(t *testing.T) {
 	modes := GetValidSQLServerModes()
 
 	// Verify all expected modes are present
-	expected := []string{"disable", "false", "true", "strict"}
+	expected := []string{"", "disable", "false", "true", "strict"}
 	assert.ElementsMatch(t, expected, modes, "Should return all valid SQL Server encryption modes")
 }

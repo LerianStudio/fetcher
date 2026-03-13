@@ -8,10 +8,10 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/model/datasource"
 	"github.com/LerianStudio/fetcher/pkg/model/job"
 	"github.com/LerianStudio/fetcher/pkg/mysql"
-	"github.com/LerianStudio/lib-commons/v3/commons"
-	libConstant "github.com/LerianStudio/lib-commons/v3/commons/constants"
-	"github.com/LerianStudio/lib-commons/v3/commons/log"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v3/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v4/commons"
+	libConstant "github.com/LerianStudio/lib-commons/v4/commons/constants"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -36,9 +36,9 @@ func (ds *DataSourceConfigMySQL) GetType() string {
 
 // Connect establishes a connection to MySQL.
 // This method is a no-op as the connection is established during factory creation.
-func (ds *DataSourceConfigMySQL) Connect(ctx context.Context, logger log.Logger) error {
+func (ds *DataSourceConfigMySQL) Connect(ctx context.Context, logger libLog.Logger) error {
 	ds.Status = libConstant.DataSourceStatusAvailable
-	logger.Infof("MySQL connection ready for %s", ds.ConfigName)
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("MySQL connection ready for %s", ds.ConfigName))
 
 	return nil
 }
@@ -57,12 +57,12 @@ func (ds *DataSourceConfigMySQL) Close(ctx context.Context) error {
 }
 
 // Query executes queries on multiple MySQL tables.
-func (ds *DataSourceConfigMySQL) Query(ctx context.Context, tables map[string][]string, filters map[string]map[string]job.FilterCondition, logger log.Logger) (map[string][]map[string]any, error) {
+func (ds *DataSourceConfigMySQL) Query(ctx context.Context, tables map[string][]string, filters map[string]map[string]job.FilterCondition, logger libLog.Logger) (map[string][]map[string]any, error) {
 	result := make(map[string][]map[string]any)
 
 	schemaResult, err := ds.MySQLRepository.GetDatabaseSchema(ctx)
 	if err != nil {
-		logger.Errorf("Error getting database schema: %s", err.Error())
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Error getting database schema: %s", err.Error()))
 		return nil, err
 	}
 
@@ -82,7 +82,7 @@ func (ds *DataSourceConfigMySQL) Query(ctx context.Context, tables map[string][]
 		}
 
 		if errQuery != nil {
-			logger.Errorf("Error querying table %s: %s", table, errQuery.Error())
+			logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Error querying table %s: %s", table, errQuery.Error()))
 			return nil, errQuery
 		}
 
@@ -116,7 +116,7 @@ func (ds *DataSourceConfigMySQL) GetSchemaInfo(ctx context.Context, schemas []st
 
 	schemaResult, err := ds.MySQLRepository.GetDatabaseSchema(ctx)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "failed to get database schema", err)
+		libOpentelemetry.HandleSpanError(span, "failed to get database schema", err)
 		return nil, fmt.Errorf("failed to get MySQL schema: %w", err)
 	}
 

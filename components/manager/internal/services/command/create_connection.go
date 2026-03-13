@@ -10,8 +10,8 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/model"
 
 	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
-	"github.com/LerianStudio/lib-commons/v3/commons"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v3/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v4/commons"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
@@ -41,9 +41,9 @@ func (s *CreateConnection) Execute(ctx context.Context, organizationID uuid.UUID
 		attribute.String("app.request.product_name", productName),
 	)
 
-	err := libOpentelemetry.SetSpanAttributesFromStruct(&span, "app.request.payload", connInput.ToMapWithMask())
+	err := libOpentelemetry.SetSpanAttributesFromValue(span, "app.request.payload", connInput.ToMapWithMask(), nil)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to convert fetcher input to JSON string", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to convert fetcher input to JSON string", err)
 	}
 
 	sslMode, sslCA, sslCert, sslKey := s.extractSSLFields(connInput)
@@ -66,18 +66,18 @@ func (s *CreateConnection) Execute(ctx context.Context, organizationID uuid.UUID
 		sslKey,
 	)
 	if err != nil {
-		libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "Failed to create connection model", err)
+		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Failed to create connection model", err)
 		return nil, fmt.Errorf("failed to create connection model: %w", err)
 	}
 
 	existing, errRepo := s.connRepo.FindByOrganizationAndName(ctx, connection.OrganizationID, connection.ConfigName)
 	if errRepo != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to check existing connection", errRepo)
+		libOpentelemetry.HandleSpanError(span, "Failed to check existing connection", errRepo)
 		return nil, fmt.Errorf("failed to check for existing connection: %w", errRepo)
 	}
 
 	if existing != nil {
-		libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "Connection config name conflict", nil)
+		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Connection config name conflict", nil)
 
 		return nil, pkg.ValidateBusinessError(
 			constant.ErrEntityConflict,
