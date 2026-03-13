@@ -18,7 +18,6 @@ import (
 	portStorage "github.com/LerianStudio/fetcher/pkg/ports/storage"
 	pkgStorage "github.com/LerianStudio/fetcher/pkg/storage"
 
-	libZapV2 "github.com/LerianStudio/lib-commons/v2/commons/zap"
 	libCommons "github.com/LerianStudio/lib-commons/v4/commons"
 	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
 	mongoDB "github.com/LerianStudio/lib-commons/v4/commons/mongo"
@@ -223,7 +222,17 @@ func InitWorker() (*Service, error) {
 
 	logFileTTL(logger, cfg)
 
-	licenseLogger := libZapV2.InitializeLogger()
+	licenseLoggerV4, licenseLogErr := libZap.New(libZap.Config{
+		Environment:     resolveZapEnvironment(cfg.EnvName),
+		Level:           cfg.LogLevel,
+		OTelLibraryName: constant.ApplicationName + "-license",
+	})
+	if licenseLogErr != nil {
+		return nil, wrapBootstrapError("initialize license logger", licenseLogErr)
+	}
+
+	var licenseLogger libLog.Logger = licenseLoggerV4
+
 	licenseClient := libLicense.NewLicenseClient(
 		constant.ApplicationName,
 		cfg.LicenseKey,

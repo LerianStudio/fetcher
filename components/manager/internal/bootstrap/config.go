@@ -28,7 +28,6 @@ import (
 	redisCache "github.com/LerianStudio/fetcher/pkg/redis"
 
 	"github.com/LerianStudio/lib-auth/v2/auth/middleware"
-	libZapV2 "github.com/LerianStudio/lib-commons/v2/commons/zap"
 	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
 	libMongo "github.com/LerianStudio/lib-commons/v4/commons/mongo"
 	libOtel "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
@@ -316,8 +315,27 @@ func initPlatformDependencies(cfg *Config, logger libLog.Logger, messageSigner c
 	rabbitMQOptions := rabbitmq.DefaultOptions()
 	rabbitMQOptions.Signer = messageSigner
 
-	authLogger := libZapV2.InitializeLogger()
-	licenseLogger := libZapV2.InitializeLogger()
+	authLoggerV4, authLogErr := zap.New(zap.Config{
+		Environment:     resolveZapEnvironment(cfg.EnvName),
+		Level:           cfg.LogLevel,
+		OTelLibraryName: constant.ApplicationName + "-auth",
+	})
+	if authLogErr != nil {
+		return nil, wrapBootstrapError("initialize auth logger", authLogErr)
+	}
+
+	var authLogger libLog.Logger = authLoggerV4
+
+	licenseLoggerV4, licenseLogErr := zap.New(zap.Config{
+		Environment:     resolveZapEnvironment(cfg.EnvName),
+		Level:           cfg.LogLevel,
+		OTelLibraryName: constant.ApplicationName + "-license",
+	})
+	if licenseLogErr != nil {
+		return nil, wrapBootstrapError("initialize license logger", licenseLogErr)
+	}
+
+	var licenseLogger libLog.Logger = licenseLoggerV4
 	schemaCacheTTL := getSchemaCacheTTL(cfg.SchemaCacheTTLSeconds)
 
 	genericCache, errCache := newSchemaCacheStore(
