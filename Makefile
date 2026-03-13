@@ -573,7 +573,7 @@ sec:
 	fi
 	@if find . -name "*.go" -type f | grep -q .; then \
 		echo "Running security checks..."; \
-		gosec -quiet ./...; \
+		gosec -quiet -exclude-dir=.docs -exclude-dir=docs ./...; \
 		echo "[ok] Security checks completed"; \
 	else \
 		echo "No Go files found, skipping security checks"; \

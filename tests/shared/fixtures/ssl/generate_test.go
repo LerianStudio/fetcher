@@ -112,6 +112,7 @@ func TestWriteToDir(t *testing.T) {
 	t.Run("reused output paths are tightened to secure permissions", func(t *testing.T) {
 		require.NoError(t, os.Chmod(bundle.CAKeyPath, 0o666))
 		require.NoError(t, os.Chmod(bundle.ServerKeyPath, 0o666))
+		require.NoError(t, os.Chmod(bundle.ClientKeyPath, 0o666))
 
 		err := bundle.WriteToDir(tmpDir)
 		require.NoError(t, err)
@@ -121,6 +122,10 @@ func TestWriteToDir(t *testing.T) {
 		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 
 		info, err = os.Stat(bundle.ServerKeyPath)
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+
+		info, err = os.Stat(bundle.ClientKeyPath)
 		require.NoError(t, err)
 		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 	})
