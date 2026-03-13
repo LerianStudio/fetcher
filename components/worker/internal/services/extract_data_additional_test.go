@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"strings"
 	"testing"
 
 	workerCrypto "github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	modelDatasource "github.com/LerianStudio/fetcher/pkg/model/datasource"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
 
@@ -41,12 +43,8 @@ func TestExtractExternalData_JobNotFoundMarksFailed(t *testing.T) {
 		Return(nil)
 
 	err := uc.ExtractExternalData(ctx, body, nil)
-	if err == nil {
-		t.Fatal("expected error when job is missing")
-	}
-	if !strings.Contains(err.Error(), "Job not found in database") {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	require.Error(t, err)
+	require.ErrorContains(t, err, "Job not found in database")
 }
 
 func TestExtractExternalData_NoConnectionsMarksFailed(t *testing.T) {
@@ -82,12 +80,8 @@ func TestExtractExternalData_NoConnectionsMarksFailed(t *testing.T) {
 		Return(nil)
 
 	err := uc.ExtractExternalData(ctx, body, nil)
-	if err == nil {
-		t.Fatal("expected error when no connections are found")
-	}
-	if !strings.Contains(err.Error(), "No connections found for config names") {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	require.Error(t, err)
+	require.ErrorContains(t, err, "No connections found for config names")
 }
 
 func TestExtractExternalData_CompletedStatusUpdateFailureMarksJobFailed(t *testing.T) {
@@ -147,12 +141,8 @@ func TestExtractExternalData_CompletedStatusUpdateFailureMarksJobFailed(t *testi
 		Return(nil)
 
 	err := uc.ExtractExternalData(ctx, body, nil)
-	if err == nil {
-		t.Fatal("expected error when completed status update fails")
-	}
-	if !strings.Contains(err.Error(), "status update failed") {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	require.Error(t, err)
+	require.ErrorContains(t, err, "status update failed")
 }
 
 func TestQueryDatabase_DataSourceFactoryAndLifecycleErrors(t *testing.T) {
@@ -167,7 +157,7 @@ func TestQueryDatabase_DataSourceFactoryAndLifecycleErrors(t *testing.T) {
 		{name: "factory error", factoryErr: errors.New("factory failed"), wantErrSubstr: "failed to create data source"},
 		{name: "connect error", connectErr: errors.New("connect failed"), wantErrSubstr: "failed to connect to postgres_db"},
 		{name: "query error", queryErr: errors.New("query failed"), wantErrSubstr: "failed to query postgres_db"},
-		{name: "close error is ignored on success", closeErr: errors.New("close failed")},
+		{name: "close error is logged as warning but does not fail the query", closeErr: errors.New("close failed")},
 	}
 
 	for _, tt := range tests {
@@ -204,21 +194,13 @@ func TestQueryDatabase_DataSourceFactoryAndLifecycleErrors(t *testing.T) {
 			err := uc.queryDatabase(ctx, "postgres_db", map[string][]string{"users": {"id"}}, []*model.Connection{connection}, nil, newTestOrgID(), result, logger, testTracer())
 
 			if tt.wantErrSubstr == "" {
-				if err != nil {
-					t.Fatalf("expected no error, got %v", err)
-				}
-				if got := result["postgres_db"]["users"]; len(got) != 1 {
-					t.Fatalf("expected merged query result, got %+v", result)
-				}
+				require.NoError(t, err)
+				assert.Len(t, result["postgres_db"]["users"], 1)
 				return
 			}
 
-			if err == nil {
-				t.Fatal("expected error, got nil")
-			}
-			if !strings.Contains(err.Error(), tt.wantErrSubstr) {
-				t.Fatalf("expected error containing %q, got %v", tt.wantErrSubstr, err)
-			}
+			require.Error(t, err)
+			require.ErrorContains(t, err, tt.wantErrSubstr)
 		})
 	}
 }
@@ -242,24 +224,16 @@ func TestSaveExternalDataToSeaweedFS_DocumentSignerError(t *testing.T) {
 	signer.EXPECT().SignReader(gomock.Any()).Return("", errors.New("sign failed"))
 
 	resultData, err := uc.saveExternalData(ctx, testTracer(), message, result, nil, logger)
-	if err == nil {
-		t.Fatal("expected error when document signing fails")
-	}
-	if resultData != nil {
-		t.Fatalf("expected nil result data, got %+v", resultData)
-	}
-	if !strings.Contains(err.Error(), "computing document HMAC") {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	require.Error(t, err)
+	require.Nil(t, resultData)
+	require.ErrorContains(t, err, "computing document HMAC")
 }
 
 func mustMarshalMessage(t *testing.T, message ExtractExternalDataMessage) []byte {
 	t.Helper()
 
 	body, err := json.Marshal(message)
-	if err != nil {
-		t.Fatalf("failed to marshal message: %v", err)
-	}
+	require.NoError(t, err)
 
 	return body
 }

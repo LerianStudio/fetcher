@@ -486,9 +486,8 @@ func TestCreateFetcherJob_publishToQueue_TypedNilAdapterIsIgnored(t *testing.T) 
 		CreatedAt: time.Now().UTC(),
 	}
 
-	if err := svc.publishToQueue(testContext(), job); err != nil {
-		t.Fatalf("expected typed-nil adapter to be ignored, got %v", err)
-	}
+	err := svc.publishToQueue(testContext(), job)
+	require.NoError(t, err)
 }
 
 // TestCreateFetcherJob_Execute_PartialConnectionsFound tests that when only some datasources
@@ -1058,38 +1057,20 @@ func TestCreateFetcherJob_Execute_PublishFailureMarksJobFailed(t *testing.T) {
 	mockJobRepo.EXPECT().
 		Update(gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, job *model.Job) (*model.Job, error) {
-			if job.Status != model.JobStatusFailed {
-				t.Fatalf("expected failed job status, got %s", job.Status)
-			}
-
-			if job.CompletedAt == nil {
-				t.Fatal("expected completedAt to be set after publish failure")
-			}
-
-			if got := job.Metadata["error"]; got != "process failed: unable to publish" {
-				t.Fatalf("expected failure metadata to be recorded, got %#v", got)
-			}
+			assert.Equal(t, model.JobStatusFailed, job.Status)
+			assert.NotNil(t, job.CompletedAt)
+			assert.Equal(t, "process failed: unable to publish", job.Metadata["error"])
 
 			return job, nil
 		})
 
 	result, err := svc.Execute(ctx, orgID, request)
-	if result != nil {
-		t.Fatalf("expected nil result on publish failure, got %+v", result)
-	}
-
-	if err == nil {
-		t.Fatal("expected publish failure error, got nil")
-	}
+	require.Nil(t, result)
+	require.Error(t, err)
 
 	var internalErr pkg.InternalServerError
-	if !errors.As(err, &internalErr) {
-		t.Fatalf("expected internal server error wrapper, got %T", err)
-	}
-
-	if internalErr.Err == nil || !strings.Contains(internalErr.Err.Error(), "publish failed") {
-		t.Fatalf("expected wrapped publish failure, got %v", internalErr.Err)
-	}
+	require.ErrorAs(t, err, &internalErr)
+	require.ErrorContains(t, internalErr.Err, "publish failed")
 }
 
 // TestCreateFetcherJob_Execute_FiltersWithMultipleDatasources tests filter transformation with multiple datasources.

@@ -1771,8 +1771,8 @@ func TestProcessPluginCRMCollection_TransformsCollectionAndDecryptsResult(t *tes
 	orgID := uuid.MustParse("019b9df1-34eb-7dd0-afd5-53f859667e51")
 	result := make(map[string]map[string][]map[string]any)
 
-	hashKey := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-	encryptKey := "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+	hashKey := strings.Repeat("01", 32)
+	encryptKey := strings.Repeat("fe", 32)
 	t.Setenv("CRYPTO_HASH_SECRET_KEY_PLUGIN_CRM", hashKey)
 	t.Setenv("CRYPTO_ENCRYPT_SECRET_KEY_PLUGIN_CRM", encryptKey)
 
@@ -1824,8 +1824,8 @@ func TestQueryPluginCRM_WithFilters_TransformsAdvancedFilters(t *testing.T) {
 	orgID := uuid.MustParse("019b9df1-34eb-7dd0-afd5-53f859667e51")
 	result := make(map[string]map[string][]map[string]any)
 
-	hashKey := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-	encryptKey := "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+	hashKey := strings.Repeat("01", 32)
+	encryptKey := strings.Repeat("fe", 32)
 	t.Setenv("CRYPTO_HASH_SECRET_KEY_PLUGIN_CRM", hashKey)
 	t.Setenv("CRYPTO_ENCRYPT_SECRET_KEY_PLUGIN_CRM", encryptKey)
 

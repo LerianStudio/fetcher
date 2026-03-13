@@ -2,7 +2,6 @@ package in
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/LerianStudio/fetcher/components/manager/internal/services/command"
 	"github.com/LerianStudio/fetcher/components/manager/internal/services/query"
@@ -82,43 +81,6 @@ func (h *FetcherHandler) CreateJob(c *fiber.Ctx) error {
 			Title:      "Invalid payload",
 			Message:    "unable to parse request body",
 			Err:        errParser,
-		})
-	}
-
-	// Validate required metadata.source field
-	if request.Metadata == nil {
-		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "missing required metadata", nil)
-
-		return httpUtils.WithError(c, pkg.ValidationError{
-			EntityType: "fetcher",
-			Code:       constant.ErrMissingFieldsInRequest.Error(),
-			Title:      "Missing Required Field",
-			Message:    "metadata is required and must contain 'source' field",
-		})
-	}
-
-	source, hasSource := request.Metadata["source"]
-	if !hasSource || source == nil {
-		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "missing required metadata.source", nil)
-
-		return httpUtils.WithError(c, pkg.ValidationError{
-			EntityType: "fetcher",
-			Code:       constant.ErrMissingFieldsInRequest.Error(),
-			Title:      "Missing Required Field",
-			Message:    "metadata.source is required for job notification routing",
-		})
-	}
-
-	// Validate source is a non-empty string
-	sourceStr, ok := source.(string)
-	if !ok || strings.TrimSpace(sourceStr) == "" {
-		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "invalid metadata.source type or empty value", nil)
-
-		return httpUtils.WithError(c, pkg.ValidationError{
-			EntityType: "fetcher",
-			Code:       constant.ErrMissingFieldsInRequest.Error(),
-			Title:      "Invalid Field Value",
-			Message:    "metadata.source must be a non-empty string",
 		})
 	}
 
