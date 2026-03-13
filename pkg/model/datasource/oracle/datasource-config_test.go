@@ -9,7 +9,7 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/model/job"
 	"github.com/LerianStudio/fetcher/pkg/oracle"
 	"github.com/LerianStudio/fetcher/pkg/testutil"
-	libConstant "github.com/LerianStudio/lib-commons/v2/commons/constants"
+	libConstant "github.com/LerianStudio/lib-commons/v4/commons/constants"
 	"github.com/LerianStudio/lib-commons/v4/commons/log"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/mock/gomock"
