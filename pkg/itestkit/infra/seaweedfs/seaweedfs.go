@@ -43,15 +43,17 @@ type SeaweedFSEndpoint struct {
 }
 
 // SeaweedFSInfra manages a SeaweedFS cluster (master + volume + filer).
-// Note: SeaweedFS uses its own internal network for master/volume/filer communication.
-// External containers can reach the filer via the Docker gateway IP and mapped port.
+// The cluster uses its own internal network for master/volume/filer communication.
+// The filer is also added to the shared suite network so app containers (Manager, Worker)
+// can reach it via network alias without going through the Docker host gateway.
 type SeaweedFSInfra struct {
-	cfg      SeaweedFSConfig
-	master   testcontainers.Container
-	volume   testcontainers.Container
-	filer    testcontainers.Container
-	endpoint *SeaweedFSEndpoint
-	network  *testcontainers.DockerNetwork
+	cfg          SeaweedFSConfig
+	master       testcontainers.Container
+	volume       testcontainers.Container
+	filer        testcontainers.Container
+	endpoint     *SeaweedFSEndpoint
+	network      *testcontainers.DockerNetwork
+	networkAlias string // alias on the shared suite network (empty when no shared network)
 }
 
 // NewSeaweedFSInfra creates a new SeaweedFS infrastructure component.
@@ -144,15 +146,27 @@ func (s *SeaweedFSInfra) Start(ctx context.Context, env *itestkit.Env) error {
 	s.volume = volume
 
 	// Start Filer
+	// Use -ip.bind=0.0.0.0 so the filer listens on all interfaces, enabling access
+	// from both the internal SeaweedFS network and the shared suite network.
+	filerNetworks := []string{networkName}
+	filerAliases := map[string][]string{
+		networkName: {filerAlias},
+	}
+
+	if env != nil && env.Network != "" {
+		sharedAlias := fmt.Sprintf("seaweedfs-filer-shared-%s", s.cfg.Name)
+		filerNetworks = append(filerNetworks, env.Network)
+		filerAliases[env.Network] = []string{sharedAlias}
+		s.networkAlias = sharedAlias
+	}
+
 	filerReq := testcontainers.ContainerRequest{
 		Image:        s.cfg.Image,
 		ExposedPorts: []string{"8888/tcp"},
-		Cmd:          []string{"filer", "-master=" + masterAlias + ":9333"},
+		Cmd:          []string{"filer", "-master=" + masterAlias + ":9333", "-ip.bind=0.0.0.0"},
 		WaitingFor:   wait.ForHTTP("/").WithPort("8888/tcp").WithStartupTimeout(s.cfg.StartupTimeout),
-		Networks:     []string{networkName},
-		NetworkAliases: map[string][]string{
-			networkName: {filerAlias},
-		},
+		Networks:     filerNetworks,
+		NetworkAliases: filerAliases,
 		HostConfigModifier: func(hc *container.HostConfig) {
 			for _, modifier := range opts.hostConfigModifiers {
 				modifier(hc)
@@ -240,9 +254,15 @@ func (s *SeaweedFSInfra) URL() (string, error) {
 }
 
 // HostPort returns the host and port as separate values.
-// The host is automatically normalized so containers can reach it (localhost is replaced with
-// the Docker gateway IP).
+// If the filer is on the shared suite network, returns the network alias and internal port (8888)
+// so app containers can reach it directly. Otherwise falls back to the host-mapped port
+// normalized for Docker access.
 func (s *SeaweedFSInfra) HostPort() (host string, port int, err error) {
+	// Prefer shared network alias for container-to-container communication
+	if s.networkAlias != "" {
+		return s.networkAlias, 8888, nil
+	}
+
 	endpoint, err := s.Endpoint()
 	if err != nil {
 		return "", 0, err

@@ -246,6 +246,8 @@ func (uc *UseCase) hashFilterValues(values []any, crypto *libCrypto.Crypto) []an
 }
 
 // decryptPluginCRMData decrypts sensitive fields for plugin_crm database.
+// Note: ctx is intentionally omitted as the crypto layer receives its logger at construction time.
+// Add ctx if trace propagation is needed in the future.
 func (uc *UseCase) decryptPluginCRMData(logger libLog.Logger, collectionResult []map[string]any, fields []string) ([]map[string]any, error) {
 	needsDecryption := false
 

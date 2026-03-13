@@ -46,9 +46,12 @@ func WithRecover(opts ...RecoverMiddlewareOption) fiber.Handler {
 		defer func() {
 			if r := recover(); r != nil {
 				reqCtx := c.UserContext()
-				logger := mid.Logger
 
-				if ctxLogger := libCommons.NewLoggerFromContext(reqCtx); ctxLogger != nil {
+				// Prefer the request-scoped logger from context when explicitly injected,
+				// but fall back to the middleware logger (configured at startup) to ensure
+				// panic logs are never silently swallowed by a nop logger.
+				logger := mid.Logger
+				if ctxLogger := libCommons.NewLoggerFromContext(reqCtx); ctxLogger != nil && mid.Logger == nil {
 					logger = ctxLogger
 				}
 

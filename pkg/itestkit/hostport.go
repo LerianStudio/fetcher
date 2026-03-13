@@ -122,6 +122,10 @@ func ParseHostPort(addr string) (host string, port int, err error) {
 		return "", 0, fmt.Errorf("invalid port: %s", portStr)
 	}
 
+	if port < 1 || port > 65535 {
+		return "", 0, fmt.Errorf("port out of range (1-65535): %d", port)
+	}
+
 	return host, port, nil
 }
 
@@ -146,6 +150,10 @@ func ResolveContainerHostPort(proxyListenInNetwork, networkAlias string, interna
 	}
 
 	if networkAlias != "" {
+		if internalPort < 1 || internalPort > 65535 {
+			return "", 0, fmt.Errorf("internal port out of range (1-65535): %d", internalPort)
+		}
+
 		return networkAlias, internalPort, nil
 	}
 

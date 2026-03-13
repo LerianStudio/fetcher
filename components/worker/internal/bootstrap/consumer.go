@@ -152,7 +152,9 @@ func (mq *MultiQueueConsumer) Run(l *commons.Launcher) error {
 
 	// Multi-tenant mode: use tmconsumer.MultiTenantConsumer
 	if mq.mtConsumer != nil {
-		mq.logger.Log(ctx, libLog.LevelInfo, "MultiQueueConsumer: starting multi-tenant consumer with per-tenant vhost isolation")
+		if mq.logger != nil {
+			mq.logger.Log(ctx, libLog.LevelInfo, "MultiQueueConsumer: starting multi-tenant consumer with per-tenant vhost isolation")
+		}
 
 		// Run starts tenant discovery and spawns consumer goroutines
 		if err := mq.mtConsumer.Run(ctx); err != nil {
@@ -162,10 +164,12 @@ func (mq *MultiQueueConsumer) Run(l *commons.Launcher) error {
 		// Block until context is canceled (shutdown signal)
 		<-ctx.Done()
 
-		mq.logger.Log(ctx, libLog.LevelInfo, "MultiQueueConsumer: shutting down multi-tenant consumer")
+		if mq.logger != nil {
+			mq.logger.Log(ctx, libLog.LevelInfo, "MultiQueueConsumer: shutting down multi-tenant consumer")
+		}
 
 		// Close gracefully stops all tenant consumers
-		if err := mq.mtConsumer.Close(); err != nil {
+		if err := mq.mtConsumer.Close(); err != nil && mq.logger != nil {
 			mq.logger.Log(ctx, libLog.LevelError, fmt.Sprintf("MultiQueueConsumer: error closing multi-tenant consumer: %v", err))
 		}
 
@@ -207,12 +211,16 @@ func (mq *MultiQueueConsumer) handlerGenerateReportDelivery(ctx context.Context,
 			tenantDB, err := mq.mongoManager.GetDatabaseForTenant(ctx, tenantID)
 			if err != nil {
 				if isPermanentTenantError(err) {
-					mq.logger.Log(ctx, libLog.LevelWarn, fmt.Sprintf("Permanent tenant resolution failure for tenant %s (message will be dropped): %v", tenantID, err))
+					if mq.logger != nil {
+						mq.logger.Log(ctx, libLog.LevelWarn, fmt.Sprintf("Permanent tenant resolution failure for tenant %s (message will be dropped): %v", tenantID, err))
+					}
 
 					return nil // Return nil so lib-commons Acks the message instead of requeuing
 				}
 
-				mq.logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Transient tenant resolution failure for tenant %s: %v", tenantID, err))
+				if mq.logger != nil {
+					mq.logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Transient tenant resolution failure for tenant %s: %v", tenantID, err))
+				}
 
 				return fmt.Errorf("resolve tenant mongo for tenant %s: %w", tenantID, err)
 			}

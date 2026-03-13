@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/LerianStudio/fetcher/pkg/testutil"
-	tmcore "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/core"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
@@ -481,32 +480,30 @@ func TestRedisCache_CacheKey_Basic(t *testing.T) {
 	assert.Equal(t, "fetcher:schema:mykey", result)
 }
 
-func TestRedisCache_GetSet_WithTenantContext(t *testing.T) {
+func TestRedisCache_GetSet_WithTenantScopedKeys(t *testing.T) {
 	mr, conn := setupMiniredis(t)
 	cache, err := NewRedisCache[testStruct](conn, time.Minute, "test:")
 	require.NoError(t, err)
 
 	t.Run("tenant-scoped keys are isolated", func(t *testing.T) {
-		tenant1Ctx := tmcore.SetTenantIDInContext(context.Background(), "tenant1")
-		tenant2Ctx := tmcore.SetTenantIDInContext(context.Background(), "tenant2")
+		ctx := context.Background()
 
 		value1 := testStruct{ID: "1", Name: "Tenant1"}
 		value2 := testStruct{ID: "2", Name: "Tenant2"}
 
-		// In v4, the cache does not automatically scope keys by tenant.
-		// Use distinct keys to achieve tenant isolation.
-		err := cache.Set(tenant1Ctx, "tenant1:shared-key", value1, 0)
+		// Tenant isolation is achieved via explicit key scoping, not context.
+		err := cache.Set(ctx, "tenant1:shared-key", value1, 0)
 		require.NoError(t, err)
 
-		err = cache.Set(tenant2Ctx, "tenant2:shared-key", value2, 0)
+		err = cache.Set(ctx, "tenant2:shared-key", value2, 0)
 		require.NoError(t, err)
 
-		result1, found1, err := cache.Get(tenant1Ctx, "tenant1:shared-key")
+		result1, found1, err := cache.Get(ctx, "tenant1:shared-key")
 		assert.NoError(t, err)
 		assert.True(t, found1)
 		assert.Equal(t, value1, result1)
 
-		result2, found2, err := cache.Get(tenant2Ctx, "tenant2:shared-key")
+		result2, found2, err := cache.Get(ctx, "tenant2:shared-key")
 		assert.NoError(t, err)
 		assert.True(t, found2)
 		assert.Equal(t, value2, result2)

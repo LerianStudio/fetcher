@@ -118,6 +118,7 @@ sequenceDiagram
 type ExternalDataSource struct {
     connection *libMongo.Client  // lib-commons/v4 mongo client
     Database   string            // Database name
+    logger     libLog.Logger     // Structured logger
 }
 ```
 

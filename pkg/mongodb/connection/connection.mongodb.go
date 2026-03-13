@@ -420,7 +420,7 @@ func (cr *ConnectionMongoDBRepository) FindByOrganizationAndDatabaseName(ctx con
 	}
 	span.SetAttributes(attributes...)
 
-	if databaseName == "" {
+	if strings.TrimSpace(databaseName) == "" {
 		err := errors.New("database_name cannot be empty")
 		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Invalid database_name", err)
 

@@ -46,7 +46,11 @@ func NewRedisCache[T any](conn *RedisConnection, ttl time.Duration, keyPrefix st
 	}, nil
 }
 
-// cacheKey generates the full Redis key.
+// cacheKey generates the full Redis key by prepending the configured prefix.
+// Tenant isolation is achieved by callers including tenant-scoped identifiers
+// (e.g., config names resolved per-organization) in the key parameter.
+// The cache itself is intentionally tenant-agnostic to avoid coupling to
+// tenant-manager internals.
 func (c *RedisCache[T]) cacheKey(key string) string {
 	return fmt.Sprintf("%s%s", c.keyPrefix, key)
 }
