@@ -162,6 +162,10 @@ func InitServers() (*Service, error) {
 	if cfg.MultiTenantEnabled {
 		logger.Log(ctx, libLog.LevelInfo, "Multi-tenant mode ENABLED")
 
+		if cfg.MultiTenantURL == "" {
+			return nil, fmt.Errorf("MULTI_TENANT_URL is required when MULTI_TENANT_ENABLED=true")
+		}
+
 		if cfg.MultiTenantServiceAPIKey == "" {
 			return nil, fmt.Errorf("MULTI_TENANT_SERVICE_API_KEY is required when MULTI_TENANT_ENABLED=true")
 		}

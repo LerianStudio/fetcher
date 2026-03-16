@@ -327,6 +327,10 @@ func validateMultiTenantConfig(cfg *Config, logger libLog.Logger) error {
 	if cfg.MultiTenantEnabled {
 		logger.Log(context.Background(), libLog.LevelInfo, "Multi-tenant mode ENABLED")
 
+		if cfg.MultiTenantURL == "" {
+			return fmt.Errorf("MULTI_TENANT_URL is required when MULTI_TENANT_ENABLED=true")
+		}
+
 		if cfg.MultiTenantServiceAPIKey == "" {
 			return fmt.Errorf("MULTI_TENANT_SERVICE_API_KEY is required when MULTI_TENANT_ENABLED=true")
 		}
