@@ -102,6 +102,7 @@ type Config struct {
 	MultiTenantIdleTimeoutSec           int    `env:"MULTI_TENANT_IDLE_TIMEOUT_SEC"`
 	MultiTenantCircuitBreakerThreshold  int    `env:"MULTI_TENANT_CIRCUIT_BREAKER_THRESHOLD"`
 	MultiTenantCircuitBreakerTimeoutSec int    `env:"MULTI_TENANT_CIRCUIT_BREAKER_TIMEOUT_SEC"`
+	MultiTenantServiceAPIKey            string `env:"MULTI_TENANT_SERVICE_API_KEY"`
 }
 
 type managerRepositories struct {
@@ -160,6 +161,14 @@ func InitServers() (*Service, error) {
 
 	if cfg.MultiTenantEnabled {
 		logger.Log(ctx, libLog.LevelInfo, "Multi-tenant mode ENABLED")
+
+		if cfg.MultiTenantURL == "" {
+			return nil, fmt.Errorf("MULTI_TENANT_URL is required when MULTI_TENANT_ENABLED=true")
+		}
+
+		if cfg.MultiTenantServiceAPIKey == "" {
+			return nil, fmt.Errorf("MULTI_TENANT_SERVICE_API_KEY is required when MULTI_TENANT_ENABLED=true")
+		}
 	} else {
 		logger.Log(ctx, libLog.LevelInfo, "Running in SINGLE-TENANT MODE")
 	}
@@ -462,6 +471,10 @@ func initMultiTenantMiddleware(cfg *Config, logger libLog.Logger) (fiber.Handler
 	if strings.HasPrefix(cfg.MultiTenantURL, "http://") {
 		clientOpts = append(clientOpts, tmclient.WithAllowInsecureHTTP())
 	}
+
+	clientOpts = append(clientOpts,
+		tmclient.WithServiceAPIKey(cfg.MultiTenantServiceAPIKey),
+	)
 
 	if cfg.MultiTenantCircuitBreakerThreshold > 0 {
 		clientOpts = append(clientOpts,

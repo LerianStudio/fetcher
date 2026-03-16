@@ -374,6 +374,7 @@ func TestConfig_LoadFromEnvVars(t *testing.T) {
 				"MULTI_TENANT_IDLE_TIMEOUT_SEC":            "600",
 				"MULTI_TENANT_CIRCUIT_BREAKER_THRESHOLD":   "10",
 				"MULTI_TENANT_CIRCUIT_BREAKER_TIMEOUT_SEC": "60",
+				"MULTI_TENANT_SERVICE_API_KEY":             "test-api-key-123",
 			},
 			validate: func(t *testing.T, cfg *Config) {
 				t.Helper()
@@ -397,6 +398,9 @@ func TestConfig_LoadFromEnvVars(t *testing.T) {
 				}
 				if cfg.MultiTenantCircuitBreakerTimeoutSec != 60 {
 					t.Errorf("MultiTenantCircuitBreakerTimeoutSec = %d, want 60", cfg.MultiTenantCircuitBreakerTimeoutSec)
+				}
+				if cfg.MultiTenantServiceAPIKey != "test-api-key-123" {
+					t.Errorf("MultiTenantServiceAPIKey = %q, want %q", cfg.MultiTenantServiceAPIKey, "test-api-key-123")
 				}
 			},
 		},
@@ -425,6 +429,9 @@ func TestConfig_LoadFromEnvVars(t *testing.T) {
 				}
 				if cfg.MultiTenantCircuitBreakerTimeoutSec != 0 {
 					t.Errorf("MultiTenantCircuitBreakerTimeoutSec should be 0, got %d", cfg.MultiTenantCircuitBreakerTimeoutSec)
+				}
+				if cfg.MultiTenantServiceAPIKey != "" {
+					t.Errorf("MultiTenantServiceAPIKey should be empty, got %q", cfg.MultiTenantServiceAPIKey)
 				}
 			},
 		},
@@ -569,6 +576,7 @@ func TestInitMultiTenantMiddleware(t *testing.T) {
 				MultiTenantIdleTimeoutSec:           300,
 				MultiTenantCircuitBreakerThreshold:  5,
 				MultiTenantCircuitBreakerTimeoutSec: 30,
+				MultiTenantServiceAPIKey:            "test-api-key",
 			},
 			wantNil:     false,
 			description: "fully configured multi-tenant should return middleware",
@@ -580,6 +588,7 @@ func TestInitMultiTenantMiddleware(t *testing.T) {
 				MultiTenantURL:                      "http://tenant-manager:8080",
 				MultiTenantCircuitBreakerThreshold:  0,
 				MultiTenantCircuitBreakerTimeoutSec: 0,
+				MultiTenantServiceAPIKey:            "test-api-key",
 			},
 			wantNil:     false,
 			description: "zero threshold should apply default circuit breaker (5 failures, 30s timeout)",
@@ -587,8 +596,9 @@ func TestInitMultiTenantMiddleware(t *testing.T) {
 		{
 			name: "returns error when tenant manager client initialization fails",
 			cfg: &Config{
-				MultiTenantEnabled: true,
-				MultiTenantURL:     "http://tenant-manager:8080",
+				MultiTenantEnabled:       true,
+				MultiTenantURL:           "http://tenant-manager:8080",
+				MultiTenantServiceAPIKey: "test-api-key",
 			},
 			wantNil:     true,
 			wantErr:     "tenant client init failed",

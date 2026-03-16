@@ -103,6 +103,7 @@ type Config struct {
 	MultiTenantIdleTimeoutSec           int    `env:"MULTI_TENANT_IDLE_TIMEOUT_SEC"`
 	MultiTenantCircuitBreakerThreshold  int    `env:"MULTI_TENANT_CIRCUIT_BREAKER_THRESHOLD"`
 	MultiTenantCircuitBreakerTimeoutSec int    `env:"MULTI_TENANT_CIRCUIT_BREAKER_TIMEOUT_SEC"`
+	MultiTenantServiceAPIKey            string `env:"MULTI_TENANT_SERVICE_API_KEY"`
 	// RabbitMQ multi-tenant consumer tuning (active when MULTI_TENANT_ENABLED=true)
 	RabbitMQMultiTenantSyncInterval     int `env:"RABBITMQ_MULTI_TENANT_SYNC_INTERVAL"`     // Stored in seconds; default 30
 	RabbitMQMultiTenantDiscoveryTimeout int `env:"RABBITMQ_MULTI_TENANT_DISCOVERY_TIMEOUT"` // Stored in milliseconds; default 500
@@ -326,6 +327,14 @@ func validateMultiTenantConfig(cfg *Config, logger libLog.Logger) error {
 	if cfg.MultiTenantEnabled {
 		logger.Log(context.Background(), libLog.LevelInfo, "Multi-tenant mode ENABLED")
 
+		if cfg.MultiTenantURL == "" {
+			return fmt.Errorf("MULTI_TENANT_URL is required when MULTI_TENANT_ENABLED=true")
+		}
+
+		if cfg.MultiTenantServiceAPIKey == "" {
+			return fmt.Errorf("MULTI_TENANT_SERVICE_API_KEY is required when MULTI_TENANT_ENABLED=true")
+		}
+
 		if cfg.RedisHost == "" {
 			return fmt.Errorf("REDIS_HOST is required when MULTI_TENANT_ENABLED=true (used for tenant discovery cache)")
 		}
@@ -431,6 +440,15 @@ func resolveZapEnvironment(env string) libZap.Environment {
 // This is shared across MongoDB manager and MultiTenantConsumer to avoid duplicate instances.
 func initTenantManagerClient(cfg *Config, logger libLog.Logger) (*tmclient.Client, error) {
 	var clientOpts []tmclient.ClientOption
+
+	clientOpts = append(clientOpts,
+		tmclient.WithServiceAPIKey(cfg.MultiTenantServiceAPIKey),
+	)
+
+	// Allow plaintext HTTP for local/dev environments where TLS is not configured.
+	if strings.HasPrefix(cfg.MultiTenantURL, "http://") {
+		clientOpts = append(clientOpts, tmclient.WithAllowInsecureHTTP())
+	}
 
 	if cfg.MultiTenantCircuitBreakerThreshold > 0 {
 		cbTimeout := time.Duration(cfg.MultiTenantCircuitBreakerTimeoutSec) * time.Second
