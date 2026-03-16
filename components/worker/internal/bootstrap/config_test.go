@@ -241,10 +241,21 @@ func TestValidateMultiTenantConfig(t *testing.T) {
 		errSubstr string
 	}{
 		{
+			name: "multi-tenant enabled without service API key returns error",
+			cfg: &Config{
+				MultiTenantEnabled:       true,
+				MultiTenantServiceAPIKey: "",
+				RedisHost:                "localhost:6379",
+			},
+			wantErr:   true,
+			errSubstr: "MULTI_TENANT_SERVICE_API_KEY is required",
+		},
+		{
 			name: "multi-tenant enabled without Redis returns error",
 			cfg: &Config{
-				MultiTenantEnabled: true,
-				RedisHost:          "",
+				MultiTenantEnabled:       true,
+				MultiTenantServiceAPIKey: "test-api-key",
+				RedisHost:                "",
 			},
 			wantErr:   true,
 			errSubstr: "REDIS_HOST is required",
@@ -252,8 +263,9 @@ func TestValidateMultiTenantConfig(t *testing.T) {
 		{
 			name: "multi-tenant enabled with Redis succeeds",
 			cfg: &Config{
-				MultiTenantEnabled: true,
-				RedisHost:          "localhost:6379",
+				MultiTenantEnabled:       true,
+				MultiTenantServiceAPIKey: "test-api-key",
+				RedisHost:                "localhost:6379",
 			},
 			wantErr: false,
 		},
