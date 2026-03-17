@@ -9,6 +9,7 @@ import (
 
 	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
 	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/valkey"
 
 	"github.com/LerianStudio/lib-commons/v4/commons"
 	"github.com/redis/go-redis/v9"
@@ -46,13 +47,21 @@ func NewRedisCache[T any](conn *RedisConnection, ttl time.Duration, keyPrefix st
 	}, nil
 }
 
-// cacheKey generates the full Redis key by prepending the configured prefix.
-// Tenant isolation is achieved by callers including tenant-scoped identifiers
-// (e.g., config names resolved per-organization) in the key parameter.
-// The cache itself is intentionally tenant-agnostic to avoid coupling to
-// tenant-manager internals.
-func (c *RedisCache[T]) cacheKey(key string) string {
-	return fmt.Sprintf("%s%s", c.keyPrefix, key)
+// cacheKey generates the full Redis key with prefix and tenant scoping.
+// Uses valkey.GetKeyFromContext to apply tenant prefix when a tenant ID
+// is present in context. In single-tenant mode (no tenant in context),
+// returns the prefixed key unchanged.
+func (c *RedisCache[T]) cacheKey(ctx context.Context, key string) (string, error) {
+	prefixed := fmt.Sprintf("%s%s", c.keyPrefix, key)
+	return valkey.GetKeyFromContext(ctx, prefixed)
+}
+
+// cachePattern generates the scan pattern with tenant scoping for Clear.
+// Uses valkey.GetPatternFromContext to apply tenant prefix when a tenant ID
+// is present in context.
+func (c *RedisCache[T]) cachePattern(ctx context.Context) (string, error) {
+	pattern := fmt.Sprintf("%s*", c.keyPrefix)
+	return valkey.GetPatternFromContext(ctx, pattern)
 }
 
 // Get retrieves a cached value by key.
@@ -69,7 +78,11 @@ func (c *RedisCache[T]) Get(ctx context.Context, key string) (T, bool, error) {
 
 	var zero T
 
-	fullKey := c.cacheKey(key)
+	fullKey, err := c.cacheKey(ctx, key)
+	if err != nil {
+		libOpentelemetry.HandleSpanError(span, "failed to resolve cache key", err)
+		return zero, false, fmt.Errorf("failed to resolve cache key: %w", err)
+	}
 
 	data, err := c.client.Get(ctx, fullKey).Bytes()
 	if err != nil {
@@ -127,7 +140,12 @@ func (c *RedisCache[T]) Set(ctx context.Context, key string, value T, ttl time.D
 		return fmt.Errorf("failed to marshal value: %w", err)
 	}
 
-	fullKey := c.cacheKey(key)
+	fullKey, err := c.cacheKey(ctx, key)
+	if err != nil {
+		libOpentelemetry.HandleSpanError(span, "failed to resolve cache key", err)
+		return fmt.Errorf("failed to resolve cache key: %w", err)
+	}
+
 	if err := c.client.Set(ctx, fullKey, data, ttl).Err(); err != nil {
 		libOpentelemetry.HandleSpanError(span, "failed to set cache value", err)
 		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("error storing in cache key %s: %v", key, err))
@@ -152,7 +170,12 @@ func (c *RedisCache[T]) Delete(ctx context.Context, key string) error {
 		attribute.String("app.request.request_id", reqID),
 	)
 
-	fullKey := c.cacheKey(key)
+	fullKey, err := c.cacheKey(ctx, key)
+	if err != nil {
+		libOpentelemetry.HandleSpanError(span, "failed to resolve cache key", err)
+		return fmt.Errorf("failed to resolve cache key: %w", err)
+	}
+
 	if err := c.client.Del(ctx, fullKey).Err(); err != nil {
 		libOpentelemetry.HandleSpanError(span, "failed to delete cache key", err)
 		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("error deleting cache key %s: %v", key, err))
@@ -171,7 +194,11 @@ func (c *RedisCache[T]) Clear(ctx context.Context) error {
 	ctx, span := tracer.Start(ctx, "cache.redis.clear")
 	defer span.End()
 
-	pattern := fmt.Sprintf("%s*", c.keyPrefix)
+	pattern, err := c.cachePattern(ctx)
+	if err != nil {
+		libOpentelemetry.HandleSpanError(span, "failed to resolve cache pattern", err)
+		return fmt.Errorf("failed to resolve cache pattern: %w", err)
+	}
 
 	span.SetAttributes(
 		attribute.String("app.cache.key_prefix", c.keyPrefix),

@@ -22,7 +22,7 @@ func (m *multiTenantProvider) IsMultiTenant() bool {
 	return m.multiTenant
 }
 
-func TestGetDatabaseForContext(t *testing.T) {
+func TestResolveDatabase(t *testing.T) {
 	tests := []struct {
 		name          string
 		setupCtx      func() context.Context
@@ -181,7 +181,7 @@ func TestGetDatabaseForContext(t *testing.T) {
 			ctx := tt.setupCtx()
 			provider := tt.setupProvider(ctrl)
 
-			db, err := GetDatabaseForContext(ctx, provider, tt.dbName)
+			db, err := ResolveDatabase(ctx, provider, tt.dbName)
 
 			if tt.wantErr {
 				require.Error(t, err)
