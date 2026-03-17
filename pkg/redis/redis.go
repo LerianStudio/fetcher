@@ -3,6 +3,7 @@ package redis
 import (
 	"context"
 	"fmt"
+	"net"
 	"time"
 
 	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
@@ -72,7 +73,7 @@ type RedisConnection struct {
 // Use RedisConfig.WithDefaults() explicitly if you want to see the resolved values.
 func NewRedisConnection(cfg RedisConfig, logger libLog.Logger) (*RedisConnection, error) {
 	cfg = cfg.WithDefaults()
-	addr := fmt.Sprintf("%s:%s", cfg.Host, cfg.Port)
+	addr := buildRedisAddr(cfg.Host, cfg.Port)
 
 	client := redis.NewClient(&redis.Options{
 		Addr:         addr,
@@ -131,4 +132,20 @@ func (r *RedisConnection) IsConnected() bool {
 	defer cancel()
 
 	return r.Client.Ping(ctx).Err() == nil
+}
+
+// buildRedisAddr constructs the Redis address from host and port.
+// If the host already contains a port (e.g., "redis.example.com:6379"),
+// the explicit port parameter is ignored to avoid duplicate ports like
+// "redis.example.com:6379:6379".
+func buildRedisAddr(host, port string) string {
+	if _, _, err := net.SplitHostPort(host); err == nil {
+		return host
+	}
+
+	if port != "" {
+		return net.JoinHostPort(host, port)
+	}
+
+	return host
 }
