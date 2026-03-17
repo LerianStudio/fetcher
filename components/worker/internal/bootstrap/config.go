@@ -446,7 +446,7 @@ func initTenantManagerClient(cfg *Config, logger libLog.Logger) (*tmclient.Clien
 	)
 
 	// Allow plaintext HTTP for local/dev environments where TLS is not configured.
-	if strings.HasPrefix(cfg.MultiTenantURL, "http://") {
+	if strings.HasPrefix(strings.ToLower(cfg.MultiTenantURL), "http://") && strings.ToLower(cfg.EnvName) != "production" {
 		clientOpts = append(clientOpts, tmclient.WithAllowInsecureHTTP())
 	}
 

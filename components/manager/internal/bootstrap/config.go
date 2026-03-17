@@ -476,7 +476,7 @@ func initMultiTenantMiddleware(cfg *Config, logger libLog.Logger) (fiber.Handler
 	var clientOpts []tmclient.ClientOption
 
 	// Allow plaintext HTTP for local/dev environments where TLS is not configured.
-	if strings.HasPrefix(cfg.MultiTenantURL, "http://") {
+	if strings.HasPrefix(strings.ToLower(cfg.MultiTenantURL), "http://") && strings.ToLower(cfg.EnvName) != "production" {
 		clientOpts = append(clientOpts, tmclient.WithAllowInsecureHTTP())
 	}
 
