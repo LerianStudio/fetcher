@@ -35,8 +35,8 @@ github.com/LerianStudio/lib-auth/v2 v2.5.0-beta.7 h1:nNPZlDfzZrYJlIR7lAN6jKhpzNM
 github.com/LerianStudio/lib-auth/v2 v2.5.0-beta.7/go.mod h1:xdXYO1Ncgf++1WAHKZYPCs7YPrcvVt3/zso/X+qUuaI=
 github.com/LerianStudio/lib-commons/v3 v3.0.0-beta.18 h1:O5pkTQB99A3zhyMJPp495n4RTswzV9R2QfJA67JPiCY=
 github.com/LerianStudio/lib-commons/v3 v3.0.0-beta.18/go.mod h1:56UddH8AvrAsH0Q84ZdkChQOmhtX48P6GhV5AxSM4xA=
-github.com/LerianStudio/lib-commons/v4 v4.1.0-beta.6 h1:uE7HvtVXkvzoWW0r4PxkzWWE5AR4vycEQVEcrgMej8M=
-github.com/LerianStudio/lib-commons/v4 v4.1.0-beta.6/go.mod h1:WMQ17ouiJ13uUVhH/eY+p++4xb/NOtR44yIMGZ0r8Ow=
+github.com/LerianStudio/lib-commons/v4 v4.1.0-beta.7 h1:B1ktf14vTyeusUm6md5gKIYlnV3O5b0evvWJeLVULew=
+github.com/LerianStudio/lib-commons/v4 v4.1.0-beta.7/go.mod h1:WMQ17ouiJ13uUVhH/eY+p++4xb/NOtR44yIMGZ0r8Ow=
 github.com/LerianStudio/lib-license-go/v2 v2.3.3-beta.2 h1:FaNTAmC69SsQdXsUfzSjson4Oc6D3DxwhK35G5eTB8k=
 github.com/LerianStudio/lib-license-go/v2 v2.3.3-beta.2/go.mod h1:wvTAmJlJOlTZLNURgUH4G02z4U+P41pJOVeShhdpgoU=
 github.com/Masterminds/squirrel v1.5.4 h1:uUcX/aBc8O7Fg9kaISIUsHXdKuqehiXAMQTYX8afzqM=

@@ -574,6 +574,7 @@ func initMultiTenantConsumer(
 	mtConfig.Service = constant.ApplicationName
 	mtConfig.Environment = cfg.MultiTenantEnvironment
 	mtConfig.MultiTenantURL = cfg.MultiTenantURL
+	mtConfig.ServiceAPIKey = cfg.MultiTenantServiceAPIKey
 	mtConfig.PrefetchCount = constant.DefaultPrefetchCount
 
 	// SyncInterval: use configured value (seconds) or default 30s
