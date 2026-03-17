@@ -14,10 +14,10 @@ import (
 //
 // In multi-tenant mode, the tenant-specific *mongo.Database is injected into
 // context by the TenantMiddleware (Manager) or RabbitMQ message handler (Worker).
-// When the connection implements MultiTenantChecker and reports multi-tenant mode,
-// but no tenant context is found, it returns ErrTenantContextRequired instead of
-// silently falling back. In single-tenant mode (no tenant in context), it uses
-// the static provider and database name.
+// If a tenant ID exists in context but no tenant database was injected, it fails
+// closed with ErrTenantContextRequired instead of silently falling back.
+// When no tenant ID is present (e.g., bootstrap operations), it falls back to the
+// static provider and database name regardless of multi-tenant mode.
 func GetDatabaseForContext(ctx context.Context, conn MongoClientProvider, dbName string) (*mongo.Database, error) {
 	if conn == nil {
 		return nil, errors.New("mongo client provider is nil")
@@ -28,12 +28,15 @@ func GetDatabaseForContext(ctx context.Context, conn MongoClientProvider, dbName
 		return db, nil
 	}
 
-	// If the provider is multi-tenant aware, require tenant context
-	if checker, ok := conn.(interface{ IsMultiTenant() bool }); ok && checker.IsMultiTenant() {
+	// If a tenant ID exists in context but no tenant DB was injected,
+	// fail closed rather than silently falling back to the shared database.
+	if tmcore.GetTenantIDFromContext(ctx) != "" {
 		return nil, tmcore.ErrTenantContextRequired
 	}
 
-	// Single-tenant fallback
+	// No tenant context present — use the static connection.
+	// This path is used in single-tenant mode and for bootstrap operations
+	// (e.g., EnsureIndexes) that run before any tenant context is available.
 	client, err := conn.Client(ctx)
 	if err != nil {
 		return nil, err

@@ -77,13 +77,13 @@ func TestGetDatabaseForContext(t *testing.T) {
 			wantErrMsg: "mongo client is nil",
 		},
 		{
-			name: "multi-tenant returns ErrTenantContextRequired when no tenant in context",
+			name: "returns ErrTenantContextRequired when tenant ID in context but no DB injected",
 			setupCtx: func() context.Context {
-				return context.Background()
+				return tmcore.ContextWithTenantID(context.Background(), "tenant-123")
 			},
 			setupProvider: func(ctrl *gomock.Controller) MongoClientProvider {
 				mock := NewMockMongoClientProvider(ctrl)
-				// GetDB should NOT be called when multi-tenant and no tenant in context
+				// Client should NOT be called when tenant ID exists but no DB injected
 				return &multiTenantProvider{
 					MockMongoClientProvider: mock,
 					multiTenant:             true,
@@ -92,6 +92,26 @@ func TestGetDatabaseForContext(t *testing.T) {
 			dbName:    "test_db",
 			wantErr:   true,
 			wantErrIs: tmcore.ErrTenantContextRequired,
+		},
+		{
+			name: "multi-tenant provider falls back to static when no tenant context at all",
+			setupCtx: func() context.Context {
+				return context.Background()
+			},
+			setupProvider: func(ctrl *gomock.Controller) MongoClientProvider {
+				mock := NewMockMongoClientProvider(ctrl)
+				// With no tenant ID in context, should fall back to static connection
+				mock.EXPECT().
+					Client(gomock.Any()).
+					Return(nil, errors.New("static fallback in multi-tenant"))
+				return &multiTenantProvider{
+					MockMongoClientProvider: mock,
+					multiTenant:             true,
+				}
+			},
+			dbName:     "test_db",
+			wantErr:    true,
+			wantErrMsg: "static fallback in multi-tenant",
 		},
 		{
 			name: "single-tenant mode falls back to static provider when no tenant context",
