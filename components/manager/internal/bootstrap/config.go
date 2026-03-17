@@ -257,21 +257,29 @@ func initMongoRepositories(ctx context.Context, cfg *Config, logger libLog.Logge
 		return nil, wrapBootstrapError("create MongoDB connection repository", err)
 	}
 
-	logger.Log(ctx, libLog.LevelInfo, "Ensuring MongoDB indexes exist for connections...")
-
-	if err := connectionRepository.EnsureIndexes(ctx); err != nil {
-		return nil, wrapBootstrapError("ensure MongoDB connection indexes", err)
-	}
-
 	jobRepository, err := newJobRepository(ctx, mongoProvider, cfg.MongoDBName)
 	if err != nil {
 		return nil, wrapBootstrapError("create MongoDB job repository", err)
 	}
 
-	logger.Log(ctx, libLog.LevelInfo, "Ensuring MongoDB indexes exist for jobs...")
+	// Ensure indexes only in single-tenant mode. In multi-tenant mode, there is no
+	// tenant context available at bootstrap time (it is injected at runtime by the
+	// TenantMiddleware or RabbitMQ consumer), so EnsureIndexes would fail with
+	// ErrTenantContextRequired. Tenant-scoped indexes are managed externally.
+	if !cfg.MultiTenantEnabled {
+		logger.Log(ctx, libLog.LevelInfo, "Ensuring MongoDB indexes exist for connections...")
 
-	if err := jobRepository.EnsureIndexes(ctx); err != nil {
-		return nil, wrapBootstrapError("ensure MongoDB job indexes", err)
+		if err := connectionRepository.EnsureIndexes(ctx); err != nil {
+			return nil, wrapBootstrapError("ensure MongoDB connection indexes", err)
+		}
+
+		logger.Log(ctx, libLog.LevelInfo, "Ensuring MongoDB indexes exist for jobs...")
+
+		if err := jobRepository.EnsureIndexes(ctx); err != nil {
+			return nil, wrapBootstrapError("ensure MongoDB job indexes", err)
+		}
+	} else {
+		logger.Log(ctx, libLog.LevelInfo, "Multi-tenant mode: skipping index creation at bootstrap (indexes are managed per-tenant)")
 	}
 
 	return &managerRepositories{
