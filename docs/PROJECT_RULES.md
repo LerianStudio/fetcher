@@ -283,7 +283,7 @@ MongoDB connection and repository implementations.
 | File | Purpose |
 |------|---------|
 | `mongo.go` | MongoDB connection management |
-| `tenant.go` | Shared tenant-aware database resolution (GetDatabaseForContext) |
+| `tenant.go` | Shared tenant-aware database resolution (ResolveDatabase) |
 
 **Subpackages:**
 

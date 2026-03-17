@@ -99,7 +99,7 @@ func NewJobMongoDBRepository(ctx context.Context, provider mongodb.MongoClientPr
 // via tmcore.GetMongoForTenant. In single-tenant mode (no tenant in context),
 // it falls back to the static connection using jr.connection.Client.
 func (jr *JobMongoDBRepository) getDatabase(ctx context.Context) (*mongo.Database, error) {
-	return mongodb.GetDatabaseForContext(ctx, jr.connection, jr.Database)
+	return mongodb.ResolveDatabase(ctx, jr.connection, jr.Database)
 }
 
 // Create inserts a new job document.

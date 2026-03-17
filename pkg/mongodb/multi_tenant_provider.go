@@ -9,11 +9,11 @@ import (
 
 // MultiTenantMongoProvider wraps a MongoClientProvider and implements the
 // tmcore.MultiTenantChecker interface (IsMultiTenant() bool). This enables
-// GetDatabaseForContext to return ErrTenantContextRequired instead of silently
+// ResolveDatabase to return ErrTenantContextRequired instead of silently
 // falling back to the default database when multi-tenant mode is active but
 // no tenant context is present in the request.
 //
-// Without this wrapper, the safety net in GetDatabaseForContext is disabled because
+// Without this wrapper, the safety net in ResolveDatabase is disabled because
 // *libMongo.Client does not implement MultiTenantChecker.
 type MultiTenantMongoProvider struct {
 	inner       MongoClientProvider
@@ -21,7 +21,7 @@ type MultiTenantMongoProvider struct {
 }
 
 // NewMultiTenantMongoProvider creates a MongoClientProvider that also satisfies
-// the MultiTenantChecker interface. When multiTenant is true, GetDatabaseForContext
+// the MultiTenantChecker interface. When multiTenant is true, ResolveDatabase
 // will reject requests that lack tenant context instead of falling back to the default DB.
 func NewMultiTenantMongoProvider(inner MongoClientProvider, multiTenant bool) *MultiTenantMongoProvider {
 	return &MultiTenantMongoProvider{
@@ -40,7 +40,7 @@ func (p *MultiTenantMongoProvider) Client(ctx context.Context) (*mongo.Client, e
 }
 
 // IsMultiTenant returns true when the application is running in multi-tenant mode.
-// This satisfies the MultiTenantChecker interface checked by GetDatabaseForContext.
+// This satisfies the MultiTenantChecker interface checked by ResolveDatabase.
 func (p *MultiTenantMongoProvider) IsMultiTenant() bool {
 	if p == nil {
 		return false

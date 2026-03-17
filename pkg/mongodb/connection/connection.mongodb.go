@@ -99,7 +99,7 @@ func NewConnectionMongoDBRepository(ctx context.Context, provider mongodb.MongoC
 // via tmcore.GetMongoForTenant. In single-tenant mode (no tenant in context),
 // it falls back to the static connection using cr.connection.GetDB.
 func (cr *ConnectionMongoDBRepository) getDatabase(ctx context.Context) (*mongo.Database, error) {
-	return mongodb.GetDatabaseForContext(ctx, cr.connection, cr.Database)
+	return mongodb.ResolveDatabase(ctx, cr.connection, cr.Database)
 }
 
 // Create inserts a new connection respecting the unique constraint per organization.

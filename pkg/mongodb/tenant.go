@@ -9,16 +9,13 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
-// GetDatabaseForContext resolves a tenant-specific database from context,
-// falling back to the static connection when no tenant context is present.
+// ResolveDatabase returns the tenant-scoped Mongo database when present.
+// If a tenant ID exists in context but no tenant database has been injected,
+// it fails closed with ErrTenantContextRequired instead of silently falling
+// back to the shared static connection.
 //
-// In multi-tenant mode, the tenant-specific *mongo.Database is injected into
-// context by the TenantMiddleware (Manager) or RabbitMQ message handler (Worker).
-// If a tenant ID exists in context but no tenant database was injected, it fails
-// closed with ErrTenantContextRequired instead of silently falling back.
-// When no tenant ID is present (e.g., bootstrap operations), it falls back to the
-// static provider and database name regardless of multi-tenant mode.
-func GetDatabaseForContext(ctx context.Context, conn MongoClientProvider, dbName string) (*mongo.Database, error) {
+// When no tenant ID is present, the static single-tenant connection is used.
+func ResolveDatabase(ctx context.Context, conn MongoClientProvider, dbName string) (*mongo.Database, error) {
 	if conn == nil {
 		return nil, errors.New("mongo client provider is nil")
 	}
