@@ -24,12 +24,10 @@ func TestPublishJobNotification_Success(t *testing.T) {
 	ctx := testContext()
 	logger := testLogger()
 	jobID := newTestJobID()
-	orgID := newTestOrgID()
 
 	message := ExtractExternalDataMessage{
-		JobID:          jobID,
-		OrganizationID: orgID,
-		Metadata:       map[string]any{"source": "test-service"},
+		JobID:    jobID,
+		Metadata: map[string]any{"source": "test-service"},
 	}
 
 	// Expect Publish to be called with correct parameters
@@ -43,9 +41,6 @@ func TestPublishJobNotification_Success(t *testing.T) {
 			}
 			if notification.JobID != jobID {
 				t.Errorf("expected jobID %s, got %s", jobID, notification.JobID)
-			}
-			if notification.OrganizationID != orgID {
-				t.Errorf("expected orgID %s, got %s", orgID, notification.OrganizationID)
 			}
 			if notification.Status != "completed" {
 				t.Errorf("expected status 'completed', got %s", notification.Status)
@@ -70,12 +65,10 @@ func TestPublishJobNotification_WithErrorMetadata(t *testing.T) {
 	ctx := testContext()
 	logger := testLogger()
 	jobID := newTestJobID()
-	orgID := newTestOrgID()
 
 	message := ExtractExternalDataMessage{
-		JobID:          jobID,
-		OrganizationID: orgID,
-		Metadata:       map[string]any{"source": "test-service"},
+		JobID:    jobID,
+		Metadata: map[string]any{"source": "test-service"},
 	}
 
 	errorMetadata := map[string]any{
@@ -128,9 +121,8 @@ func TestPublishJobNotification_PublisherNotConfigured(t *testing.T) {
 	logger := testLogger()
 
 	message := ExtractExternalDataMessage{
-		JobID:          newTestJobID(),
-		OrganizationID: newTestOrgID(),
-		Metadata:       map[string]any{"source": "test"},
+		JobID:    newTestJobID(),
+		Metadata: map[string]any{"source": "test"},
 	}
 
 	// Should return nil without calling publish
@@ -149,9 +141,8 @@ func TestPublishJobNotification_NilLoggerFallsBackSafely(t *testing.T) {
 
 	ctx := testContext()
 	message := ExtractExternalDataMessage{
-		JobID:          newTestJobID(),
-		OrganizationID: newTestOrgID(),
-		Metadata:       map[string]any{"source": "test-service"},
+		JobID:    newTestJobID(),
+		Metadata: map[string]any{"source": "test-service"},
 	}
 
 	mocks.rabbitPublisher.EXPECT().
@@ -176,9 +167,8 @@ func TestPublishJobNotification_PublishError(t *testing.T) {
 	logger := testLogger()
 
 	message := ExtractExternalDataMessage{
-		JobID:          newTestJobID(),
-		OrganizationID: newTestOrgID(),
-		Metadata:       map[string]any{"source": "test-service"},
+		JobID:    newTestJobID(),
+		Metadata: map[string]any{"source": "test-service"},
 	}
 
 	expectedErr := errors.New("connection refused")
@@ -210,9 +200,8 @@ func TestPublishJobNotification_UnknownSource(t *testing.T) {
 
 	// Message without source in metadata
 	message := ExtractExternalDataMessage{
-		JobID:          newTestJobID(),
-		OrganizationID: newTestOrgID(),
-		Metadata:       nil,
+		JobID:    newTestJobID(),
+		Metadata: nil,
 	}
 
 	// Expect routing key with "unknown" source
@@ -229,13 +218,11 @@ func TestPublishJobNotification_UnknownSource(t *testing.T) {
 // TestJobNotificationMessage_JSON tests JSON serialization of the notification message.
 func TestJobNotificationMessage_JSON(t *testing.T) {
 	jobID := uuid.New()
-	orgID := uuid.New()
 
 	msg := JobNotificationMessage{
-		JobID:          jobID,
-		OrganizationID: orgID,
-		Status:         "completed",
-		Metadata:       map[string]any{"source": "test", "key": "value"},
+		JobID:    jobID,
+		Status:   "completed",
+		Metadata: map[string]any{"source": "test", "key": "value"},
 	}
 
 	data, err := json.Marshal(msg)
@@ -250,10 +237,6 @@ func TestJobNotificationMessage_JSON(t *testing.T) {
 
 	if decoded.JobID != jobID {
 		t.Errorf("expected jobID %s, got %s", jobID, decoded.JobID)
-	}
-
-	if decoded.OrganizationID != orgID {
-		t.Errorf("expected orgID %s, got %s", orgID, decoded.OrganizationID)
 	}
 
 	if decoded.Status != "completed" {
@@ -272,12 +255,10 @@ func TestPublishJobNotification_WithResultData(t *testing.T) {
 	ctx := testContext()
 	logger := testLogger()
 	jobID := newTestJobID()
-	orgID := newTestOrgID()
 
 	message := ExtractExternalDataMessage{
-		JobID:          jobID,
-		OrganizationID: orgID,
-		Metadata:       map[string]any{"source": "test-service"},
+		JobID:    jobID,
+		Metadata: map[string]any{"source": "test-service"},
 	}
 
 	resultData := &JobResultData{
@@ -338,9 +319,8 @@ func TestPublishJobNotification_EmptyExchange(t *testing.T) {
 	logger := testLogger()
 
 	message := ExtractExternalDataMessage{
-		JobID:          newTestJobID(),
-		OrganizationID: newTestOrgID(),
-		Metadata:       map[string]any{"source": "test"},
+		JobID:    newTestJobID(),
+		Metadata: map[string]any{"source": "test"},
 	}
 
 	// Should return nil without calling publish
@@ -362,8 +342,7 @@ func TestPublishJobNotification_MetadataPreservation(t *testing.T) {
 	logger := testLogger()
 
 	message := ExtractExternalDataMessage{
-		JobID:          newTestJobID(),
-		OrganizationID: newTestOrgID(),
+		JobID: newTestJobID(),
 		Metadata: map[string]any{
 			"source":      "test-service",
 			"requestId":   "req-123",
@@ -472,9 +451,8 @@ func TestPublishJobNotification_RoutingKeyGeneration(t *testing.T) {
 			logger := testLogger()
 
 			message := ExtractExternalDataMessage{
-				JobID:          newTestJobID(),
-				OrganizationID: newTestOrgID(),
-				Metadata:       tt.metadata,
+				JobID:    newTestJobID(),
+				Metadata: tt.metadata,
 			}
 
 			mocks.rabbitPublisher.EXPECT().
@@ -506,9 +484,8 @@ func TestPublishJobNotification_WithCompletedAt(t *testing.T) {
 	}
 
 	message := ExtractExternalDataMessage{
-		JobID:          newTestJobID(),
-		OrganizationID: newTestOrgID(),
-		Metadata:       map[string]any{"source": "test"},
+		JobID:    newTestJobID(),
+		Metadata: map[string]any{"source": "test"},
 	}
 
 	mocks.rabbitPublisher.EXPECT().
@@ -554,9 +531,8 @@ func TestPublishJobNotification_WithAllOptions(t *testing.T) {
 	}
 
 	message := ExtractExternalDataMessage{
-		JobID:          newTestJobID(),
-		OrganizationID: newTestOrgID(),
-		Metadata:       map[string]any{"source": "test", "custom": "value"},
+		JobID:    newTestJobID(),
+		Metadata: map[string]any{"source": "test", "custom": "value"},
 	}
 
 	mocks.rabbitPublisher.EXPECT().

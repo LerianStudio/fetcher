@@ -23,6 +23,10 @@ const (
 
 	// ContextExternalHMAC is used to derive the key for signing external messages and document HMACs.
 	ContextExternalHMAC = "fetcher-external-hmac-v1"
+
+	// ContextStorageEncryption is used to derive the key for encrypting extracted data at rest (SeaweedFS).
+	// Both Fetcher (encrypt) and Reporter (decrypt) derive this key from the shared APP_ENC_KEY.
+	ContextStorageEncryption = "fetcher-storage-encryption-v1"
 )
 
 // DefaultKeyLength is the standard key length for AES-256 and HMAC-SHA256.
@@ -50,10 +54,11 @@ type KeyDeriver interface {
 // HKDFKeyDeriver implements KeyDeriver using HKDF (RFC 5869) with SHA-256.
 // Keys are derived once at construction time and cached for performance.
 type HKDFKeyDeriver struct {
-	masterKey       []byte
-	credentialKey   []byte
-	internalHMACKey []byte
-	externalHMACKey []byte
+	masterKey         []byte
+	credentialKey     []byte
+	internalHMACKey   []byte
+	externalHMACKey   []byte
+	storageEncryptKey []byte
 }
 
 // NewHKDFKeyDeriver creates a new key deriver from a master key.
@@ -84,6 +89,11 @@ func NewHKDFKeyDeriver(masterKey []byte) (*HKDFKeyDeriver, error) {
 	deriver.externalHMACKey, err = deriver.DeriveKey(ContextExternalHMAC, DefaultKeyLength)
 	if err != nil {
 		return nil, fmt.Errorf("failed to derive external HMAC key: %w", err)
+	}
+
+	deriver.storageEncryptKey, err = deriver.DeriveKey(ContextStorageEncryption, DefaultKeyLength)
+	if err != nil {
+		return nil, fmt.Errorf("failed to derive storage encryption key: %w", err)
 	}
 
 	return deriver, nil
@@ -136,6 +146,15 @@ func (d *HKDFKeyDeriver) GetInternalHMACKey() []byte {
 func (d *HKDFKeyDeriver) GetExternalHMACKey() []byte {
 	keyCopy := make([]byte, len(d.externalHMACKey))
 	copy(keyCopy, d.externalHMACKey)
+
+	return keyCopy
+}
+
+// GetStorageEncryptKey returns a copy of the pre-derived key for storage encryption (AES-256).
+// The returned slice is a copy; modifications do not affect the original key.
+func (d *HKDFKeyDeriver) GetStorageEncryptKey() []byte {
+	keyCopy := make([]byte, len(d.storageEncryptKey))
+	copy(keyCopy, d.storageEncryptKey)
 
 	return keyCopy
 }

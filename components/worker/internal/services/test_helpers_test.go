@@ -62,7 +62,7 @@ func newTestUseCase(mocks *testMocks) *UseCase {
 		JobEventsExchange:    "test-exchange",
 	}
 
-	uc.SetStorageSecrets("test-seaweedfs-encrypt-key", "test-seaweedfs-hash-key")
+	uc.SetStorageEncryptDerivedKey([]byte("test-seaweedfs-encrypt-key-32by"))
 	uc.SetCRMSecrets("test-crm-encrypt-key", "test-crm-hash-key")
 
 	return uc

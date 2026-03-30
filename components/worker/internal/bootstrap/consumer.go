@@ -206,7 +206,7 @@ func (mq *MultiQueueConsumer) handlerGenerateReportDelivery(ctx context.Context,
 	// Resolve per-tenant MongoDB connection if mongoManager is available.
 	// The tenant ID is already in context from tmconsumer.MultiTenantConsumer.
 	if mq.mongoManager != nil {
-		tenantID := tmcore.GetTenantIDFromContext(ctx)
+		tenantID := tmcore.GetTenantIDContext(ctx)
 		if tenantID != "" {
 			tenantDB, err := mq.mongoManager.GetDatabaseForTenant(ctx, tenantID)
 			if err != nil {
@@ -225,7 +225,7 @@ func (mq *MultiQueueConsumer) handlerGenerateReportDelivery(ctx context.Context,
 				return fmt.Errorf("resolve tenant mongo for tenant %s: %w", tenantID, err)
 			}
 
-			ctx = tmcore.ContextWithTenantMongo(ctx, tenantDB)
+			ctx = tmcore.ContextWithMB(ctx, tenantDB)
 		}
 	}
 
@@ -247,7 +247,7 @@ func (mq *MultiQueueConsumer) handlerGenerateReport(ctx context.Context, body []
 	// Extract tenant ID from AMQP headers ONLY if not already set by the multi-tenant
 	// consumer framework. In multi-tenant mode, the vhost-derived tenant ID is authoritative
 	// and must not be overwritten by AMQP headers.
-	if tmcore.GetTenantIDFromContext(ctx) == "" {
+	if tmcore.GetTenantIDContext(ctx) == "" {
 		ctx = extractTenantIDFromHeaders(ctx, headers)
 	}
 
@@ -304,23 +304,23 @@ func extractTenantIDFromHeaders(ctx context.Context, headers map[string]any) con
 		return ctx
 	}
 
-	return tmcore.SetTenantIDInContext(ctx, tenantID)
+	return tmcore.ContextWithTenantID(ctx, tenantID)
 }
 
 // resolveTenantMongo resolves a tenant-specific MongoDB database using the mongo manager
-// and injects it into the context via tmcore.ContextWithTenantMongo.
+// and injects it into the context via tmcore.ContextWithMB.
 func resolveTenantMongo(ctx context.Context, mongoManager *tmmongo.Manager) (context.Context, error) {
 	if mongoManager == nil {
 		return ctx, nil
 	}
 
-	tenantID := tmcore.GetTenantIDFromContext(ctx)
+	tenantID := tmcore.GetTenantIDContext(ctx)
 	if tenantID == "" {
 		return ctx, nil
 	}
 
 	// Skip resolution if tenant mongo is already set in context
-	if tmcore.GetMongoFromContext(ctx) != nil {
+	if tmcore.GetMBContext(ctx) != nil {
 		return ctx, nil
 	}
 
@@ -329,7 +329,7 @@ func resolveTenantMongo(ctx context.Context, mongoManager *tmmongo.Manager) (con
 		return ctx, err
 	}
 
-	return tmcore.ContextWithTenantMongo(ctx, tenantDB), nil
+	return tmcore.ContextWithMB(ctx, tenantDB), nil
 }
 
 // isPermanentTenantError returns true if the error indicates a permanent failure

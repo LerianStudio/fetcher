@@ -21,44 +21,6 @@
       "read": ".*"
     }
   ],
-  "queues": [
-    {
-      "name": "fetcher.extract-external-data.queue",
-      "vhost": "/",
-      "durable": true,
-      "arguments": {
-        "x-dead-letter-exchange": "fetcher.dlx",
-        "x-dead-letter-routing-key": "fetcher.dlq.key"
-      }
-    },
-    {
-      "name": "fetcher.dlq",
-      "vhost": "/",
-      "durable": true,
-      "arguments": {
-        "x-message-ttl": 604800000,
-        "x-max-length": 10000
-      }
-    },
-    {
-      "name": "reporter.dlq",
-      "vhost": "/",
-      "durable": true,
-      "arguments": {
-        "x-message-ttl": 604800000,
-        "x-max-length": 10000
-      }
-    },
-    {
-      "name": "reporter.fetcher-notifications.queue",
-      "vhost": "/",
-      "durable": true,
-      "arguments": {
-        "x-dead-letter-exchange": "reporter.dlx",
-        "x-dead-letter-routing-key": "reporter.dlq.key"
-      }
-    }
-  ],
   "exchanges": [
     {
       "name": "fetcher.extract-external-data.exchange",
@@ -77,12 +39,26 @@
       "vhost": "/",
       "type": "topic",
       "durable": true
+    }
+  ],
+  "queues": [
+    {
+      "name": "fetcher.extract-external-data.queue",
+      "vhost": "/",
+      "durable": true,
+      "arguments": {
+        "x-dead-letter-exchange": "fetcher.dlx",
+        "x-dead-letter-routing-key": "fetcher.dlq.key"
+      }
     },
     {
-      "name": "reporter.dlx",
+      "name": "fetcher.dlq",
       "vhost": "/",
-      "type": "direct",
-      "durable": true
+      "durable": true,
+      "arguments": {
+        "x-message-ttl": 604800000,
+        "x-max-length": 10000
+      }
     }
   ],
   "bindings": [
@@ -94,46 +70,11 @@
       "routing_key": "fetcher.job.key"
     },
     {
-      "source": "fetcher.extract-external-data.exchange",
-      "vhost": "/",
-      "destination": "reporter.fetcher-notifications.queue",
-      "destination_type": "queue",
-      "routing_key": "job.completed.reporter"
-    },
-    {
-      "source": "fetcher.extract-external-data.exchange",
-      "vhost": "/",
-      "destination": "reporter.fetcher-notifications.queue",
-      "destination_type": "queue",
-      "routing_key": "job.failed.reporter"
-    },
-    {
       "source": "fetcher.dlx",
       "vhost": "/",
       "destination": "fetcher.dlq",
       "destination_type": "queue",
       "routing_key": "fetcher.dlq.key"
-    },
-    {
-      "source": "fetcher.job.events",
-      "vhost": "/",
-      "destination": "reporter.fetcher-notifications.queue",
-      "destination_type": "queue",
-      "routing_key": "job.completed.reporter"
-    },
-    {
-      "source": "fetcher.job.events",
-      "vhost": "/",
-      "destination": "reporter.fetcher-notifications.queue",
-      "destination_type": "queue",
-      "routing_key": "job.failed.reporter"
-    },
-    {
-      "source": "reporter.dlx",
-      "vhost": "/",
-      "destination": "reporter.dlq",
-      "destination_type": "queue",
-      "routing_key": "reporter.dlq.key"
     }
   ]
 }

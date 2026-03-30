@@ -21,17 +21,15 @@ func TestExtractExternalData_ParseError_UpdatesJobAndPublishesNotification(t *te
 
 	ctx := testContext()
 	jobID := newTestJobID()
-	orgID := newTestOrgID()
 
 	invalidBody := []byte(`{"invalid": json}`)
 	headers := map[string]any{
-		"jobId":          jobID.String(),
-		"organizationId": orgID.String(),
+		"jobId": jobID.String(),
 	}
 
 	// Expect job status to be updated to failed
 	mocks.jobRepo.EXPECT().
-		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any(), gomock.Any(), gomock.Any()).
+		UpdateStatus(gomock.Any(), jobID, model.JobStatusFailed, gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil)
 
 	// Expect failure notification to be published
@@ -67,11 +65,9 @@ func TestExtractExternalData_SkipsCompletedJob(t *testing.T) {
 
 	ctx := testContext()
 	jobID := newTestJobID()
-	orgID := newTestOrgID()
 
 	validMessage := ExtractExternalDataMessage{
-		JobID:          jobID,
-		OrganizationID: orgID,
+		JobID: jobID,
 		MappedFields: map[string]map[string][]string{
 			"datasource1": {"table1": {"field1"}},
 		},
@@ -84,7 +80,7 @@ func TestExtractExternalData_SkipsCompletedJob(t *testing.T) {
 
 	// Job is already completed - should be skipped
 	mocks.jobRepo.EXPECT().
-		FindByID(gomock.Any(), jobID, orgID).
+		FindByID(gomock.Any(), jobID).
 		Return(&model.Job{
 			ID:     jobID,
 			Status: model.JobStatusCompleted,
@@ -108,11 +104,9 @@ func TestExtractExternalData_SkipsProcessingJob(t *testing.T) {
 
 	ctx := testContext()
 	jobID := newTestJobID()
-	orgID := newTestOrgID()
 
 	validMessage := ExtractExternalDataMessage{
-		JobID:          jobID,
-		OrganizationID: orgID,
+		JobID: jobID,
 		MappedFields: map[string]map[string][]string{
 			"datasource1": {"table1": {"field1"}},
 		},
@@ -124,7 +118,7 @@ func TestExtractExternalData_SkipsProcessingJob(t *testing.T) {
 	}
 
 	mocks.jobRepo.EXPECT().
-		FindByID(gomock.Any(), jobID, orgID).
+		FindByID(gomock.Any(), jobID).
 		Return(&model.Job{
 			ID:     jobID,
 			Status: model.JobStatusProcessing,
@@ -146,11 +140,9 @@ func TestExtractExternalData_ConnectionNotFound(t *testing.T) {
 
 	ctx := testContext()
 	jobID := newTestJobID()
-	orgID := newTestOrgID()
 
 	validMessage := ExtractExternalDataMessage{
-		JobID:          jobID,
-		OrganizationID: orgID,
+		JobID: jobID,
 		MappedFields: map[string]map[string][]string{
 			"postgres_db": {"users": {"id", "name"}},
 		},
@@ -164,7 +156,7 @@ func TestExtractExternalData_ConnectionNotFound(t *testing.T) {
 
 	// Job is not completed - should continue processing
 	mocks.jobRepo.EXPECT().
-		FindByID(gomock.Any(), jobID, orgID).
+		FindByID(gomock.Any(), jobID).
 		Return(&model.Job{
 			ID:     jobID,
 			Status: model.JobStatusPending,
@@ -172,7 +164,7 @@ func TestExtractExternalData_ConnectionNotFound(t *testing.T) {
 
 	// Second call for job validation in handleErrorWithUpdate flow
 	mocks.jobRepo.EXPECT().
-		FindByID(gomock.Any(), jobID, orgID).
+		FindByID(gomock.Any(), jobID).
 		Return(&model.Job{
 			ID:     jobID,
 			Status: model.JobStatusPending,
@@ -180,17 +172,17 @@ func TestExtractExternalData_ConnectionNotFound(t *testing.T) {
 
 	// Connection repository returns error
 	mocks.connRepo.EXPECT().
-		FindByConfigNames(gomock.Any(), orgID, []string{"postgres_db"}).
+		FindByConfigNames(gomock.Any(), []string{"postgres_db"}).
 		Return(nil, errors.New("connection not found"))
 
 	// Expect job transition to processing before extraction
 	mocks.jobRepo.EXPECT().
-		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusProcessing, "", "", nil).
+		UpdateStatus(gomock.Any(), jobID, model.JobStatusProcessing, "", "", nil).
 		Return(nil)
 
 	// Expect job status to be updated to failed
 	mocks.jobRepo.EXPECT().
-		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any(), gomock.Any(), gomock.Any()).
+		UpdateStatus(gomock.Any(), jobID, model.JobStatusFailed, gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil)
 
 	// Expect failure notification to be published
@@ -214,11 +206,9 @@ func TestExtractExternalData_JobNotFound(t *testing.T) {
 
 	ctx := testContext()
 	jobID := newTestJobID()
-	orgID := newTestOrgID()
 
 	validMessage := ExtractExternalDataMessage{
-		JobID:          jobID,
-		OrganizationID: orgID,
+		JobID: jobID,
 		MappedFields: map[string]map[string][]string{
 			"datasource1": {"table1": {"field1"}},
 		},
@@ -232,17 +222,17 @@ func TestExtractExternalData_JobNotFound(t *testing.T) {
 
 	// First check - job is not found (nil status means process)
 	mocks.jobRepo.EXPECT().
-		FindByID(gomock.Any(), jobID, orgID).
+		FindByID(gomock.Any(), jobID).
 		Return(nil, nil)
 
 	// Second check - job not found returns error
 	mocks.jobRepo.EXPECT().
-		FindByID(gomock.Any(), jobID, orgID).
+		FindByID(gomock.Any(), jobID).
 		Return(nil, errors.New("job not found"))
 
 	// Expect job status update to failed
 	mocks.jobRepo.EXPECT().
-		UpdateStatus(gomock.Any(), jobID, orgID, model.JobStatusFailed, gomock.Any(), gomock.Any(), gomock.Any()).
+		UpdateStatus(gomock.Any(), jobID, model.JobStatusFailed, gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil)
 
 	// Expect failure notification
@@ -259,11 +249,9 @@ func TestExtractExternalData_JobNotFound(t *testing.T) {
 // TestExtractExternalDataMessage_JSON tests JSON serialization of the message.
 func TestExtractExternalDataMessage_JSON(t *testing.T) {
 	jobID := uuid.New()
-	orgID := uuid.New()
 
 	msg := ExtractExternalDataMessage{
-		JobID:          jobID,
-		OrganizationID: orgID,
+		JobID: jobID,
 		MappedFields: map[string]map[string][]string{
 			"db1": {"table1": {"field1", "field2"}},
 			"db2": {"table2": {"field3"}},
@@ -283,10 +271,6 @@ func TestExtractExternalDataMessage_JSON(t *testing.T) {
 
 	if decoded.JobID != jobID {
 		t.Errorf("expected jobID %s, got %s", jobID, decoded.JobID)
-	}
-
-	if decoded.OrganizationID != orgID {
-		t.Errorf("expected orgID %s, got %s", orgID, decoded.OrganizationID)
 	}
 
 	if len(decoded.MappedFields) != 2 {

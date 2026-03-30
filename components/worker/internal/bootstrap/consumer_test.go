@@ -106,7 +106,7 @@ func TestResolveTenantMongo(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
 			if tt.tenantID != "" {
-				ctx = tmcore.SetTenantIDInContext(ctx, tt.tenantID)
+				ctx = tmcore.ContextWithTenantID(ctx, tt.tenantID)
 			}
 
 			resultCtx, err := resolveTenantMongo(ctx, tt.mongoManager)
@@ -116,7 +116,7 @@ func TestResolveTenantMongo(t *testing.T) {
 			} else {
 				require.NoError(t, err, tt.description)
 				// Verify tenant ID is preserved in the returned context
-				assert.Equal(t, tt.tenantID, tmcore.GetTenantIDFromContext(resultCtx),
+				assert.Equal(t, tt.tenantID, tmcore.GetTenantIDContext(resultCtx),
 					"tenant ID must be preserved in returned context")
 			}
 		})
@@ -169,7 +169,7 @@ func TestHandlerGenerateReport_TenantIDExtraction(t *testing.T) {
 			ctx := context.Background()
 			ctx = extractTenantIDFromHeaders(ctx, tt.headers)
 
-			tenantID := tmcore.GetTenantIDFromContext(ctx)
+			tenantID := tmcore.GetTenantIDContext(ctx)
 			assert.Equal(t, tt.expectTenantID, tenantID)
 		})
 	}
@@ -277,11 +277,11 @@ func TestIsPermanentTenantError(t *testing.T) {
 func TestResolveTenantMongo_NilManagerPreservesContext(t *testing.T) {
 	// resolveTenantMongo with nil manager should always succeed (single-tenant mode)
 	ctx := context.Background()
-	ctx = tmcore.SetTenantIDInContext(ctx, "tenant-abc")
+	ctx = tmcore.ContextWithTenantID(ctx, "tenant-abc")
 
 	resultCtx, err := resolveTenantMongo(ctx, nil)
 	require.NoError(t, err)
-	assert.Equal(t, "tenant-abc", tmcore.GetTenantIDFromContext(resultCtx))
+	assert.Equal(t, "tenant-abc", tmcore.GetTenantIDContext(resultCtx))
 }
 
 func TestNewMultiQueueConsumerMultiTenant_RegistersHandler(t *testing.T) {

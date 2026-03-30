@@ -57,9 +57,6 @@ type JobNotificationMessage struct {
 	// JobID is the unique identifier of the job.
 	JobID uuid.UUID `json:"jobId"`
 
-	// OrganizationID is the unique identifier of the organization.
-	OrganizationID uuid.UUID `json:"organizationId"`
-
 	// Metadata contains additional metadata for the notification.
 	// It should include "source" to identify which service requested the job.
 	// For failed jobs, it may include "error" with error details.
@@ -108,10 +105,9 @@ func (uc *UseCase) publishJobNotification(
 	defer notifySpan.End()
 
 	notification := JobNotificationMessage{
-		JobID:          message.JobID,
-		OrganizationID: message.OrganizationID,
-		Status:         status,
-		Metadata:       make(map[string]any),
+		JobID:    message.JobID,
+		Status:   status,
+		Metadata: make(map[string]any),
 	}
 
 	// Add optional result and execution data
