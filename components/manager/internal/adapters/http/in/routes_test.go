@@ -16,7 +16,7 @@ import (
 // telemetry middleware has a data race issue when running with -race flag.
 // The race occurs between ContextWithLogger() and NewLoggerFromContext() in
 // background goroutines spawned by the telemetry metrics collection.
-// See: lib-commons/v3/commons/net/http/withTelemetry.go:158
+// See: lib-commons/v4/commons/net/http/withTelemetry.go:158
 //
 // Routes are tested indirectly through connection_test.go and fetcher_test.go
 // which test the handlers directly without the telemetry middleware.

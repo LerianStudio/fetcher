@@ -37,13 +37,6 @@ const docTemplate = `{
                         "in": "header"
                     },
                     {
-                        "type": "string",
-                        "description": "Organization ID",
-                        "name": "X-Organization-Id",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
                         "description": "Fetcher request payload. metadata.source is required.",
                         "name": "request",
                         "in": "body",
@@ -112,13 +105,6 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Organization ID",
-                        "name": "X-Organization-Id",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
                         "description": "Job ID",
                         "name": "id",
                         "in": "path",
@@ -169,13 +155,6 @@ const docTemplate = `{
                         "description": "The authorization token in the 'Bearer access_token' format. Only required when auth plugin is enabled.",
                         "name": "Authorization",
                         "in": "header"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Organization ID",
-                        "name": "X-Organization-Id",
-                        "in": "header",
-                        "required": true
                     },
                     {
                         "type": "string",
@@ -318,13 +297,6 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Organization ID",
-                        "name": "X-Organization-Id",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
                         "description": "Product name (required, non-empty)",
                         "name": "X-Product-Name",
                         "in": "header",
@@ -387,13 +359,6 @@ const docTemplate = `{
                         "description": "The authorization token in the 'Bearer access_token' format. Only required when auth plugin is enabled.",
                         "name": "Authorization",
                         "in": "header"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Organization ID",
-                        "name": "X-Organization-Id",
-                        "in": "header",
-                        "required": true
                     },
                     {
                         "type": "integer",
@@ -488,13 +453,6 @@ const docTemplate = `{
                         "in": "header"
                     },
                     {
-                        "type": "string",
-                        "description": "Organization ID",
-                        "name": "X-Organization-Id",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
                         "description": "Schema validation request",
                         "name": "request",
                         "in": "body",
@@ -551,13 +509,6 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Organization ID",
-                        "name": "X-Organization-Id",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
                         "description": "Connection ID",
                         "name": "id",
                         "in": "path",
@@ -606,13 +557,6 @@ const docTemplate = `{
                         "description": "The authorization token in the 'Bearer access_token' format. Only required when auth plugin is enabled.",
                         "name": "Authorization",
                         "in": "header"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Organization ID",
-                        "name": "X-Organization-Id",
-                        "in": "header",
-                        "required": true
                     },
                     {
                         "type": "string",
@@ -670,13 +614,6 @@ const docTemplate = `{
                         "description": "The authorization token in the 'Bearer access_token' format. Only required when auth plugin is enabled.",
                         "name": "Authorization",
                         "in": "header"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Organization ID",
-                        "name": "X-Organization-Id",
-                        "in": "header",
-                        "required": true
                     },
                     {
                         "type": "string",
@@ -748,13 +685,6 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Organization ID",
-                        "name": "X-Organization-Id",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
                         "description": "Connection ID",
                         "name": "id",
                         "in": "path",
@@ -821,13 +751,6 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Organization ID",
-                        "name": "X-Organization-Id",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
                         "description": "Connection ID",
                         "name": "id",
                         "in": "path",
@@ -878,13 +801,6 @@ const docTemplate = `{
                         "description": "The authorization token in the 'Bearer access_token' format. Only required when auth plugin is enabled.",
                         "name": "Authorization",
                         "in": "header"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Organization ID",
-                        "name": "X-Organization-Id",
-                        "in": "header",
-                        "required": true
                     },
                     {
                         "type": "string",
@@ -1215,9 +1131,6 @@ const docTemplate = `{
                 "metadata": {
                     "type": "object",
                     "additionalProperties": {}
-                },
-                "organizationId": {
-                    "type": "string"
                 },
                 "requestHash": {
                     "type": "string"

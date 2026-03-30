@@ -22,6 +22,7 @@ type Server struct {
 	license       licenseTerminator
 	logger        libCommonsLog.Logger
 	telemetry     libCommonsOtel.Telemetry
+	shutdownHooks []func(context.Context) error
 }
 
 // ServerAddress returns is a convenience method to return the server address.
@@ -30,13 +31,15 @@ func (s *Server) ServerAddress() string {
 }
 
 // NewServer creates an instance of Server.
-func NewServer(cfg *Config, app *fiber.App, logger libCommonsLog.Logger, telemetry *libCommonsOtel.Telemetry, licenseClient *libLicense.LicenseClient) *Server {
+// Optional shutdownHooks are registered with the server manager and executed during graceful shutdown.
+func NewServer(cfg *Config, app *fiber.App, logger libCommonsLog.Logger, telemetry *libCommonsOtel.Telemetry, licenseClient *libLicense.LicenseClient, shutdownHooks ...func(context.Context) error) *Server {
 	return &Server{
 		app:           app,
 		serverAddress: cfg.ServerAddress,
 		license:       licenseClient.GetLicenseManagerShutdown(),
 		logger:        logger,
 		telemetry:     *telemetry,
+		shutdownHooks: shutdownHooks,
 	}
 }
 
@@ -53,6 +56,10 @@ func (s *Server) Run(l *libCommons.Launcher) error {
 
 			return nil
 		})
+	}
+
+	for _, hook := range s.shutdownHooks {
+		manager = manager.WithShutdownHook(hook)
 	}
 
 	manager.StartWithGracefulShutdown()

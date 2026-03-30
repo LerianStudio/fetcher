@@ -21,14 +21,12 @@ func TestGetJob_Execute(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	orgID := uuid.New()
 	jobID := uuid.New()
 	now := time.Now().UTC()
 
 	expectedJob := &model.Job{
-		ID:             jobID,
-		OrganizationID: orgID,
-		Status:         model.JobStatusPending,
+		ID:     jobID,
+		Status: model.JobStatusPending,
 		MappedFields: map[string]map[string][]string{
 			"datasource1": {
 				"table1": {"field1", "field2"},
@@ -40,35 +38,34 @@ func TestGetJob_Execute(t *testing.T) {
 	}
 
 	tests := []struct {
-		name           string
-		setupMock      func(mockRepo *job.MockRepository)
-		organizationID uuid.UUID
-		jobID          uuid.UUID
-		expectedJob    *model.Job
-		expectedError  error
+		name          string
+		setupMock     func(mockRepo *job.MockRepository)
+		jobID         uuid.UUID
+		expectedJob   *model.Job
+		expectedError error
 	}{
 		{
 			name: "success - job found",
 			setupMock: func(mockRepo *job.MockRepository) {
 				mockRepo.EXPECT().
-					FindByID(gomock.Any(), jobID, orgID).
+					FindByID(gomock.Any(), jobID).
 					Return(expectedJob, nil)
 			},
-			organizationID: orgID,
-			jobID:          jobID,
-			expectedJob:    expectedJob,
-			expectedError:  nil,
+
+			jobID:         jobID,
+			expectedJob:   expectedJob,
+			expectedError: nil,
 		},
 		{
 			name: "error - repository returns mongo.ErrNoDocuments",
 			setupMock: func(mockRepo *job.MockRepository) {
 				mockRepo.EXPECT().
-					FindByID(gomock.Any(), jobID, orgID).
+					FindByID(gomock.Any(), jobID).
 					Return(nil, mongo.ErrNoDocuments)
 			},
-			organizationID: orgID,
-			jobID:          jobID,
-			expectedJob:    nil,
+
+			jobID:       jobID,
+			expectedJob: nil,
 			// Service passes through repository errors directly
 			expectedError: mongo.ErrNoDocuments,
 		},
@@ -76,25 +73,25 @@ func TestGetJob_Execute(t *testing.T) {
 			name: "error - job not found (nil return)",
 			setupMock: func(mockRepo *job.MockRepository) {
 				mockRepo.EXPECT().
-					FindByID(gomock.Any(), jobID, orgID).
+					FindByID(gomock.Any(), jobID).
 					Return(nil, nil)
 			},
-			organizationID: orgID,
-			jobID:          jobID,
-			expectedJob:    nil,
-			expectedError:  pkg.ResponseErrorWithStatusCode{StatusCode: http.StatusNotFound},
+
+			jobID:         jobID,
+			expectedJob:   nil,
+			expectedError: pkg.ResponseErrorWithStatusCode{StatusCode: http.StatusNotFound},
 		},
 		{
 			name: "error - repository error",
 			setupMock: func(mockRepo *job.MockRepository) {
 				mockRepo.EXPECT().
-					FindByID(gomock.Any(), jobID, orgID).
+					FindByID(gomock.Any(), jobID).
 					Return(nil, errors.New("database error"))
 			},
-			organizationID: orgID,
-			jobID:          jobID,
-			expectedJob:    nil,
-			expectedError:  errors.New("database error"),
+
+			jobID:         jobID,
+			expectedJob:   nil,
+			expectedError: errors.New("database error"),
 		},
 	}
 
@@ -107,7 +104,7 @@ func TestGetJob_Execute(t *testing.T) {
 
 			ctx := testContext()
 
-			result, err := service.Execute(ctx, tt.organizationID, tt.jobID)
+			result, err := service.Execute(ctx, tt.jobID)
 
 			if tt.expectedError != nil {
 				require.Error(t, err)
@@ -126,7 +123,6 @@ func TestGetJob_Execute(t *testing.T) {
 			} else {
 				require.NoError(t, err)
 				assert.Equal(t, tt.expectedJob.ID, result.ID)
-				assert.Equal(t, tt.expectedJob.OrganizationID, result.OrganizationID)
 				assert.Equal(t, tt.expectedJob.Status, result.Status)
 			}
 		})

@@ -11,7 +11,6 @@ import (
 	"github.com/LerianStudio/lib-commons/v4/commons"
 	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
 
-	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -23,7 +22,7 @@ func NewListUnassignedConnections(connectionRepo connRepo.Repository) *ListUnass
 	return &ListUnassignedConnections{connRepo: connectionRepo}
 }
 
-func (s *ListUnassignedConnections) Execute(ctx context.Context, organizationID uuid.UUID, filters http.QueryHeader) (*model.Pagination, error) {
+func (s *ListUnassignedConnections) Execute(ctx context.Context, filters http.QueryHeader) (*model.Pagination, error) {
 	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "service.list_unassigned_connections")
@@ -31,7 +30,6 @@ func (s *ListUnassignedConnections) Execute(ctx context.Context, organizationID 
 
 	span.SetAttributes(
 		attribute.String("app.request.request_id", reqID),
-		attribute.String("app.request.organization_id", organizationID.String()),
 	)
 
 	err := libOpentelemetry.SetSpanAttributesFromValue(span, "app.request.payload", filters, nil)
@@ -39,7 +37,7 @@ func (s *ListUnassignedConnections) Execute(ctx context.Context, organizationID 
 		libOpentelemetry.HandleSpanError(span, "Failed to convert fetcher input to JSON string", err)
 	}
 
-	list, totalCount, err := s.connRepo.ListUnassigned(ctx, organizationID, filters)
+	list, totalCount, err := s.connRepo.ListUnassigned(ctx, filters)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list unassigned connections: %w", err)
 	}

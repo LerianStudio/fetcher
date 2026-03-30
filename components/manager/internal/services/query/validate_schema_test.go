@@ -27,12 +27,11 @@ func TestValidateSchema_Success(t *testing.T) {
 	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
-	orgID := uuid.New()
 	connID := uuid.New()
 
 	// Setup mock expectations
 	mockConnRepo.EXPECT().
-		FindByConfigNames(gomock.Any(), orgID, []string{"midaz_onboarding"}).
+		FindByConfigNames(gomock.Any(), []string{"midaz_onboarding"}).
 		Return([]*model.Connection{
 			{ID: connID, ConfigName: "midaz_onboarding"},
 		}, nil)
@@ -48,7 +47,7 @@ func TestValidateSchema_Success(t *testing.T) {
 			},
 		}, nil)
 
-	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil)
+	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil, nil)
 
 	ctx := testContext()
 	request := model.SchemaValidationRequest{
@@ -59,7 +58,7 @@ func TestValidateSchema_Success(t *testing.T) {
 		},
 	}
 
-	resp, err := service.Execute(ctx, orgID, request)
+	resp, err := service.Execute(ctx, request)
 
 	assert.NoError(t, err)
 	require.NotNil(t, resp)
@@ -75,13 +74,11 @@ func TestValidateSchema_DataSourceNotFound(t *testing.T) {
 	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
-	orgID := uuid.New()
-
 	mockConnRepo.EXPECT().
-		FindByConfigNames(gomock.Any(), orgID, gomock.Any()).
+		FindByConfigNames(gomock.Any(), gomock.Any()).
 		Return([]*model.Connection{}, nil) // No connections found
 
-	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil)
+	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil, nil)
 
 	ctx := testContext()
 	request := model.SchemaValidationRequest{
@@ -90,7 +87,7 @@ func TestValidateSchema_DataSourceNotFound(t *testing.T) {
 		},
 	}
 
-	resp, err := service.Execute(ctx, orgID, request)
+	resp, err := service.Execute(ctx, request)
 
 	// When no connections are found for ANY of the requested datasources,
 	// the production code returns a ValidationError immediately
@@ -111,11 +108,10 @@ func TestValidateSchema_TableNotFound(t *testing.T) {
 	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
-	orgID := uuid.New()
 	connID := uuid.New()
 
 	mockConnRepo.EXPECT().
-		FindByConfigNames(gomock.Any(), orgID, gomock.Any()).
+		FindByConfigNames(gomock.Any(), gomock.Any()).
 		Return([]*model.Connection{
 			{ID: connID, ConfigName: "db1"},
 		}, nil)
@@ -128,7 +124,7 @@ func TestValidateSchema_TableNotFound(t *testing.T) {
 			Tables:     map[string]*model.TableSchema{}, // Empty tables
 		}, nil)
 
-	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil)
+	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil, nil)
 
 	ctx := testContext()
 	request := model.SchemaValidationRequest{
@@ -137,7 +133,7 @@ func TestValidateSchema_TableNotFound(t *testing.T) {
 		},
 	}
 
-	resp, err := service.Execute(ctx, orgID, request)
+	resp, err := service.Execute(ctx, request)
 
 	assert.NoError(t, err)
 	require.NotNil(t, resp)
@@ -154,11 +150,10 @@ func TestValidateSchema_FieldNotFound(t *testing.T) {
 	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
-	orgID := uuid.New()
 	connID := uuid.New()
 
 	mockConnRepo.EXPECT().
-		FindByConfigNames(gomock.Any(), orgID, gomock.Any()).
+		FindByConfigNames(gomock.Any(), gomock.Any()).
 		Return([]*model.Connection{
 			{ID: connID, ConfigName: "db1"},
 		}, nil)
@@ -174,7 +169,7 @@ func TestValidateSchema_FieldNotFound(t *testing.T) {
 			},
 		}, nil)
 
-	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil)
+	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil, nil)
 
 	ctx := testContext()
 	request := model.SchemaValidationRequest{
@@ -183,7 +178,7 @@ func TestValidateSchema_FieldNotFound(t *testing.T) {
 		},
 	}
 
-	resp, err := service.Execute(ctx, orgID, request)
+	resp, err := service.Execute(ctx, request)
 
 	assert.NoError(t, err)
 	require.NotNil(t, resp)
@@ -201,11 +196,10 @@ func TestValidateSchema_MultipleErrors(t *testing.T) {
 	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
-	orgID := uuid.New()
 	connID := uuid.New()
 
 	mockConnRepo.EXPECT().
-		FindByConfigNames(gomock.Any(), orgID, gomock.Any()).
+		FindByConfigNames(gomock.Any(), gomock.Any()).
 		Return([]*model.Connection{
 			{ID: connID, ConfigName: "db1"},
 		}, nil)
@@ -221,7 +215,7 @@ func TestValidateSchema_MultipleErrors(t *testing.T) {
 			},
 		}, nil)
 
-	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil)
+	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil, nil)
 
 	ctx := testContext()
 	request := model.SchemaValidationRequest{
@@ -234,7 +228,7 @@ func TestValidateSchema_MultipleErrors(t *testing.T) {
 		},
 	}
 
-	resp, err := service.Execute(ctx, orgID, request)
+	resp, err := service.Execute(ctx, request)
 
 	assert.NoError(t, err)
 	require.NotNil(t, resp)
@@ -250,15 +244,14 @@ func TestValidateSchema_InvalidRequest_NilMappedFields(t *testing.T) {
 	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
-	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil)
+	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil, nil)
 
 	ctx := testContext()
 	request := model.SchemaValidationRequest{
 		MappedFields: nil,
 	}
 
-	orgID := uuid.New()
-	resp, err := service.Execute(ctx, orgID, request)
+	resp, err := service.Execute(ctx, request)
 
 	// Should return validation error
 	assert.Error(t, err)
@@ -273,15 +266,14 @@ func TestValidateSchema_InvalidRequest_EmptyMappedFields(t *testing.T) {
 	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
-	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil)
+	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil, nil)
 
 	ctx := testContext()
 	request := model.SchemaValidationRequest{
 		MappedFields: map[string]map[string][]string{},
 	}
 
-	orgID := uuid.New()
-	resp, err := service.Execute(ctx, orgID, request)
+	resp, err := service.Execute(ctx, request)
 
 	// Should return validation error
 	assert.Error(t, err)
@@ -296,14 +288,12 @@ func TestValidateSchema_RepositoryError(t *testing.T) {
 	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
-	orgID := uuid.New()
-
 	dbError := errors.New("database connection failed")
 	mockConnRepo.EXPECT().
-		FindByConfigNames(gomock.Any(), orgID, gomock.Any()).
+		FindByConfigNames(gomock.Any(), gomock.Any()).
 		Return(nil, dbError)
 
-	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil)
+	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil, nil)
 
 	ctx := testContext()
 	request := model.SchemaValidationRequest{
@@ -312,7 +302,7 @@ func TestValidateSchema_RepositoryError(t *testing.T) {
 		},
 	}
 
-	resp, err := service.Execute(ctx, orgID, request)
+	resp, err := service.Execute(ctx, request)
 
 	assert.Error(t, err)
 	assert.Nil(t, resp)
@@ -327,11 +317,10 @@ func TestValidateSchema_CacheError_ContinuesToFetch(t *testing.T) {
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 	mockDataSource := datasource.NewMockDataSource(ctrl)
 
-	orgID := uuid.New()
 	connID := uuid.New()
 
 	mockConnRepo.EXPECT().
-		FindByConfigNames(gomock.Any(), orgID, gomock.Any()).
+		FindByConfigNames(gomock.Any(), gomock.Any()).
 		Return([]*model.Connection{
 			{ID: connID, ConfigName: "db1", Type: model.TypePostgreSQL, Host: "localhost", Port: 5432},
 		}, nil)
@@ -359,7 +348,7 @@ func TestValidateSchema_CacheError_ContinuesToFetch(t *testing.T) {
 		assert.Equal(t, "db1", conn.ConfigName)
 		return mockDataSource, nil
 	}
-	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, testFactory)
+	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, testFactory, nil)
 
 	ctx := testContext()
 	request := model.SchemaValidationRequest{
@@ -368,7 +357,7 @@ func TestValidateSchema_CacheError_ContinuesToFetch(t *testing.T) {
 		},
 	}
 
-	resp, err := service.Execute(ctx, orgID, request)
+	resp, err := service.Execute(ctx, request)
 
 	assert.NoError(t, err)
 	require.NotNil(t, resp)
@@ -384,12 +373,11 @@ func TestValidateSchema_PartialConnectionsFound(t *testing.T) {
 	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
-	orgID := uuid.New()
 	connID := uuid.New()
 
 	// Only db1 is found, db2 is not
 	mockConnRepo.EXPECT().
-		FindByConfigNames(gomock.Any(), orgID, gomock.Any()).
+		FindByConfigNames(gomock.Any(), gomock.Any()).
 		Return([]*model.Connection{
 			{ID: connID, ConfigName: "db1"},
 		}, nil)
@@ -403,7 +391,7 @@ func TestValidateSchema_PartialConnectionsFound(t *testing.T) {
 			},
 		}, nil)
 
-	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil)
+	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil, nil)
 
 	ctx := testContext()
 	request := model.SchemaValidationRequest{
@@ -413,7 +401,7 @@ func TestValidateSchema_PartialConnectionsFound(t *testing.T) {
 		},
 	}
 
-	resp, err := service.Execute(ctx, orgID, request)
+	resp, err := service.Execute(ctx, request)
 
 	assert.NoError(t, err)
 	require.NotNil(t, resp)
@@ -437,7 +425,7 @@ func TestNewValidateSchema(t *testing.T) {
 	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
-	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil)
+	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil, nil)
 
 	assert.NotNil(t, service)
 	assert.NotNil(t, service.connRepo)
@@ -453,13 +441,11 @@ func TestValidateSchema_NoConnections_ReturnsSchemaEntityType(t *testing.T) {
 	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
-	orgID := uuid.New()
-
 	mockConnRepo.EXPECT().
-		FindByConfigNames(gomock.Any(), orgID, gomock.Any()).
+		FindByConfigNames(gomock.Any(), gomock.Any()).
 		Return([]*model.Connection{}, nil)
 
-	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil)
+	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil, nil)
 
 	ctx := testContext()
 	request := model.SchemaValidationRequest{
@@ -468,7 +454,7 @@ func TestValidateSchema_NoConnections_ReturnsSchemaEntityType(t *testing.T) {
 		},
 	}
 
-	_, err := service.Execute(ctx, orgID, request)
+	_, err := service.Execute(ctx, request)
 
 	require.Error(t, err)
 	var validationErr pkg.ValidationError
@@ -485,12 +471,11 @@ func TestValidateSchema_MultipleDatasources_AllValid(t *testing.T) {
 	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
-	orgID := uuid.New()
 	connID1 := uuid.New()
 	connID2 := uuid.New()
 
 	mockConnRepo.EXPECT().
-		FindByConfigNames(gomock.Any(), orgID, gomock.Any()).
+		FindByConfigNames(gomock.Any(), gomock.Any()).
 		Return([]*model.Connection{
 			{ID: connID1, ConfigName: "db1"},
 			{ID: connID2, ConfigName: "db2"},
@@ -514,7 +499,7 @@ func TestValidateSchema_MultipleDatasources_AllValid(t *testing.T) {
 			},
 		}, nil)
 
-	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil)
+	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil, nil)
 
 	ctx := testContext()
 	request := model.SchemaValidationRequest{
@@ -524,7 +509,7 @@ func TestValidateSchema_MultipleDatasources_AllValid(t *testing.T) {
 		},
 	}
 
-	resp, err := service.Execute(ctx, orgID, request)
+	resp, err := service.Execute(ctx, request)
 
 	assert.NoError(t, err)
 	require.NotNil(t, resp)
@@ -641,12 +626,11 @@ func TestValidateSchema_PostgreSQLWithUnqualifiedTables(t *testing.T) {
 	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
-	orgID := uuid.New()
 	connID := uuid.New()
 
 	// PostgreSQL connection
 	mockConnRepo.EXPECT().
-		FindByConfigNames(gomock.Any(), orgID, gomock.Any()).
+		FindByConfigNames(gomock.Any(), gomock.Any()).
 		Return([]*model.Connection{
 			{ID: connID, ConfigName: "pg_db", Type: model.TypePostgreSQL},
 		}, nil)
@@ -661,7 +645,7 @@ func TestValidateSchema_PostgreSQLWithUnqualifiedTables(t *testing.T) {
 			},
 		}, nil)
 
-	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil)
+	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil, nil)
 
 	ctx := testContext()
 	// Request with unqualified table name
@@ -671,7 +655,7 @@ func TestValidateSchema_PostgreSQLWithUnqualifiedTables(t *testing.T) {
 		},
 	}
 
-	resp, err := service.Execute(ctx, orgID, request)
+	resp, err := service.Execute(ctx, request)
 
 	// The schema validation might still fail because "users" != "public.users" in the schema
 	// but the important part is that public schema is requested from the datasource
@@ -689,12 +673,11 @@ func TestValidateSchema_PostgreSQLWithMixedQualifiedTables(t *testing.T) {
 	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
-	orgID := uuid.New()
 	connID := uuid.New()
 
 	// PostgreSQL connection
 	mockConnRepo.EXPECT().
-		FindByConfigNames(gomock.Any(), orgID, gomock.Any()).
+		FindByConfigNames(gomock.Any(), gomock.Any()).
 		Return([]*model.Connection{
 			{ID: connID, ConfigName: "pg_db", Type: model.TypePostgreSQL},
 		}, nil)
@@ -710,7 +693,7 @@ func TestValidateSchema_PostgreSQLWithMixedQualifiedTables(t *testing.T) {
 			},
 		}, nil)
 
-	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil)
+	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil, nil)
 
 	ctx := testContext()
 	// Request with mixed qualified/unqualified table names
@@ -723,7 +706,7 @@ func TestValidateSchema_PostgreSQLWithMixedQualifiedTables(t *testing.T) {
 		},
 	}
 
-	resp, err := service.Execute(ctx, orgID, request)
+	resp, err := service.Execute(ctx, request)
 
 	assert.NoError(t, err)
 	require.NotNil(t, resp)
@@ -756,11 +739,10 @@ func TestValidateSchema_NonPostgreSQLDoesNotAddPublicSchema(t *testing.T) {
 			mockCrypto := crypto.NewMockCryptor(ctrl)
 			mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
-			orgID := uuid.New()
 			connID := uuid.New()
 
 			mockConnRepo.EXPECT().
-				FindByConfigNames(gomock.Any(), orgID, gomock.Any()).
+				FindByConfigNames(gomock.Any(), gomock.Any()).
 				Return([]*model.Connection{
 					{ID: connID, ConfigName: "db", Type: tt.dbType},
 				}, nil)
@@ -775,7 +757,7 @@ func TestValidateSchema_NonPostgreSQLDoesNotAddPublicSchema(t *testing.T) {
 					},
 				}, nil)
 
-			service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil)
+			service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil, nil)
 
 			ctx := testContext()
 			request := model.SchemaValidationRequest{
@@ -784,7 +766,7 @@ func TestValidateSchema_NonPostgreSQLDoesNotAddPublicSchema(t *testing.T) {
 				},
 			}
 
-			resp, err := service.Execute(ctx, orgID, request)
+			resp, err := service.Execute(ctx, request)
 
 			assert.NoError(t, err)
 			require.NotNil(t, resp)
@@ -803,11 +785,10 @@ func TestValidateSchema_CacheSetError(t *testing.T) {
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 	mockDataSource := datasource.NewMockDataSource(ctrl)
 
-	orgID := uuid.New()
 	connID := uuid.New()
 
 	mockConnRepo.EXPECT().
-		FindByConfigNames(gomock.Any(), orgID, gomock.Any()).
+		FindByConfigNames(gomock.Any(), gomock.Any()).
 		Return([]*model.Connection{
 			{ID: connID, ConfigName: "db1", Type: model.TypeMySQL, Host: "localhost", Port: 3306},
 		}, nil)
@@ -834,7 +815,7 @@ func TestValidateSchema_CacheSetError(t *testing.T) {
 		assert.Equal(t, "db1", conn.ConfigName)
 		return mockDataSource, nil
 	}
-	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, testFactory)
+	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, testFactory, nil)
 
 	ctx := testContext()
 	request := model.SchemaValidationRequest{
@@ -843,7 +824,7 @@ func TestValidateSchema_CacheSetError(t *testing.T) {
 		},
 	}
 
-	resp, err := service.Execute(ctx, orgID, request)
+	resp, err := service.Execute(ctx, request)
 
 	assert.NoError(t, err)
 	require.NotNil(t, resp)
@@ -860,12 +841,11 @@ func TestValidateSchema_NilSchemaFromDatasource(t *testing.T) {
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 	mockDataSource := datasource.NewMockDataSource(ctrl)
 
-	orgID := uuid.New()
 	connID := uuid.New()
 	conn := &model.Connection{ID: connID, ConfigName: "db1", Type: model.TypeMySQL, Host: "localhost", Port: 3306}
 
 	mockConnRepo.EXPECT().
-		FindByConfigNames(gomock.Any(), orgID, gomock.Any()).
+		FindByConfigNames(gomock.Any(), gomock.Any()).
 		Return([]*model.Connection{conn}, nil)
 
 	mockSchemaCache.EXPECT().
@@ -893,7 +873,7 @@ func TestValidateSchema_NilSchemaFromDatasource(t *testing.T) {
 	dsFactory := func(_ context.Context, _ *model.Connection, _ crypto.Cryptor) (datasource.DataSource, error) {
 		return mockDataSource, nil
 	}
-	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, dsFactory)
+	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, dsFactory, nil)
 
 	ctx := testContext()
 	request := model.SchemaValidationRequest{
@@ -902,7 +882,7 @@ func TestValidateSchema_NilSchemaFromDatasource(t *testing.T) {
 		},
 	}
 
-	resp, err := service.Execute(ctx, orgID, request)
+	resp, err := service.Execute(ctx, request)
 
 	assert.NoError(t, err)
 	require.NotNil(t, resp)
@@ -919,12 +899,11 @@ func TestValidateSchema_NilDatasourceFactoryResult(t *testing.T) {
 	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
-	orgID := uuid.New()
 	connID := uuid.New()
 	conn := &model.Connection{ID: connID, ConfigName: "db1", Type: model.TypeMySQL, Host: "localhost", Port: 3306}
 
 	mockConnRepo.EXPECT().
-		FindByConfigNames(gomock.Any(), orgID, gomock.Any()).
+		FindByConfigNames(gomock.Any(), gomock.Any()).
 		Return([]*model.Connection{conn}, nil)
 
 	mockSchemaCache.EXPECT().
@@ -934,7 +913,7 @@ func TestValidateSchema_NilDatasourceFactoryResult(t *testing.T) {
 	nilFactory := func(context.Context, *model.Connection, crypto.Cryptor) (datasource.DataSource, error) {
 		return nil, nil
 	}
-	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nilFactory)
+	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nilFactory, nil)
 
 	ctx := testContext()
 	request := model.SchemaValidationRequest{
@@ -943,7 +922,7 @@ func TestValidateSchema_NilDatasourceFactoryResult(t *testing.T) {
 		},
 	}
 
-	resp, err := service.Execute(ctx, orgID, request)
+	resp, err := service.Execute(ctx, request)
 
 	assert.NoError(t, err)
 	require.NotNil(t, resp)
@@ -961,19 +940,18 @@ func TestValidateSchema_NilDatasourceFactory_ReturnsInternalError(t *testing.T) 
 	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
-	orgID := uuid.New()
 	connID := uuid.New()
 	conn := &model.Connection{ID: connID, ConfigName: "db1", Type: model.TypeMySQL, Host: "localhost", Port: 3306}
 
 	mockConnRepo.EXPECT().
-		FindByConfigNames(gomock.Any(), orgID, gomock.Any()).
+		FindByConfigNames(gomock.Any(), gomock.Any()).
 		Return([]*model.Connection{conn}, nil)
 
 	mockSchemaCache.EXPECT().
 		Get(gomock.Any(), "db1").
 		Return(nil, nil)
 
-	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil)
+	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil, nil)
 
 	ctx := testContext()
 	request := model.SchemaValidationRequest{
@@ -982,7 +960,7 @@ func TestValidateSchema_NilDatasourceFactory_ReturnsInternalError(t *testing.T) 
 		},
 	}
 
-	resp, err := service.Execute(ctx, orgID, request)
+	resp, err := service.Execute(ctx, request)
 
 	assert.Nil(t, resp)
 	require.Error(t, err)
@@ -1000,10 +978,9 @@ func TestValidateSchema_EmptyConfigName(t *testing.T) {
 	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
-	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil)
+	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil, nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
 
 	// Request with empty config name key
 	request := model.SchemaValidationRequest{
@@ -1012,7 +989,7 @@ func TestValidateSchema_EmptyConfigName(t *testing.T) {
 		},
 	}
 
-	resp, err := service.Execute(ctx, orgID, request)
+	resp, err := service.Execute(ctx, request)
 
 	// Should return validation error for invalid request
 	assert.Error(t, err)
@@ -1028,7 +1005,6 @@ func TestValidateSchema_LargeNumberOfTables(t *testing.T) {
 	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
-	orgID := uuid.New()
 	connID := uuid.New()
 
 	// Create schema with maximum allowed tables (MaxTablesPerDataSource = 20)
@@ -1044,7 +1020,7 @@ func TestValidateSchema_LargeNumberOfTables(t *testing.T) {
 	}
 
 	mockConnRepo.EXPECT().
-		FindByConfigNames(gomock.Any(), orgID, gomock.Any()).
+		FindByConfigNames(gomock.Any(), gomock.Any()).
 		Return([]*model.Connection{
 			{ID: connID, ConfigName: "large_db"},
 		}, nil)
@@ -1056,7 +1032,7 @@ func TestValidateSchema_LargeNumberOfTables(t *testing.T) {
 			Tables:     tableSchemas,
 		}, nil)
 
-	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil)
+	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil, nil)
 
 	ctx := testContext()
 	request := model.SchemaValidationRequest{
@@ -1065,7 +1041,7 @@ func TestValidateSchema_LargeNumberOfTables(t *testing.T) {
 		},
 	}
 
-	resp, err := service.Execute(ctx, orgID, request)
+	resp, err := service.Execute(ctx, request)
 
 	assert.NoError(t, err)
 	require.NotNil(t, resp)

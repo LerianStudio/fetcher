@@ -13,8 +13,8 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/model"
 	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
 
-	libCommons "github.com/LerianStudio/lib-commons/v3/commons"
-	libLog "github.com/LerianStudio/lib-commons/v3/commons/log"
+	libCommons "github.com/LerianStudio/lib-commons/v4/commons"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -29,7 +29,7 @@ func setupMigrationTestApp() *fiber.App {
 	})
 
 	app.Use(func(c *fiber.Ctx) error {
-		logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+		logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 		values := &libCommons.CustomContextKeyValue{
 			HeaderID: "test-request-id",
 			Logger:   logger,
@@ -46,11 +46,10 @@ func setupMigrationTestApp() *fiber.App {
 	return app
 }
 
-func createTestConnectionForMigration(id, orgID uuid.UUID) *model.Connection {
+func createTestConnectionForMigration(id uuid.UUID) *model.Connection {
 	now := time.Now().UTC()
 	return &model.Connection{
 		ID:                   id,
-		OrganizationID:       orgID,
 		ConfigName:           "test-connection",
 		Type:                 model.TypePostgreSQL,
 		Host:                 "localhost",
@@ -74,13 +73,12 @@ func TestMigrationHandler_ListUnassignedConnections_Success(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	orgID := uuid.New()
 	connections := []*model.Connection{
-		createTestConnectionForMigration(uuid.New(), orgID),
-		createTestConnectionForMigration(uuid.New(), orgID),
+		createTestConnectionForMigration(uuid.New()),
+		createTestConnectionForMigration(uuid.New()),
 	}
 
-	mockConnRepo.EXPECT().ListUnassigned(gomock.Any(), orgID, gomock.Any()).Return(connections, int64(2), nil)
+	mockConnRepo.EXPECT().ListUnassigned(gomock.Any(), gomock.Any()).Return(connections, int64(2), nil)
 
 	listQry := query.NewListUnassignedConnections(mockConnRepo)
 	handler := &MigrationHandler{ListUnassignedQry: listQry}
@@ -89,7 +87,6 @@ func TestMigrationHandler_ListUnassignedConnections_Success(t *testing.T) {
 	app.Get("/v1/management/connections/unassigned", handler.ListUnassignedConnections)
 
 	req := httptest.NewRequest("GET", "/v1/management/connections/unassigned", nil)
-	req.Header.Set("X-Organization-Id", orgID.String())
 
 	resp, err := app.Test(req)
 	require.NoError(t, err)
@@ -109,31 +106,13 @@ func TestMigrationHandler_ListUnassignedConnections_Success(t *testing.T) {
 	assert.Len(t, items, 2)
 }
 
-func TestMigrationHandler_ListUnassignedConnections_MissingOrgHeader(t *testing.T) {
-	handler := &MigrationHandler{ListUnassignedQry: nil}
-
-	app := setupMigrationTestApp()
-	app.Get("/v1/management/connections/unassigned", handler.ListUnassignedConnections)
-
-	req := httptest.NewRequest("GET", "/v1/management/connections/unassigned", nil)
-	// No org header
-
-	resp, err := app.Test(req)
-	require.NoError(t, err)
-	defer resp.Body.Close()
-
-	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
-}
-
 func TestMigrationHandler_ListUnassignedConnections_Empty(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	orgID := uuid.New()
-
-	mockConnRepo.EXPECT().ListUnassigned(gomock.Any(), orgID, gomock.Any()).Return(nil, int64(0), nil)
+	mockConnRepo.EXPECT().ListUnassigned(gomock.Any(), gomock.Any()).Return(nil, int64(0), nil)
 
 	listQry := query.NewListUnassignedConnections(mockConnRepo)
 	handler := &MigrationHandler{ListUnassignedQry: listQry}
@@ -142,7 +121,6 @@ func TestMigrationHandler_ListUnassignedConnections_Empty(t *testing.T) {
 	app.Get("/v1/management/connections/unassigned", handler.ListUnassignedConnections)
 
 	req := httptest.NewRequest("GET", "/v1/management/connections/unassigned", nil)
-	req.Header.Set("X-Organization-Id", orgID.String())
 
 	resp, err := app.Test(req)
 	require.NoError(t, err)
@@ -161,13 +139,12 @@ func TestMigrationHandler_AssignConnectionToProduct_Success(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	orgID := uuid.New()
 	connID := uuid.New()
-	testConn := createTestConnectionForMigration(connID, orgID)
+	testConn := createTestConnectionForMigration(connID)
 	testConn.ProductName = "reporter"
 
-	mockConnRepo.EXPECT().FindByID(gomock.Any(), connID, orgID).Return(testConn, nil)
-	mockConnRepo.EXPECT().AssignProductName(gomock.Any(), connID, orgID, "reporter").Return(testConn, nil)
+	mockConnRepo.EXPECT().FindByID(gomock.Any(), connID).Return(testConn, nil)
+	mockConnRepo.EXPECT().AssignProductName(gomock.Any(), connID, "reporter").Return(testConn, nil)
 
 	assignCmd := command.NewAssignConnection(mockConnRepo)
 	handler := &MigrationHandler{AssignCmd: assignCmd}
@@ -177,7 +154,6 @@ func TestMigrationHandler_AssignConnectionToProduct_Success(t *testing.T) {
 
 	req := httptest.NewRequest("POST", "/v1/management/connections/"+connID.String()+"/assign", nil)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Organization-Id", orgID.String())
 	req.Header.Set("X-Product-Name", "reporter")
 
 	resp, err := app.Test(req)
@@ -185,24 +161,6 @@ func TestMigrationHandler_AssignConnectionToProduct_Success(t *testing.T) {
 	defer resp.Body.Close()
 
 	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
-}
-
-func TestMigrationHandler_AssignConnectionToProduct_MissingOrgHeader(t *testing.T) {
-	handler := &MigrationHandler{AssignCmd: nil}
-
-	app := setupMigrationTestApp()
-	app.Post("/v1/management/connections/:id/assign", handler.AssignConnectionToProduct)
-
-	req := httptest.NewRequest("POST", "/v1/management/connections/"+uuid.New().String()+"/assign", nil)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Product-Name", "reporter")
-	// No org header
-
-	resp, err := app.Test(req)
-	require.NoError(t, err)
-	defer resp.Body.Close()
-
-	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
 }
 
 func TestMigrationHandler_AssignConnectionToProduct_InvalidConnectionID(t *testing.T) {
@@ -247,10 +205,9 @@ func TestMigrationHandler_AssignConnectionToProduct_ConnectionNotFound(t *testin
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	orgID := uuid.New()
 	connID := uuid.New()
 
-	mockConnRepo.EXPECT().FindByID(gomock.Any(), connID, orgID).Return(nil, nil)
+	mockConnRepo.EXPECT().FindByID(gomock.Any(), connID).Return(nil, nil)
 
 	assignCmd := command.NewAssignConnection(mockConnRepo)
 	handler := &MigrationHandler{AssignCmd: assignCmd}
@@ -260,7 +217,6 @@ func TestMigrationHandler_AssignConnectionToProduct_ConnectionNotFound(t *testin
 
 	req := httptest.NewRequest("POST", "/v1/management/connections/"+connID.String()+"/assign", nil)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Organization-Id", orgID.String())
 	req.Header.Set("X-Product-Name", "reporter")
 
 	resp, err := app.Test(req)
