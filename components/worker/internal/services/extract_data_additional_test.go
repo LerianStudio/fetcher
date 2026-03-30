@@ -6,6 +6,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/LerianStudio/fetcher/pkg/constant"
 	workerCrypto "github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	modelDatasource "github.com/LerianStudio/fetcher/pkg/model/datasource"
@@ -122,9 +123,9 @@ func TestExtractExternalData_CompletedStatusUpdateFailureMarksJobFailed(t *testi
 	mockDataSource.EXPECT().Close(gomock.Any()).Return(nil)
 	signer := uc.DocumentSigner.(*workerCrypto.MockSigner)
 	signer.EXPECT().SignReader(gomock.Any()).Return("test-hmac", nil)
-	mocks.seaweedFS.EXPECT().Put(gomock.Any(), jobID.String()+".json", gomock.Any()).Return(nil)
+	mocks.seaweedFS.EXPECT().Put(gomock.Any(), constant.ExternalDataKeyPrefix+"/"+jobID.String()+".json", gomock.Any()).Return(nil)
 	mocks.jobRepo.EXPECT().
-		UpdateStatus(gomock.Any(), jobID, model.JobStatusCompleted, "/external-data/"+jobID.String()+".json", "test-hmac", nil).
+		UpdateStatus(gomock.Any(), jobID, model.JobStatusCompleted, constant.ExternalDataKeyPrefix+"/"+jobID.String()+".json", "test-hmac", nil).
 		Return(errors.New("status update failed"))
 	mocks.jobRepo.EXPECT().
 		UpdateStatus(gomock.Any(), jobID, model.JobStatusFailed, "", "", gomock.Any()).

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	modelJob "github.com/LerianStudio/fetcher/pkg/model/job"
 	"github.com/google/uuid"
@@ -1684,7 +1685,7 @@ func TestSaveExternalData_StoragePutError(t *testing.T) {
 	}
 
 	// Mock storage to return error
-	expectedObjectName := jobID.String() + ".json"
+	expectedObjectName := constant.ExternalDataKeyPrefix + "/" + jobID.String() + ".json"
 	mocks.seaweedFS.EXPECT().
 		Put(gomock.Any(), expectedObjectName, gomock.Any()).
 		Return(errors.New("storage connection failed"))
@@ -1728,7 +1729,7 @@ func TestSaveExternalData_Success(t *testing.T) {
 	}
 
 	// Mock storage to succeed
-	expectedObjectName := jobID.String() + ".json"
+	expectedObjectName := constant.ExternalDataKeyPrefix + "/" + jobID.String() + ".json"
 	mocks.seaweedFS.EXPECT().
 		Put(gomock.Any(), expectedObjectName, gomock.Any()).
 		Return(nil)
@@ -1743,7 +1744,7 @@ func TestSaveExternalData_Success(t *testing.T) {
 	}
 
 	// Verify result data
-	expectedPath := "/external-data/" + expectedObjectName
+	expectedPath := expectedObjectName
 	if resultData.Path != expectedPath {
 		t.Errorf("expected path %s, got %s", expectedPath, resultData.Path)
 	}
@@ -1938,7 +1939,7 @@ func TestCompleteJob_CompletedStatusUpdateError(t *testing.T) {
 	}
 
 	resultData := &JobResultData{
-		Path:      "/external-data/result.json",
+		Path:      "external-data/result.json",
 		SizeBytes: 10,
 		RowCount:  1,
 		Format:    "json",
@@ -2138,7 +2139,7 @@ func TestSaveExternalData_EmptyResult(t *testing.T) {
 	result := map[string]map[string][]map[string]any{}
 
 	// Mock storage to succeed
-	expectedObjectName := jobID.String() + ".json"
+	expectedObjectName := constant.ExternalDataKeyPrefix + "/" + jobID.String() + ".json"
 	mocks.seaweedFS.EXPECT().
 		Put(gomock.Any(), expectedObjectName, gomock.Any()).
 		Return(nil)
@@ -2251,7 +2252,7 @@ func TestCompleteJob_NotificationFailure_StillReturnsNil(t *testing.T) {
 	}
 
 	resultData := &JobResultData{
-		Path:      "/external-data/result.json",
+		Path:      "external-data/result.json",
 		SizeBytes: 1024,
 		RowCount:  50,
 		Format:    "json",
