@@ -140,7 +140,7 @@ func TestResolveDatabase(t *testing.T) {
 					panic("mongo.NewClient() failed: " + err.Error())
 				}
 				db := client.Database("tenant_abc")
-				return tmcore.ContextWithTenantMongo(context.Background(), db)
+				return tmcore.ContextWithMB(context.Background(), db)
 			},
 			setupProvider: func(ctrl *gomock.Controller) MongoClientProvider {
 				mock := NewMockMongoClientProvider(ctrl)
@@ -161,7 +161,7 @@ func TestResolveDatabase(t *testing.T) {
 					panic("mongo.NewClient() failed: " + err.Error())
 				}
 				db := client.Database("tenant_xyz")
-				return tmcore.ContextWithTenantMongo(context.Background(), db)
+				return tmcore.ContextWithMB(context.Background(), db)
 			},
 			setupProvider: func(ctrl *gomock.Controller) MongoClientProvider {
 				mock := NewMockMongoClientProvider(ctrl)

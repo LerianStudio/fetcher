@@ -60,8 +60,10 @@ func NewDataSourceFromConnection(ctx context.Context, conn *model.Connection, cr
 
 	span.SetAttributes(attribute.String("app.datasource.connection_type", string(conn.Type)))
 
-	if cryptor == nil {
-		err := fmt.Errorf("cryptor cannot be nil")
+	// Allow nil cryptor for in-memory connections (from tenant-manager) that have
+	// plaintext passwords. Connections with EncryptionKeyVersion set still require cryptor.
+	if cryptor == nil && conn.EncryptionKeyVersion != "" {
+		err := fmt.Errorf("cryptor cannot be nil for encrypted connections")
 		libOpentelemetry.HandleSpanError(span, "nil cryptor", err)
 
 		return nil, err
@@ -96,6 +98,19 @@ func NewDataSourceFromConnection(ctx context.Context, conn *model.Connection, cr
 	return ds, nil
 }
 
+// resolvePassword returns the connection password, either from the plaintext field
+// (for in-memory connections from tenant-manager) or by decrypting the encrypted password.
+// Connections with empty EncryptionKeyVersion are assumed to have plaintext passwords.
+func resolvePassword(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor) (string, error) {
+	if conn.EncryptionKeyVersion == "" {
+		// In-memory connection with plaintext password (from tenant-manager or env vars)
+		return conn.GetPlaintextPassword(), nil
+	}
+
+	// Encrypted connection — decrypt using cryptor
+	return conn.GetPasswordDecrypted(ctx, cryptor)
+}
+
 // newDataSourceConfigFromConnection creates a base DataSourceConfig from a Connection entity.
 func newDataSourceConfigFromConnection(conn *model.Connection) datasource.DataSourceConfig {
 	var sslConfig model.SSLConfig
@@ -105,7 +120,6 @@ func newDataSourceConfigFromConnection(conn *model.Connection) datasource.DataSo
 
 	return datasource.DataSourceConfig{
 		ID:                conn.ID.String(),
-		OrganizationID:    conn.OrganizationID.String(),
 		ConfigName:        conn.ConfigName,
 		Type:              strings.ToUpper(string(conn.Type)),
 		Host:              conn.Host,
@@ -120,10 +134,10 @@ func newDataSourceConfigFromConnection(conn *model.Connection) datasource.DataSo
 
 // newDataSourceConfigMongoDB creates a MongoDB-specific DataSourceConfig.
 func newDataSourceConfigMongoDB(ctx context.Context, base datasource.DataSourceConfig, conn *model.Connection, cryptor crypto.Cryptor, logger libLog.Logger) (*datasourceMongoConfig.DataSourceConfigMongoDB, error) {
-	// Decrypt password before using it in connection string
-	password, err := conn.GetPasswordDecrypted(ctx, cryptor)
+	// Resolve password (plaintext for internal datasources, decrypt for encrypted)
+	password, err := resolvePassword(ctx, conn, cryptor)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt password for MongoDB connection: %w", err)
+		return nil, fmt.Errorf("failed to resolve password for MongoDB connection: %w", err)
 	}
 
 	optionParts := buildMongoDBOptions(conn)
@@ -166,9 +180,17 @@ func newDataSourceConfigMongoDB(ctx context.Context, base datasource.DataSourceC
 	}, nil
 }
 
-// buildMongoDBOptions builds the connection options from metadata, defaulting to authSource=admin.
+// buildMongoDBOptions builds the connection options from metadata.
+// For internal connections (EncryptionKeyVersion empty), authSource defaults to
+// the database name itself (per tenant-manager provisioning convention).
+// For external connections, authSource defaults to "admin".
 func buildMongoDBOptions(conn *model.Connection) []string {
-	optionParts := []string{"authSource=admin"}
+	defaultAuthSource := "admin"
+	if conn.EncryptionKeyVersion == "" && conn.DatabaseName != "" {
+		defaultAuthSource = conn.DatabaseName
+	}
+
+	optionParts := []string{"authSource=" + defaultAuthSource}
 
 	if conn.Metadata != nil {
 		if dc, ok := (*conn.Metadata)["directConnection"].(string); ok && dc == "true" {
@@ -244,10 +266,10 @@ func testMongoDBConnection(ctx context.Context, mongoURI, configName string, log
 
 // newDataSourceConfigPostgres creates a PostgreSQL-specific DataSourceConfig.
 func newDataSourceConfigPostgres(ctx context.Context, base datasource.DataSourceConfig, conn *model.Connection, cryptor crypto.Cryptor, logger libLog.Logger) (*datasourcePostgresConfig.DataSourceConfigPostgres, error) {
-	// Decrypt password before using it in connection string
-	password, err := conn.GetPasswordDecrypted(ctx, cryptor)
+	// Resolve password (plaintext for internal datasources, decrypt for encrypted)
+	password, err := resolvePassword(ctx, conn, cryptor)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt password for PostgreSQL connection: %w", err)
+		return nil, fmt.Errorf("failed to resolve password for PostgreSQL connection: %w", err)
 	}
 
 	sslMode := "disable"
@@ -299,10 +321,10 @@ func newDataSourceConfigPostgres(ctx context.Context, base datasource.DataSource
 
 // newDataSourceConfigOracle creates an Oracle-specific DataSourceConfig.
 func newDataSourceConfigOracle(ctx context.Context, base datasource.DataSourceConfig, conn *model.Connection, cryptor crypto.Cryptor, logger libLog.Logger) (*datasourceOracleConfig.DataSourceConfigOracle, error) {
-	// Decrypt password before using it in connection string
-	password, err := conn.GetPasswordDecrypted(ctx, cryptor)
+	// Resolve password (plaintext for internal datasources, decrypt for encrypted)
+	password, err := resolvePassword(ctx, conn, cryptor)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt password for Oracle connection: %w", err)
+		return nil, fmt.Errorf("failed to resolve password for Oracle connection: %w", err)
 	}
 
 	serviceName := ""
@@ -365,10 +387,10 @@ func newDataSourceConfigOracle(ctx context.Context, base datasource.DataSourceCo
 
 // newDataSourceConfigMySQL creates a MySQL-specific DataSourceConfig.
 func newDataSourceConfigMySQL(ctx context.Context, base datasource.DataSourceConfig, conn *model.Connection, cryptor crypto.Cryptor, logger libLog.Logger) (*datasourceMySQLConfig.DataSourceConfigMySQL, error) {
-	// Decrypt password before using it in connection string
-	password, err := conn.GetPasswordDecrypted(ctx, cryptor)
+	// Resolve password (plaintext for internal datasources, decrypt for encrypted)
+	password, err := resolvePassword(ctx, conn, cryptor)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt password for MySQL connection: %w", err)
+		return nil, fmt.Errorf("failed to resolve password for MySQL connection: %w", err)
 	}
 
 	// MySQL connection string format: user:password@tcp(host:port)/database?params
@@ -420,10 +442,10 @@ func newDataSourceConfigMySQL(ctx context.Context, base datasource.DataSourceCon
 
 // newDataSourceConfigSQLServer creates a SQL Server-specific DataSourceConfig.
 func newDataSourceConfigSQLServer(ctx context.Context, base datasource.DataSourceConfig, conn *model.Connection, cryptor crypto.Cryptor, logger libLog.Logger) (*datasourceSQLServerConfig.DataSourceConfigSQLServer, error) {
-	// Decrypt password before using it in connection string
-	password, err := conn.GetPasswordDecrypted(ctx, cryptor)
+	// Resolve password (plaintext for internal datasources, decrypt for encrypted)
+	password, err := resolvePassword(ctx, conn, cryptor)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt password for SQL Server connection: %w", err)
+		return nil, fmt.Errorf("failed to resolve password for SQL Server connection: %w", err)
 	}
 
 	// SQL Server connection string format: sqlserver://user:password@host:port?database=database&encrypt=mode

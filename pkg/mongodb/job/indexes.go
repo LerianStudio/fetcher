@@ -48,11 +48,10 @@ func (jr *JobMongoDBRepository) EnsureIndexes(ctx context.Context) error {
 	indexes := []mongo.IndexModel{
 		{
 			Keys: bson.D{
-				{Key: "organization_id", Value: 1},
 				{Key: "status", Value: 1},
 			},
 			Options: options.Index().
-				SetName("idx_job_org_status"),
+				SetName("idx_job_status"),
 		},
 		{
 			Keys: bson.D{
@@ -84,12 +83,11 @@ func (jr *JobMongoDBRepository) EnsureIndexes(ctx context.Context) error {
 		},
 		{
 			Keys: bson.D{
-				{Key: "organization_id", Value: 1},
 				{Key: "request_hash", Value: 1},
 				{Key: "created_at", Value: -1},
 			},
 			Options: options.Index().
-				SetName("idx_job_org_hash_created"),
+				SetName("idx_job_hash_created"),
 		},
 	}
 
@@ -122,11 +120,10 @@ func (jr *JobMongoDBRepository) EnsureIndexes(ctx context.Context) error {
 	// which is relied upon by create_fetcher_job.go (mongo.IsDuplicateKeyError checks).
 	uniqueActiveHashIndex := mongo.IndexModel{
 		Keys: bson.D{
-			{Key: "organization_id", Value: 1},
 			{Key: "request_hash", Value: 1},
 		},
 		Options: options.Index().
-			SetName("uniq_job_org_hash_active").
+			SetName("uniq_job_hash_active").
 			SetUnique(true).
 			SetPartialFilterExpression(bson.D{
 				{Key: "status", Value: bson.D{
@@ -148,7 +145,7 @@ func (jr *JobMongoDBRepository) EnsureIndexes(ctx context.Context) error {
 			libOpentelemetry.HandleSpanError(span, "Cannot create unique active hash index: duplicate active jobs exist", err)
 			logger.Log(ctx, libLog.LevelError, fmt.Sprintf(
 				"Cannot create unique active hash index for %s: existing duplicate active jobs prevent index creation. "+
-					"Manual cleanup required — deduplicate jobs with same organization_id+request_hash in pending/processing status. Error: %v",
+					"Manual cleanup required — deduplicate jobs with same request_hash in pending/processing status. Error: %v",
 				constant.MongoCollectionJob, err,
 			))
 

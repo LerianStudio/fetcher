@@ -16,8 +16,8 @@ import (
 
 func testConnectionV2(dbType model.DBType) *model.Connection {
 	return &model.Connection{
-		ID:                   uuid.New(),
-		OrganizationID:       uuid.New(),
+		ID: uuid.New(),
+
 		ConfigName:           "test-conn",
 		Type:                 dbType,
 		Host:                 "localhost",
@@ -53,7 +53,7 @@ func TestNewDataSourceFromConnection_NilCryptor(t *testing.T) {
 	ds, err := NewDataSourceFromConnection(context.Background(), conn, nil, logger)
 	assert.Nil(t, ds)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "cryptor cannot be nil")
+	assert.Contains(t, err.Error(), "cryptor cannot be nil for encrypted connections")
 }
 
 // ============================================================================
@@ -86,7 +86,6 @@ func TestNewDataSourceConfigFromConnection(t *testing.T) {
 	config := newDataSourceConfigFromConnection(conn)
 
 	assert.Equal(t, conn.ID.String(), config.ID)
-	assert.Equal(t, conn.OrganizationID.String(), config.OrganizationID)
 	assert.Equal(t, "test-conn", config.ConfigName)
 	assert.Equal(t, "POSTGRESQL", config.Type)
 	assert.Equal(t, "localhost", config.Host)
@@ -347,7 +346,6 @@ func TestDataSourceConfig_HasRequiredFields(t *testing.T) {
 	// Verify that the base config struct has all expected fields
 	config := datasource.DataSourceConfig{
 		ID:                "test-id",
-		OrganizationID:    "test-org",
 		ConfigName:        "test-config",
 		Type:              "POSTGRESQL",
 		Host:              "localhost",
@@ -358,7 +356,6 @@ func TestDataSourceConfig_HasRequiredFields(t *testing.T) {
 	}
 
 	assert.Equal(t, "test-id", config.ID)
-	assert.Equal(t, "test-org", config.OrganizationID)
 	assert.Equal(t, "test-config", config.ConfigName)
 	assert.Equal(t, "POSTGRESQL", config.Type)
 }

@@ -530,14 +530,12 @@ func TestNewJobResponseFrom(t *testing.T) {
 
 	t.Run("converts job to response", func(t *testing.T) {
 		jobID := uuid.New()
-		orgID := uuid.New()
 		createdAt := time.Now().UTC()
 		completedAt := time.Now().UTC().Add(1 * time.Hour)
 
 		job := &Job{
-			ID:             jobID,
-			OrganizationID: orgID,
-			Metadata:       map[string]any{"key": "value"},
+			ID:       jobID,
+			Metadata: map[string]any{"key": "value"},
 			MappedFields: map[string]map[string][]string{
 				"db1": {"table1": {"field1"}},
 			},
@@ -565,10 +563,6 @@ func TestNewJobResponseFrom(t *testing.T) {
 			t.Fatalf("expected ID %v, got %v", jobID, result.ID)
 		}
 
-		if result.OrganizationID != orgID {
-			t.Fatalf("expected OrganizationID %v, got %v", orgID, result.OrganizationID)
-		}
-
 		if result.Status != string(JobStatusCompleted) {
 			t.Fatalf("expected status %s, got %s", JobStatusCompleted, result.Status)
 		}
@@ -589,7 +583,6 @@ func TestNewJobResponseFrom(t *testing.T) {
 
 func TestNewJob(t *testing.T) {
 	t.Run("creates new job with generated ID", func(t *testing.T) {
-		orgID := uuid.New()
 		metadata := map[string]any{"key": "value"}
 		mappedFields := map[string]map[string][]string{
 			"db1": {"table1": {"field1"}},
@@ -604,7 +597,6 @@ func TestNewJob(t *testing.T) {
 		createdAt := time.Now().UTC()
 
 		job, err := NewJob(
-			orgID,
 			metadata,
 			mappedFields,
 			filters,
@@ -624,10 +616,6 @@ func TestNewJob(t *testing.T) {
 
 		if job.ID == uuid.Nil {
 			t.Fatal("expected generated ID to be non-nil")
-		}
-
-		if job.OrganizationID != orgID {
-			t.Fatalf("expected OrganizationID %v, got %v", orgID, job.OrganizationID)
 		}
 
 		if job.Status != JobStatusPending {

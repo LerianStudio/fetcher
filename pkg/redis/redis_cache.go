@@ -48,12 +48,12 @@ func NewRedisCache[T any](conn *RedisConnection, ttl time.Duration, keyPrefix st
 }
 
 // cacheKey generates the full Redis key with prefix and tenant scoping.
-// Uses valkey.GetKeyFromContext to apply tenant prefix when a tenant ID
+// Uses valkey.GetKeyContext to apply tenant prefix when a tenant ID
 // is present in context. In single-tenant mode (no tenant in context),
 // returns the prefixed key unchanged.
 func (c *RedisCache[T]) cacheKey(ctx context.Context, key string) (string, error) {
 	prefixed := fmt.Sprintf("%s%s", c.keyPrefix, key)
-	return valkey.GetKeyFromContext(ctx, prefixed)
+	return valkey.GetKeyContext(ctx, prefixed)
 }
 
 // cachePattern generates the scan pattern with tenant scoping for Clear.

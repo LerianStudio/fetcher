@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	tmcore "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/core"
+	tmcore "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/core"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -299,8 +299,8 @@ func TestInMemoryCache_GetSet_WithTenantContext(t *testing.T) {
 	defer cache.Close()
 
 	t.Run("tenant-scoped keys are isolated", func(t *testing.T) {
-		tenant1Ctx := tmcore.SetTenantIDInContext(context.Background(), "tenant1")
-		tenant2Ctx := tmcore.SetTenantIDInContext(context.Background(), "tenant2")
+		tenant1Ctx := tmcore.ContextWithTenantID(context.Background(), "tenant1")
+		tenant2Ctx := tmcore.ContextWithTenantID(context.Background(), "tenant2")
 
 		// In v4, the cache does not automatically scope keys by tenant.
 		// Use distinct keys to achieve tenant isolation.
@@ -339,8 +339,8 @@ func TestInMemoryCache_GetSet_WithTenantContext(t *testing.T) {
 	})
 
 	t.Run("delete only affects the tenant that owns the key", func(t *testing.T) {
-		tenant1Ctx := tmcore.SetTenantIDInContext(context.Background(), "tenant_del_1")
-		tenant2Ctx := tmcore.SetTenantIDInContext(context.Background(), "tenant_del_2")
+		tenant1Ctx := tmcore.ContextWithTenantID(context.Background(), "tenant_del_1")
+		tenant2Ctx := tmcore.ContextWithTenantID(context.Background(), "tenant_del_2")
 
 		value1 := testStruct{ID: "d1", Name: "DelTenant1"}
 		value2 := testStruct{ID: "d2", Name: "DelTenant2"}

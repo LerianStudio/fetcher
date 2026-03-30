@@ -155,17 +155,18 @@ func (s *SeaweedFSInfra) Start(ctx context.Context, env *itestkit.Env) error {
 
 	if env != nil && env.Network != "" {
 		sharedAlias := fmt.Sprintf("seaweedfs-filer-shared-%s", s.cfg.Name)
+
 		filerNetworks = append(filerNetworks, env.Network)
 		filerAliases[env.Network] = []string{sharedAlias}
 		s.networkAlias = sharedAlias
 	}
 
 	filerReq := testcontainers.ContainerRequest{
-		Image:        s.cfg.Image,
-		ExposedPorts: []string{"8888/tcp"},
-		Cmd:          []string{"filer", "-master=" + masterAlias + ":9333", "-ip.bind=0.0.0.0"},
-		WaitingFor:   wait.ForHTTP("/").WithPort("8888/tcp").WithStartupTimeout(s.cfg.StartupTimeout),
-		Networks:     filerNetworks,
+		Image:          s.cfg.Image,
+		ExposedPorts:   []string{"8888/tcp"},
+		Cmd:            []string{"filer", "-master=" + masterAlias + ":9333", "-ip.bind=0.0.0.0"},
+		WaitingFor:     wait.ForHTTP("/").WithPort("8888/tcp").WithStartupTimeout(s.cfg.StartupTimeout),
+		Networks:       filerNetworks,
 		NetworkAliases: filerAliases,
 		HostConfigModifier: func(hc *container.HostConfig) {
 			for _, modifier := range opts.hostConfigModifiers {

@@ -120,10 +120,6 @@ func (jr *JobMongoDBRepository) Create(ctx context.Context, job *model.Job) (*mo
 		attribute.String("app.request.request_id", reqID),
 	}
 
-	if job.OrganizationID != uuid.Nil {
-		attributes = append(attributes, attribute.String("app.request.organization_id", job.OrganizationID.String()))
-	}
-
 	if job.ID != uuid.Nil {
 		attributes = append(attributes, attribute.String("app.request.job_id", job.ID.String()))
 	}
@@ -189,7 +185,6 @@ func (jr *JobMongoDBRepository) Update(ctx context.Context, job *model.Job) (*mo
 	attributes := []attribute.KeyValue{
 		attribute.String("app.request.request_id", reqID),
 		attribute.String("app.request.job_id", job.ID.String()),
-		attribute.String("app.request.organization_id", job.OrganizationID.String()),
 	}
 	span.SetAttributes(attributes...)
 
@@ -205,8 +200,7 @@ func (jr *JobMongoDBRepository) Update(ctx context.Context, job *model.Job) (*mo
 
 	coll := db.Collection(strings.ToLower(constant.MongoCollectionJob))
 	filter := bson.M{
-		"_id":             job.ID,
-		"organization_id": job.OrganizationID,
+		"_id": job.ID,
 	}
 
 	update := bson.M{
@@ -248,7 +242,7 @@ func (jr *JobMongoDBRepository) Update(ctx context.Context, job *model.Job) (*mo
 }
 
 // UpdateStatus updates only the status, resultPath, resultHMAC and metadata of a job, automatically managing CompletedAt.
-func (jr *JobMongoDBRepository) UpdateStatus(ctx context.Context, id, organizationID uuid.UUID, status model.JobStatus, resultPath, resultHMAC string, metadata map[string]any) error {
+func (jr *JobMongoDBRepository) UpdateStatus(ctx context.Context, id uuid.UUID, status model.JobStatus, resultPath, resultHMAC string, metadata map[string]any) error {
 	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "mongodb.update_job_status")
@@ -257,7 +251,6 @@ func (jr *JobMongoDBRepository) UpdateStatus(ctx context.Context, id, organizati
 	attributes := []attribute.KeyValue{
 		attribute.String("app.request.request_id", reqID),
 		attribute.String("app.request.job_id", id.String()),
-		attribute.String("app.request.organization_id", organizationID.String()),
 		attribute.String("app.request.status", string(status)),
 	}
 	span.SetAttributes(attributes...)
@@ -278,8 +271,7 @@ func (jr *JobMongoDBRepository) UpdateStatus(ctx context.Context, id, organizati
 	coll := db.Collection(strings.ToLower(constant.MongoCollectionJob))
 
 	filter := bson.M{
-		"_id":             id,
-		"organization_id": organizationID,
+		"_id": id,
 	}
 
 	update := bson.M{
@@ -349,7 +341,7 @@ func (jr *JobMongoDBRepository) UpdateStatus(ctx context.Context, id, organizati
 }
 
 // FindByID fetches a job by its ID scoped to an organization.
-func (jr *JobMongoDBRepository) FindByID(ctx context.Context, id, organizationID uuid.UUID) (*model.Job, error) {
+func (jr *JobMongoDBRepository) FindByID(ctx context.Context, id uuid.UUID) (*model.Job, error) {
 	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "mongodb.find_job_by_id")
@@ -358,7 +350,6 @@ func (jr *JobMongoDBRepository) FindByID(ctx context.Context, id, organizationID
 	attributes := []attribute.KeyValue{
 		attribute.String("app.request.request_id", reqID),
 		attribute.String("app.request.job_id", id.String()),
-		attribute.String("app.request.organization_id", organizationID.String()),
 	}
 	span.SetAttributes(attributes...)
 
@@ -373,8 +364,7 @@ func (jr *JobMongoDBRepository) FindByID(ctx context.Context, id, organizationID
 	var record JobMongoDBModel
 
 	filter := bson.M{
-		"_id":             id,
-		"organization_id": organizationID,
+		"_id": id,
 	}
 
 	if err := coll.FindOne(ctx, filter).Decode(&record); err != nil {
@@ -399,7 +389,7 @@ func (jr *JobMongoDBRepository) FindByID(ctx context.Context, id, organizationID
 // FindByRequestHashWithinWindow finds the most recent job with the given request hash
 // created within the specified time window (in minutes) for deduplication purposes.
 // Returns nil without error if no matching job is found.
-func (jr *JobMongoDBRepository) FindByRequestHashWithinWindow(ctx context.Context, organizationID uuid.UUID, requestHash string, windowMinutes int) (*model.Job, error) {
+func (jr *JobMongoDBRepository) FindByRequestHashWithinWindow(ctx context.Context, requestHash string, windowMinutes int) (*model.Job, error) {
 	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "mongodb.find_job_by_request_hash_within_window")
@@ -407,7 +397,6 @@ func (jr *JobMongoDBRepository) FindByRequestHashWithinWindow(ctx context.Contex
 
 	attributes := []attribute.KeyValue{
 		attribute.String("app.request.request_id", reqID),
-		attribute.String("app.request.organization_id", organizationID.String()),
 		attribute.String("app.request.request_hash", requestHash),
 		attribute.Int("app.request.window_minutes", windowMinutes),
 	}
@@ -428,8 +417,7 @@ func (jr *JobMongoDBRepository) FindByRequestHashWithinWindow(ctx context.Contex
 	windowStart := time.Now().UTC().Add(-time.Duration(windowMinutes) * time.Minute)
 
 	filter := bson.M{
-		"organization_id": organizationID,
-		"request_hash":    requestHash,
+		"request_hash": requestHash,
 		"created_at": bson.M{
 			"$gte": windowStart,
 		},
@@ -464,7 +452,7 @@ func (jr *JobMongoDBRepository) FindByRequestHashWithinWindow(ctx context.Contex
 // FindActiveByRequestHash finds the most recent active job (pending or processing)
 // for a request hash in an organization. Returns nil without error when no active
 // matching job exists.
-func (jr *JobMongoDBRepository) FindActiveByRequestHash(ctx context.Context, organizationID uuid.UUID, requestHash string) (*model.Job, error) {
+func (jr *JobMongoDBRepository) FindActiveByRequestHash(ctx context.Context, requestHash string) (*model.Job, error) {
 	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "mongodb.find_active_job_by_request_hash")
@@ -472,7 +460,6 @@ func (jr *JobMongoDBRepository) FindActiveByRequestHash(ctx context.Context, org
 
 	attributes := []attribute.KeyValue{
 		attribute.String("app.request.request_id", reqID),
-		attribute.String("app.request.organization_id", organizationID.String()),
 		attribute.String("app.request.request_hash", requestHash),
 	}
 	span.SetAttributes(attributes...)
@@ -490,8 +477,7 @@ func (jr *JobMongoDBRepository) FindActiveByRequestHash(ctx context.Context, org
 	coll := db.Collection(strings.ToLower(constant.MongoCollectionJob))
 
 	filter := bson.M{
-		"organization_id": organizationID,
-		"request_hash":    requestHash,
+		"request_hash": requestHash,
 		"status": bson.M{
 			"$in": bson.A{model.JobStatusPending, model.JobStatusProcessing},
 		},
@@ -525,7 +511,7 @@ func (jr *JobMongoDBRepository) FindActiveByRequestHash(ctx context.Context, org
 
 // ExistsRunningByMappedFieldKey reports whether there is any running job (pending or processing)
 // that contains the specified key in its mapped_fields document for the given organization.
-func (jr *JobMongoDBRepository) ExistsRunningByMappedFieldKey(ctx context.Context, organizationID uuid.UUID, keyPattern string) (bool, error) {
+func (jr *JobMongoDBRepository) ExistsRunningByMappedFieldKey(ctx context.Context, keyPattern string) (bool, error) {
 	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "mongodb.exists_running_job_by_mapped_field_key")
@@ -533,7 +519,6 @@ func (jr *JobMongoDBRepository) ExistsRunningByMappedFieldKey(ctx context.Contex
 
 	attributes := []attribute.KeyValue{
 		attribute.String("app.request.request_id", reqID),
-		attribute.String("app.request.organization_id", organizationID.String()),
 		attribute.String("app.request.key_pattern", keyPattern),
 	}
 	span.SetAttributes(attributes...)
@@ -560,7 +545,6 @@ func (jr *JobMongoDBRepository) ExistsRunningByMappedFieldKey(ctx context.Contex
 	mappedFieldKey := "mapped_fields." + keyPattern
 
 	filter := bson.M{
-		"organization_id": organizationID,
 		"status": bson.M{
 			"$in": bson.A{model.JobStatusPending, model.JobStatusProcessing},
 		},
@@ -595,7 +579,6 @@ func (jr *JobMongoDBRepository) List(ctx context.Context, filters *ListFilter) (
 
 	attributes := []attribute.KeyValue{
 		attribute.String("app.request.request_id", reqID),
-		attribute.String("app.request.organization_id", filters.OrganizationID.String()),
 	}
 	span.SetAttributes(attributes...)
 
@@ -631,9 +614,7 @@ func (jr *JobMongoDBRepository) List(ctx context.Context, filters *ListFilter) (
 
 // buildQueryFilter builds the MongoDB query filter from filters
 func (jr *JobMongoDBRepository) buildQueryFilter(filters *ListFilter) bson.M {
-	queryFilter := bson.M{
-		"organization_id": filters.OrganizationID,
-	}
+	queryFilter := bson.M{}
 
 	jr.addStatusFilter(queryFilter, filters)
 	jr.addDateRangeFilter(queryFilter, filters)

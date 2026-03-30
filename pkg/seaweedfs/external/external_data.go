@@ -6,9 +6,10 @@ import (
 
 	portStorage "github.com/LerianStudio/fetcher/pkg/ports/storage"
 	"github.com/LerianStudio/fetcher/pkg/seaweedfs"
-	libCommons "github.com/LerianStudio/lib-commons/v3/commons"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v3/commons/opentelemetry"
-	tms3 "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/s3"
+	libCommons "github.com/LerianStudio/lib-commons/v4/commons"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
+	tms3 "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/s3"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -39,7 +40,11 @@ func (repo *SimpleRepository) Get(ctx context.Context, objectName string) ([]byt
 	defer span.End()
 
 	// Apply tenant-prefixed key (multi-tenant: "{tenantId}/{objectName}", single-tenant: "{objectName}")
-	tenantObjectName := tms3.GetObjectStorageKeyForTenant(ctx, objectName)
+	tenantObjectName, err := tms3.GetObjectStorageKeyForTenant(ctx, objectName)
+	if err != nil {
+		libOpentelemetry.HandleSpanError(span, "Failed to resolve tenant object key", err)
+		return nil, fmt.Errorf("tenant object key for %s: %w", objectName, err)
+	}
 
 	span.SetAttributes(
 		attribute.String("app.request.request_id", reqID),
@@ -51,7 +56,7 @@ func (repo *SimpleRepository) Get(ctx context.Context, objectName string) ([]byt
 
 	data, err := repo.client.DownloadFile(ctx, path)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to download file from SeaweedFS", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to download file from SeaweedFS", err)
 		return nil, fmt.Errorf("seaweedfs download failed for %s: %w", objectName, err)
 	}
 
@@ -68,7 +73,11 @@ func (repo *SimpleRepository) Put(ctx context.Context, objectName string, data [
 	defer span.End()
 
 	// Apply tenant-prefixed key (multi-tenant: "{tenantId}/{objectName}", single-tenant: "{objectName}")
-	tenantObjectName := tms3.GetObjectStorageKeyForTenant(ctx, objectName)
+	tenantObjectName, err := tms3.GetObjectStorageKeyForTenant(ctx, objectName)
+	if err != nil {
+		libOpentelemetry.HandleSpanError(span, "Failed to resolve tenant object key", err)
+		return fmt.Errorf("tenant object key for %s: %w", objectName, err)
+	}
 
 	span.SetAttributes(
 		attribute.String("app.request.request_id", reqID),
@@ -78,10 +87,10 @@ func (repo *SimpleRepository) Put(ctx context.Context, objectName string, data [
 
 	path := fmt.Sprintf("/%s/%s", repo.bucket, tenantObjectName)
 
-	err := repo.client.UploadFile(ctx, path, data)
+	err = repo.client.UploadFile(ctx, path, data)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to upload file to SeaweedFS", err)
-		logger.Errorf("Error communicating with SeaweedFS: %v", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to upload file to SeaweedFS", err)
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Error communicating with SeaweedFS: %v", err))
 
 		return fmt.Errorf("seaweedfs upload failed for %s: %w", objectName, err)
 	}
