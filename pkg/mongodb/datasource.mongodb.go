@@ -29,6 +29,7 @@ type Datasource interface {
 	Query(ctx context.Context, collection string, fields []string, filter map[string][]any) ([]map[string]any, error)
 	QueryWithAdvancedFilters(ctx context.Context, collection string, fields []string, filter map[string]job.FilterCondition) ([]map[string]any, error)
 	GetDatabaseSchema(ctx context.Context) ([]CollectionSchema, error)
+	ListCollectionNames(ctx context.Context) ([]string, error)
 	CloseConnection(ctx context.Context) error
 }
 
@@ -253,6 +254,28 @@ func convertBsonValue(value any) any {
 		// Other primitive types (string, int, float, bool, etc.) don't need conversion
 		return v
 	}
+}
+
+// ListCollectionNames returns the names of all collections in the database.
+func (ds *ExternalDataSource) ListCollectionNames(ctx context.Context) ([]string, error) {
+	client, err := ds.connection.Client(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	listCtx, cancel := context.WithTimeout(ctx, constant.SchemaDiscoveryTimeout)
+	defer cancel()
+
+	collections, err := client.Database(ds.Database).ListCollectionNames(listCtx, bson.M{})
+	if err != nil {
+		if listCtx.Err() == context.DeadlineExceeded {
+			return nil, fmt.Errorf("mongodb list collections timeout after %v: %w", constant.SchemaDiscoveryTimeout, err)
+		}
+
+		return nil, fmt.Errorf("failed to list collection names: %w", err)
+	}
+
+	return collections, nil
 }
 
 // GetDatabaseSchema retrieves all collections and infers their schema from sample documents

@@ -14,7 +14,6 @@ import (
 // DataSourceConfig represents the base configuration for all data sources.
 type DataSourceConfig struct {
 	ID                string
-	OrganizationID    string
 	ConfigName        string
 	Type              string
 	Host              string

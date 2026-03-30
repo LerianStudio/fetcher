@@ -48,41 +48,37 @@ func (cr *ConnectionMongoDBRepository) EnsureIndexes(ctx context.Context) error 
 	indexes := []mongo.IndexModel{
 		{
 			Keys: bson.D{
-				{Key: "organization_id", Value: 1},
 				{Key: "config_name", Value: 1},
 			},
 			Options: options.Index().
-				SetName("idx_connection_org_config_name").
+				SetName("idx_connection_config_name").
 				SetUnique(true).
 				SetPartialFilterExpression(bson.D{{Key: "deleted_at", Value: nil}}),
 		},
 		{
 			Keys: bson.D{
-				{Key: "organization_id", Value: 1},
 				{Key: "created_at", Value: -1},
 			},
 			Options: options.Index().
-				SetName("idx_connection_org_created").
+				SetName("idx_connection_created").
 				SetPartialFilterExpression(bson.D{{Key: "deleted_at", Value: nil}}),
 		},
 		{
 			Keys: bson.D{
-				{Key: "organization_id", Value: 1},
 				{Key: "database_name", Value: 1},
 			},
 			Options: options.Index().
-				SetName("idx_connection_org_database_name").
+				SetName("idx_connection_database_name").
 				SetPartialFilterExpression(bson.D{{Key: "deleted_at", Value: nil}}),
 		},
 		// Product isolation indexes
 		{
 			Keys: bson.D{
-				{Key: "organization_id", Value: 1},
 				{Key: "product_id", Value: 1},
 				{Key: "config_name", Value: 1},
 			},
 			Options: options.Index().
-				SetName("idx_connection_org_product_config").
+				SetName("idx_connection_product_config").
 				SetUnique(true).
 				SetPartialFilterExpression(bson.D{
 					{Key: "deleted_at", Value: nil},
@@ -91,17 +87,15 @@ func (cr *ConnectionMongoDBRepository) EnsureIndexes(ctx context.Context) error 
 		},
 		{
 			Keys: bson.D{
-				{Key: "organization_id", Value: 1},
 				{Key: "product_id", Value: 1},
 				{Key: "created_at", Value: -1},
 			},
 			Options: options.Index().
-				SetName("idx_connection_org_product_created").
+				SetName("idx_connection_product_created").
 				SetPartialFilterExpression(bson.D{{Key: "deleted_at", Value: nil}}),
 		},
 		{
 			Keys: bson.D{
-				{Key: "organization_id", Value: 1},
 				{Key: "product_id", Value: 1},
 			},
 			Options: options.Index().

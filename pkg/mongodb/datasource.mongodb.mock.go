@@ -70,6 +70,21 @@ func (mr *MockDatasourceMockRecorder) GetDatabaseSchema(ctx any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDatabaseSchema", reflect.TypeOf((*MockDatasource)(nil).GetDatabaseSchema), ctx)
 }
 
+// ListCollectionNames mocks base method.
+func (m *MockDatasource) ListCollectionNames(ctx context.Context) ([]string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListCollectionNames", ctx)
+	ret0, _ := ret[0].([]string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListCollectionNames indicates an expected call of ListCollectionNames.
+func (mr *MockDatasourceMockRecorder) ListCollectionNames(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListCollectionNames", reflect.TypeOf((*MockDatasource)(nil).ListCollectionNames), ctx)
+}
+
 // Query mocks base method.
 func (m *MockDatasource) Query(ctx context.Context, collection string, fields []string, filter map[string][]any) ([]map[string]any, error) {
 	m.ctrl.T.Helper()
