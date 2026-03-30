@@ -49,6 +49,14 @@ func (s *GetConnection) Execute(ctx context.Context, connectionID uuid.UUID) (*m
 				return nil, fmt.Errorf("failed to resolve internal datasource '%s': %w", configName, resolveErr)
 			}
 
+			if resolved == nil {
+				return nil, pkg.ValidateBusinessError(
+					constant.ErrEntityNotFound,
+					"connection",
+					connectionID,
+				)
+			}
+
 			return resolved, nil
 		}
 	}

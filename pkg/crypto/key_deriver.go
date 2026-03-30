@@ -24,7 +24,7 @@ const (
 	// ContextExternalHMAC is used to derive the key for signing external messages and document HMACs.
 	ContextExternalHMAC = "fetcher-external-hmac-v1"
 
-	// ContextStorageEncryption is used to derive the key for encrypting extracted data at rest (SeaweedFS).
+	// ContextStorageEncryption is used to derive the key for encrypting extracted data at rest (S3).
 	// Both Fetcher (encrypt) and Reporter (decrypt) derive this key from the shared APP_ENC_KEY.
 	ContextStorageEncryption = "fetcher-storage-encryption-v1"
 )

@@ -5,7 +5,7 @@
 | Component | Service Const | Module Const | Resources | Adapted |
 |-----------|--------------|--------------|-----------|---------|
 | Manager | `fetcher` | `fetcher-manager` | Connections, Jobs (MongoDB), Schema Cache (Redis), Job Publishing (RabbitMQ) | TenantMiddleware + WithMB, valkey key prefixing, tmrabbitmq.Manager |
-| Worker | `fetcher` | `fetcher-worker` | Jobs (MongoDB), External Data (S3/SeaweedFS), Job Consuming (RabbitMQ), Job Events (RabbitMQ) | MultiTenantConsumer, tmrabbitmq.Manager, tms3 key prefixing |
+| Worker | `fetcher` | `fetcher-worker` | Jobs (MongoDB), External Data (S3), Job Consuming (RabbitMQ), Job Events (RabbitMQ) | MultiTenantConsumer, tmrabbitmq.Manager, tms3 key prefixing |
 
 ## Environment Variables
 

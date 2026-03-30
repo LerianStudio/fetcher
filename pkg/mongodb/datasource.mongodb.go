@@ -258,6 +258,10 @@ func convertBsonValue(value any) any {
 
 // ListCollectionNames returns the names of all collections in the database.
 func (ds *ExternalDataSource) ListCollectionNames(ctx context.Context) ([]string, error) {
+	if ds.connection == nil {
+		return nil, fmt.Errorf("mongodb connection is nil")
+	}
+
 	client, err := ds.connection.Client(ctx)
 	if err != nil {
 		return nil, err

@@ -62,6 +62,10 @@ func NewDataSourceFromConnection(ctx context.Context, conn *model.Connection, cr
 
 	// Allow nil cryptor for in-memory connections (from tenant-manager) that have
 	// plaintext passwords. Connections with EncryptionKeyVersion set still require cryptor.
+	// NOTE: EncryptionKeyVersion="" is the signal for "plaintext/internal". This is an
+	// implicit contract — external connections persisted in MongoDB always have a non-empty
+	// EncryptionKeyVersion set during creation. If this contract changes, add an explicit
+	// IsEncrypted field to the Connection model.
 	if cryptor == nil && conn.EncryptionKeyVersion != "" {
 		err := fmt.Errorf("cryptor cannot be nil for encrypted connections")
 		libOpentelemetry.HandleSpanError(span, "nil cryptor", err)

@@ -251,6 +251,12 @@ func (mq *MultiQueueConsumer) handlerGenerateReport(ctx context.Context, body []
 		ctx = extractTenantIDFromHeaders(ctx, headers)
 	}
 
+	// Fail-closed: reject messages without tenant context in multi-tenant mode.
+	// This prevents processing data without proper tenant isolation.
+	if mq.mtConsumer != nil && tmcore.GetTenantIDContext(ctx) == "" {
+		return fmt.Errorf("message rejected: no tenant ID in multi-tenant mode (neither vhost nor AMQP headers)")
+	}
+
 	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	spanCtx, span := tracer.Start(ctx, "consumer.handler_generate_report")
