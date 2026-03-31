@@ -43,12 +43,11 @@ func TestCreateConnection_Execute_Success(t *testing.T) {
 	svc := NewCreateConnection(mockConnRepo, mockCrypto)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	input := newValidConnectionInput()
 
 	// Mock: no existing connection found
 	mockConnRepo.EXPECT().
-		FindByOrganizationAndName(gomock.Any(), orgID, input.ConfigName).
+		FindByName(gomock.Any(), input.ConfigName).
 		Return(nil, nil)
 
 	// Mock: create returns the connection
@@ -58,7 +57,7 @@ func TestCreateConnection_Execute_Success(t *testing.T) {
 			return conn, nil
 		})
 
-	result, err := svc.Execute(ctx, orgID, input, "test-product")
+	result, err := svc.Execute(ctx, input, "test-product")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -69,10 +68,6 @@ func TestCreateConnection_Execute_Success(t *testing.T) {
 
 	if result.ConfigName != input.ConfigName {
 		t.Fatalf("expected ConfigName %s, got %s", input.ConfigName, result.ConfigName)
-	}
-
-	if result.OrganizationID != orgID {
-		t.Fatalf("expected OrganizationID %s, got %s", orgID, result.OrganizationID)
 	}
 
 	if result.Type != model.TypePostgreSQL {
@@ -104,21 +99,19 @@ func TestCreateConnection_Execute_ConflictError(t *testing.T) {
 	svc := NewCreateConnection(mockConnRepo, mockCrypto)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	input := newValidConnectionInput()
 
 	existingConnection := &model.Connection{
-		ID:             uuid.New(),
-		OrganizationID: orgID,
-		ConfigName:     input.ConfigName,
+		ID:         uuid.New(),
+		ConfigName: input.ConfigName,
 	}
 
 	// Mock: existing connection found
 	mockConnRepo.EXPECT().
-		FindByOrganizationAndName(gomock.Any(), orgID, input.ConfigName).
+		FindByName(gomock.Any(), input.ConfigName).
 		Return(existingConnection, nil)
 
-	result, err := svc.Execute(ctx, orgID, input, "test-product")
+	result, err := svc.Execute(ctx, input, "test-product")
 
 	if result != nil {
 		t.Fatalf("expected nil result, got %+v", result)
@@ -135,8 +128,8 @@ func TestCreateConnection_Execute_ConflictError(t *testing.T) {
 	assert.Equal(t, http.StatusConflict, respErr.StatusCode)
 }
 
-// TestCreateConnection_Execute_FindByOrganizationAndNameError tests repository error during lookup.
-func TestCreateConnection_Execute_FindByOrganizationAndNameError(t *testing.T) {
+// TestCreateConnection_Execute_FindByNameError tests repository error during lookup.
+func TestCreateConnection_Execute_FindByNameError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
@@ -149,17 +142,16 @@ func TestCreateConnection_Execute_FindByOrganizationAndNameError(t *testing.T) {
 	svc := NewCreateConnection(mockConnRepo, mockCrypto)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	input := newValidConnectionInput()
 
 	dbError := errors.New("database connection failed")
 
 	// Mock: database error during lookup
 	mockConnRepo.EXPECT().
-		FindByOrganizationAndName(gomock.Any(), orgID, input.ConfigName).
+		FindByName(gomock.Any(), input.ConfigName).
 		Return(nil, dbError)
 
-	result, err := svc.Execute(ctx, orgID, input, "test-product")
+	result, err := svc.Execute(ctx, input, "test-product")
 
 	if result != nil {
 		t.Fatalf("expected nil result, got %+v", result)
@@ -188,14 +180,13 @@ func TestCreateConnection_Execute_CreateError(t *testing.T) {
 	svc := NewCreateConnection(mockConnRepo, mockCrypto)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	input := newValidConnectionInput()
 
 	dbError := errors.New("failed to insert into database")
 
 	// Mock: no existing connection found
 	mockConnRepo.EXPECT().
-		FindByOrganizationAndName(gomock.Any(), orgID, input.ConfigName).
+		FindByName(gomock.Any(), input.ConfigName).
 		Return(nil, nil)
 
 	// Mock: create returns error
@@ -203,7 +194,7 @@ func TestCreateConnection_Execute_CreateError(t *testing.T) {
 		Create(gomock.Any(), gomock.Any()).
 		Return(nil, dbError)
 
-	result, err := svc.Execute(ctx, orgID, input, "test-product")
+	result, err := svc.Execute(ctx, input, "test-product")
 
 	if result != nil {
 		t.Fatalf("expected nil result, got %+v", result)
@@ -234,10 +225,9 @@ func TestCreateConnection_Execute_EncryptionError(t *testing.T) {
 	svc := NewCreateConnection(mockConnRepo, mockCrypto)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	input := newValidConnectionInput()
 
-	result, err := svc.Execute(ctx, orgID, input, "test-product")
+	result, err := svc.Execute(ctx, input, "test-product")
 
 	if result != nil {
 		t.Fatalf("expected nil result, got %+v", result)
@@ -407,9 +397,8 @@ func TestCreateConnection_Execute_ValidationErrors(t *testing.T) {
 			svc := NewCreateConnection(mockConnRepo, mockCrypto)
 
 			ctx := testContext()
-			orgID := uuid.New()
 
-			result, err := svc.Execute(ctx, orgID, tt.input, "test-product")
+			result, err := svc.Execute(ctx, tt.input, "test-product")
 
 			if result != nil {
 				t.Fatalf("expected nil result for invalid request, got %+v", result)
@@ -452,7 +441,6 @@ func TestCreateConnection_Execute_WithSSL(t *testing.T) {
 	svc := NewCreateConnection(mockConnRepo, mockCrypto)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	certValue := "-----BEGIN CERTIFICATE-----\ntest-cert\n-----END CERTIFICATE-----"
 	keyValue := "-----BEGIN PRIVATE KEY-----\ntest-key\n-----END PRIVATE KEY-----"
 
@@ -474,7 +462,7 @@ func TestCreateConnection_Execute_WithSSL(t *testing.T) {
 
 	// Mock: no existing connection found
 	mockConnRepo.EXPECT().
-		FindByOrganizationAndName(gomock.Any(), orgID, input.ConfigName).
+		FindByName(gomock.Any(), input.ConfigName).
 		Return(nil, nil)
 
 	// Mock: create returns the connection
@@ -492,7 +480,7 @@ func TestCreateConnection_Execute_WithSSL(t *testing.T) {
 			return conn, nil
 		})
 
-	result, err := svc.Execute(ctx, orgID, input, "test-product")
+	result, err := svc.Execute(ctx, input, "test-product")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -539,7 +527,6 @@ func TestCreateConnection_Execute_AllDatabaseTypes(t *testing.T) {
 			svc := NewCreateConnection(mockConnRepo, mockCrypto)
 
 			ctx := testContext()
-			orgID := uuid.New()
 
 			input := model.ConnectionInput{
 				ConfigName:   "test-" + tt.dbType,
@@ -552,7 +539,7 @@ func TestCreateConnection_Execute_AllDatabaseTypes(t *testing.T) {
 			}
 
 			mockConnRepo.EXPECT().
-				FindByOrganizationAndName(gomock.Any(), orgID, input.ConfigName).
+				FindByName(gomock.Any(), input.ConfigName).
 				Return(nil, nil)
 
 			mockConnRepo.EXPECT().
@@ -561,7 +548,7 @@ func TestCreateConnection_Execute_AllDatabaseTypes(t *testing.T) {
 					return conn, nil
 				})
 
-			result, err := svc.Execute(ctx, orgID, input, "test-product")
+			result, err := svc.Execute(ctx, input, "test-product")
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -633,7 +620,6 @@ func TestCreateConnection_Execute_ConfigNameEdgeCases(t *testing.T) {
 			svc := NewCreateConnection(mockConnRepo, mockCrypto)
 
 			ctx := testContext()
-			orgID := uuid.New()
 
 			input := model.ConnectionInput{
 				ConfigName:   tt.configName,
@@ -647,7 +633,7 @@ func TestCreateConnection_Execute_ConfigNameEdgeCases(t *testing.T) {
 
 			if tt.shouldPass {
 				mockConnRepo.EXPECT().
-					FindByOrganizationAndName(gomock.Any(), orgID, gomock.Any()).
+					FindByName(gomock.Any(), gomock.Any()).
 					Return(nil, nil)
 				mockConnRepo.EXPECT().
 					Create(gomock.Any(), gomock.Any()).
@@ -656,7 +642,7 @@ func TestCreateConnection_Execute_ConfigNameEdgeCases(t *testing.T) {
 					})
 			}
 
-			result, err := svc.Execute(ctx, orgID, input, "test-product")
+			result, err := svc.Execute(ctx, input, "test-product")
 
 			if tt.shouldPass {
 				if err != nil {

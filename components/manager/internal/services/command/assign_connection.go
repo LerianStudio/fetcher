@@ -26,7 +26,7 @@ func NewAssignConnection(connectionRepo connRepo.Repository) *AssignConnection {
 	return &AssignConnection{connRepo: connectionRepo}
 }
 
-func (s *AssignConnection) Execute(ctx context.Context, organizationID, connectionID uuid.UUID, productName string) (*model.Connection, error) {
+func (s *AssignConnection) Execute(ctx context.Context, connectionID uuid.UUID, productName string) (*model.Connection, error) {
 	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "service.assign_connection_to_product")
@@ -34,7 +34,6 @@ func (s *AssignConnection) Execute(ctx context.Context, organizationID, connecti
 
 	span.SetAttributes(
 		attribute.String("app.request.request_id", reqID),
-		attribute.String("app.request.organization_id", organizationID.String()),
 		attribute.String("app.request.connection_id", connectionID.String()),
 		attribute.String("app.request.product_name", productName),
 	)
@@ -51,7 +50,7 @@ func (s *AssignConnection) Execute(ctx context.Context, organizationID, connecti
 	}
 
 	// Validate connection exists
-	conn, err := s.connRepo.FindByID(ctx, connectionID, organizationID)
+	conn, err := s.connRepo.FindByID(ctx, connectionID)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to find connection by ID", err)
 		return nil, fmt.Errorf("failed to find connection by id: %w", err)
@@ -63,7 +62,7 @@ func (s *AssignConnection) Execute(ctx context.Context, organizationID, connecti
 	}
 
 	// Persist the assignment (atomic guard: repo uses product_name: {$eq: ""} filter)
-	updated, err := s.connRepo.AssignProductName(ctx, connectionID, organizationID, productName)
+	updated, err := s.connRepo.AssignProductName(ctx, connectionID, productName)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to assign product to connection", err)
 		return nil, fmt.Errorf("failed to assign product to connection: %w", err)
@@ -77,7 +76,6 @@ func (s *AssignConnection) Execute(ctx context.Context, organizationID, connecti
 	logger.Log(ctx, libLog.LevelInfo, "connection assigned to product",
 		libLog.String("connection_id", connectionID.String()),
 		libLog.String("product_name", productName),
-		libLog.String("organization_id", organizationID.String()),
 	)
 
 	return updated, nil

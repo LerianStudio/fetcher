@@ -13,7 +13,6 @@ import (
 	"github.com/LerianStudio/lib-commons/v4/commons"
 	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
 
-	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -29,7 +28,7 @@ func NewCreateConnection(connectionRepo connRepo.Repository, cryptor crypto.Cryp
 	}
 }
 
-func (s *CreateConnection) Execute(ctx context.Context, organizationID uuid.UUID, connInput model.ConnectionInput, productName string) (*model.Connection, error) {
+func (s *CreateConnection) Execute(ctx context.Context, connInput model.ConnectionInput, productName string) (*model.Connection, error) {
 	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "service.create_connection")
@@ -37,7 +36,6 @@ func (s *CreateConnection) Execute(ctx context.Context, organizationID uuid.UUID
 
 	span.SetAttributes(
 		attribute.String("app.request.request_id", reqID),
-		attribute.String("app.request.organization_id", organizationID.String()),
 		attribute.String("app.request.product_name", productName),
 	)
 
@@ -48,15 +46,20 @@ func (s *CreateConnection) Execute(ctx context.Context, organizationID uuid.UUID
 
 	sslMode, sslCA, sslCert, sslKey := s.extractSSLFields(connInput)
 
+	var schema *string
+	if connInput.Schema != "" {
+		schema = &connInput.Schema
+	}
+
 	connection, err := model.NewConnection(
 		ctx, s.cryptor,
-		organizationID,
 		productName,
 		connInput.ConfigName,
 		connInput.Type,
 		connInput.Host,
 		connInput.Port,
 		connInput.DatabaseName,
+		schema,
 		connInput.Username,
 		connInput.Password,
 		connInput.Metadata,
@@ -70,7 +73,7 @@ func (s *CreateConnection) Execute(ctx context.Context, organizationID uuid.UUID
 		return nil, fmt.Errorf("failed to create connection model: %w", err)
 	}
 
-	existing, errRepo := s.connRepo.FindByOrganizationAndName(ctx, connection.OrganizationID, connection.ConfigName)
+	existing, errRepo := s.connRepo.FindByName(ctx, connection.ConfigName)
 	if errRepo != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to check existing connection", errRepo)
 		return nil, fmt.Errorf("failed to check for existing connection: %w", errRepo)

@@ -109,7 +109,7 @@ func (pr *PublisherRoutes) Publish(ctx context.Context, exchange, routingKey str
 
 	// Multi-tenant mode: use tmrabbitmq.Manager for per-tenant vhost
 	if pr.multiTenantMode && pr.rabbitMQManager != nil {
-		tenantID := tmcore.GetTenantIDFromContext(ctx)
+		tenantID := tmcore.GetTenantIDContext(ctx)
 		if tenantID == "" {
 			opentelemetry.HandleSpanError(span, "No tenant ID in context for multi-tenant publish", fmt.Errorf("tenant ID required"))
 			return fmt.Errorf("multi-tenant publish requires tenant ID in context")
@@ -172,7 +172,7 @@ func (pr *PublisherRoutes) Publish(ctx context.Context, exchange, routingKey str
 	// When no tenant context is present (single-tenant mode), headers remain nil.
 	var headers *map[string]any
 
-	if tenantID := tmcore.GetTenantIDFromContext(ctx); tenantID != "" {
+	if tenantID := tmcore.GetTenantIDContext(ctx); tenantID != "" {
 		h := map[string]any{"X-Tenant-ID": tenantID}
 		headers = &h
 	}

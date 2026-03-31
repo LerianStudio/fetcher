@@ -24,10 +24,9 @@ import (
 type testConnectionContextKey string
 
 // newTestConnectionFixture creates a valid Connection for testing TestConnection service.
-func newTestConnectionFixture(orgID, connID uuid.UUID, dbType model.DBType) *model.Connection {
+func newTestConnectionFixture(connID uuid.UUID, dbType model.DBType) *model.Connection {
 	return &model.Connection{
 		ID:                   connID,
-		OrganizationID:       orgID,
 		ConfigName:           "test-connection",
 		Type:                 dbType,
 		Host:                 "localhost",
@@ -53,18 +52,17 @@ func TestTestConnection_Execute_NotFoundError(t *testing.T) {
 		Take(gomock.Any(), gomock.Any()).
 		Return(uint64(1), uint64(10), uint64(time.Now().UTC().Add(time.Minute).UnixNano()), true, nil)
 
-	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, nil)
+	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, nil, nil, nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
 
 	// Mock: connection not found
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, orgID).
+		FindByID(gomock.Any(), connID).
 		Return(nil, nil)
 
-	result, err := svc.Execute(ctx, orgID, connID)
+	result, err := svc.Execute(ctx, connID)
 
 	if result != nil {
 		t.Fatalf("expected nil result, got %+v", result)
@@ -93,20 +91,19 @@ func TestTestConnection_Execute_RepositoryError(t *testing.T) {
 		Take(gomock.Any(), gomock.Any()).
 		Return(uint64(1), uint64(10), uint64(time.Now().UTC().Add(time.Minute).UnixNano()), true, nil)
 
-	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, nil)
+	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, nil, nil, nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
 
 	dbError := errors.New("database connection failed")
 
 	// Mock: database error during lookup
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, orgID).
+		FindByID(gomock.Any(), connID).
 		Return(nil, dbError)
 
-	result, err := svc.Execute(ctx, orgID, connID)
+	result, err := svc.Execute(ctx, connID)
 
 	if result != nil {
 		t.Fatalf("expected nil result, got %+v", result)
@@ -143,7 +140,7 @@ func TestTestConnection_Execute_DecryptionError(t *testing.T) {
 	testFactory := func(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor) (datasourceModel.DataSource, error) {
 		require.Equal(t, mockCrypto, cryptor)
 		assert.Equal(t, "trace-value", ctx.Value(testConnectionContextKey("trace-key")))
-		assert.Equal(t, "tenant-decrypt", tmcore.GetTenantIDFromContext(ctx))
+		assert.Equal(t, "tenant-decrypt", tmcore.GetTenantIDContext(ctx))
 		_, err := cryptor.Decrypt(ctx, conn.PasswordEncrypted, conn.EncryptionKeyVersion)
 		if err != nil {
 			return nil, fmt.Errorf("decryption failed: %w", err)
@@ -151,20 +148,19 @@ func TestTestConnection_Execute_DecryptionError(t *testing.T) {
 		return nil, fmt.Errorf("connection failed")
 	}
 
-	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, testFactory)
+	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, testFactory, nil, nil)
 
 	ctx := context.WithValue(testContext(), testConnectionContextKey("trace-key"), "trace-value")
-	ctx = tmcore.SetTenantIDInContext(ctx, "tenant-decrypt")
-	orgID := uuid.New()
+	ctx = tmcore.ContextWithTenantID(ctx, "tenant-decrypt")
 	connID := uuid.New()
-	existingConn := newTestConnectionFixture(orgID, connID, model.TypePostgreSQL)
+	existingConn := newTestConnectionFixture(connID, model.TypePostgreSQL)
 
 	// Mock: connection found
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, orgID).
+		FindByID(gomock.Any(), connID).
 		Return(existingConn, nil)
 
-	result, err := svc.Execute(ctx, orgID, connID)
+	result, err := svc.Execute(ctx, connID)
 
 	if result != nil {
 		t.Fatalf("expected nil result, got %+v", result)
@@ -194,13 +190,12 @@ func TestTestConnection_Execute_RateLimitError(t *testing.T) {
 		Take(gomock.Any(), gomock.Any()).
 		Return(uint64(0), uint64(0), uint64(0), false, limiterError)
 
-	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, nil)
+	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, nil, nil, nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
 
-	result, err := svc.Execute(ctx, orgID, connID)
+	result, err := svc.Execute(ctx, connID)
 
 	if result != nil {
 		t.Fatalf("expected nil result, got %+v", result)
@@ -225,47 +220,45 @@ func TestTestConnection_Execute_Success(t *testing.T) {
 	mockStore := NewMockRateLimiterStore(ctrl)
 	mockDataSource := datasourceModel.NewMockDataSource(ctrl)
 
-	orgID := uuid.New()
 	connID := uuid.New()
-	existingConn := newTestConnectionFixture(orgID, connID, model.TypePostgreSQL)
+	existingConn := newTestConnectionFixture(connID, model.TypePostgreSQL)
 
 	mockStore.EXPECT().
 		Take(gomock.Any(), gomock.Any()).
 		DoAndReturn(func(ctx context.Context, key string) (uint64, uint64, uint64, bool, error) {
 			assert.Equal(t, "trace-value", ctx.Value(testConnectionContextKey("trace-key")))
-			assert.Equal(t, "tenant-success", tmcore.GetTenantIDFromContext(ctx))
+			assert.Equal(t, "tenant-success", tmcore.GetTenantIDContext(ctx))
 			assert.Contains(t, key, "tenant-success")
 			return uint64(1), uint64(10), uint64(time.Now().UTC().Add(time.Minute).UnixNano()), true, nil
 		})
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, orgID).
-		DoAndReturn(func(ctx context.Context, gotConnID, gotOrgID uuid.UUID) (*model.Connection, error) {
+		FindByID(gomock.Any(), connID).
+		DoAndReturn(func(ctx context.Context, gotConnID uuid.UUID) (*model.Connection, error) {
 			assert.Equal(t, "trace-value", ctx.Value(testConnectionContextKey("trace-key")))
-			assert.Equal(t, "tenant-success", tmcore.GetTenantIDFromContext(ctx))
+			assert.Equal(t, "tenant-success", tmcore.GetTenantIDContext(ctx))
 			assert.Equal(t, connID, gotConnID)
-			assert.Equal(t, orgID, gotOrgID)
 			return existingConn, nil
 		})
 	mockDataSource.EXPECT().
 		Close(gomock.Any()).
 		DoAndReturn(func(ctx context.Context) error {
 			assert.Equal(t, "trace-value", ctx.Value(testConnectionContextKey("trace-key")))
-			assert.Equal(t, "tenant-success", tmcore.GetTenantIDFromContext(ctx))
+			assert.Equal(t, "tenant-success", tmcore.GetTenantIDContext(ctx))
 			return nil
 		})
 
 	testFactory := func(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor) (datasourceModel.DataSource, error) {
 		assert.Equal(t, mockCrypto, cryptor)
 		assert.Equal(t, "trace-value", ctx.Value(testConnectionContextKey("trace-key")))
-		assert.Equal(t, "tenant-success", tmcore.GetTenantIDFromContext(ctx))
+		assert.Equal(t, "tenant-success", tmcore.GetTenantIDContext(ctx))
 		assert.Equal(t, existingConn, conn)
 		return mockDataSource, nil
 	}
-	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, testFactory)
+	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, testFactory, nil, nil)
 
 	ctx := context.WithValue(testContext(), testConnectionContextKey("trace-key"), "trace-value")
-	ctx = tmcore.SetTenantIDInContext(ctx, "tenant-success")
-	result, err := svc.Execute(ctx, orgID, connID)
+	ctx = tmcore.ContextWithTenantID(ctx, "tenant-success")
+	result, err := svc.Execute(ctx, connID)
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -282,14 +275,13 @@ func TestTestConnection_Execute_RateLimitKeyDerivationError(t *testing.T) {
 	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockStore := NewMockRateLimiterStore(ctrl)
 
-	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, nil)
+	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, nil, nil, nil)
 
 	ctx := testContext()
-	ctx = tmcore.SetTenantIDInContext(ctx, "tenant:invalid")
-	orgID := uuid.New()
+	ctx = tmcore.ContextWithTenantID(ctx, "tenant:invalid")
 	connID := uuid.New()
 
-	result, err := svc.Execute(ctx, orgID, connID)
+	result, err := svc.Execute(ctx, connID)
 
 	assert.Nil(t, result)
 	require.Error(t, err)
@@ -312,13 +304,12 @@ func TestTestConnection_Execute_RateLimited(t *testing.T) {
 		Take(gomock.Any(), gomock.Any()).
 		Return(uint64(0), uint64(0), uint64(resetTime.UnixNano()), false, nil)
 
-	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, nil)
+	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, nil, nil, nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
 
-	result, err := svc.Execute(ctx, orgID, connID)
+	result, err := svc.Execute(ctx, connID)
 
 	if result != nil {
 		t.Fatalf("expected nil result, got %+v", result)
@@ -342,8 +333,8 @@ func TestTestConnection_Execute_RateLimited(t *testing.T) {
 	}
 }
 
-// TestTestConnection_Execute_OrganizationIsolation tests that connections are isolated by organization.
-func TestTestConnection_Execute_OrganizationIsolation(t *testing.T) {
+// TestTestConnection_Execute_ConnectionNotFound tests behavior when connection does not exist.
+func TestTestConnection_Execute_ConnectionNotFound(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
@@ -352,27 +343,24 @@ func TestTestConnection_Execute_OrganizationIsolation(t *testing.T) {
 	mockStore := NewMockRateLimiterStore(ctrl)
 	mockStore.EXPECT().Take(gomock.Any(), gomock.Any()).Return(uint64(1), uint64(10), uint64(time.Now().UTC().Add(time.Minute).UnixNano()), true, nil)
 
-	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, nil)
+	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, nil, nil, nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
-	differentOrgID := uuid.New()
 	connID := uuid.New()
 
-	// Connection belongs to a different organization but we query with orgID
-	// The repository should return nil because it filters by organizationID
+	// Repository returns nil — connection not found
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, orgID).
+		FindByID(gomock.Any(), connID).
 		Return(nil, nil)
 
-	result, err := svc.Execute(ctx, orgID, connID)
+	result, err := svc.Execute(ctx, connID)
 
 	if result != nil {
-		t.Fatalf("expected nil result for connection in different organization, got %+v", result)
+		t.Fatalf("expected nil result for non-existent connection, got %+v", result)
 	}
 
 	if err == nil {
-		t.Fatal("expected error for connection in different organization, got nil")
+		t.Fatal("expected error for non-existent connection, got nil")
 	}
 
 	var respErr pkg.ResponseErrorWithStatusCode
@@ -382,7 +370,6 @@ func TestTestConnection_Execute_OrganizationIsolation(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, respErr.StatusCode)
 
 	// Verify the existing connection is not returned (it belongs to a different org)
-	_ = differentOrgID // Unused in mock but demonstrates the test scenario
 }
 
 // TestTestConnection_Execute_WithSSLConfiguration tests connection test with SSL configuration.
@@ -403,13 +390,12 @@ func TestTestConnection_Execute_WithSSLConfiguration(t *testing.T) {
 		return mockDataSource, nil
 	}
 
-	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, sslFactory)
+	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, sslFactory, nil, nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
 
-	existingConn := newTestConnectionFixture(orgID, connID, model.TypePostgreSQL)
+	existingConn := newTestConnectionFixture(connID, model.TypePostgreSQL)
 	existingConn.SSL = &model.SSLConfig{
 		Mode: "require",
 		CA:   "-----BEGIN CERTIFICATE-----\ntest-ca\n-----END CERTIFICATE-----",
@@ -418,11 +404,11 @@ func TestTestConnection_Execute_WithSSLConfiguration(t *testing.T) {
 	}
 
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, orgID).
+		FindByID(gomock.Any(), connID).
 		Return(existingConn, nil)
 	mockDataSource.EXPECT().Close(gomock.Any()).Return(nil)
 
-	result, err := svc.Execute(ctx, orgID, connID)
+	result, err := svc.Execute(ctx, connID)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, "success", result.Status)
@@ -479,21 +465,20 @@ func TestTestConnection_Execute_AllDatabaseTypes(t *testing.T) {
 				return mockDataSource, nil
 			}
 
-			svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, dbTypeFactory)
+			svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, dbTypeFactory, nil, nil)
 
 			ctx := testContext()
-			orgID := uuid.New()
 			connID := uuid.New()
 
-			existingConn := newTestConnectionFixture(orgID, connID, tt.dbType)
+			existingConn := newTestConnectionFixture(connID, tt.dbType)
 			existingConn.Port = tt.port
 
 			mockConnRepo.EXPECT().
-				FindByID(gomock.Any(), connID, orgID).
+				FindByID(gomock.Any(), connID).
 				Return(existingConn, nil)
 			mockDataSource.EXPECT().Close(gomock.Any()).Return(nil)
 
-			result, err := svc.Execute(ctx, orgID, connID)
+			result, err := svc.Execute(ctx, connID)
 			require.NoError(t, err)
 			require.NotNil(t, result)
 			assert.Equal(t, "success", result.Status)
@@ -541,18 +526,17 @@ func TestTestConnection_Execute_MultipleRepositoryErrors(t *testing.T) {
 				Take(gomock.Any(), gomock.Any()).
 				Return(uint64(1), uint64(10), uint64(time.Now().UTC().Add(time.Minute).UnixNano()), true, nil)
 
-			svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, nil)
+			svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, nil, nil, nil)
 
 			ctx := testContext()
-			orgID := uuid.New()
 			connID := uuid.New()
 
 			// Mock: database error
 			mockConnRepo.EXPECT().
-				FindByID(gomock.Any(), connID, orgID).
+				FindByID(gomock.Any(), connID).
 				Return(nil, tt.dbError)
 
-			result, err := svc.Execute(ctx, orgID, connID)
+			result, err := svc.Execute(ctx, connID)
 
 			if result != nil {
 				t.Fatalf("expected nil result for %s, got %+v", tt.name, result)
@@ -579,18 +563,17 @@ func TestTestConnection_Execute_EmptyUUIDs(t *testing.T) {
 	mockStore := NewMockRateLimiterStore(ctrl)
 	mockStore.EXPECT().Take(gomock.Any(), gomock.Any()).Return(uint64(1), uint64(10), uint64(time.Now().UTC().Add(time.Minute).UnixNano()), true, nil)
 
-	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, nil)
+	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, nil, nil, nil)
 
 	ctx := testContext()
-	orgID := uuid.Nil
 	connID := uuid.Nil
 
 	// Mock: connection not found with nil UUIDs
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, orgID).
+		FindByID(gomock.Any(), connID).
 		Return(nil, nil)
 
-	result, err := svc.Execute(ctx, orgID, connID)
+	result, err := svc.Execute(ctx, connID)
 
 	if result != nil {
 		t.Fatalf("expected nil result with nil UUIDs, got %+v", result)
@@ -616,7 +599,7 @@ func TestNewTestConnection(t *testing.T) {
 	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockStore := NewMockRateLimiterStore(ctrl)
 
-	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, nil)
+	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, nil, nil, nil)
 
 	if svc == nil {
 		t.Fatal("expected non-nil service")
@@ -669,13 +652,12 @@ func TestTestConnection_Execute_RateLimitResetTime(t *testing.T) {
 			mockStore := NewMockRateLimiterStore(ctrl)
 			mockStore.EXPECT().Take(gomock.Any(), gomock.Any()).Return(uint64(0), uint64(0), uint64(tt.resetTime.UnixNano()), false, nil)
 
-			svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, nil)
+			svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, nil, nil, nil)
 
 			ctx := testContext()
-			orgID := uuid.New()
 			connID := uuid.New()
 
-			result, err := svc.Execute(ctx, orgID, connID)
+			result, err := svc.Execute(ctx, connID)
 
 			if result != nil {
 				t.Fatalf("expected nil result, got %+v", result)
@@ -716,21 +698,20 @@ func TestTestConnection_Execute_DecryptionKeyVersionMismatch(t *testing.T) {
 		}
 		return nil, fmt.Errorf("connection failed")
 	}
-	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, testFactory)
+	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, testFactory, nil, nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
 
-	existingConn := newTestConnectionFixture(orgID, connID, model.TypePostgreSQL)
+	existingConn := newTestConnectionFixture(connID, model.TypePostgreSQL)
 	existingConn.EncryptionKeyVersion = "v2" // Mismatched version
 
 	// Mock: connection found
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, orgID).
+		FindByID(gomock.Any(), connID).
 		Return(existingConn, nil)
 
-	result, err := svc.Execute(ctx, orgID, connID)
+	result, err := svc.Execute(ctx, connID)
 
 	if result != nil {
 		t.Fatalf("expected nil result, got %+v", result)
@@ -764,15 +745,13 @@ func TestTestConnection_Execute_ConnectionWithAllFields(t *testing.T) {
 		}
 		return nil, fmt.Errorf("connection failed: unable to connect to database")
 	}
-	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, testFactory)
+	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, testFactory, nil, nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
 
 	existingConn := &model.Connection{
 		ID:                   connID,
-		OrganizationID:       orgID,
 		ConfigName:           "full-connection",
 		Type:                 model.TypePostgreSQL,
 		Host:                 "db.example.com",
@@ -793,10 +772,10 @@ func TestTestConnection_Execute_ConnectionWithAllFields(t *testing.T) {
 
 	// Mock: connection found
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, orgID).
+		FindByID(gomock.Any(), connID).
 		Return(existingConn, nil)
 
-	result, err := svc.Execute(ctx, orgID, connID)
+	result, err := svc.Execute(ctx, connID)
 
 	// Expected: connection failure because we can't connect to actual DB
 	if err == nil {
@@ -833,20 +812,19 @@ func TestTestConnection_Execute_DifferentOrganizations(t *testing.T) {
 	mockStore := NewMockRateLimiterStore(ctrl)
 	mockStore.EXPECT().Take(gomock.Any(), gomock.Any()).Return(uint64(1), uint64(10), uint64(time.Now().UTC().Add(time.Minute).UnixNano()), true, nil)
 
-	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, nil)
+	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, nil, nil, nil)
 
 	ctx := testContext()
-	requestingOrgID := uuid.New()
 	connectionOrgID := uuid.New()
 	connID := uuid.New()
 
 	// The repository should filter by organization and return nil
 	// because the connection belongs to a different organization
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, requestingOrgID).
+		FindByID(gomock.Any(), connID).
 		Return(nil, nil)
 
-	result, err := svc.Execute(ctx, requestingOrgID, connID)
+	result, err := svc.Execute(ctx, connID)
 
 	if result != nil {
 		t.Fatalf("expected nil result for connection in different organization, got %+v", result)
@@ -910,19 +888,18 @@ func TestTestConnection_Execute_RateLimitKeyTenantIsolation(t *testing.T) {
 				}).
 				Times(2)
 
-			svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, nil)
-			orgID := uuid.New()
+			svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, nil, nil, nil)
 
 			// Execute with tenant A context
 			ctxA := testContext()
-			ctxA = tmcore.SetTenantIDInContext(ctxA, tt.tenantA)
-			_, errA := svc.Execute(ctxA, orgID, connID)
+			ctxA = tmcore.ContextWithTenantID(ctxA, tt.tenantA)
+			_, errA := svc.Execute(ctxA, connID)
 			assert.Error(t, errA, "rate-limited request must return an error for tenant A")
 
 			// Execute with tenant B context
 			ctxB := testContext()
-			ctxB = tmcore.SetTenantIDInContext(ctxB, tt.tenantB)
-			_, errB := svc.Execute(ctxB, orgID, connID)
+			ctxB = tmcore.ContextWithTenantID(ctxB, tt.tenantB)
+			_, errB := svc.Execute(ctxB, connID)
 			assert.Error(t, errB, "rate-limited request must return an error for tenant B")
 
 			assert.Len(t, capturedKeys, 2, "expected two rate limiter keys to be captured")
@@ -961,13 +938,12 @@ func TestTestConnection_Execute_RateLimitKeySingleTenant(t *testing.T) {
 			return 0, 0, uint64(time.Now().UTC().Add(30 * time.Second).UnixNano()), false, nil
 		})
 
-	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, nil)
+	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, nil, nil, nil)
 
 	// No tenant in context (single-tenant mode)
 	ctx := testContext()
-	orgID := uuid.New()
 
-	_, err := svc.Execute(ctx, orgID, connID)
+	_, err := svc.Execute(ctx, connID)
 	assert.Error(t, err, "rate-limited request must return an error in single-tenant mode")
 
 	assert.Equal(t, connID.String(), capturedKey,

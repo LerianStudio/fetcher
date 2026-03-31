@@ -118,7 +118,6 @@ func (cr *ConnectionMongoDBRepository) Create(ctx context.Context, conn *model.C
 
 	span.SetAttributes(
 		attribute.String("app.request.request_id", reqID),
-		attribute.String("app.request.organization_id", conn.OrganizationID.String()),
 		attribute.String("app.request.config_name", conn.ConfigName),
 		attribute.String("app.request.connection_id", conn.ID.String()),
 	)
@@ -137,7 +136,7 @@ func (cr *ConnectionMongoDBRepository) Create(ctx context.Context, conn *model.C
 	coll := db.Collection(strings.ToLower(constant.MongoCollectionConnection))
 	if _, err := coll.InsertOne(ctx, record); err != nil {
 		if mongo.IsDuplicateKeyError(err) {
-			err := fmt.Errorf("connection with config_name '%s' already exists for organization '%s'", conn.ConfigName, conn.OrganizationID.String())
+			err := fmt.Errorf("connection with config_name '%s' already exists", conn.ConfigName)
 			libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Duplicate connection", err)
 
 			return nil, pkg.ValidateBusinessError(
@@ -177,7 +176,6 @@ func (cr *ConnectionMongoDBRepository) Update(ctx context.Context, conn *model.C
 	attributes := []attribute.KeyValue{
 		attribute.String("app.request.request_id", reqID),
 		attribute.String("app.request.connection_id", conn.ID.String()),
-		attribute.String("app.request.organization_id", conn.OrganizationID.String()),
 	}
 	span.SetAttributes(attributes...)
 
@@ -189,9 +187,8 @@ func (cr *ConnectionMongoDBRepository) Update(ctx context.Context, conn *model.C
 
 	coll := db.Collection(strings.ToLower(constant.MongoCollectionConnection))
 	filter := bson.M{
-		"_id":             conn.ID,
-		"organization_id": conn.OrganizationID,
-		"deleted_at":      bson.D{{Key: "$eq", Value: nil}},
+		"_id":        conn.ID,
+		"deleted_at": bson.D{{Key: "$eq", Value: nil}},
 	}
 
 	update := bson.M{
@@ -201,6 +198,7 @@ func (cr *ConnectionMongoDBRepository) Update(ctx context.Context, conn *model.C
 			"host":                   conn.Host,
 			"port":                   conn.Port,
 			"database_name":          conn.DatabaseName,
+			"schema":                 conn.Schema,
 			"username":               conn.Username,
 			"password_encrypted":     conn.PasswordEncrypted,
 			"encryption_key_version": conn.EncryptionKeyVersion,
@@ -231,7 +229,7 @@ func (cr *ConnectionMongoDBRepository) Update(ctx context.Context, conn *model.C
 		}
 
 		if mongo.IsDuplicateKeyError(err) {
-			err := fmt.Errorf("connection with config_name '%s' already exists for organization '%s'", conn.ConfigName, conn.OrganizationID.String())
+			err := fmt.Errorf("connection with config_name '%s' already exists", conn.ConfigName)
 			libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Duplicate connection", err)
 
 			return nil, pkg.ValidateBusinessError(
@@ -255,7 +253,7 @@ func (cr *ConnectionMongoDBRepository) Update(ctx context.Context, conn *model.C
 }
 
 // Delete performs a soft delete by stamping deleted_at and updated_at fields.
-func (cr *ConnectionMongoDBRepository) Delete(ctx context.Context, connectionID, organizationID uuid.UUID, deletedAt time.Time) error {
+func (cr *ConnectionMongoDBRepository) Delete(ctx context.Context, connectionID uuid.UUID, deletedAt time.Time) error {
 	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "mongodb.delete_connection")
@@ -264,7 +262,6 @@ func (cr *ConnectionMongoDBRepository) Delete(ctx context.Context, connectionID,
 	attributes := []attribute.KeyValue{
 		attribute.String("app.request.request_id", reqID),
 		attribute.String("app.request.connection_id", connectionID.String()),
-		attribute.String("app.request.organization_id", organizationID.String()),
 	}
 	span.SetAttributes(attributes...)
 
@@ -276,9 +273,8 @@ func (cr *ConnectionMongoDBRepository) Delete(ctx context.Context, connectionID,
 
 	coll := db.Collection(strings.ToLower(constant.MongoCollectionConnection))
 	filter := bson.M{
-		"_id":             connectionID,
-		"organization_id": organizationID,
-		"deleted_at":      bson.D{{Key: "$eq", Value: nil}},
+		"_id":        connectionID,
+		"deleted_at": bson.D{{Key: "$eq", Value: nil}},
 	}
 
 	update := bson.M{
@@ -307,7 +303,7 @@ func (cr *ConnectionMongoDBRepository) Delete(ctx context.Context, connectionID,
 }
 
 // FindByID fetches a connection by its ID scoped to an organization.
-func (cr *ConnectionMongoDBRepository) FindByID(ctx context.Context, connectionID, organizationID uuid.UUID) (*model.Connection, error) {
+func (cr *ConnectionMongoDBRepository) FindByID(ctx context.Context, connectionID uuid.UUID) (*model.Connection, error) {
 	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "mongodb.find_connection_by_id")
@@ -316,7 +312,6 @@ func (cr *ConnectionMongoDBRepository) FindByID(ctx context.Context, connectionI
 	attributes := []attribute.KeyValue{
 		attribute.String("app.request.request_id", reqID),
 		attribute.String("app.request.connection_id", connectionID.String()),
-		attribute.String("app.request.organization_id", organizationID.String()),
 	}
 	span.SetAttributes(attributes...)
 
@@ -329,9 +324,8 @@ func (cr *ConnectionMongoDBRepository) FindByID(ctx context.Context, connectionI
 	var record ConnectionMongoDBModel
 
 	filter := bson.M{
-		"_id":             connectionID,
-		"organization_id": organizationID,
-		"deleted_at":      bson.D{{Key: "$eq", Value: nil}},
+		"_id":        connectionID,
+		"deleted_at": bson.D{{Key: "$eq", Value: nil}},
 	}
 
 	coll := db.Collection(strings.ToLower(constant.MongoCollectionConnection))
@@ -354,16 +348,15 @@ func (cr *ConnectionMongoDBRepository) FindByID(ctx context.Context, connectionI
 	return connection, nil
 }
 
-// FindByOrganizationAndName retrieves a connection by configName scoped to an organization.
-func (cr *ConnectionMongoDBRepository) FindByOrganizationAndName(ctx context.Context, organizationID uuid.UUID, configName string) (*model.Connection, error) {
+// FindByName retrieves a connection by configName.
+func (cr *ConnectionMongoDBRepository) FindByName(ctx context.Context, configName string) (*model.Connection, error) {
 	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
-	ctx, span := tracer.Start(ctx, "mongodb.find_connection_by_org_name")
+	ctx, span := tracer.Start(ctx, "mongodb.find_connection_by_name")
 	defer span.End()
 
 	attributes := []attribute.KeyValue{
 		attribute.String("app.request.request_id", reqID),
-		attribute.String("app.request.organization_id", organizationID.String()),
 		attribute.String("app.request.config_name", configName),
 	}
 	span.SetAttributes(attributes...)
@@ -377,9 +370,8 @@ func (cr *ConnectionMongoDBRepository) FindByOrganizationAndName(ctx context.Con
 	var record ConnectionMongoDBModel
 
 	filter := bson.M{
-		"organization_id": organizationID,
-		"config_name":     configName,
-		"deleted_at":      bson.D{{Key: "$eq", Value: nil}},
+		"config_name": configName,
+		"deleted_at":  bson.D{{Key: "$eq", Value: nil}},
 	}
 
 	coll := db.Collection(strings.ToLower(constant.MongoCollectionConnection))
@@ -406,16 +398,15 @@ func (cr *ConnectionMongoDBRepository) FindByOrganizationAndName(ctx context.Con
 	return conn, nil
 }
 
-// FindByOrganizationAndDatabaseName retrieves a connection by databaseName scoped to an organization.
-func (cr *ConnectionMongoDBRepository) FindByOrganizationAndDatabaseName(ctx context.Context, organizationID uuid.UUID, databaseName string) (*model.Connection, error) {
+// FindByDatabaseName retrieves a connection by databaseName.
+func (cr *ConnectionMongoDBRepository) FindByDatabaseName(ctx context.Context, databaseName string) (*model.Connection, error) {
 	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
-	ctx, span := tracer.Start(ctx, "mongodb.find_connection_by_org_database")
+	ctx, span := tracer.Start(ctx, "mongodb.find_connection_by_database")
 	defer span.End()
 
 	attributes := []attribute.KeyValue{
 		attribute.String("app.request.request_id", reqID),
-		attribute.String("app.request.organization_id", organizationID.String()),
 		attribute.String("app.request.database_name", databaseName),
 	}
 	span.SetAttributes(attributes...)
@@ -438,9 +429,8 @@ func (cr *ConnectionMongoDBRepository) FindByOrganizationAndDatabaseName(ctx con
 	var record ConnectionMongoDBModel
 
 	filter := bson.M{
-		"organization_id": organizationID,
-		"database_name":   databaseName,
-		"deleted_at":      bson.D{{Key: "$eq", Value: nil}},
+		"database_name": databaseName,
+		"deleted_at":    bson.D{{Key: "$eq", Value: nil}},
 	}
 
 	if errFind := coll.FindOne(ctx, filter).Decode(&record); errFind != nil {
@@ -463,7 +453,7 @@ func (cr *ConnectionMongoDBRepository) FindByOrganizationAndDatabaseName(ctx con
 }
 
 // FindByConfigNames retrieves connections that match any of the provided config names for the given organization.
-func (cr *ConnectionMongoDBRepository) FindByConfigNames(ctx context.Context, organizationID uuid.UUID, configNames []string) ([]*model.Connection, error) {
+func (cr *ConnectionMongoDBRepository) FindByConfigNames(ctx context.Context, configNames []string) ([]*model.Connection, error) {
 	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "mongodb.find_connections_by_config_names")
@@ -487,7 +477,6 @@ func (cr *ConnectionMongoDBRepository) FindByConfigNames(ctx context.Context, or
 
 	attributes := []attribute.KeyValue{
 		attribute.String("app.request.request_id", reqID),
-		attribute.String("app.request.organization_id", organizationID.String()),
 		attribute.Int("app.request.config_names_count", len(trimmedNames)),
 	}
 	span.SetAttributes(attributes...)
@@ -501,9 +490,8 @@ func (cr *ConnectionMongoDBRepository) FindByConfigNames(ctx context.Context, or
 	coll := db.Collection(strings.ToLower(constant.MongoCollectionConnection))
 
 	filter := bson.M{
-		"organization_id": organizationID,
-		"config_name":     bson.M{"$in": trimmedNames},
-		"deleted_at":      bson.D{{Key: "$eq", Value: nil}},
+		"config_name": bson.M{"$in": trimmedNames},
+		"deleted_at":  bson.D{{Key: "$eq", Value: nil}},
 	}
 
 	if err := setSpanAttributesFromValue(span, "app.request.repository_filter", filter); err != nil {
@@ -546,7 +534,7 @@ func (cr *ConnectionMongoDBRepository) FindByConfigNames(ctx context.Context, or
 }
 
 // List returns a paginated set of connections for the given organization.
-func (rm *ConnectionMongoDBRepository) List(ctx context.Context, organizationID uuid.UUID, filters http.QueryHeader) ([]*model.Connection, int64, error) {
+func (rm *ConnectionMongoDBRepository) List(ctx context.Context, filters http.QueryHeader) ([]*model.Connection, int64, error) {
 	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "mongodb.list_connections")
@@ -565,7 +553,7 @@ func (rm *ConnectionMongoDBRepository) List(ctx context.Context, organizationID 
 		return nil, 0, mongodb.MapMongoErrorToResponse(err, ctx)
 	}
 
-	queryFilter := rm.buildQueryFilter(organizationID, filters)
+	queryFilter := rm.buildQueryFilter(filters)
 	opts := mongodb.BuildPaginationOptions(filters)
 
 	err = libOpentelemetry.SetSpanAttributesFromValue(span, "app.request.repository_filter", queryFilter, nil)
@@ -622,7 +610,7 @@ func (rm *ConnectionMongoDBRepository) List(ctx context.Context, organizationID 
 }
 
 // ListUnassigned returns a paginated set of connections that have no product assigned for the given organization.
-func (rm *ConnectionMongoDBRepository) ListUnassigned(ctx context.Context, organizationID uuid.UUID, filters http.QueryHeader) ([]*model.Connection, int64, error) {
+func (rm *ConnectionMongoDBRepository) ListUnassigned(ctx context.Context, filters http.QueryHeader) ([]*model.Connection, int64, error) {
 	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "mongodb.list_unassigned_connections")
@@ -642,8 +630,7 @@ func (rm *ConnectionMongoDBRepository) ListUnassigned(ctx context.Context, organ
 	}
 
 	queryFilter := bson.M{
-		"organization_id": organizationID,
-		"deleted_at":      bson.D{{Key: "$eq", Value: nil}},
+		"deleted_at": bson.D{{Key: "$eq", Value: nil}},
 		"$or": []bson.M{
 			{"product_name": ""},
 			{"product_name": bson.M{"$eq": nil}},
@@ -708,7 +695,7 @@ func (rm *ConnectionMongoDBRepository) ListUnassigned(ctx context.Context, organ
 }
 
 // AssignProductName associates a legacy (unassigned) connection to a product by name. Returns the updated connection.
-func (cr *ConnectionMongoDBRepository) AssignProductName(ctx context.Context, connectionID, organizationID uuid.UUID, productName string) (*model.Connection, error) {
+func (cr *ConnectionMongoDBRepository) AssignProductName(ctx context.Context, connectionID uuid.UUID, productName string) (*model.Connection, error) {
 	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "mongodb.assign_connection_product")
@@ -717,7 +704,6 @@ func (cr *ConnectionMongoDBRepository) AssignProductName(ctx context.Context, co
 	span.SetAttributes(
 		attribute.String("app.request.request_id", reqID),
 		attribute.String("app.request.connection_id", connectionID.String()),
-		attribute.String("app.request.organization_id", organizationID.String()),
 		attribute.String("app.request.product_name", productName),
 	)
 
@@ -730,9 +716,8 @@ func (cr *ConnectionMongoDBRepository) AssignProductName(ctx context.Context, co
 	coll := db.Collection(strings.ToLower(constant.MongoCollectionConnection))
 
 	filter := bson.M{
-		"_id":             connectionID,
-		"organization_id": organizationID,
-		"deleted_at":      bson.D{{Key: "$eq", Value: nil}},
+		"_id":        connectionID,
+		"deleted_at": bson.D{{Key: "$eq", Value: nil}},
 		"$or": []bson.M{
 			{"product_name": ""},
 			{"product_name": bson.M{"$eq": nil}},
@@ -771,14 +756,17 @@ func (cr *ConnectionMongoDBRepository) AssignProductName(ctx context.Context, co
 }
 
 // buildQueryFilter builds the MongoDB query filter from filters
-func (rm *ConnectionMongoDBRepository) buildQueryFilter(organizationID uuid.UUID, filters http.QueryHeader) bson.M {
+func (rm *ConnectionMongoDBRepository) buildQueryFilter(filters http.QueryHeader) bson.M {
 	queryFilter := bson.M{
-		"organization_id": organizationID,
-		"deleted_at":      bson.D{{Key: "$eq", Value: nil}},
+		"deleted_at": bson.D{{Key: "$eq", Value: nil}},
 	}
 
 	if filters.ProductName != "" {
 		queryFilter["product_name"] = filters.ProductName
+	}
+
+	if filters.Type != "" {
+		queryFilter["type"] = filters.Type
 	}
 
 	if len(filters.Metadata) > 0 && filters.UseMetadata {

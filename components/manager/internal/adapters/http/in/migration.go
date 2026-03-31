@@ -42,7 +42,6 @@ func NewMigrationHandler(
 //	@Tags			Migration
 //	@Produce		json
 //	@Param			Authorization		header		string	false	"The authorization token in the 'Bearer access_token' format. Only required when auth plugin is enabled."
-//	@Param			X-Organization-Id	header		string	true	"Organization ID"
 //	@Param			page				query		int		false	"Page number (minimum 1)"	default(1)
 //	@Param			limit				query		int		false	"Page size (default 50, max 1000)"	default(50)
 //	@Param			sortOrder			query		string	false	"Sort order"	Enums(asc, desc)	default(desc)
@@ -59,15 +58,8 @@ func (h *MigrationHandler) ListUnassignedConnections(c *fiber.Ctx) error {
 
 	c.SetUserContext(ctx)
 
-	orgID, err := httpUtils.GetOrganizationID(c)
-	if err != nil {
-		libOpentelemetry.HandleSpanError(span, "missing or invalid org id", err)
-		return httpUtils.WithError(c, err)
-	}
-
 	span.SetAttributes(
 		attribute.String("app.request.request_id", reqID),
-		attribute.String("app.request.organization_id", orgID.String()),
 	)
 
 	headerParams, err := httpUtils.ValidateParameters(c.Queries())
@@ -78,7 +70,7 @@ func (h *MigrationHandler) ListUnassignedConnections(c *fiber.Ctx) error {
 		return httpUtils.WithError(c, err)
 	}
 
-	pagination, err := h.ListUnassignedQry.Execute(ctx, orgID, *headerParams)
+	pagination, err := h.ListUnassignedQry.Execute(ctx, *headerParams)
 	if err != nil {
 		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to execute list unassigned connections query, Error: %s", err.Error()))
 		libOpentelemetry.HandleSpanError(span, "failed to list unassigned connections", err)
@@ -86,7 +78,7 @@ func (h *MigrationHandler) ListUnassignedConnections(c *fiber.Ctx) error {
 		return httpUtils.WithError(c, err)
 	}
 
-	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("unassigned connections listed org=%s count=%d", orgID, pagination.Total))
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("unassigned connections listed count=%d", pagination.Total))
 
 	return httpUtils.OK(c, pagination)
 }
@@ -98,7 +90,6 @@ func (h *MigrationHandler) ListUnassignedConnections(c *fiber.Ctx) error {
 //	@Tags			Migration
 //	@Produce		json
 //	@Param			Authorization		header		string							false	"The authorization token in the 'Bearer access_token' format. Only required when auth plugin is enabled."
-//	@Param			X-Organization-Id	header		string							true	"Organization ID"
 //	@Param			id					path		string							true	"Connection ID"
 //	@Param			X-Product-Name		header		string							true	"Product name to assign"
 //	@Success		200					{object}	model.ConnectionResponse
@@ -116,12 +107,6 @@ func (h *MigrationHandler) AssignConnectionToProduct(c *fiber.Ctx) error {
 
 	c.SetUserContext(ctx)
 
-	orgID, err := httpUtils.GetOrganizationID(c)
-	if err != nil {
-		libOpentelemetry.HandleSpanError(span, "missing or invalid org id", err)
-		return httpUtils.WithError(c, err)
-	}
-
 	connectionID, err := uuid.Parse(c.Params("id"))
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "invalid connection id parameter", err)
@@ -137,7 +122,6 @@ func (h *MigrationHandler) AssignConnectionToProduct(c *fiber.Ctx) error {
 
 	span.SetAttributes(
 		attribute.String("app.request.request_id", reqID),
-		attribute.String("app.request.organization_id", orgID.String()),
 		attribute.String("app.request.connection_id", connectionID.String()),
 	)
 
@@ -149,7 +133,7 @@ func (h *MigrationHandler) AssignConnectionToProduct(c *fiber.Ctx) error {
 
 	span.SetAttributes(attribute.String("app.request.product_name", productName))
 
-	conn, err := h.AssignCmd.Execute(ctx, orgID, connectionID, productName)
+	conn, err := h.AssignCmd.Execute(ctx, connectionID, productName)
 	if err != nil {
 		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to assign connection to product, Error: %s", err.Error()))
 		libOpentelemetry.HandleSpanError(span, "failed to assign connection to product", err)
@@ -159,7 +143,7 @@ func (h *MigrationHandler) AssignConnectionToProduct(c *fiber.Ctx) error {
 
 	resp := model.NewConnectionResponseFrom(conn)
 
-	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("connection assigned to product connection_id=%s product_name=%s org=%s", connectionID, productName, orgID))
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("connection assigned to product connection_id=%s product_name=%s", connectionID, productName))
 
 	return httpUtils.OK(c, resp)
 }

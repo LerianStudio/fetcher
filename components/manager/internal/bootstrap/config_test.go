@@ -14,7 +14,9 @@ import (
 	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
 	libOtel "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
 	tmclient "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/client"
+	tmcore "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/core"
 	"github.com/LerianStudio/lib-commons/v4/commons/zap"
+	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -369,7 +371,9 @@ func TestConfig_LoadFromEnvVars(t *testing.T) {
 			envVars: map[string]string{
 				"MULTI_TENANT_ENABLED":                     "true",
 				"MULTI_TENANT_URL":                         "http://tenant-manager:8080",
-				"MULTI_TENANT_ENVIRONMENT":                 "staging",
+				"MULTI_TENANT_REDIS_HOST":                  "redis-host",
+				"MULTI_TENANT_REDIS_PORT":                  "6380",
+				"MULTI_TENANT_REDIS_PASSWORD":              "redis-secret",
 				"MULTI_TENANT_MAX_TENANT_POOLS":            "200",
 				"MULTI_TENANT_IDLE_TIMEOUT_SEC":            "600",
 				"MULTI_TENANT_CIRCUIT_BREAKER_THRESHOLD":   "10",
@@ -384,8 +388,14 @@ func TestConfig_LoadFromEnvVars(t *testing.T) {
 				if cfg.MultiTenantURL != "http://tenant-manager:8080" {
 					t.Errorf("MultiTenantURL = %q, want %q", cfg.MultiTenantURL, "http://tenant-manager:8080")
 				}
-				if cfg.MultiTenantEnvironment != "staging" {
-					t.Errorf("MultiTenantEnvironment = %q, want %q", cfg.MultiTenantEnvironment, "staging")
+				if cfg.MultiTenantRedisHost != "redis-host" {
+					t.Errorf("MultiTenantRedisHost = %q, want %q", cfg.MultiTenantRedisHost, "redis-host")
+				}
+				if cfg.MultiTenantRedisPort != "6380" {
+					t.Errorf("MultiTenantRedisPort = %q, want %q", cfg.MultiTenantRedisPort, "6380")
+				}
+				if cfg.MultiTenantRedisPassword != "redis-secret" {
+					t.Errorf("MultiTenantRedisPassword = %q, want %q", cfg.MultiTenantRedisPassword, "redis-secret")
 				}
 				if cfg.MultiTenantMaxTenantPools != 200 {
 					t.Errorf("MultiTenantMaxTenantPools = %d, want 200", cfg.MultiTenantMaxTenantPools)
@@ -415,8 +425,8 @@ func TestConfig_LoadFromEnvVars(t *testing.T) {
 				if cfg.MultiTenantURL != "" {
 					t.Errorf("MultiTenantURL should be empty, got %q", cfg.MultiTenantURL)
 				}
-				if cfg.MultiTenantEnvironment != "" {
-					t.Errorf("MultiTenantEnvironment should be empty, got %q", cfg.MultiTenantEnvironment)
+				if cfg.MultiTenantRedisHost != "" {
+					t.Errorf("MultiTenantRedisHost should be empty, got %q", cfg.MultiTenantRedisHost)
 				}
 				if cfg.MultiTenantMaxTenantPools != 0 {
 					t.Errorf("MultiTenantMaxTenantPools should be 0, got %d", cfg.MultiTenantMaxTenantPools)
@@ -534,6 +544,197 @@ func TestGetRedisDB(t *testing.T) {
 	}
 }
 
+func TestResolvedMaxTenantPools(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  *Config
+		want int
+	}{
+		{
+			name: "configured value",
+			cfg:  &Config{MultiTenantMaxTenantPools: 200},
+			want: 200,
+		},
+		{
+			name: "zero uses default",
+			cfg:  &Config{MultiTenantMaxTenantPools: 0},
+			want: defaultMaxTenantPools,
+		},
+		{
+			name: "negative uses default",
+			cfg:  &Config{MultiTenantMaxTenantPools: -1},
+			want: defaultMaxTenantPools,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := resolvedMaxTenantPools(tt.cfg)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestMultiTenantPublisher_ProducerDefault_RequiresTenantID(t *testing.T) {
+	publisher := &multiTenantPublisher{
+		manager: &stubRabbitMQManager{},
+		logger:  testManagerBootstrapLogger(),
+	}
+
+	err := publisher.ProducerDefault(context.Background(), "", "test-queue", []byte(`{}`), nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no tenant ID in context")
+}
+
+func TestMultiTenantPublisher_ProducerDefault_GetChannelError(t *testing.T) {
+	publisher := &multiTenantPublisher{
+		manager: &stubRabbitMQManager{err: errors.New("connection refused")},
+		logger:  testManagerBootstrapLogger(),
+	}
+
+	ctx := stubTenantContext("tenant-1")
+
+	err := publisher.ProducerDefault(ctx, "", "test-queue", []byte(`{}`), nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "get RabbitMQ channel for tenant tenant-1")
+	assert.Contains(t, err.Error(), "connection refused")
+}
+
+func TestMultiTenantPublisher_ProducerDefault_PublishesMessage(t *testing.T) {
+	ch := &stubRabbitMQChannel{}
+	publisher := &multiTenantPublisher{
+		manager: &stubRabbitMQManager{channel: ch},
+		logger:  testManagerBootstrapLogger(),
+	}
+
+	ctx := stubTenantContext("tenant-1")
+	headers := map[string]any{"X-Custom": "value"}
+
+	err := publisher.ProducerDefault(ctx, "exchange", "routing-key", []byte(`{"job":"1"}`), &headers)
+	require.NoError(t, err)
+	assert.True(t, ch.published, "expected message to be published")
+	assert.True(t, ch.closed, "expected channel to be closed")
+	assert.Equal(t, "exchange", ch.lastExchange)
+	assert.Equal(t, "routing-key", ch.lastKey)
+}
+
+func TestMultiTenantPublisher_ProducerDefault_NilHeaders(t *testing.T) {
+	ch := &stubRabbitMQChannel{}
+	publisher := &multiTenantPublisher{
+		manager: &stubRabbitMQManager{channel: ch},
+		logger:  testManagerBootstrapLogger(),
+	}
+
+	ctx := stubTenantContext("tenant-1")
+
+	err := publisher.ProducerDefault(ctx, "", "queue", []byte(`{}`), nil)
+	require.NoError(t, err)
+	assert.True(t, ch.published)
+}
+
+func TestManagerRabbitMQAdapter_GetChannel(t *testing.T) {
+	// Verify the adapter wraps the manager correctly (structural test)
+	adapter := newManagerRabbitMQAdapter(nil)
+	assert.NotNil(t, adapter)
+}
+
+func TestInitPlatformDependencies_MultiTenant_CreatesTMPublisher(t *testing.T) {
+	original := newSchemaCacheStore
+	originalTM := newTenantManagerClient
+	t.Cleanup(func() {
+		newSchemaCacheStore = original
+		newTenantManagerClient = originalTM
+	})
+
+	newSchemaCacheStore = func(redisCache.RedisConfig, libLog.Logger, time.Duration, string) (redisCache.Cache[model.DataSourceSchema], error) {
+		return stubSchemaCacheStore{}, nil
+	}
+
+	newTenantManagerClient = func(string, libLog.Logger, ...tmclient.ClientOption) (*tmclient.Client, error) {
+		return &tmclient.Client{}, nil
+	}
+
+	cfg := &Config{
+		MultiTenantEnabled:       true,
+		MultiTenantURL:           "http://tenant-manager:8080",
+		MultiTenantServiceAPIKey: "test-key",
+	}
+
+	deps, err := initPlatformDependencies(cfg, testManagerBootstrapLogger(), nil)
+	require.NoError(t, err)
+	assert.NotNil(t, deps.rabbitPublisher)
+	assert.NotNil(t, deps.rabbitMQCleanup)
+
+	// Verify it is a multiTenantPublisher
+	_, ok := deps.rabbitPublisher.(*multiTenantPublisher)
+	assert.True(t, ok, "expected rabbitPublisher to be *multiTenantPublisher in multi-tenant mode")
+}
+
+func TestInitPlatformDependencies_MultiTenant_TMClientError(t *testing.T) {
+	original := newSchemaCacheStore
+	originalTM := newTenantManagerClient
+	t.Cleanup(func() {
+		newSchemaCacheStore = original
+		newTenantManagerClient = originalTM
+	})
+
+	newSchemaCacheStore = func(redisCache.RedisConfig, libLog.Logger, time.Duration, string) (redisCache.Cache[model.DataSourceSchema], error) {
+		return stubSchemaCacheStore{}, nil
+	}
+
+	newTenantManagerClient = func(string, libLog.Logger, ...tmclient.ClientOption) (*tmclient.Client, error) {
+		return nil, errors.New("tm client init failed")
+	}
+
+	cfg := &Config{
+		MultiTenantEnabled:       true,
+		MultiTenantURL:           "http://tenant-manager:8080",
+		MultiTenantServiceAPIKey: "test-key",
+	}
+
+	deps, err := initPlatformDependencies(cfg, testManagerBootstrapLogger(), nil)
+	assert.Nil(t, deps)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "create tenant manager client for RabbitMQ")
+}
+
+// --- test stubs for multiTenantPublisher ---
+
+type stubRabbitMQManager struct {
+	channel managerRabbitMQChannel
+	err     error
+}
+
+func (s *stubRabbitMQManager) GetChannel(_ context.Context, _ string) (managerRabbitMQChannel, error) {
+	return s.channel, s.err
+}
+
+type stubRabbitMQChannel struct {
+	published    bool
+	closed       bool
+	lastExchange string
+	lastKey      string
+	publishErr   error
+}
+
+func (s *stubRabbitMQChannel) PublishWithContext(_ context.Context, exchange, key string, _, _ bool, _ amqp.Publishing) error {
+	s.published = true
+	s.lastExchange = exchange
+	s.lastKey = key
+
+	return s.publishErr
+}
+
+func (s *stubRabbitMQChannel) Close() error {
+	s.closed = true
+	return nil
+}
+
+// stubTenantContext creates a context with tenant ID set via tmcore.
+func stubTenantContext(tenantID string) context.Context {
+	return tmcore.ContextWithTenantID(context.Background(), tenantID)
+}
+
 func TestInitMultiTenantMiddleware(t *testing.T) {
 	logger := testManagerBootstrapLogger()
 
@@ -615,7 +816,11 @@ func TestInitMultiTenantMiddleware(t *testing.T) {
 				}
 			}
 
-			handler, err := initMultiTenantMiddleware(tt.cfg, logger)
+			handler, cleanup, err := initMultiTenantMiddleware(tt.cfg, logger)
+			if cleanup != nil {
+				t.Cleanup(cleanup)
+			}
+
 			if tt.wantErr != "" {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), "create tenant manager client")

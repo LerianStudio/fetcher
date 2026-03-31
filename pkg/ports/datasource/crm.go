@@ -21,4 +21,8 @@ type CRMQueryable interface {
 
 	// QueryCollectionWithAdvancedFilters queries a single collection using advanced FilterCondition filters.
 	QueryCollectionWithAdvancedFilters(ctx context.Context, collection string, fields []string, filters map[string]job.FilterCondition) ([]map[string]any, error)
+
+	// ListCollectionNames returns all collection names in the database.
+	// Used by plugin_crm to discover collections by prefix (e.g., "holders_*").
+	ListCollectionNames(ctx context.Context) ([]string, error)
 }

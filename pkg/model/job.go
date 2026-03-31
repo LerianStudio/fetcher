@@ -64,21 +64,19 @@ func (js JobStatus) IsValid() bool {
 
 // Job represents the API payload stored in the jobs collection.
 type Job struct {
-	ID             uuid.UUID
-	OrganizationID uuid.UUID
-	Metadata       map[string]any
-	MappedFields   map[string]map[string][]string
-	Filters        NestedFilters
-	Status         JobStatus
-	ResultPath     string
-	ResultHMAC     string
-	RequestHash    string
-	CreatedAt      time.Time
-	CompletedAt    *time.Time
+	ID           uuid.UUID
+	Metadata     map[string]any
+	MappedFields map[string]map[string][]string
+	Filters      NestedFilters
+	Status       JobStatus
+	ResultPath   string
+	ResultHMAC   string
+	RequestHash  string
+	CreatedAt    time.Time
+	CompletedAt  *time.Time
 }
 
 func NewJob(
-	organizationID uuid.UUID,
 	metadata map[string]any,
 	mappedFields map[string]map[string][]string,
 	filters NestedFilters,
@@ -94,16 +92,15 @@ func NewJob(
 	}
 
 	return &Job{
-		ID:             id,
-		OrganizationID: organizationID,
-		Metadata:       metadata,
-		MappedFields:   mappedFields,
-		Filters:        filters,
-		Status:         status,
-		ResultPath:     resultPath,
-		RequestHash:    requestHash,
-		CreatedAt:      createdAt,
-		CompletedAt:    completedAt,
+		ID:           id,
+		Metadata:     metadata,
+		MappedFields: mappedFields,
+		Filters:      filters,
+		Status:       status,
+		ResultPath:   resultPath,
+		RequestHash:  requestHash,
+		CreatedAt:    createdAt,
+		CompletedAt:  completedAt,
 	}, nil
 }
 
@@ -317,17 +314,16 @@ type FetcherResponse struct {
 //
 // @Description JobResponse represents the complete information about a data extraction job.
 type JobResponse struct {
-	ID             uuid.UUID                      `json:"id"`
-	OrganizationID uuid.UUID                      `json:"organizationId"`
-	Metadata       map[string]any                 `json:"metadata,omitempty"`
-	MappedFields   map[string]map[string][]string `json:"mappedFields"`
-	Filters        NestedFilters                  `json:"filters,omitempty"`
-	Status         string                         `json:"status"`
-	ResultPath     string                         `json:"resultPath,omitempty"`
-	ResultHmac     string                         `json:"resultHmac,omitempty"`
-	RequestHash    string                         `json:"requestHash,omitempty"`
-	CreatedAt      time.Time                      `json:"createdAt"`
-	CompletedAt    *time.Time                     `json:"completedAt,omitempty"`
+	ID           uuid.UUID                      `json:"id"`
+	Metadata     map[string]any                 `json:"metadata,omitempty"`
+	MappedFields map[string]map[string][]string `json:"mappedFields"`
+	Filters      NestedFilters                  `json:"filters,omitempty"`
+	Status       string                         `json:"status"`
+	ResultPath   string                         `json:"resultPath,omitempty"`
+	ResultHmac   string                         `json:"resultHmac,omitempty"`
+	RequestHash  string                         `json:"requestHash,omitempty"`
+	CreatedAt    time.Time                      `json:"createdAt"`
+	CompletedAt  *time.Time                     `json:"completedAt,omitempty"`
 }
 
 // NewJobResponseFrom creates a JobResponse from a Job entity.
@@ -337,16 +333,15 @@ func NewJobResponseFrom(j *Job) *JobResponse {
 	}
 
 	return &JobResponse{
-		ID:             j.ID,
-		OrganizationID: j.OrganizationID,
-		Metadata:       j.Metadata,
-		MappedFields:   j.MappedFields,
-		Filters:        j.Filters,
-		Status:         string(j.Status),
-		ResultPath:     j.ResultPath,
-		ResultHmac:     j.ResultHMAC,
-		RequestHash:    j.RequestHash,
-		CreatedAt:      j.CreatedAt,
-		CompletedAt:    j.CompletedAt,
+		ID:           j.ID,
+		Metadata:     j.Metadata,
+		MappedFields: j.MappedFields,
+		Filters:      j.Filters,
+		Status:       string(j.Status),
+		ResultPath:   j.ResultPath,
+		ResultHmac:   j.ResultHMAC,
+		RequestHash:  j.RequestHash,
+		CreatedAt:    j.CreatedAt,
+		CompletedAt:  j.CompletedAt,
 	}
 }

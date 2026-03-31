@@ -16,10 +16,9 @@ import (
 )
 
 // newExistingConnectionForAssign creates a valid existing Connection without a ProductName (unassigned).
-func newExistingConnectionForAssign(orgID, connID uuid.UUID) *model.Connection {
+func newExistingConnectionForAssign(connID uuid.UUID) *model.Connection {
 	return &model.Connection{
 		ID:                   connID,
-		OrganizationID:       orgID,
 		ConfigName:           "existing-connection",
 		Type:                 model.TypePostgreSQL,
 		Host:                 "localhost",
@@ -43,27 +42,26 @@ func TestAssignConnection_Execute_Success(t *testing.T) {
 	svc := NewAssignConnection(mockConnRepo)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
 	productName := "reporter"
 
-	existingConn := newExistingConnectionForAssign(orgID, connID)
+	existingConn := newExistingConnectionForAssign(connID)
 
-	updatedConn := newExistingConnectionForAssign(orgID, connID)
+	updatedConn := newExistingConnectionForAssign(connID)
 	updatedConn.ProductName = productName
 	updatedConn.UpdatedAt = time.Now().UTC()
 
 	// Mock: connection found (unassigned)
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, orgID).
+		FindByID(gomock.Any(), connID).
 		Return(existingConn, nil)
 
 	// Mock: assign product name succeeds
 	mockConnRepo.EXPECT().
-		AssignProductName(gomock.Any(), connID, orgID, productName).
+		AssignProductName(gomock.Any(), connID, productName).
 		Return(updatedConn, nil)
 
-	result, err := svc.Execute(ctx, orgID, connID, productName)
+	result, err := svc.Execute(ctx, connID, productName)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -86,15 +84,14 @@ func TestAssignConnection_Execute_ConnectionNotFound(t *testing.T) {
 	svc := NewAssignConnection(mockConnRepo)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
 
 	// Mock: connection not found
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, orgID).
+		FindByID(gomock.Any(), connID).
 		Return(nil, nil)
 
-	result, err := svc.Execute(ctx, orgID, connID, "reporter")
+	result, err := svc.Execute(ctx, connID, "reporter")
 
 	if result != nil {
 		t.Fatalf("expected nil result, got %+v", result)
@@ -122,17 +119,16 @@ func TestAssignConnection_Execute_ConnectionRepoError(t *testing.T) {
 	svc := NewAssignConnection(mockConnRepo)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
 
 	dbError := errors.New("database connection failed")
 
 	// Mock: connection repo returns error
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, orgID).
+		FindByID(gomock.Any(), connID).
 		Return(nil, dbError)
 
-	result, err := svc.Execute(ctx, orgID, connID, "reporter")
+	result, err := svc.Execute(ctx, connID, "reporter")
 
 	if result != nil {
 		t.Fatalf("expected nil result, got %+v", result)
@@ -158,23 +154,22 @@ func TestAssignConnection_Execute_ConnectionAlreadyAssigned(t *testing.T) {
 	svc := NewAssignConnection(mockConnRepo)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
 
-	existingConn := newExistingConnectionForAssign(orgID, connID)
+	existingConn := newExistingConnectionForAssign(connID)
 	existingConn.ProductName = "existing-product" // Already assigned
 
 	// Mock: connection found (already assigned)
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, orgID).
+		FindByID(gomock.Any(), connID).
 		Return(existingConn, nil)
 
 	// Mock: AssignProductName returns nil (atomic guard rejects -- product_name is not empty)
 	mockConnRepo.EXPECT().
-		AssignProductName(gomock.Any(), connID, orgID, "reporter").
+		AssignProductName(gomock.Any(), connID, "reporter").
 		Return(nil, nil)
 
-	result, err := svc.Execute(ctx, orgID, connID, "reporter")
+	result, err := svc.Execute(ctx, connID, "reporter")
 
 	if result != nil {
 		t.Fatalf("expected nil result, got %+v", result)
@@ -204,22 +199,21 @@ func TestAssignConnection_Execute_RepoAssignProductReturnsNil(t *testing.T) {
 	svc := NewAssignConnection(mockConnRepo)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
 
-	existingConn := newExistingConnectionForAssign(orgID, connID)
+	existingConn := newExistingConnectionForAssign(connID)
 
 	// Mock: connection found (unassigned)
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, orgID).
+		FindByID(gomock.Any(), connID).
 		Return(existingConn, nil)
 
 	// Mock: AssignProductName returns nil (race condition -- assigned between check and persist)
 	mockConnRepo.EXPECT().
-		AssignProductName(gomock.Any(), connID, orgID, "reporter").
+		AssignProductName(gomock.Any(), connID, "reporter").
 		Return(nil, nil)
 
-	result, err := svc.Execute(ctx, orgID, connID, "reporter")
+	result, err := svc.Execute(ctx, connID, "reporter")
 
 	if result != nil {
 		t.Fatalf("expected nil result, got %+v", result)
@@ -247,24 +241,23 @@ func TestAssignConnection_Execute_RepoAssignProductError(t *testing.T) {
 	svc := NewAssignConnection(mockConnRepo)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
 
-	existingConn := newExistingConnectionForAssign(orgID, connID)
+	existingConn := newExistingConnectionForAssign(connID)
 
 	dbError := errors.New("failed to update in database")
 
 	// Mock: connection found (unassigned)
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, orgID).
+		FindByID(gomock.Any(), connID).
 		Return(existingConn, nil)
 
 	// Mock: AssignProductName returns error
 	mockConnRepo.EXPECT().
-		AssignProductName(gomock.Any(), connID, orgID, "reporter").
+		AssignProductName(gomock.Any(), connID, "reporter").
 		Return(nil, dbError)
 
-	result, err := svc.Execute(ctx, orgID, connID, "reporter")
+	result, err := svc.Execute(ctx, connID, "reporter")
 
 	if result != nil {
 		t.Fatalf("expected nil result, got %+v", result)
@@ -301,30 +294,30 @@ func TestNewAssignConnection(t *testing.T) {
 func TestAssignConnection_Execute_TableDriven(t *testing.T) {
 	tests := []struct {
 		name           string
-		setupMocks     func(*connRepo.MockRepository, uuid.UUID, uuid.UUID, string)
+		setupMocks     func(*connRepo.MockRepository, uuid.UUID, string)
 		wantErr        bool
 		wantStatusCode int // 0 means generic error (no status code check)
 	}{
 		{
 			name: "successful assignment",
-			setupMocks: func(connMock *connRepo.MockRepository, orgID, connID uuid.UUID, productName string) {
-				conn := newExistingConnectionForAssign(orgID, connID)
+			setupMocks: func(connMock *connRepo.MockRepository, connID uuid.UUID, productName string) {
+				conn := newExistingConnectionForAssign(connID)
 				connMock.EXPECT().
-					FindByID(gomock.Any(), connID, orgID).
+					FindByID(gomock.Any(), connID).
 					Return(conn, nil)
-				updatedConn := newExistingConnectionForAssign(orgID, connID)
+				updatedConn := newExistingConnectionForAssign(connID)
 				updatedConn.ProductName = productName
 				connMock.EXPECT().
-					AssignProductName(gomock.Any(), connID, orgID, productName).
+					AssignProductName(gomock.Any(), connID, productName).
 					Return(updatedConn, nil)
 			},
 			wantErr: false,
 		},
 		{
 			name: "connection not found",
-			setupMocks: func(connMock *connRepo.MockRepository, orgID, connID uuid.UUID, productName string) {
+			setupMocks: func(connMock *connRepo.MockRepository, connID uuid.UUID, productName string) {
 				connMock.EXPECT().
-					FindByID(gomock.Any(), connID, orgID).
+					FindByID(gomock.Any(), connID).
 					Return(nil, nil)
 			},
 			wantErr:        true,
@@ -332,15 +325,15 @@ func TestAssignConnection_Execute_TableDriven(t *testing.T) {
 		},
 		{
 			name: "connection already assigned",
-			setupMocks: func(connMock *connRepo.MockRepository, orgID, connID uuid.UUID, productName string) {
-				conn := newExistingConnectionForAssign(orgID, connID)
+			setupMocks: func(connMock *connRepo.MockRepository, connID uuid.UUID, productName string) {
+				conn := newExistingConnectionForAssign(connID)
 				conn.ProductName = "existing-product"
 				connMock.EXPECT().
-					FindByID(gomock.Any(), connID, orgID).
+					FindByID(gomock.Any(), connID).
 					Return(conn, nil)
 				// Atomic guard rejects -- product_name is not empty
 				connMock.EXPECT().
-					AssignProductName(gomock.Any(), connID, orgID, productName).
+					AssignProductName(gomock.Any(), connID, productName).
 					Return(nil, nil)
 			},
 			wantErr:        true,
@@ -348,9 +341,9 @@ func TestAssignConnection_Execute_TableDriven(t *testing.T) {
 		},
 		{
 			name: "connection repo database error",
-			setupMocks: func(connMock *connRepo.MockRepository, orgID, connID uuid.UUID, productName string) {
+			setupMocks: func(connMock *connRepo.MockRepository, connID uuid.UUID, productName string) {
 				connMock.EXPECT().
-					FindByID(gomock.Any(), connID, orgID).
+					FindByID(gomock.Any(), connID).
 					Return(nil, errors.New("database connection failed"))
 			},
 			wantErr:        true,
@@ -358,13 +351,13 @@ func TestAssignConnection_Execute_TableDriven(t *testing.T) {
 		},
 		{
 			name: "assign product repo returns nil (race condition)",
-			setupMocks: func(connMock *connRepo.MockRepository, orgID, connID uuid.UUID, productName string) {
-				conn := newExistingConnectionForAssign(orgID, connID)
+			setupMocks: func(connMock *connRepo.MockRepository, connID uuid.UUID, productName string) {
+				conn := newExistingConnectionForAssign(connID)
 				connMock.EXPECT().
-					FindByID(gomock.Any(), connID, orgID).
+					FindByID(gomock.Any(), connID).
 					Return(conn, nil)
 				connMock.EXPECT().
-					AssignProductName(gomock.Any(), connID, orgID, productName).
+					AssignProductName(gomock.Any(), connID, productName).
 					Return(nil, nil)
 			},
 			wantErr:        true,
@@ -372,13 +365,13 @@ func TestAssignConnection_Execute_TableDriven(t *testing.T) {
 		},
 		{
 			name: "assign product repo error",
-			setupMocks: func(connMock *connRepo.MockRepository, orgID, connID uuid.UUID, productName string) {
-				conn := newExistingConnectionForAssign(orgID, connID)
+			setupMocks: func(connMock *connRepo.MockRepository, connID uuid.UUID, productName string) {
+				conn := newExistingConnectionForAssign(connID)
 				connMock.EXPECT().
-					FindByID(gomock.Any(), connID, orgID).
+					FindByID(gomock.Any(), connID).
 					Return(conn, nil)
 				connMock.EXPECT().
-					AssignProductName(gomock.Any(), connID, orgID, productName).
+					AssignProductName(gomock.Any(), connID, productName).
 					Return(nil, errors.New("failed to update in database"))
 			},
 			wantErr:        true,
@@ -394,15 +387,14 @@ func TestAssignConnection_Execute_TableDriven(t *testing.T) {
 			mockConnRepo := connRepo.NewMockRepository(ctrl)
 
 			ctx := testContext()
-			orgID := uuid.New()
 			connID := uuid.New()
 			productName := "reporter"
 
-			tt.setupMocks(mockConnRepo, orgID, connID, productName)
+			tt.setupMocks(mockConnRepo, connID, productName)
 
 			svc := NewAssignConnection(mockConnRepo)
 
-			result, err := svc.Execute(ctx, orgID, connID, productName)
+			result, err := svc.Execute(ctx, connID, productName)
 
 			if tt.wantErr {
 				if err == nil {
@@ -443,11 +435,10 @@ func TestAssignConnection_Execute_EmptyProductName(t *testing.T) {
 	svc := NewAssignConnection(mockConnRepo)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
 
 	// No mock expectations: validation returns before any repository calls
-	result, err := svc.Execute(ctx, orgID, connID, "")
+	result, err := svc.Execute(ctx, connID, "")
 
 	if result != nil {
 		t.Fatalf("expected nil result, got %+v", result)

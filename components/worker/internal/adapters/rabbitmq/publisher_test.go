@@ -152,7 +152,7 @@ func TestPublisherRoutes_Publish_TenantIDPropagation(t *testing.T) {
 
 			ctx := context.Background()
 			if tt.tenantID != "" {
-				ctx = tmcore.SetTenantIDInContext(ctx, tt.tenantID)
+				ctx = tmcore.ContextWithTenantID(ctx, tt.tenantID)
 			}
 
 			// Capture the headers argument passed to ProducerDefault
@@ -201,7 +201,7 @@ func TestPublish_MultiTenant_Success(t *testing.T) {
 	logger := log.NewNop()
 	publisher := NewPublisherRoutesMultiTenant(mockMgr, logger, nil)
 
-	ctx := tmcore.SetTenantIDInContext(context.Background(), "tenant-123")
+	ctx := tmcore.ContextWithTenantID(context.Background(), "tenant-123")
 	err := publisher.Publish(ctx, "test-exchange", "test.key", []byte(`{"status":"completed"}`))
 
 	require.NoError(t, err)
@@ -215,7 +215,7 @@ func TestPublish_MultiTenant_GetChannelError(t *testing.T) {
 	logger := log.NewNop()
 	publisher := NewPublisherRoutesMultiTenant(mockMgr, logger, nil)
 
-	ctx := tmcore.SetTenantIDInContext(context.Background(), "tenant-123")
+	ctx := tmcore.ContextWithTenantID(context.Background(), "tenant-123")
 	err := publisher.Publish(ctx, "test-exchange", "test.key", []byte(`{}`))
 
 	require.Error(t, err)
@@ -230,7 +230,7 @@ func TestPublish_MultiTenant_ExchangeDeclareError(t *testing.T) {
 	logger := log.NewNop()
 	publisher := NewPublisherRoutesMultiTenant(mockMgr, logger, nil)
 
-	ctx := tmcore.SetTenantIDInContext(context.Background(), "tenant-123")
+	ctx := tmcore.ContextWithTenantID(context.Background(), "tenant-123")
 	err := publisher.Publish(ctx, "test-exchange", "test.key", []byte(`{}`))
 
 	require.Error(t, err)
@@ -269,7 +269,7 @@ func TestPublish_MultiTenant_PublishError(t *testing.T) {
 	logger := log.NewNop()
 	publisher := NewPublisherRoutesMultiTenant(mockMgr, logger, nil)
 
-	ctx := tmcore.SetTenantIDInContext(context.Background(), "tenant-123")
+	ctx := tmcore.ContextWithTenantID(context.Background(), "tenant-123")
 	err := publisher.Publish(ctx, "test-exchange", "test.key", []byte(`{}`))
 
 	require.Error(t, err)

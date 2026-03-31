@@ -157,7 +157,7 @@ func TestExtraction_AllFilterOperators(t *testing.T) {
 			seaweedURL, err := coreInfra.SeaweedFS.URL()
 			require.NoError(t, err, "get seaweedfs url")
 
-			resultData := e2eshared.DownloadAndDecryptResult(t, ctx, seaweedURL, jobResult.ResultPath)
+			resultData := e2eshared.DownloadAndDecryptResult(t, ctx, seaweedURL, e2eshared.DefaultE2EStorageBucket, jobResult.ResultPath)
 			rowCount := e2eshared.CountResultRows(resultData)
 			assert.Equal(t, tc.expectedRows, rowCount,
 				"filter %s should return exactly %d rows, got %d", tc.desc, tc.expectedRows, rowCount)

@@ -8,6 +8,7 @@
 *.out
 *.so
 *.test
+__debug_bin*
 
 # ----------------------------------------
 # Go: Workspace and Modules

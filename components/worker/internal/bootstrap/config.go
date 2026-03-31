@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/url"
 	"strings"
 	"time"
@@ -12,10 +13,12 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/datasource"
+	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/mongodb"
 	"github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 	"github.com/LerianStudio/fetcher/pkg/mongodb/job"
 	portStorage "github.com/LerianStudio/fetcher/pkg/ports/storage"
+	"github.com/LerianStudio/fetcher/pkg/resolver"
 	pkgStorage "github.com/LerianStudio/fetcher/pkg/storage"
 
 	libCommons "github.com/LerianStudio/lib-commons/v4/commons"
@@ -23,13 +26,15 @@ import (
 	mongoDB "github.com/LerianStudio/lib-commons/v4/commons/mongo"
 	libOtel "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
 	libRabbitMQ "github.com/LerianStudio/lib-commons/v4/commons/rabbitmq"
-	libRedis "github.com/LerianStudio/lib-commons/v4/commons/redis"
 	tmclient "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/client"
 	tmconsumer "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/consumer"
+	tmevent "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/event"
 	tmmongo "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/mongo"
 	tmrabbitmq "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/rabbitmq"
+	"github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/tenantcache"
 	libZap "github.com/LerianStudio/lib-commons/v4/commons/zap"
 	libLicense "github.com/LerianStudio/lib-license-go/v2/middleware"
+	"github.com/redis/go-redis/v9"
 )
 
 // defaultMaxTenantPools is the fallback soft limit for tenant connection pools
@@ -59,13 +64,8 @@ type Config struct {
 	OtelDeploymentEnv       string `env:"OTEL_RESOURCE_DEPLOYMENT_ENVIRONMENT"`
 	OtelColExporterEndpoint string `env:"OTEL_EXPORTER_OTLP_ENDPOINT"`
 	EnableTelemetry         bool   `env:"ENABLE_TELEMETRY"`
-	// SeaweedFS configuration envs
-	SeaweedFSHost      string `env:"SEAWEEDFS_HOST"`
-	SeaweedFSFilerPort string `env:"SEAWEEDFS_FILER_PORT"`
-	SeaweedFSTTL       string `env:"SEAWEEDFS_TTL"`
-	// Storage provider selection ("seaweedfs" or "s3", defaults to "seaweedfs")
-	StorageProvider string `env:"STORAGE_PROVIDER"`
-	// S3-compatible object storage configuration (used when STORAGE_PROVIDER=s3)
+	OtelInsecureExporter    bool   `env:"OTEL_INSECURE_EXPORTER"`
+	// S3-compatible object storage configuration (AWS S3, MinIO, SeaweedFS S3 API).
 	// SSL is controlled by the URL scheme of ObjectStorageEndpoint.
 	ObjectStorageEndpoint     string `env:"OBJECT_STORAGE_ENDPOINT"`
 	ObjectStorageRegion       string `env:"OBJECT_STORAGE_REGION"`
@@ -74,6 +74,9 @@ type Config struct {
 	ObjectStorageAccessKeyID  string `env:"OBJECT_STORAGE_ACCESS_KEY_ID"`
 	ObjectStorageSecretKey    string `env:"OBJECT_STORAGE_SECRET_KEY"`
 	ObjectStorageUsePathStyle bool   `env:"OBJECT_STORAGE_USE_PATH_STYLE"`
+	// ObjectStorageTTL is the file TTL for storage backends that support it (e.g., SeaweedFS).
+	// S3 ignores this — use lifecycle policies instead. Format: "1h", "7d", "6M".
+	ObjectStorageTTL string `env:"OBJECT_STORAGE_TTL"`
 	// OBJECT_STORAGE_DISABLE_SSL omitted — SSL controlled by endpoint URL scheme.
 	// MongoDB
 	MongoURI        string `env:"MONGO_URI"`
@@ -89,21 +92,22 @@ type Config struct {
 	// Encryption
 	AppEncryptionKey        string `env:"APP_ENC_KEY"`
 	AppEncryptionKeyVersion string `env:"APP_ENC_KEY_VERSION"`
-	// SeaweedFS encryption keys
-	CryptoEncryptFileStorage string `env:"CRYPTO_ENCRYPT_FILE_STORAGE"`
-	CryptoHashFileStorage    string `env:"CRYPTO_HASH_SECRET_KEY_FILE_STORAGE"`
 	// CRM plugin encryption keys
 	CryptoEncryptSecretKeyPluginCRM string `env:"CRYPTO_ENCRYPT_SECRET_KEY_PLUGIN_CRM"`
 	CryptoHashSecretKeyPluginCRM    string `env:"CRYPTO_HASH_SECRET_KEY_PLUGIN_CRM"`
 	// Multi-Tenant configuration
 	MultiTenantEnabled                  bool   `env:"MULTI_TENANT_ENABLED"`
 	MultiTenantURL                      string `env:"MULTI_TENANT_URL"`
-	MultiTenantEnvironment              string `env:"MULTI_TENANT_ENVIRONMENT"`
-	MultiTenantMaxTenantPools           int    `env:"MULTI_TENANT_MAX_TENANT_POOLS"`
-	MultiTenantIdleTimeoutSec           int    `env:"MULTI_TENANT_IDLE_TIMEOUT_SEC"`
-	MultiTenantCircuitBreakerThreshold  int    `env:"MULTI_TENANT_CIRCUIT_BREAKER_THRESHOLD"`
-	MultiTenantCircuitBreakerTimeoutSec int    `env:"MULTI_TENANT_CIRCUIT_BREAKER_TIMEOUT_SEC"`
+	MultiTenantRedisHost                string `env:"MULTI_TENANT_REDIS_HOST"`
+	MultiTenantRedisPort                string `env:"MULTI_TENANT_REDIS_PORT" default:"6379"`
+	MultiTenantRedisPassword            string `env:"MULTI_TENANT_REDIS_PASSWORD"`
+	MultiTenantMaxTenantPools           int    `env:"MULTI_TENANT_MAX_TENANT_POOLS" default:"100"`
+	MultiTenantIdleTimeoutSec           int    `env:"MULTI_TENANT_IDLE_TIMEOUT_SEC" default:"300"`
+	MultiTenantCircuitBreakerThreshold  int    `env:"MULTI_TENANT_CIRCUIT_BREAKER_THRESHOLD" default:"5"`
+	MultiTenantCircuitBreakerTimeoutSec int    `env:"MULTI_TENANT_CIRCUIT_BREAKER_TIMEOUT_SEC" default:"30"`
 	MultiTenantServiceAPIKey            string `env:"MULTI_TENANT_SERVICE_API_KEY"`
+	MultiTenantCacheTTLSec              int    `env:"MULTI_TENANT_CACHE_TTL_SEC" default:"120"`
+	MultiTenantTimeout                  int    `env:"MULTI_TENANT_TIMEOUT" default:"30"`
 	// RabbitMQ multi-tenant consumer tuning (active when MULTI_TENANT_ENABLED=true)
 	RabbitMQMultiTenantSyncInterval     int `env:"RABBITMQ_MULTI_TENANT_SYNC_INTERVAL"`     // Stored in seconds; default 30
 	RabbitMQMultiTenantDiscoveryTimeout int `env:"RABBITMQ_MULTI_TENANT_DISCOVERY_TIMEOUT"` // Stored in milliseconds; default 500
@@ -135,33 +139,8 @@ func InitWorker() (*Service, error) {
 
 	ctx := context.Background()
 
-	logger, err := newZapLogger(libZap.Config{
-		Environment:     resolveZapEnvironment(cfg.EnvName),
-		Level:           cfg.LogLevel,
-		OTelLibraryName: cfg.OtelLibraryName,
-	})
+	logger, telemetry, err := initObservability(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("failed to initialize logger: %w", err)
-	}
-
-	if err := validateMultiTenantConfig(cfg, logger); err != nil {
-		return nil, err
-	}
-
-	telemetry, err := newTelemetry(libOtel.TelemetryConfig{
-		LibraryName:               cfg.OtelLibraryName,
-		ServiceName:               cfg.OtelServiceName,
-		ServiceVersion:            cfg.OtelServiceVersion,
-		DeploymentEnv:             cfg.OtelDeploymentEnv,
-		CollectorExporterEndpoint: cfg.OtelColExporterEndpoint,
-		EnableTelemetry:           cfg.EnableTelemetry,
-		Logger:                    logger,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("initialize telemetry: %w", err)
-	}
-
-	if err := applyTelemetryGlobals(telemetry); err != nil {
 		return nil, err
 	}
 
@@ -177,7 +156,9 @@ func InitWorker() (*Service, error) {
 		return nil, err
 	}
 
-	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Storage initialized with provider: %s", cfg.StorageProvider))
+	logger.Log(ctx, libLog.LevelInfo, "Storage initialized (S3)",
+		libLog.String("bucket", cfg.ObjectStorageBucket),
+		libLog.String("region", cfg.ObjectStorageRegion))
 
 	mongoConnection, err := initMongoConnection(ctx, cfg, logger)
 	if err != nil {
@@ -214,12 +195,29 @@ func InitWorker() (*Service, error) {
 		ConnectionRepository: connectionRepository,
 		Cryptor:              cryptoService,
 		DocumentSigner:       cryptoWithExternalHMAC,
-		FileTTL:              cfg.SeaweedFSTTL,
+		FileTTL:              cfg.ObjectStorageTTL,
 		JobEventsExchange:    cfg.RabbitMQJobEventsExchange,
 	}
-	service.SetStorageSecrets(cfg.CryptoEncryptFileStorage, cfg.CryptoHashFileStorage)
+	service.SetStorageEncryptDerivedKey(keyDeriver.GetStorageEncryptKey())
 	service.SetCRMSecrets(cfg.CryptoEncryptSecretKeyPluginCRM, cfg.CryptoHashSecretKeyPluginCRM)
 	service.SetDataSourceFactory(datasource.NewDataSourceFromConnectionWithLogger(logger))
+
+	// Create ConnectionResolver based on multi-tenant mode
+	dsRegistry := resolver.NewInternalDatasourceRegistry()
+
+	if cfg.MultiTenantEnabled && cfg.MultiTenantURL != "" {
+		resolverTMClient, resolverTMErr := initTenantManagerClient(cfg, logger)
+		if resolverTMErr != nil {
+			return nil, fmt.Errorf("create tenant manager client for resolver: %w", resolverTMErr)
+		}
+
+		tenantAdapter := resolver.NewTenantManagerAdapter(resolverTMClient)
+		service.ConnectionResolver = resolver.NewMultiTenantResolver(connectionRepository, dsRegistry, tenantAdapter)
+	} else {
+		// Single-tenant: env-based connections deferred to follow-up task.
+		envConnections := make(map[string]*model.Connection)
+		service.ConnectionResolver = resolver.NewSingleTenantResolver(connectionRepository, dsRegistry, envConnections)
+	}
 
 	logFileTTL(logger, cfg)
 
@@ -244,7 +242,7 @@ func InitWorker() (*Service, error) {
 	// Branch: multi-tenant mode uses tmconsumer.MultiTenantConsumer with per-tenant vhosts
 	// Single-tenant mode uses existing ConsumerRoutes with static RabbitMQ connection
 	if cfg.MultiTenantEnabled && cfg.MultiTenantURL != "" {
-		mtConsumer, mtCleanup, mtErr := initMultiTenantConsumer(ctx, cfg, logger, mongoManager, rabbitMQManager)
+		mtConsumer, tmClient, mtCleanup, mtErr := initMultiTenantStack(ctx, cfg, logger, mongoManager, rabbitMQManager)
 		if mtErr != nil {
 			return nil, mtErr
 		}
@@ -260,6 +258,11 @@ func InitWorker() (*Service, error) {
 
 		multiQueueConsumer := NewMultiQueueConsumerMultiTenant(mtConsumer, service, cfg.RabbitMQGenerateReportQueue, logger, mongoManager)
 
+		// Discover existing tenants on startup so consumers start immediately.
+		// Called AFTER handler registration so EnsureConsumerStarted can spawn
+		// consumer goroutines for all registered queues.
+		performInitialTenantSync(ctx, logger, tmClient, mtConsumer)
+
 		return &Service{
 			MultiQueueConsumer: multiQueueConsumer,
 			Logger:             logger,
@@ -268,13 +271,35 @@ func InitWorker() (*Service, error) {
 		}, nil
 	}
 
-	// Single-tenant mode: use existing ConsumerRoutes with static RabbitMQ connection
-	// Consumer and Publisher use SEPARATE connections to avoid channel interference.
+	multiQueueConsumer, err := initSingleTenantRabbitMQ(cfg, logger, telemetry, keyDeriver, cryptoWithExternalHMAC, service, mongoManager)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Service{
+		MultiQueueConsumer: multiQueueConsumer,
+		Logger:             logger,
+		licenseShutdown:    licenseClient.GetLicenseManagerShutdown(),
+	}, nil
+}
+
+// initSingleTenantRabbitMQ initializes RabbitMQ consumer and publisher for single-tenant mode.
+// Consumer and Publisher use SEPARATE connections to avoid channel interference.
+func initSingleTenantRabbitMQ(
+	cfg *Config,
+	logger libLog.Logger,
+	telemetry *libOtel.Telemetry,
+	keyDeriver *crypto.HKDFKeyDeriver,
+	cryptoWithExternalHMAC *crypto.HMACSigner,
+	service *services.UseCase,
+	mongoManager *tmmongo.Manager,
+) (*MultiQueueConsumer, error) {
 	// URL-encode credentials to handle special characters (@ : / etc.)
 	escapedUserRMQ := url.PathEscape(cfg.RabbitMQUser)
 	escapedPassRMQ := url.QueryEscape(cfg.RabbitMQPass)
 	rabbitSource := fmt.Sprintf("%s://%s:%s@%s:%s",
 		cfg.RabbitURI, escapedUserRMQ, escapedPassRMQ, cfg.RabbitMQHost, cfg.RabbitMQPortAMQP)
+
 	consumerConnection := &libRabbitMQ.RabbitMQConnection{
 		ConnectionStringSource: rabbitSource,
 		HealthCheckURL:         cfg.RabbitMQHealthCheckURL,
@@ -313,13 +338,43 @@ func InitWorker() (*Service, error) {
 
 	service.RabbitMQPublisher = publisherRoutes
 
-	multiQueueConsumer := NewMultiQueueConsumer(consumerRoutes, service, cfg.RabbitMQGenerateReportQueue, logger, mongoManager)
+	return NewMultiQueueConsumer(consumerRoutes, service, cfg.RabbitMQGenerateReportQueue, logger, mongoManager), nil
+}
 
-	return &Service{
-		MultiQueueConsumer: multiQueueConsumer,
-		Logger:             logger,
-		licenseShutdown:    licenseClient.GetLicenseManagerShutdown(),
-	}, nil
+// initObservability initializes the logger and telemetry pipeline.
+func initObservability(cfg *Config) (libLog.Logger, *libOtel.Telemetry, error) {
+	logger, err := newZapLogger(libZap.Config{
+		Environment:     resolveZapEnvironment(cfg.EnvName),
+		Level:           cfg.LogLevel,
+		OTelLibraryName: cfg.OtelLibraryName,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to initialize logger: %w", err)
+	}
+
+	if err := validateMultiTenantConfig(cfg, logger); err != nil {
+		return nil, nil, err
+	}
+
+	telemetry, err := newTelemetry(libOtel.TelemetryConfig{
+		LibraryName:               cfg.OtelLibraryName,
+		ServiceName:               cfg.OtelServiceName,
+		ServiceVersion:            cfg.OtelServiceVersion,
+		DeploymentEnv:             cfg.OtelDeploymentEnv,
+		CollectorExporterEndpoint: cfg.OtelColExporterEndpoint,
+		EnableTelemetry:           cfg.EnableTelemetry,
+		InsecureExporter:          cfg.OtelInsecureExporter,
+		Logger:                    logger,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("initialize telemetry: %w", err)
+	}
+
+	if err := applyTelemetryGlobals(telemetry); err != nil {
+		return nil, nil, err
+	}
+
+	return logger, telemetry, nil
 }
 
 // validateMultiTenantConfig validates multi-tenant configuration and logs the mode.
@@ -335,8 +390,8 @@ func validateMultiTenantConfig(cfg *Config, logger libLog.Logger) error {
 			return fmt.Errorf("MULTI_TENANT_SERVICE_API_KEY is required when MULTI_TENANT_ENABLED=true")
 		}
 
-		if cfg.RedisHost == "" {
-			return fmt.Errorf("REDIS_HOST is required when MULTI_TENANT_ENABLED=true (used for tenant discovery cache)")
+		if cfg.MultiTenantRedisHost == "" {
+			return fmt.Errorf("MULTI_TENANT_REDIS_HOST is required when MULTI_TENANT_ENABLED=true (used for tenant event-driven discovery)")
 		}
 	} else {
 		logger.Log(context.Background(), libLog.LevelInfo, "Running in SINGLE-TENANT MODE")
@@ -370,23 +425,15 @@ func initCryptoServices(cfg *Config) (*crypto.AESGCMService, *crypto.HMACSigner,
 	return cryptoService, cryptoWithExternalHMAC, keyDeriver, nil
 }
 
-// initStorageRepository initializes the storage repository (SeaweedFS or S3).
+// initStorageRepository initializes the S3-compatible storage repository.
 func initStorageRepository(ctx context.Context, cfg *Config) (portStorage.Repository, error) {
-	storageProvider := cfg.StorageProvider
-	if storageProvider == "" {
-		storageProvider = pkgStorage.ProviderSeaweedFS
-		cfg.StorageProvider = storageProvider
-	}
-
 	return pkgStorage.NewRepository(ctx, pkgStorage.ProviderConfig{
-		Provider:          storageProvider,
-		SeaweedFSEndpoint: fmt.Sprintf("http://%s:%s", cfg.SeaweedFSHost, cfg.SeaweedFSFilerPort),
-		Bucket:            constant.ExternalDataBucketName,
-		S3Endpoint:        cfg.ObjectStorageEndpoint,
-		S3Region:          cfg.ObjectStorageRegion,
-		S3Bucket:          cfg.ObjectStorageBucket,
-		S3KeyPrefix:       cfg.ObjectStorageKeyPrefix,
-		S3AccessKeyID:     cfg.ObjectStorageAccessKeyID,
+		Provider:      pkgStorage.ProviderS3,
+		S3Endpoint:    cfg.ObjectStorageEndpoint,
+		S3Region:      cfg.ObjectStorageRegion,
+		S3Bucket:      cfg.ObjectStorageBucket,
+		S3KeyPrefix:   cfg.ObjectStorageKeyPrefix,
+		S3AccessKeyID: cfg.ObjectStorageAccessKeyID,
 		S3SecretAccessKey: cfg.ObjectStorageSecretKey,
 		S3UsePathStyle:    cfg.ObjectStorageUsePathStyle,
 	})
@@ -412,10 +459,10 @@ func initMongoConnection(ctx context.Context, cfg *Config, logger libLog.Logger)
 
 // logFileTTL logs the configured file TTL for storage.
 func logFileTTL(logger libLog.Logger, cfg *Config) {
-	if cfg.SeaweedFSTTL != "" {
-		logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Reports will expire after: %s", cfg.SeaweedFSTTL))
+	if cfg.ObjectStorageTTL != "" {
+		logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Files will expire after: %s", cfg.ObjectStorageTTL))
 	} else {
-		logger.Log(context.Background(), libLog.LevelInfo, "Reports will be stored permanently (no TTL)")
+		logger.Log(context.Background(), libLog.LevelInfo, "Files will be stored permanently (no TTL — use S3 lifecycle policies for expiration)")
 	}
 }
 
@@ -448,6 +495,14 @@ func initTenantManagerClient(cfg *Config, logger libLog.Logger) (*tmclient.Clien
 	// Allow plaintext HTTP for local/dev environments where TLS is not configured.
 	if strings.HasPrefix(strings.ToLower(cfg.MultiTenantURL), "http://") && strings.ToLower(cfg.EnvName) != "production" {
 		clientOpts = append(clientOpts, tmclient.WithAllowInsecureHTTP())
+	}
+
+	if cfg.MultiTenantTimeout > 0 {
+		clientOpts = append(clientOpts, tmclient.WithTimeout(time.Duration(cfg.MultiTenantTimeout)*time.Second))
+	}
+
+	if cfg.MultiTenantCacheTTLSec > 0 {
+		clientOpts = append(clientOpts, tmclient.WithCacheTTL(time.Duration(cfg.MultiTenantCacheTTLSec)*time.Second))
 	}
 
 	if cfg.MultiTenantCircuitBreakerThreshold > 0 {
@@ -535,89 +590,183 @@ func initMultiTenantManagers(cfg *Config, logger libLog.Logger) (*tmmongo.Manage
 	return mongoManager, rabbitManager, nil
 }
 
-// initMultiTenantConsumer creates the tmconsumer.MultiTenantConsumer for per-tenant
-// vhost isolation with lazy initialization.
-func initMultiTenantConsumer(
+// initMultiTenantStack creates the unified multi-tenant consumer stack:
+// shared TenantCache, TenantLoader, EventDispatcher, MultiTenantConsumer,
+// and TenantEventListener. The EventDispatcher is shared between the consumer
+// and the event listener so that Redis Pub/Sub events reach
+// MultiTenantConsumer.EnsureConsumerStarted via wireDispatcherCallbacks.
+func initMultiTenantStack(
 	ctx context.Context,
 	cfg *Config,
 	logger libLog.Logger,
 	tenantMongoManager *tmmongo.Manager,
 	rabbitMQManager *tmrabbitmq.Manager,
-) (*tmconsumer.MultiTenantConsumer, func(), error) {
-	// Create Redis connection for tenant discovery cache
-	redisConn, err := libRedis.New(ctx, libRedis.Config{
-		Topology: libRedis.Topology{
-			Standalone: &libRedis.StandaloneTopology{
-				Address: cfg.RedisHost,
-			},
-		},
-		Auth: libRedis.Auth{
-			StaticPassword: &libRedis.StaticPasswordAuth{
-				Password: cfg.RedisPassword,
-			},
-		},
-		Logger: logger,
-	})
+) (*tmconsumer.MultiTenantConsumer, *tmclient.Client, func(), error) {
+	// 1. Create shared Tenant Manager client
+	tmClient, err := initTenantManagerClient(cfg, logger)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to connect to Redis for tenant discovery: %w", err)
+		return nil, nil, nil, wrapBootstrapError("create tenant manager client for multi-tenant stack", err)
 	}
 
-	redisClient, err := redisConn.GetClient(ctx)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to get Redis client for tenant discovery: %w", err)
+	// 2. Create shared TenantCache and TenantLoader
+	var cacheTTL time.Duration
+	if cfg.MultiTenantCacheTTLSec > 0 {
+		cacheTTL = time.Duration(cfg.MultiTenantCacheTTLSec) * time.Second
 	}
 
-	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Redis connected for multi-tenant consumer (host: %s, db: %d)", cfg.RedisHost, cfg.RedisDB))
+	tenantCache := tenantcache.NewTenantCache()
+	tenantLoader := tenantcache.NewTenantLoader(tmClient, tenantCache, constant.ApplicationName, cacheTTL, logger)
 
-	// Configure MultiTenantConsumer
+	// 3. Create ONE EventDispatcher with infrastructure managers
+	var dispatcherOpts []tmevent.DispatcherOption
+
+	dispatcherOpts = append(dispatcherOpts,
+		tmevent.WithDispatcherLogger(logger),
+		tmevent.WithCacheTTL(cacheTTL),
+	)
+
+	if tenantMongoManager != nil {
+		dispatcherOpts = append(dispatcherOpts, tmevent.WithMongo(tenantMongoManager))
+	}
+
+	if rabbitMQManager != nil {
+		dispatcherOpts = append(dispatcherOpts, tmevent.WithRabbitMQ(rabbitMQManager))
+	}
+
+	dispatcher := tmevent.NewEventDispatcher(
+		tenantCache,
+		tenantLoader,
+		constant.ApplicationName,
+		dispatcherOpts...,
+	)
+
+	// 4. Create MultiTenantConsumer with the shared dispatcher injected.
+	// The consumer's constructor calls wireDispatcherCallbacks() which wires:
+	//   - onTenantAdded  -> knownTenants + EnsureConsumerStarted
+	//   - onTenantRemoved -> cancel goroutine + remove from knownTenants
+	//   - cache sync (consumer uses same cache as dispatcher)
 	mtConfig := tmconsumer.DefaultMultiTenantConfig()
 	mtConfig.Service = constant.ApplicationName
-	mtConfig.Environment = cfg.MultiTenantEnvironment
+	mtConfig.Environment = cfg.EnvName
 	mtConfig.MultiTenantURL = cfg.MultiTenantURL
 	mtConfig.ServiceAPIKey = cfg.MultiTenantServiceAPIKey
 	mtConfig.PrefetchCount = constant.DefaultPrefetchCount
 
-	// SyncInterval: use configured value (seconds) or default 30s
-	if cfg.RabbitMQMultiTenantSyncInterval > 0 {
-		mtConfig.SyncInterval = time.Duration(cfg.RabbitMQMultiTenantSyncInterval) * time.Second
-	}
 
-	// DiscoveryTimeout: use configured value (milliseconds) or default 500ms
-	if cfg.RabbitMQMultiTenantDiscoveryTimeout > 0 {
-		mtConfig.DiscoveryTimeout = time.Duration(cfg.RabbitMQMultiTenantDiscoveryTimeout) * time.Millisecond
-	}
-
-	// Build options
 	var consumerOpts []tmconsumer.Option
+
+	if rabbitMQManager != nil {
+		consumerOpts = append(consumerOpts, tmconsumer.WithRabbitMQ(rabbitMQManager))
+	}
+
+	consumerOpts = append(consumerOpts, tmconsumer.WithEventDispatcher(dispatcher))
+
 	if tenantMongoManager != nil {
 		consumerOpts = append(consumerOpts, tmconsumer.WithMongoManager(tenantMongoManager))
 	}
 
-	// Create MultiTenantConsumer
 	mtConsumer, err := tmconsumer.NewMultiTenantConsumerWithError(
-		rabbitMQManager,
-		redisClient,
 		mtConfig,
 		logger,
 		consumerOpts...,
 	)
 	if err != nil {
-		return nil, nil, fmt.Errorf("create multi-tenant consumer: %w", err)
+		return nil, nil, nil, fmt.Errorf("create multi-tenant consumer: %w", err)
 	}
 
-	logger.Log(ctx, libLog.LevelInfo, "MultiTenantConsumer initialized with per-tenant vhost isolation")
+	// 5. Wire restart recovery: when TenantLoader lazy-loads a tenant from the API
+	// (e.g., on cache miss after restart), also ensure a consumer goroutine is started.
+	tenantLoader.SetOnTenantLoaded(func(loadCtx context.Context, tenantID string) {
+		mtConsumer.EnsureConsumerStarted(loadCtx, tenantID)
+	})
 
-	// Cleanup function to close Redis connection only.
-	// mtConsumer.Close() is handled by MultiQueueConsumer.Run() on context cancellation.
-	cleanup := func() {
-		logger.Log(context.Background(), libLog.LevelInfo, "Cleanup: closing Redis connection")
+	logger.Log(ctx, libLog.LevelInfo, "MultiTenantConsumer initialized with shared EventDispatcher and per-tenant vhost isolation")
 
-		if closeErr := redisConn.Close(); closeErr != nil {
-			logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Cleanup: failed to close Redis connection: %v", closeErr))
+	// 6. Create TenantEventListener (Redis Pub/Sub -> dispatcher.HandleEvent)
+	var listenerCleanup func()
+
+	redisPort := cfg.MultiTenantRedisPort
+	if redisPort == "" {
+		redisPort = "6379"
+	}
+
+	redisClient := redis.NewClient(&redis.Options{
+		Addr:     net.JoinHostPort(cfg.MultiTenantRedisHost, redisPort),
+		Password: cfg.MultiTenantRedisPassword,
+	})
+
+	listener, listenerErr := tmevent.NewTenantEventListener(
+		redisClient,
+		dispatcher.HandleEvent,
+		tmevent.WithListenerLogger(logger),
+		tmevent.WithService(constant.ApplicationName),
+	)
+	if listenerErr != nil {
+		return nil, nil, nil, wrapBootstrapError("create worker tenant event listener", listenerErr)
+	}
+
+	if startErr := listener.Start(context.Background()); startErr != nil {
+		return nil, nil, nil, wrapBootstrapError("start worker tenant event listener", startErr)
+	}
+
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Worker multi-tenant event listener started: redis=%s", net.JoinHostPort(cfg.MultiTenantRedisHost, redisPort)))
+
+	listenerCleanup = func() {
+		logger.Log(context.Background(), libLog.LevelInfo, "Stopping worker multi-tenant event listener")
+
+		if stopErr := listener.Stop(); stopErr != nil {
+			logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to stop worker tenant event listener: %v", stopErr))
+		}
+
+		if closeErr := redisClient.Close(); closeErr != nil {
+			logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to close worker tenant event Redis client: %v", closeErr))
 		}
 	}
 
-	return mtConsumer, cleanup, nil
+	// Compose cleanup: event listener resources
+	// Note: mtConsumer.Close() is handled by MultiQueueConsumer.Run() on context cancellation.
+	cleanup := listenerCleanup
+
+	return mtConsumer, tmClient, cleanup, nil
+}
+
+// performInitialTenantSync fetches all active tenants from the Tenant Manager API
+// and calls EnsureConsumerStarted for each one. This ensures the worker starts
+// consuming messages for all known tenants immediately on startup, rather than
+// waiting for a Redis Pub/Sub event or lazy-load trigger.
+func performInitialTenantSync(
+	ctx context.Context,
+	logger libLog.Logger,
+	tmClient *tmclient.Client,
+	mtConsumer *tmconsumer.MultiTenantConsumer,
+) {
+	if tmClient == nil {
+		logger.Log(ctx, libLog.LevelWarn,
+			"Initial tenant sync skipped: tenant manager client is nil")
+
+		return
+	}
+
+	tenants, err := tmClient.GetActiveTenantsByService(ctx, constant.ApplicationName)
+	if err != nil {
+		logger.Log(ctx, libLog.LevelWarn,
+			"Initial tenant sync failed; tenants will be discovered via events or lazy-load",
+			libLog.Err(err))
+
+		return
+	}
+
+	for _, t := range tenants {
+		logger.Log(ctx, libLog.LevelDebug, "Initial tenant sync: starting consumer",
+			libLog.String("tenant_id", t.ID),
+			libLog.String("tenant_name", t.Name),
+			libLog.String("tenant_status", t.Status))
+
+		mtConsumer.EnsureConsumerStarted(ctx, t.ID)
+	}
+
+	logger.Log(ctx, libLog.LevelInfo, "Initial tenant sync completed",
+		libLog.Int("tenant_count", len(tenants)))
 }
 
 // rabbitMQManagerAdapter wraps tmrabbitmq.Manager to satisfy rabbitmq.RabbitMQManagerInterface.

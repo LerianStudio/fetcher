@@ -328,7 +328,7 @@ func TestMultiDatasourceExtraction_WithFilters(t *testing.T) {
 	seaweedURL, err := coreInfra.SeaweedFS.URL()
 	require.NoError(t, err, "get seaweedfs url")
 
-	resultData := e2eshared.DownloadAndDecryptResult(t, ctx, seaweedURL, jobResult.ResultPath)
+	resultData := e2eshared.DownloadAndDecryptResult(t, ctx, seaweedURL, e2eshared.DefaultE2EStorageBucket, jobResult.ResultPath)
 
 	pgData := resultData[pgConnName]
 	require.NotNil(t, pgData, "result should contain PostgreSQL datasource %s", pgConnName)

@@ -39,7 +39,7 @@ func TestNewDataSourceFromConnection(t *testing.T) {
 			cryptor: func(t *testing.T) cryptoPkg.Cryptor { return nil },
 			assertOutcome: func(t *testing.T, got modeldatasource.DataSource, err error) {
 				require.Error(t, err)
-				assert.EqualError(t, err, "cryptor cannot be nil")
+				assert.EqualError(t, err, "cryptor cannot be nil for encrypted connections")
 				assert.Nil(t, got)
 			},
 		},
@@ -68,17 +68,17 @@ func TestNewDataSourceFromConnection(t *testing.T) {
 
 func testConnection(dbType model.DBType) *model.Connection {
 	return &model.Connection{
-		ID:                uuid.MustParse("11111111-1111-1111-1111-111111111111"),
-		OrganizationID:    uuid.MustParse("22222222-2222-2222-2222-222222222222"),
-		ConfigName:        "analytics",
-		Type:              dbType,
-		Host:              "db.internal",
-		Port:              5432,
-		DatabaseName:      "warehouse",
-		Username:          "fetcher",
-		PasswordEncrypted: "enc-password",
-		CreatedAt:         time.Unix(1700000000, 0).UTC(),
-		UpdatedAt:         time.Unix(1700000000, 0).UTC(),
+		ID:                   uuid.MustParse("11111111-1111-1111-1111-111111111111"),
+		ConfigName:           "analytics",
+		Type:                 dbType,
+		Host:                 "db.internal",
+		Port:                 5432,
+		DatabaseName:         "warehouse",
+		Username:             "fetcher",
+		PasswordEncrypted:    "enc-password",
+		EncryptionKeyVersion: "v1",
+		CreatedAt:            time.Unix(1700000000, 0).UTC(),
+		UpdatedAt:            time.Unix(1700000000, 0).UTC(),
 	}
 }
 

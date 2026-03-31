@@ -10,7 +10,6 @@ import (
 	portDS "github.com/LerianStudio/fetcher/pkg/ports/datasource"
 	libCrypto "github.com/LerianStudio/lib-commons/v4/commons/crypto"
 	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
-	"github.com/google/uuid"
 	"go.uber.org/mock/gomock"
 )
 
@@ -1072,7 +1071,8 @@ func TestTransformPluginCRMAdvancedFilters_AllConditionTypes(t *testing.T) {
 	}
 }
 
-// TestProcessPluginCRMCollection_WithOrganizationID tests collection name transformation with organization ID.
+// TestProcessPluginCRMCollection_WithOrganizationID tests auto-discovery of collections by prefix
+// and merging results from all matching collections.
 func TestProcessPluginCRMCollection_WithOrganizationID(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
@@ -1090,41 +1090,48 @@ func TestProcessPluginCRMCollection_WithOrganizationID(t *testing.T) {
 	ctx := testContext()
 	logger := testLogger()
 
-	orgID := uuid.MustParse("019b9df1-34eb-7dd0-afd5-53f859667e51")
 	result := make(map[string]map[string][]map[string]any)
-	expectedRows := []map[string]any{{"id": "123", "name": "Ada"}}
-	decryptedRows := []map[string]any{{"id": "123", "name": "Ada Lovelace"}}
+	rowsOrg1 := []map[string]any{{"id": "123", "name": "Ada"}}
+	rowsOrg2 := []map[string]any{{"id": "456", "name": "Grace"}}
+	decryptedRows := []map[string]any{{"id": "123", "name": "Ada Lovelace"}, {"id": "456", "name": "Grace Hopper"}}
 
+	var queryCallCount int
 	queryPluginCRMCollectionWithFiltersFn = func(_ *UseCase, _ context.Context, _ portDS.CRMQueryable, collection string, fields []string, filters map[string]modelJob.FilterCondition, _ libLog.Logger) ([]map[string]any, error) {
-		if collection != "holders_"+orgID.String() {
-			t.Fatalf("unexpected collection name: %s", collection)
-		}
+		queryCallCount++
 		if len(fields) != 2 || fields[0] != "id" || fields[1] != "name" {
 			t.Fatalf("unexpected fields: %v", fields)
 		}
-		if filters != nil {
-			t.Fatalf("expected nil filters, got %+v", filters)
+		switch collection {
+		case "holders_org-uuid-1":
+			return rowsOrg1, nil
+		case "holders_org-uuid-2":
+			return rowsOrg2, nil
+		default:
+			t.Fatalf("unexpected collection name: %s", collection)
+			return nil, nil
 		}
-		return expectedRows, nil
 	}
 
 	decryptPluginCRMDataFn = func(_ *UseCase, _ libLog.Logger, collectionResult []map[string]any, fields []string) ([]map[string]any, error) {
-		if len(collectionResult) != 1 || collectionResult[0]["name"] != "Ada" {
-			t.Fatalf("unexpected collection result: %+v", collectionResult)
-		}
-		if len(fields) != 2 {
-			t.Fatalf("unexpected fields: %v", fields)
+		if len(collectionResult) != 2 {
+			t.Fatalf("expected 2 merged results, got %d: %+v", len(collectionResult), collectionResult)
 		}
 		return decryptedRows, nil
 	}
 
-	err := uc.processPluginCRMCollection(ctx, nil, "holders", []string{"id", "name"}, nil, orgID, result, logger)
+	// matchingCollections is now pre-filtered and passed by QueryPluginCRM
+	matchingCollections := []string{"holders_org-uuid-1", "holders_org-uuid-2"}
+	err := uc.processPluginCRMCollection(ctx, nil, "holders", []string{"id", "name"}, nil, matchingCollections, result, logger)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 
+	if queryCallCount != 2 {
+		t.Fatalf("expected 2 query calls (one per matching collection), got %d", queryCallCount)
+	}
+
 	got := result["plugin_crm"]["holders"]
-	if len(got) != 1 || got[0]["name"] != "Ada Lovelace" {
+	if len(got) != 2 || got[0]["name"] != "Ada Lovelace" || got[1]["name"] != "Grace Hopper" {
 		t.Fatalf("unexpected stored result: %+v", got)
 	}
 }
@@ -1219,7 +1226,6 @@ func TestQueryPluginCRM_EmptyCollections(t *testing.T) {
 	ctx := testContext()
 	logger := testLogger()
 
-	orgID := uuid.MustParse("019b9df1-34eb-7dd0-afd5-53f859667e51")
 	result := make(map[string]map[string][]map[string]any)
 
 	// Empty collections should not cause errors - just no processing
@@ -1229,7 +1235,6 @@ func TestQueryPluginCRM_EmptyCollections(t *testing.T) {
 		"plugin_crm",
 		map[string][]string{}, // empty collections
 		nil,
-		orgID,
 		result,
 		logger,
 	)
@@ -1249,7 +1254,6 @@ func TestQueryPluginCRM_NilCollections(t *testing.T) {
 	ctx := testContext()
 	logger := testLogger()
 
-	orgID := uuid.MustParse("019b9df1-34eb-7dd0-afd5-53f859667e51")
 	result := make(map[string]map[string][]map[string]any)
 
 	// Nil collections should not cause errors
@@ -1259,7 +1263,6 @@ func TestQueryPluginCRM_NilCollections(t *testing.T) {
 		"plugin_crm",
 		nil, // nil collections
 		nil,
-		orgID,
 		result,
 		logger,
 	)
@@ -1285,10 +1288,9 @@ func TestQueryPluginCRM_WithOrganizationOnly(t *testing.T) {
 	logger := testLogger()
 	result := make(map[string]map[string][]map[string]any)
 	collections := map[string][]string{"organization": {"id", "name"}}
-	orgID := uuid.MustParse("019b9df1-34eb-7dd0-afd5-53f859667e51")
 
 	called := false
-	processPluginCRMCollectionFn = func(_ *UseCase, _ context.Context, _ portDS.CRMQueryable, collection string, fields []string, filters map[string]modelJob.FilterCondition, gotOrgID uuid.UUID, _ map[string]map[string][]map[string]any, _ libLog.Logger) error {
+	processPluginCRMCollectionFn = func(_ *UseCase, _ context.Context, _ portDS.CRMQueryable, collection string, fields []string, filters map[string]modelJob.FilterCondition, matchingCollections []string, _ map[string]map[string][]map[string]any, _ libLog.Logger) error {
 		called = true
 		if collection != "organization" {
 			t.Fatalf("unexpected collection: %s", collection)
@@ -1299,13 +1301,16 @@ func TestQueryPluginCRM_WithOrganizationOnly(t *testing.T) {
 		if filters != nil {
 			t.Fatalf("expected nil filters, got %+v", filters)
 		}
-		if gotOrgID != orgID {
-			t.Fatalf("unexpected org ID: %s", gotOrgID)
+		if len(matchingCollections) != 1 || matchingCollections[0] != "organization_org-uuid-1" {
+			t.Fatalf("unexpected matching collections: %v", matchingCollections)
 		}
 		return nil
 	}
 
-	if err := uc.QueryPluginCRM(ctx, nil, "plugin_crm", collections, nil, orgID, result, logger); err != nil {
+	mockDS := portDS.NewMockCRMQueryable(ctrl)
+	mockDS.EXPECT().ListCollectionNames(gomock.Any()).Return([]string{"organization_org-uuid-1"}, nil)
+
+	if err := uc.QueryPluginCRM(ctx, mockDS, "plugin_crm", collections, nil, result, logger); err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 	if !called {
@@ -1671,10 +1676,9 @@ func TestQueryPluginCRM_WithFilters(t *testing.T) {
 			"status": {Equals: []any{"active"}},
 		},
 	}
-	orgID := uuid.MustParse("019b9df1-34eb-7dd0-afd5-53f859667e51")
 
 	seenCounterparty := false
-	processPluginCRMCollectionFn = func(_ *UseCase, _ context.Context, _ portDS.CRMQueryable, collection string, _ []string, collectionFilters map[string]modelJob.FilterCondition, _ uuid.UUID, _ map[string]map[string][]map[string]any, _ libLog.Logger) error {
+	processPluginCRMCollectionFn = func(_ *UseCase, _ context.Context, _ portDS.CRMQueryable, collection string, _ []string, collectionFilters map[string]modelJob.FilterCondition, _ []string, _ map[string]map[string][]map[string]any, _ libLog.Logger) error {
 		if collection == "counterparty" {
 			seenCounterparty = true
 			if collectionFilters["status"].Equals[0] != "active" {
@@ -1684,7 +1688,13 @@ func TestQueryPluginCRM_WithFilters(t *testing.T) {
 		return nil
 	}
 
-	if err := uc.QueryPluginCRM(ctx, nil, "plugin_crm", collections, filters, orgID, result, logger); err != nil {
+	mockDS := portDS.NewMockCRMQueryable(ctrl)
+	mockDS.EXPECT().ListCollectionNames(gomock.Any()).Return([]string{
+		"organization_org-uuid-1",
+		"counterparty_org-uuid-1",
+	}, nil)
+
+	if err := uc.QueryPluginCRM(ctx, mockDS, "plugin_crm", collections, filters, result, logger); err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 	if !seenCounterparty {
@@ -1737,17 +1747,17 @@ func TestProcessPluginCRMCollection_WithValidOrganization(t *testing.T) {
 
 	ctx := testContext()
 	logger := testLogger()
-	orgID := uuid.MustParse("019b9df1-34eb-7dd0-afd5-53f859667e51")
 	result := make(map[string]map[string][]map[string]any)
 
 	queryPluginCRMCollectionWithFiltersFn = func(_ *UseCase, _ context.Context, _ portDS.CRMQueryable, collection string, _ []string, _ map[string]modelJob.FilterCondition, _ libLog.Logger) ([]map[string]any, error) {
-		if collection != "counterparty_"+orgID.String() {
+		if collection != "counterparty_org-uuid-1" {
 			t.Fatalf("unexpected collection: %s", collection)
 		}
 		return nil, errors.New("query failed")
 	}
 
-	err := uc.processPluginCRMCollection(ctx, nil, "counterparty", []string{"id", "name"}, nil, orgID, result, logger)
+	matchingCollections := []string{"counterparty_org-uuid-1"}
+	err := uc.processPluginCRMCollection(ctx, nil, "counterparty", []string{"id", "name"}, nil, matchingCollections, result, logger)
 	if err == nil || !strings.Contains(err.Error(), "query failed") {
 		t.Fatalf("expected query failure, got %v", err)
 	}
@@ -1768,7 +1778,6 @@ func TestProcessPluginCRMCollection_TransformsCollectionAndDecryptsResult(t *tes
 	uc := newTestUseCase(mocks)
 	ctx := testContext()
 	logger := testLogger()
-	orgID := uuid.MustParse("019b9df1-34eb-7dd0-afd5-53f859667e51")
 	result := make(map[string]map[string][]map[string]any)
 
 	hashKey := strings.Repeat("01", 32)
@@ -1779,7 +1788,7 @@ func TestProcessPluginCRMCollection_TransformsCollectionAndDecryptsResult(t *tes
 	plainDocument := "12345678900"
 
 	queryPluginCRMCollectionWithFiltersFn = func(_ *UseCase, _ context.Context, _ portDS.CRMQueryable, collection string, fields []string, _ map[string]modelJob.FilterCondition, _ libLog.Logger) ([]map[string]any, error) {
-		expectedCollection := "holders_" + orgID.String()
+		expectedCollection := "holders_org-uuid-1"
 		if collection != expectedCollection {
 			t.Fatalf("expected collection %s, got %s", expectedCollection, collection)
 		}
@@ -1793,8 +1802,8 @@ func TestProcessPluginCRMCollection_TransformsCollectionAndDecryptsResult(t *tes
 		return []map[string]any{{"document": plainDocument}}, nil
 	}
 
-	mockDS := portDS.NewMockCRMQueryable(ctrl)
-	err := uc.processPluginCRMCollection(ctx, mockDS, "holders", []string{"document"}, nil, orgID, result, logger)
+	matchingCollections := []string{"holders_org-uuid-1"}
+	err := uc.processPluginCRMCollection(ctx, nil, "holders", []string{"document"}, nil, matchingCollections, result, logger)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -1821,7 +1830,6 @@ func TestQueryPluginCRM_WithFilters_TransformsAdvancedFilters(t *testing.T) {
 	uc := newTestUseCase(mocks)
 	ctx := testContext()
 	logger := testLogger()
-	orgID := uuid.MustParse("019b9df1-34eb-7dd0-afd5-53f859667e51")
 	result := make(map[string]map[string][]map[string]any)
 
 	hashKey := strings.Repeat("01", 32)
@@ -1829,7 +1837,7 @@ func TestQueryPluginCRM_WithFilters_TransformsAdvancedFilters(t *testing.T) {
 	t.Setenv("CRYPTO_HASH_SECRET_KEY_PLUGIN_CRM", hashKey)
 	t.Setenv("CRYPTO_ENCRYPT_SECRET_KEY_PLUGIN_CRM", encryptKey)
 
-	processPluginCRMCollectionFn = func(_ *UseCase, _ context.Context, _ portDS.CRMQueryable, collection string, _ []string, collectionFilters map[string]modelJob.FilterCondition, _ uuid.UUID, res map[string]map[string][]map[string]any, _ libLog.Logger) error {
+	processPluginCRMCollectionFn = func(_ *UseCase, _ context.Context, _ portDS.CRMQueryable, collection string, _ []string, collectionFilters map[string]modelJob.FilterCondition, _ []string, res map[string]map[string][]map[string]any, _ libLog.Logger) error {
 		if collectionFilters == nil {
 			t.Fatal("expected non-nil filters")
 		}
@@ -1844,6 +1852,8 @@ func TestQueryPluginCRM_WithFilters_TransformsAdvancedFilters(t *testing.T) {
 	}
 
 	mockDS := portDS.NewMockCRMQueryable(ctrl)
+	mockDS.EXPECT().ListCollectionNames(gomock.Any()).Return([]string{"holders_org-uuid-1"}, nil)
+
 	err := uc.QueryPluginCRM(
 		ctx,
 		mockDS,
@@ -1854,7 +1864,6 @@ func TestQueryPluginCRM_WithFilters_TransformsAdvancedFilters(t *testing.T) {
 				"document": {Equals: []any{"12345678900"}},
 			},
 		},
-		orgID,
 		result,
 		logger,
 	)

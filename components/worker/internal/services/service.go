@@ -10,6 +10,7 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/ports/job"
 	"github.com/LerianStudio/fetcher/pkg/ports/publisher"
 	"github.com/LerianStudio/fetcher/pkg/ports/storage"
+	"github.com/LerianStudio/fetcher/pkg/resolver"
 )
 
 // UseCase is a struct that coordinates the handling of template files, report storage, external data sources, and report data.
@@ -42,23 +43,24 @@ type UseCase struct {
 	// dataSourceFactory creates DataSource instances from connections.
 	dataSourceFactory func(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor) (datasource.DataSource, error)
 
-	// storageEncryptSecretKey is the encryption secret key for external data storage data-at-rest.
-	storageEncryptSecretKey string
-
-	// storageHashSecretKey is the hash secret key for external data storage data-at-rest.
-	storageHashSecretKey string
+	// storageEncryptDerivedKey is the HKDF-derived AES-256 key for encrypting
+	// extracted data at rest. Derived from APP_ENC_KEY with context "fetcher-storage-encryption-v1".
+	storageEncryptDerivedKey []byte
 
 	// crmEncryptSecretKey is the encryption secret key for plugin_crm datasource.
 	crmEncryptSecretKey string
 
 	// crmHashSecretKey is the hash secret key for plugin_crm datasource.
 	crmHashSecretKey string
+
+	// ConnectionResolver resolves datasource connections (internal + external).
+	// When nil, falls back to ConnectionRepository.FindByConfigNames (backwards compatible).
+	ConnectionResolver resolver.ConnectionResolver
 }
 
-// SetStorageSecrets configures the storage encryption and hash secret keys.
-func (uc *UseCase) SetStorageSecrets(encryptKey, hashKey string) {
-	uc.storageEncryptSecretKey = encryptKey
-	uc.storageHashSecretKey = hashKey
+// SetStorageEncryptDerivedKey configures the HKDF-derived AES-256 key for storage encryption.
+func (uc *UseCase) SetStorageEncryptDerivedKey(key []byte) {
+	uc.storageEncryptDerivedKey = key
 }
 
 // SetCRMSecrets configures the CRM plugin encryption and hash secret keys.

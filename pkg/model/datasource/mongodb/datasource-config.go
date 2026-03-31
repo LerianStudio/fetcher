@@ -86,6 +86,24 @@ func (ds *DataSourceConfigMongoDB) Query(ctx context.Context, collections map[st
 	return result, nil
 }
 
+// QueryCollection queries a single MongoDB collection with the specified fields and optional filter.
+// Implements portDS.CRMQueryable.
+func (ds *DataSourceConfigMongoDB) QueryCollection(ctx context.Context, collection string, fields []string, filter map[string][]any) ([]map[string]any, error) {
+	return ds.MongoDBRepository.Query(ctx, collection, fields, filter)
+}
+
+// QueryCollectionWithAdvancedFilters queries a single MongoDB collection using advanced FilterCondition filters.
+// Implements portDS.CRMQueryable.
+func (ds *DataSourceConfigMongoDB) QueryCollectionWithAdvancedFilters(ctx context.Context, collection string, fields []string, filters map[string]job.FilterCondition) ([]map[string]any, error) {
+	return ds.MongoDBRepository.QueryWithAdvancedFilters(ctx, collection, fields, filters)
+}
+
+// ListCollectionNames returns all collection names in the MongoDB database.
+// Implements portDS.CRMQueryable.
+func (ds *DataSourceConfigMongoDB) ListCollectionNames(ctx context.Context) ([]string, error) {
+	return ds.MongoDBRepository.ListCollectionNames(ctx)
+}
+
 // getCollectionFilters extracts filters for a specific collection.
 func getCollectionFilters(databaseFilters map[string]map[string]job.FilterCondition, collectionName string) map[string]job.FilterCondition {
 	if databaseFilters == nil {

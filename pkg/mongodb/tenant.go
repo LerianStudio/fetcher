@@ -21,13 +21,13 @@ func ResolveDatabase(ctx context.Context, conn MongoClientProvider, dbName strin
 	}
 
 	// Check if there is a tenant-specific database in context
-	if db := tmcore.GetMongoFromContext(ctx); db != nil {
+	if db := tmcore.GetMBContext(ctx); db != nil {
 		return db, nil
 	}
 
 	// If a tenant ID exists in context but no tenant DB was injected,
 	// fail closed rather than silently falling back to the shared database.
-	if tmcore.GetTenantIDFromContext(ctx) != "" {
+	if tmcore.GetTenantIDContext(ctx) != "" {
 		return nil, tmcore.ErrTenantContextRequired
 	}
 

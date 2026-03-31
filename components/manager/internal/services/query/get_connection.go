@@ -8,9 +8,11 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
+	"github.com/LerianStudio/fetcher/pkg/resolver"
 
 	"github.com/LerianStudio/lib-commons/v4/commons"
 	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
+	tmcore "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/core"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
@@ -18,13 +20,15 @@ import (
 
 type GetConnection struct {
 	connRepo connRepo.Repository
+	resolver resolver.ConnectionResolver          // nil-safe
+	registry *resolver.InternalDatasourceRegistry // nil-safe
 }
 
-func NewGetConnection(connectionRepo connRepo.Repository) *GetConnection {
-	return &GetConnection{connRepo: connectionRepo}
+func NewGetConnection(connectionRepo connRepo.Repository, connResolver resolver.ConnectionResolver, dsRegistry *resolver.InternalDatasourceRegistry) *GetConnection {
+	return &GetConnection{connRepo: connectionRepo, resolver: connResolver, registry: dsRegistry}
 }
 
-func (s *GetConnection) Execute(ctx context.Context, organizationID, connectionID uuid.UUID) (*model.Connection, error) {
+func (s *GetConnection) Execute(ctx context.Context, connectionID uuid.UUID) (*model.Connection, error) {
 	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "service.get_connection")
@@ -32,11 +36,33 @@ func (s *GetConnection) Execute(ctx context.Context, organizationID, connectionI
 
 	span.SetAttributes(
 		attribute.String("app.request.request_id", reqID),
-		attribute.String("app.request.organization_id", organizationID.String()),
 		attribute.String("app.request.connection_id", connectionID.String()),
 	)
 
-	current, err := s.connRepo.FindByID(ctx, connectionID, organizationID)
+	// Check if this is an internal datasource (deterministic UUID per tenant)
+	if s.registry != nil && s.resolver != nil {
+		tenantID := tmcore.GetTenantIDContext(ctx)
+		if configName, _, found := s.registry.FindConfigByID(connectionID, tenantID); found {
+			resolved, resolveErr := s.resolver.ResolveInternalByConfigName(ctx, configName)
+			if resolveErr != nil {
+				libOpentelemetry.HandleSpanError(span, "failed to resolve internal datasource", resolveErr)
+				return nil, fmt.Errorf("failed to resolve internal datasource '%s': %w", configName, resolveErr)
+			}
+
+			if resolved == nil {
+				return nil, pkg.ValidateBusinessError(
+					constant.ErrEntityNotFound,
+					"connection",
+					connectionID,
+				)
+			}
+
+			return resolved, nil
+		}
+	}
+
+	// Fallback to MongoDB lookup for external connections
+	current, err := s.connRepo.FindByID(ctx, connectionID)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to find connection by ID", err)
 		return nil, fmt.Errorf("failed to find connection by id: %w", err)

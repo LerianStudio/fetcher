@@ -28,15 +28,13 @@ func TestConnectionHandler_CreateConnection_RealHandlerSuccess(t *testing.T) {
 	defer ctrl.Finish()
 
 	app := setupConnectionTestApp()
-	orgID := uuid.New()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockCryptor := crypto.NewMockCryptor(ctrl)
 
 	mockCryptor.EXPECT().Encrypt(gomock.Any(), "secretpassword").Return("encrypted-password", "v1", nil)
-	mockConnRepo.EXPECT().FindByOrganizationAndName(gomock.Any(), orgID, "test-connection").Return(nil, nil)
+	mockConnRepo.EXPECT().FindByName(gomock.Any(), "test-connection").Return(nil, nil)
 	mockConnRepo.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, conn *model.Connection) (*model.Connection, error) {
-		assert.Equal(t, orgID, conn.OrganizationID)
 		assert.Equal(t, "test-connection", conn.ConfigName)
 		assert.Equal(t, model.TypePostgreSQL, conn.Type)
 		return conn, nil
@@ -57,7 +55,7 @@ func TestConnectionHandler_CreateConnection_RealHandlerSuccess(t *testing.T) {
 		"password":"secretpassword"
 	}`))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Organization-Id", orgID.String())
+
 	req.Header.Set("X-Product-Name", "test-product")
 
 	resp, err := app.Test(req)
@@ -76,25 +74,23 @@ func TestConnectionHandler_ListConnections_RealHandlerSuccess(t *testing.T) {
 	defer ctrl.Finish()
 
 	app := setupConnectionTestApp()
-	orgID := uuid.New()
-	conn1 := createTestConnection(uuid.New(), orgID)
-	conn2 := createTestConnection(uuid.New(), orgID)
+	conn1 := createTestConnection(uuid.New())
+	conn2 := createTestConnection(uuid.New())
 	conn2.ConfigName = "secondary"
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockConnRepo.EXPECT().List(gomock.Any(), orgID, gomock.Any()).DoAndReturn(func(_ context.Context, _ uuid.UUID, filters nethttp.QueryHeader) ([]*model.Connection, int64, error) {
+	mockConnRepo.EXPECT().List(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, filters nethttp.QueryHeader) ([]*model.Connection, int64, error) {
 		assert.Equal(t, 10, filters.Limit)
 		assert.Equal(t, 1, filters.Page)
 		return []*model.Connection{conn1, conn2}, 2, nil
 	})
 
 	handler := &ConnectionHandler{
-		ListQuery: querySvc.NewListConnections(mockConnRepo),
+		ListQuery: querySvc.NewListConnections(mockConnRepo, nil),
 	}
 	app.Get("/v1/management/connections", handler.ListConnections)
 
 	req := httptest.NewRequest("GET", "/v1/management/connections?limit=10&page=1", nil)
-	req.Header.Set("X-Organization-Id", orgID.String())
 
 	resp, err := app.Test(req)
 	require.NoError(t, err)
@@ -115,15 +111,14 @@ func TestConnectionHandler_UpdateConnection_RealHandlerSuccess(t *testing.T) {
 	defer ctrl.Finish()
 
 	app := setupConnectionTestApp()
-	orgID := uuid.New()
 	connID := uuid.New()
-	current := createTestConnection(connID, orgID)
+	current := createTestConnection(connID)
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 
-	mockConnRepo.EXPECT().FindByID(gomock.Any(), connID, orgID).Return(current, nil)
-	mockJobRepo.EXPECT().ExistsRunningByMappedFieldKey(gomock.Any(), orgID, current.ConfigName).Return(false, nil)
+	mockConnRepo.EXPECT().FindByID(gomock.Any(), connID).Return(current, nil)
+	mockJobRepo.EXPECT().ExistsRunningByMappedFieldKey(gomock.Any(), current.ConfigName).Return(false, nil)
 	mockConnRepo.EXPECT().Update(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, conn *model.Connection) (*model.Connection, error) {
 		assert.Equal(t, "new-host", conn.Host)
 		assert.Equal(t, 5433, conn.Port)
@@ -140,7 +135,6 @@ func TestConnectionHandler_UpdateConnection_RealHandlerSuccess(t *testing.T) {
 		"port":5433
 	}`))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Organization-Id", orgID.String())
 
 	resp, err := app.Test(req)
 	require.NoError(t, err)
@@ -158,19 +152,18 @@ func TestConnectionHandler_ValidateSchema_RealHandlerFailureResponse(t *testing.
 	defer ctrl.Finish()
 
 	app := setupConnectionTestApp()
-	orgID := uuid.New()
 	connID := uuid.New()
-	conn := createTestConnection(connID, orgID)
+	conn := createTestConnection(connID)
 	conn.ConfigName = "db1"
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
-	mockConnRepo.EXPECT().FindByConfigNames(gomock.Any(), orgID, []string{"db1"}).Return([]*model.Connection{conn}, nil)
+	mockConnRepo.EXPECT().FindByConfigNames(gomock.Any(), []string{"db1"}).Return([]*model.Connection{conn}, nil)
 	mockSchemaCache.EXPECT().Get(gomock.Any(), "db1").Return(model.NewDataSourceSchema("db1"), nil)
 
 	handler := &ConnectionHandler{
-		ValidateSchemaQuery: querySvc.NewValidateSchema(mockConnRepo, nil, mockSchemaCache, nil),
+		ValidateSchemaQuery: querySvc.NewValidateSchema(mockConnRepo, nil, mockSchemaCache, nil, nil),
 	}
 	app.Post("/v1/management/connections/validate-schema", handler.ValidateSchema)
 
@@ -178,7 +171,6 @@ func TestConnectionHandler_ValidateSchema_RealHandlerFailureResponse(t *testing.
 		"mappedFields": {"db1": {"users": ["id"]}}
 	}`))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Organization-Id", orgID.String())
 
 	resp, err := app.Test(req)
 	require.NoError(t, err)
@@ -197,13 +189,12 @@ func TestConnectionHandler_GetConnectionSchema_RealHandlerSuccess(t *testing.T) 
 	defer ctrl.Finish()
 
 	app := setupConnectionTestApp()
-	orgID := uuid.New()
 	connID := uuid.New()
-	conn := createTestConnection(connID, orgID)
+	conn := createTestConnection(connID)
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockDataSource := datasourceModel.NewMockDataSource(ctrl)
 
-	mockConnRepo.EXPECT().FindByID(gomock.Any(), connID, orgID).Return(conn, nil)
+	mockConnRepo.EXPECT().FindByID(gomock.Any(), connID).Return(conn, nil)
 	schema := model.NewDataSourceSchema(conn.ConfigName)
 	schema.AddTable("users", []string{"id", "name"})
 	mockDataSource.EXPECT().GetSchemaInfo(gomock.Any(), gomock.Any()).Return(schema, nil)
@@ -212,12 +203,11 @@ func TestConnectionHandler_GetConnectionSchema_RealHandlerSuccess(t *testing.T) 
 	handler := &ConnectionHandler{
 		GetSchemaQuery: querySvc.NewGetConnectionSchema(mockConnRepo, nil, func(_ context.Context, _ *model.Connection, _ crypto.Cryptor) (datasourceModel.DataSource, error) {
 			return mockDataSource, nil
-		}),
+		}, nil, nil),
 	}
 	app.Get("/v1/management/connections/:id/schema", handler.GetConnectionSchema)
 
 	req := httptest.NewRequest("GET", "/v1/management/connections/"+connID.String()+"/schema", nil)
-	req.Header.Set("X-Organization-Id", orgID.String())
 
 	resp, err := app.Test(req)
 	require.NoError(t, err)
@@ -235,17 +225,15 @@ func TestMigrationHandler_ListUnassignedConnections_RealHandlerSuccess(t *testin
 	defer ctrl.Finish()
 
 	app := setupConnectionTestApp()
-	orgID := uuid.New()
-	conn := createTestConnection(uuid.New(), orgID)
+	conn := createTestConnection(uuid.New())
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	mockConnRepo.EXPECT().ListUnassigned(gomock.Any(), orgID, gomock.Any()).Return([]*model.Connection{conn}, int64(1), nil)
+	mockConnRepo.EXPECT().ListUnassigned(gomock.Any(), gomock.Any()).Return([]*model.Connection{conn}, int64(1), nil)
 
 	handler := &MigrationHandler{ListUnassignedQry: querySvc.NewListUnassignedConnections(mockConnRepo)}
 	app.Get("/v1/management/connections/unassigned", handler.ListUnassignedConnections)
 
 	req := httptest.NewRequest("GET", "/v1/management/connections/unassigned?limit=10&page=1", nil)
-	req.Header.Set("X-Organization-Id", orgID.String())
 
 	resp, err := app.Test(req)
 	require.NoError(t, err)
@@ -264,14 +252,13 @@ func TestMigrationHandler_AssignConnectionToProduct_RealHandlerSuccess(t *testin
 	defer ctrl.Finish()
 
 	app := setupConnectionTestApp()
-	orgID := uuid.New()
 	connID := uuid.New()
 	productName := "my-product"
-	conn := createTestConnection(connID, orgID)
+	conn := createTestConnection(connID)
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	mockConnRepo.EXPECT().FindByID(gomock.Any(), connID, orgID).Return(conn, nil)
-	mockConnRepo.EXPECT().AssignProductName(gomock.Any(), connID, orgID, productName).DoAndReturn(func(_ context.Context, _ uuid.UUID, _ uuid.UUID, name string) (*model.Connection, error) {
+	mockConnRepo.EXPECT().FindByID(gomock.Any(), connID).Return(conn, nil)
+	mockConnRepo.EXPECT().AssignProductName(gomock.Any(), connID, productName).DoAndReturn(func(_ context.Context, _ uuid.UUID, name string) (*model.Connection, error) {
 		conn.ProductName = name
 		return conn, nil
 	})
@@ -281,7 +268,7 @@ func TestMigrationHandler_AssignConnectionToProduct_RealHandlerSuccess(t *testin
 
 	req := httptest.NewRequest("POST", "/v1/management/connections/"+connID.String()+"/assign", nil)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Organization-Id", orgID.String())
+
 	req.Header.Set("X-Product-Name", productName)
 
 	resp, err := app.Test(req)

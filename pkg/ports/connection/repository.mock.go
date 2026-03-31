@@ -45,18 +45,18 @@ func (m *MockRepository) EXPECT() *MockRepositoryMockRecorder {
 }
 
 // AssignProductName mocks base method.
-func (m *MockRepository) AssignProductName(ctx context.Context, connectionID, organizationID uuid.UUID, productName string) (*model.Connection, error) {
+func (m *MockRepository) AssignProductName(ctx context.Context, connectionID uuid.UUID, productName string) (*model.Connection, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "AssignProductName", ctx, connectionID, organizationID, productName)
+	ret := m.ctrl.Call(m, "AssignProductName", ctx, connectionID, productName)
 	ret0, _ := ret[0].(*model.Connection)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // AssignProductName indicates an expected call of AssignProductName.
-func (mr *MockRepositoryMockRecorder) AssignProductName(ctx, connectionID, organizationID, productName any) *gomock.Call {
+func (mr *MockRepositoryMockRecorder) AssignProductName(ctx, connectionID, productName any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AssignProductName", reflect.TypeOf((*MockRepository)(nil).AssignProductName), ctx, connectionID, organizationID, productName)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AssignProductName", reflect.TypeOf((*MockRepository)(nil).AssignProductName), ctx, connectionID, productName)
 }
 
 // Create mocks base method.
@@ -75,83 +75,83 @@ func (mr *MockRepositoryMockRecorder) Create(ctx, conn any) *gomock.Call {
 }
 
 // Delete mocks base method.
-func (m *MockRepository) Delete(ctx context.Context, id, organizationID uuid.UUID, deletedAt time.Time) error {
+func (m *MockRepository) Delete(ctx context.Context, id uuid.UUID, deletedAt time.Time) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Delete", ctx, id, organizationID, deletedAt)
+	ret := m.ctrl.Call(m, "Delete", ctx, id, deletedAt)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // Delete indicates an expected call of Delete.
-func (mr *MockRepositoryMockRecorder) Delete(ctx, id, organizationID, deletedAt any) *gomock.Call {
+func (mr *MockRepositoryMockRecorder) Delete(ctx, id, deletedAt any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Delete", reflect.TypeOf((*MockRepository)(nil).Delete), ctx, id, organizationID, deletedAt)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Delete", reflect.TypeOf((*MockRepository)(nil).Delete), ctx, id, deletedAt)
 }
 
 // FindByConfigNames mocks base method.
-func (m *MockRepository) FindByConfigNames(ctx context.Context, organizationID uuid.UUID, configNames []string) ([]*model.Connection, error) {
+func (m *MockRepository) FindByConfigNames(ctx context.Context, configNames []string) ([]*model.Connection, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "FindByConfigNames", ctx, organizationID, configNames)
+	ret := m.ctrl.Call(m, "FindByConfigNames", ctx, configNames)
 	ret0, _ := ret[0].([]*model.Connection)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // FindByConfigNames indicates an expected call of FindByConfigNames.
-func (mr *MockRepositoryMockRecorder) FindByConfigNames(ctx, organizationID, configNames any) *gomock.Call {
+func (mr *MockRepositoryMockRecorder) FindByConfigNames(ctx, configNames any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FindByConfigNames", reflect.TypeOf((*MockRepository)(nil).FindByConfigNames), ctx, organizationID, configNames)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FindByConfigNames", reflect.TypeOf((*MockRepository)(nil).FindByConfigNames), ctx, configNames)
+}
+
+// FindByDatabaseName mocks base method.
+func (m *MockRepository) FindByDatabaseName(ctx context.Context, databaseName string) (*model.Connection, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "FindByDatabaseName", ctx, databaseName)
+	ret0, _ := ret[0].(*model.Connection)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// FindByDatabaseName indicates an expected call of FindByDatabaseName.
+func (mr *MockRepositoryMockRecorder) FindByDatabaseName(ctx, databaseName any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FindByDatabaseName", reflect.TypeOf((*MockRepository)(nil).FindByDatabaseName), ctx, databaseName)
 }
 
 // FindByID mocks base method.
-func (m *MockRepository) FindByID(ctx context.Context, id, organizationID uuid.UUID) (*model.Connection, error) {
+func (m *MockRepository) FindByID(ctx context.Context, id uuid.UUID) (*model.Connection, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "FindByID", ctx, id, organizationID)
+	ret := m.ctrl.Call(m, "FindByID", ctx, id)
 	ret0, _ := ret[0].(*model.Connection)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // FindByID indicates an expected call of FindByID.
-func (mr *MockRepositoryMockRecorder) FindByID(ctx, id, organizationID any) *gomock.Call {
+func (mr *MockRepositoryMockRecorder) FindByID(ctx, id any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FindByID", reflect.TypeOf((*MockRepository)(nil).FindByID), ctx, id, organizationID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FindByID", reflect.TypeOf((*MockRepository)(nil).FindByID), ctx, id)
 }
 
-// FindByOrganizationAndDatabaseName mocks base method.
-func (m *MockRepository) FindByOrganizationAndDatabaseName(ctx context.Context, organizationID uuid.UUID, databaseName string) (*model.Connection, error) {
+// FindByName mocks base method.
+func (m *MockRepository) FindByName(ctx context.Context, configName string) (*model.Connection, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "FindByOrganizationAndDatabaseName", ctx, organizationID, databaseName)
+	ret := m.ctrl.Call(m, "FindByName", ctx, configName)
 	ret0, _ := ret[0].(*model.Connection)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// FindByOrganizationAndDatabaseName indicates an expected call of FindByOrganizationAndDatabaseName.
-func (mr *MockRepositoryMockRecorder) FindByOrganizationAndDatabaseName(ctx, organizationID, databaseName any) *gomock.Call {
+// FindByName indicates an expected call of FindByName.
+func (mr *MockRepositoryMockRecorder) FindByName(ctx, configName any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FindByOrganizationAndDatabaseName", reflect.TypeOf((*MockRepository)(nil).FindByOrganizationAndDatabaseName), ctx, organizationID, databaseName)
-}
-
-// FindByOrganizationAndName mocks base method.
-func (m *MockRepository) FindByOrganizationAndName(ctx context.Context, organizationID uuid.UUID, configName string) (*model.Connection, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "FindByOrganizationAndName", ctx, organizationID, configName)
-	ret0, _ := ret[0].(*model.Connection)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// FindByOrganizationAndName indicates an expected call of FindByOrganizationAndName.
-func (mr *MockRepositoryMockRecorder) FindByOrganizationAndName(ctx, organizationID, configName any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FindByOrganizationAndName", reflect.TypeOf((*MockRepository)(nil).FindByOrganizationAndName), ctx, organizationID, configName)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FindByName", reflect.TypeOf((*MockRepository)(nil).FindByName), ctx, configName)
 }
 
 // List mocks base method.
-func (m *MockRepository) List(ctx context.Context, organizationID uuid.UUID, filters http.QueryHeader) ([]*model.Connection, int64, error) {
+func (m *MockRepository) List(ctx context.Context, filters http.QueryHeader) ([]*model.Connection, int64, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "List", ctx, organizationID, filters)
+	ret := m.ctrl.Call(m, "List", ctx, filters)
 	ret0, _ := ret[0].([]*model.Connection)
 	ret1, _ := ret[1].(int64)
 	ret2, _ := ret[2].(error)
@@ -159,15 +159,15 @@ func (m *MockRepository) List(ctx context.Context, organizationID uuid.UUID, fil
 }
 
 // List indicates an expected call of List.
-func (mr *MockRepositoryMockRecorder) List(ctx, organizationID, filters any) *gomock.Call {
+func (mr *MockRepositoryMockRecorder) List(ctx, filters any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "List", reflect.TypeOf((*MockRepository)(nil).List), ctx, organizationID, filters)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "List", reflect.TypeOf((*MockRepository)(nil).List), ctx, filters)
 }
 
 // ListUnassigned mocks base method.
-func (m *MockRepository) ListUnassigned(ctx context.Context, organizationID uuid.UUID, filters http.QueryHeader) ([]*model.Connection, int64, error) {
+func (m *MockRepository) ListUnassigned(ctx context.Context, filters http.QueryHeader) ([]*model.Connection, int64, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListUnassigned", ctx, organizationID, filters)
+	ret := m.ctrl.Call(m, "ListUnassigned", ctx, filters)
 	ret0, _ := ret[0].([]*model.Connection)
 	ret1, _ := ret[1].(int64)
 	ret2, _ := ret[2].(error)
@@ -175,9 +175,9 @@ func (m *MockRepository) ListUnassigned(ctx context.Context, organizationID uuid
 }
 
 // ListUnassigned indicates an expected call of ListUnassigned.
-func (mr *MockRepositoryMockRecorder) ListUnassigned(ctx, organizationID, filters any) *gomock.Call {
+func (mr *MockRepositoryMockRecorder) ListUnassigned(ctx, filters any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListUnassigned", reflect.TypeOf((*MockRepository)(nil).ListUnassigned), ctx, organizationID, filters)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListUnassigned", reflect.TypeOf((*MockRepository)(nil).ListUnassigned), ctx, filters)
 }
 
 // Update mocks base method.

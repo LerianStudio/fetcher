@@ -32,7 +32,7 @@ func NewUpdateConnection(connectionRepo connRepo.Repository, jobRepo job.Reposit
 	}
 }
 
-func (s *UpdateConnection) Execute(ctx context.Context, organizationID, connectionID uuid.UUID, connInput model.ConnectionUpdateInput) (*model.Connection, error) {
+func (s *UpdateConnection) Execute(ctx context.Context, connectionID uuid.UUID, connInput model.ConnectionUpdateInput) (*model.Connection, error) {
 	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "service.update_connection")
@@ -40,7 +40,6 @@ func (s *UpdateConnection) Execute(ctx context.Context, organizationID, connecti
 
 	span.SetAttributes(
 		attribute.String("app.request.request_id", reqID),
-		attribute.String("app.request.organization_id", organizationID.String()),
 		attribute.String("app.request.connection_id", connectionID.String()),
 	)
 
@@ -49,7 +48,7 @@ func (s *UpdateConnection) Execute(ctx context.Context, organizationID, connecti
 		libOpentelemetry.HandleSpanError(span, "Failed to convert fetcher input to JSON string", err)
 	}
 
-	current, err := s.connRepo.FindByID(ctx, connectionID, organizationID)
+	current, err := s.connRepo.FindByID(ctx, connectionID)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to find connection by ID", err)
 		return nil, fmt.Errorf("failed to find connection by id: %w", err)
@@ -64,7 +63,7 @@ func (s *UpdateConnection) Execute(ctx context.Context, organizationID, connecti
 		)
 	}
 
-	active, err := s.jobRepo.ExistsRunningByMappedFieldKey(ctx, organizationID, current.ConfigName)
+	active, err := s.jobRepo.ExistsRunningByMappedFieldKey(ctx, current.ConfigName)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to check for active jobs", err)
 		return nil, fmt.Errorf("failed to check for active jobs: %w", err)
@@ -88,6 +87,7 @@ func (s *UpdateConnection) Execute(ctx context.Context, organizationID, connecti
 		connInput.Host,
 		connInput.Port,
 		connInput.DatabaseName,
+		connInput.Schema,
 		connInput.Username,
 		connInput.Password,
 		connInput.Metadata,

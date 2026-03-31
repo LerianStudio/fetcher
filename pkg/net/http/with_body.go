@@ -11,7 +11,7 @@ import (
 	"sync"
 
 	"github.com/LerianStudio/fetcher/pkg"
-	libCommons "github.com/LerianStudio/lib-commons/v3/commons"
+	libCommons "github.com/LerianStudio/lib-commons/v4/commons"
 	"github.com/go-playground/locales/en"
 	ut "github.com/go-playground/universal-translator"
 	"github.com/gofiber/fiber/v2"

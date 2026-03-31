@@ -13,10 +13,12 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/model/datasource"
 	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
+	"github.com/LerianStudio/fetcher/pkg/resolver"
 
 	"github.com/LerianStudio/lib-commons/v4/commons"
 	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
 	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
+	tmcore "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/core"
 	valkey "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/valkey"
 
 	"github.com/google/uuid"
@@ -38,21 +40,32 @@ type TestConnection struct {
 	store     RateLimiterStore
 	cryptor   crypto.Cryptor
 	dsFactory ds.DataSourceFactory
+	resolver  resolver.ConnectionResolver          // nil-safe
+	registry  *resolver.InternalDatasourceRegistry // nil-safe
 }
 
 // NewTestConnection creates a new TestConnection service.
 // The store parameter accepts either *ratelimit.RateLimiter or any implementation
 // of the RateLimiterStore interface for backward compatibility.
-func NewTestConnection(connectionRepo connRepo.Repository, cryptor crypto.Cryptor, store RateLimiterStore, factory ds.DataSourceFactory) *TestConnection {
+func NewTestConnection(
+	connectionRepo connRepo.Repository,
+	cryptor crypto.Cryptor,
+	store RateLimiterStore,
+	factory ds.DataSourceFactory,
+	connResolver resolver.ConnectionResolver,
+	dsRegistry *resolver.InternalDatasourceRegistry,
+) *TestConnection {
 	return &TestConnection{
 		connRepo:  connectionRepo,
 		store:     store,
 		cryptor:   cryptor,
 		dsFactory: factory,
+		resolver:  connResolver,
+		registry:  dsRegistry,
 	}
 }
 
-func (s *TestConnection) Execute(ctx context.Context, organizationID, connectionID uuid.UUID) (*model.ConnectionTestResponse, error) {
+func (s *TestConnection) Execute(ctx context.Context, connectionID uuid.UUID) (*model.ConnectionTestResponse, error) {
 	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "service.test_connection")
@@ -60,16 +73,14 @@ func (s *TestConnection) Execute(ctx context.Context, organizationID, connection
 
 	span.SetAttributes(
 		attribute.String("app.request.request_id", reqID),
-		attribute.String("app.request.organization_id", organizationID.String()),
 		attribute.String("app.request.connection_id", connectionID.String()),
 	)
 
-	key, err := valkey.GetKeyFromContext(ctx, connectionID.String())
+	key, err := valkey.GetKeyContext(ctx, connectionID.String())
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "connection test rate limiter key derivation error", err)
 		logger.Log(ctx, libLog.LevelError, "connection test rate limiter key derivation error",
 			libLog.String("connection_id", connectionID.String()),
-			libLog.String("organization_id", organizationID.String()),
 			libLog.Err(err),
 		)
 
@@ -81,7 +92,6 @@ func (s *TestConnection) Execute(ctx context.Context, organizationID, connection
 		libOpentelemetry.HandleSpanError(span, "connection test rate limiter error", err)
 		logger.Log(ctx, libLog.LevelError, "connection test rate limiter error",
 			libLog.String("connection_id", connectionID.String()),
-			libLog.String("organization_id", organizationID.String()),
 			libLog.Err(err),
 		)
 
@@ -104,7 +114,6 @@ func (s *TestConnection) Execute(ctx context.Context, organizationID, connection
 
 		logger.Log(ctx, libLog.LevelWarn, "connection test rate limited",
 			libLog.String("connection_id", connectionID.String()),
-			libLog.String("organization_id", organizationID.String()),
 			libLog.Int("wait_seconds", waitSeconds),
 		)
 
@@ -115,17 +124,38 @@ func (s *TestConnection) Execute(ctx context.Context, organizationID, connection
 		}
 	}
 
-	conn, err := s.connRepo.FindByID(ctx, connectionID, organizationID)
-	if err != nil {
-		libOpentelemetry.HandleSpanError(span, "failed to find connection", err)
-		return nil, fmt.Errorf("failed to find connection by id: %w", err)
+	// Check if this is an internal datasource (deterministic UUID per tenant)
+	var conn *model.Connection
+
+	if s.registry != nil && s.resolver != nil {
+		tenantID := tmcore.GetTenantIDContext(ctx)
+		if configName, _, found := s.registry.FindConfigByID(connectionID, tenantID); found {
+			resolved, resolveErr := s.resolver.ResolveInternalByConfigName(ctx, configName)
+			if resolveErr != nil {
+				libOpentelemetry.HandleSpanError(span, "failed to resolve internal datasource", resolveErr)
+				return nil, fmt.Errorf("failed to resolve internal datasource '%s': %w", configName, resolveErr)
+			}
+
+			conn = resolved
+		}
 	}
 
+	// Fallback to MongoDB lookup for external connections
 	if conn == nil {
-		return nil, pkg.ValidateBusinessError(
-			constant.ErrEntityNotFound,
-			"connection",
-		)
+		var findErr error
+
+		conn, findErr = s.connRepo.FindByID(ctx, connectionID)
+		if findErr != nil {
+			libOpentelemetry.HandleSpanError(span, "failed to find connection", findErr)
+			return nil, fmt.Errorf("failed to find connection by id: %w", findErr)
+		}
+
+		if conn == nil {
+			return nil, pkg.ValidateBusinessError(
+				constant.ErrEntityNotFound,
+				"connection",
+			)
+		}
 	}
 
 	testCtx, cancel := context.WithTimeout(ctx, ConnectionTestTimeout)
@@ -140,7 +170,6 @@ func (s *TestConnection) Execute(ctx context.Context, organizationID, connection
 		libOpentelemetry.HandleSpanError(span, "failed to establish datasource connection", err)
 		logger.Log(testCtx, libLog.LevelError, "connection test failed",
 			libLog.String("connection_id", connectionID.String()),
-			libLog.String("organization_id", organizationID.String()),
 			libLog.Err(err),
 		)
 
@@ -157,7 +186,6 @@ func (s *TestConnection) Execute(ctx context.Context, organizationID, connection
 	if err := connDS.Close(testCtx); err != nil {
 		logger.Log(testCtx, libLog.LevelWarn, "connection test cleanup failed",
 			libLog.String("connection_id", connectionID.String()),
-			libLog.String("organization_id", organizationID.String()),
 			libLog.Err(err),
 		)
 	}

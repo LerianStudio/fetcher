@@ -490,8 +490,8 @@ func TestRedisCache_GetSet_WithTenantContext(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("tenant context scopes keys automatically via valkey", func(t *testing.T) {
-		ctxA := tmcore.SetTenantIDInContext(context.Background(), "tenant-aaa")
-		ctxB := tmcore.SetTenantIDInContext(context.Background(), "tenant-bbb")
+		ctxA := tmcore.ContextWithTenantID(context.Background(), "tenant-aaa")
+		ctxB := tmcore.ContextWithTenantID(context.Background(), "tenant-bbb")
 
 		valueA := testStruct{ID: "1", Name: "TenantA"}
 		valueB := testStruct{ID: "2", Name: "TenantB"}
@@ -537,8 +537,8 @@ func TestRedisCache_GetSet_WithTenantContext(t *testing.T) {
 	})
 
 	t.Run("delete only affects the tenant that owns the key", func(t *testing.T) {
-		ctxA := tmcore.SetTenantIDInContext(context.Background(), "tenant-del-a")
-		ctxB := tmcore.SetTenantIDInContext(context.Background(), "tenant-del-b")
+		ctxA := tmcore.ContextWithTenantID(context.Background(), "tenant-del-a")
+		ctxB := tmcore.ContextWithTenantID(context.Background(), "tenant-del-b")
 
 		value := testStruct{ID: "x", Name: "DeleteTest"}
 
@@ -568,8 +568,8 @@ func TestRedisCache_GetSet_WithTenantContext(t *testing.T) {
 		freshCache, err := NewRedisCache[testStruct](conn, time.Minute, "cleartest:")
 		require.NoError(t, err)
 
-		ctxA := tmcore.SetTenantIDInContext(context.Background(), "tenant-clear-a")
-		ctxB := tmcore.SetTenantIDInContext(context.Background(), "tenant-clear-b")
+		ctxA := tmcore.ContextWithTenantID(context.Background(), "tenant-clear-a")
+		ctxB := tmcore.ContextWithTenantID(context.Background(), "tenant-clear-b")
 
 		err = freshCache.Set(ctxA, "k1", testStruct{ID: "a1"}, 0)
 		require.NoError(t, err)
@@ -599,7 +599,7 @@ func TestRedisCache_CacheKey_WithTenantContext(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("with tenant context adds tenant prefix", func(t *testing.T) {
-		ctx := tmcore.SetTenantIDInContext(context.Background(), "abc-123")
+		ctx := tmcore.ContextWithTenantID(context.Background(), "abc-123")
 		result, err := cache.cacheKey(ctx, "mykey")
 		require.NoError(t, err)
 		assert.Equal(t, "tenant:abc-123:fetcher:schema:mykey", result)

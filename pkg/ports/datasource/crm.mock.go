@@ -41,6 +41,21 @@ func (m *MockCRMQueryable) EXPECT() *MockCRMQueryableMockRecorder {
 	return m.recorder
 }
 
+// ListCollectionNames mocks base method.
+func (m *MockCRMQueryable) ListCollectionNames(ctx context.Context) ([]string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListCollectionNames", ctx)
+	ret0, _ := ret[0].([]string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListCollectionNames indicates an expected call of ListCollectionNames.
+func (mr *MockCRMQueryableMockRecorder) ListCollectionNames(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListCollectionNames", reflect.TypeOf((*MockCRMQueryable)(nil).ListCollectionNames), ctx)
+}
+
 // QueryCollection mocks base method.
 func (m *MockCRMQueryable) QueryCollection(ctx context.Context, collection string, fields []string, filter map[string][]any) ([]map[string]any, error) {
 	m.ctrl.T.Helper()

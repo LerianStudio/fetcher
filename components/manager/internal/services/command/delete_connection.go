@@ -30,7 +30,7 @@ func NewDeleteConnection(connectionRepo connRepo.Repository, jobRepo job.Reposit
 	}
 }
 
-func (s *DeleteConnection) Execute(ctx context.Context, organizationID, connectionID uuid.UUID) error {
+func (s *DeleteConnection) Execute(ctx context.Context, connectionID uuid.UUID) error {
 	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "service.delete_connection")
@@ -38,11 +38,10 @@ func (s *DeleteConnection) Execute(ctx context.Context, organizationID, connecti
 
 	span.SetAttributes(
 		attribute.String("app.request.request_id", reqID),
-		attribute.String("app.request.organization_id", organizationID.String()),
 		attribute.String("app.request.connection_id", connectionID.String()),
 	)
 
-	current, err := s.connRepo.FindByID(ctx, connectionID, organizationID)
+	current, err := s.connRepo.FindByID(ctx, connectionID)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to find connection by ID", err)
 		return fmt.Errorf("failed to find connection by id: %w", err)
@@ -57,7 +56,7 @@ func (s *DeleteConnection) Execute(ctx context.Context, organizationID, connecti
 		)
 	}
 
-	active, err := s.jobRepo.ExistsRunningByMappedFieldKey(ctx, organizationID, current.ConfigName)
+	active, err := s.jobRepo.ExistsRunningByMappedFieldKey(ctx, current.ConfigName)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to check for active jobs", err)
 		return fmt.Errorf("failed to check for active jobs: %w", err)
@@ -69,14 +68,13 @@ func (s *DeleteConnection) Execute(ctx context.Context, organizationID, connecti
 		return pkg.ValidateBusinessError(constant.ErrJobInProgress, "connection", "cannot delete connection with active jobs")
 	}
 
-	if err := s.connRepo.Delete(ctx, connectionID, organizationID, time.Now().UTC()); err != nil {
+	if err := s.connRepo.Delete(ctx, connectionID, time.Now().UTC()); err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to delete connection", err)
 		return fmt.Errorf("failed to delete connection: %w", err)
 	}
 
 	logger.Log(ctx, libLog.LevelInfo, "deleted connection",
 		libLog.String("connection_id", connectionID.String()),
-		libLog.String("organization_id", organizationID.String()),
 	)
 
 	return nil
