@@ -13,7 +13,6 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/datasource"
-	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/mongodb"
 	"github.com/LerianStudio/fetcher/pkg/mongodb/connection"
 	"github.com/LerianStudio/fetcher/pkg/mongodb/job"
@@ -214,8 +213,8 @@ func InitWorker() (*Service, error) {
 		tenantAdapter := resolver.NewTenantManagerAdapter(resolverTMClient)
 		service.ConnectionResolver = resolver.NewMultiTenantResolver(connectionRepository, dsRegistry, tenantAdapter)
 	} else {
-		// Single-tenant: env-based connections deferred to follow-up task.
-		envConnections := make(map[string]*model.Connection)
+		// Single-tenant: load internal datasource connections from DATASOURCE_* env vars.
+		envConnections := resolver.LoadInternalConnectionsFromEnv(dsRegistry, logger)
 		service.ConnectionResolver = resolver.NewSingleTenantResolver(connectionRepository, dsRegistry, envConnections)
 	}
 
