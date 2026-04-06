@@ -59,12 +59,25 @@ func LoadInternalConnectionsFromEnv(registry *InternalDatasourceRegistry, logger
 			continue
 		}
 
+		host := getEnv("HOST")
+		database := getEnv("DATABASE")
+
+		if host == "" || database == "" {
+			logger.Log(context.Background(), libLog.LevelWarn, "Missing HOST or DATABASE for internal datasource, skipping",
+				libLog.String("config_name", configName),
+				libLog.String("host", host),
+				libLog.String("database", database),
+			)
+
+			continue
+		}
+
 		conn := &model.Connection{
 			ConfigName:   configName,
 			Type:         dbType,
-			Host:         getEnv("HOST"),
+			Host:         host,
 			Port:         port,
-			DatabaseName: getEnv("DATABASE"),
+			DatabaseName: database,
 			Username:     getEnv("USER"),
 		}
 
