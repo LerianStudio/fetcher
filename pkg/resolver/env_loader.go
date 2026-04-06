@@ -39,7 +39,15 @@ func LoadInternalConnectionsFromEnv(registry *InternalDatasourceRegistry, logger
 			return os.Getenv(prefix + "_" + field)
 		}
 
-		port, _ := strconv.Atoi(getEnv("PORT"))
+		portStr := getEnv("PORT")
+
+		port, portErr := strconv.Atoi(portStr)
+		if portErr != nil || port == 0 {
+			logger.Log(context.Background(), libLog.LevelWarn, "Invalid or missing PORT for internal datasource, connection may fail",
+				libLog.String("config_name", configName),
+				libLog.String("port_value", portStr),
+			)
+		}
 
 		dbType := model.DBType(strings.ToUpper(getEnv("TYPE")))
 
