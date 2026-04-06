@@ -49,7 +49,15 @@ func LoadInternalConnectionsFromEnv(registry *InternalDatasourceRegistry, logger
 			)
 		}
 
-		dbType := model.DBType(strings.ToUpper(getEnv("TYPE")))
+		dbType, typeErr := model.NewTypeFromString(getEnv("TYPE"))
+		if typeErr != nil {
+			logger.Log(context.Background(), libLog.LevelWarn, "Invalid TYPE for internal datasource, skipping",
+				libLog.String("config_name", configName),
+				libLog.String("type_value", getEnv("TYPE")),
+			)
+
+			continue
+		}
 
 		conn := &model.Connection{
 			ConfigName:   configName,
