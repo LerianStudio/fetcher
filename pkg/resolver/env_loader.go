@@ -86,6 +86,16 @@ func LoadInternalConnectionsFromEnv(registry *InternalDatasourceRegistry, logger
 		// Internal connections use plaintext password (no encryption needed, in-memory only).
 		conn.SetPlaintextPassword(getEnv("PASSWORD"))
 
+		if existing, dup := envConnections[configName]; dup {
+			logger.Log(context.Background(), libLog.LevelWarn, "Duplicate configName in DATASOURCE_* env vars, keeping first entry",
+				libLog.String("config_name", configName),
+				libLog.String("kept_host", existing.Host),
+				libLog.String("skipped_host", conn.Host),
+			)
+
+			continue
+		}
+
 		envConnections[configName] = conn
 
 		logger.Log(context.Background(), libLog.LevelInfo, "Loaded internal datasource from env vars",
