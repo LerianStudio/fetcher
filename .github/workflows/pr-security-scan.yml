@@ -30,6 +30,11 @@ jobs:
       filter_paths: |-
         components/manager
         components/worker
+      shared_paths: |
+        go.mod
+        go.sum
+        pkg/
+        Makefile
       path_level: "2"
       dockerhub_org: "lerianstudio"
     secrets: inherit
