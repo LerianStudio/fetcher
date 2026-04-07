@@ -2,6 +2,9 @@ package redis
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/base64"
 	"fmt"
 	"net"
 	"time"
@@ -25,6 +28,10 @@ type RedisConfig struct {
 	Port     string
 	Password string
 	DB       int
+
+	// TLS settings (optional - disabled by default)
+	UseTLS bool   // Enable TLS for Redis connection
+	CACert string // Base64-encoded CA certificate for TLS verification
 
 	// Connection pool settings (optional - uses defaults if zero)
 	PoolSize     int           // Default: 10
@@ -75,7 +82,7 @@ func NewRedisConnection(cfg RedisConfig, logger libLog.Logger) (*RedisConnection
 	cfg = cfg.WithDefaults()
 	addr := buildRedisAddr(cfg.Host, cfg.Port)
 
-	client := redis.NewClient(&redis.Options{
+	opts := &redis.Options{
 		Addr:         addr,
 		Password:     cfg.Password,
 		DB:           cfg.DB,
@@ -84,7 +91,29 @@ func NewRedisConnection(cfg RedisConfig, logger libLog.Logger) (*RedisConnection
 		WriteTimeout: cfg.WriteTimeout,
 		PoolSize:     cfg.PoolSize,
 		MinIdleConns: cfg.MinIdleConns,
-	})
+	}
+
+	if cfg.UseTLS {
+		tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
+
+		if cfg.CACert != "" {
+			caBytes, err := base64.StdEncoding.DecodeString(cfg.CACert)
+			if err != nil {
+				return nil, fmt.Errorf("failed to decode Redis CA certificate: %w", err)
+			}
+
+			pool := x509.NewCertPool()
+			if !pool.AppendCertsFromPEM(caBytes) {
+				return nil, fmt.Errorf("failed to parse Redis CA certificate")
+			}
+
+			tlsCfg.RootCAs = pool
+		}
+
+		opts.TLSConfig = tlsCfg
+	}
+
+	client := redis.NewClient(opts)
 
 	// Test connection
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

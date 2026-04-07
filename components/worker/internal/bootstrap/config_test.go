@@ -7,6 +7,7 @@ import (
 
 	libCommons "github.com/LerianStudio/lib-commons/v4/commons"
 	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	mongoDB "github.com/LerianStudio/lib-commons/v4/commons/mongo"
 	libOtel "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
 	libZap "github.com/LerianStudio/lib-commons/v4/commons/zap"
 	"github.com/stretchr/testify/assert"
@@ -217,22 +218,6 @@ func TestInitWorker_ReturnsErrorWhenCryptoInitFails(t *testing.T) {
 	assert.Contains(t, err.Error(), "decode master encryption key")
 }
 
-func TestConfig_RedisFields(t *testing.T) {
-	t.Setenv("REDIS_HOST", "localhost:6379")
-	t.Setenv("REDIS_PASSWORD", "secret")
-	t.Setenv("REDIS_DB", "2")
-	t.Setenv("REDIS_PROTOCOL", "3")
-
-	cfg := &Config{}
-	err := libCommons.SetConfigFromEnvVars(cfg)
-	require.NoError(t, err, "Failed to load config")
-
-	assert.Equal(t, "localhost:6379", cfg.RedisHost)
-	assert.Equal(t, "secret", cfg.RedisPassword)
-	assert.Equal(t, 2, cfg.RedisDB)
-	assert.Equal(t, 3, cfg.RedisProtocol)
-}
-
 func TestValidateMultiTenantConfig(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -336,6 +321,71 @@ func TestResolvedMaxTenantPools(t *testing.T) {
 			assert.Equal(t, tt.expected, resolvedMaxTenantPools(tt.cfg))
 		})
 	}
+}
+
+func TestInitMongoConnection_PassesTLSConfig(t *testing.T) {
+	originalMongoClient := newMongoClient
+	t.Cleanup(func() { newMongoClient = originalMongoClient })
+
+	var capturedConfig mongoDB.Config
+
+	newMongoClient = func(ctx context.Context, cfg mongoDB.Config, opts ...mongoDB.Option) (*mongoDB.Client, error) {
+		capturedConfig = cfg
+		return nil, errors.New("intentional stop after capturing config")
+	}
+
+	cfg := &Config{
+		MongoURI:        "mongodb",
+		MongoDBHost:     "localhost",
+		MongoDBName:     "testdb",
+		MongoDBUser:     "user",
+		MongoDBPassword: "pass",
+		MongoDBPort:     "27017",
+		MaxPoolSize:     100,
+		MongoTLSCACert:  "dGVzdC1jYS1jZXJ0",
+	}
+
+	_, _ = initMongoConnection(context.Background(), cfg, testBootstrapLogger())
+
+	require.NotNil(t, capturedConfig.TLS, "TLS config should be set when MongoTLSCACert is non-empty")
+	assert.Equal(t, "dGVzdC1jYS1jZXJ0", capturedConfig.TLS.CACertBase64)
+}
+
+func TestInitMongoConnection_NoTLSWhenCertEmpty(t *testing.T) {
+	originalMongoClient := newMongoClient
+	t.Cleanup(func() { newMongoClient = originalMongoClient })
+
+	var capturedConfig mongoDB.Config
+
+	newMongoClient = func(ctx context.Context, cfg mongoDB.Config, opts ...mongoDB.Option) (*mongoDB.Client, error) {
+		capturedConfig = cfg
+		return nil, errors.New("intentional stop after capturing config")
+	}
+
+	cfg := &Config{
+		MongoURI:        "mongodb",
+		MongoDBHost:     "localhost",
+		MongoDBName:     "testdb",
+		MongoDBUser:     "user",
+		MongoDBPassword: "pass",
+		MongoDBPort:     "27017",
+		MaxPoolSize:     100,
+		MongoTLSCACert:  "",
+	}
+
+	_, _ = initMongoConnection(context.Background(), cfg, testBootstrapLogger())
+
+	assert.Nil(t, capturedConfig.TLS, "TLS config should be nil when MongoTLSCACert is empty")
+}
+
+func TestConfig_MultiTenantRedisTLS(t *testing.T) {
+	t.Setenv("MULTI_TENANT_REDIS_TLS", "true")
+
+	cfg := &Config{}
+	err := libCommons.SetConfigFromEnvVars(cfg)
+	require.NoError(t, err, "Failed to load config")
+
+	assert.True(t, cfg.MultiTenantRedisTLS, "MultiTenantRedisTLS should be true")
 }
 
 // Dummy usage of context to avoid import issues

@@ -12,6 +12,7 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/model"
 	redisCache "github.com/LerianStudio/fetcher/pkg/redis"
 	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	libMongo "github.com/LerianStudio/lib-commons/v4/commons/mongo"
 	libOtel "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
 	tmclient "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/client"
 	tmcore "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/core"
@@ -232,6 +233,59 @@ func TestInitServers_PropagatesHelperErrors(t *testing.T) {
 	assert.Contains(t, err.Error(), "tenant middleware init failed")
 }
 
+func TestInitMongoRepositories_PassesTLSConfig(t *testing.T) {
+	originalMongoClient := newManagerMongoClient
+	t.Cleanup(func() { newManagerMongoClient = originalMongoClient })
+
+	var capturedConfig libMongo.Config
+
+	newManagerMongoClient = func(ctx context.Context, cfg libMongo.Config, opts ...libMongo.Option) (*libMongo.Client, error) {
+		capturedConfig = cfg
+		return nil, errors.New("intentional stop after capturing config")
+	}
+
+	cfg := &Config{
+		MongoURI:        "mongodb",
+		MongoDBHost:     "localhost",
+		MongoDBName:     "testdb",
+		MongoDBUser:     "user",
+		MongoDBPassword: "pass",
+		MongoDBPort:     "27017",
+		MongoTLSCACert:  "dGVzdC1jYS1jZXJ0",
+	}
+
+	_, _ = initMongoRepositories(context.Background(), cfg, testManagerBootstrapLogger())
+
+	require.NotNil(t, capturedConfig.TLS, "TLS config should be set when MongoTLSCACert is non-empty")
+	assert.Equal(t, "dGVzdC1jYS1jZXJ0", capturedConfig.TLS.CACertBase64)
+}
+
+func TestInitMongoRepositories_NoTLSWhenCertEmpty(t *testing.T) {
+	originalMongoClient := newManagerMongoClient
+	t.Cleanup(func() { newManagerMongoClient = originalMongoClient })
+
+	var capturedConfig libMongo.Config
+
+	newManagerMongoClient = func(ctx context.Context, cfg libMongo.Config, opts ...libMongo.Option) (*libMongo.Client, error) {
+		capturedConfig = cfg
+		return nil, errors.New("intentional stop after capturing config")
+	}
+
+	cfg := &Config{
+		MongoURI:        "mongodb",
+		MongoDBHost:     "localhost",
+		MongoDBName:     "testdb",
+		MongoDBUser:     "user",
+		MongoDBPassword: "pass",
+		MongoDBPort:     "27017",
+		MongoTLSCACert:  "",
+	}
+
+	_, _ = initMongoRepositories(context.Background(), cfg, testManagerBootstrapLogger())
+
+	assert.Nil(t, capturedConfig.TLS, "TLS config should be nil when MongoTLSCACert is empty")
+}
+
 func TestConfig_LoadFromEnvVars(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -344,6 +398,59 @@ func TestConfig_LoadFromEnvVars(t *testing.T) {
 				}
 				if cfg.RedisDB != "2" {
 					t.Errorf("RedisDB = %q, want %q", cfg.RedisDB, "2")
+				}
+			},
+		},
+		{
+			name: "loads MongoDB TLS CA cert configuration",
+			envVars: map[string]string{
+				"MONGO_TLS_CA_CERT": "dGVzdC1jYS1jZXJ0LWJhc2U2NA==",
+			},
+			validate: func(t *testing.T, cfg *Config) {
+				t.Helper()
+				if cfg.MongoTLSCACert != "dGVzdC1jYS1jZXJ0LWJhc2U2NA==" {
+					t.Errorf("MongoTLSCACert = %q, want %q", cfg.MongoTLSCACert, "dGVzdC1jYS1jZXJ0LWJhc2U2NA==")
+				}
+			},
+		},
+		{
+			name: "loads Redis TLS configuration",
+			envVars: map[string]string{
+				"REDIS_TLS":     "true",
+				"REDIS_CA_CERT": "dGVzdC1jYS1jZXJ0",
+			},
+			validate: func(t *testing.T, cfg *Config) {
+				t.Helper()
+				if !cfg.RedisTLS {
+					t.Error("RedisTLS should be true")
+				}
+				if cfg.RedisCACert != "dGVzdC1jYS1jZXJ0" {
+					t.Errorf("RedisCACert = %q, want %q", cfg.RedisCACert, "dGVzdC1jYS1jZXJ0")
+				}
+			},
+		},
+		{
+			name:    "Redis TLS defaults to false when not set",
+			envVars: map[string]string{},
+			validate: func(t *testing.T, cfg *Config) {
+				t.Helper()
+				if cfg.RedisTLS {
+					t.Error("RedisTLS should default to false")
+				}
+				if cfg.RedisCACert != "" {
+					t.Errorf("RedisCACert should be empty, got %q", cfg.RedisCACert)
+				}
+			},
+		},
+		{
+			name: "loads multi-tenant Redis TLS configuration",
+			envVars: map[string]string{
+				"MULTI_TENANT_REDIS_TLS": "true",
+			},
+			validate: func(t *testing.T, cfg *Config) {
+				t.Helper()
+				if !cfg.MultiTenantRedisTLS {
+					t.Error("MultiTenantRedisTLS should be true")
 				}
 			},
 		},
