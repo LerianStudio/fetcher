@@ -397,7 +397,7 @@ func TestValidateDates(t *testing.T) {
 		{
 			name:      "only end date provided",
 			startDate: time.Time{},
-			endDate:   time.Date(2025, 12, 31, 0, 0, 0, 0, time.UTC),
+			endDate:   time.Date(2027, 12, 31, 0, 0, 0, 0, time.UTC),
 			wantErr:   false,
 		},
 	}

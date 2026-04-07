@@ -3,6 +3,7 @@ package metricskit
 import (
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 )
 
@@ -62,8 +63,18 @@ func (r *Reporter) WriteReport(w io.Writer) error {
 	errorCounts := s.GetErrorCounts()
 	if len(errorCounts) > 0 {
 		lines = append(lines, "  ERROR BREAKDOWN")
-		for category, count := range errorCounts {
-			lines = append(lines, fmt.Sprintf("     %-18s %d", string(category)+":", count))
+
+		categories := make([]ErrorCategory, 0, len(errorCounts))
+		for category := range errorCounts {
+			categories = append(categories, category)
+		}
+
+		slices.SortFunc(categories, func(a, b ErrorCategory) int {
+			return strings.Compare(string(a), string(b))
+		})
+
+		for _, category := range categories {
+			lines = append(lines, fmt.Sprintf("     %-18s %d", string(category)+":", errorCounts[category]))
 		}
 
 		lines = append(lines, "")

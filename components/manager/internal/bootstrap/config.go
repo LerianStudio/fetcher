@@ -470,9 +470,8 @@ func assembleService(
 		tenantAdapter := resolver.NewTenantManagerAdapter(tmClient)
 		connResolver = resolver.NewMultiTenantResolver(repositories.connection, registry, tenantAdapter)
 	} else {
-		// Single-tenant: env-based connections deferred to follow-up task.
-		// Empty map means internal datasources must still be registered via Connection API.
-		envConnections := make(map[string]*model.Connection)
+		// Single-tenant: load internal datasource connections from DATASOURCE_* env vars.
+		envConnections := resolver.LoadInternalConnectionsFromEnv(registry, logger)
 		connResolver = resolver.NewSingleTenantResolver(repositories.connection, registry, envConnections)
 	}
 
@@ -946,3 +945,4 @@ func wrapBootstrapError(action string, err error) error {
 
 	return nil
 }
+
