@@ -121,13 +121,28 @@ func (s *DataSourceSchema) HasTable(tableName string) bool {
 }
 
 // HasField checks if a table has a specific field (case-sensitive).
+// Also recognizes parent objects: if "natural_person" is not a direct column
+// but "natural_person.mother_name" exists, "natural_person" is valid.
 func (s *DataSourceSchema) HasField(tableName, fieldName string) bool {
 	table, exists := s.Tables[tableName]
 	if !exists {
 		return false
 	}
 
-	return table.Columns[fieldName]
+	if table.Columns[fieldName] {
+		return true
+	}
+
+	// Check if fieldName is a parent object with nested fields (e.g. "natural_person"
+	// when "natural_person.mother_name" exists in the schema).
+	prefix := fieldName + "."
+	for col := range table.Columns {
+		if strings.HasPrefix(col, prefix) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // IsExpired checks if the cached schema has expired.
