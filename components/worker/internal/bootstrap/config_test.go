@@ -218,26 +218,6 @@ func TestInitWorker_ReturnsErrorWhenCryptoInitFails(t *testing.T) {
 	assert.Contains(t, err.Error(), "decode master encryption key")
 }
 
-func TestConfig_RedisFields(t *testing.T) {
-	t.Setenv("REDIS_HOST", "localhost:6379")
-	t.Setenv("REDIS_PASSWORD", "secret")
-	t.Setenv("REDIS_DB", "2")
-	t.Setenv("REDIS_PROTOCOL", "3")
-	t.Setenv("REDIS_TLS", "true")
-	t.Setenv("REDIS_CA_CERT", "dGVzdC1jYS1jZXJ0")
-
-	cfg := &Config{}
-	err := libCommons.SetConfigFromEnvVars(cfg)
-	require.NoError(t, err, "Failed to load config")
-
-	assert.Equal(t, "localhost:6379", cfg.RedisHost)
-	assert.Equal(t, "secret", cfg.RedisPassword)
-	assert.Equal(t, 2, cfg.RedisDB)
-	assert.Equal(t, 3, cfg.RedisProtocol)
-	assert.True(t, cfg.RedisTLS, "RedisTLS should be true")
-	assert.Equal(t, "dGVzdC1jYS1jZXJ0", cfg.RedisCACert)
-}
-
 func TestValidateMultiTenantConfig(t *testing.T) {
 	tests := []struct {
 		name      string

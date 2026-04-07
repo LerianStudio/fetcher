@@ -116,13 +116,6 @@ type Config struct {
 	// RabbitMQ multi-tenant consumer tuning (active when MULTI_TENANT_ENABLED=true)
 	RabbitMQMultiTenantSyncInterval     int `env:"RABBITMQ_MULTI_TENANT_SYNC_INTERVAL"`     // Stored in seconds; default 30
 	RabbitMQMultiTenantDiscoveryTimeout int `env:"RABBITMQ_MULTI_TENANT_DISCOVERY_TIMEOUT"` // Stored in milliseconds; default 500
-	// Redis/Valkey configuration (required for multi-tenant tenant discovery cache)
-	RedisHost     string `env:"REDIS_HOST"`
-	RedisPassword string `env:"REDIS_PASSWORD"`
-	RedisDB       int    `env:"REDIS_DB"`
-	RedisProtocol int    `env:"REDIS_PROTOCOL"`
-	RedisTLS      bool   `env:"REDIS_TLS" default:"false"`
-	RedisCACert   string `env:"REDIS_CA_CERT"`
 }
 
 var (
