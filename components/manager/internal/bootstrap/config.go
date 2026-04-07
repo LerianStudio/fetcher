@@ -2,6 +2,9 @@ package bootstrap
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/base64"
 	"fmt"
 	"net"
 	"net/url"
@@ -74,6 +77,7 @@ type Config struct {
 	MongoDBUser     string `env:"MONGO_USER"`
 	MongoDBPassword string `env:"MONGO_PASSWORD"`
 	MongoDBPort     string `env:"MONGO_PORT"`
+	MongoTLSCACert  string `env:"MONGO_TLS_CA_CERT"`
 	// RabbitMQ configuration envs
 	RabbitURI                   string `env:"RABBITMQ_URI"`
 	RabbitMQHost                string `env:"RABBITMQ_HOST"`
@@ -97,6 +101,8 @@ type Config struct {
 	RedisPort     string `env:"REDIS_PORT"`
 	RedisPassword string `env:"REDIS_PASSWORD"`
 	RedisDB       string `env:"REDIS_DB"`
+	RedisTLS      bool   `env:"REDIS_TLS" default:"false"`
+	RedisCACert   string `env:"REDIS_CA_CERT"`
 	// Schema cache TTL
 	SchemaCacheTTLSeconds string `env:"SCHEMA_CACHE_TTL_SECONDS"`
 	// Multi-Tenant configuration
@@ -105,6 +111,8 @@ type Config struct {
 	MultiTenantRedisHost                string `env:"MULTI_TENANT_REDIS_HOST"`
 	MultiTenantRedisPort                string `env:"MULTI_TENANT_REDIS_PORT" default:"6379"`
 	MultiTenantRedisPassword            string `env:"MULTI_TENANT_REDIS_PASSWORD"`
+	MultiTenantRedisTLS                 bool   `env:"MULTI_TENANT_REDIS_TLS" default:"false"`
+	MultiTenantRedisCACert              string `env:"MULTI_TENANT_REDIS_CA_CERT"`
 	MultiTenantMaxTenantPools           int    `env:"MULTI_TENANT_MAX_TENANT_POOLS" default:"100"`
 	MultiTenantIdleTimeoutSec           int    `env:"MULTI_TENANT_IDLE_TIMEOUT_SEC" default:"300"`
 	MultiTenantCircuitBreakerThreshold  int    `env:"MULTI_TENANT_CIRCUIT_BREAKER_THRESHOLD" default:"5"`
@@ -249,11 +257,17 @@ func initLoggerAndTelemetry(cfg *Config) (libLog.Logger, *libOtel.Telemetry, err
 }
 
 func initMongoRepositories(ctx context.Context, cfg *Config, logger libLog.Logger) (*managerRepositories, error) {
-	mongoConnection, err := newManagerMongoClient(ctx, libMongo.Config{
+	mongoCfg := libMongo.Config{
 		URI:      buildMongoSource(cfg),
 		Database: cfg.MongoDBName,
 		Logger:   logger,
-	})
+	}
+
+	if cfg.MongoTLSCACert != "" {
+		mongoCfg.TLS = &libMongo.TLSConfig{CACertBase64: cfg.MongoTLSCACert}
+	}
+
+	mongoConnection, err := newManagerMongoClient(ctx, mongoCfg)
 	if err != nil {
 		return nil, wrapBootstrapError("initialize MongoDB client", err)
 	}
@@ -424,6 +438,8 @@ func initPlatformDependencies(cfg *Config, logger libLog.Logger, messageSigner c
 			Port:     cfg.RedisPort,
 			Password: cfg.RedisPassword,
 			DB:       getRedisDB(cfg.RedisDB),
+			UseTLS:   cfg.RedisTLS,
+			CACert:   cfg.RedisCACert,
 		},
 		logger,
 		schemaCacheTTL,
@@ -696,10 +712,35 @@ func initManagerEventDiscovery(
 		redisPort = "6379"
 	}
 
-	redisClient := redis.NewClient(&redis.Options{
+	redisOpts := &redis.Options{
 		Addr:     net.JoinHostPort(cfg.MultiTenantRedisHost, redisPort),
 		Password: cfg.MultiTenantRedisPassword,
-	})
+	}
+
+	if cfg.MultiTenantRedisTLS {
+		tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
+
+		if cfg.MultiTenantRedisCACert != "" {
+			caCert, err := base64.StdEncoding.DecodeString(cfg.MultiTenantRedisCACert)
+			if err != nil {
+				logger.Log(context.Background(), libLog.LevelWarn,
+					"Multi-tenant Redis CA cert: failed to decode base64, using system root CAs",
+					libLog.Err(err))
+			} else {
+				pool := x509.NewCertPool()
+				if pool.AppendCertsFromPEM(caCert) {
+					tlsCfg.RootCAs = pool
+				} else {
+					logger.Log(context.Background(), libLog.LevelWarn,
+						"Multi-tenant Redis CA cert: no valid PEM certificates found, using system root CAs")
+				}
+			}
+		}
+
+		redisOpts.TLSConfig = tlsCfg
+	}
+
+	redisClient := redis.NewClient(redisOpts)
 
 	var cacheTTL time.Duration
 	if cfg.MultiTenantCacheTTLSec > 0 {

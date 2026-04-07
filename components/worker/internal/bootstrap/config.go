@@ -2,6 +2,9 @@ package bootstrap
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/base64"
 	"fmt"
 	"net"
 	"net/url"
@@ -84,6 +87,7 @@ type Config struct {
 	MongoDBUser     string `env:"MONGO_USER"`
 	MongoDBPassword string `env:"MONGO_PASSWORD"`
 	MongoDBPort     string `env:"MONGO_PORT"`
+	MongoTLSCACert  string `env:"MONGO_TLS_CA_CERT"`
 	MaxPoolSize     int    `env:"MONGO_MAX_POOL_SIZE"`
 	// License configuration envs
 	LicenseKey      string `env:"LICENSE_KEY"`
@@ -100,6 +104,8 @@ type Config struct {
 	MultiTenantRedisHost                string `env:"MULTI_TENANT_REDIS_HOST"`
 	MultiTenantRedisPort                string `env:"MULTI_TENANT_REDIS_PORT" default:"6379"`
 	MultiTenantRedisPassword            string `env:"MULTI_TENANT_REDIS_PASSWORD"`
+	MultiTenantRedisTLS                 bool   `env:"MULTI_TENANT_REDIS_TLS" default:"false"`
+	MultiTenantRedisCACert              string `env:"MULTI_TENANT_REDIS_CA_CERT"`
 	MultiTenantMaxTenantPools           int    `env:"MULTI_TENANT_MAX_TENANT_POOLS" default:"100"`
 	MultiTenantIdleTimeoutSec           int    `env:"MULTI_TENANT_IDLE_TIMEOUT_SEC" default:"300"`
 	MultiTenantCircuitBreakerThreshold  int    `env:"MULTI_TENANT_CIRCUIT_BREAKER_THRESHOLD" default:"5"`
@@ -115,6 +121,8 @@ type Config struct {
 	RedisPassword string `env:"REDIS_PASSWORD"`
 	RedisDB       int    `env:"REDIS_DB"`
 	RedisProtocol int    `env:"REDIS_PROTOCOL"`
+	RedisTLS      bool   `env:"REDIS_TLS" default:"false"`
+	RedisCACert   string `env:"REDIS_CA_CERT"`
 }
 
 var (
@@ -448,12 +456,18 @@ func initMongoConnection(ctx context.Context, cfg *Config, logger libLog.Logger)
 		cfg.MaxPoolSize = 100
 	}
 
-	return newMongoClient(ctx, mongoDB.Config{
+	mongoCfg := mongoDB.Config{
 		URI:         mongoSource,
 		Database:    cfg.MongoDBName,
 		Logger:      logger,
 		MaxPoolSize: uint64(cfg.MaxPoolSize),
-	})
+	}
+
+	if cfg.MongoTLSCACert != "" {
+		mongoCfg.TLS = &mongoDB.TLSConfig{CACertBase64: cfg.MongoTLSCACert}
+	}
+
+	return newMongoClient(ctx, mongoCfg)
 }
 
 // logFileTTL logs the configured file TTL for storage.
@@ -689,10 +703,35 @@ func initMultiTenantStack(
 		redisPort = "6379"
 	}
 
-	redisClient := redis.NewClient(&redis.Options{
+	redisOpts := &redis.Options{
 		Addr:     net.JoinHostPort(cfg.MultiTenantRedisHost, redisPort),
 		Password: cfg.MultiTenantRedisPassword,
-	})
+	}
+
+	if cfg.MultiTenantRedisTLS {
+		tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
+
+		if cfg.MultiTenantRedisCACert != "" {
+			caCert, err := base64.StdEncoding.DecodeString(cfg.MultiTenantRedisCACert)
+			if err != nil {
+				logger.Log(ctx, libLog.LevelWarn,
+					"Multi-tenant Redis CA cert: failed to decode base64, using system root CAs",
+					libLog.Err(err))
+			} else {
+				pool := x509.NewCertPool()
+				if pool.AppendCertsFromPEM(caCert) {
+					tlsCfg.RootCAs = pool
+				} else {
+					logger.Log(ctx, libLog.LevelWarn,
+						"Multi-tenant Redis CA cert: no valid PEM certificates found, using system root CAs")
+				}
+			}
+		}
+
+		redisOpts.TLSConfig = tlsCfg
+	}
+
+	redisClient := redis.NewClient(redisOpts)
 
 	listener, listenerErr := tmevent.NewTenantEventListener(
 		redisClient,
