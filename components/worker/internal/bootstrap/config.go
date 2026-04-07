@@ -714,18 +714,15 @@ func initMultiTenantStack(
 		if cfg.MultiTenantRedisCACert != "" {
 			caCert, err := base64.StdEncoding.DecodeString(cfg.MultiTenantRedisCACert)
 			if err != nil {
-				logger.Log(ctx, libLog.LevelWarn,
-					"Multi-tenant Redis CA cert: failed to decode base64, using system root CAs",
-					libLog.Err(err))
-			} else {
-				pool := x509.NewCertPool()
-				if pool.AppendCertsFromPEM(caCert) {
-					tlsCfg.RootCAs = pool
-				} else {
-					logger.Log(ctx, libLog.LevelWarn,
-						"Multi-tenant Redis CA cert: no valid PEM certificates found, using system root CAs")
-				}
+				return nil, nil, nil, fmt.Errorf("failed to decode multi-tenant Redis CA certificate: %w", err)
 			}
+
+			pool := x509.NewCertPool()
+			if !pool.AppendCertsFromPEM(caCert) {
+				return nil, nil, nil, fmt.Errorf("failed to parse multi-tenant Redis CA certificate")
+			}
+
+			tlsCfg.RootCAs = pool
 		}
 
 		redisOpts.TLSConfig = tlsCfg
