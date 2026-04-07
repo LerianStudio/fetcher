@@ -39,7 +39,7 @@ func WithOracleInitScript(hostPath, containerFileName string) OracleOption {
 				testcontainers.ContainerFile{
 					HostFilePath:      hostPath,
 					ContainerFilePath: "/container-entrypoint-initdb.d/" + containerFileName,
-					FileMode:          0755,
+					FileMode:          0o755,
 				},
 			),
 		)

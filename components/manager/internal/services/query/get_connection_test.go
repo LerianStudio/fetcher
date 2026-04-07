@@ -16,10 +16,9 @@ import (
 )
 
 // newExistingConnection creates a valid existing Connection for testing.
-func newExistingConnection(orgID, connID uuid.UUID) *model.Connection {
+func newExistingConnection(connID uuid.UUID) *model.Connection {
 	return &model.Connection{
 		ID:                   connID,
-		OrganizationID:       orgID,
 		ConfigName:           "test-connection",
 		Type:                 model.TypePostgreSQL,
 		Host:                 "localhost",
@@ -40,19 +39,18 @@ func TestGetConnection_Execute_Success(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewGetConnection(mockConnRepo)
+	svc := NewGetConnection(mockConnRepo, nil, nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
-	existingConn := newExistingConnection(orgID, connID)
+	existingConn := newExistingConnection(connID)
 
 	// Mock: connection found
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, orgID).
+		FindByID(gomock.Any(), connID).
 		Return(existingConn, nil)
 
-	result, err := svc.Execute(ctx, orgID, connID)
+	result, err := svc.Execute(ctx, connID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -63,10 +61,6 @@ func TestGetConnection_Execute_Success(t *testing.T) {
 
 	if result.ID != connID {
 		t.Fatalf("expected ID %s, got %s", connID, result.ID)
-	}
-
-	if result.OrganizationID != orgID {
-		t.Fatalf("expected OrganizationID %s, got %s", orgID, result.OrganizationID)
 	}
 
 	if result.ConfigName != existingConn.ConfigName {
@@ -93,18 +87,17 @@ func TestGetConnection_Execute_NotFoundError(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewGetConnection(mockConnRepo)
+	svc := NewGetConnection(mockConnRepo, nil, nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
 
 	// Mock: connection not found
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, orgID).
+		FindByID(gomock.Any(), connID).
 		Return(nil, nil)
 
-	result, err := svc.Execute(ctx, orgID, connID)
+	result, err := svc.Execute(ctx, connID)
 
 	if result != nil {
 		t.Fatalf("expected nil result, got %+v", result)
@@ -128,20 +121,19 @@ func TestGetConnection_Execute_RepositoryError(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewGetConnection(mockConnRepo)
+	svc := NewGetConnection(mockConnRepo, nil, nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
 
 	dbError := errors.New("database connection failed")
 
 	// Mock: database error during lookup
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, orgID).
+		FindByID(gomock.Any(), connID).
 		Return(nil, dbError)
 
-	result, err := svc.Execute(ctx, orgID, connID)
+	result, err := svc.Execute(ctx, connID)
 
 	if result != nil {
 		t.Fatalf("expected nil result, got %+v", result)
@@ -163,20 +155,19 @@ func TestGetConnection_Execute_OrganizationIsolation(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewGetConnection(mockConnRepo)
+	svc := NewGetConnection(mockConnRepo, nil, nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	differentOrgID := uuid.New()
 	connID := uuid.New()
 
 	// Connection belongs to a different organization but we query with orgID
 	// The repository should return nil because it filters by organizationID
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, orgID).
+		FindByID(gomock.Any(), connID).
 		Return(nil, nil)
 
-	result, err := svc.Execute(ctx, orgID, connID)
+	result, err := svc.Execute(ctx, connID)
 
 	if result != nil {
 		t.Fatalf("expected nil result for connection in different organization, got %+v", result)
@@ -200,24 +191,24 @@ func TestGetConnection_Execute_OrganizationIsolation(t *testing.T) {
 func TestGetConnection_Execute_TableDriven(t *testing.T) {
 	tests := []struct {
 		name           string
-		setupMocks     func(*connRepo.MockRepository, uuid.UUID, uuid.UUID, *model.Connection)
+		setupMocks     func(*connRepo.MockRepository, uuid.UUID, *model.Connection)
 		wantErr        bool
 		wantStatusCode int // 0 means generic error (no status code check)
 	}{
 		{
 			name: "successful retrieval",
-			setupMocks: func(connMock *connRepo.MockRepository, orgID, connID uuid.UUID, existing *model.Connection) {
+			setupMocks: func(connMock *connRepo.MockRepository, connID uuid.UUID, existing *model.Connection) {
 				connMock.EXPECT().
-					FindByID(gomock.Any(), connID, orgID).
+					FindByID(gomock.Any(), connID).
 					Return(existing, nil)
 			},
 			wantErr: false,
 		},
 		{
 			name: "connection not found",
-			setupMocks: func(connMock *connRepo.MockRepository, orgID, connID uuid.UUID, existing *model.Connection) {
+			setupMocks: func(connMock *connRepo.MockRepository, connID uuid.UUID, existing *model.Connection) {
 				connMock.EXPECT().
-					FindByID(gomock.Any(), connID, orgID).
+					FindByID(gomock.Any(), connID).
 					Return(nil, nil)
 			},
 			wantErr:        true,
@@ -225,9 +216,9 @@ func TestGetConnection_Execute_TableDriven(t *testing.T) {
 		},
 		{
 			name: "FindByID database error",
-			setupMocks: func(connMock *connRepo.MockRepository, orgID, connID uuid.UUID, existing *model.Connection) {
+			setupMocks: func(connMock *connRepo.MockRepository, connID uuid.UUID, existing *model.Connection) {
 				connMock.EXPECT().
-					FindByID(gomock.Any(), connID, orgID).
+					FindByID(gomock.Any(), connID).
 					Return(nil, errors.New("database connection failed"))
 			},
 			wantErr:        true,
@@ -243,15 +234,14 @@ func TestGetConnection_Execute_TableDriven(t *testing.T) {
 			mockConnRepo := connRepo.NewMockRepository(ctrl)
 
 			ctx := testContext()
-			orgID := uuid.New()
 			connID := uuid.New()
-			existingConn := newExistingConnection(orgID, connID)
+			existingConn := newExistingConnection(connID)
 
-			tt.setupMocks(mockConnRepo, orgID, connID, existingConn)
+			tt.setupMocks(mockConnRepo, connID, existingConn)
 
-			svc := NewGetConnection(mockConnRepo)
+			svc := NewGetConnection(mockConnRepo, nil, nil)
 
-			result, err := svc.Execute(ctx, orgID, connID)
+			result, err := svc.Execute(ctx, connID)
 
 			if tt.wantErr {
 				if err == nil {
@@ -286,13 +276,12 @@ func TestGetConnection_Execute_ConnectionWithSSL(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewGetConnection(mockConnRepo)
+	svc := NewGetConnection(mockConnRepo, nil, nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
 
-	existingConn := newExistingConnection(orgID, connID)
+	existingConn := newExistingConnection(connID)
 	existingConn.SSL = &model.SSLConfig{
 		Mode: "require",
 		CA:   "-----BEGIN CERTIFICATE-----\ntest-ca\n-----END CERTIFICATE-----",
@@ -302,10 +291,10 @@ func TestGetConnection_Execute_ConnectionWithSSL(t *testing.T) {
 
 	// Mock: connection found with SSL
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, orgID).
+		FindByID(gomock.Any(), connID).
 		Return(existingConn, nil)
 
-	result, err := svc.Execute(ctx, orgID, connID)
+	result, err := svc.Execute(ctx, connID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -358,21 +347,20 @@ func TestGetConnection_Execute_AllDatabaseTypes(t *testing.T) {
 
 			mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-			svc := NewGetConnection(mockConnRepo)
+			svc := NewGetConnection(mockConnRepo, nil, nil)
 
 			ctx := testContext()
-			orgID := uuid.New()
 			connID := uuid.New()
 
-			existingConn := newExistingConnection(orgID, connID)
+			existingConn := newExistingConnection(connID)
 			existingConn.Type = tt.dbType
 
 			// Mock: connection found
 			mockConnRepo.EXPECT().
-				FindByID(gomock.Any(), connID, orgID).
+				FindByID(gomock.Any(), connID).
 				Return(existingConn, nil)
 
-			result, err := svc.Execute(ctx, orgID, connID)
+			result, err := svc.Execute(ctx, connID)
 			if err != nil {
 				t.Fatalf("unexpected error for %s: %v", tt.name, err)
 			}
@@ -395,7 +383,7 @@ func TestNewGetConnection(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewGetConnection(mockConnRepo)
+	svc := NewGetConnection(mockConnRepo, nil, nil)
 
 	if svc == nil {
 		t.Fatal("expected non-nil service")
@@ -413,15 +401,13 @@ func TestGetConnection_Execute_ConnectionWithAllFields(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewGetConnection(mockConnRepo)
+	svc := NewGetConnection(mockConnRepo, nil, nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
 
 	existingConn := &model.Connection{
 		ID:                   connID,
-		OrganizationID:       orgID,
 		ConfigName:           "full-connection",
 		Type:                 model.TypePostgreSQL,
 		Host:                 "db.example.com",
@@ -442,10 +428,10 @@ func TestGetConnection_Execute_ConnectionWithAllFields(t *testing.T) {
 
 	// Mock: connection found
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, orgID).
+		FindByID(gomock.Any(), connID).
 		Return(existingConn, nil)
 
-	result, err := svc.Execute(ctx, orgID, connID)
+	result, err := svc.Execute(ctx, connID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -457,9 +443,6 @@ func TestGetConnection_Execute_ConnectionWithAllFields(t *testing.T) {
 	// Verify all fields
 	if result.ID != connID {
 		t.Fatalf("expected ID %s, got %s", connID, result.ID)
-	}
-	if result.OrganizationID != orgID {
-		t.Fatalf("expected OrganizationID %s, got %s", orgID, result.OrganizationID)
 	}
 	if result.ConfigName != "full-connection" {
 		t.Fatalf("expected ConfigName 'full-connection', got %s", result.ConfigName)
@@ -528,18 +511,17 @@ func TestGetConnection_Execute_MultipleRepositoryErrors(t *testing.T) {
 
 			mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-			svc := NewGetConnection(mockConnRepo)
+			svc := NewGetConnection(mockConnRepo, nil, nil)
 
 			ctx := testContext()
-			orgID := uuid.New()
 			connID := uuid.New()
 
 			// Mock: database error
 			mockConnRepo.EXPECT().
-				FindByID(gomock.Any(), connID, orgID).
+				FindByID(gomock.Any(), connID).
 				Return(nil, tt.dbError)
 
-			result, err := svc.Execute(ctx, orgID, connID)
+			result, err := svc.Execute(ctx, connID)
 
 			if result != nil {
 				t.Fatalf("expected nil result for %s, got %+v", tt.name, result)
@@ -563,18 +545,17 @@ func TestGetConnection_Execute_EmptyUUIDs(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewGetConnection(mockConnRepo)
+	svc := NewGetConnection(mockConnRepo, nil, nil)
 
 	ctx := testContext()
-	orgID := uuid.Nil
 	connID := uuid.Nil
 
 	// Mock: connection not found with nil UUIDs
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, orgID).
+		FindByID(gomock.Any(), connID).
 		Return(nil, nil)
 
-	result, err := svc.Execute(ctx, orgID, connID)
+	result, err := svc.Execute(ctx, connID)
 
 	if result != nil {
 		t.Fatalf("expected nil result with nil UUIDs, got %+v", result)

@@ -10,10 +10,9 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/model"
 
 	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
-	"github.com/LerianStudio/lib-commons/v3/commons"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v3/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v4/commons"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
 
-	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -29,7 +28,7 @@ func NewCreateConnection(connectionRepo connRepo.Repository, cryptor crypto.Cryp
 	}
 }
 
-func (s *CreateConnection) Execute(ctx context.Context, organizationID uuid.UUID, connInput model.ConnectionInput, productName string) (*model.Connection, error) {
+func (s *CreateConnection) Execute(ctx context.Context, connInput model.ConnectionInput, productName string) (*model.Connection, error) {
 	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "service.create_connection")
@@ -37,26 +36,30 @@ func (s *CreateConnection) Execute(ctx context.Context, organizationID uuid.UUID
 
 	span.SetAttributes(
 		attribute.String("app.request.request_id", reqID),
-		attribute.String("app.request.organization_id", organizationID.String()),
 		attribute.String("app.request.product_name", productName),
 	)
 
-	err := libOpentelemetry.SetSpanAttributesFromStruct(&span, "app.request.payload", connInput.ToMapWithMask())
+	err := libOpentelemetry.SetSpanAttributesFromValue(span, "app.request.payload", connInput.ToMapWithMask(), nil)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to convert fetcher input to JSON string", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to convert fetcher input to JSON string", err)
 	}
 
 	sslMode, sslCA, sslCert, sslKey := s.extractSSLFields(connInput)
 
+	var schema *string
+	if connInput.Schema != "" {
+		schema = &connInput.Schema
+	}
+
 	connection, err := model.NewConnection(
 		ctx, s.cryptor,
-		organizationID,
 		productName,
 		connInput.ConfigName,
 		connInput.Type,
 		connInput.Host,
 		connInput.Port,
 		connInput.DatabaseName,
+		schema,
 		connInput.Username,
 		connInput.Password,
 		connInput.Metadata,
@@ -66,18 +69,18 @@ func (s *CreateConnection) Execute(ctx context.Context, organizationID uuid.UUID
 		sslKey,
 	)
 	if err != nil {
-		libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "Failed to create connection model", err)
+		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Failed to create connection model", err)
 		return nil, fmt.Errorf("failed to create connection model: %w", err)
 	}
 
-	existing, errRepo := s.connRepo.FindByOrganizationAndName(ctx, connection.OrganizationID, connection.ConfigName)
+	existing, errRepo := s.connRepo.FindByName(ctx, connection.ConfigName)
 	if errRepo != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to check existing connection", errRepo)
+		libOpentelemetry.HandleSpanError(span, "Failed to check existing connection", errRepo)
 		return nil, fmt.Errorf("failed to check for existing connection: %w", errRepo)
 	}
 
 	if existing != nil {
-		libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "Connection config name conflict", nil)
+		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Connection config name conflict", nil)
 
 		return nil, pkg.ValidateBusinessError(
 			constant.ErrEntityConflict,

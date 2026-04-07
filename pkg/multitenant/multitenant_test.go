@@ -6,9 +6,9 @@ import (
 	"testing"
 
 	"github.com/LerianStudio/fetcher/pkg/testutil"
-	tmcore "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/core"
-	tms3 "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/s3"
-	"github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/valkey"
+	tmcore "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/core"
+	tms3 "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/s3"
+	"github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/valkey"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -20,7 +20,7 @@ import (
 // ---------------------------------------------------------------------------
 
 // TestTenantIsolation_MongoDBDatabaseRouting verifies that two tenants with different
-// tenant IDs get different *mongo.Database instances from tmcore.GetMongoFromContext.
+// tenant IDs get different *mongo.Database instances from tmcore.GetMBContext.
 // This test validates the context-based routing mechanism that underpins all MongoDB
 // multi-tenant isolation in fetcher.
 func TestTenantIsolation_MongoDBDatabaseRouting(t *testing.T) {
@@ -65,12 +65,12 @@ func TestTenantIsolation_MongoDBDatabaseRouting(t *testing.T) {
 			t.Parallel()
 
 			// Set up context with tenant ID for tenant A
-			ctxA := tmcore.SetTenantIDInContext(testutil.TestContext(), tt.tenantAID)
-			tenantAFromCtx := tmcore.GetTenantIDFromContext(ctxA)
+			ctxA := tmcore.ContextWithTenantID(testutil.TestContext(), tt.tenantAID)
+			tenantAFromCtx := tmcore.GetTenantIDContext(ctxA)
 
 			// Set up context with tenant ID for tenant B
-			ctxB := tmcore.SetTenantIDInContext(testutil.TestContext(), tt.tenantBID)
-			tenantBFromCtx := tmcore.GetTenantIDFromContext(ctxB)
+			ctxB := tmcore.ContextWithTenantID(testutil.TestContext(), tt.tenantBID)
+			tenantBFromCtx := tmcore.GetTenantIDContext(ctxB)
 
 			// Verify tenant IDs are correctly stored and retrievable
 			assert.Equal(t, tt.tenantAID, tenantAFromCtx,
@@ -88,28 +88,28 @@ func TestTenantIsolation_MongoDBDatabaseRouting(t *testing.T) {
 
 			// Verify that GetMongoFromContext returns nil when no mongo connection
 			// is in context (simulating context-only tenant ID without infrastructure)
-			dbA := tmcore.GetMongoFromContext(ctxA)
+			dbA := tmcore.GetMBContext(ctxA)
 			assert.Nil(t, dbA,
 				"GetMongoFromContext must return nil when no mongo connection in context (tenant A)")
 
-			dbB := tmcore.GetMongoFromContext(ctxB)
+			dbB := tmcore.GetMBContext(ctxB)
 			assert.Nil(t, dbB,
 				"GetMongoFromContext must return nil when no mongo connection in context (tenant B)")
 
 			// Positive path: inject tenant-specific databases and verify routing
 			clientA, _ := mongo.NewClient() //nolint:staticcheck // test-only disconnected client
 			tenantDBa := clientA.Database(tt.tenantADB)
-			ctxWithDBA := tmcore.ContextWithTenantMongo(ctxA, tenantDBa)
+			ctxWithDBA := tmcore.ContextWithMB(ctxA, tenantDBa)
 
 			clientB, _ := mongo.NewClient() //nolint:staticcheck // test-only disconnected client
 			tenantDBb := clientB.Database(tt.tenantBDB)
-			ctxWithDBB := tmcore.ContextWithTenantMongo(ctxB, tenantDBb)
+			ctxWithDBB := tmcore.ContextWithMB(ctxB, tenantDBb)
 
-			resolvedA := tmcore.GetMongoFromContext(ctxWithDBA)
+			resolvedA := tmcore.GetMBContext(ctxWithDBA)
 			require.NotNil(t, resolvedA,
 				"GetMongoFromContext must return non-nil when tenant DB is injected (tenant A)")
 
-			resolvedB := tmcore.GetMongoFromContext(ctxWithDBB)
+			resolvedB := tmcore.GetMBContext(ctxWithDBB)
 			require.NotNil(t, resolvedB,
 				"GetMongoFromContext must return non-nil when tenant DB is injected (tenant B)")
 
@@ -160,11 +160,11 @@ func TestTenantIsolation_RedisKeyIsolation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			ctxA := tmcore.SetTenantIDInContext(context.Background(), tt.tenantAID)
-			ctxB := tmcore.SetTenantIDInContext(context.Background(), tt.tenantBID)
+			ctxA := tmcore.ContextWithTenantID(context.Background(), tt.tenantAID)
+			ctxB := tmcore.ContextWithTenantID(context.Background(), tt.tenantBID)
 
-			keyA := valkey.GetKeyFromContext(ctxA, tt.key)
-			keyB := valkey.GetKeyFromContext(ctxB, tt.key)
+			keyA, _ := valkey.GetKeyContext(ctxA, tt.key)
+			keyB, _ := valkey.GetKeyContext(ctxB, tt.key)
 
 			// Keys for different tenants must be different
 			assert.NotEqual(t, keyA, keyB,
@@ -229,11 +229,11 @@ func TestTenantIsolation_S3KeyIsolation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			ctxA := tmcore.SetTenantIDInContext(context.Background(), tt.tenantAID)
-			ctxB := tmcore.SetTenantIDInContext(context.Background(), tt.tenantBID)
+			ctxA := tmcore.ContextWithTenantID(context.Background(), tt.tenantAID)
+			ctxB := tmcore.ContextWithTenantID(context.Background(), tt.tenantBID)
 
-			keyA := tms3.GetObjectStorageKeyForTenant(ctxA, tt.objectName)
-			keyB := tms3.GetObjectStorageKeyForTenant(ctxB, tt.objectName)
+			keyA, _ := tms3.GetObjectStorageKeyForTenant(ctxA, tt.objectName)
+			keyB, _ := tms3.GetObjectStorageKeyForTenant(ctxB, tt.objectName)
 
 			// Keys for different tenants must be different
 			assert.NotEqual(t, keyA, keyB,
@@ -309,22 +309,22 @@ func TestTenantContext_MissingJWTFallback(t *testing.T) {
 			ctx := tt.setupCtx()
 
 			// GetTenantIDFromContext must return empty string, not panic
-			tenantID := tmcore.GetTenantIDFromContext(ctx)
+			tenantID := tmcore.GetTenantIDContext(ctx)
 			assert.Empty(t, tenantID,
 				"missing JWT/tenant context must return empty tenant ID: %s", tt.description)
 
 			// GetMongoFromContext must return nil (not panic) when no tenant context
-			db := tmcore.GetMongoFromContext(ctx)
+			db := tmcore.GetMBContext(ctx)
 			assert.Nil(t, db,
 				"GetMongoFromContext must return nil database when no tenant context")
 
 			// Redis key must return unprefixed key (single-tenant fallback)
-			redisKey := valkey.GetKeyFromContext(ctx, "test-key")
+			redisKey, _ := valkey.GetKeyContext(ctx, "test-key")
 			assert.Equal(t, "test-key", redisKey,
 				"Redis key must be unprefixed when no tenant context (single-tenant fallback)")
 
 			// S3 key must return unmodified object name (single-tenant fallback)
-			s3Key := tms3.GetObjectStorageKeyForTenant(ctx, "reports/data.json")
+			s3Key, _ := tms3.GetObjectStorageKeyForTenant(ctx, "reports/data.json")
 			assert.Equal(t, "reports/data.json", s3Key,
 				"S3 key must be unmodified when no tenant context (single-tenant fallback)")
 		})
@@ -332,7 +332,7 @@ func TestTenantContext_MissingJWTFallback(t *testing.T) {
 }
 
 // TestTenantContext_TenantManagerUnavailable verifies that when
-// tmcore.GetMongoFromContext returns nil (e.g., no mongo connection set),
+// tmcore.GetMBContext returns nil (e.g., no mongo connection set),
 // the repository layer can fall back to static connections.
 func TestTenantContext_TenantManagerUnavailable(t *testing.T) {
 	t.Parallel()
@@ -357,10 +357,10 @@ func TestTenantContext_TenantManagerUnavailable(t *testing.T) {
 
 			ctx := context.Background()
 			if tt.tenantID != "" {
-				ctx = tmcore.SetTenantIDInContext(ctx, tt.tenantID)
+				ctx = tmcore.ContextWithTenantID(ctx, tt.tenantID)
 			}
 
-			db := tmcore.GetMongoFromContext(ctx)
+			db := tmcore.GetMBContext(ctx)
 			assert.Nil(t, db,
 				"GetMongoFromContext must return nil when no mongo connection in context")
 		})
@@ -440,25 +440,25 @@ func TestTenantContext_InvalidRabbitMQTenantIDHeader(t *testing.T) {
 			// components/worker/internal/bootstrap/consumer.go
 			ctx := extractTenantIDFromHeaders(context.Background(), tt.headers)
 
-			tenantID := tmcore.GetTenantIDFromContext(ctx)
+			tenantID := tmcore.GetTenantIDContext(ctx)
 			assert.Equal(t, tt.expectTenantID, tenantID,
 				"tenant ID extracted from headers must match expected value")
 
 			// Verify downstream behavior: if no tenant, keys are unprefixed
 			if tt.expectTenantID == "" {
-				redisKey := valkey.GetKeyFromContext(ctx, "some-key")
+				redisKey, _ := valkey.GetKeyContext(ctx, "some-key")
 				assert.Equal(t, "some-key", redisKey,
 					"with invalid tenant header, Redis key must remain unprefixed")
 
-				s3Key := tms3.GetObjectStorageKeyForTenant(ctx, "some/object.json")
+				s3Key, _ := tms3.GetObjectStorageKeyForTenant(ctx, "some/object.json")
 				assert.Equal(t, "some/object.json", s3Key,
 					"with invalid tenant header, S3 key must remain unmodified")
 			} else {
-				redisKey := valkey.GetKeyFromContext(ctx, "some-key")
+				redisKey, _ := valkey.GetKeyContext(ctx, "some-key")
 				assert.Contains(t, redisKey, tt.expectTenantID,
 					"with valid tenant header, Redis key must contain tenant ID")
 
-				s3Key := tms3.GetObjectStorageKeyForTenant(ctx, "some/object.json")
+				s3Key, _ := tms3.GetObjectStorageKeyForTenant(ctx, "some/object.json")
 				assert.Contains(t, s3Key, tt.expectTenantID,
 					"with valid tenant header, S3 key must contain tenant ID")
 			}
@@ -499,15 +499,15 @@ func TestTenantContext_EmptyTenantPropagation(t *testing.T) {
 
 			ctx := context.Background()
 
-			redisKey := valkey.GetKeyFromContext(ctx, tt.key)
+			redisKey, _ := valkey.GetKeyContext(ctx, tt.key)
 			assert.Equal(t, tt.key, redisKey,
 				"empty tenant context must not add prefix to Redis key")
 
-			s3Key := tms3.GetObjectStorageKeyForTenant(ctx, tt.objectName)
+			s3Key, _ := tms3.GetObjectStorageKeyForTenant(ctx, tt.objectName)
 			assert.Equal(t, tt.objectName, s3Key,
 				"empty tenant context must not add prefix to S3 key")
 
-			tenantID := tmcore.GetTenantIDFromContext(ctx)
+			tenantID := tmcore.GetTenantIDContext(ctx)
 			assert.Empty(t, tenantID,
 				"empty context must return empty tenant ID")
 		})
@@ -547,27 +547,27 @@ func TestContextPropagation_EndToEndFlow(t *testing.T) {
 			t.Parallel()
 
 			// Step 1: Set tenant ID in context (simulating JWT middleware extraction)
-			ctx := tmcore.SetTenantIDInContext(context.Background(), tt.tenantID)
+			ctx := tmcore.ContextWithTenantID(context.Background(), tt.tenantID)
 
 			// Step 2: Verify tenant ID is available via GetTenantIDFromContext
-			extractedID := tmcore.GetTenantIDFromContext(ctx)
+			extractedID := tmcore.GetTenantIDContext(ctx)
 			require.Equal(t, tt.tenantID, extractedID,
 				"tenant ID must be retrievable from context after setting")
 
 			// Step 3: Verify MongoDB layer sees tenant context
 			// GetMongoFromContext returns nil when no real DB is set in context
-			mongoDB := tmcore.GetMongoFromContext(ctx)
+			mongoDB := tmcore.GetMBContext(ctx)
 			assert.Nil(t, mongoDB,
 				"GetMongoFromContext returns nil without real DB set in context")
 
 			// Step 4: Verify Redis layer applies tenant prefix
-			redisKey := valkey.GetKeyFromContext(ctx, "test-cache-key")
+			redisKey, _ := valkey.GetKeyContext(ctx, "test-cache-key")
 			expectedRedisKey := "tenant:" + tt.tenantID + ":test-cache-key"
 			assert.Equal(t, expectedRedisKey, redisKey,
 				"Redis key must be tenant-prefixed when tenant context is present")
 
 			// Step 5: Verify S3 layer applies tenant prefix
-			s3Key := tms3.GetObjectStorageKeyForTenant(ctx, "output/data.json")
+			s3Key, _ := tms3.GetObjectStorageKeyForTenant(ctx, "output/data.json")
 			expectedS3Key := tt.tenantID + "/output/data.json"
 			assert.Equal(t, expectedS3Key, s3Key,
 				"S3 key must be tenant-prefixed when tenant context is present")
@@ -575,7 +575,7 @@ func TestContextPropagation_EndToEndFlow(t *testing.T) {
 			// Step 6: Verify RabbitMQ header injection would include tenant ID
 			// Simulate what publisher.rabbitmq.go does: extract from context, set in headers
 			headers := make(map[string]any)
-			if tid := tmcore.GetTenantIDFromContext(ctx); tid != "" {
+			if tid := tmcore.GetTenantIDContext(ctx); tid != "" {
 				headers["X-Tenant-ID"] = tid
 			}
 			assert.Equal(t, tt.tenantID, headers["X-Tenant-ID"],
@@ -609,10 +609,10 @@ func TestContextPropagation_NoCrossGoroutineLeakage(t *testing.T) {
 		go func() {
 			defer wg.Done()
 
-			ctx := tmcore.SetTenantIDInContext(context.Background(), tenantAID)
+			ctx := tmcore.ContextWithTenantID(context.Background(), tenantAID)
 
 			// Verify tenant ID
-			tid := tmcore.GetTenantIDFromContext(ctx)
+			tid := tmcore.GetTenantIDContext(ctx)
 			if tid != tenantAID {
 				muA.Lock()
 				errorsA = append(errorsA, "expected "+tenantAID+", got "+tid)
@@ -622,7 +622,7 @@ func TestContextPropagation_NoCrossGoroutineLeakage(t *testing.T) {
 			}
 
 			// Verify Redis key
-			redisKey := valkey.GetKeyFromContext(ctx, "key")
+			redisKey, _ := valkey.GetKeyContext(ctx, "key")
 			expectedKey := "tenant:" + tenantAID + ":key"
 			if redisKey != expectedKey {
 				muA.Lock()
@@ -633,7 +633,7 @@ func TestContextPropagation_NoCrossGoroutineLeakage(t *testing.T) {
 			}
 
 			// Verify S3 key
-			s3Key := tms3.GetObjectStorageKeyForTenant(ctx, "obj.json")
+			s3Key, _ := tms3.GetObjectStorageKeyForTenant(ctx, "obj.json")
 			expectedS3 := tenantAID + "/obj.json"
 			if s3Key != expectedS3 {
 				muA.Lock()
@@ -650,10 +650,10 @@ func TestContextPropagation_NoCrossGoroutineLeakage(t *testing.T) {
 		go func() {
 			defer wg.Done()
 
-			ctx := tmcore.SetTenantIDInContext(context.Background(), tenantBID)
+			ctx := tmcore.ContextWithTenantID(context.Background(), tenantBID)
 
 			// Verify tenant ID
-			tid := tmcore.GetTenantIDFromContext(ctx)
+			tid := tmcore.GetTenantIDContext(ctx)
 			if tid != tenantBID {
 				muB.Lock()
 				errorsB = append(errorsB, "expected "+tenantBID+", got "+tid)
@@ -663,7 +663,7 @@ func TestContextPropagation_NoCrossGoroutineLeakage(t *testing.T) {
 			}
 
 			// Verify Redis key
-			redisKey := valkey.GetKeyFromContext(ctx, "key")
+			redisKey, _ := valkey.GetKeyContext(ctx, "key")
 			expectedKey := "tenant:" + tenantBID + ":key"
 			if redisKey != expectedKey {
 				muB.Lock()
@@ -674,7 +674,7 @@ func TestContextPropagation_NoCrossGoroutineLeakage(t *testing.T) {
 			}
 
 			// Verify S3 key
-			s3Key := tms3.GetObjectStorageKeyForTenant(ctx, "obj.json")
+			s3Key, _ := tms3.GetObjectStorageKeyForTenant(ctx, "obj.json")
 			expectedS3 := tenantBID + "/obj.json"
 			if s3Key != expectedS3 {
 				muB.Lock()
@@ -715,13 +715,13 @@ func TestContextPropagation_ChildContextInheritsTenantID(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			parent := tmcore.SetTenantIDInContext(context.Background(), tt.tenantID)
+			parent := tmcore.ContextWithTenantID(context.Background(), tt.tenantID)
 
 			// Child via WithCancel
 			child, cancelChild := context.WithCancel(parent)
 			defer cancelChild()
 
-			childTenant := tmcore.GetTenantIDFromContext(child)
+			childTenant := tmcore.GetTenantIDContext(child)
 			assert.Equal(t, tt.tenantID, childTenant,
 				"child context must inherit tenant ID from parent")
 
@@ -729,17 +729,17 @@ func TestContextPropagation_ChildContextInheritsTenantID(t *testing.T) {
 			grandchild, cancelGrandchild := context.WithCancel(child)
 			defer cancelGrandchild()
 
-			grandchildTenant := tmcore.GetTenantIDFromContext(grandchild)
+			grandchildTenant := tmcore.GetTenantIDContext(grandchild)
 			assert.Equal(t, tt.tenantID, grandchildTenant,
 				"grandchild context must inherit tenant ID from grandparent")
 
 			// Verify infrastructure keys also work through child contexts
-			redisKey := valkey.GetKeyFromContext(child, "nested-key")
+			redisKey, _ := valkey.GetKeyContext(child, "nested-key")
 			expectedRedis := "tenant:" + tt.tenantID + ":nested-key"
 			assert.Equal(t, expectedRedis, redisKey,
 				"child context must produce correct tenant-prefixed Redis key")
 
-			s3Key := tms3.GetObjectStorageKeyForTenant(grandchild, "nested/object.json")
+			s3Key, _ := tms3.GetObjectStorageKeyForTenant(grandchild, "nested/object.json")
 			expectedS3 := tt.tenantID + "/nested/object.json"
 			assert.Equal(t, expectedS3, s3Key,
 				"grandchild context must produce correct tenant-prefixed S3 key")
@@ -760,7 +760,9 @@ func TestMultiTenantConfig_CanonicalEnvVars(t *testing.T) {
 	type multiTenantConfig struct {
 		MultiTenantEnabled                  bool   `env:"MULTI_TENANT_ENABLED"`
 		MultiTenantURL                      string `env:"MULTI_TENANT_URL"`
-		MultiTenantEnvironment              string `env:"MULTI_TENANT_ENVIRONMENT"`
+		MultiTenantRedisHost                string `env:"MULTI_TENANT_REDIS_HOST"`
+		MultiTenantRedisPort                string `env:"MULTI_TENANT_REDIS_PORT"`
+		MultiTenantRedisPassword            string `env:"MULTI_TENANT_REDIS_PASSWORD"`
 		MultiTenantMaxTenantPools           int    `env:"MULTI_TENANT_MAX_TENANT_POOLS"`
 		MultiTenantIdleTimeoutSec           int    `env:"MULTI_TENANT_IDLE_TIMEOUT_SEC"`
 		MultiTenantCircuitBreakerThreshold  int    `env:"MULTI_TENANT_CIRCUIT_BREAKER_THRESHOLD"`
@@ -791,12 +793,30 @@ func TestMultiTenantConfig_CanonicalEnvVars(t *testing.T) {
 			},
 		},
 		{
-			name:  "MULTI_TENANT_ENVIRONMENT defaults to empty string",
-			field: "MultiTenantEnvironment",
+			name:  "MULTI_TENANT_REDIS_HOST defaults to empty string",
+			field: "MultiTenantRedisHost",
 			validate: func(t *testing.T, cfg *multiTenantConfig) {
 				t.Helper()
-				assert.Empty(t, cfg.MultiTenantEnvironment,
-					"MULTI_TENANT_ENVIRONMENT must default to empty string")
+				assert.Empty(t, cfg.MultiTenantRedisHost,
+					"MULTI_TENANT_REDIS_HOST must default to empty string")
+			},
+		},
+		{
+			name:  "MULTI_TENANT_REDIS_PORT defaults to empty string",
+			field: "MultiTenantRedisPort",
+			validate: func(t *testing.T, cfg *multiTenantConfig) {
+				t.Helper()
+				assert.Empty(t, cfg.MultiTenantRedisPort,
+					"MULTI_TENANT_REDIS_PORT must default to empty string")
+			},
+		},
+		{
+			name:  "MULTI_TENANT_REDIS_PASSWORD defaults to empty string",
+			field: "MultiTenantRedisPassword",
+			validate: func(t *testing.T, cfg *multiTenantConfig) {
+				t.Helper()
+				assert.Empty(t, cfg.MultiTenantRedisPassword,
+					"MULTI_TENANT_REDIS_PASSWORD must default to empty string")
 			},
 		},
 		{
@@ -918,7 +938,7 @@ func TestSingleTenantFallback_AllInfrastructure(t *testing.T) {
 
 		ctx := context.Background()
 
-		db := tmcore.GetMongoFromContext(ctx)
+		db := tmcore.GetMBContext(ctx)
 		assert.Nil(t, db,
 			"GetMongoFromContext must return nil when no tenant in context")
 	})
@@ -936,7 +956,7 @@ func TestSingleTenantFallback_AllInfrastructure(t *testing.T) {
 		}
 
 		for _, key := range keys {
-			result := valkey.GetKeyFromContext(ctx, key)
+			result, _ := valkey.GetKeyContext(ctx, key)
 			assert.Equal(t, key, result,
 				"Redis key %q must be unchanged in single-tenant mode", key)
 		}
@@ -955,7 +975,7 @@ func TestSingleTenantFallback_AllInfrastructure(t *testing.T) {
 		}
 
 		for _, name := range objectNames {
-			result := tms3.GetObjectStorageKeyForTenant(ctx, name)
+			result, _ := tms3.GetObjectStorageKeyForTenant(ctx, name)
 			assert.Equal(t, name, result,
 				"S3 key %q must be unchanged in single-tenant mode", name)
 		}
@@ -966,7 +986,7 @@ func TestSingleTenantFallback_AllInfrastructure(t *testing.T) {
 
 		ctx := context.Background()
 
-		tenantID := tmcore.GetTenantIDFromContext(ctx)
+		tenantID := tmcore.GetTenantIDContext(ctx)
 		assert.Empty(t, tenantID,
 			"tenant ID must be empty in single-tenant mode")
 	})
@@ -978,7 +998,7 @@ func TestSingleTenantFallback_AllInfrastructure(t *testing.T) {
 
 		// Simulate RabbitMQ header injection logic from publisher.rabbitmq.go
 		headers := make(map[string]any)
-		if tid := tmcore.GetTenantIDFromContext(ctx); tid != "" {
+		if tid := tmcore.GetTenantIDContext(ctx); tid != "" {
 			headers["X-Tenant-ID"] = tid
 		}
 
@@ -1005,5 +1025,5 @@ func extractTenantIDFromHeaders(ctx context.Context, headers map[string]any) con
 		return ctx
 	}
 
-	return tmcore.SetTenantIDInContext(ctx, tenantID)
+	return tmcore.ContextWithTenantID(ctx, tenantID)
 }

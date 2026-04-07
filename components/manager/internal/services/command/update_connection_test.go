@@ -19,10 +19,9 @@ import (
 )
 
 // newExistingConnection creates a valid existing Connection for testing updates.
-func newExistingConnection(orgID, connID uuid.UUID) *model.Connection {
+func newExistingConnection(connID uuid.UUID) *model.Connection {
 	return &model.Connection{
 		ID:                   connID,
-		OrganizationID:       orgID,
 		ProductName:          "test-product",
 		ConfigName:           "existing-connection",
 		Type:                 model.TypePostgreSQL,
@@ -84,19 +83,18 @@ func TestUpdateConnection_Execute_Success(t *testing.T) {
 	svc := NewUpdateConnection(mockConnRepo, mockJobRepo, mockCrypto)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
-	existingConn := newExistingConnection(orgID, connID)
+	existingConn := newExistingConnection(connID)
 	input := newUpdateConnectionInput()
 
 	// Mock: find existing connection
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, orgID).
+		FindByID(gomock.Any(), connID).
 		Return(existingConn, nil)
 
 	// Mock: no active jobs for this connection
 	mockJobRepo.EXPECT().
-		ExistsRunningByMappedFieldKey(gomock.Any(), orgID, existingConn.ConfigName).
+		ExistsRunningByMappedFieldKey(gomock.Any(), existingConn.ConfigName).
 		Return(false, nil)
 
 	// Mock: update returns the updated connection
@@ -106,7 +104,7 @@ func TestUpdateConnection_Execute_Success(t *testing.T) {
 			return conn, nil
 		})
 
-	result, err := svc.Execute(ctx, orgID, connID, input)
+	result, err := svc.Execute(ctx, connID, input)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -144,16 +142,15 @@ func TestUpdateConnection_Execute_NotFoundError(t *testing.T) {
 	svc := NewUpdateConnection(mockConnRepo, mockJobRepo, mockCrypto)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
 	input := newUpdateConnectionInput()
 
 	// Mock: connection not found
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, orgID).
+		FindByID(gomock.Any(), connID).
 		Return(nil, nil)
 
-	result, err := svc.Execute(ctx, orgID, connID, input)
+	result, err := svc.Execute(ctx, connID, input)
 
 	if result != nil {
 		t.Fatalf("expected nil result, got %+v", result)
@@ -186,7 +183,6 @@ func TestUpdateConnection_Execute_FindByIDError(t *testing.T) {
 	svc := NewUpdateConnection(mockConnRepo, mockJobRepo, mockCrypto)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
 	input := newUpdateConnectionInput()
 
@@ -194,10 +190,10 @@ func TestUpdateConnection_Execute_FindByIDError(t *testing.T) {
 
 	// Mock: database error during lookup
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, orgID).
+		FindByID(gomock.Any(), connID).
 		Return(nil, dbError)
 
-	result, err := svc.Execute(ctx, orgID, connID, input)
+	result, err := svc.Execute(ctx, connID, input)
 
 	if result != nil {
 		t.Fatalf("expected nil result, got %+v", result)
@@ -228,22 +224,21 @@ func TestUpdateConnection_Execute_ActiveJobError(t *testing.T) {
 	svc := NewUpdateConnection(mockConnRepo, mockJobRepo, mockCrypto)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
-	existingConn := newExistingConnection(orgID, connID)
+	existingConn := newExistingConnection(connID)
 	input := newUpdateConnectionInput()
 
 	// Mock: find existing connection
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, orgID).
+		FindByID(gomock.Any(), connID).
 		Return(existingConn, nil)
 
 	// Mock: active jobs exist for this connection
 	mockJobRepo.EXPECT().
-		ExistsRunningByMappedFieldKey(gomock.Any(), orgID, existingConn.ConfigName).
+		ExistsRunningByMappedFieldKey(gomock.Any(), existingConn.ConfigName).
 		Return(true, nil)
 
-	result, err := svc.Execute(ctx, orgID, connID, input)
+	result, err := svc.Execute(ctx, connID, input)
 
 	if result != nil {
 		t.Fatalf("expected nil result, got %+v", result)
@@ -276,24 +271,23 @@ func TestUpdateConnection_Execute_ExistsRunningJobError(t *testing.T) {
 	svc := NewUpdateConnection(mockConnRepo, mockJobRepo, mockCrypto)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
-	existingConn := newExistingConnection(orgID, connID)
+	existingConn := newExistingConnection(connID)
 	input := newUpdateConnectionInput()
 
 	dbError := errors.New("database connection failed")
 
 	// Mock: find existing connection
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, orgID).
+		FindByID(gomock.Any(), connID).
 		Return(existingConn, nil)
 
 	// Mock: error during job check
 	mockJobRepo.EXPECT().
-		ExistsRunningByMappedFieldKey(gomock.Any(), orgID, existingConn.ConfigName).
+		ExistsRunningByMappedFieldKey(gomock.Any(), existingConn.ConfigName).
 		Return(false, dbError)
 
-	result, err := svc.Execute(ctx, orgID, connID, input)
+	result, err := svc.Execute(ctx, connID, input)
 
 	if result != nil {
 		t.Fatalf("expected nil result, got %+v", result)
@@ -324,21 +318,20 @@ func TestUpdateConnection_Execute_UpdateError(t *testing.T) {
 	svc := NewUpdateConnection(mockConnRepo, mockJobRepo, mockCrypto)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
-	existingConn := newExistingConnection(orgID, connID)
+	existingConn := newExistingConnection(connID)
 	input := newUpdateConnectionInput()
 
 	dbError := errors.New("failed to update in database")
 
 	// Mock: find existing connection
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, orgID).
+		FindByID(gomock.Any(), connID).
 		Return(existingConn, nil)
 
 	// Mock: no active jobs
 	mockJobRepo.EXPECT().
-		ExistsRunningByMappedFieldKey(gomock.Any(), orgID, existingConn.ConfigName).
+		ExistsRunningByMappedFieldKey(gomock.Any(), existingConn.ConfigName).
 		Return(false, nil)
 
 	// Mock: update returns error
@@ -346,7 +339,7 @@ func TestUpdateConnection_Execute_UpdateError(t *testing.T) {
 		Update(gomock.Any(), gomock.Any()).
 		Return(nil, dbError)
 
-	result, err := svc.Execute(ctx, orgID, connID, input)
+	result, err := svc.Execute(ctx, connID, input)
 
 	if result != nil {
 		t.Fatalf("expected nil result, got %+v", result)
@@ -377,19 +370,18 @@ func TestUpdateConnection_Execute_UpdateReturnsNil(t *testing.T) {
 	svc := NewUpdateConnection(mockConnRepo, mockJobRepo, mockCrypto)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
-	existingConn := newExistingConnection(orgID, connID)
+	existingConn := newExistingConnection(connID)
 	input := newUpdateConnectionInput()
 
 	// Mock: find existing connection
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, orgID).
+		FindByID(gomock.Any(), connID).
 		Return(existingConn, nil)
 
 	// Mock: no active jobs
 	mockJobRepo.EXPECT().
-		ExistsRunningByMappedFieldKey(gomock.Any(), orgID, existingConn.ConfigName).
+		ExistsRunningByMappedFieldKey(gomock.Any(), existingConn.ConfigName).
 		Return(false, nil)
 
 	// Mock: update returns nil (connection not found during update)
@@ -397,7 +389,7 @@ func TestUpdateConnection_Execute_UpdateReturnsNil(t *testing.T) {
 		Update(gomock.Any(), gomock.Any()).
 		Return(nil, nil)
 
-	result, err := svc.Execute(ctx, orgID, connID, input)
+	result, err := svc.Execute(ctx, connID, input)
 
 	if result != nil {
 		t.Fatalf("expected nil result, got %+v", result)
@@ -431,22 +423,21 @@ func TestUpdateConnection_Execute_EncryptionError(t *testing.T) {
 	svc := NewUpdateConnection(mockConnRepo, mockJobRepo, mockCrypto)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
-	existingConn := newExistingConnection(orgID, connID)
+	existingConn := newExistingConnection(connID)
 	input := newUpdateConnectionInput()
 
 	// Mock: find existing connection
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, orgID).
+		FindByID(gomock.Any(), connID).
 		Return(existingConn, nil)
 
 	// Mock: no active jobs
 	mockJobRepo.EXPECT().
-		ExistsRunningByMappedFieldKey(gomock.Any(), orgID, existingConn.ConfigName).
+		ExistsRunningByMappedFieldKey(gomock.Any(), existingConn.ConfigName).
 		Return(false, nil)
 
-	result, err := svc.Execute(ctx, orgID, connID, input)
+	result, err := svc.Execute(ctx, connID, input)
 
 	if result != nil {
 		t.Fatalf("expected nil result, got %+v", result)
@@ -475,9 +466,8 @@ func TestUpdateConnection_Execute_PartialUpdate(t *testing.T) {
 	svc := NewUpdateConnection(mockConnRepo, mockJobRepo, mockCrypto)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
-	existingConn := newExistingConnection(orgID, connID)
+	existingConn := newExistingConnection(connID)
 
 	// Only update the host - true partial update with ConnectionUpdateInput
 	input := model.ConnectionUpdateInput{
@@ -487,12 +477,12 @@ func TestUpdateConnection_Execute_PartialUpdate(t *testing.T) {
 
 	// Mock: find existing connection
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, orgID).
+		FindByID(gomock.Any(), connID).
 		Return(existingConn, nil)
 
 	// Mock: no active jobs
 	mockJobRepo.EXPECT().
-		ExistsRunningByMappedFieldKey(gomock.Any(), orgID, existingConn.ConfigName).
+		ExistsRunningByMappedFieldKey(gomock.Any(), existingConn.ConfigName).
 		Return(false, nil)
 
 	// Mock: update returns the updated connection
@@ -509,7 +499,7 @@ func TestUpdateConnection_Execute_PartialUpdate(t *testing.T) {
 			return conn, nil
 		})
 
-	result, err := svc.Execute(ctx, orgID, connID, input)
+	result, err := svc.Execute(ctx, connID, input)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -539,9 +529,8 @@ func TestUpdateConnection_Execute_WithSSL(t *testing.T) {
 	svc := NewUpdateConnection(mockConnRepo, mockJobRepo, mockCrypto)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
-	existingConn := newExistingConnection(orgID, connID)
+	existingConn := newExistingConnection(connID)
 
 	input := model.ConnectionUpdateInput{
 		ConfigName:   strPtr("ssl-connection"),
@@ -561,12 +550,12 @@ func TestUpdateConnection_Execute_WithSSL(t *testing.T) {
 
 	// Mock: find existing connection
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, orgID).
+		FindByID(gomock.Any(), connID).
 		Return(existingConn, nil)
 
 	// Mock: no active jobs
 	mockJobRepo.EXPECT().
-		ExistsRunningByMappedFieldKey(gomock.Any(), orgID, existingConn.ConfigName).
+		ExistsRunningByMappedFieldKey(gomock.Any(), existingConn.ConfigName).
 		Return(false, nil)
 
 	// Mock: update returns the connection
@@ -584,7 +573,7 @@ func TestUpdateConnection_Execute_WithSSL(t *testing.T) {
 			return conn, nil
 		})
 
-	result, err := svc.Execute(ctx, orgID, connID, input)
+	result, err := svc.Execute(ctx, connID, input)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -618,9 +607,8 @@ func TestUpdateConnection_Execute_InvalidTypeError(t *testing.T) {
 	svc := NewUpdateConnection(mockConnRepo, mockJobRepo, mockCrypto)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
-	existingConn := newExistingConnection(orgID, connID)
+	existingConn := newExistingConnection(connID)
 
 	input := model.ConnectionUpdateInput{
 		ConfigName:   strPtr("test-connection"),
@@ -634,15 +622,15 @@ func TestUpdateConnection_Execute_InvalidTypeError(t *testing.T) {
 
 	// Mock: find existing connection
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, orgID).
+		FindByID(gomock.Any(), connID).
 		Return(existingConn, nil)
 
 	// Mock: no active jobs
 	mockJobRepo.EXPECT().
-		ExistsRunningByMappedFieldKey(gomock.Any(), orgID, existingConn.ConfigName).
+		ExistsRunningByMappedFieldKey(gomock.Any(), existingConn.ConfigName).
 		Return(false, nil)
 
-	result, err := svc.Execute(ctx, orgID, connID, input)
+	result, err := svc.Execute(ctx, connID, input)
 
 	if result != nil {
 		t.Fatalf("expected nil result, got %+v", result)
@@ -690,7 +678,7 @@ func TestNewUpdateConnection(t *testing.T) {
 func TestUpdateConnection_Execute_TableDriven(t *testing.T) {
 	tests := []struct {
 		name           string
-		setupMocks     func(*connRepo.MockRepository, *jobRepo.MockRepository, *crypto.MockCryptor, uuid.UUID, uuid.UUID, *model.Connection)
+		setupMocks     func(*connRepo.MockRepository, *jobRepo.MockRepository, *crypto.MockCryptor, uuid.UUID, *model.Connection)
 		input          model.ConnectionUpdateInput
 		wantErr        bool
 		wantStatusCode int // 0 means no status code check
@@ -698,16 +686,16 @@ func TestUpdateConnection_Execute_TableDriven(t *testing.T) {
 	}{
 		{
 			name: "successful update with all fields",
-			setupMocks: func(connMock *connRepo.MockRepository, jobMock *jobRepo.MockRepository, cryptoMock *crypto.MockCryptor, orgID, connID uuid.UUID, existing *model.Connection) {
+			setupMocks: func(connMock *connRepo.MockRepository, jobMock *jobRepo.MockRepository, cryptoMock *crypto.MockCryptor, connID uuid.UUID, existing *model.Connection) {
 				cryptoMock.EXPECT().
 					Encrypt(gomock.Any(), gomock.Any()).
 					Return("encrypted-newpassword", "v1", nil).
 					AnyTimes()
 				connMock.EXPECT().
-					FindByID(gomock.Any(), connID, orgID).
+					FindByID(gomock.Any(), connID).
 					Return(existing, nil)
 				jobMock.EXPECT().
-					ExistsRunningByMappedFieldKey(gomock.Any(), orgID, existing.ConfigName).
+					ExistsRunningByMappedFieldKey(gomock.Any(), existing.ConfigName).
 					Return(false, nil)
 				connMock.EXPECT().
 					Update(gomock.Any(), gomock.Any()).
@@ -736,13 +724,13 @@ func TestUpdateConnection_Execute_TableDriven(t *testing.T) {
 		},
 		{
 			name: "connection not found",
-			setupMocks: func(connMock *connRepo.MockRepository, jobMock *jobRepo.MockRepository, cryptoMock *crypto.MockCryptor, orgID, connID uuid.UUID, existing *model.Connection) {
+			setupMocks: func(connMock *connRepo.MockRepository, jobMock *jobRepo.MockRepository, cryptoMock *crypto.MockCryptor, connID uuid.UUID, existing *model.Connection) {
 				cryptoMock.EXPECT().
 					Encrypt(gomock.Any(), gomock.Any()).
 					Return("encrypted-newpassword", "v1", nil).
 					AnyTimes()
 				connMock.EXPECT().
-					FindByID(gomock.Any(), connID, orgID).
+					FindByID(gomock.Any(), connID).
 					Return(nil, nil)
 			},
 			input:          newUpdateConnectionInput(),
@@ -751,16 +739,16 @@ func TestUpdateConnection_Execute_TableDriven(t *testing.T) {
 		},
 		{
 			name: "active jobs prevent update",
-			setupMocks: func(connMock *connRepo.MockRepository, jobMock *jobRepo.MockRepository, cryptoMock *crypto.MockCryptor, orgID, connID uuid.UUID, existing *model.Connection) {
+			setupMocks: func(connMock *connRepo.MockRepository, jobMock *jobRepo.MockRepository, cryptoMock *crypto.MockCryptor, connID uuid.UUID, existing *model.Connection) {
 				cryptoMock.EXPECT().
 					Encrypt(gomock.Any(), gomock.Any()).
 					Return("encrypted-newpassword", "v1", nil).
 					AnyTimes()
 				connMock.EXPECT().
-					FindByID(gomock.Any(), connID, orgID).
+					FindByID(gomock.Any(), connID).
 					Return(existing, nil)
 				jobMock.EXPECT().
-					ExistsRunningByMappedFieldKey(gomock.Any(), orgID, existing.ConfigName).
+					ExistsRunningByMappedFieldKey(gomock.Any(), existing.ConfigName).
 					Return(true, nil)
 			},
 			input:          newUpdateConnectionInput(),
@@ -779,15 +767,14 @@ func TestUpdateConnection_Execute_TableDriven(t *testing.T) {
 			mockCrypto := crypto.NewMockCryptor(ctrl)
 
 			ctx := testContext()
-			orgID := uuid.New()
 			connID := uuid.New()
-			existingConn := newExistingConnection(orgID, connID)
+			existingConn := newExistingConnection(connID)
 
-			tt.setupMocks(mockConnRepo, mockJobRepo, mockCrypto, orgID, connID, existingConn)
+			tt.setupMocks(mockConnRepo, mockJobRepo, mockCrypto, connID, existingConn)
 
 			svc := NewUpdateConnection(mockConnRepo, mockJobRepo, mockCrypto)
 
-			result, err := svc.Execute(ctx, orgID, connID, tt.input)
+			result, err := svc.Execute(ctx, connID, tt.input)
 
 			if tt.wantErr {
 				if err == nil {
@@ -866,9 +853,8 @@ func TestUpdateConnection_Execute_DatabaseTypeChange(t *testing.T) {
 			svc := NewUpdateConnection(mockConnRepo, mockJobRepo, mockCrypto)
 
 			ctx := testContext()
-			orgID := uuid.New()
 			connID := uuid.New()
-			existingConn := newExistingConnection(orgID, connID)
+			existingConn := newExistingConnection(connID)
 
 			// Only update the type - true partial update
 			input := model.ConnectionUpdateInput{
@@ -877,12 +863,12 @@ func TestUpdateConnection_Execute_DatabaseTypeChange(t *testing.T) {
 
 			// Mock: find existing connection
 			mockConnRepo.EXPECT().
-				FindByID(gomock.Any(), connID, orgID).
+				FindByID(gomock.Any(), connID).
 				Return(existingConn, nil)
 
 			// Mock: no active jobs
 			mockJobRepo.EXPECT().
-				ExistsRunningByMappedFieldKey(gomock.Any(), orgID, existingConn.ConfigName).
+				ExistsRunningByMappedFieldKey(gomock.Any(), existingConn.ConfigName).
 				Return(false, nil)
 
 			// Mock: update returns the connection
@@ -892,7 +878,7 @@ func TestUpdateConnection_Execute_DatabaseTypeChange(t *testing.T) {
 					return conn, nil
 				})
 
-			result, err := svc.Execute(ctx, orgID, connID, input)
+			result, err := svc.Execute(ctx, connID, input)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -921,9 +907,8 @@ func TestUpdateConnection_Execute_TruePartialUpdate(t *testing.T) {
 	svc := NewUpdateConnection(mockConnRepo, mockJobRepo, mockCrypto)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
-	existingConn := newExistingConnection(orgID, connID)
+	existingConn := newExistingConnection(connID)
 
 	// Store original values to verify they weren't changed
 	originalHost := existingConn.Host
@@ -941,12 +926,12 @@ func TestUpdateConnection_Execute_TruePartialUpdate(t *testing.T) {
 
 	// Mock: find existing connection
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, orgID).
+		FindByID(gomock.Any(), connID).
 		Return(existingConn, nil)
 
 	// Mock: no active jobs
 	mockJobRepo.EXPECT().
-		ExistsRunningByMappedFieldKey(gomock.Any(), orgID, existingConn.ConfigName).
+		ExistsRunningByMappedFieldKey(gomock.Any(), existingConn.ConfigName).
 		Return(false, nil)
 
 	// Mock: update returns the connection - verify only ConfigName was changed
@@ -978,7 +963,7 @@ func TestUpdateConnection_Execute_TruePartialUpdate(t *testing.T) {
 			return conn, nil
 		})
 
-	result, err := svc.Execute(ctx, orgID, connID, input)
+	result, err := svc.Execute(ctx, connID, input)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

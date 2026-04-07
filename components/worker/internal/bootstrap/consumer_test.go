@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/LerianStudio/lib-commons/v3/commons/log"
-	tmconsumer "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/consumer"
-	tmcore "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/core"
-	tmmongo "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/mongo"
+	"github.com/LerianStudio/lib-commons/v4/commons/log"
+	tmconsumer "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/consumer"
+	tmcore "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/core"
+	tmmongo "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/mongo"
 	amqp "github.com/rabbitmq/amqp091-go"
 
 	"github.com/stretchr/testify/assert"
@@ -23,13 +23,15 @@ type mockMultiTenantConsumer struct {
 	registeredHandlers []tmconsumer.HandlerFunc
 	runCalled          bool
 	closeCalled        bool
+	registerErr        error
 	runErr             error
 	closeErr           error
 }
 
-func (m *mockMultiTenantConsumer) Register(queueName string, handler tmconsumer.HandlerFunc) {
+func (m *mockMultiTenantConsumer) Register(queueName string, handler tmconsumer.HandlerFunc) error {
 	m.registeredQueues = append(m.registeredQueues, queueName)
 	m.registeredHandlers = append(m.registeredHandlers, handler)
+	return m.registerErr
 }
 
 func (m *mockMultiTenantConsumer) Run(_ context.Context) error {
@@ -43,27 +45,14 @@ func (m *mockMultiTenantConsumer) Close() error {
 }
 
 // mockBootstrapLogger is a minimal logger for bootstrap package tests
-// that satisfies the log.Logger interface from lib-commons v3.
+// that satisfies the log.Logger interface from lib-commons v4.
 type mockBootstrapLogger struct{}
 
-func (m *mockBootstrapLogger) Info(args ...any)                                     {}
-func (m *mockBootstrapLogger) Infof(format string, args ...any)                     {}
-func (m *mockBootstrapLogger) Infoln(args ...any)                                   {}
-func (m *mockBootstrapLogger) Warn(args ...any)                                     {}
-func (m *mockBootstrapLogger) Warnf(format string, args ...any)                     {}
-func (m *mockBootstrapLogger) Warnln(args ...any)                                   {}
-func (m *mockBootstrapLogger) Error(args ...any)                                    {}
-func (m *mockBootstrapLogger) Errorf(format string, args ...any)                    {}
-func (m *mockBootstrapLogger) Errorln(args ...any)                                  {}
-func (m *mockBootstrapLogger) Debug(args ...any)                                    {}
-func (m *mockBootstrapLogger) Debugf(format string, args ...any)                    {}
-func (m *mockBootstrapLogger) Debugln(args ...any)                                  {}
-func (m *mockBootstrapLogger) Fatal(args ...any)                                    {}
-func (m *mockBootstrapLogger) Fatalf(format string, args ...any)                    {}
-func (m *mockBootstrapLogger) Fatalln(args ...any)                                  {}
-func (m *mockBootstrapLogger) WithFields(fields ...any) log.Logger                  { return m }
-func (m *mockBootstrapLogger) WithDefaultMessageTemplate(message string) log.Logger { return m }
-func (m *mockBootstrapLogger) Sync() error                                          { return nil }
+func (m *mockBootstrapLogger) Enabled(_ log.Level) bool                                     { return true }
+func (m *mockBootstrapLogger) Log(_ context.Context, _ log.Level, _ string, _ ...log.Field) {}
+func (m *mockBootstrapLogger) With(_ ...log.Field) log.Logger                               { return m }
+func (m *mockBootstrapLogger) WithGroup(_ string) log.Logger                                { return m }
+func (m *mockBootstrapLogger) Sync(_ context.Context) error                                 { return nil }
 
 func TestNewMultiQueueConsumerMultiTenant_SetsFields(t *testing.T) {
 	mockConsumer := &mockMultiTenantConsumer{}
@@ -117,7 +106,7 @@ func TestResolveTenantMongo(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
 			if tt.tenantID != "" {
-				ctx = tmcore.SetTenantIDInContext(ctx, tt.tenantID)
+				ctx = tmcore.ContextWithTenantID(ctx, tt.tenantID)
 			}
 
 			resultCtx, err := resolveTenantMongo(ctx, tt.mongoManager)
@@ -127,7 +116,7 @@ func TestResolveTenantMongo(t *testing.T) {
 			} else {
 				require.NoError(t, err, tt.description)
 				// Verify tenant ID is preserved in the returned context
-				assert.Equal(t, tt.tenantID, tmcore.GetTenantIDFromContext(resultCtx),
+				assert.Equal(t, tt.tenantID, tmcore.GetTenantIDContext(resultCtx),
 					"tenant ID must be preserved in returned context")
 			}
 		})
@@ -180,7 +169,7 @@ func TestHandlerGenerateReport_TenantIDExtraction(t *testing.T) {
 			ctx := context.Background()
 			ctx = extractTenantIDFromHeaders(ctx, tt.headers)
 
-			tenantID := tmcore.GetTenantIDFromContext(ctx)
+			tenantID := tmcore.GetTenantIDContext(ctx)
 			assert.Equal(t, tt.expectTenantID, tenantID)
 		})
 	}
@@ -288,11 +277,11 @@ func TestIsPermanentTenantError(t *testing.T) {
 func TestResolveTenantMongo_NilManagerPreservesContext(t *testing.T) {
 	// resolveTenantMongo with nil manager should always succeed (single-tenant mode)
 	ctx := context.Background()
-	ctx = tmcore.SetTenantIDInContext(ctx, "tenant-abc")
+	ctx = tmcore.ContextWithTenantID(ctx, "tenant-abc")
 
 	resultCtx, err := resolveTenantMongo(ctx, nil)
 	require.NoError(t, err)
-	assert.Equal(t, "tenant-abc", tmcore.GetTenantIDFromContext(resultCtx))
+	assert.Equal(t, "tenant-abc", tmcore.GetTenantIDContext(resultCtx))
 }
 
 func TestNewMultiQueueConsumerMultiTenant_RegistersHandler(t *testing.T) {
@@ -311,6 +300,30 @@ func TestNewMultiQueueConsumerMultiTenant_RegistersHandler(t *testing.T) {
 	assert.Equal(t, 1, len(mockConsumer.registeredQueues))
 	assert.Equal(t, "test-queue", mockConsumer.registeredQueues[0])
 	assert.NotNil(t, mockConsumer.registeredHandlers[0])
+	assert.NoError(t, mqConsumer.initErr)
+}
+
+func TestNewMultiQueueConsumerMultiTenant_StoresRegistrationError(t *testing.T) {
+	mockConsumer := &mockMultiTenantConsumer{registerErr: errors.New("register failed")}
+	logger := &mockBootstrapLogger{}
+
+	consumer := NewMultiQueueConsumerMultiTenant(mockConsumer, nil, "test-queue", logger, nil)
+
+	require.Error(t, consumer.initErr)
+	assert.Contains(t, consumer.initErr.Error(), "register multi-tenant handler")
+	assert.Contains(t, consumer.initErr.Error(), "register failed")
+	assert.False(t, mockConsumer.runCalled)
+}
+
+func TestMultiQueueConsumerRun_ReturnsDeferredRegistrationError(t *testing.T) {
+	consumer := &MultiQueueConsumer{
+		logger:  &mockBootstrapLogger{},
+		initErr: errors.New("register failed"),
+	}
+
+	err := consumer.Run(nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "register failed")
 }
 
 func TestHandlerGenerateReportDelivery_NilMongoManager_SkipsResolution(t *testing.T) {

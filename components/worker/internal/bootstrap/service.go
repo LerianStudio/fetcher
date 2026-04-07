@@ -1,16 +1,29 @@
 package bootstrap
 
 import (
-	"github.com/LerianStudio/lib-commons/v3/commons"
-	libCommonsLicense "github.com/LerianStudio/lib-commons/v3/commons/license"
-	"github.com/LerianStudio/lib-commons/v3/commons/log"
+	"context"
+
+	"github.com/LerianStudio/lib-commons/v4/commons"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
 )
+
+var runLauncher = func(logger libLog.Logger, consumer *MultiQueueConsumer) {
+	commons.NewLauncher(
+		commons.WithLogger(logger),
+		commons.RunApp("RabbitMQ Consumer", consumer),
+	).Run()
+}
+
+type licenseTerminator interface {
+	Terminate(msg string)
+}
 
 // Service is the application glue where we put all top level components to be used.
 type Service struct {
 	*MultiQueueConsumer
-	log.Logger
-	licenseShutdown *libCommonsLicense.ManagerShutdown
+	libLog.
+		Logger
+	licenseShutdown licenseTerminator
 	// mtCleanup is the cleanup function for multi-tenant resources (Redis, etc.)
 	mtCleanup func()
 }
@@ -18,21 +31,18 @@ type Service struct {
 // Run starts the application.
 // This is the only necessary code to run an app in main.go
 func (app *Service) Run() {
-	commons.NewLauncher(
-		commons.WithLogger(app.Logger),
-		commons.RunApp("RabbitMQ Consumer", app.MultiQueueConsumer),
-	).Run()
+	runLauncher(app.Logger, app.MultiQueueConsumer)
 
 	// Graceful shutdown
-	app.Info("Starting graceful shutdown...")
+	app.Log(context.Background(), libLog.LevelInfo, "Starting graceful shutdown...")
 
 	// Close multi-tenant resources (Redis) if present.
 	// mtConsumer.Close() is handled by MultiQueueConsumer.Run() on context cancellation.
 	// mtCleanup only closes Redis connection.
 	if app.mtCleanup != nil {
-		app.Info("Closing multi-tenant resources (Redis)...")
+		app.Log(context.Background(), libLog.LevelInfo, "Closing multi-tenant resources (Redis)...")
 		app.mtCleanup()
-		app.Info("Multi-tenant resources closed")
+		app.Log(context.Background(), libLog.LevelInfo, "Multi-tenant resources closed")
 	}
 
 	// After all consumers are done, shutdown license
@@ -40,5 +50,5 @@ func (app *Service) Run() {
 		app.licenseShutdown.Terminate("Consumers are done.")
 	}
 
-	app.Info("Graceful shutdown complete")
+	app.Log(context.Background(), libLog.LevelInfo, "Graceful shutdown complete")
 }

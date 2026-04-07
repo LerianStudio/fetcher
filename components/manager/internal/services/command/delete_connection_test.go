@@ -17,10 +17,9 @@ import (
 )
 
 // newExistingConnectionForDelete creates a valid existing Connection for testing deletions.
-func newExistingConnectionForDelete(orgID, connID uuid.UUID) *model.Connection {
+func newExistingConnectionForDelete(connID uuid.UUID) *model.Connection {
 	return &model.Connection{
 		ID:                   connID,
-		OrganizationID:       orgID,
 		ConfigName:           "existing-connection",
 		Type:                 model.TypePostgreSQL,
 		Host:                 "localhost",
@@ -35,8 +34,8 @@ func newExistingConnectionForDelete(orgID, connID uuid.UUID) *model.Connection {
 }
 
 // newSoftDeletedConnection creates a soft-deleted Connection for testing.
-func newSoftDeletedConnection(orgID, connID uuid.UUID) *model.Connection {
-	conn := newExistingConnectionForDelete(orgID, connID)
+func newSoftDeletedConnection(connID uuid.UUID) *model.Connection {
+	conn := newExistingConnectionForDelete(connID)
 	deletedAt := time.Now().UTC().Add(-1 * time.Hour)
 	conn.DeletedAt = &deletedAt
 	return conn
@@ -53,26 +52,25 @@ func TestDeleteConnection_Execute_Success(t *testing.T) {
 	svc := NewDeleteConnection(mockConnRepo, mockJobRepo)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
-	existingConn := newExistingConnectionForDelete(orgID, connID)
+	existingConn := newExistingConnectionForDelete(connID)
 
 	// Mock: find existing connection
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, orgID).
+		FindByID(gomock.Any(), connID).
 		Return(existingConn, nil)
 
 	// Mock: no active jobs for this connection
 	mockJobRepo.EXPECT().
-		ExistsRunningByMappedFieldKey(gomock.Any(), orgID, existingConn.ConfigName).
+		ExistsRunningByMappedFieldKey(gomock.Any(), existingConn.ConfigName).
 		Return(false, nil)
 
 	// Mock: delete succeeds
 	mockConnRepo.EXPECT().
-		Delete(gomock.Any(), connID, orgID, gomock.Any()).
+		Delete(gomock.Any(), connID, gomock.Any()).
 		Return(nil)
 
-	err := svc.Execute(ctx, orgID, connID)
+	err := svc.Execute(ctx, connID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -89,15 +87,14 @@ func TestDeleteConnection_Execute_NotFoundError(t *testing.T) {
 	svc := NewDeleteConnection(mockConnRepo, mockJobRepo)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
 
 	// Mock: connection not found
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, orgID).
+		FindByID(gomock.Any(), connID).
 		Return(nil, nil)
 
-	err := svc.Execute(ctx, orgID, connID)
+	err := svc.Execute(ctx, connID)
 
 	if err == nil {
 		t.Fatal("expected error for non-existent connection, got nil")
@@ -121,21 +118,20 @@ func TestDeleteConnection_Execute_ActiveJobError(t *testing.T) {
 	svc := NewDeleteConnection(mockConnRepo, mockJobRepo)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
-	existingConn := newExistingConnectionForDelete(orgID, connID)
+	existingConn := newExistingConnectionForDelete(connID)
 
 	// Mock: find existing connection
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, orgID).
+		FindByID(gomock.Any(), connID).
 		Return(existingConn, nil)
 
 	// Mock: active jobs exist for this connection
 	mockJobRepo.EXPECT().
-		ExistsRunningByMappedFieldKey(gomock.Any(), orgID, existingConn.ConfigName).
+		ExistsRunningByMappedFieldKey(gomock.Any(), existingConn.ConfigName).
 		Return(true, nil)
 
-	err := svc.Execute(ctx, orgID, connID)
+	err := svc.Execute(ctx, connID)
 
 	if err == nil {
 		t.Fatal("expected error for active jobs, got nil")
@@ -159,17 +155,16 @@ func TestDeleteConnection_Execute_FindByIDError(t *testing.T) {
 	svc := NewDeleteConnection(mockConnRepo, mockJobRepo)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
 
 	dbError := errors.New("database connection failed")
 
 	// Mock: database error during lookup
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, orgID).
+		FindByID(gomock.Any(), connID).
 		Return(nil, dbError)
 
-	err := svc.Execute(ctx, orgID, connID)
+	err := svc.Execute(ctx, connID)
 
 	if err == nil {
 		t.Fatal("expected error, got nil")
@@ -191,23 +186,22 @@ func TestDeleteConnection_Execute_ExistsRunningJobError(t *testing.T) {
 	svc := NewDeleteConnection(mockConnRepo, mockJobRepo)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
-	existingConn := newExistingConnectionForDelete(orgID, connID)
+	existingConn := newExistingConnectionForDelete(connID)
 
 	dbError := errors.New("database connection failed")
 
 	// Mock: find existing connection
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, orgID).
+		FindByID(gomock.Any(), connID).
 		Return(existingConn, nil)
 
 	// Mock: error during job check
 	mockJobRepo.EXPECT().
-		ExistsRunningByMappedFieldKey(gomock.Any(), orgID, existingConn.ConfigName).
+		ExistsRunningByMappedFieldKey(gomock.Any(), existingConn.ConfigName).
 		Return(false, dbError)
 
-	err := svc.Execute(ctx, orgID, connID)
+	err := svc.Execute(ctx, connID)
 
 	if err == nil {
 		t.Fatal("expected error, got nil")
@@ -229,28 +223,27 @@ func TestDeleteConnection_Execute_DeleteError(t *testing.T) {
 	svc := NewDeleteConnection(mockConnRepo, mockJobRepo)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
-	existingConn := newExistingConnectionForDelete(orgID, connID)
+	existingConn := newExistingConnectionForDelete(connID)
 
 	dbError := errors.New("failed to delete from database")
 
 	// Mock: find existing connection
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, orgID).
+		FindByID(gomock.Any(), connID).
 		Return(existingConn, nil)
 
 	// Mock: no active jobs
 	mockJobRepo.EXPECT().
-		ExistsRunningByMappedFieldKey(gomock.Any(), orgID, existingConn.ConfigName).
+		ExistsRunningByMappedFieldKey(gomock.Any(), existingConn.ConfigName).
 		Return(false, nil)
 
 	// Mock: delete returns error
 	mockConnRepo.EXPECT().
-		Delete(gomock.Any(), connID, orgID, gomock.Any()).
+		Delete(gomock.Any(), connID, gomock.Any()).
 		Return(dbError)
 
-	err := svc.Execute(ctx, orgID, connID)
+	err := svc.Execute(ctx, connID)
 
 	if err == nil {
 		t.Fatal("expected error, got nil")
@@ -288,30 +281,30 @@ func TestNewDeleteConnection(t *testing.T) {
 func TestDeleteConnection_Execute_TableDriven(t *testing.T) {
 	tests := []struct {
 		name           string
-		setupMocks     func(*connRepo.MockRepository, *jobRepo.MockRepository, uuid.UUID, uuid.UUID, *model.Connection)
+		setupMocks     func(*connRepo.MockRepository, *jobRepo.MockRepository, uuid.UUID, *model.Connection)
 		wantErr        bool
 		wantStatusCode int // 0 means generic error (no status code check)
 	}{
 		{
 			name: "successful deletion",
-			setupMocks: func(connMock *connRepo.MockRepository, jobMock *jobRepo.MockRepository, orgID, connID uuid.UUID, existing *model.Connection) {
+			setupMocks: func(connMock *connRepo.MockRepository, jobMock *jobRepo.MockRepository, connID uuid.UUID, existing *model.Connection) {
 				connMock.EXPECT().
-					FindByID(gomock.Any(), connID, orgID).
+					FindByID(gomock.Any(), connID).
 					Return(existing, nil)
 				jobMock.EXPECT().
-					ExistsRunningByMappedFieldKey(gomock.Any(), orgID, existing.ConfigName).
+					ExistsRunningByMappedFieldKey(gomock.Any(), existing.ConfigName).
 					Return(false, nil)
 				connMock.EXPECT().
-					Delete(gomock.Any(), connID, orgID, gomock.Any()).
+					Delete(gomock.Any(), connID, gomock.Any()).
 					Return(nil)
 			},
 			wantErr: false,
 		},
 		{
 			name: "connection not found",
-			setupMocks: func(connMock *connRepo.MockRepository, jobMock *jobRepo.MockRepository, orgID, connID uuid.UUID, existing *model.Connection) {
+			setupMocks: func(connMock *connRepo.MockRepository, jobMock *jobRepo.MockRepository, connID uuid.UUID, existing *model.Connection) {
 				connMock.EXPECT().
-					FindByID(gomock.Any(), connID, orgID).
+					FindByID(gomock.Any(), connID).
 					Return(nil, nil)
 			},
 			wantErr:        true,
@@ -319,12 +312,12 @@ func TestDeleteConnection_Execute_TableDriven(t *testing.T) {
 		},
 		{
 			name: "active jobs prevent deletion",
-			setupMocks: func(connMock *connRepo.MockRepository, jobMock *jobRepo.MockRepository, orgID, connID uuid.UUID, existing *model.Connection) {
+			setupMocks: func(connMock *connRepo.MockRepository, jobMock *jobRepo.MockRepository, connID uuid.UUID, existing *model.Connection) {
 				connMock.EXPECT().
-					FindByID(gomock.Any(), connID, orgID).
+					FindByID(gomock.Any(), connID).
 					Return(existing, nil)
 				jobMock.EXPECT().
-					ExistsRunningByMappedFieldKey(gomock.Any(), orgID, existing.ConfigName).
+					ExistsRunningByMappedFieldKey(gomock.Any(), existing.ConfigName).
 					Return(true, nil)
 			},
 			wantErr:        true,
@@ -332,9 +325,9 @@ func TestDeleteConnection_Execute_TableDriven(t *testing.T) {
 		},
 		{
 			name: "FindByID database error",
-			setupMocks: func(connMock *connRepo.MockRepository, jobMock *jobRepo.MockRepository, orgID, connID uuid.UUID, existing *model.Connection) {
+			setupMocks: func(connMock *connRepo.MockRepository, jobMock *jobRepo.MockRepository, connID uuid.UUID, existing *model.Connection) {
 				connMock.EXPECT().
-					FindByID(gomock.Any(), connID, orgID).
+					FindByID(gomock.Any(), connID).
 					Return(nil, errors.New("database connection failed"))
 			},
 			wantErr:        true,
@@ -342,12 +335,12 @@ func TestDeleteConnection_Execute_TableDriven(t *testing.T) {
 		},
 		{
 			name: "ExistsRunningByMappedFieldKey database error",
-			setupMocks: func(connMock *connRepo.MockRepository, jobMock *jobRepo.MockRepository, orgID, connID uuid.UUID, existing *model.Connection) {
+			setupMocks: func(connMock *connRepo.MockRepository, jobMock *jobRepo.MockRepository, connID uuid.UUID, existing *model.Connection) {
 				connMock.EXPECT().
-					FindByID(gomock.Any(), connID, orgID).
+					FindByID(gomock.Any(), connID).
 					Return(existing, nil)
 				jobMock.EXPECT().
-					ExistsRunningByMappedFieldKey(gomock.Any(), orgID, existing.ConfigName).
+					ExistsRunningByMappedFieldKey(gomock.Any(), existing.ConfigName).
 					Return(false, errors.New("database connection failed"))
 			},
 			wantErr:        true,
@@ -355,15 +348,15 @@ func TestDeleteConnection_Execute_TableDriven(t *testing.T) {
 		},
 		{
 			name: "Delete database error",
-			setupMocks: func(connMock *connRepo.MockRepository, jobMock *jobRepo.MockRepository, orgID, connID uuid.UUID, existing *model.Connection) {
+			setupMocks: func(connMock *connRepo.MockRepository, jobMock *jobRepo.MockRepository, connID uuid.UUID, existing *model.Connection) {
 				connMock.EXPECT().
-					FindByID(gomock.Any(), connID, orgID).
+					FindByID(gomock.Any(), connID).
 					Return(existing, nil)
 				jobMock.EXPECT().
-					ExistsRunningByMappedFieldKey(gomock.Any(), orgID, existing.ConfigName).
+					ExistsRunningByMappedFieldKey(gomock.Any(), existing.ConfigName).
 					Return(false, nil)
 				connMock.EXPECT().
-					Delete(gomock.Any(), connID, orgID, gomock.Any()).
+					Delete(gomock.Any(), connID, gomock.Any()).
 					Return(errors.New("failed to delete"))
 			},
 			wantErr:        true,
@@ -380,15 +373,14 @@ func TestDeleteConnection_Execute_TableDriven(t *testing.T) {
 			mockJobRepo := jobRepo.NewMockRepository(ctrl)
 
 			ctx := testContext()
-			orgID := uuid.New()
 			connID := uuid.New()
-			existingConn := newExistingConnectionForDelete(orgID, connID)
+			existingConn := newExistingConnectionForDelete(connID)
 
-			tt.setupMocks(mockConnRepo, mockJobRepo, orgID, connID, existingConn)
+			tt.setupMocks(mockConnRepo, mockJobRepo, connID, existingConn)
 
 			svc := NewDeleteConnection(mockConnRepo, mockJobRepo)
 
-			err := svc.Execute(ctx, orgID, connID)
+			err := svc.Execute(ctx, connID)
 
 			if tt.wantErr {
 				if err == nil {
@@ -423,20 +415,19 @@ func TestDeleteConnection_Execute_DifferentOrganizations(t *testing.T) {
 	svc := NewDeleteConnection(mockConnRepo, mockJobRepo)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	differentOrgID := uuid.New()
 	connID := uuid.New()
 
 	// Connection belongs to a different organization
-	existingConn := newExistingConnectionForDelete(differentOrgID, connID)
+	existingConn := newExistingConnectionForDelete(differentOrgID)
 
 	// Mock: connection not found for the given organization
 	// (the connection exists but belongs to a different org)
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, orgID).
+		FindByID(gomock.Any(), connID).
 		Return(nil, nil)
 
-	err := svc.Execute(ctx, orgID, connID)
+	err := svc.Execute(ctx, connID)
 
 	if err == nil {
 		t.Fatal("expected error for connection in different organization, got nil")
@@ -465,26 +456,25 @@ func TestDeleteConnection_Execute_DeletePassesCorrectTimestamp(t *testing.T) {
 	svc := NewDeleteConnection(mockConnRepo, mockJobRepo)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
-	existingConn := newExistingConnectionForDelete(orgID, connID)
+	existingConn := newExistingConnectionForDelete(connID)
 
 	beforeExecution := time.Now().UTC()
 
 	// Mock: find existing connection
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, orgID).
+		FindByID(gomock.Any(), connID).
 		Return(existingConn, nil)
 
 	// Mock: no active jobs
 	mockJobRepo.EXPECT().
-		ExistsRunningByMappedFieldKey(gomock.Any(), orgID, existingConn.ConfigName).
+		ExistsRunningByMappedFieldKey(gomock.Any(), existingConn.ConfigName).
 		Return(false, nil)
 
 	// Mock: delete with timestamp validation
 	mockConnRepo.EXPECT().
-		Delete(gomock.Any(), connID, orgID, gomock.Any()).
-		DoAndReturn(func(ctx interface{}, id, orgID uuid.UUID, deletedAt time.Time) error {
+		Delete(gomock.Any(), connID, gomock.Any()).
+		DoAndReturn(func(ctx interface{}, id uuid.UUID, deletedAt time.Time) error {
 			afterExecution := time.Now().UTC()
 			if deletedAt.Before(beforeExecution) || deletedAt.After(afterExecution) {
 				t.Errorf("expected deletedAt between %v and %v, got %v", beforeExecution, afterExecution, deletedAt)
@@ -492,7 +482,7 @@ func TestDeleteConnection_Execute_DeletePassesCorrectTimestamp(t *testing.T) {
 			return nil
 		})
 
-	err := svc.Execute(ctx, orgID, connID)
+	err := svc.Execute(ctx, connID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -528,28 +518,27 @@ func TestDeleteConnection_Execute_MultipleJobsCheck(t *testing.T) {
 			svc := NewDeleteConnection(mockConnRepo, mockJobRepo)
 
 			ctx := testContext()
-			orgID := uuid.New()
 			connID := uuid.New()
-			existingConn := newExistingConnectionForDelete(orgID, connID)
+			existingConn := newExistingConnectionForDelete(connID)
 
 			// Mock: find existing connection
 			mockConnRepo.EXPECT().
-				FindByID(gomock.Any(), connID, orgID).
+				FindByID(gomock.Any(), connID).
 				Return(existingConn, nil)
 
 			// Mock: job check
 			mockJobRepo.EXPECT().
-				ExistsRunningByMappedFieldKey(gomock.Any(), orgID, existingConn.ConfigName).
+				ExistsRunningByMappedFieldKey(gomock.Any(), existingConn.ConfigName).
 				Return(tt.hasRunning, nil)
 
 			if !tt.hasRunning {
 				// Mock: delete succeeds only if no running jobs
 				mockConnRepo.EXPECT().
-					Delete(gomock.Any(), connID, orgID, gomock.Any()).
+					Delete(gomock.Any(), connID, gomock.Any()).
 					Return(nil)
 			}
 
-			err := svc.Execute(ctx, orgID, connID)
+			err := svc.Execute(ctx, connID)
 
 			if tt.wantErr {
 				if err == nil {
@@ -608,28 +597,27 @@ func TestDeleteConnection_Execute_ConnectionWithDifferentTypes(t *testing.T) {
 			svc := NewDeleteConnection(mockConnRepo, mockJobRepo)
 
 			ctx := testContext()
-			orgID := uuid.New()
 			connID := uuid.New()
 
-			existingConn := newExistingConnectionForDelete(orgID, connID)
+			existingConn := newExistingConnectionForDelete(connID)
 			existingConn.Type = tt.dbType
 
 			// Mock: find existing connection
 			mockConnRepo.EXPECT().
-				FindByID(gomock.Any(), connID, orgID).
+				FindByID(gomock.Any(), connID).
 				Return(existingConn, nil)
 
 			// Mock: no active jobs
 			mockJobRepo.EXPECT().
-				ExistsRunningByMappedFieldKey(gomock.Any(), orgID, existingConn.ConfigName).
+				ExistsRunningByMappedFieldKey(gomock.Any(), existingConn.ConfigName).
 				Return(false, nil)
 
 			// Mock: delete succeeds
 			mockConnRepo.EXPECT().
-				Delete(gomock.Any(), connID, orgID, gomock.Any()).
+				Delete(gomock.Any(), connID, gomock.Any()).
 				Return(nil)
 
-			err := svc.Execute(ctx, orgID, connID)
+			err := svc.Execute(ctx, connID)
 			if err != nil {
 				t.Fatalf("unexpected error for %s: %v", tt.name, err)
 			}
@@ -648,10 +636,9 @@ func TestDeleteConnection_Execute_ConnectionWithSSL(t *testing.T) {
 	svc := NewDeleteConnection(mockConnRepo, mockJobRepo)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
 
-	existingConn := newExistingConnectionForDelete(orgID, connID)
+	existingConn := newExistingConnectionForDelete(connID)
 	existingConn.SSL = &model.SSLConfig{
 		Mode: "require",
 		CA:   "-----BEGIN CERTIFICATE-----\ntest-ca\n-----END CERTIFICATE-----",
@@ -661,20 +648,20 @@ func TestDeleteConnection_Execute_ConnectionWithSSL(t *testing.T) {
 
 	// Mock: find existing connection
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, orgID).
+		FindByID(gomock.Any(), connID).
 		Return(existingConn, nil)
 
 	// Mock: no active jobs
 	mockJobRepo.EXPECT().
-		ExistsRunningByMappedFieldKey(gomock.Any(), orgID, existingConn.ConfigName).
+		ExistsRunningByMappedFieldKey(gomock.Any(), existingConn.ConfigName).
 		Return(false, nil)
 
 	// Mock: delete succeeds
 	mockConnRepo.EXPECT().
-		Delete(gomock.Any(), connID, orgID, gomock.Any()).
+		Delete(gomock.Any(), connID, gomock.Any()).
 		Return(nil)
 
-	err := svc.Execute(ctx, orgID, connID)
+	err := svc.Execute(ctx, connID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

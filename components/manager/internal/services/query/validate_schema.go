@@ -2,7 +2,9 @@ package query
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 
 	"github.com/LerianStudio/fetcher/pkg"
@@ -13,12 +15,13 @@ import (
 	datasourceModel "github.com/LerianStudio/fetcher/pkg/model/datasource"
 	cacheRepo "github.com/LerianStudio/fetcher/pkg/ports/cache"
 	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
+	"github.com/LerianStudio/fetcher/pkg/resolver"
 	"github.com/LerianStudio/fetcher/pkg/schemautil"
 
-	"github.com/LerianStudio/lib-commons/v3/commons"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v3/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v4/commons"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
 
-	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -27,18 +30,15 @@ const (
 	pluginCRMConfigName = "plugin_crm"
 )
 
-// pluginCRMTableMapping maps user-friendly table names to actual database collection names.
-// The actual collection name in the database is: <mapped_name>_<organization_id>
-var pluginCRMTableMapping = map[string]string{
-	"holders": "holders",
-	"aliases": "aliases",
-}
+var errDataSourceFactoryNotConfigured = errors.New("datasource factory is not configured")
 
 // ValidateSchema is the query service for validating schema references.
 type ValidateSchema struct {
 	connRepo    connRepo.Repository
 	cryptor     crypto.Cryptor
 	schemaCache cacheRepo.SchemaCacheRepository
+	dsFactory   datasource.DataSourceFactory
+	resolver    resolver.ConnectionResolver // nil-safe: if nil, uses connRepo only
 }
 
 // NewValidateSchema creates a new ValidateSchema service without rate limiting.
@@ -46,18 +46,21 @@ func NewValidateSchema(
 	connectionRepo connRepo.Repository,
 	cryptor crypto.Cryptor,
 	schemaCache cacheRepo.SchemaCacheRepository,
+	factory datasource.DataSourceFactory,
+	connResolver resolver.ConnectionResolver,
 ) *ValidateSchema {
 	return &ValidateSchema{
 		connRepo:    connectionRepo,
 		cryptor:     cryptor,
 		schemaCache: schemaCache,
+		dsFactory:   factory,
+		resolver:    connResolver,
 	}
 }
 
 // Execute validates schema references against configured datasources.
 func (s *ValidateSchema) Execute(
 	ctx context.Context,
-	organizationID uuid.UUID,
 	request model.SchemaValidationRequest,
 ) (*model.SchemaValidationResponse, error) {
 	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
@@ -67,12 +70,11 @@ func (s *ValidateSchema) Execute(
 
 	span.SetAttributes(
 		attribute.String("app.request.request_id", reqID),
-		attribute.String("app.request.organization_id", organizationID.String()),
 		attribute.Int("app.request.datasource_count", len(request.MappedFields)),
 	)
 
-	if err := libOpentelemetry.SetSpanAttributesFromStruct(&span, "app.request.payload", request.ToMapWithMask()); err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to convert request to JSON string", err)
+	if err := libOpentelemetry.SetSpanAttributesFromValue(span, "app.request.payload", request.ToMapWithMask(), nil); err != nil {
+		libOpentelemetry.HandleSpanError(span, "Failed to convert request to JSON string", err)
 	}
 
 	// Create validation spec from request
@@ -80,8 +82,10 @@ func (s *ValidateSchema) Execute(
 
 	// Validate request payload structure and limits
 	if errValidation := spec.Validate(); errValidation != nil {
-		libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "Invalid request payload", errValidation)
-		logger.Warnf("schema validation request invalid org=%s: %v", organizationID, errValidation)
+		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Invalid request payload", errValidation)
+		logger.Log(ctx, libLog.LevelWarn, "schema validation request invalid",
+			libLog.Err(errValidation),
+		)
 
 		return nil, errValidation
 	}
@@ -90,17 +94,36 @@ func (s *ValidateSchema) Execute(
 	configNames := spec.GetConfigNames()
 	span.SetAttributes(attribute.StringSlice("app.request.config_names", configNames))
 
-	// Get connections from repository by config names
-	connections, err := s.connRepo.FindByConfigNames(ctx, organizationID, configNames)
-	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to find connections", err)
-		logger.Errorf("failed to find connections org=%s: %v", organizationID, err)
+	// Get connections: use resolver (handles internal + external) or fallback to repo
+	var (
+		connections []*model.Connection
+		err         error
+	)
 
-		return nil, pkg.ValidateInternalError(err, "schema")
+	if s.resolver != nil {
+		connections, err = s.resolver.ResolveConnections(ctx, configNames)
+		if err != nil {
+			libOpentelemetry.HandleSpanError(span, "Failed to resolve connections", err)
+			logger.Log(ctx, libLog.LevelError, "failed to resolve connections",
+				libLog.Err(err),
+			)
+
+			return nil, pkg.ValidateInternalError(err, "schema")
+		}
+	} else {
+		connections, err = s.connRepo.FindByConfigNames(ctx, configNames)
+		if err != nil {
+			libOpentelemetry.HandleSpanError(span, "Failed to find connections", err)
+			logger.Log(ctx, libLog.LevelError, "failed to find connections",
+				libLog.Err(err),
+			)
+
+			return nil, pkg.ValidateInternalError(err, "schema")
+		}
 	}
 
 	if len(connections) == 0 {
-		libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "No connections found for the provided datasources", nil)
+		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "No connections found for the provided datasources", nil)
 
 		return nil, pkg.ValidationError{
 			EntityType: "schema",
@@ -125,7 +148,9 @@ func (s *ValidateSchema) Execute(
 		conn, found := connMap[configName]
 		if !found {
 			validationErrors = append(validationErrors, model.NewDataSourceNotFoundError(configName))
-			logger.Warnf("datasource not found config_name=%s org=%s", configName, organizationID)
+			logger.Log(ctx, libLog.LevelWarn, "datasource not found",
+				libLog.String("config_name", configName),
+			)
 
 			continue
 		}
@@ -134,12 +159,6 @@ func (s *ValidateSchema) Execute(
 
 		// tableNameReverseMap maps transformed names back to original names for error reporting
 		var tableNameReverseMap map[string]string
-
-		// Transform table names for plugin_crm to include organization ID suffix
-		if configName == pluginCRMConfigName {
-			tables, tableNameReverseMap = transformPluginCRMTables(tables, organizationID)
-			logger.Debugf("transformed plugin_crm tables org=%s tables=%v", organizationID, tables)
-		}
 
 		// Returns schemas only if they exist
 		schemas := datasourceModel.GetUniqueSchemas(tables)
@@ -159,10 +178,32 @@ func (s *ValidateSchema) Execute(
 		// Get or fetch schema for the connection
 		schema, err := s.getOrFetchSchema(ctx, conn, schemas)
 		if err != nil {
+			if errors.Is(err, errDataSourceFactoryNotConfigured) {
+				libOpentelemetry.HandleSpanError(span, "schema validation datasource factory misconfiguration", err)
+				logger.Log(ctx, libLog.LevelError, "schema validation datasource factory misconfiguration",
+					libLog.String("config_name", configName),
+					libLog.Err(err),
+				)
+
+				return nil, pkg.ValidateInternalError(err, "schema")
+			}
+
 			validationErrors = append(validationErrors, model.NewDataSourceDownError(configName))
-			logger.Warnf("failed to get schema config_name=%s org=%s: %v", configName, organizationID, err)
+			logger.Log(ctx, libLog.LevelWarn, "failed to get schema",
+				libLog.String("config_name", configName),
+				libLog.Err(err),
+			)
 
 			continue
+		}
+
+		// Transform table names for plugin_crm using auto-discovery against the real schema.
+		// Must happen AFTER getOrFetchSchema so we know the actual collection names.
+		if configName == pluginCRMConfigName && schema != nil {
+			tables, tableNameReverseMap = transformPluginCRMTablesFromSchema(tables, schema)
+			logger.Log(ctx, libLog.LevelDebug, "transformed plugin_crm tables via schema auto-discovery",
+				libLog.Any("tables", tables),
+			)
 		}
 
 		// Validate against schema using transformed table names
@@ -175,10 +216,14 @@ func (s *ValidateSchema) Execute(
 	if len(validationErrors) == 0 {
 		response = model.NewSuccessResponse()
 
-		logger.Infof("schema validation successful org=%s datasources=%d", organizationID, len(configNames))
+		logger.Log(ctx, libLog.LevelInfo, "schema validation successful",
+			libLog.Int("datasource_count", len(configNames)),
+		)
 	} else {
 		response = model.NewFailureResponse(validationErrors)
-		logger.Warnf("schema validation failed org=%s errors=%d", organizationID, len(validationErrors))
+		logger.Log(ctx, libLog.LevelWarn, "schema validation failed",
+			libLog.Int("error_count", len(validationErrors)),
+		)
 	}
 
 	span.SetAttributes(
@@ -208,43 +253,91 @@ func (s *ValidateSchema) getOrFetchSchema(
 	// Check cache first
 	cachedSchema, err := s.schemaCache.Get(ctx, conn.ConfigName)
 	if err != nil {
-		logger.Warnf("cache error for config_name=%s: %v", conn.ConfigName, err)
+		logger.Log(ctx, libLog.LevelWarn, "schema cache error",
+			libLog.String("config_name", conn.ConfigName),
+			libLog.Err(err),
+		)
 	}
 
 	if cachedSchema != nil {
 		span.SetAttributes(attribute.Bool("app.schema.cache_hit", true))
-		logger.Debugf("schema cache hit config_name=%s", conn.ConfigName)
+		logger.Log(ctx, libLog.LevelDebug, "schema cache hit", libLog.String("config_name", conn.ConfigName))
 
 		return cachedSchema, nil
 	}
 
 	span.SetAttributes(attribute.Bool("app.schema.cache_hit", false))
-	logger.Debugf("schema cache miss config_name=%s", conn.ConfigName)
+	logger.Log(ctx, libLog.LevelDebug, "schema cache miss", libLog.String("config_name", conn.ConfigName))
 
-	// Get datasource instance because schema is not in cache
-	ds, err := datasource.NewDataSourceFromConnection(ctx, conn, s.cryptor, logger)
+	if s.dsFactory == nil {
+		libOpentelemetry.HandleSpanError(span, "datasource factory not configured", errDataSourceFactoryNotConfigured)
+		logger.Log(ctx, libLog.LevelError, "datasource factory not configured",
+			libLog.String("config_name", conn.ConfigName),
+		)
+
+		return nil, errDataSourceFactoryNotConfigured
+	}
+
+	ds, err := s.dsFactory(ctx, conn, s.cryptor)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "failed to create datasource", err)
+		libOpentelemetry.HandleSpanError(span, "failed to create datasource", err)
 		return nil, fmt.Errorf("failed to create datasource: %w", err)
+	}
+
+	if isNilDataSource(ds) {
+		factoryErr := fmt.Errorf("datasource factory returned nil datasource for config %s", conn.ConfigName)
+		libOpentelemetry.HandleSpanError(span, "datasource factory returned nil", factoryErr)
+
+		return nil, factoryErr
 	}
 	defer ds.Close(ctx)
 
 	// Get schema info from datasource
 	schema, err := ds.GetSchemaInfo(ctx, schemas)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "failed to get schema info", err)
+		libOpentelemetry.HandleSpanError(span, "failed to get schema info", err)
 		return nil, fmt.Errorf("failed to get schema info: %w", err)
+	}
+
+	if schema == nil {
+		schema = model.NewDataSourceSchema(conn.ConfigName)
+	}
+
+	if schema.Tables == nil {
+		schema.Tables = map[string]*model.TableSchema{}
 	}
 
 	// Cache the fetched schema for future requests
 	if err := s.schemaCache.Set(ctx, conn.ConfigName, schema, cacheRepo.DefaultSchemaCacheTTL); err != nil {
-		logger.Warnf("failed to cache schema config_name=%s: %v", conn.ConfigName, err)
+		logger.Log(ctx, libLog.LevelWarn, "schema fetched but failed to cache",
+			libLog.String("config_name", conn.ConfigName),
+			libLog.Err(err),
+		)
+	} else {
+		logger.Log(ctx, libLog.LevelDebug, "schema fetched and cached",
+			libLog.String("config_name", conn.ConfigName),
+			libLog.Int("table_count", len(schema.Tables)),
+		)
 	}
 
 	span.SetAttributes(attribute.Int("app.schema.tables_count", len(schema.Tables)))
-	logger.Debugf("schema fetched and cached config_name=%s tables=%d", conn.ConfigName, len(schema.Tables))
 
 	return schema, nil
+}
+
+func isNilDataSource(ds datasourceModel.DataSource) bool {
+	if ds == nil {
+		return true
+	}
+
+	rv := reflect.ValueOf(ds)
+
+	switch rv.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return rv.IsNil()
+	default:
+		return false
+	}
 }
 
 // validateTablesAgainstSchema validates tables against a DataSourceSchema.
@@ -257,7 +350,7 @@ func validateTablesAgainstSchema(
 	reverseMap map[string]string,
 	dbType model.DBType,
 ) []model.SchemaValidationError {
-	var errors []model.SchemaValidationError
+	var validationErrors []model.SchemaValidationError
 
 	for tableName, fields := range tables {
 		// Determine the display name for error messages
@@ -273,7 +366,7 @@ func validateTablesAgainstSchema(
 
 		// Check if table exists in schema
 		if !schema.HasTable(lookupName) {
-			errors = append(errors, model.SchemaValidationError{
+			validationErrors = append(validationErrors, model.SchemaValidationError{
 				Type:         model.ErrTypeTableNotFound,
 				DataSourceID: configName,
 				Table:        displayName,
@@ -286,7 +379,7 @@ func validateTablesAgainstSchema(
 		for _, fieldName := range fields {
 			lookupFieldName := normalizeFieldNameForValidation(fieldName, dbType)
 			if !schema.HasField(lookupName, lookupFieldName) {
-				errors = append(errors, model.SchemaValidationError{
+				validationErrors = append(validationErrors, model.SchemaValidationError{
 					Type:         model.ErrTypeFieldNotFound,
 					DataSourceID: configName,
 					Table:        displayName,
@@ -296,7 +389,7 @@ func validateTablesAgainstSchema(
 		}
 	}
 
-	return errors
+	return validationErrors
 }
 
 // normalizeTableNameForValidation normalizes a table name for schema lookup
@@ -381,27 +474,49 @@ func ensureDefaultSchemaForSQLServer(tables map[string][]string, schemas []strin
 	return ensureDefaultSchema(tables, schemas, schemautil.DefaultSchemaSQLServer)
 }
 
-// transformPluginCRMTables transforms table names for plugin_crm datasource.
-// It maps user-friendly names (e.g., "holders") to actual database collection names
-// with organization ID suffix (e.g., "holders_<org_id>").
+// transformPluginCRMTablesFromSchema transforms table names for plugin_crm datasource
+// using auto-discovery against the real schema. For each logical name (e.g., "holders"),
+// it finds the first real collection matching the prefix "holders_" in the schema.
+// If the name already matches a real collection (e.g., "holders_06c4f684-..."), it passes through.
 // Returns the transformed tables and a reverse map (transformed -> original) for error reporting.
-func transformPluginCRMTables(tables map[string][]string, organizationID uuid.UUID) (map[string][]string, map[string]string) {
+func transformPluginCRMTablesFromSchema(tables map[string][]string, schema *model.DataSourceSchema) (map[string][]string, map[string]string) {
 	transformed := make(map[string][]string, len(tables))
 	reverseMap := make(map[string]string, len(tables))
 
+	// Build a list of real collection names from the schema
+	realCollections := make([]string, 0, len(schema.Tables))
+	for tableName := range schema.Tables {
+		realCollections = append(realCollections, tableName)
+	}
+
 	for tableName, fields := range tables {
-		var actualName string
-		// Check if we have a mapping for this table name
-		if mappedName, exists := pluginCRMTableMapping[tableName]; exists {
-			// Transform to actual collection name: <mapped_name>_<org_id>
-			actualName = mappedName + "_" + organizationID.String()
-		} else {
-			// No mapping found, use table name with org_id suffix as fallback
-			actualName = tableName + "_" + organizationID.String()
+		// Check if the table name already exists in the schema (full name passed)
+		if schema.HasTable(tableName) {
+			transformed[tableName] = fields
+			reverseMap[tableName] = tableName
+
+			continue
 		}
 
-		transformed[actualName] = fields
-		reverseMap[actualName] = tableName
+		// Auto-discover: find the first collection matching prefix "tableName_"
+		prefix := tableName + "_"
+		found := false
+
+		for _, realName := range realCollections {
+			if strings.HasPrefix(realName, prefix) {
+				transformed[realName] = fields
+				reverseMap[realName] = tableName
+				found = true
+
+				break
+			}
+		}
+
+		if !found {
+			// No match — pass through as-is (will fail validation with TABLE_NOT_FOUND)
+			transformed[tableName] = fields
+			reverseMap[tableName] = tableName
+		}
 	}
 
 	return transformed, reverseMap

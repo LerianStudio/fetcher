@@ -3,9 +3,10 @@ package redis
 import (
 	"context"
 	"fmt"
+	"net"
 	"time"
 
-	"github.com/LerianStudio/lib-commons/v3/commons/log"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -63,16 +64,16 @@ func (c RedisConfig) WithDefaults() RedisConfig {
 // RedisConnection manages the Redis client connection.
 type RedisConnection struct {
 	Client    *redis.Client
-	Logger    log.Logger
+	Logger    libLog.Logger
 	Connected bool
 }
 
 // NewRedisConnection creates a new Redis connection.
 // Configuration values default to sensible values if not specified.
 // Use RedisConfig.WithDefaults() explicitly if you want to see the resolved values.
-func NewRedisConnection(cfg RedisConfig, logger log.Logger) (*RedisConnection, error) {
+func NewRedisConnection(cfg RedisConfig, logger libLog.Logger) (*RedisConnection, error) {
 	cfg = cfg.WithDefaults()
-	addr := fmt.Sprintf("%s:%s", cfg.Host, cfg.Port)
+	addr := buildRedisAddr(cfg.Host, cfg.Port)
 
 	client := redis.NewClient(&redis.Options{
 		Addr:         addr,
@@ -90,11 +91,11 @@ func NewRedisConnection(cfg RedisConfig, logger log.Logger) (*RedisConnection, e
 	defer cancel()
 
 	if err := client.Ping(ctx).Err(); err != nil {
-		logger.Errorf("Failed to connect to Redis at %s: %v", addr, err)
+		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to connect to Redis at %s: %v", addr, err))
 		return nil, fmt.Errorf("failed to connect to Redis: %w", err)
 	}
 
-	logger.Infof("Successfully connected to Redis at %s", addr)
+	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Successfully connected to Redis at %s", addr))
 
 	return &RedisConnection{
 		Client:    client,
@@ -106,16 +107,16 @@ func NewRedisConnection(cfg RedisConfig, logger log.Logger) (*RedisConnection, e
 // Close closes the Redis connection.
 func (r *RedisConnection) Close() error {
 	if r.Client != nil {
-		r.Logger.Info("Closing Redis connection...")
+		r.Logger.Log(context.Background(), libLog.LevelInfo, "Closing Redis connection...")
 
 		err := r.Client.Close()
 		if err != nil {
-			r.Logger.Errorf("Error closing Redis connection: %v", err)
-			return fmt.Errorf("failed to close Redis connection: %w", err)
+			r.Logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Error closing Redis connection: %v", err))
+			return err
 		}
 
 		r.Connected = false
-		r.Logger.Info("Redis connection closed successfully.")
+		r.Logger.Log(context.Background(), libLog.LevelInfo, "Redis connection closed successfully.")
 	}
 
 	return nil
@@ -131,4 +132,20 @@ func (r *RedisConnection) IsConnected() bool {
 	defer cancel()
 
 	return r.Client.Ping(ctx).Err() == nil
+}
+
+// buildRedisAddr constructs the Redis address from host and port.
+// If the host already contains a port (e.g., "redis.example.com:6379"),
+// the explicit port parameter is ignored to avoid duplicate ports like
+// "redis.example.com:6379:6379".
+func buildRedisAddr(host, port string) string {
+	if _, _, err := net.SplitHostPort(host); err == nil {
+		return host
+	}
+
+	if port != "" {
+		return net.JoinHostPort(host, port)
+	}
+
+	return host
 }

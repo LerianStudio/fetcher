@@ -17,10 +17,10 @@ import (
 func main() {
 	pkg.InitLocalEnvConfig()
 
-	app, err := bootstrap.InitServers()
+	service, err := bootstrap.InitServers()
 	if err != nil {
 		log.Fatalf("failed to initialize manager service: %s", startup.SanitizeError(err))
 	}
 
-	app.Run()
+	service.Run()
 }

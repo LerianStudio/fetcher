@@ -2,12 +2,11 @@ package redis
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
 	"github.com/LerianStudio/fetcher/pkg/testutil"
-	tmcore "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/core"
+	tmcore "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/core"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
@@ -302,7 +301,7 @@ func TestRedisCache_NewRedisCache_NilConnection_ReturnsError(t *testing.T) {
 		cache, err := NewRedisCache[testStruct](nil, time.Minute, "test:")
 		assert.Nil(t, cache)
 		assert.Error(t, err)
-		assert.ErrorIs(t, err, ErrRedisCacheNotInitialized)
+		assert.Contains(t, err.Error(), "redis connection and client must not be nil")
 	})
 
 	t.Run("connection with nil client returns error", func(t *testing.T) {
@@ -314,15 +313,8 @@ func TestRedisCache_NewRedisCache_NilConnection_ReturnsError(t *testing.T) {
 		cache, err := NewRedisCache[testStruct](conn, time.Minute, "test:")
 		assert.Nil(t, cache)
 		assert.Error(t, err)
-		assert.ErrorIs(t, err, ErrRedisCacheNotInitialized)
+		assert.Contains(t, err.Error(), "redis connection and client must not be nil")
 	})
-}
-
-func TestRedisCache_NewRedisCacheSafe_ReturnsErrorOnInvalidConnection(t *testing.T) {
-	cache, err := NewRedisCacheSafe[testStruct](nil, time.Minute, "test:")
-	assert.Nil(t, cache)
-	assert.Error(t, err)
-	assert.ErrorIs(t, err, ErrRedisCacheNotInitialized)
 }
 
 func TestRedisCache_Close(t *testing.T) {
@@ -475,27 +467,21 @@ func TestRedisCache_CacheKey(t *testing.T) {
 			cache, err := NewRedisCache[testStruct](conn, time.Minute, tt.prefix)
 			require.NoError(t, err)
 			// No tenant in context => key returned unchanged
-			assert.Equal(t, tt.expected, cache.cacheKey(context.Background(), tt.key))
+			result, err := cache.cacheKey(context.Background(), tt.key)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, result)
 		})
 	}
 }
 
-func TestRedisCache_CacheKey_WithTenantContext(t *testing.T) {
+func TestRedisCache_CacheKey_Basic(t *testing.T) {
 	_, conn := setupMiniredis(t)
 	cache, err := NewRedisCache[testStruct](conn, time.Minute, "fetcher:schema:")
 	require.NoError(t, err)
 
-	t.Run("includes tenant prefix when tenant context is set", func(t *testing.T) {
-		ctx := tmcore.SetTenantIDInContext(context.Background(), "org_abc123")
-
-		result := cache.cacheKey(ctx, "mykey")
-		assert.Equal(t, "fetcher:schema:tenant:org_abc123:mykey", result)
-	})
-
-	t.Run("no tenant prefix when tenant context is not set", func(t *testing.T) {
-		result := cache.cacheKey(context.Background(), "mykey")
-		assert.Equal(t, "fetcher:schema:mykey", result)
-	})
+	result, err := cache.cacheKey(context.Background(), "mykey")
+	require.NoError(t, err)
+	assert.Equal(t, "fetcher:schema:mykey", result)
 }
 
 func TestRedisCache_GetSet_WithTenantContext(t *testing.T) {
@@ -503,90 +489,132 @@ func TestRedisCache_GetSet_WithTenantContext(t *testing.T) {
 	cache, err := NewRedisCache[testStruct](conn, time.Minute, "test:")
 	require.NoError(t, err)
 
-	t.Run("tenant-scoped keys are isolated", func(t *testing.T) {
-		tenant1Ctx := tmcore.SetTenantIDInContext(context.Background(), "tenant1")
-		tenant2Ctx := tmcore.SetTenantIDInContext(context.Background(), "tenant2")
-		key := "shared-key"
+	t.Run("tenant context scopes keys automatically via valkey", func(t *testing.T) {
+		ctxA := tmcore.ContextWithTenantID(context.Background(), "tenant-aaa")
+		ctxB := tmcore.ContextWithTenantID(context.Background(), "tenant-bbb")
 
-		value1 := testStruct{ID: "1", Name: "Tenant1"}
-		value2 := testStruct{ID: "2", Name: "Tenant2"}
+		valueA := testStruct{ID: "1", Name: "TenantA"}
+		valueB := testStruct{ID: "2", Name: "TenantB"}
 
-		// Set for tenant1
-		err := cache.Set(tenant1Ctx, key, value1, 0)
+		// Same logical key, different tenant contexts
+		err := cache.Set(ctxA, "shared-key", valueA, 0)
 		require.NoError(t, err)
 
-		// Set for tenant2
-		err = cache.Set(tenant2Ctx, key, value2, 0)
+		err = cache.Set(ctxB, "shared-key", valueB, 0)
 		require.NoError(t, err)
 
-		// Get for tenant1 should return tenant1's value
-		result1, found1, err := cache.Get(tenant1Ctx, key)
+		// Each tenant gets its own value
+		resultA, foundA, err := cache.Get(ctxA, "shared-key")
 		assert.NoError(t, err)
-		assert.True(t, found1)
-		assert.Equal(t, value1, result1)
+		assert.True(t, foundA)
+		assert.Equal(t, valueA, resultA)
 
-		// Get for tenant2 should return tenant2's value
-		result2, found2, err := cache.Get(tenant2Ctx, key)
+		resultB, foundB, err := cache.Get(ctxB, "shared-key")
 		assert.NoError(t, err)
-		assert.True(t, found2)
-		assert.Equal(t, value2, result2)
+		assert.True(t, foundB)
+		assert.Equal(t, valueB, resultB)
 
-		// Verify distinct keys in Redis
+		// Verify tenant-prefixed keys in Redis
 		keys := mr.Keys()
-		assert.Contains(t, keys, "test:tenant:tenant1:shared-key")
-		assert.Contains(t, keys, "test:tenant:tenant2:shared-key")
+		assert.Contains(t, keys, "tenant:tenant-aaa:test:shared-key")
+		assert.Contains(t, keys, "tenant:tenant-bbb:test:shared-key")
+	})
+
+	t.Run("no tenant context returns unprefixed key (single-tenant backward compat)", func(t *testing.T) {
+		ctx := context.Background()
+		value := testStruct{ID: "3", Name: "SingleTenant"}
+
+		err := cache.Set(ctx, "solo-key", value, 0)
+		require.NoError(t, err)
+
+		result, found, err := cache.Get(ctx, "solo-key")
+		assert.NoError(t, err)
+		assert.True(t, found)
+		assert.Equal(t, value, result)
+
+		keys := mr.Keys()
+		assert.Contains(t, keys, "test:solo-key")
+	})
+
+	t.Run("delete only affects the tenant that owns the key", func(t *testing.T) {
+		ctxA := tmcore.ContextWithTenantID(context.Background(), "tenant-del-a")
+		ctxB := tmcore.ContextWithTenantID(context.Background(), "tenant-del-b")
+
+		value := testStruct{ID: "x", Name: "DeleteTest"}
+
+		err := cache.Set(ctxA, "del-key", value, 0)
+		require.NoError(t, err)
+
+		err = cache.Set(ctxB, "del-key", value, 0)
+		require.NoError(t, err)
+
+		// Delete only tenant A's key
+		err = cache.Delete(ctxA, "del-key")
+		require.NoError(t, err)
+
+		// Tenant A: gone
+		_, foundA, err := cache.Get(ctxA, "del-key")
+		assert.NoError(t, err)
+		assert.False(t, foundA)
+
+		// Tenant B: still there
+		_, foundB, err := cache.Get(ctxB, "del-key")
+		assert.NoError(t, err)
+		assert.True(t, foundB)
+	})
+
+	t.Run("clear only affects keys with matching tenant and prefix", func(t *testing.T) {
+		// Use a fresh cache with distinct prefix to avoid interference
+		freshCache, err := NewRedisCache[testStruct](conn, time.Minute, "cleartest:")
+		require.NoError(t, err)
+
+		ctxA := tmcore.ContextWithTenantID(context.Background(), "tenant-clear-a")
+		ctxB := tmcore.ContextWithTenantID(context.Background(), "tenant-clear-b")
+
+		err = freshCache.Set(ctxA, "k1", testStruct{ID: "a1"}, 0)
+		require.NoError(t, err)
+
+		err = freshCache.Set(ctxB, "k1", testStruct{ID: "b1"}, 0)
+		require.NoError(t, err)
+
+		// Clear tenant A only
+		err = freshCache.Clear(ctxA)
+		require.NoError(t, err)
+
+		// Tenant A: cleared
+		_, foundA, err := freshCache.Get(ctxA, "k1")
+		assert.NoError(t, err)
+		assert.False(t, foundA)
+
+		// Tenant B: untouched
+		_, foundB, err := freshCache.Get(ctxB, "k1")
+		assert.NoError(t, err)
+		assert.True(t, foundB)
+	})
+}
+
+func TestRedisCache_CacheKey_WithTenantContext(t *testing.T) {
+	_, conn := setupMiniredis(t)
+	cache, err := NewRedisCache[testStruct](conn, time.Minute, "fetcher:schema:")
+	require.NoError(t, err)
+
+	t.Run("with tenant context adds tenant prefix", func(t *testing.T) {
+		ctx := tmcore.ContextWithTenantID(context.Background(), "abc-123")
+		result, err := cache.cacheKey(ctx, "mykey")
+		require.NoError(t, err)
+		assert.Equal(t, "tenant:abc-123:fetcher:schema:mykey", result)
+	})
+
+	t.Run("without tenant context returns plain key", func(t *testing.T) {
+		result, err := cache.cacheKey(context.Background(), "mykey")
+		require.NoError(t, err)
+		assert.Equal(t, "fetcher:schema:mykey", result)
 	})
 }
 
 // TestRedisCache_IsHealthy_WithInitErr verifies the initErr guard in IsHealthy.
 // The initErr field is never set by constructors (they return an error instead),
 // but the guard exists as defense-in-depth for future degraded-mode constructors.
-// We test it by directly setting the field on a valid cache instance.
-func TestRedisCache_IsHealthy_WithInitErr(t *testing.T) {
-	_, conn := setupMiniredis(t)
-	cache, err := NewRedisCache[testStruct](conn, time.Minute, "test:")
-	require.NoError(t, err)
-
-	ctx := context.Background()
-
-	// Sanity: healthy before setting initErr
-	assert.True(t, cache.IsHealthy(ctx))
-
-	// Inject initErr to simulate degraded construction
-	cache.initErr = errors.New("simulated init failure")
-
-	assert.False(t, cache.IsHealthy(ctx),
-		"IsHealthy must return false when initErr is set")
-}
-
-// TestRedisCache_EnsureClient_WithInitErr verifies ensureClient propagates initErr.
-func TestRedisCache_EnsureClient_WithInitErr(t *testing.T) {
-	_, conn := setupMiniredis(t)
-	cache, err := NewRedisCache[testStruct](conn, time.Minute, "test:")
-	require.NoError(t, err)
-
-	cache.initErr = errors.New("init failed")
-
-	ctx := context.Background()
-
-	// All operations should fail with initErr
-	_, _, getErr := cache.Get(ctx, "key")
-	assert.Error(t, getErr)
-	assert.Contains(t, getErr.Error(), "init failed")
-
-	setErr := cache.Set(ctx, "key", testStruct{}, 0)
-	assert.Error(t, setErr)
-	assert.Contains(t, setErr.Error(), "init failed")
-
-	delErr := cache.Delete(ctx, "key")
-	assert.Error(t, delErr)
-	assert.Contains(t, delErr.Error(), "init failed")
-
-	clearErr := cache.Clear(ctx)
-	assert.Error(t, clearErr)
-	assert.Contains(t, clearErr.Error(), "init failed")
-}
-
 func TestRedisCache_GetSet_MultipleTypes(t *testing.T) {
 	_, conn := setupMiniredis(t)
 

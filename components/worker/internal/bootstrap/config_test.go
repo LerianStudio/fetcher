@@ -1,13 +1,221 @@
 package bootstrap
 
 import (
+	"context"
+	"errors"
 	"testing"
 
-	libCommons "github.com/LerianStudio/lib-commons/v3/commons"
-	"github.com/LerianStudio/lib-commons/v3/commons/log"
+	libCommons "github.com/LerianStudio/lib-commons/v4/commons"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	libOtel "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
+	libZap "github.com/LerianStudio/lib-commons/v4/commons/zap"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func testBootstrapLogger() *libLog.GoLogger {
+	return &libLog.GoLogger{Level: libLog.LevelError}
+}
+
+func TestResolveZapEnvironment(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		input string
+		want  libZap.Environment
+	}{
+		{name: "production aliases", input: " PROD ", want: libZap.EnvironmentProduction},
+		{name: "staging alias", input: "stage", want: libZap.EnvironmentStaging},
+		{name: "uat alias", input: "UAT", want: libZap.EnvironmentUAT},
+		{name: "development alias", input: "development", want: libZap.EnvironmentDevelopment},
+		{name: "local alias", input: "local", want: libZap.EnvironmentLocal},
+		{name: "unknown defaults to local", input: "qa", want: libZap.EnvironmentLocal},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := resolveZapEnvironment(tt.input); got != tt.want {
+				t.Fatalf("resolveZapEnvironment(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestWrapBootstrapError(t *testing.T) {
+	t.Parallel()
+
+	if err := wrapBootstrapError("noop", nil); err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+
+	err := wrapBootstrapError("decode key", errors.New("boom"))
+	if err == nil {
+		t.Fatal("expected wrapped error, got nil")
+	}
+	if got := err.Error(); got != "decode key: boom" {
+		t.Fatalf("unexpected wrapped error: %s", got)
+	}
+}
+
+func TestInitWorker_ReturnsErrorWhenConfigLoadFails(t *testing.T) {
+	originalSetConfigFromEnvVars := setConfigFromEnvVars
+	t.Cleanup(func() { setConfigFromEnvVars = originalSetConfigFromEnvVars })
+
+	setConfigFromEnvVars = func(any) error {
+		return errors.New("config load failed")
+	}
+
+	service, err := InitWorker()
+	if service != nil {
+		t.Fatalf("expected nil service, got %#v", service)
+	}
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	assert.Contains(t, err.Error(), "config load failed")
+}
+
+func TestInitWorker_ReturnsErrorWhenLoggerInitFails(t *testing.T) {
+	originalSetConfigFromEnvVars := setConfigFromEnvVars
+	originalNewZapLogger := newZapLogger
+	t.Cleanup(func() {
+		setConfigFromEnvVars = originalSetConfigFromEnvVars
+		newZapLogger = originalNewZapLogger
+	})
+
+	setConfigFromEnvVars = func(target any) error {
+		cfg := target.(*Config)
+		cfg.EnvName = "local"
+		cfg.LogLevel = "debug"
+		return nil
+	}
+
+	newZapLogger = func(libZap.Config) (libLog.Logger, error) {
+		return nil, errors.New("logger init failed")
+	}
+
+	service, err := InitWorker()
+	if service != nil {
+		t.Fatalf("expected nil service, got %#v", service)
+	}
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	assert.Contains(t, err.Error(), "logger init failed")
+}
+
+func TestInitWorker_ReturnsErrorWhenTelemetryInitFails(t *testing.T) {
+	originalSetConfigFromEnvVars := setConfigFromEnvVars
+	originalNewZapLogger := newZapLogger
+	originalNewTelemetry := newTelemetry
+	t.Cleanup(func() {
+		setConfigFromEnvVars = originalSetConfigFromEnvVars
+		newZapLogger = originalNewZapLogger
+		newTelemetry = originalNewTelemetry
+	})
+
+	setConfigFromEnvVars = func(target any) error {
+		cfg := target.(*Config)
+		cfg.EnvName = "local"
+		cfg.LogLevel = "debug"
+		return nil
+	}
+
+	newZapLogger = func(libZap.Config) (libLog.Logger, error) {
+		return testBootstrapLogger(), nil
+	}
+
+	newTelemetry = func(libOtel.TelemetryConfig) (*libOtel.Telemetry, error) {
+		return nil, errors.New("telemetry init failed")
+	}
+
+	service, err := InitWorker()
+	if service != nil {
+		t.Fatalf("expected nil service, got %#v", service)
+	}
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	assert.Contains(t, err.Error(), "telemetry init failed")
+}
+
+func TestInitWorker_ReturnsErrorWhenTelemetryGlobalsFail(t *testing.T) {
+	originalSetConfigFromEnvVars := setConfigFromEnvVars
+	originalNewZapLogger := newZapLogger
+	originalNewTelemetry := newTelemetry
+	originalApplyTelemetryGlobals := applyTelemetryGlobals
+	t.Cleanup(func() {
+		setConfigFromEnvVars = originalSetConfigFromEnvVars
+		newZapLogger = originalNewZapLogger
+		newTelemetry = originalNewTelemetry
+		applyTelemetryGlobals = originalApplyTelemetryGlobals
+	})
+
+	setConfigFromEnvVars = func(target any) error {
+		cfg := target.(*Config)
+		cfg.EnvName = "local"
+		cfg.LogLevel = "debug"
+		return nil
+	}
+
+	newZapLogger = func(libZap.Config) (libLog.Logger, error) {
+		return testBootstrapLogger(), nil
+	}
+
+	newTelemetry = func(libOtel.TelemetryConfig) (*libOtel.Telemetry, error) {
+		return &libOtel.Telemetry{}, nil
+	}
+
+	applyTelemetryGlobals = func(*libOtel.Telemetry) error {
+		return errors.New("apply globals failed")
+	}
+
+	service, err := InitWorker()
+	if service != nil {
+		t.Fatalf("expected nil service, got %#v", service)
+	}
+	if err == nil || err.Error() != "apply globals failed" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestInitWorker_ReturnsErrorWhenCryptoInitFails(t *testing.T) {
+	originalSetConfigFromEnvVars := setConfigFromEnvVars
+	originalNewZapLogger := newZapLogger
+	originalNewTelemetry := newTelemetry
+	originalApplyTelemetryGlobals := applyTelemetryGlobals
+	originalDecodeMasterKey := decodeMasterKey
+	t.Cleanup(func() {
+		setConfigFromEnvVars = originalSetConfigFromEnvVars
+		newZapLogger = originalNewZapLogger
+		newTelemetry = originalNewTelemetry
+		applyTelemetryGlobals = originalApplyTelemetryGlobals
+		decodeMasterKey = originalDecodeMasterKey
+	})
+
+	setConfigFromEnvVars = func(target any) error {
+		cfg := target.(*Config)
+		cfg.EnvName = "local"
+		cfg.LogLevel = "debug"
+		return nil
+	}
+	newZapLogger = func(libZap.Config) (libLog.Logger, error) { return testBootstrapLogger(), nil }
+	newTelemetry = func(libOtel.TelemetryConfig) (*libOtel.Telemetry, error) { return &libOtel.Telemetry{}, nil }
+	applyTelemetryGlobals = func(*libOtel.Telemetry) error { return nil }
+	decodeMasterKey = func(string) ([]byte, error) { return nil, errors.New("bad key") }
+
+	service, err := InitWorker()
+	if service != nil {
+		t.Fatalf("expected nil service, got %#v", service)
+	}
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	assert.Contains(t, err.Error(), "decode master encryption key")
+}
 
 func TestConfig_RedisFields(t *testing.T) {
 	t.Setenv("REDIS_HOST", "localhost:6379")
@@ -33,33 +241,59 @@ func TestValidateMultiTenantConfig(t *testing.T) {
 		errSubstr string
 	}{
 		{
-			name: "multi-tenant enabled without Redis returns error",
+			name: "multi-tenant enabled without tenant manager URL returns error",
 			cfg: &Config{
-				MultiTenantEnabled: true,
-				RedisHost:          "",
+				MultiTenantEnabled:       true,
+				MultiTenantURL:           "",
+				MultiTenantServiceAPIKey: "test-api-key",
+				MultiTenantRedisHost:     "localhost",
 			},
 			wantErr:   true,
-			errSubstr: "REDIS_HOST is required",
+			errSubstr: "MULTI_TENANT_URL is required",
 		},
 		{
-			name: "multi-tenant enabled with Redis succeeds",
+			name: "multi-tenant enabled without service API key returns error",
 			cfg: &Config{
-				MultiTenantEnabled: true,
-				RedisHost:          "localhost:6379",
+				MultiTenantEnabled:       true,
+				MultiTenantURL:           "http://tenant-manager:8080",
+				MultiTenantServiceAPIKey: "",
+				MultiTenantRedisHost:     "localhost",
+			},
+			wantErr:   true,
+			errSubstr: "MULTI_TENANT_SERVICE_API_KEY is required",
+		},
+		{
+			name: "multi-tenant enabled without Redis returns error",
+			cfg: &Config{
+				MultiTenantEnabled:       true,
+				MultiTenantURL:           "http://tenant-manager:8080",
+				MultiTenantServiceAPIKey: "test-api-key",
+				MultiTenantRedisHost:     "",
+			},
+			wantErr:   true,
+			errSubstr: "MULTI_TENANT_REDIS_HOST is required",
+		},
+		{
+			name: "multi-tenant enabled with all required config succeeds",
+			cfg: &Config{
+				MultiTenantEnabled:       true,
+				MultiTenantURL:           "http://tenant-manager:8080",
+				MultiTenantServiceAPIKey: "test-api-key",
+				MultiTenantRedisHost:     "redis-host",
 			},
 			wantErr: false,
 		},
 		{
 			name: "multi-tenant disabled succeeds without Redis",
 			cfg: &Config{
-				MultiTenantEnabled: false,
-				RedisHost:          "",
+				MultiTenantEnabled:   false,
+				MultiTenantRedisHost: "",
 			},
 			wantErr: false,
 		},
 	}
 
-	logger := &mockConfigTestLogger{}
+	logger := testBootstrapLogger()
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -104,24 +338,5 @@ func TestResolvedMaxTenantPools(t *testing.T) {
 	}
 }
 
-// mockConfigTestLogger satisfies log.Logger for config tests.
-type mockConfigTestLogger struct{}
-
-func (m *mockConfigTestLogger) Info(_ ...any)                                  {}
-func (m *mockConfigTestLogger) Infof(_ string, _ ...any)                       {}
-func (m *mockConfigTestLogger) Infoln(_ ...any)                                {}
-func (m *mockConfigTestLogger) Warn(_ ...any)                                  {}
-func (m *mockConfigTestLogger) Warnf(_ string, _ ...any)                       {}
-func (m *mockConfigTestLogger) Warnln(_ ...any)                                {}
-func (m *mockConfigTestLogger) Error(_ ...any)                                 {}
-func (m *mockConfigTestLogger) Errorf(_ string, _ ...any)                      {}
-func (m *mockConfigTestLogger) Errorln(_ ...any)                               {}
-func (m *mockConfigTestLogger) Debug(_ ...any)                                 {}
-func (m *mockConfigTestLogger) Debugf(_ string, _ ...any)                      {}
-func (m *mockConfigTestLogger) Debugln(_ ...any)                               {}
-func (m *mockConfigTestLogger) Fatal(_ ...any)                                 {}
-func (m *mockConfigTestLogger) Fatalf(_ string, _ ...any)                      {}
-func (m *mockConfigTestLogger) Fatalln(_ ...any)                               {}
-func (m *mockConfigTestLogger) WithFields(_ ...any) log.Logger                 { return m }
-func (m *mockConfigTestLogger) WithDefaultMessageTemplate(_ string) log.Logger { return m }
-func (m *mockConfigTestLogger) Sync() error                                    { return nil }
+// Dummy usage of context to avoid import issues
+var _ = context.Background

@@ -12,42 +12,25 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
-func TestSetStorageSecrets(t *testing.T) {
-	tests := []struct {
-		name       string
-		encryptKey string
-		hashKey    string
-	}{
-		{
-			name:       "sets both keys",
-			encryptKey: "my-encrypt-key",
-			hashKey:    "my-hash-key",
-		},
-		{
-			name:       "sets empty keys",
-			encryptKey: "",
-			hashKey:    "",
-		},
-		{
-			name:       "sets long keys",
-			encryptKey: "a-very-long-encryption-key-for-seaweedfs-data-at-rest",
-			hashKey:    "a-very-long-hash-key-for-seaweedfs-data-integrity-check",
-		},
-	}
+func TestSetStorageEncryptDerivedKey(t *testing.T) {
+	t.Run("sets derived key", func(t *testing.T) {
+		uc := &UseCase{}
+		key := []byte("12345678901234567890123456789012")
+		uc.SetStorageEncryptDerivedKey(key)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			uc := &UseCase{}
-			uc.SetStorageSecrets(tt.encryptKey, tt.hashKey)
+		if len(uc.storageEncryptDerivedKey) != 32 {
+			t.Errorf("storageEncryptDerivedKey length = %d, want 32", len(uc.storageEncryptDerivedKey))
+		}
+	})
 
-			if uc.storageEncryptSecretKey != tt.encryptKey {
-				t.Errorf("storageEncryptSecretKey = %q, want %q", uc.storageEncryptSecretKey, tt.encryptKey)
-			}
-			if uc.storageHashSecretKey != tt.hashKey {
-				t.Errorf("storageHashSecretKey = %q, want %q", uc.storageHashSecretKey, tt.hashKey)
-			}
-		})
-	}
+	t.Run("sets nil key", func(t *testing.T) {
+		uc := &UseCase{}
+		uc.SetStorageEncryptDerivedKey(nil)
+
+		if uc.storageEncryptDerivedKey != nil {
+			t.Error("storageEncryptDerivedKey should be nil")
+		}
+	})
 }
 
 func TestSetCRMSecrets(t *testing.T) {
@@ -136,14 +119,13 @@ func TestCreateDataSource(t *testing.T) {
 		mockCryptor := crypto.NewMockCryptor(ctrl)
 
 		conn := &model.Connection{
-			ID:             uuid.New(),
-			OrganizationID: uuid.New(),
-			ConfigName:     "test-conn",
-			Host:           "localhost",
-			Port:           5432,
-			DatabaseName:   "testdb",
-			Username:       "user",
-			Type:           model.TypePostgreSQL,
+			ID:           uuid.New(),
+			ConfigName:   "test-conn",
+			Host:         "localhost",
+			Port:         5432,
+			DatabaseName: "testdb",
+			Username:     "user",
+			Type:         model.TypePostgreSQL,
 		}
 
 		uc := &UseCase{

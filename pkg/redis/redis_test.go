@@ -345,3 +345,62 @@ func TestRedisConnection_WithDB(t *testing.T) {
 
 	assert.True(t, conn.IsConnected())
 }
+
+func TestBuildRedisAddr(t *testing.T) {
+	tests := []struct {
+		name string
+		host string
+		port string
+		want string
+	}{
+		{
+			name: "host and port separate",
+			host: "localhost",
+			port: "6379",
+			want: "localhost:6379",
+		},
+		{
+			name: "host already contains port - ignores port param",
+			host: "valkey.dev.clotilde.lerian.net:6379",
+			port: "6379",
+			want: "valkey.dev.clotilde.lerian.net:6379",
+		},
+		{
+			name: "host with port and different port param - uses host port",
+			host: "redis.example.com:6380",
+			port: "6379",
+			want: "redis.example.com:6380",
+		},
+		{
+			name: "host only without port",
+			host: "redis.example.com",
+			port: "",
+			want: "redis.example.com",
+		},
+		{
+			name: "IPv6 with port in brackets",
+			host: "[::1]:6379",
+			port: "6379",
+			want: "[::1]:6379",
+		},
+		{
+			name: "IPv6 without port",
+			host: "::1",
+			port: "6379",
+			want: "[::1]:6379",
+		},
+		{
+			name: "empty host with port",
+			host: "",
+			port: "6379",
+			want: ":6379",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := buildRedisAddr(tt.host, tt.port)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}

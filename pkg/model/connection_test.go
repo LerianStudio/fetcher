@@ -194,8 +194,6 @@ func TestNewConnection(t *testing.T) {
 		Return("encrypted-password", "v1", nil).
 		AnyTimes()
 
-	orgID := uuid.New()
-
 	tests := []struct {
 		name        string
 		configName  string
@@ -408,13 +406,13 @@ func TestNewConnection(t *testing.T) {
 			conn, err := NewConnection(
 				ctx,
 				testCryptor,
-				orgID,
 				"test-product",
 				tt.configName,
 				tt.typ,
 				tt.host,
 				tt.port,
 				tt.dbName,
+				nil,
 				tt.username,
 				tt.password,
 				&map[string]any{},
@@ -443,9 +441,6 @@ func TestNewConnection(t *testing.T) {
 			if conn.ID == uuid.Nil {
 				t.Fatal("expected non-nil UUID for ID")
 			}
-			if conn.OrganizationID != orgID {
-				t.Fatalf("expected OrganizationID %s, got %s", orgID, conn.OrganizationID)
-			}
 			if conn.CreatedAt.IsZero() {
 				t.Fatal("expected CreatedAt to be set")
 			}
@@ -471,8 +466,8 @@ func TestConnection_IsValid(t *testing.T) {
 		{
 			name: "valid connection without SSL",
 			connection: Connection{
-				ID:                uuid.New(),
-				OrganizationID:    uuid.New(),
+				ID: uuid.New(),
+
 				ProductName:       "test-product",
 				ConfigName:        "test-connection",
 				Type:              TypePostgreSQL,
@@ -487,8 +482,8 @@ func TestConnection_IsValid(t *testing.T) {
 		{
 			name: "valid connection with SSL",
 			connection: Connection{
-				ID:                uuid.New(),
-				OrganizationID:    uuid.New(),
+				ID: uuid.New(),
+
 				ProductName:       "test-product",
 				ConfigName:        "test-connection",
 				Type:              TypePostgreSQL,
@@ -507,8 +502,8 @@ func TestConnection_IsValid(t *testing.T) {
 		{
 			name: "missing product name",
 			connection: Connection{
-				ID:                uuid.New(),
-				OrganizationID:    uuid.New(),
+				ID: uuid.New(),
+
 				ProductName:       "",
 				ConfigName:        "test-connection",
 				Type:              TypePostgreSQL,
@@ -522,27 +517,10 @@ func TestConnection_IsValid(t *testing.T) {
 			errorField:  "product_name",
 		},
 		{
-			name: "missing organization ID",
-			connection: Connection{
-				ID:                uuid.New(),
-				OrganizationID:    uuid.Nil,
-				ProductName:       "test-product",
-				ConfigName:        "test-connection",
-				Type:              TypePostgreSQL,
-				Host:              "localhost",
-				Port:              5432,
-				DatabaseName:      "testdb",
-				Username:          "testuser",
-				PasswordEncrypted: "encrypted-password",
-			},
-			expectError: true,
-			errorField:  "organization_id",
-		},
-		{
 			name: "missing ID",
 			connection: Connection{
-				ID:                uuid.Nil,
-				OrganizationID:    uuid.New(),
+				ID: uuid.Nil,
+
 				ProductName:       "test-product",
 				ConfigName:        "test-connection",
 				Type:              TypePostgreSQL,
@@ -558,8 +536,8 @@ func TestConnection_IsValid(t *testing.T) {
 		{
 			name: "empty config name",
 			connection: Connection{
-				ID:                uuid.New(),
-				OrganizationID:    uuid.New(),
+				ID: uuid.New(),
+
 				ProductName:       "test-product",
 				ConfigName:        "",
 				Type:              TypePostgreSQL,
@@ -575,8 +553,8 @@ func TestConnection_IsValid(t *testing.T) {
 		{
 			name: "config name too short",
 			connection: Connection{
-				ID:                uuid.New(),
-				OrganizationID:    uuid.New(),
+				ID: uuid.New(),
+
 				ProductName:       "test-product",
 				ConfigName:        "ab",
 				Type:              TypePostgreSQL,
@@ -592,8 +570,8 @@ func TestConnection_IsValid(t *testing.T) {
 		{
 			name: "config name with invalid characters",
 			connection: Connection{
-				ID:                uuid.New(),
-				OrganizationID:    uuid.New(),
+				ID: uuid.New(),
+
 				ProductName:       "test-product",
 				ConfigName:        "test@connection!",
 				Type:              TypePostgreSQL,
@@ -609,8 +587,8 @@ func TestConnection_IsValid(t *testing.T) {
 		{
 			name: "invalid database type",
 			connection: Connection{
-				ID:                uuid.New(),
-				OrganizationID:    uuid.New(),
+				ID: uuid.New(),
+
 				ProductName:       "test-product",
 				ConfigName:        "test-connection",
 				Type:              DBType("INVALID"),
@@ -626,8 +604,8 @@ func TestConnection_IsValid(t *testing.T) {
 		{
 			name: "empty host",
 			connection: Connection{
-				ID:                uuid.New(),
-				OrganizationID:    uuid.New(),
+				ID: uuid.New(),
+
 				ProductName:       "test-product",
 				ConfigName:        "test-connection",
 				Type:              TypePostgreSQL,
@@ -643,8 +621,8 @@ func TestConnection_IsValid(t *testing.T) {
 		{
 			name: "zero port",
 			connection: Connection{
-				ID:                uuid.New(),
-				OrganizationID:    uuid.New(),
+				ID: uuid.New(),
+
 				ProductName:       "test-product",
 				ConfigName:        "test-connection",
 				Type:              TypePostgreSQL,
@@ -660,8 +638,8 @@ func TestConnection_IsValid(t *testing.T) {
 		{
 			name: "negative port",
 			connection: Connection{
-				ID:                uuid.New(),
-				OrganizationID:    uuid.New(),
+				ID: uuid.New(),
+
 				ProductName:       "test-product",
 				ConfigName:        "test-connection",
 				Type:              TypePostgreSQL,
@@ -677,8 +655,8 @@ func TestConnection_IsValid(t *testing.T) {
 		{
 			name: "empty database name",
 			connection: Connection{
-				ID:                uuid.New(),
-				OrganizationID:    uuid.New(),
+				ID: uuid.New(),
+
 				ProductName:       "test-product",
 				ConfigName:        "test-connection",
 				Type:              TypePostgreSQL,
@@ -694,8 +672,8 @@ func TestConnection_IsValid(t *testing.T) {
 		{
 			name: "empty username",
 			connection: Connection{
-				ID:                uuid.New(),
-				OrganizationID:    uuid.New(),
+				ID: uuid.New(),
+
 				ProductName:       "test-product",
 				ConfigName:        "test-connection",
 				Type:              TypePostgreSQL,
@@ -711,8 +689,8 @@ func TestConnection_IsValid(t *testing.T) {
 		{
 			name: "empty password encrypted",
 			connection: Connection{
-				ID:                uuid.New(),
-				OrganizationID:    uuid.New(),
+				ID: uuid.New(),
+
 				ProductName:       "test-product",
 				ConfigName:        "test-connection",
 				Type:              TypePostgreSQL,
@@ -728,8 +706,8 @@ func TestConnection_IsValid(t *testing.T) {
 		{
 			name: "SSL without mode",
 			connection: Connection{
-				ID:                uuid.New(),
-				OrganizationID:    uuid.New(),
+				ID: uuid.New(),
+
 				ProductName:       "test-product",
 				ConfigName:        "test-connection",
 				Type:              TypePostgreSQL,
@@ -749,8 +727,8 @@ func TestConnection_IsValid(t *testing.T) {
 		{
 			name: "SSL without CA",
 			connection: Connection{
-				ID:                uuid.New(),
-				OrganizationID:    uuid.New(),
+				ID: uuid.New(),
+
 				ProductName:       "test-product",
 				ConfigName:        "test-connection",
 				Type:              TypePostgreSQL,
@@ -770,8 +748,8 @@ func TestConnection_IsValid(t *testing.T) {
 		{
 			name: "whitespace in config name gets trimmed",
 			connection: Connection{
-				ID:                uuid.New(),
-				OrganizationID:    uuid.New(),
+				ID: uuid.New(),
+
 				ProductName:       "test-product",
 				ConfigName:        "   test-connection   ",
 				Type:              TypePostgreSQL,
@@ -786,8 +764,8 @@ func TestConnection_IsValid(t *testing.T) {
 		{
 			name: "invalid SSL mode for PostgreSQL",
 			connection: Connection{
-				ID:                uuid.New(),
-				OrganizationID:    uuid.New(),
+				ID: uuid.New(),
+
 				ProductName:       "test-product",
 				ConfigName:        "test-connection",
 				Type:              TypePostgreSQL,
@@ -807,8 +785,8 @@ func TestConnection_IsValid(t *testing.T) {
 		{
 			name: "valid SSL mode for MySQL",
 			connection: Connection{
-				ID:                uuid.New(),
-				OrganizationID:    uuid.New(),
+				ID: uuid.New(),
+
 				ProductName:       "test-product",
 				ConfigName:        "test-connection",
 				Type:              TypeMySQL,
@@ -827,8 +805,8 @@ func TestConnection_IsValid(t *testing.T) {
 		{
 			name: "invalid SSL mode for MySQL",
 			connection: Connection{
-				ID:                uuid.New(),
-				OrganizationID:    uuid.New(),
+				ID: uuid.New(),
+
 				ProductName:       "test-product",
 				ConfigName:        "test-connection",
 				Type:              TypeMySQL,
@@ -848,8 +826,8 @@ func TestConnection_IsValid(t *testing.T) {
 		{
 			name: "valid SSL mode for MongoDB",
 			connection: Connection{
-				ID:                uuid.New(),
-				OrganizationID:    uuid.New(),
+				ID: uuid.New(),
+
 				ProductName:       "test-product",
 				ConfigName:        "test-connection",
 				Type:              TypeMongoDB,
@@ -868,8 +846,8 @@ func TestConnection_IsValid(t *testing.T) {
 		{
 			name: "invalid SSL mode for MongoDB",
 			connection: Connection{
-				ID:                uuid.New(),
-				OrganizationID:    uuid.New(),
+				ID: uuid.New(),
+
 				ProductName:       "test-product",
 				ConfigName:        "test-connection",
 				Type:              TypeMongoDB,
@@ -889,8 +867,8 @@ func TestConnection_IsValid(t *testing.T) {
 		{
 			name: "valid SSL mode for Oracle",
 			connection: Connection{
-				ID:                uuid.New(),
-				OrganizationID:    uuid.New(),
+				ID: uuid.New(),
+
 				ProductName:       "test-product",
 				ConfigName:        "test-connection",
 				Type:              TypeOracle,
@@ -909,8 +887,8 @@ func TestConnection_IsValid(t *testing.T) {
 		{
 			name: "invalid SSL mode for Oracle",
 			connection: Connection{
-				ID:                uuid.New(),
-				OrganizationID:    uuid.New(),
+				ID: uuid.New(),
+
 				ProductName:       "test-product",
 				ConfigName:        "test-connection",
 				Type:              TypeOracle,
@@ -930,8 +908,8 @@ func TestConnection_IsValid(t *testing.T) {
 		{
 			name: "valid SSL mode for SQL Server",
 			connection: Connection{
-				ID:                uuid.New(),
-				OrganizationID:    uuid.New(),
+				ID: uuid.New(),
+
 				ProductName:       "test-product",
 				ConfigName:        "test-connection",
 				Type:              TypeSQLServer,
@@ -950,8 +928,8 @@ func TestConnection_IsValid(t *testing.T) {
 		{
 			name: "invalid SSL mode for SQL Server",
 			connection: Connection{
-				ID:                uuid.New(),
-				OrganizationID:    uuid.New(),
+				ID: uuid.New(),
+
 				ProductName:       "test-product",
 				ConfigName:        "test-connection",
 				Type:              TypeSQLServer,
@@ -971,8 +949,8 @@ func TestConnection_IsValid(t *testing.T) {
 		{
 			name: "injection attempt in SSL mode",
 			connection: Connection{
-				ID:                uuid.New(),
-				OrganizationID:    uuid.New(),
+				ID: uuid.New(),
+
 				ProductName:       "test-product",
 				ConfigName:        "test-connection",
 				Type:              TypePostgreSQL,
@@ -1030,8 +1008,8 @@ func TestConnection_ApplyPatch(t *testing.T) {
 
 	baseConnection := func() *Connection {
 		return &Connection{
-			ID:                   uuid.New(),
-			OrganizationID:       uuid.New(),
+			ID: uuid.New(),
+
 			ProductName:          "test-product",
 			ConfigName:           "original-connection",
 			Type:                 TypePostgreSQL,
@@ -1217,6 +1195,7 @@ func TestConnection_ApplyPatch(t *testing.T) {
 				tt.host,
 				tt.port,
 				tt.dbName,
+				nil,
 				tt.username,
 				tt.password,
 				&map[string]any{},
@@ -1254,8 +1233,8 @@ func TestConnection_ApplyPatch_Metadata(t *testing.T) {
 
 	t.Run("patch metadata updates connection metadata", func(t *testing.T) {
 		conn := &Connection{
-			ID:                   uuid.New(),
-			OrganizationID:       uuid.New(),
+			ID: uuid.New(),
+
 			ProductName:          "test-product",
 			ConfigName:           "oracle-connection",
 			Type:                 TypeOracle,
@@ -1283,6 +1262,7 @@ func TestConnection_ApplyPatch_Metadata(t *testing.T) {
 			nil, // host
 			nil, // port
 			nil, // dbName
+			nil, // schema
 			nil, // username
 			nil, // password
 			newMetadata,
@@ -1314,8 +1294,8 @@ func TestConnection_ApplyPatch_Metadata(t *testing.T) {
 		}
 
 		conn := &Connection{
-			ID:                   uuid.New(),
-			OrganizationID:       uuid.New(),
+			ID: uuid.New(),
+
 			ProductName:          "test-product",
 			ConfigName:           "oracle-connection",
 			Type:                 TypeOracle,
@@ -1333,7 +1313,7 @@ func TestConnection_ApplyPatch_Metadata(t *testing.T) {
 		err := conn.ApplyPatch(
 			ctx,
 			mockCrypto,
-			nil, nil, nil, nil, nil, nil, nil,
+			nil, nil, nil, nil, nil, nil, nil, nil,
 			nil, // nil metadata should NOT clear existing
 			nil, nil, nil, nil,
 		)
@@ -1355,8 +1335,8 @@ func TestConnection_ApplyPatch_Metadata(t *testing.T) {
 func TestConnection_SoftDelete(t *testing.T) {
 	t.Run("soft delete with specific timestamp", func(t *testing.T) {
 		conn := &Connection{
-			ID:                uuid.New(),
-			OrganizationID:    uuid.New(),
+			ID: uuid.New(),
+
 			ConfigName:        "test-connection",
 			Type:              TypePostgreSQL,
 			Host:              "localhost",
@@ -1384,8 +1364,8 @@ func TestConnection_SoftDelete(t *testing.T) {
 
 	t.Run("soft delete with zero timestamp uses current time", func(t *testing.T) {
 		conn := &Connection{
-			ID:                uuid.New(),
-			OrganizationID:    uuid.New(),
+			ID: uuid.New(),
+
 			ConfigName:        "test-connection",
 			Type:              TypePostgreSQL,
 			Host:              "localhost",
@@ -1550,12 +1530,10 @@ func TestConnection_DecryptPassword(t *testing.T) {
 func TestConnection_ToMapWithMask(t *testing.T) {
 	t.Run("connection without SSL", func(t *testing.T) {
 		connID := uuid.New()
-		orgID := uuid.New()
 		now := time.Now()
 
 		conn := &Connection{
 			ID:                   connID,
-			OrganizationID:       orgID,
 			ConfigName:           "test-connection",
 			Type:                 TypePostgreSQL,
 			Host:                 "localhost",
@@ -1572,9 +1550,6 @@ func TestConnection_ToMapWithMask(t *testing.T) {
 
 		if result["id"] != connID {
 			t.Fatalf("expected ID %v, got %v", connID, result["id"])
-		}
-		if result["organization_id"] != orgID {
-			t.Fatalf("expected organization_id %v, got %v", orgID, result["organization_id"])
 		}
 		if result["config_name"] != "test-connection" {
 			t.Fatalf("expected config_name 'test-connection', got %v", result["config_name"])
@@ -1600,8 +1575,8 @@ func TestConnection_ToMapWithMask(t *testing.T) {
 
 	t.Run("connection with SSL", func(t *testing.T) {
 		conn := &Connection{
-			ID:                   uuid.New(),
-			OrganizationID:       uuid.New(),
+			ID: uuid.New(),
+
 			ConfigName:           "ssl-connection",
 			Type:                 TypePostgreSQL,
 			Host:                 "localhost",
@@ -1820,8 +1795,8 @@ func TestNewConnectionResponseFrom(t *testing.T) {
 		now := time.Now()
 
 		conn := &Connection{
-			ID:                uuid.New(),
-			OrganizationID:    uuid.New(),
+			ID: uuid.New(),
+
 			ConfigName:        "test-connection",
 			Type:              TypePostgreSQL,
 			Host:              "localhost",
@@ -1855,8 +1830,8 @@ func TestNewConnectionResponseFrom(t *testing.T) {
 
 	t.Run("connection with SSL", func(t *testing.T) {
 		conn := &Connection{
-			ID:                uuid.New(),
-			OrganizationID:    uuid.New(),
+			ID: uuid.New(),
+
 			ConfigName:        "ssl-connection",
 			Type:              TypePostgreSQL,
 			Host:              "localhost",
@@ -1922,8 +1897,8 @@ func TestConnection_AssignProductName(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			conn := &Connection{
-				ID:                uuid.New(),
-				OrganizationID:    uuid.New(),
+				ID: uuid.New(),
+
 				ProductName:       tt.initialProduct,
 				ConfigName:        "test-connection",
 				Type:              TypePostgreSQL,
@@ -2024,8 +1999,8 @@ func TestConnection_ConfigNameEdgeCases(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			conn := Connection{
-				ID:                uuid.New(),
-				OrganizationID:    uuid.New(),
+				ID: uuid.New(),
+
 				ProductName:       "test-product",
 				ConfigName:        tt.configName,
 				Type:              TypePostgreSQL,
@@ -2064,8 +2039,8 @@ func TestConnection_AllDatabaseTypes(t *testing.T) {
 	for _, tt := range dbTypes {
 		t.Run(tt.name, func(t *testing.T) {
 			conn := Connection{
-				ID:                uuid.New(),
-				OrganizationID:    uuid.New(),
+				ID: uuid.New(),
+
 				ProductName:       "test-product",
 				ConfigName:        "test-connection",
 				Type:              tt.dbType,
@@ -2098,8 +2073,8 @@ func intPtr(i int) *int {
 func TestNewConnectionSchemaFrom(t *testing.T) {
 	t.Run("valid connection with tables", func(t *testing.T) {
 		conn := &Connection{
-			ID:                uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"),
-			OrganizationID:    uuid.MustParse("550e8400-e29b-41d4-a716-446655440001"),
+			ID: uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"),
+
 			ConfigName:        "Pix-BTG-Banco-Transacional",
 			DatabaseName:      "pix_btg",
 			Type:              TypePostgreSQL,
@@ -2151,8 +2126,8 @@ func TestNewConnectionSchemaFrom(t *testing.T) {
 
 	t.Run("empty tables", func(t *testing.T) {
 		conn := &Connection{
-			ID:                uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"),
-			OrganizationID:    uuid.MustParse("550e8400-e29b-41d4-a716-446655440001"),
+			ID: uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"),
+
 			ConfigName:        "test-connection",
 			DatabaseName:      "testdb",
 			Type:              TypeMySQL,
@@ -2186,8 +2161,8 @@ func TestNewConnectionSchemaFrom(t *testing.T) {
 
 		for _, tt := range dbTypes {
 			conn := &Connection{
-				ID:                uuid.New(),
-				OrganizationID:    uuid.New(),
+				ID: uuid.New(),
+
 				ConfigName:        "test-connection",
 				DatabaseName:      "testdb",
 				Type:              tt.dbType,

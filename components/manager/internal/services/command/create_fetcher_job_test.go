@@ -17,8 +17,9 @@ import (
 	jobRepo "github.com/LerianStudio/fetcher/pkg/mongodb/job"
 	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
 	"github.com/LerianStudio/fetcher/pkg/ports/messaging"
+	pkgRabbitMQ "github.com/LerianStudio/fetcher/pkg/rabbitmq"
 
-	tmcore "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/core"
+	tmcore "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/core"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -65,7 +66,7 @@ func TestCreateFetcherJob_Execute_ValidationError(t *testing.T) {
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 
-	svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, nil, "", nil)
+	svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, nil, "", nil, nil)
 
 	tests := []struct {
 		name    string
@@ -139,14 +140,25 @@ func TestCreateFetcherJob_Execute_ValidationError(t *testing.T) {
 			},
 			wantErr: "metadata.source must be a non-empty string",
 		},
+		{
+			name: "metadata with whitespace-only source",
+			request: model.FetcherRequest{
+				DataRequest: model.DataRequest{
+					MappedFields: map[string]map[string][]string{
+						"ds1": {"table1": {"field1"}},
+					},
+				},
+				Metadata: map[string]any{"source": "   \t\n  "},
+			},
+			wantErr: "metadata.source must be a non-empty string",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := testContext()
-			orgID := uuid.New()
 
-			result, err := svc.Execute(ctx, orgID, tt.request)
+			result, err := svc.Execute(ctx, tt.request)
 
 			if result != nil {
 				t.Fatalf("expected nil result for invalid request, got %+v", result)
@@ -176,26 +188,24 @@ func TestCreateFetcherJob_Execute_DuplicateWithinWindow(t *testing.T) {
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 
-	svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, nil, "", nil)
+	svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, nil, "", nil, nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	request := newValidFetcherRequest()
 
 	existingJobID := uuid.New()
 	existingJob := &model.Job{
-		ID:             existingJobID,
-		OrganizationID: orgID,
-		Status:         model.JobStatusPending,
-		CreatedAt:      time.Now().UTC().Add(-2 * time.Minute),
+		ID:        existingJobID,
+		Status:    model.JobStatusPending,
+		CreatedAt: time.Now().UTC().Add(-2 * time.Minute),
 	}
 
 	// Mock: find existing job within window
 	mockJobRepo.EXPECT().
-		FindByRequestHashWithinWindow(gomock.Any(), orgID, gomock.Any(), DeduplicationWindowMinutes).
+		FindByRequestHashWithinWindow(gomock.Any(), gomock.Any(), DeduplicationWindowMinutes).
 		Return(existingJob, nil)
 
-	result, err := svc.Execute(ctx, orgID, request)
+	result, err := svc.Execute(ctx, request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -226,23 +236,22 @@ func TestCreateFetcherJob_Execute_NoConnectionsFound(t *testing.T) {
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 
-	svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, nil, "", nil)
+	svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, nil, "", nil, nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	request := newValidFetcherRequest()
 
 	// Mock: no duplicate found
 	mockJobRepo.EXPECT().
-		FindByRequestHashWithinWindow(gomock.Any(), orgID, gomock.Any(), DeduplicationWindowMinutes).
+		FindByRequestHashWithinWindow(gomock.Any(), gomock.Any(), DeduplicationWindowMinutes).
 		Return(nil, nil)
 
 	// Mock: no connections found at all
 	mockConnRepo.EXPECT().
-		FindByConfigNames(gomock.Any(), orgID, []string{"datasource1"}).
+		FindByConfigNames(gomock.Any(), []string{"datasource1"}).
 		Return([]*model.Connection{}, nil)
 
-	result, err := svc.Execute(ctx, orgID, request)
+	result, err := svc.Execute(ctx, request)
 
 	if result != nil {
 		t.Fatalf("expected nil result, got %+v", result)
@@ -271,10 +280,9 @@ func TestCreateFetcherJob_Execute_TooManyDatasources(t *testing.T) {
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 
-	svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, nil, "", nil)
+	svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, nil, "", nil, nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
 
 	// Create request with 11 datasources (exceeds MaxDatasourcesPerJob = 10)
 	mappedFields := make(map[string]map[string][]string)
@@ -293,7 +301,7 @@ func TestCreateFetcherJob_Execute_TooManyDatasources(t *testing.T) {
 
 	// No mock expectations needed - validation fails before any repository calls
 
-	result, err := svc.Execute(ctx, orgID, request)
+	result, err := svc.Execute(ctx, request)
 
 	if result != nil {
 		t.Fatalf("expected nil result, got %+v", result)
@@ -321,20 +329,19 @@ func TestCreateFetcherJob_Execute_FindByRequestHashError(t *testing.T) {
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 
-	svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, nil, "", nil)
+	svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, nil, "", nil, nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	request := newValidFetcherRequest()
 
 	dbError := errors.New("database connection failed")
 
 	// Mock: database error during duplicate check
 	mockJobRepo.EXPECT().
-		FindByRequestHashWithinWindow(gomock.Any(), orgID, gomock.Any(), DeduplicationWindowMinutes).
+		FindByRequestHashWithinWindow(gomock.Any(), gomock.Any(), DeduplicationWindowMinutes).
 		Return(nil, dbError)
 
-	result, err := svc.Execute(ctx, orgID, request)
+	result, err := svc.Execute(ctx, request)
 
 	if result != nil {
 		t.Fatalf("expected nil result, got %+v", result)
@@ -358,25 +365,24 @@ func TestCreateFetcherJob_Execute_FindByConfigNamesError(t *testing.T) {
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 
-	svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, nil, "", nil)
+	svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, nil, "", nil, nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	request := newValidFetcherRequest()
 
 	dbError := errors.New("database connection failed")
 
 	// Mock: no duplicate found
 	mockJobRepo.EXPECT().
-		FindByRequestHashWithinWindow(gomock.Any(), orgID, gomock.Any(), DeduplicationWindowMinutes).
+		FindByRequestHashWithinWindow(gomock.Any(), gomock.Any(), DeduplicationWindowMinutes).
 		Return(nil, nil)
 
 	// Mock: database error during connection lookup
 	mockConnRepo.EXPECT().
-		FindByConfigNames(gomock.Any(), orgID, []string{"datasource1"}).
+		FindByConfigNames(gomock.Any(), []string{"datasource1"}).
 		Return(nil, dbError)
 
-	result, err := svc.Execute(ctx, orgID, request)
+	result, err := svc.Execute(ctx, request)
 
 	if result != nil {
 		t.Fatalf("expected nil result, got %+v", result)
@@ -425,7 +431,7 @@ func TestCreateFetcherJob_QueueNameConfiguration(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, nil, tt.inputQueueName, nil)
+			svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, nil, tt.inputQueueName, nil, nil)
 
 			if svc.queueName != tt.expectedQueueName {
 				t.Fatalf("expected queueName %q, got %q", tt.expectedQueueName, svc.queueName)
@@ -442,7 +448,7 @@ func TestNewCreateFetcherJob(t *testing.T) {
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 
-	svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, nil, "", nil)
+	svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, nil, "", nil, nil)
 
 	if svc == nil {
 		t.Fatal("expected non-nil service")
@@ -457,6 +463,25 @@ func TestNewCreateFetcherJob(t *testing.T) {
 	}
 }
 
+func TestCreateFetcherJob_publishToQueue_TypedNilAdapterIsIgnored(t *testing.T) {
+	var typedNilAdapter *pkgRabbitMQ.RabbitMQAdapter
+
+	svc := NewCreateFetcherJob(nil, nil, nil, typedNilAdapter, "", nil, nil)
+	job := &model.Job{
+		ID: uuid.New(),
+		MappedFields: map[string]map[string][]string{
+			"datasource1": {
+				"users": {"id"},
+			},
+		},
+		Metadata:  map[string]any{"source": "test"},
+		CreatedAt: time.Now().UTC(),
+	}
+
+	err := svc.publishToQueue(testContext(), job)
+	require.NoError(t, err)
+}
+
 // TestCreateFetcherJob_Execute_PartialConnectionsFound tests that when only some datasources
 // have matching connections, a validation error is returned listing the missing ones.
 func TestCreateFetcherJob_Execute_PartialConnectionsFound(t *testing.T) {
@@ -466,10 +491,9 @@ func TestCreateFetcherJob_Execute_PartialConnectionsFound(t *testing.T) {
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 
-	svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, nil, "", nil)
+	svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, nil, "", nil, nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
 
 	// Request has 2 datasources but only 1 connection exists
@@ -485,17 +509,17 @@ func TestCreateFetcherJob_Execute_PartialConnectionsFound(t *testing.T) {
 
 	// Mock: no duplicate found
 	mockJobRepo.EXPECT().
-		FindByRequestHashWithinWindow(gomock.Any(), orgID, gomock.Any(), DeduplicationWindowMinutes).
+		FindByRequestHashWithinWindow(gomock.Any(), gomock.Any(), DeduplicationWindowMinutes).
 		Return(nil, nil)
 
 	// Mock: only one connection found (postgres_db exists, missing_db does not)
 	mockConnRepo.EXPECT().
-		FindByConfigNames(gomock.Any(), orgID, gomock.Any()).
+		FindByConfigNames(gomock.Any(), gomock.Any()).
 		Return([]*model.Connection{
 			{ID: connID, ConfigName: "postgres_db", Type: model.TypePostgreSQL},
 		}, nil)
 
-	result, err := svc.Execute(ctx, orgID, request)
+	result, err := svc.Execute(ctx, request)
 
 	if result != nil {
 		t.Fatalf("expected nil result, got %+v", result)
@@ -536,23 +560,22 @@ func TestCreateFetcherJob_Execute_JobCreateError(t *testing.T) {
 		return nil, fmt.Errorf("connection failed")
 	}
 
-	svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, mockCryptor, nil, "", testFactory)
+	svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, mockCryptor, nil, "", testFactory, nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
 
 	request := newValidFetcherRequest()
 
 	// Mock: no duplicate found
 	mockJobRepo.EXPECT().
-		FindByRequestHashWithinWindow(gomock.Any(), orgID, gomock.Any(), DeduplicationWindowMinutes).
+		FindByRequestHashWithinWindow(gomock.Any(), gomock.Any(), DeduplicationWindowMinutes).
 		Return(nil, nil)
 
 	// Mock: connection found with encryption fields
 	conn := newConnectionWithEncryption(connID, "datasource1", model.TypePostgreSQL)
 	mockConnRepo.EXPECT().
-		FindByConfigNames(gomock.Any(), orgID, []string{"datasource1"}).
+		FindByConfigNames(gomock.Any(), []string{"datasource1"}).
 		Return([]*model.Connection{conn}, nil)
 
 	// Mock: decryption fails during connection test
@@ -561,7 +584,7 @@ func TestCreateFetcherJob_Execute_JobCreateError(t *testing.T) {
 		Decrypt(gomock.Any(), conn.PasswordEncrypted, conn.EncryptionKeyVersion).
 		Return("", errors.New("decryption failed"))
 
-	result, err := svc.Execute(ctx, orgID, request)
+	result, err := svc.Execute(ctx, request)
 
 	if result != nil {
 		t.Fatalf("expected nil result, got %+v", result)
@@ -622,26 +645,24 @@ func TestCreateFetcherJob_Execute_DuplicateWithDifferentStatuses(t *testing.T) {
 			mockConnRepo := connRepo.NewMockRepository(ctrl)
 			mockJobRepo := jobRepo.NewMockRepository(ctrl)
 
-			svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, nil, "", nil)
+			svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, nil, "", nil, nil)
 
 			ctx := testContext()
-			orgID := uuid.New()
 			request := newValidFetcherRequest()
 
 			existingJobID := uuid.New()
 			existingJob := &model.Job{
-				ID:             existingJobID,
-				OrganizationID: orgID,
-				Status:         tt.status,
-				CreatedAt:      time.Now().UTC().Add(-2 * time.Minute),
+				ID:        existingJobID,
+				Status:    tt.status,
+				CreatedAt: time.Now().UTC().Add(-2 * time.Minute),
 			}
 
 			// Mock: find existing job within window
 			mockJobRepo.EXPECT().
-				FindByRequestHashWithinWindow(gomock.Any(), orgID, gomock.Any(), DeduplicationWindowMinutes).
+				FindByRequestHashWithinWindow(gomock.Any(), gomock.Any(), DeduplicationWindowMinutes).
 				Return(existingJob, nil)
 
-			result, err := svc.Execute(ctx, orgID, request)
+			result, err := svc.Execute(ctx, request)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -673,23 +694,21 @@ func TestCreateFetcherJob_Execute_FailedJobWithinWindow_AllowsRetry(t *testing.T
 	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, nil, nil, mockConnTester, "", nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	request := newValidFetcherRequest()
 	conn := &model.Connection{ID: uuid.New(), ProductName: "test-product", ConfigName: "datasource1", Type: model.TypePostgreSQL}
 
 	existingFailedJob := &model.Job{
-		ID:             uuid.New(),
-		OrganizationID: orgID,
-		Status:         model.JobStatusFailed,
-		CreatedAt:      time.Now().UTC().Add(-1 * time.Minute),
+		ID:        uuid.New(),
+		Status:    model.JobStatusFailed,
+		CreatedAt: time.Now().UTC().Add(-1 * time.Minute),
 	}
 
 	mockJobRepo.EXPECT().
-		FindByRequestHashWithinWindow(gomock.Any(), orgID, gomock.Any(), DeduplicationWindowMinutes).
+		FindByRequestHashWithinWindow(gomock.Any(), gomock.Any(), DeduplicationWindowMinutes).
 		Return(existingFailedJob, nil)
 
 	mockConnRepo.EXPECT().
-		FindByConfigNames(gomock.Any(), orgID, []string{"datasource1"}).
+		FindByConfigNames(gomock.Any(), []string{"datasource1"}).
 		Return([]*model.Connection{conn}, nil)
 
 	mockConnTester.EXPECT().
@@ -702,7 +721,7 @@ func TestCreateFetcherJob_Execute_FailedJobWithinWindow_AllowsRetry(t *testing.T
 			return created, nil
 		})
 
-	result, err := svc.Execute(ctx, orgID, request)
+	result, err := svc.Execute(ctx, request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -732,23 +751,21 @@ func TestCreateFetcherJob_Execute_DuplicateKeyOnCreate_ReturnsExistingJob(t *tes
 	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, nil, nil, mockConnTester, "", nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	request := newValidFetcherRequest()
 	conn := &model.Connection{ID: uuid.New(), ProductName: "test-product", ConfigName: "datasource1", Type: model.TypePostgreSQL}
 
 	existingJob := &model.Job{
-		ID:             uuid.New(),
-		OrganizationID: orgID,
-		Status:         model.JobStatusPending,
-		CreatedAt:      time.Now().UTC(),
+		ID:        uuid.New(),
+		Status:    model.JobStatusPending,
+		CreatedAt: time.Now().UTC(),
 	}
 
 	gomock.InOrder(
 		mockJobRepo.EXPECT().
-			FindByRequestHashWithinWindow(gomock.Any(), orgID, gomock.Any(), DeduplicationWindowMinutes).
+			FindByRequestHashWithinWindow(gomock.Any(), gomock.Any(), DeduplicationWindowMinutes).
 			Return(nil, nil),
 		mockConnRepo.EXPECT().
-			FindByConfigNames(gomock.Any(), orgID, []string{"datasource1"}).
+			FindByConfigNames(gomock.Any(), []string{"datasource1"}).
 			Return([]*model.Connection{conn}, nil),
 		mockConnTester.EXPECT().
 			TestConnection(gomock.Any(), conn).
@@ -757,11 +774,11 @@ func TestCreateFetcherJob_Execute_DuplicateKeyOnCreate_ReturnsExistingJob(t *tes
 			Create(gomock.Any(), gomock.Any()).
 			Return(nil, mongo.WriteException{WriteErrors: []mongo.WriteError{{Code: 11000, Message: "duplicate key"}}}),
 		mockJobRepo.EXPECT().
-			FindActiveByRequestHash(gomock.Any(), orgID, gomock.Any()).
+			FindActiveByRequestHash(gomock.Any(), gomock.Any()).
 			Return(existingJob, nil),
 	)
 
-	result, err := svc.Execute(ctx, orgID, request)
+	result, err := svc.Execute(ctx, request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -796,16 +813,15 @@ func TestCreateFetcherJob_Execute_DuplicateKeyOnCreate_ActiveLookupMissAndRetryF
 	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, nil, nil, mockConnTester, "", nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	request := newValidFetcherRequest()
 	conn := &model.Connection{ID: uuid.New(), ProductName: "test-product", ConfigName: "datasource1", Type: model.TypePostgreSQL}
 
 	gomock.InOrder(
 		mockJobRepo.EXPECT().
-			FindByRequestHashWithinWindow(gomock.Any(), orgID, gomock.Any(), DeduplicationWindowMinutes).
+			FindByRequestHashWithinWindow(gomock.Any(), gomock.Any(), DeduplicationWindowMinutes).
 			Return(nil, nil),
 		mockConnRepo.EXPECT().
-			FindByConfigNames(gomock.Any(), orgID, []string{"datasource1"}).
+			FindByConfigNames(gomock.Any(), []string{"datasource1"}).
 			Return([]*model.Connection{conn}, nil),
 		mockConnTester.EXPECT().
 			TestConnection(gomock.Any(), conn).
@@ -814,14 +830,14 @@ func TestCreateFetcherJob_Execute_DuplicateKeyOnCreate_ActiveLookupMissAndRetryF
 			Create(gomock.Any(), gomock.Any()).
 			Return(nil, mongo.WriteException{WriteErrors: []mongo.WriteError{{Code: 11000, Message: "duplicate key"}}}),
 		mockJobRepo.EXPECT().
-			FindActiveByRequestHash(gomock.Any(), orgID, gomock.Any()).
+			FindActiveByRequestHash(gomock.Any(), gomock.Any()).
 			Return(nil, nil),
 		mockJobRepo.EXPECT().
 			Create(gomock.Any(), gomock.Any()).
 			Return(nil, errors.New("create failed after duplicate recovery")),
 	)
 
-	result, err := svc.Execute(ctx, orgID, request)
+	result, err := svc.Execute(ctx, request)
 	if result != nil {
 		t.Fatalf("expected nil result, got %+v", result)
 	}
@@ -849,16 +865,15 @@ func TestCreateFetcherJob_Execute_DuplicateKeyOnCreate_ActiveLookupMissAndRetryS
 	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, nil, nil, mockConnTester, "", nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	request := newValidFetcherRequest()
 	conn := &model.Connection{ID: uuid.New(), ProductName: "test-product", ConfigName: "datasource1", Type: model.TypePostgreSQL}
 
 	gomock.InOrder(
 		mockJobRepo.EXPECT().
-			FindByRequestHashWithinWindow(gomock.Any(), orgID, gomock.Any(), DeduplicationWindowMinutes).
+			FindByRequestHashWithinWindow(gomock.Any(), gomock.Any(), DeduplicationWindowMinutes).
 			Return(nil, nil),
 		mockConnRepo.EXPECT().
-			FindByConfigNames(gomock.Any(), orgID, []string{"datasource1"}).
+			FindByConfigNames(gomock.Any(), []string{"datasource1"}).
 			Return([]*model.Connection{conn}, nil),
 		mockConnTester.EXPECT().
 			TestConnection(gomock.Any(), conn).
@@ -867,7 +882,7 @@ func TestCreateFetcherJob_Execute_DuplicateKeyOnCreate_ActiveLookupMissAndRetryS
 			Create(gomock.Any(), gomock.Any()).
 			Return(nil, mongo.WriteException{WriteErrors: []mongo.WriteError{{Code: 11000, Message: "duplicate key"}}}),
 		mockJobRepo.EXPECT().
-			FindActiveByRequestHash(gomock.Any(), orgID, gomock.Any()).
+			FindActiveByRequestHash(gomock.Any(), gomock.Any()).
 			Return(nil, nil),
 		mockJobRepo.EXPECT().
 			Create(gomock.Any(), gomock.Any()).
@@ -876,7 +891,7 @@ func TestCreateFetcherJob_Execute_DuplicateKeyOnCreate_ActiveLookupMissAndRetryS
 			}),
 	)
 
-	result, err := svc.Execute(ctx, orgID, request)
+	result, err := svc.Execute(ctx, request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -906,7 +921,6 @@ func TestCreateFetcherJob_Execute_MultipleConnectionsSuccess_WithoutProductRepo(
 	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, nil, nil, mockConnTester, "", nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID1 := uuid.New()
 	connID2 := uuid.New()
 
@@ -927,12 +941,12 @@ func TestCreateFetcherJob_Execute_MultipleConnectionsSuccess_WithoutProductRepo(
 
 	// Mock: no duplicate found
 	mockJobRepo.EXPECT().
-		FindByRequestHashWithinWindow(gomock.Any(), orgID, gomock.Any(), DeduplicationWindowMinutes).
+		FindByRequestHashWithinWindow(gomock.Any(), gomock.Any(), DeduplicationWindowMinutes).
 		Return(nil, nil)
 
 	// Mock: both connections found
 	mockConnRepo.EXPECT().
-		FindByConfigNames(gomock.Any(), orgID, gomock.Any()).
+		FindByConfigNames(gomock.Any(), gomock.Any()).
 		Return([]*model.Connection{conn1, conn2}, nil)
 
 	// Mock: connection tests succeed
@@ -950,7 +964,7 @@ func TestCreateFetcherJob_Execute_MultipleConnectionsSuccess_WithoutProductRepo(
 			return job, nil
 		})
 
-	result, err := svc.Execute(ctx, orgID, request)
+	result, err := svc.Execute(ctx, request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -973,6 +987,72 @@ func TestCreateFetcherJob_Execute_MultipleConnectionsSuccess_WithoutProductRepo(
 	}
 }
 
+func TestCreateFetcherJob_Execute_PublishFailureMarksJobFailed(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockJobRepo := jobRepo.NewMockRepository(ctrl)
+	mockConnTester := NewMockConnectionTester(ctrl)
+	mockRabbitMQ := messaging.NewMockMessagePublisher(ctrl)
+
+	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, nil, mockRabbitMQ, mockConnTester, "fetcher.extract-external-data.queue", nil)
+
+	ctx := testContext()
+	connID := uuid.New()
+	request := model.FetcherRequest{
+		DataRequest: model.DataRequest{
+			MappedFields: map[string]map[string][]string{
+				"postgres_db": {"transactions": {"id", "status"}},
+			},
+		},
+		Metadata: map[string]any{"source": "test"},
+	}
+
+	conn := &model.Connection{ID: connID, ConfigName: "postgres_db", Type: model.TypePostgreSQL, ProductName: "test"}
+	publishErr := errors.New("publish failed")
+
+	mockJobRepo.EXPECT().
+		FindByRequestHashWithinWindow(gomock.Any(), gomock.Any(), DeduplicationWindowMinutes).
+		Return(nil, nil)
+
+	mockConnRepo.EXPECT().
+		FindByConfigNames(gomock.Any(), []string{"postgres_db"}).
+		Return([]*model.Connection{conn}, nil)
+
+	mockConnTester.EXPECT().
+		TestConnection(gomock.Any(), conn).
+		Return(nil)
+
+	mockJobRepo.EXPECT().
+		Create(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, job *model.Job) (*model.Job, error) {
+			return job, nil
+		})
+
+	mockRabbitMQ.EXPECT().
+		ProducerDefault(gomock.Any(), "", "fetcher.extract-external-data.queue", gomock.Any(), gomock.Any()).
+		Return(publishErr)
+
+	mockJobRepo.EXPECT().
+		Update(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, job *model.Job) (*model.Job, error) {
+			assert.Equal(t, model.JobStatusFailed, job.Status)
+			assert.NotNil(t, job.CompletedAt)
+			assert.Equal(t, "process failed: unable to publish", job.Metadata["error"])
+
+			return job, nil
+		})
+
+	result, err := svc.Execute(ctx, request)
+	require.Nil(t, result)
+	require.Error(t, err)
+
+	var internalErr pkg.InternalServerError
+	require.ErrorAs(t, err, &internalErr)
+	require.ErrorContains(t, internalErr.Err, "publish failed")
+}
+
 // TestCreateFetcherJob_Execute_FiltersWithMultipleDatasources tests filter transformation with multiple datasources.
 func TestCreateFetcherJob_Execute_FiltersWithMultipleDatasources(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -985,7 +1065,6 @@ func TestCreateFetcherJob_Execute_FiltersWithMultipleDatasources(t *testing.T) {
 	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, nil, nil, mockConnTester, "", nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
 
 	// Request with filters referencing the correct datasource
@@ -1011,12 +1090,12 @@ func TestCreateFetcherJob_Execute_FiltersWithMultipleDatasources(t *testing.T) {
 
 	// Mock: no duplicate found
 	mockJobRepo.EXPECT().
-		FindByRequestHashWithinWindow(gomock.Any(), orgID, gomock.Any(), DeduplicationWindowMinutes).
+		FindByRequestHashWithinWindow(gomock.Any(), gomock.Any(), DeduplicationWindowMinutes).
 		Return(nil, nil)
 
 	// Mock: connection found
 	mockConnRepo.EXPECT().
-		FindByConfigNames(gomock.Any(), orgID, []string{"postgres_db"}).
+		FindByConfigNames(gomock.Any(), []string{"postgres_db"}).
 		Return([]*model.Connection{conn}, nil)
 
 	// Mock: connection test succeeds
@@ -1031,7 +1110,7 @@ func TestCreateFetcherJob_Execute_FiltersWithMultipleDatasources(t *testing.T) {
 			return job, nil
 		})
 
-	result, err := svc.Execute(ctx, orgID, request)
+	result, err := svc.Execute(ctx, request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1075,7 +1154,7 @@ func TestCreateFetcherJob_Execute_InvalidFilterReferences(t *testing.T) {
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 
-	svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, nil, "", nil)
+	svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, nil, "", nil, nil)
 
 	tests := []struct {
 		name    string
@@ -1106,9 +1185,8 @@ func TestCreateFetcherJob_Execute_InvalidFilterReferences(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := testContext()
-			orgID := uuid.New()
 
-			result, err := svc.Execute(ctx, orgID, tt.request)
+			result, err := svc.Execute(ctx, tt.request)
 
 			if result != nil {
 				t.Fatalf("expected nil result for invalid filter, got %+v", result)
@@ -1143,7 +1221,6 @@ func TestCreateFetcherJob_Execute_ConnectionNotAssigned(t *testing.T) {
 	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, nil, nil, mockConnTester, "", nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
 
 	request := model.FetcherRequest{
@@ -1157,16 +1234,16 @@ func TestCreateFetcherJob_Execute_ConnectionNotAssigned(t *testing.T) {
 
 	// Mock: no duplicate found
 	mockJobRepo.EXPECT().
-		FindByRequestHashWithinWindow(gomock.Any(), orgID, gomock.Any(), DeduplicationWindowMinutes).
+		FindByRequestHashWithinWindow(gomock.Any(), gomock.Any(), DeduplicationWindowMinutes).
 		Return(nil, nil)
 
 	// Mock: connection found with ProductName = "" (unassigned)
 	conn := &model.Connection{ID: connID, ConfigName: "datasource1", Type: model.TypePostgreSQL, ProductName: ""}
 	mockConnRepo.EXPECT().
-		FindByConfigNames(gomock.Any(), orgID, []string{"datasource1"}).
+		FindByConfigNames(gomock.Any(), []string{"datasource1"}).
 		Return([]*model.Connection{conn}, nil)
 
-	result, err := svc.Execute(ctx, orgID, request)
+	result, err := svc.Execute(ctx, request)
 
 	if result != nil {
 		t.Fatalf("expected nil result, got %+v", result)
@@ -1204,7 +1281,6 @@ func TestCreateFetcherJob_Execute_ProductMismatch(t *testing.T) {
 	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, nil, nil, mockConnTester, "", nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
 
 	request := model.FetcherRequest{
@@ -1218,16 +1294,16 @@ func TestCreateFetcherJob_Execute_ProductMismatch(t *testing.T) {
 
 	// Mock: no duplicate found
 	mockJobRepo.EXPECT().
-		FindByRequestHashWithinWindow(gomock.Any(), orgID, gomock.Any(), DeduplicationWindowMinutes).
+		FindByRequestHashWithinWindow(gomock.Any(), gomock.Any(), DeduplicationWindowMinutes).
 		Return(nil, nil)
 
 	// Mock: connection found with ProductName = "other-product" (different from source "test")
 	conn := &model.Connection{ID: connID, ConfigName: "datasource1", Type: model.TypePostgreSQL, ProductName: "other-product"}
 	mockConnRepo.EXPECT().
-		FindByConfigNames(gomock.Any(), orgID, []string{"datasource1"}).
+		FindByConfigNames(gomock.Any(), []string{"datasource1"}).
 		Return([]*model.Connection{conn}, nil)
 
-	result, err := svc.Execute(ctx, orgID, request)
+	result, err := svc.Execute(ctx, request)
 
 	if result != nil {
 		t.Fatalf("expected nil result, got %+v", result)
@@ -1264,16 +1340,15 @@ func TestCreateFetcherJob_Execute_DuplicateKeyOnCreate_FindActiveReturnsError(t 
 	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, nil, nil, mockConnTester, "", nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	request := newValidFetcherRequest()
 	conn := &model.Connection{ID: uuid.New(), ProductName: "test-product", ConfigName: "datasource1", Type: model.TypePostgreSQL}
 
 	gomock.InOrder(
 		mockJobRepo.EXPECT().
-			FindByRequestHashWithinWindow(gomock.Any(), orgID, gomock.Any(), DeduplicationWindowMinutes).
+			FindByRequestHashWithinWindow(gomock.Any(), gomock.Any(), DeduplicationWindowMinutes).
 			Return(nil, nil),
 		mockConnRepo.EXPECT().
-			FindByConfigNames(gomock.Any(), orgID, []string{"datasource1"}).
+			FindByConfigNames(gomock.Any(), []string{"datasource1"}).
 			Return([]*model.Connection{conn}, nil),
 		mockConnTester.EXPECT().
 			TestConnection(gomock.Any(), conn).
@@ -1282,11 +1357,11 @@ func TestCreateFetcherJob_Execute_DuplicateKeyOnCreate_FindActiveReturnsError(t 
 			Create(gomock.Any(), gomock.Any()).
 			Return(nil, mongo.WriteException{WriteErrors: []mongo.WriteError{{Code: 11000, Message: "duplicate key"}}}),
 		mockJobRepo.EXPECT().
-			FindActiveByRequestHash(gomock.Any(), orgID, gomock.Any()).
+			FindActiveByRequestHash(gomock.Any(), gomock.Any()).
 			Return(nil, errors.New("mongodb connection lost")),
 	)
 
-	result, err := svc.Execute(ctx, orgID, request)
+	result, err := svc.Execute(ctx, request)
 
 	if result != nil {
 		t.Fatalf("expected nil result, got %+v", result)
@@ -1316,25 +1391,23 @@ func TestCreateFetcherJob_Execute_DuplicateKeyOnCreate_RetryAlsoHitsDupKey_Secon
 	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, nil, nil, mockConnTester, "", nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	request := newValidFetcherRequest()
 	conn := &model.Connection{ID: uuid.New(), ProductName: "test-product", ConfigName: "datasource1", Type: model.TypePostgreSQL}
 
 	existingJob := &model.Job{
-		ID:             uuid.New(),
-		OrganizationID: orgID,
-		Status:         model.JobStatusPending,
-		CreatedAt:      time.Now().UTC(),
+		ID:        uuid.New(),
+		Status:    model.JobStatusPending,
+		CreatedAt: time.Now().UTC(),
 	}
 
 	gomock.InOrder(
 		// 1. Dedup window check returns no match
 		mockJobRepo.EXPECT().
-			FindByRequestHashWithinWindow(gomock.Any(), orgID, gomock.Any(), DeduplicationWindowMinutes).
+			FindByRequestHashWithinWindow(gomock.Any(), gomock.Any(), DeduplicationWindowMinutes).
 			Return(nil, nil),
 		// 2. Connection lookup
 		mockConnRepo.EXPECT().
-			FindByConfigNames(gomock.Any(), orgID, []string{"datasource1"}).
+			FindByConfigNames(gomock.Any(), []string{"datasource1"}).
 			Return([]*model.Connection{conn}, nil),
 		// 3. Connection test
 		mockConnTester.EXPECT().
@@ -1346,7 +1419,7 @@ func TestCreateFetcherJob_Execute_DuplicateKeyOnCreate_RetryAlsoHitsDupKey_Secon
 			Return(nil, mongo.WriteException{WriteErrors: []mongo.WriteError{{Code: 11000, Message: "duplicate key"}}}),
 		// 5. First FindActiveByRequestHash → miss (nil, nil)
 		mockJobRepo.EXPECT().
-			FindActiveByRequestHash(gomock.Any(), orgID, gomock.Any()).
+			FindActiveByRequestHash(gomock.Any(), gomock.Any()).
 			Return(nil, nil),
 		// 6. Retry Create → also duplicate key error
 		mockJobRepo.EXPECT().
@@ -1354,11 +1427,11 @@ func TestCreateFetcherJob_Execute_DuplicateKeyOnCreate_RetryAlsoHitsDupKey_Secon
 			Return(nil, mongo.WriteException{WriteErrors: []mongo.WriteError{{Code: 11000, Message: "duplicate key"}}}),
 		// 7. Second FindActiveByRequestHash → finds the active job
 		mockJobRepo.EXPECT().
-			FindActiveByRequestHash(gomock.Any(), orgID, gomock.Any()).
+			FindActiveByRequestHash(gomock.Any(), gomock.Any()).
 			Return(existingJob, nil),
 	)
 
-	result, err := svc.Execute(ctx, orgID, request)
+	result, err := svc.Execute(ctx, request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1393,7 +1466,6 @@ func TestCreateFetcherJob_Execute_ProductValidationSuccess(t *testing.T) {
 	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, nil, nil, mockConnTester, "", nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
 
 	request := model.FetcherRequest{
@@ -1407,13 +1479,13 @@ func TestCreateFetcherJob_Execute_ProductValidationSuccess(t *testing.T) {
 
 	// Mock: no duplicate found
 	mockJobRepo.EXPECT().
-		FindByRequestHashWithinWindow(gomock.Any(), orgID, gomock.Any(), DeduplicationWindowMinutes).
+		FindByRequestHashWithinWindow(gomock.Any(), gomock.Any(), DeduplicationWindowMinutes).
 		Return(nil, nil)
 
 	// Mock: connection found with matching ProductName
 	conn := &model.Connection{ID: connID, ConfigName: "datasource1", Type: model.TypePostgreSQL, ProductName: "test"}
 	mockConnRepo.EXPECT().
-		FindByConfigNames(gomock.Any(), orgID, []string{"datasource1"}).
+		FindByConfigNames(gomock.Any(), []string{"datasource1"}).
 		Return([]*model.Connection{conn}, nil)
 
 	// Mock: connection test succeeds
@@ -1428,7 +1500,7 @@ func TestCreateFetcherJob_Execute_ProductValidationSuccess(t *testing.T) {
 			return j, nil
 		})
 
-	result, err := svc.Execute(ctx, orgID, request)
+	result, err := svc.Execute(ctx, request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1483,11 +1555,10 @@ func TestPublishToQueue_TenantIDHeaderPropagation(t *testing.T) {
 			}
 
 			testJob := &model.Job{
-				ID:             uuid.New(),
-				OrganizationID: uuid.New(),
-				MappedFields:   map[string]map[string][]string{"ds1": {"t1": {"f1"}}},
-				Metadata:       map[string]any{"source": "test-product"},
-				CreatedAt:      time.Now().UTC(),
+				ID:           uuid.New(),
+				MappedFields: map[string]map[string][]string{"ds1": {"t1": {"f1"}}},
+				Metadata:     map[string]any{"source": "test-product"},
+				CreatedAt:    time.Now().UTC(),
 			}
 
 			// Capture headers passed to ProducerDefault
@@ -1501,7 +1572,7 @@ func TestPublishToQueue_TenantIDHeaderPropagation(t *testing.T) {
 
 			ctx := testContext()
 			if tt.tenantID != "" {
-				ctx = tmcore.SetTenantIDInContext(ctx, tt.tenantID)
+				ctx = tmcore.ContextWithTenantID(ctx, tt.tenantID)
 			}
 
 			err := svc.publishToQueue(ctx, testJob)
@@ -1518,7 +1589,6 @@ func TestPublishToQueue_TenantIDHeaderPropagation(t *testing.T) {
 
 			// Always verify standard headers are present
 			assert.Equal(t, testJob.ID.String(), headers["jobId"])
-			assert.Equal(t, testJob.OrganizationID.String(), headers["organizationId"])
 		})
 	}
 }

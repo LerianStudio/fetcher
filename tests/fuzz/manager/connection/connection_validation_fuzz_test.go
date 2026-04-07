@@ -9,7 +9,6 @@ import (
 
 	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/tests/fuzz/shared/mocks"
-	"github.com/google/uuid"
 )
 
 func FuzzConnectionValidation(f *testing.F) {
@@ -31,9 +30,8 @@ func FuzzConnectionValidation(f *testing.F) {
 	f.Fuzz(func(t *testing.T, productName, configName, typ, host string, port int, dbName, username, password string) {
 		ctx := context.Background()
 		mockCryptor := &mocks.MockCryptor{}
-		orgID := uuid.New()
 
-		conn, err := model.NewConnection(ctx, mockCryptor, orgID, productName, configName, typ, host, port, dbName, username, password, nil, nil, nil, nil, nil)
+		conn, err := model.NewConnection(ctx, mockCryptor, productName, configName, typ, host, port, dbName, nil, username, password, nil, nil, nil, nil, nil)
 		if err != nil {
 			return
 		}

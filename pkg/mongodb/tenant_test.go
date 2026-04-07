@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	tmcore "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/core"
+	tmcore "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/core"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -22,7 +22,7 @@ func (m *multiTenantProvider) IsMultiTenant() bool {
 	return m.multiTenant
 }
 
-func TestGetDatabaseForContext(t *testing.T) {
+func TestResolveDatabase(t *testing.T) {
 	tests := []struct {
 		name          string
 		setupCtx      func() context.Context
@@ -33,6 +33,18 @@ func TestGetDatabaseForContext(t *testing.T) {
 		wantErrMsg    string
 	}{
 		{
+			name: "nil provider returns error",
+			setupCtx: func() context.Context {
+				return context.Background()
+			},
+			setupProvider: func(ctrl *gomock.Controller) MongoClientProvider {
+				return nil
+			},
+			dbName:     "test_db",
+			wantErr:    true,
+			wantErrMsg: "mongo client provider is nil",
+		},
+		{
 			name: "single-tenant fallback when provider errors",
 			setupCtx: func() context.Context {
 				return context.Background()
@@ -40,7 +52,7 @@ func TestGetDatabaseForContext(t *testing.T) {
 			setupProvider: func(ctrl *gomock.Controller) MongoClientProvider {
 				mock := NewMockMongoClientProvider(ctrl)
 				mock.EXPECT().
-					GetDB(gomock.Any()).
+					Client(gomock.Any()).
 					Return(nil, errors.New("connection failed"))
 				return mock
 			},
@@ -49,13 +61,29 @@ func TestGetDatabaseForContext(t *testing.T) {
 			wantErrMsg: "connection failed",
 		},
 		{
-			name: "multi-tenant returns ErrTenantContextRequired when no tenant in context",
+			name: "single-tenant returns error when provider returns nil client",
 			setupCtx: func() context.Context {
 				return context.Background()
 			},
 			setupProvider: func(ctrl *gomock.Controller) MongoClientProvider {
 				mock := NewMockMongoClientProvider(ctrl)
-				// GetDB should NOT be called when multi-tenant and no tenant in context
+				mock.EXPECT().
+					Client(gomock.Any()).
+					Return(nil, nil)
+				return mock
+			},
+			dbName:     "test_db",
+			wantErr:    true,
+			wantErrMsg: "mongo client is nil",
+		},
+		{
+			name: "returns ErrTenantContextRequired when tenant ID in context but no DB injected",
+			setupCtx: func() context.Context {
+				return tmcore.ContextWithTenantID(context.Background(), "tenant-123")
+			},
+			setupProvider: func(ctrl *gomock.Controller) MongoClientProvider {
+				mock := NewMockMongoClientProvider(ctrl)
+				// Client should NOT be called when tenant ID exists but no DB injected
 				return &multiTenantProvider{
 					MockMongoClientProvider: mock,
 					multiTenant:             true,
@@ -66,6 +94,26 @@ func TestGetDatabaseForContext(t *testing.T) {
 			wantErrIs: tmcore.ErrTenantContextRequired,
 		},
 		{
+			name: "multi-tenant provider falls back to static when no tenant context at all",
+			setupCtx: func() context.Context {
+				return context.Background()
+			},
+			setupProvider: func(ctrl *gomock.Controller) MongoClientProvider {
+				mock := NewMockMongoClientProvider(ctrl)
+				// With no tenant ID in context, should fall back to static connection
+				mock.EXPECT().
+					Client(gomock.Any()).
+					Return(nil, errors.New("static fallback in multi-tenant"))
+				return &multiTenantProvider{
+					MockMongoClientProvider: mock,
+					multiTenant:             true,
+				}
+			},
+			dbName:     "test_db",
+			wantErr:    true,
+			wantErrMsg: "static fallback in multi-tenant",
+		},
+		{
 			name: "single-tenant mode falls back to static provider when no tenant context",
 			setupCtx: func() context.Context {
 				return context.Background()
@@ -73,7 +121,7 @@ func TestGetDatabaseForContext(t *testing.T) {
 			setupProvider: func(ctrl *gomock.Controller) MongoClientProvider {
 				mock := NewMockMongoClientProvider(ctrl)
 				mock.EXPECT().
-					GetDB(gomock.Any()).
+					Client(gomock.Any()).
 					Return(nil, errors.New("static fallback error"))
 				return mock
 			},
@@ -92,7 +140,7 @@ func TestGetDatabaseForContext(t *testing.T) {
 					panic("mongo.NewClient() failed: " + err.Error())
 				}
 				db := client.Database("tenant_abc")
-				return tmcore.ContextWithTenantMongo(context.Background(), db)
+				return tmcore.ContextWithMB(context.Background(), db)
 			},
 			setupProvider: func(ctrl *gomock.Controller) MongoClientProvider {
 				mock := NewMockMongoClientProvider(ctrl)
@@ -113,7 +161,7 @@ func TestGetDatabaseForContext(t *testing.T) {
 					panic("mongo.NewClient() failed: " + err.Error())
 				}
 				db := client.Database("tenant_xyz")
-				return tmcore.ContextWithTenantMongo(context.Background(), db)
+				return tmcore.ContextWithMB(context.Background(), db)
 			},
 			setupProvider: func(ctrl *gomock.Controller) MongoClientProvider {
 				mock := NewMockMongoClientProvider(ctrl)
@@ -133,7 +181,7 @@ func TestGetDatabaseForContext(t *testing.T) {
 			ctx := tt.setupCtx()
 			provider := tt.setupProvider(ctrl)
 
-			db, err := GetDatabaseForContext(ctx, provider, tt.dbName)
+			db, err := ResolveDatabase(ctx, provider, tt.dbName)
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -150,4 +198,30 @@ func TestGetDatabaseForContext(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMultiTenantMongoProviderNilGuards(t *testing.T) {
+	t.Run("client returns error when provider is nil", func(t *testing.T) {
+		var provider *MultiTenantMongoProvider
+
+		client, err := provider.Client(context.Background())
+		require.Error(t, err)
+		assert.Nil(t, client)
+		assert.Contains(t, err.Error(), "mongo client provider is nil")
+	})
+
+	t.Run("client returns error when inner provider is nil", func(t *testing.T) {
+		provider := NewMultiTenantMongoProvider(nil, true)
+
+		client, err := provider.Client(context.Background())
+		require.Error(t, err)
+		assert.Nil(t, client)
+		assert.Contains(t, err.Error(), "mongo client provider is nil")
+		assert.True(t, provider.IsMultiTenant())
+	})
+
+	t.Run("is multi-tenant is safe on nil receiver", func(t *testing.T) {
+		var provider *MultiTenantMongoProvider
+		assert.False(t, provider.IsMultiTenant())
+	})
 }

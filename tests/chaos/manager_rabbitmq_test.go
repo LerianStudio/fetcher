@@ -24,7 +24,6 @@ import (
 // - Job creation should fail gracefully with clear error
 // - Other API operations (connections) should still work
 func TestManager_RabbitMQ_Unavailable(t *testing.T) {
-
 	ctx, cancel := context.WithTimeout(context.Background(), DefaultChaosTestTimeout)
 	defer cancel()
 
@@ -70,7 +69,6 @@ func TestManager_RabbitMQ_Unavailable(t *testing.T) {
 // - Job creation should still succeed (degraded performance)
 // - Latency should be higher but within acceptable limits
 func TestManager_RabbitMQ_HighLatency(t *testing.T) {
-
 	ctx, cancel := context.WithTimeout(context.Background(), DefaultChaosTestTimeout)
 	defer cancel()
 
@@ -140,7 +138,6 @@ func TestManager_RabbitMQ_HighLatency(t *testing.T) {
 // - System should recover within SLO threshold
 // - Queued jobs should be processed after recovery
 func TestManager_RabbitMQ_Recovery(t *testing.T) {
-
 	ctx, cancel := context.WithTimeout(context.Background(), LongChaosTestTimeout)
 	defer cancel()
 
@@ -206,7 +203,6 @@ func TestManager_RabbitMQ_Recovery(t *testing.T) {
 // - Job creation should succeed
 // - Job processing should complete (bandwidth limit may not affect actual delivery)
 func TestManager_RabbitMQ_SlowConsumer(t *testing.T) {
-
 	ctx, cancel := context.WithTimeout(context.Background(), LongChaosTestTimeout)
 	defer cancel()
 

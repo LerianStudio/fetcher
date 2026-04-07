@@ -1,33 +1,235 @@
 package bootstrap
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
 
-	"github.com/LerianStudio/fetcher/pkg"
-	"github.com/LerianStudio/lib-commons/v3/commons/zap"
-
 	cacheRepo "github.com/LerianStudio/fetcher/components/manager/internal/adapters/cache"
+	"github.com/LerianStudio/fetcher/pkg"
+	"github.com/LerianStudio/fetcher/pkg/crypto"
+	"github.com/LerianStudio/fetcher/pkg/model"
+	redisCache "github.com/LerianStudio/fetcher/pkg/redis"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	libOtel "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
+	tmclient "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/client"
+	tmcore "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/core"
+	"github.com/LerianStudio/lib-commons/v4/commons/zap"
+	amqp "github.com/rabbitmq/amqp091-go"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func TestConfig_StructFields(t *testing.T) {
-	cfg := &Config{
-		EnvName:       "test",
-		ServerAddress: "localhost:8080",
-		LogLevel:      "info",
+func testManagerBootstrapLogger() *libLog.GoLogger {
+	return &libLog.GoLogger{Level: libLog.LevelError}
+}
+
+type stubSchemaCacheStore struct{}
+
+func (stubSchemaCacheStore) Get(context.Context, string) (model.DataSourceSchema, bool, error) {
+	return model.DataSourceSchema{}, false, nil
+}
+
+func (stubSchemaCacheStore) Set(context.Context, string, model.DataSourceSchema, time.Duration) error {
+	return nil
+}
+
+func (stubSchemaCacheStore) Delete(context.Context, string) error {
+	return nil
+}
+
+func (stubSchemaCacheStore) Clear(context.Context) error {
+	return nil
+}
+
+func (stubSchemaCacheStore) IsHealthy(context.Context) bool {
+	return true
+}
+
+func TestConfigStruct(t *testing.T) {
+	cfg := &Config{EnvName: "test", ServerAddress: "localhost:8080", LogLevel: "info"}
+	assert.Equal(t, "test", cfg.EnvName)
+	assert.Equal(t, "localhost:8080", cfg.ServerAddress)
+	assert.Equal(t, "info", cfg.LogLevel)
+}
+
+func TestResolveZapEnvironment(t *testing.T) {
+	assert.Equal(t, zap.EnvironmentProduction, resolveZapEnvironment("prod"))
+	assert.Equal(t, zap.EnvironmentStaging, resolveZapEnvironment("stage"))
+	assert.Equal(t, zap.EnvironmentDevelopment, resolveZapEnvironment("dev"))
+	assert.Equal(t, zap.EnvironmentLocal, resolveZapEnvironment("unknown"))
+}
+
+func TestWrapBootstrapError(t *testing.T) {
+	assert.NoError(t, wrapBootstrapError("noop", nil))
+
+	err := wrapBootstrapError("decode key", errors.New("boom"))
+	require.Error(t, err)
+	assert.EqualError(t, err, "decode key: boom")
+}
+
+func TestLoadConfig_ReturnsError(t *testing.T) {
+	original := setConfigFromEnvVars
+	t.Cleanup(func() { setConfigFromEnvVars = original })
+
+	setConfigFromEnvVars = func(any) error {
+		return errors.New("config load failed")
 	}
 
-	if cfg.EnvName != "test" {
-		t.Errorf("Expected EnvName to be 'test', got '%s'", cfg.EnvName)
+	cfg, err := loadConfig()
+	assert.Nil(t, cfg)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "config load failed")
+}
+
+func TestInitLoggerAndTelemetry_ReturnsApplyGlobalsError(t *testing.T) {
+	originalLogger := newManagerLogger
+	originalTelemetry := newManagerTelemetry
+	originalApply := applyTelemetryGlobals
+	t.Cleanup(func() {
+		newManagerLogger = originalLogger
+		newManagerTelemetry = originalTelemetry
+		applyTelemetryGlobals = originalApply
+	})
+
+	newManagerLogger = func(zap.Config) (libLog.Logger, error) {
+		return testManagerBootstrapLogger(), nil
+	}
+	newManagerTelemetry = func(libOtel.TelemetryConfig) (*libOtel.Telemetry, error) {
+		return &libOtel.Telemetry{}, nil
+	}
+	applyTelemetryGlobals = func(*libOtel.Telemetry) error {
+		return errors.New("apply globals failed")
 	}
 
-	if cfg.ServerAddress != "localhost:8080" {
-		t.Errorf("Expected ServerAddress to be 'localhost:8080', got '%s'", cfg.ServerAddress)
+	logger, telemetry, err := initLoggerAndTelemetry(&Config{EnvName: "local", LogLevel: "debug"})
+	assert.Nil(t, logger)
+	assert.Nil(t, telemetry)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "apply globals failed")
+}
+
+func TestInitCrypto_ReturnsWrappedError(t *testing.T) {
+	deps, err := initCrypto(&Config{AppEncryptionKey: "invalid", AppEncryptionKeyVersion: "v1"}, testManagerBootstrapLogger())
+	assert.Nil(t, deps)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "decode master encryption key")
+}
+
+func TestInitPlatformDependencies_ReturnsCacheError(t *testing.T) {
+	original := newSchemaCacheStore
+	t.Cleanup(func() { newSchemaCacheStore = original })
+
+	newSchemaCacheStore = func(redisCache.RedisConfig, libLog.Logger, time.Duration, string) (redisCache.Cache[model.DataSourceSchema], error) {
+		return nil, errors.New("cache init failed")
 	}
 
-	if cfg.LogLevel != "info" {
-		t.Errorf("Expected LogLevel to be 'info', got '%s'", cfg.LogLevel)
+	deps, err := initPlatformDependencies(&Config{}, testManagerBootstrapLogger(), nil)
+	assert.Nil(t, deps)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "initialize schema cache")
+}
+
+func TestInitServers_ReturnsAssembledService(t *testing.T) {
+	originalLoadConfig := loadConfigFn
+	originalLoggerAndTelemetry := initLoggerAndTelemetryFn
+	originalMongoRepos := initMongoRepositoriesFn
+	originalCrypto := initCryptoFn
+	originalPlatform := initPlatformDependenciesFn
+	originalAssemble := assembleServiceFn
+	t.Cleanup(func() {
+		loadConfigFn = originalLoadConfig
+		initLoggerAndTelemetryFn = originalLoggerAndTelemetry
+		initMongoRepositoriesFn = originalMongoRepos
+		initCryptoFn = originalCrypto
+		initPlatformDependenciesFn = originalPlatform
+		assembleServiceFn = originalAssemble
+	})
+
+	expectedService := &Service{}
+	loadConfigFn = func() (*Config, error) { return &Config{}, nil }
+	initLoggerAndTelemetryFn = func(*Config) (libLog.Logger, *libOtel.Telemetry, error) {
+		return testManagerBootstrapLogger(), &libOtel.Telemetry{}, nil
 	}
+	initMongoRepositoriesFn = func(context.Context, *Config, libLog.Logger) (*managerRepositories, error) {
+		return &managerRepositories{}, nil
+	}
+	initCryptoFn = func(*Config, libLog.Logger) (*managerCrypto, error) {
+		return &managerCrypto{service: &crypto.AESGCMService{}}, nil
+	}
+	initPlatformDependenciesFn = func(*Config, libLog.Logger, crypto.Signer) (*managerPlatformDependencies, error) {
+		return &managerPlatformDependencies{}, nil
+	}
+	assembleServiceFn = func(*Config, libLog.Logger, *libOtel.Telemetry, *managerRepositories, *crypto.AESGCMService, *managerPlatformDependencies) (*Service, error) {
+		return expectedService, nil
+	}
+
+	service, err := InitServers()
+	require.NoError(t, err)
+	assert.Same(t, expectedService, service)
+}
+
+func TestInitServers_PropagatesHelperErrors(t *testing.T) {
+	originalLoadConfig := loadConfigFn
+	originalLoggerAndTelemetry := initLoggerAndTelemetryFn
+	originalMongoRepos := initMongoRepositoriesFn
+	originalCrypto := initCryptoFn
+	originalPlatform := initPlatformDependenciesFn
+	originalAssemble := assembleServiceFn
+	t.Cleanup(func() {
+		loadConfigFn = originalLoadConfig
+		initLoggerAndTelemetryFn = originalLoggerAndTelemetry
+		initMongoRepositoriesFn = originalMongoRepos
+		initCryptoFn = originalCrypto
+		initPlatformDependenciesFn = originalPlatform
+		assembleServiceFn = originalAssemble
+	})
+
+	loadConfigFn = func() (*Config, error) {
+		return nil, errors.New("config load failed")
+	}
+
+	service, err := InitServers()
+	assert.Nil(t, service)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "config load failed")
+
+	loadConfigFn = func() (*Config, error) {
+		return &Config{}, nil
+	}
+	initLoggerAndTelemetryFn = func(*Config) (libLog.Logger, *libOtel.Telemetry, error) {
+		return nil, nil, errors.New("logger init failed")
+	}
+
+	service, err = InitServers()
+	assert.Nil(t, service)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "logger init failed")
+
+	loadConfigFn = func() (*Config, error) {
+		return &Config{}, nil
+	}
+	initLoggerAndTelemetryFn = func(*Config) (libLog.Logger, *libOtel.Telemetry, error) {
+		return testManagerBootstrapLogger(), &libOtel.Telemetry{}, nil
+	}
+	initMongoRepositoriesFn = func(context.Context, *Config, libLog.Logger) (*managerRepositories, error) {
+		return &managerRepositories{}, nil
+	}
+	initCryptoFn = func(*Config, libLog.Logger) (*managerCrypto, error) {
+		return &managerCrypto{service: &crypto.AESGCMService{}}, nil
+	}
+	initPlatformDependenciesFn = func(*Config, libLog.Logger, crypto.Signer) (*managerPlatformDependencies, error) {
+		return &managerPlatformDependencies{}, nil
+	}
+	assembleServiceFn = func(*Config, libLog.Logger, *libOtel.Telemetry, *managerRepositories, *crypto.AESGCMService, *managerPlatformDependencies) (*Service, error) {
+		return nil, errors.New("tenant middleware init failed")
+	}
+
+	service, err = InitServers()
+	assert.Nil(t, service)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "tenant middleware init failed")
 }
 
 func TestConfig_LoadFromEnvVars(t *testing.T) {
@@ -169,11 +371,14 @@ func TestConfig_LoadFromEnvVars(t *testing.T) {
 			envVars: map[string]string{
 				"MULTI_TENANT_ENABLED":                     "true",
 				"MULTI_TENANT_URL":                         "http://tenant-manager:8080",
-				"MULTI_TENANT_ENVIRONMENT":                 "staging",
+				"MULTI_TENANT_REDIS_HOST":                  "redis-host",
+				"MULTI_TENANT_REDIS_PORT":                  "6380",
+				"MULTI_TENANT_REDIS_PASSWORD":              "redis-secret",
 				"MULTI_TENANT_MAX_TENANT_POOLS":            "200",
 				"MULTI_TENANT_IDLE_TIMEOUT_SEC":            "600",
 				"MULTI_TENANT_CIRCUIT_BREAKER_THRESHOLD":   "10",
 				"MULTI_TENANT_CIRCUIT_BREAKER_TIMEOUT_SEC": "60",
+				"MULTI_TENANT_SERVICE_API_KEY":             "test-api-key-123",
 			},
 			validate: func(t *testing.T, cfg *Config) {
 				t.Helper()
@@ -183,8 +388,14 @@ func TestConfig_LoadFromEnvVars(t *testing.T) {
 				if cfg.MultiTenantURL != "http://tenant-manager:8080" {
 					t.Errorf("MultiTenantURL = %q, want %q", cfg.MultiTenantURL, "http://tenant-manager:8080")
 				}
-				if cfg.MultiTenantEnvironment != "staging" {
-					t.Errorf("MultiTenantEnvironment = %q, want %q", cfg.MultiTenantEnvironment, "staging")
+				if cfg.MultiTenantRedisHost != "redis-host" {
+					t.Errorf("MultiTenantRedisHost = %q, want %q", cfg.MultiTenantRedisHost, "redis-host")
+				}
+				if cfg.MultiTenantRedisPort != "6380" {
+					t.Errorf("MultiTenantRedisPort = %q, want %q", cfg.MultiTenantRedisPort, "6380")
+				}
+				if cfg.MultiTenantRedisPassword != "redis-secret" {
+					t.Errorf("MultiTenantRedisPassword = %q, want %q", cfg.MultiTenantRedisPassword, "redis-secret")
 				}
 				if cfg.MultiTenantMaxTenantPools != 200 {
 					t.Errorf("MultiTenantMaxTenantPools = %d, want 200", cfg.MultiTenantMaxTenantPools)
@@ -197,6 +408,9 @@ func TestConfig_LoadFromEnvVars(t *testing.T) {
 				}
 				if cfg.MultiTenantCircuitBreakerTimeoutSec != 60 {
 					t.Errorf("MultiTenantCircuitBreakerTimeoutSec = %d, want 60", cfg.MultiTenantCircuitBreakerTimeoutSec)
+				}
+				if cfg.MultiTenantServiceAPIKey != "test-api-key-123" {
+					t.Errorf("MultiTenantServiceAPIKey = %q, want %q", cfg.MultiTenantServiceAPIKey, "test-api-key-123")
 				}
 			},
 		},
@@ -211,8 +425,8 @@ func TestConfig_LoadFromEnvVars(t *testing.T) {
 				if cfg.MultiTenantURL != "" {
 					t.Errorf("MultiTenantURL should be empty, got %q", cfg.MultiTenantURL)
 				}
-				if cfg.MultiTenantEnvironment != "" {
-					t.Errorf("MultiTenantEnvironment should be empty, got %q", cfg.MultiTenantEnvironment)
+				if cfg.MultiTenantRedisHost != "" {
+					t.Errorf("MultiTenantRedisHost should be empty, got %q", cfg.MultiTenantRedisHost)
 				}
 				if cfg.MultiTenantMaxTenantPools != 0 {
 					t.Errorf("MultiTenantMaxTenantPools should be 0, got %d", cfg.MultiTenantMaxTenantPools)
@@ -225,6 +439,9 @@ func TestConfig_LoadFromEnvVars(t *testing.T) {
 				}
 				if cfg.MultiTenantCircuitBreakerTimeoutSec != 0 {
 					t.Errorf("MultiTenantCircuitBreakerTimeoutSec should be 0, got %d", cfg.MultiTenantCircuitBreakerTimeoutSec)
+				}
+				if cfg.MultiTenantServiceAPIKey != "" {
+					t.Errorf("MultiTenantServiceAPIKey should be empty, got %q", cfg.MultiTenantServiceAPIKey)
 				}
 			},
 		},
@@ -327,13 +544,210 @@ func TestGetRedisDB(t *testing.T) {
 	}
 }
 
+func TestResolvedMaxTenantPools(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  *Config
+		want int
+	}{
+		{
+			name: "configured value",
+			cfg:  &Config{MultiTenantMaxTenantPools: 200},
+			want: 200,
+		},
+		{
+			name: "zero uses default",
+			cfg:  &Config{MultiTenantMaxTenantPools: 0},
+			want: defaultMaxTenantPools,
+		},
+		{
+			name: "negative uses default",
+			cfg:  &Config{MultiTenantMaxTenantPools: -1},
+			want: defaultMaxTenantPools,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := resolvedMaxTenantPools(tt.cfg)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestMultiTenantPublisher_ProducerDefault_RequiresTenantID(t *testing.T) {
+	publisher := &multiTenantPublisher{
+		manager: &stubRabbitMQManager{},
+		logger:  testManagerBootstrapLogger(),
+	}
+
+	err := publisher.ProducerDefault(context.Background(), "", "test-queue", []byte(`{}`), nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no tenant ID in context")
+}
+
+func TestMultiTenantPublisher_ProducerDefault_GetChannelError(t *testing.T) {
+	publisher := &multiTenantPublisher{
+		manager: &stubRabbitMQManager{err: errors.New("connection refused")},
+		logger:  testManagerBootstrapLogger(),
+	}
+
+	ctx := stubTenantContext("tenant-1")
+
+	err := publisher.ProducerDefault(ctx, "", "test-queue", []byte(`{}`), nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "get RabbitMQ channel for tenant tenant-1")
+	assert.Contains(t, err.Error(), "connection refused")
+}
+
+func TestMultiTenantPublisher_ProducerDefault_PublishesMessage(t *testing.T) {
+	ch := &stubRabbitMQChannel{}
+	publisher := &multiTenantPublisher{
+		manager: &stubRabbitMQManager{channel: ch},
+		logger:  testManagerBootstrapLogger(),
+	}
+
+	ctx := stubTenantContext("tenant-1")
+	headers := map[string]any{"X-Custom": "value"}
+
+	err := publisher.ProducerDefault(ctx, "exchange", "routing-key", []byte(`{"job":"1"}`), &headers)
+	require.NoError(t, err)
+	assert.True(t, ch.published, "expected message to be published")
+	assert.True(t, ch.closed, "expected channel to be closed")
+	assert.Equal(t, "exchange", ch.lastExchange)
+	assert.Equal(t, "routing-key", ch.lastKey)
+}
+
+func TestMultiTenantPublisher_ProducerDefault_NilHeaders(t *testing.T) {
+	ch := &stubRabbitMQChannel{}
+	publisher := &multiTenantPublisher{
+		manager: &stubRabbitMQManager{channel: ch},
+		logger:  testManagerBootstrapLogger(),
+	}
+
+	ctx := stubTenantContext("tenant-1")
+
+	err := publisher.ProducerDefault(ctx, "", "queue", []byte(`{}`), nil)
+	require.NoError(t, err)
+	assert.True(t, ch.published)
+}
+
+func TestManagerRabbitMQAdapter_GetChannel(t *testing.T) {
+	// Verify the adapter wraps the manager correctly (structural test)
+	adapter := newManagerRabbitMQAdapter(nil)
+	assert.NotNil(t, adapter)
+}
+
+func TestInitPlatformDependencies_MultiTenant_CreatesTMPublisher(t *testing.T) {
+	original := newSchemaCacheStore
+	originalTM := newTenantManagerClient
+	t.Cleanup(func() {
+		newSchemaCacheStore = original
+		newTenantManagerClient = originalTM
+	})
+
+	newSchemaCacheStore = func(redisCache.RedisConfig, libLog.Logger, time.Duration, string) (redisCache.Cache[model.DataSourceSchema], error) {
+		return stubSchemaCacheStore{}, nil
+	}
+
+	newTenantManagerClient = func(string, libLog.Logger, ...tmclient.ClientOption) (*tmclient.Client, error) {
+		return &tmclient.Client{}, nil
+	}
+
+	cfg := &Config{
+		MultiTenantEnabled:       true,
+		MultiTenantURL:           "http://tenant-manager:8080",
+		MultiTenantServiceAPIKey: "test-key",
+	}
+
+	deps, err := initPlatformDependencies(cfg, testManagerBootstrapLogger(), nil)
+	require.NoError(t, err)
+	assert.NotNil(t, deps.rabbitPublisher)
+	assert.NotNil(t, deps.rabbitMQCleanup)
+
+	// Verify it is a multiTenantPublisher
+	_, ok := deps.rabbitPublisher.(*multiTenantPublisher)
+	assert.True(t, ok, "expected rabbitPublisher to be *multiTenantPublisher in multi-tenant mode")
+}
+
+func TestInitPlatformDependencies_MultiTenant_TMClientError(t *testing.T) {
+	original := newSchemaCacheStore
+	originalTM := newTenantManagerClient
+	t.Cleanup(func() {
+		newSchemaCacheStore = original
+		newTenantManagerClient = originalTM
+	})
+
+	newSchemaCacheStore = func(redisCache.RedisConfig, libLog.Logger, time.Duration, string) (redisCache.Cache[model.DataSourceSchema], error) {
+		return stubSchemaCacheStore{}, nil
+	}
+
+	newTenantManagerClient = func(string, libLog.Logger, ...tmclient.ClientOption) (*tmclient.Client, error) {
+		return nil, errors.New("tm client init failed")
+	}
+
+	cfg := &Config{
+		MultiTenantEnabled:       true,
+		MultiTenantURL:           "http://tenant-manager:8080",
+		MultiTenantServiceAPIKey: "test-key",
+	}
+
+	deps, err := initPlatformDependencies(cfg, testManagerBootstrapLogger(), nil)
+	assert.Nil(t, deps)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "create tenant manager client for RabbitMQ")
+}
+
+// --- test stubs for multiTenantPublisher ---
+
+type stubRabbitMQManager struct {
+	channel managerRabbitMQChannel
+	err     error
+}
+
+func (s *stubRabbitMQManager) GetChannel(_ context.Context, _ string) (managerRabbitMQChannel, error) {
+	return s.channel, s.err
+}
+
+type stubRabbitMQChannel struct {
+	published    bool
+	closed       bool
+	lastExchange string
+	lastKey      string
+	publishErr   error
+}
+
+func (s *stubRabbitMQChannel) PublishWithContext(_ context.Context, exchange, key string, _, _ bool, _ amqp.Publishing) error {
+	s.published = true
+	s.lastExchange = exchange
+	s.lastKey = key
+
+	return s.publishErr
+}
+
+func (s *stubRabbitMQChannel) Close() error {
+	s.closed = true
+	return nil
+}
+
+// stubTenantContext creates a context with tenant ID set via tmcore.
+func stubTenantContext(tenantID string) context.Context {
+	return tmcore.ContextWithTenantID(context.Background(), tenantID)
+}
+
 func TestInitMultiTenantMiddleware(t *testing.T) {
-	logger := zap.InitializeLogger()
+	logger := testManagerBootstrapLogger()
+
+	originalNewTenantManagerClient := newTenantManagerClient
+	t.Cleanup(func() {
+		newTenantManagerClient = originalNewTenantManagerClient
+	})
 
 	tests := []struct {
 		name        string
 		cfg         *Config
 		wantNil     bool
+		wantErr     string
 		description string
 	}{
 		{
@@ -363,6 +777,7 @@ func TestInitMultiTenantMiddleware(t *testing.T) {
 				MultiTenantIdleTimeoutSec:           300,
 				MultiTenantCircuitBreakerThreshold:  5,
 				MultiTenantCircuitBreakerTimeoutSec: 30,
+				MultiTenantServiceAPIKey:            "test-api-key",
 			},
 			wantNil:     false,
 			description: "fully configured multi-tenant should return middleware",
@@ -374,15 +789,47 @@ func TestInitMultiTenantMiddleware(t *testing.T) {
 				MultiTenantURL:                      "http://tenant-manager:8080",
 				MultiTenantCircuitBreakerThreshold:  0,
 				MultiTenantCircuitBreakerTimeoutSec: 0,
+				MultiTenantServiceAPIKey:            "test-api-key",
 			},
 			wantNil:     false,
 			description: "zero threshold should apply default circuit breaker (5 failures, 30s timeout)",
+		},
+		{
+			name: "returns error when tenant manager client initialization fails",
+			cfg: &Config{
+				MultiTenantEnabled:       true,
+				MultiTenantURL:           "http://tenant-manager:8080",
+				MultiTenantServiceAPIKey: "test-api-key",
+			},
+			wantNil:     true,
+			wantErr:     "tenant client init failed",
+			description: "configured multi-tenant must fail fast when client creation fails",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			handler := initMultiTenantMiddleware(tt.cfg, logger)
+			newTenantManagerClient = originalNewTenantManagerClient
+			if tt.wantErr != "" {
+				newTenantManagerClient = func(string, libLog.Logger, ...tmclient.ClientOption) (*tmclient.Client, error) {
+					return nil, errors.New(tt.wantErr)
+				}
+			}
+
+			handler, cleanup, err := initMultiTenantMiddleware(tt.cfg, logger)
+			if cleanup != nil {
+				t.Cleanup(cleanup)
+			}
+
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "create tenant manager client")
+				assert.Contains(t, err.Error(), tt.wantErr)
+				assert.Nil(t, handler)
+				return
+			}
+
+			require.NoError(t, err)
 			if tt.wantNil {
 				if handler != nil {
 					t.Errorf("initMultiTenantMiddleware() = non-nil, want nil: %s", tt.description)

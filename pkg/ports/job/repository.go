@@ -13,16 +13,15 @@ import (
 
 // ListFilter controls pagination and filtering for job listings.
 type ListFilter struct {
-	OrganizationID uuid.UUID
-	Status         model.JobStatus
-	Statuses       []model.JobStatus
-	CreatedFrom    *time.Time
-	CreatedTo      *time.Time
-	CompletedFrom  *time.Time
-	CompletedTo    *time.Time
-	Limit          int
-	Page           int
-	SortOrder      constant.Order
+	Status        model.JobStatus
+	Statuses      []model.JobStatus
+	CreatedFrom   *time.Time
+	CreatedTo     *time.Time
+	CompletedFrom *time.Time
+	CompletedTo   *time.Time
+	Limit         int
+	Page          int
+	SortOrder     constant.Order
 }
 
 // Repository defines the domain port for jobs.
@@ -31,10 +30,10 @@ type ListFilter struct {
 type Repository interface {
 	Create(ctx context.Context, job *model.Job) (*model.Job, error)
 	Update(ctx context.Context, job *model.Job) (*model.Job, error)
-	UpdateStatus(ctx context.Context, id, organizationID uuid.UUID, status model.JobStatus, resultPath, resultHMAC string, metadata map[string]any) error
-	FindByID(ctx context.Context, id, organizationID uuid.UUID) (*model.Job, error)
-	FindByRequestHashWithinWindow(ctx context.Context, organizationID uuid.UUID, requestHash string, windowMinutes int) (*model.Job, error)
-	FindActiveByRequestHash(ctx context.Context, organizationID uuid.UUID, requestHash string) (*model.Job, error)
+	UpdateStatus(ctx context.Context, id uuid.UUID, status model.JobStatus, resultPath, resultHMAC string, metadata map[string]any) error
+	FindByID(ctx context.Context, id uuid.UUID) (*model.Job, error)
+	FindByRequestHashWithinWindow(ctx context.Context, requestHash string, windowMinutes int) (*model.Job, error)
+	FindActiveByRequestHash(ctx context.Context, requestHash string) (*model.Job, error)
 	List(ctx context.Context, filters *ListFilter) ([]*model.Job, error)
-	ExistsRunningByMappedFieldKey(ctx context.Context, organizationID uuid.UUID, keyPattern string) (bool, error)
+	ExistsRunningByMappedFieldKey(ctx context.Context, keyPattern string) (bool, error)
 }

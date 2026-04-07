@@ -56,6 +56,11 @@ const (
 	// CircuitBreakerCooldown is the duration the circuit breaker remains open before attempting
 	// to half-open and allow test requests through.
 	CircuitBreakerCooldown = 30 * time.Second
+
+	// chaosProductName is the product name used for chaos test connections and job requests.
+	// It must match in both CreateConnection (X-Product-Name header) and FetcherRequest
+	// (metadata.source) so that validateProductOwnership passes during job creation.
+	chaosProductName = "chaos-test"
 )
 
 // Test timeout constants define the maximum duration for various test scenarios.
@@ -176,12 +181,11 @@ type ProxiedAppEnv struct {
 }
 
 // buildProxiedAppEnv constructs environment configuration from infrastructure endpoints.
-// The infra HostPort() methods return network aliases when running in a shared Docker network,
-// enabling direct container-to-container communication through Toxiproxy.
+// ContainerHostPort preserves in-network proxy addresses for app containers while the
+// public HostPort contract remains host-usable for test code.
 func buildProxiedAppEnv() (*ProxiedAppEnv, error) {
-	// Note: For now, we use direct endpoints and the chaos tests
-	// will inject failures at the proxy level. The apps connect to
-	// infrastructure directly; chaos is injected via network manipulation.
+	// The app containers must use the in-network endpoints so traffic flows
+	// through Toxiproxy when chaos mode is enabled.
 	mongoHost, mongoPort, err := chaosInfra.MongoDB.HostPort()
 	if err != nil {
 		return nil, fmt.Errorf("mongo host/port: %w", err)
@@ -269,8 +273,10 @@ func createTestConnection(t *testing.T, ctx context.Context, prefix string) *e2e
 	// Log the address being used for debugging
 	t.Logf("PostgreSQL address for connection: %s:%d", pgHost, pgPort)
 
+	// Product name must match metadata.source in createBasicFetcherRequest
+	// so that validateProductOwnership passes during job creation.
 	uniqueName := fmt.Sprintf("chaos-%s-%s", prefix, uuid.New().String()[:8])
-	conn, err := apiClient.CreateConnection(ctx, "fetcher", e2eshared.ConnectionInput{
+	conn, err := apiClient.CreateConnection(ctx, chaosProductName, e2eshared.ConnectionInput{
 		ConfigName:   uniqueName,
 		Type:         e2eshared.DBTypePostgreSQL,
 		Host:         pgHost,
@@ -284,7 +290,7 @@ func createTestConnection(t *testing.T, ctx context.Context, prefix string) *e2e
 		// Try with explicit Docker gateway as fallback
 		gatewayIP := itestkit.HostGatewayIP()
 		t.Logf("Retrying with Docker gateway IP: %s:%d", gatewayIP, pgPort)
-		conn, err = apiClient.CreateConnection(ctx, "fetcher", e2eshared.ConnectionInput{
+		conn, err = apiClient.CreateConnection(ctx, chaosProductName, e2eshared.ConnectionInput{
 			ConfigName:   uniqueName,
 			Type:         e2eshared.DBTypePostgreSQL,
 			Host:         gatewayIP,
@@ -315,7 +321,7 @@ func createBasicFetcherRequest(configName string) model.FetcherRequest {
 			},
 		},
 		Metadata: map[string]any{
-			"source": "chaos-test",
+			"source": chaosProductName,
 			"test":   "chaos-validation",
 		},
 	}

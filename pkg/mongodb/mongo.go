@@ -9,8 +9,9 @@ import (
 
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
-	"github.com/LerianStudio/lib-commons/v3/commons"
-	tmcore "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/core"
+	"github.com/LerianStudio/lib-commons/v4/commons"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	tmcore "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/core"
 	"go.mongodb.org/mongo-driver/bson/bsoncodec"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/readpref"
@@ -47,42 +48,42 @@ func MapMongoErrorToResponse(err error, ctx context.Context) error {
 	// Client-side cancellation / deadlines (HTTP layer)
 	// If the client closed the connection, you often can't write a response anyway.
 	if errors.Is(err, context.Canceled) {
-		logger.Errorf("MongoDB request canceled by client: %v", err)
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("MongoDB request canceled by client: %v", err))
 		return pkg.ValidateInternalError(constant.ErrServiceUnavailable, "")
 	}
 
 	// Timeouts (driver/helpers)
 	if errors.Is(err, context.DeadlineExceeded) || mongo.IsTimeout(err) {
-		logger.Errorf("MongoDB timeout error: %v", err)
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("MongoDB timeout error: %v", err))
 		return pkg.ValidateInternalError(constant.ErrServiceUnavailable, "")
 	}
 
 	// Server selection / network
 	if errors.Is(err, topology.ErrServerSelectionTimeout) {
-		logger.Errorf("MongoDB server selection timeout: %v", err)
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("MongoDB server selection timeout: %v", err))
 		return pkg.ValidateInternalError(constant.ErrServiceUnavailable, "")
 	}
 
 	var sse topology.ServerSelectionError
 	if errors.As(err, &sse) {
-		logger.Errorf("MongoDB server selection error: %v", err)
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("MongoDB server selection error: %v", err))
 		return pkg.ValidateInternalError(constant.ErrServiceUnavailable, "")
 	}
 
 	if mongo.IsNetworkError(err) {
-		logger.Errorf("MongoDB network error: %v", err)
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("MongoDB network error: %v", err))
 		return pkg.ValidateInternalError(constant.ErrServiceUnavailable, "")
 	}
 
 	// Common query/result semantics
 	if errors.Is(err, mongo.ErrNoDocuments) {
-		logger.Debugf("MongoDB document not found: %v", err)
+		logger.Log(ctx, libLog.LevelDebug, fmt.Sprintf("MongoDB document not found: %v", err))
 		return pkg.ValidateInternalError(constant.ErrNotFound, "")
 	}
 
 	// Duplicate key -> 409
 	if mongo.IsDuplicateKeyError(err) {
-		logger.Errorf("MongoDB duplicate key error: %v", err)
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("MongoDB duplicate key error: %v", err))
 		return pkg.ValidateInternalError(constant.ErrConflict, "")
 	}
 
@@ -91,19 +92,19 @@ func MapMongoErrorToResponse(err error, ctx context.Context) error {
 	if errors.As(err, &cmdErr) {
 		switch cmdErr.Code {
 		case 13, 18: // Unauthorized / AuthenticationFailed
-			logger.Errorf("MongoDB unauthorized error: %v", err)
+			logger.Log(ctx, libLog.LevelError, fmt.Sprintf("MongoDB unauthorized error: %v", err))
 			return pkg.ValidateInternalError(constant.ErrInternalServer, "")
 		case 50: // ExceededTimeLimit
-			logger.Errorf("MongoDB exceeded time limit error: %v", err)
+			logger.Log(ctx, libLog.LevelError, fmt.Sprintf("MongoDB exceeded time limit error: %v", err))
 			return pkg.ValidateInternalError(constant.ErrServiceUnavailable, "")
 		case 6, 7, 89, 91: // HostUnreachable/HostNotFound/Shutdown
-			logger.Errorf("MongoDB service unavailable error: %v", err)
+			logger.Log(ctx, libLog.LevelError, fmt.Sprintf("MongoDB service unavailable error: %v", err))
 			return pkg.ValidateInternalError(constant.ErrServiceUnavailable, "")
 		case 9: // FailedToParse
-			logger.Errorf("MongoDB bad request error: %v", err)
+			logger.Log(ctx, libLog.LevelError, fmt.Sprintf("MongoDB bad request error: %v", err))
 			return pkg.ValidateInternalError(constant.ErrInternalServer, "")
 		case 26: // NamespaceNotFound
-			logger.Debugf("MongoDB namespace not found error: %v", err)
+			logger.Log(ctx, libLog.LevelDebug, fmt.Sprintf("MongoDB namespace not found error: %v", err))
 			return pkg.ValidateInternalError(constant.ErrInternalServer, "")
 		}
 	}
@@ -113,12 +114,12 @@ func MapMongoErrorToResponse(err error, ctx context.Context) error {
 	if errors.As(err, &we) {
 		for _, e := range we.WriteErrors {
 			if e.Code == 11000 || e.Code == 11001 {
-				logger.Errorf("MongoDB duplicate key error in write exception: %v", err)
+				logger.Log(ctx, libLog.LevelError, fmt.Sprintf("MongoDB duplicate key error in write exception: %v", err))
 				return pkg.ValidateInternalError(constant.ErrConflict, "")
 			}
 		}
 
-		logger.Errorf("MongoDB write exception error: %v", err)
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("MongoDB write exception error: %v", err))
 
 		return pkg.ValidateInternalError(constant.ErrInternalServer, "")
 	}
@@ -126,27 +127,27 @@ func MapMongoErrorToResponse(err error, ctx context.Context) error {
 	// Decode / BSON issues
 	var decodeErr bsoncodec.ValueDecoderError
 	if errors.As(err, &decodeErr) {
-		logger.Errorf("MongoDB decode error: %v", err)
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("MongoDB decode error: %v", err))
 		return pkg.ValidateInternalError(constant.ErrInternalServer, "")
 	}
 
 	// Multi-tenant sentinel errors
 	if errors.Is(err, tmcore.ErrTenantContextRequired) {
-		logger.Errorf("MongoDB tenant context required: %v", err)
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("MongoDB tenant context required: %v", err))
 		return pkg.ValidateBusinessError(constant.ErrTenantContextRequired, "tenant")
 	}
 
 	if errors.Is(err, tmcore.ErrTenantNotFound) {
-		logger.Errorf("MongoDB tenant not found: %v", err)
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("MongoDB tenant not found: %v", err))
 		return pkg.ValidateBusinessError(constant.ErrTenantNotFound, "tenant")
 	}
 
 	if errors.Is(err, tmcore.ErrCircuitBreakerOpen) {
-		logger.Errorf("MongoDB tenant circuit breaker open: %v", err)
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("MongoDB tenant circuit breaker open: %v", err))
 		return pkg.ValidateBusinessError(constant.ErrTenantCircuitBreaker, "tenant")
 	}
 
-	logger.Errorf("MongoDB unknown error: %v", err)
+	logger.Log(ctx, libLog.LevelError, fmt.Sprintf("MongoDB unknown error: %v", err))
 
 	return pkg.ValidateInternalError(constant.ErrInternalServer, "")
 }
@@ -156,7 +157,7 @@ func MapMongoErrorToResponse(err error, ctx context.Context) error {
 // MongoClientProvider is an interface for obtaining a MongoDB client.
 // This allows for easy testing and dependency injection.
 type MongoClientProvider interface {
-	GetDB(ctx context.Context) (*mongo.Client, error)
+	Client(ctx context.Context) (*mongo.Client, error)
 }
 
 // PingMongo performs a health check ping on the MongoDB connection.
@@ -171,7 +172,7 @@ func PingMongo(ctx context.Context, provider MongoClientProvider, timeout time.D
 		timeout = DefaultPingTimeout
 	}
 
-	client, err := provider.GetDB(ctx)
+	client, err := provider.Client(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get database connection: %w", err)
 	}

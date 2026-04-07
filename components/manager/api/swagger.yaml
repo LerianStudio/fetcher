@@ -209,8 +209,6 @@ definitions:
       metadata:
         additionalProperties: {}
         type: object
-      organizationId:
-        type: string
       requestHash:
         type: string
       resultHmac:
@@ -432,11 +430,6 @@ paths:
         in: header
         name: Authorization
         type: string
-      - description: Organization ID
-        in: header
-        name: X-Organization-Id
-        required: true
-        type: string
       - description: Fetcher request payload. metadata.source is required.
         in: body
         name: request
@@ -483,11 +476,6 @@ paths:
         in: header
         name: Authorization
         type: string
-      - description: Organization ID
-        in: header
-        name: X-Organization-Id
-        required: true
-        type: string
       - description: Job ID
         in: path
         name: id
@@ -524,11 +512,6 @@ paths:
           Only required when auth plugin is enabled.
         in: header
         name: Authorization
-        type: string
-      - description: Organization ID
-        in: header
-        name: X-Organization-Id
-        required: true
         type: string
       - description: Product name. When provided, filters connections by product.
         in: header
@@ -626,11 +609,6 @@ paths:
         in: header
         name: Authorization
         type: string
-      - description: Organization ID
-        in: header
-        name: X-Organization-Id
-        required: true
-        type: string
       - description: Product name (required, non-empty)
         in: header
         name: X-Product-Name
@@ -676,11 +654,6 @@ paths:
         in: header
         name: Authorization
         type: string
-      - description: Organization ID
-        in: header
-        name: X-Organization-Id
-        required: true
-        type: string
       - description: Connection ID
         in: path
         name: id
@@ -717,11 +690,6 @@ paths:
           Only required when auth plugin is enabled.
         in: header
         name: Authorization
-        type: string
-      - description: Organization ID
-        in: header
-        name: X-Organization-Id
-        required: true
         type: string
       - description: Connection ID
         in: path
@@ -760,11 +728,6 @@ paths:
           Only required when auth plugin is enabled.
         in: header
         name: Authorization
-        type: string
-      - description: Organization ID
-        in: header
-        name: X-Organization-Id
-        required: true
         type: string
       - description: Connection ID
         in: path
@@ -814,11 +777,6 @@ paths:
         in: header
         name: Authorization
         type: string
-      - description: Organization ID
-        in: header
-        name: X-Organization-Id
-        required: true
-        type: string
       - description: Connection ID
         in: path
         name: id
@@ -864,11 +822,6 @@ paths:
         in: header
         name: Authorization
         type: string
-      - description: Organization ID
-        in: header
-        name: X-Organization-Id
-        required: true
-        type: string
       - description: Connection ID
         in: path
         name: id
@@ -904,11 +857,6 @@ paths:
           Only required when auth plugin is enabled.
         in: header
         name: Authorization
-        type: string
-      - description: Organization ID
-        in: header
-        name: X-Organization-Id
-        required: true
         type: string
       - description: Connection ID
         in: path
@@ -951,11 +899,6 @@ paths:
           Only required when auth plugin is enabled.
         in: header
         name: Authorization
-        type: string
-      - description: Organization ID
-        in: header
-        name: X-Organization-Id
-        required: true
         type: string
       - default: 1
         description: Page number (minimum 1)
@@ -1018,11 +961,6 @@ paths:
           Only required when auth plugin is enabled.
         in: header
         name: Authorization
-        type: string
-      - description: Organization ID
-        in: header
-        name: X-Organization-Id
-        required: true
         type: string
       - description: Schema validation request
         in: body

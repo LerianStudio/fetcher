@@ -39,7 +39,7 @@ func WithMySQLInitScript(hostPath, containerFileName string) MySQLOption {
 				testcontainers.ContainerFile{
 					HostFilePath:      hostPath,
 					ContainerFilePath: "/docker-entrypoint-initdb.d/" + containerFileName,
-					FileMode:          0755,
+					FileMode:          0o755,
 				},
 			),
 		)

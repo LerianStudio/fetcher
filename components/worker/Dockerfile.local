@@ -1,0 +1,21 @@
+FROM alpine:3.23
+
+WORKDIR /app
+
+RUN apk add --no-cache ca-certificates tzdata && \
+  update-ca-certificates
+
+RUN addgroup -g 1001 -S appgroup && \
+  adduser -u 1001 -S -h /app appuser -G appgroup
+
+ENV HOME=/app
+
+COPY artifacts/docker/worker/worker /app/worker
+
+RUN chown -R appuser:appgroup /app
+
+USER appuser
+
+EXPOSE 4019
+
+ENTRYPOINT ["/app/worker"]

@@ -28,9 +28,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// s3ResultPath is the expected prefix for result paths when using the S3 storage provider.
-// The Worker stores objects under /{bucket}/{jobID}.json, where bucket = constant.ExternalDataBucketName.
-var s3ResultPathPrefix = "/" + constant.ExternalDataBucketName + "/"
+// s3ResultPathPrefix is the expected prefix for result paths when using the S3 storage provider.
+// The Worker stores objects under external-data/{jobID}.json (the key prefix within the bucket).
+var s3ResultPathPrefix = constant.ExternalDataKeyPrefix + "/"
 
 // skipIfS3NotEnabled skips the test when E2E_ENABLE_S3 is not set (coreInfra.Minio is nil).
 func skipIfS3NotEnabled(t *testing.T) {
@@ -39,13 +39,6 @@ func skipIfS3NotEnabled(t *testing.T) {
 	if coreInfra.Minio == nil {
 		t.Skip("S3 storage tests skipped: set E2E_ENABLE_S3=true to enable")
 	}
-}
-
-// s3ObjectKeyFromResultPath extracts the S3 object key from the result path returned by the API.
-// The result path format is "/{bucket}/{jobID}.json"; the key is the part after the bucket prefix.
-// Example: "/external-data/550e8400-xxxx.json" → "550e8400-xxxx.json"
-func s3ObjectKeyFromResultPath(resultPath string) string {
-	return strings.TrimPrefix(resultPath, s3ResultPathPrefix)
 }
 
 // TestS3Storage_JobCompletesSuccessfully validates the full extraction workflow when the
@@ -160,7 +153,7 @@ func TestS3Storage_ObjectExistsInBucket(t *testing.T) {
 	require.Equal(t, "completed", jobResult.Status, "job must complete before S3 verification")
 	require.NotEmpty(t, jobResult.ResultPath, "result path must be set to locate the S3 object")
 
-	objectKey := s3ObjectKeyFromResultPath(jobResult.ResultPath)
+	objectKey := jobResult.ResultPath
 	t.Logf("Verifying S3 object exists: bucket=%s key=%s", coreInfra.Minio.Bucket(), objectKey)
 
 	err = coreInfra.Minio.HeadObject(ctx, objectKey)
@@ -216,7 +209,7 @@ func TestS3Storage_ObjectHasContent(t *testing.T) {
 	require.Equal(t, "completed", jobResult.Status)
 	require.NotEmpty(t, jobResult.ResultPath)
 
-	objectKey := s3ObjectKeyFromResultPath(jobResult.ResultPath)
+	objectKey := jobResult.ResultPath
 
 	data, err := coreInfra.Minio.GetObject(ctx, objectKey)
 	require.NoError(t, err, "should be able to download object %q from S3", objectKey)
@@ -230,8 +223,9 @@ func TestS3Storage_ObjectHasContent(t *testing.T) {
 // TestS3Storage_ObjectKeyMatchesResultPath confirms the relationship between the
 // result_path returned by the API and the actual S3 object key.
 //
-// The Worker stores the object at key="{jobID}.json" (no key prefix in the test env)
-// and records result_path="/{bucket}/{jobID}.json" in MongoDB. The test verifies both:
+// The Worker stores the object at key="external-data/{jobID}.json" and records
+// result_path="external-data/{jobID}.json" (S3 key, no bucket prefix) in MongoDB.
+// The test verifies both:
 //  1. The result_path format conforms to the expected pattern
 //  2. The derived key corresponds to an existing S3 object
 func TestS3Storage_ObjectKeyMatchesResultPath(t *testing.T) {
@@ -281,16 +275,13 @@ func TestS3Storage_ObjectKeyMatchesResultPath(t *testing.T) {
 	jobResult := e2eshared.AssertJobCompleted(t, apiClient, jobID, e2eshared.DefaultJobTimeout)
 	require.Equal(t, "completed", jobResult.Status)
 
-	// Verify result_path format: "/{bucket}/{jobID}.json"
-	expectedResultPath := fmt.Sprintf("/%s/%s.json", constant.ExternalDataBucketName, jobID)
+	// Verify result_path format: "external-data/{jobID}.json" (S3 key, no bucket prefix)
+	expectedResultPath := fmt.Sprintf("%s/%s.json", constant.ExternalDataKeyPrefix, jobID)
 	assert.Equal(t, expectedResultPath, jobResult.ResultPath,
-		"result_path should be /%s/{jobID}.json", constant.ExternalDataBucketName)
+		"result_path should be %s/{jobID}.json", constant.ExternalDataKeyPrefix)
 
-	// Derive object key and confirm it exists in S3
-	expectedKey := fmt.Sprintf("%s.json", jobID)
-	objectKey := s3ObjectKeyFromResultPath(jobResult.ResultPath)
-	assert.Equal(t, expectedKey, objectKey,
-		"object key derived from result_path should be {jobID}.json")
+	// The result_path IS the S3 object key (no transformation needed)
+	objectKey := jobResult.ResultPath
 
 	err = coreInfra.Minio.HeadObject(ctx, objectKey)
 	assert.NoError(t, err, "object %q should exist in S3 bucket", objectKey)
@@ -362,7 +353,7 @@ func TestS3Storage_MultipleJobsStoredSeparately(t *testing.T) {
 		require.NotEmpty(t, jobResult.ResultPath, "job %d should have result path", i)
 
 		entries[i].resultPath = jobResult.ResultPath
-		entries[i].objectKey = s3ObjectKeyFromResultPath(jobResult.ResultPath)
+		entries[i].objectKey = jobResult.ResultPath
 	}
 
 	// Assert all keys are distinct and all objects exist in S3

@@ -82,13 +82,18 @@ func NewToxiproxyChaos(ctx context.Context, cfg ChaosConfig, networkName string)
 
 	api := fmt.Sprintf("http://%s:%s", host, port.Port())
 
+	networkAlias := ""
+	if networkName != "" {
+		networkAlias = toxiproxyAlias
+	}
+
 	tc := &toxiproxyChaos{
 		container:     c,
 		client:        toxiclient.NewClient(api),
 		proxies:       make(map[string]*toxiclient.Proxy),
 		proxyMappings: make(map[string]string),
 		hostIP:        host,
-		networkAlias:  toxiproxyAlias,
+		networkAlias:  networkAlias,
 	}
 	tc.nextPort.Store(proxyPortRangeStart)
 
@@ -110,27 +115,29 @@ func (t *toxiproxyChaos) CreateProxy(ctx context.Context, name string, upstream 
 		return ProxyRef{}, err
 	}
 
-	t.proxies[name] = p
-
-	// If we have a network alias, use internal address for container-to-container communication
-	if t.networkAlias != "" {
-		internalAddr := fmt.Sprintf("%s:%d", t.networkAlias, internalPort)
-		t.proxyMappings[name] = internalAddr
-
-		return ProxyRef{Name: name, ListenAddr: internalAddr, Upstream: upstream}, nil
-	}
-
-	// Fallback: Get the mapped port on the host for this internal port
+	// Always resolve the mapped host port for public helpers.
 	mappedPort, err := t.container.MappedPort(ctx, nat.Port(fmt.Sprintf("%d/tcp", internalPort)))
 	if err != nil {
+		_ = p.Delete()
 		return ProxyRef{}, fmt.Errorf("get mapped port for proxy %s: %w", name, err)
 	}
 
-	// Store the mapping and return the host-accessible address
+	t.proxies[name] = p
+
 	hostAddr := fmt.Sprintf("%s:%s", t.hostIP, mappedPort.Port())
 	t.proxyMappings[name] = hostAddr
 
-	return ProxyRef{Name: name, ListenAddr: hostAddr, Upstream: upstream}, nil
+	internalAddr := ""
+	if t.networkAlias != "" {
+		internalAddr = fmt.Sprintf("%s:%d", t.networkAlias, internalPort)
+	}
+
+	return ProxyRef{
+		Name:                name,
+		ListenAddr:          hostAddr,
+		InNetworkListenAddr: internalAddr,
+		Upstream:            upstream,
+	}, nil
 }
 
 func (t *toxiproxyChaos) AddLatency(ctx context.Context, proxyName string, latency, jitter time.Duration) error {

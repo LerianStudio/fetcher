@@ -21,12 +21,6 @@ paths:
         name: Authorization
         schema:
           type: string
-      - description: Organization ID
-        in: header
-        name: X-Organization-Id
-        required: true
-        schema:
-          type: string
       requestBody:
         content:
           application/json:
@@ -86,12 +80,6 @@ paths:
         name: Authorization
         schema:
           type: string
-      - description: Organization ID
-        in: header
-        name: X-Organization-Id
-        required: true
-        schema:
-          type: string
       - description: Job ID
         in: path
         name: id
@@ -135,12 +123,6 @@ paths:
           Only required when auth plugin is enabled.
         in: header
         name: Authorization
-        schema:
-          type: string
-      - description: Organization ID
-        in: header
-        name: X-Organization-Id
-        required: true
         schema:
           type: string
       - description: Product name. When provided, filters connections by product.
@@ -240,12 +222,6 @@ paths:
         name: Authorization
         schema:
           type: string
-      - description: Organization ID
-        in: header
-        name: X-Organization-Id
-        required: true
-        schema:
-          type: string
       - description: Product name (required, non-empty)
         in: header
         name: X-Product-Name
@@ -299,12 +275,6 @@ paths:
           Only required when auth plugin is enabled.
         in: header
         name: Authorization
-        schema:
-          type: string
-      - description: Organization ID
-        in: header
-        name: X-Organization-Id
-        required: true
         schema:
           type: string
       - description: Page number (minimum 1)
@@ -362,12 +332,6 @@ paths:
         name: Authorization
         schema:
           type: string
-      - description: Organization ID
-        in: header
-        name: X-Organization-Id
-        required: true
-        schema:
-          type: string
       requestBody:
         content:
           application/json:
@@ -416,12 +380,6 @@ paths:
         name: Authorization
         schema:
           type: string
-      - description: Organization ID
-        in: header
-        name: X-Organization-Id
-        required: true
-        schema:
-          type: string
       - description: Connection ID
         in: path
         name: id
@@ -468,12 +426,6 @@ paths:
         name: Authorization
         schema:
           type: string
-      - description: Organization ID
-        in: header
-        name: X-Organization-Id
-        required: true
-        schema:
-          type: string
       - description: Connection ID
         in: path
         name: id
@@ -516,12 +468,6 @@ paths:
           Only required when auth plugin is enabled.
         in: header
         name: Authorization
-        schema:
-          type: string
-      - description: Organization ID
-        in: header
-        name: X-Organization-Id
-        required: true
         schema:
           type: string
       - description: Connection ID
@@ -584,12 +530,6 @@ paths:
         name: Authorization
         schema:
           type: string
-      - description: Organization ID
-        in: header
-        name: X-Organization-Id
-        required: true
-        schema:
-          type: string
       - description: Connection ID
         in: path
         name: id
@@ -646,12 +586,6 @@ paths:
         name: Authorization
         schema:
           type: string
-      - description: Organization ID
-        in: header
-        name: X-Organization-Id
-        required: true
-        schema:
-          type: string
       - description: Connection ID
         in: path
         name: id
@@ -694,12 +628,6 @@ paths:
           Only required when auth plugin is enabled.
         in: header
         name: Authorization
-        schema:
-          type: string
-      - description: Organization ID
-        in: header
-        name: X-Organization-Id
-        required: true
         schema:
           type: string
       - description: Connection ID
@@ -986,7 +914,6 @@ components:
       description: JobResponse represents the complete information about a data extraction
         job.
       example:
-        organizationId: organizationId
         resultHmac: resultHmac
         createdAt: createdAt
         mappedFields:
@@ -1062,8 +989,6 @@ components:
           additionalProperties:
             type: object
           type: object
-        organizationId:
-          type: string
         requestHash:
           type: string
         resultHmac:

@@ -14,6 +14,7 @@ import (
 	reflect "reflect"
 
 	model "github.com/LerianStudio/fetcher/pkg/model"
+	job "github.com/LerianStudio/fetcher/pkg/ports/job"
 	uuid "github.com/google/uuid"
 	gomock "go.uber.org/mock/gomock"
 )
@@ -43,82 +44,82 @@ func (m *MockRepository) EXPECT() *MockRepositoryMockRecorder {
 }
 
 // Create mocks base method.
-func (m *MockRepository) Create(ctx context.Context, job *model.Job) (*model.Job, error) {
+func (m *MockRepository) Create(ctx context.Context, arg1 *model.Job) (*model.Job, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Create", ctx, job)
+	ret := m.ctrl.Call(m, "Create", ctx, arg1)
 	ret0, _ := ret[0].(*model.Job)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // Create indicates an expected call of Create.
-func (mr *MockRepositoryMockRecorder) Create(ctx, job any) *gomock.Call {
+func (mr *MockRepositoryMockRecorder) Create(ctx, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Create", reflect.TypeOf((*MockRepository)(nil).Create), ctx, job)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Create", reflect.TypeOf((*MockRepository)(nil).Create), ctx, arg1)
 }
 
 // ExistsRunningByMappedFieldKey mocks base method.
-func (m *MockRepository) ExistsRunningByMappedFieldKey(ctx context.Context, organizationID uuid.UUID, keyPattern string) (bool, error) {
+func (m *MockRepository) ExistsRunningByMappedFieldKey(ctx context.Context, keyPattern string) (bool, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ExistsRunningByMappedFieldKey", ctx, organizationID, keyPattern)
+	ret := m.ctrl.Call(m, "ExistsRunningByMappedFieldKey", ctx, keyPattern)
 	ret0, _ := ret[0].(bool)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // ExistsRunningByMappedFieldKey indicates an expected call of ExistsRunningByMappedFieldKey.
-func (mr *MockRepositoryMockRecorder) ExistsRunningByMappedFieldKey(ctx, organizationID, keyPattern any) *gomock.Call {
+func (mr *MockRepositoryMockRecorder) ExistsRunningByMappedFieldKey(ctx, keyPattern any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExistsRunningByMappedFieldKey", reflect.TypeOf((*MockRepository)(nil).ExistsRunningByMappedFieldKey), ctx, organizationID, keyPattern)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExistsRunningByMappedFieldKey", reflect.TypeOf((*MockRepository)(nil).ExistsRunningByMappedFieldKey), ctx, keyPattern)
 }
 
 // FindActiveByRequestHash mocks base method.
-func (m *MockRepository) FindActiveByRequestHash(ctx context.Context, organizationID uuid.UUID, requestHash string) (*model.Job, error) {
+func (m *MockRepository) FindActiveByRequestHash(ctx context.Context, requestHash string) (*model.Job, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "FindActiveByRequestHash", ctx, organizationID, requestHash)
+	ret := m.ctrl.Call(m, "FindActiveByRequestHash", ctx, requestHash)
 	ret0, _ := ret[0].(*model.Job)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // FindActiveByRequestHash indicates an expected call of FindActiveByRequestHash.
-func (mr *MockRepositoryMockRecorder) FindActiveByRequestHash(ctx, organizationID, requestHash any) *gomock.Call {
+func (mr *MockRepositoryMockRecorder) FindActiveByRequestHash(ctx, requestHash any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FindActiveByRequestHash", reflect.TypeOf((*MockRepository)(nil).FindActiveByRequestHash), ctx, organizationID, requestHash)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FindActiveByRequestHash", reflect.TypeOf((*MockRepository)(nil).FindActiveByRequestHash), ctx, requestHash)
 }
 
 // FindByID mocks base method.
-func (m *MockRepository) FindByID(ctx context.Context, id, organizationID uuid.UUID) (*model.Job, error) {
+func (m *MockRepository) FindByID(ctx context.Context, id uuid.UUID) (*model.Job, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "FindByID", ctx, id, organizationID)
+	ret := m.ctrl.Call(m, "FindByID", ctx, id)
 	ret0, _ := ret[0].(*model.Job)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // FindByID indicates an expected call of FindByID.
-func (mr *MockRepositoryMockRecorder) FindByID(ctx, id, organizationID any) *gomock.Call {
+func (mr *MockRepositoryMockRecorder) FindByID(ctx, id any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FindByID", reflect.TypeOf((*MockRepository)(nil).FindByID), ctx, id, organizationID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FindByID", reflect.TypeOf((*MockRepository)(nil).FindByID), ctx, id)
 }
 
 // FindByRequestHashWithinWindow mocks base method.
-func (m *MockRepository) FindByRequestHashWithinWindow(ctx context.Context, organizationID uuid.UUID, requestHash string, windowMinutes int) (*model.Job, error) {
+func (m *MockRepository) FindByRequestHashWithinWindow(ctx context.Context, requestHash string, windowMinutes int) (*model.Job, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "FindByRequestHashWithinWindow", ctx, organizationID, requestHash, windowMinutes)
+	ret := m.ctrl.Call(m, "FindByRequestHashWithinWindow", ctx, requestHash, windowMinutes)
 	ret0, _ := ret[0].(*model.Job)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // FindByRequestHashWithinWindow indicates an expected call of FindByRequestHashWithinWindow.
-func (mr *MockRepositoryMockRecorder) FindByRequestHashWithinWindow(ctx, organizationID, requestHash, windowMinutes any) *gomock.Call {
+func (mr *MockRepositoryMockRecorder) FindByRequestHashWithinWindow(ctx, requestHash, windowMinutes any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FindByRequestHashWithinWindow", reflect.TypeOf((*MockRepository)(nil).FindByRequestHashWithinWindow), ctx, organizationID, requestHash, windowMinutes)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FindByRequestHashWithinWindow", reflect.TypeOf((*MockRepository)(nil).FindByRequestHashWithinWindow), ctx, requestHash, windowMinutes)
 }
 
 // List mocks base method.
-func (m *MockRepository) List(ctx context.Context, filters *ListFilter) ([]*model.Job, error) {
+func (m *MockRepository) List(ctx context.Context, filters *job.ListFilter) ([]*model.Job, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "List", ctx, filters)
 	ret0, _ := ret[0].([]*model.Job)
@@ -133,30 +134,30 @@ func (mr *MockRepositoryMockRecorder) List(ctx, filters any) *gomock.Call {
 }
 
 // Update mocks base method.
-func (m *MockRepository) Update(ctx context.Context, job *model.Job) (*model.Job, error) {
+func (m *MockRepository) Update(ctx context.Context, arg1 *model.Job) (*model.Job, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Update", ctx, job)
+	ret := m.ctrl.Call(m, "Update", ctx, arg1)
 	ret0, _ := ret[0].(*model.Job)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // Update indicates an expected call of Update.
-func (mr *MockRepositoryMockRecorder) Update(ctx, job any) *gomock.Call {
+func (mr *MockRepositoryMockRecorder) Update(ctx, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Update", reflect.TypeOf((*MockRepository)(nil).Update), ctx, job)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Update", reflect.TypeOf((*MockRepository)(nil).Update), ctx, arg1)
 }
 
 // UpdateStatus mocks base method.
-func (m *MockRepository) UpdateStatus(ctx context.Context, id, organizationID uuid.UUID, status model.JobStatus, resultPath, resultHMAC string, metadata map[string]any) error {
+func (m *MockRepository) UpdateStatus(ctx context.Context, id uuid.UUID, status model.JobStatus, resultPath, resultHMAC string, metadata map[string]any) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpdateStatus", ctx, id, organizationID, status, resultPath, resultHMAC, metadata)
+	ret := m.ctrl.Call(m, "UpdateStatus", ctx, id, status, resultPath, resultHMAC, metadata)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // UpdateStatus indicates an expected call of UpdateStatus.
-func (mr *MockRepositoryMockRecorder) UpdateStatus(ctx, id, organizationID, status, resultPath, resultHMAC, metadata any) *gomock.Call {
+func (mr *MockRepositoryMockRecorder) UpdateStatus(ctx, id, status, resultPath, resultHMAC, metadata any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateStatus", reflect.TypeOf((*MockRepository)(nil).UpdateStatus), ctx, id, organizationID, status, resultPath, resultHMAC, metadata)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateStatus", reflect.TypeOf((*MockRepository)(nil).UpdateStatus), ctx, id, status, resultPath, resultHMAC, metadata)
 }

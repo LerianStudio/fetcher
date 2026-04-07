@@ -19,10 +19,9 @@ import (
 )
 
 // newSchemaConnectionFixture creates a valid Connection for testing GetConnectionSchema service.
-func newSchemaConnectionFixture(orgID, connID uuid.UUID, dbType model.DBType) *model.Connection {
+func newSchemaConnectionFixture(connID uuid.UUID, dbType model.DBType) *model.Connection {
 	return &model.Connection{
 		ID:                   connID,
-		OrganizationID:       orgID,
 		ConfigName:           "test-connection",
 		Type:                 dbType,
 		Host:                 "localhost",
@@ -50,16 +49,15 @@ func TestGetConnectionSchema_Execute_Success(t *testing.T) {
 		return mockDataSource, nil
 	}
 
-	svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory)
+	svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory, nil, nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
-	existingConn := newSchemaConnectionFixture(orgID, connID, model.TypePostgreSQL)
+	existingConn := newSchemaConnectionFixture(connID, model.TypePostgreSQL)
 
 	// Mock: connection found
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, orgID).
+		FindByID(gomock.Any(), connID).
 		Return(existingConn, nil)
 
 	// Mock: schema info returned with user tables and system tables
@@ -76,7 +74,7 @@ func TestGetConnectionSchema_Execute_Success(t *testing.T) {
 		Close(gomock.Any()).
 		Return(nil)
 
-	result, err := svc.Execute(ctx, orgID, connID)
+	result, err := svc.Execute(ctx, connID)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
@@ -110,18 +108,17 @@ func TestGetConnectionSchema_Execute_NotFound(t *testing.T) {
 		return nil, nil
 	}
 
-	svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory)
+	svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory, nil, nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
 
 	// Mock: connection not found
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, orgID).
+		FindByID(gomock.Any(), connID).
 		Return(nil, nil)
 
-	result, err := svc.Execute(ctx, orgID, connID)
+	result, err := svc.Execute(ctx, connID)
 
 	assert.Nil(t, result)
 	assert.Error(t, err)
@@ -145,20 +142,19 @@ func TestGetConnectionSchema_Execute_RepositoryError(t *testing.T) {
 		return nil, nil
 	}
 
-	svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory)
+	svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory, nil, nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
 
 	dbError := errors.New("database connection failed")
 
 	// Mock: repository error
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, orgID).
+		FindByID(gomock.Any(), connID).
 		Return(nil, dbError)
 
-	result, err := svc.Execute(ctx, orgID, connID)
+	result, err := svc.Execute(ctx, connID)
 
 	assert.Nil(t, result)
 	assert.Error(t, err)
@@ -178,19 +174,18 @@ func TestGetConnectionSchema_Execute_DataSourceFactoryError(t *testing.T) {
 		return nil, factoryError
 	}
 
-	svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory)
+	svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory, nil, nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
-	existingConn := newSchemaConnectionFixture(orgID, connID, model.TypePostgreSQL)
+	existingConn := newSchemaConnectionFixture(connID, model.TypePostgreSQL)
 
 	// Mock: connection found
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, orgID).
+		FindByID(gomock.Any(), connID).
 		Return(existingConn, nil)
 
-	result, err := svc.Execute(ctx, orgID, connID)
+	result, err := svc.Execute(ctx, connID)
 
 	assert.Nil(t, result)
 	assert.Error(t, err)
@@ -214,16 +209,15 @@ func TestGetConnectionSchema_Execute_GetSchemaInfoError(t *testing.T) {
 		return mockDataSource, nil
 	}
 
-	svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory)
+	svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory, nil, nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
-	existingConn := newSchemaConnectionFixture(orgID, connID, model.TypePostgreSQL)
+	existingConn := newSchemaConnectionFixture(connID, model.TypePostgreSQL)
 
 	// Mock: connection found
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, orgID).
+		FindByID(gomock.Any(), connID).
 		Return(existingConn, nil)
 
 	schemaError := errors.New("failed to get schema info")
@@ -235,7 +229,7 @@ func TestGetConnectionSchema_Execute_GetSchemaInfoError(t *testing.T) {
 		Close(gomock.Any()).
 		Return(nil)
 
-	result, err := svc.Execute(ctx, orgID, connID)
+	result, err := svc.Execute(ctx, connID)
 
 	assert.Nil(t, result)
 	assert.Error(t, err)
@@ -333,15 +327,14 @@ func TestGetConnectionSchema_Execute_FiltersSystemTables(t *testing.T) {
 				return mockDataSource, nil
 			}
 
-			svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory)
+			svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory, nil, nil)
 
 			ctx := testContext()
-			orgID := uuid.New()
 			connID := uuid.New()
-			existingConn := newSchemaConnectionFixture(orgID, connID, tt.dbType)
+			existingConn := newSchemaConnectionFixture(connID, tt.dbType)
 
 			mockConnRepo.EXPECT().
-				FindByID(gomock.Any(), connID, orgID).
+				FindByID(gomock.Any(), connID).
 				Return(existingConn, nil)
 
 			schema := model.NewDataSourceSchema("test-connection")
@@ -357,7 +350,7 @@ func TestGetConnectionSchema_Execute_FiltersSystemTables(t *testing.T) {
 				Close(gomock.Any()).
 				Return(nil)
 
-			result, err := svc.Execute(ctx, orgID, connID)
+			result, err := svc.Execute(ctx, connID)
 
 			assert.NoError(t, err)
 			assert.NotNil(t, result)
@@ -394,15 +387,14 @@ func TestGetConnectionSchema_Execute_NilSchema(t *testing.T) {
 		return mockDataSource, nil
 	}
 
-	svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory)
+	svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory, nil, nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
-	existingConn := newSchemaConnectionFixture(orgID, connID, model.TypePostgreSQL)
+	existingConn := newSchemaConnectionFixture(connID, model.TypePostgreSQL)
 
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, orgID).
+		FindByID(gomock.Any(), connID).
 		Return(existingConn, nil)
 
 	// Nil schema (edge case - empty database)
@@ -414,7 +406,7 @@ func TestGetConnectionSchema_Execute_NilSchema(t *testing.T) {
 		Close(gomock.Any()).
 		Return(nil)
 
-	result, err := svc.Execute(ctx, orgID, connID)
+	result, err := svc.Execute(ctx, connID)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
@@ -436,15 +428,14 @@ func TestGetConnectionSchema_Execute_EmptySchema(t *testing.T) {
 		return mockDataSource, nil
 	}
 
-	svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory)
+	svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory, nil, nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	connID := uuid.New()
-	existingConn := newSchemaConnectionFixture(orgID, connID, model.TypePostgreSQL)
+	existingConn := newSchemaConnectionFixture(connID, model.TypePostgreSQL)
 
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, orgID).
+		FindByID(gomock.Any(), connID).
 		Return(existingConn, nil)
 
 	// Empty schema
@@ -458,7 +449,7 @@ func TestGetConnectionSchema_Execute_EmptySchema(t *testing.T) {
 		Close(gomock.Any()).
 		Return(nil)
 
-	result, err := svc.Execute(ctx, orgID, connID)
+	result, err := svc.Execute(ctx, connID)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
@@ -478,18 +469,17 @@ func TestGetConnectionSchema_Execute_OrganizationIsolation(t *testing.T) {
 		return nil, nil
 	}
 
-	svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory)
+	svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory, nil, nil)
 
 	ctx := testContext()
-	requestingOrgID := uuid.New()
 	connID := uuid.New()
 
 	// Repository returns nil because connection belongs to different organization
 	mockConnRepo.EXPECT().
-		FindByID(gomock.Any(), connID, requestingOrgID).
+		FindByID(gomock.Any(), connID).
 		Return(nil, nil)
 
-	result, err := svc.Execute(ctx, requestingOrgID, connID)
+	result, err := svc.Execute(ctx, connID)
 
 	assert.Nil(t, result)
 	assert.Error(t, err)
@@ -511,7 +501,7 @@ func TestNewGetConnectionSchema(t *testing.T) {
 		return nil, nil
 	}
 
-	svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory)
+	svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory, nil, nil)
 
 	assert.NotNil(t, svc)
 }
