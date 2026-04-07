@@ -38,6 +38,7 @@ jobs:
         migrations
         scripts
         deps
+        workflows
       require_scope: false
       enable_auto_labeler: true
       labeler_config_path: '.github/labeler.yml'
