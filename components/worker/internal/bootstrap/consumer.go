@@ -253,8 +253,14 @@ func (mq *MultiQueueConsumer) handlerGenerateReport(ctx context.Context, body []
 
 	// Fail-closed: reject messages without tenant context in multi-tenant mode.
 	// This prevents processing data without proper tenant isolation.
+	// Return nil (drop the message) because a message without tenant ID will never
+	// acquire one on retry — requeuing would cause an infinite loop.
 	if mq.mtConsumer != nil && tmcore.GetTenantIDContext(ctx) == "" {
-		return fmt.Errorf("message rejected: no tenant ID in multi-tenant mode (neither vhost nor AMQP headers)")
+		if mq.logger != nil {
+			mq.logger.Log(ctx, libLog.LevelWarn, "message rejected: no tenant ID in multi-tenant mode (message will be dropped)")
+		}
+
+		return nil
 	}
 
 	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
@@ -288,6 +294,17 @@ func (mq *MultiQueueConsumer) handlerGenerateReport(ctx context.Context, body []
 
 	err = extractExternalData(mq.UseCase, spanCtx, body, headers)
 	if err != nil {
+		// DEFENSIVE RETRY GUARD: If the handler error is permanent (validation,
+		// entity not found, FET-* business error, context.Canceled), return nil
+		// so lib-commons Acks the message instead of Nacking+requeuing.
+		if isNonRetryableHandlerError(err) {
+			opentelemetry.HandleSpanError(span, "Non-retryable handler error (message will be dropped).", err)
+			logger.Log(spanCtx, libLog.LevelWarn, "non-retryable handler error, message will be dropped",
+				libLog.Err(err))
+
+			return nil
+		}
+
 		opentelemetry.HandleSpanError(span, "Error generating report.", err)
 
 		logger.Log(spanCtx, libLog.LevelError, "error generating report", libLog.Err(err))
