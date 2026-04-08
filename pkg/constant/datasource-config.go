@@ -36,8 +36,8 @@ const (
 
 // Query Timeout Configuration
 const (
-	QueryTimeoutMedium     = 10 * time.Second
-	QueryTimeoutSlow       = 15 * time.Second
+	QueryTimeoutMedium     = 60 * time.Second
+	QueryTimeoutSlow       = 120 * time.Second
 	SchemaDiscoveryTimeout = 30 * time.Second
 	ConnectionTimeout      = 5 * time.Second
 )
