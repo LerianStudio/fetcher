@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/LerianStudio/fetcher/pkg"
 	modelJob "github.com/LerianStudio/fetcher/pkg/model/job"
 	portDS "github.com/LerianStudio/fetcher/pkg/ports/datasource"
 	libCommons "github.com/LerianStudio/lib-commons/v4/commons"
@@ -95,7 +96,7 @@ func (uc *UseCase) QueryPluginCRM(
 		}
 
 		if len(matchingCollections) == 0 {
-			err := fmt.Errorf("no collections found matching prefix %q in plugin_crm database", prefix)
+			err := pkg.ValidationError{Code: "FET-0059", Title: "Collection Not Found", Message: fmt.Sprintf("no collections found matching prefix %q in plugin_crm database", prefix)}
 			libOtel.HandleSpanError(span, "No matching collections found", err)
 
 			return err
@@ -198,7 +199,7 @@ func (uc *UseCase) transformPluginCRMAdvancedFilters(ctx context.Context, filter
 	}
 
 	if uc.crmHashSecretKey == "" {
-		return nil, fmt.Errorf("CRM hash secret key not configured")
+		return nil, pkg.FailedPreconditionError{Code: "FET-0057", Title: "CRM Crypto Not Configured", Message: "CRM hash secret key not configured"}
 	}
 
 	crypto := &libCrypto.Crypto{
@@ -309,11 +310,11 @@ func (uc *UseCase) decryptPluginCRMData(logger libLog.Logger, collectionResult [
 
 	// Initialize crypto instance
 	if uc.crmEncryptSecretKey == "" {
-		return nil, fmt.Errorf("CRM encrypt secret key not configured")
+		return nil, pkg.FailedPreconditionError{Code: "FET-0058", Title: "CRM Crypto Not Configured", Message: "CRM encrypt secret key not configured"}
 	}
 
 	if uc.crmHashSecretKey == "" {
-		return nil, fmt.Errorf("CRM hash secret key not configured")
+		return nil, pkg.FailedPreconditionError{Code: "FET-0057", Title: "CRM Crypto Not Configured", Message: "CRM hash secret key not configured"}
 	}
 
 	crypto := &libCrypto.Crypto{
@@ -324,14 +325,14 @@ func (uc *UseCase) decryptPluginCRMData(logger libLog.Logger, collectionResult [
 
 	err := crypto.InitializeCipher()
 	if err != nil {
-		return nil, fmt.Errorf("failed to initialize cipher: %w", err)
+		return nil, pkg.FailedPreconditionError{Code: "FET-0064", Title: "Cipher Initialization Failed", Message: fmt.Sprintf("failed to initialize cipher: %s", err.Error()), Err: err}
 	}
 
 	// Process each record in the collection
 	for i, record := range collectionResult {
 		decryptedRecord, err := uc.decryptRecord(record, crypto)
 		if err != nil {
-			return nil, fmt.Errorf("failed to decrypt record %d: %w", i, err)
+			return nil, pkg.FailedPreconditionError{Code: "FET-0065", Title: "Decryption Failed", Message: fmt.Sprintf("failed to decrypt record %d: %s", i, err.Error()), Err: err}
 		}
 
 		collectionResult[i] = decryptedRecord
