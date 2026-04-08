@@ -343,9 +343,11 @@ func TestHandlerGenerateReportDelivery_NilMongoManager_SkipsResolution(t *testin
 	}
 
 	// This will fail in handlerGenerateReport (nil UseCase) but must NOT panic
-	// on nil mongoManager. The error proves we got past the nil guard.
+	// on nil mongoManager. Getting past the call without panic proves the nil-guard works.
+	// The retry guard classifies the validation error as non-retryable and returns nil
+	// (message dropped), so we expect no error.
 	err := consumer.handlerGenerateReportDelivery(ctx, delivery)
-	assert.Error(t, err, "expected error from nil UseCase, not from nil mongoManager")
+	assert.NoError(t, err, "expected nil (message dropped by retry guard), not a panic from nil mongoManager")
 }
 
 func TestHeadersFromDelivery_NilHeaders(t *testing.T) {

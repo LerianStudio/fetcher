@@ -8,13 +8,13 @@ import (
 	crand "crypto/rand"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"regexp"
 	"strings"
 	"time"
 
+	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	modelJob "github.com/LerianStudio/fetcher/pkg/model/job"
@@ -241,20 +241,20 @@ func (uc *UseCase) parseMessage(ctx context.Context, body []byte, headers map[st
 
 func validateExtractExternalDataMessage(message *ExtractExternalDataMessage) error {
 	if message == nil {
-		return errors.New("message payload is null")
+		return pkg.ValidationError{Code: "FET-0050", Title: "Invalid Message", Message: "message payload is null"}
 	}
 
 	if message.JobID == uuid.Nil {
-		return errors.New("jobId is required")
+		return pkg.ValidationError{Code: "FET-0051", Title: "Invalid Message", Message: "jobId is required"}
 	}
 
 	if len(message.MappedFields) == 0 {
-		return errors.New("mappedFields is required")
+		return pkg.ValidationError{Code: "FET-0052", Title: "Invalid Message", Message: "mappedFields is required"}
 	}
 
 	for db, tables := range message.MappedFields {
 		if len(tables) == 0 {
-			return fmt.Errorf("mappedFields[%q] has no tables", db)
+			return pkg.ValidationError{Code: "FET-0053", Title: "Invalid Message", Message: fmt.Sprintf("mappedFields[%q] has no tables", db)}
 		}
 	}
 
@@ -424,7 +424,7 @@ func (uc *UseCase) queryDatabase(
 	}
 
 	if foundConnection == nil {
-		err := fmt.Errorf("connection not found for database: %s", databaseName)
+		err := pkg.ValidationError{Code: "FET-0054", Title: "Connection Not Found", Message: fmt.Sprintf("connection not found for database: %s", databaseName)}
 		libOtel.HandleSpanBusinessErrorEvent(dbSpan, "Connection not found", err)
 
 		return err
@@ -463,7 +463,7 @@ func (uc *UseCase) queryDatabase(
 	if foundConnection.Type == model.TypeMongoDB && databaseName == "plugin_crm" {
 		crmDS, ok := dataSource.(portDS.CRMQueryable)
 		if !ok {
-			return fmt.Errorf("data source for plugin_crm does not support CRM queries")
+			return pkg.ValidationError{Code: "FET-0055", Title: "Unsupported Operation", Message: "data source for plugin_crm does not support CRM queries"}
 		}
 
 		return uc.QueryPluginCRM(ctx, crmDS, databaseName, tables, databaseFilters, result, logger)
@@ -509,7 +509,7 @@ func (uc *UseCase) saveExternalData(
 		libOtel.HandleSpanError(span, "Error marshalling result to JSON", err)
 		logger.Log(ctx, libLog.LevelError, "error marshalling result to json", libLog.Err(err))
 
-		return nil, fmt.Errorf("marshalling result to JSON: %w", err)
+		return nil, pkg.FailedPreconditionError{Code: "FET-0060", Title: "Data Serialization Failed", Message: fmt.Sprintf("marshalling result to JSON: %s", err.Error()), Err: err}
 	}
 
 	// Calculate metrics before encryption (original data size)
@@ -527,7 +527,7 @@ func (uc *UseCase) saveExternalData(
 			libOtel.HandleSpanError(span, "Error computing document HMAC", errHMAC)
 			logger.Log(ctx, libLog.LevelError, "error computing document hmac", libLog.Err(errHMAC))
 
-			return nil, fmt.Errorf("computing document HMAC: %w", errHMAC)
+			return nil, pkg.FailedPreconditionError{Code: "FET-0061", Title: "HMAC Computation Failed", Message: fmt.Sprintf("computing document HMAC: %s", errHMAC.Error()), Err: errHMAC}
 		}
 
 		documentHMAC = hmac
@@ -555,7 +555,7 @@ func (uc *UseCase) saveExternalData(
 	// The tenant-aware key matches what Put() stored, so consumers can download directly.
 	tenantObjectName, tenantKeyErr := tms3.GetObjectStorageKeyForTenant(ctx, objectName)
 	if tenantKeyErr != nil {
-		return nil, fmt.Errorf("resolving tenant storage path: %w", tenantKeyErr)
+		return nil, pkg.FailedPreconditionError{Code: "FET-0066", Title: "Tenant Path Resolution Failed", Message: fmt.Sprintf("resolving tenant storage path: %s", tenantKeyErr.Error()), Err: tenantKeyErr}
 	}
 
 	resultPath := tenantObjectName
@@ -579,17 +579,17 @@ func (uc *UseCase) saveExternalData(
 // Compatible with Reporter's decryptFetcherData which uses the same derived key.
 func (uc *UseCase) encryptData(data []byte, _ libLog.Logger) ([]byte, error) {
 	if len(uc.storageEncryptDerivedKey) == 0 {
-		return nil, fmt.Errorf("encrypting data for storage: storage encrypt secret key not configured")
+		return nil, pkg.FailedPreconditionError{Code: "FET-0056", Title: "Encryption Not Configured", Message: "storage encrypt secret key not configured"}
 	}
 
 	block, err := aes.NewCipher(uc.storageEncryptDerivedKey)
 	if err != nil {
-		return nil, fmt.Errorf("encrypting data: create AES cipher: %w", err)
+		return nil, pkg.FailedPreconditionError{Code: "FET-0062", Title: "Cipher Creation Failed", Message: fmt.Sprintf("encrypting data: create AES cipher: %s", err.Error()), Err: err}
 	}
 
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
-		return nil, fmt.Errorf("encrypting data: create GCM: %w", err)
+		return nil, pkg.FailedPreconditionError{Code: "FET-0063", Title: "Cipher Creation Failed", Message: fmt.Sprintf("encrypting data: create GCM: %s", err.Error()), Err: err}
 	}
 
 	nonce := make([]byte, gcm.NonceSize())
@@ -633,7 +633,7 @@ func (uc *UseCase) checkReportStatus(ctx context.Context, jobID uuid.UUID, logge
 
 	if jobData == nil {
 		logger.Log(ctx, libLog.LevelDebug, "no job data found", libLog.String("job_id", jobID.String()))
-		return "", fmt.Errorf("no job data found for %s", jobID)
+		return "", pkg.ValidationError{Code: "FET-0067", Title: "Job Not Found", Message: fmt.Sprintf("no job data found for %s", jobID)}
 	}
 
 	logger.Log(ctx, libLog.LevelDebug, "current job status",

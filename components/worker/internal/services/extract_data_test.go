@@ -1535,7 +1535,7 @@ func TestQueryDatabase_ConnectionNotFound(t *testing.T) {
 		t.Fatal("expected error when connection not found")
 	}
 
-	if err.Error() != "connection not found for database: postgres_db" {
+	if !strings.Contains(err.Error(), "connection not found for database: postgres_db") {
 		t.Errorf("unexpected error message: %v", err)
 	}
 }
@@ -1584,7 +1584,7 @@ func TestQueryDatabase_ConnectionFoundButDifferentConfigName(t *testing.T) {
 		t.Fatal("expected error when connection not found")
 	}
 
-	if err.Error() != "connection not found for database: postgres_db" {
+	if !strings.Contains(err.Error(), "connection not found for database: postgres_db") {
 		t.Errorf("unexpected error message: %v", err)
 	}
 }
