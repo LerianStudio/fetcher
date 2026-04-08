@@ -1,0 +1,5 @@
+# 2026-04-08 — GHSA-xmrv-pmrh-hhx2
+# DoS via panic in AWS SDK for Go v2 EventStream Decoder
+# No fix available upstream (v1.7.8 is latest and still affected)
+# Low impact: EventStream Decoder not used directly by this service
+GHSA-xmrv-pmrh-hhx2
