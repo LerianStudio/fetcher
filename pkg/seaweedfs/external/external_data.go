@@ -40,7 +40,7 @@ func (repo *SimpleRepository) Get(ctx context.Context, objectName string) ([]byt
 	defer span.End()
 
 	// Apply tenant-prefixed key (multi-tenant: "{tenantId}/{objectName}", single-tenant: "{objectName}")
-	tenantObjectName, err := tms3.GetObjectStorageKeyForTenant(ctx, objectName)
+	tenantObjectName, err := tms3.GetS3KeyStorageContext(ctx, objectName)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to resolve tenant object key", err)
 		return nil, fmt.Errorf("tenant object key for %s: %w", objectName, err)
@@ -73,7 +73,7 @@ func (repo *SimpleRepository) Put(ctx context.Context, objectName string, data [
 	defer span.End()
 
 	// Apply tenant-prefixed key (multi-tenant: "{tenantId}/{objectName}", single-tenant: "{objectName}")
-	tenantObjectName, err := tms3.GetObjectStorageKeyForTenant(ctx, objectName)
+	tenantObjectName, err := tms3.GetS3KeyStorageContext(ctx, objectName)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to resolve tenant object key", err)
 		return fmt.Errorf("tenant object key for %s: %w", objectName, err)
