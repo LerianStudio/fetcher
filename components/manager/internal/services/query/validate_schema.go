@@ -160,20 +160,7 @@ func (s *ValidateSchema) Execute(
 		// tableNameReverseMap maps transformed names back to original names for error reporting
 		var tableNameReverseMap map[string]string
 
-		// Returns schemas only if they exist
-		schemas := datasourceModel.GetUniqueSchemas(tables)
-
-		// For PostgreSQL, ensure the default "public" schema is included
-		// when there are unqualified table names (tables without a dot)
-		if conn.Type == model.TypePostgreSQL {
-			schemas = ensureDefaultSchemaForPostgreSQL(tables, schemas)
-		}
-
-		// For SQL Server, ensure the default "dbo" schema is included
-		// when there are unqualified table names (tables without a dot)
-		if conn.Type == model.TypeSQLServer {
-			schemas = ensureDefaultSchemaForSQLServer(tables, schemas)
-		}
+		schemas := resolveSchemas(tables, conn)
 
 		// Get or fetch schema for the connection
 		schema, err := s.getOrFetchSchema(ctx, conn, schemas)
@@ -463,6 +450,29 @@ func ensureDefaultSchema(tables map[string][]string, schemas []string, defaultSc
 // ensureDefaultSchemaForPostgreSQL adds the default "public" schema to the schemas list
 // if any table name is unqualified (has no schema prefix with a dot).
 // This ensures tables in the public schema are discoverable when mixed with schema-qualified tables.
+// resolveSchemas determines which database schemas to query based on connection type and config.
+// Priority: metadata.schemas (explicit) > default per database type (public/dbo).
+func resolveSchemas(tables map[string][]string, conn *model.Connection) []string {
+	schemas := datasourceModel.GetUniqueSchemas(tables)
+
+	switch conn.Type {
+	case model.TypePostgreSQL:
+		if conn.Metadata != nil {
+			if s, ok := (*conn.Metadata)["schemas"].(string); ok && s != "" {
+				schemas = append(schemas, strings.Split(s, ",")...)
+			}
+		}
+
+		if len(schemas) == 0 {
+			schemas = ensureDefaultSchemaForPostgreSQL(tables, schemas)
+		}
+	case model.TypeSQLServer:
+		schemas = ensureDefaultSchemaForSQLServer(tables, schemas)
+	}
+
+	return schemas
+}
+
 func ensureDefaultSchemaForPostgreSQL(tables map[string][]string, schemas []string) []string {
 	return ensureDefaultSchema(tables, schemas, schemautil.DefaultSchemaPostgreSQL)
 }

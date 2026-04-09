@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -504,17 +505,40 @@ func (uc *UseCase) saveExternalData(
 	ctx, spanSave := tracer.Start(ctx, "service.extract_external_data.save_external_data")
 	defer spanSave.End()
 
-	jsonData, err := json.MarshalIndent(result, "", "  ")
+	// Stream JSON to temp file to avoid holding both the result map and the
+	// serialized JSON in memory simultaneously for large datasets.
+	tmpJSON, err := os.CreateTemp("", "fetcher-json-*.tmp")
 	if err != nil {
+		return nil, fmt.Errorf("create temp file for JSON: %w", err)
+	}
+
+	defer os.Remove(tmpJSON.Name())
+	defer tmpJSON.Close()
+
+	encoder := json.NewEncoder(tmpJSON)
+	encoder.SetIndent("", "  ")
+
+	if err := encoder.Encode(result); err != nil {
 		libOtel.HandleSpanError(span, "Error marshalling result to JSON", err)
 		logger.Log(ctx, libLog.LevelError, "error marshalling result to json", libLog.Err(err))
 
 		return nil, pkg.FailedPreconditionError{Code: "FET-0060", Title: "Data Serialization Failed", Message: fmt.Sprintf("marshalling result to JSON: %s", err.Error()), Err: err}
 	}
 
-	// Calculate metrics before encryption (original data size)
-	sizeBytes := int64(len(jsonData))
+	// Calculate metrics from temp file size
+	tmpStat, _ := tmpJSON.Stat()
+	sizeBytes := tmpStat.Size()
 	rowCount := countTotalRows(result)
+
+	// Read JSON back for HMAC and encryption (from disk, not network — no timeout risk)
+	if _, err := tmpJSON.Seek(0, io.SeekStart); err != nil {
+		return nil, fmt.Errorf("seek temp JSON file: %w", err)
+	}
+
+	jsonData, err := io.ReadAll(tmpJSON)
+	if err != nil {
+		return nil, fmt.Errorf("read temp JSON file: %w", err)
+	}
 
 	// Compute HMAC of plaintext data before encryption for external verification
 	var documentHMAC string

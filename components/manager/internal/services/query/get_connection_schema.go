@@ -94,14 +94,14 @@ func (s *GetConnectionSchema) Execute(ctx context.Context, connectionID uuid.UUI
 	}()
 
 	// Determine which PostgreSQL schema(s) to discover.
-	// Priority: explicit Schema field > username-based (internal connections) > default ("public").
+	// Priority: explicit Schema field > metadata.schemas > default ("public" via GetDatabaseSchema fallback).
 	var schemas []string
 	if conn.Schema != nil && *conn.Schema != "" {
 		schemas = []string{*conn.Schema}
-	} else if conn.EncryptionKeyVersion == "" && conn.Username != "" &&
-		(conn.Type == model.TypePostgreSQL) {
-		// Internal connections: tenant-manager provisions schemas named after the database user.
-		schemas = []string{conn.Username}
+	} else if conn.Metadata != nil {
+		if s, ok := (*conn.Metadata)["schemas"].(string); ok && s != "" {
+			schemas = strings.Split(s, ",")
+		}
 	}
 
 	// Get schema info
