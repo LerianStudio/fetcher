@@ -459,13 +459,18 @@ func resolveSchemas(tables map[string][]string, conn *model.Connection) []string
 	case model.TypePostgreSQL:
 		if conn.Metadata != nil {
 			if s, ok := (*conn.Metadata)["schemas"].(string); ok && s != "" {
-				schemas = append(schemas, strings.Split(s, ",")...)
+				for _, part := range strings.Split(s, ",") {
+					trimmed := strings.TrimSpace(part)
+					if trimmed != "" {
+						schemas = append(schemas, trimmed)
+					}
+				}
 			}
 		}
 
-		if len(schemas) == 0 {
-			schemas = ensureDefaultSchemaForPostgreSQL(tables, schemas)
-		}
+		// Always ensure "public" is included when there are unqualified table
+		// names (no dot), even if other schemas were already added from metadata.
+		schemas = ensureDefaultSchemaForPostgreSQL(tables, schemas)
 	case model.TypeSQLServer:
 		schemas = ensureDefaultSchemaForSQLServer(tables, schemas)
 	}

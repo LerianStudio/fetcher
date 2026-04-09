@@ -526,8 +526,13 @@ func (uc *UseCase) saveExternalData(
 	}
 
 	// Calculate metrics from temp file size
-	tmpStat, _ := tmpJSON.Stat()
-	sizeBytes := tmpStat.Size()
+	var sizeBytes int64
+
+	tmpStat, statErr := tmpJSON.Stat()
+	if statErr == nil {
+		sizeBytes = tmpStat.Size()
+	}
+
 	rowCount := countTotalRows(result)
 
 	// Read JSON back for HMAC and encryption (from disk, not network — no timeout risk)

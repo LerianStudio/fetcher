@@ -100,7 +100,12 @@ func (s *GetConnectionSchema) Execute(ctx context.Context, connectionID uuid.UUI
 		schemas = []string{*conn.Schema}
 	} else if conn.Metadata != nil {
 		if s, ok := (*conn.Metadata)["schemas"].(string); ok && s != "" {
-			schemas = strings.Split(s, ",")
+			for _, part := range strings.Split(s, ",") {
+				trimmed := strings.TrimSpace(part)
+				if trimmed != "" {
+					schemas = append(schemas, trimmed)
+				}
+			}
 		}
 	}
 
