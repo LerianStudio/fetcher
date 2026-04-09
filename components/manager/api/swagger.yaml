@@ -39,6 +39,9 @@ definitions:
         maximum: 65535
         minimum: 1
         type: integer
+      schema:
+        example: my_schema
+        type: string
       ssl:
         $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.SSLInput'
       type:
@@ -80,6 +83,8 @@ definitions:
       port:
         type: integer
       productName:
+        type: string
+      schema:
         type: string
       ssl:
         $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.SSLResponse'
@@ -129,6 +134,9 @@ definitions:
         maximum: 65535
         minimum: 1
         type: integer
+      schema:
+        example: my_schema
+        type: string
       ssl:
         $ref: '#/definitions/github_com_LerianStudio_fetcher_pkg_model.SSLUpdateInput'
       type:

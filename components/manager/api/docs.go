@@ -906,6 +906,10 @@ const docTemplate = `{
                     "minimum": 1,
                     "example": 5432
                 },
+                "schema": {
+                    "type": "string",
+                    "example": "my_schema"
+                },
                 "ssl": {
                     "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.SSLInput"
                 },
@@ -952,6 +956,9 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "productName": {
+                    "type": "string"
+                },
+                "schema": {
                     "type": "string"
                 },
                 "ssl": {
@@ -1021,6 +1028,10 @@ const docTemplate = `{
                     "maximum": 65535,
                     "minimum": 1,
                     "example": 5432
+                },
+                "schema": {
+                    "type": "string",
+                    "example": "my_schema"
                 },
                 "ssl": {
                     "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.SSLUpdateInput"
