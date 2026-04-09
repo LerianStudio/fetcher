@@ -9,10 +9,10 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/model/datasource"
 	"github.com/LerianStudio/fetcher/pkg/model/job"
 	"github.com/LerianStudio/fetcher/pkg/sqlserver"
-	"github.com/LerianStudio/lib-commons/v2/commons"
-	libConstant "github.com/LerianStudio/lib-commons/v2/commons/constants"
-	"github.com/LerianStudio/lib-commons/v2/commons/log"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v4/commons"
+	libConstant "github.com/LerianStudio/lib-commons/v4/commons/constants"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -40,9 +40,9 @@ func (ds *DataSourceConfigSQLServer) GetType() string {
 
 // Connect establishes a connection to SQL Server.
 // This method is a no-op as the connection is established during factory creation.
-func (ds *DataSourceConfigSQLServer) Connect(ctx context.Context, logger log.Logger) error {
+func (ds *DataSourceConfigSQLServer) Connect(ctx context.Context, logger libLog.Logger) error {
 	ds.Status = libConstant.DataSourceStatusAvailable
-	logger.Infof("SQL Server connection ready for %s", ds.ConfigName)
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("SQL Server connection ready for %s", ds.ConfigName))
 
 	return nil
 }
@@ -61,7 +61,7 @@ func (ds *DataSourceConfigSQLServer) Close(ctx context.Context) error {
 }
 
 // Query executes queries on multiple SQL Server tables.
-func (ds *DataSourceConfigSQLServer) Query(ctx context.Context, tables map[string][]string, filters map[string]map[string]job.FilterCondition, logger log.Logger) (map[string][]map[string]any, error) {
+func (ds *DataSourceConfigSQLServer) Query(ctx context.Context, tables map[string][]string, filters map[string]map[string]job.FilterCondition, logger libLog.Logger) (map[string][]map[string]any, error) {
 	result := make(map[string][]map[string]any)
 
 	// Extract unique schemas from table names
@@ -69,7 +69,7 @@ func (ds *DataSourceConfigSQLServer) Query(ctx context.Context, tables map[strin
 
 	schemaResult, err := ds.SQLServerRepository.GetDatabaseSchema(ctx, schemas)
 	if err != nil {
-		logger.Errorf("Error getting database schema: %s", err.Error())
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Error getting database schema: %s", err.Error()))
 		return nil, err
 	}
 
@@ -89,7 +89,7 @@ func (ds *DataSourceConfigSQLServer) Query(ctx context.Context, tables map[strin
 		}
 
 		if errQuery != nil {
-			logger.Errorf("Error querying table %s: %s", table, errQuery.Error())
+			logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Error querying table %s: %s", table, errQuery.Error()))
 			return nil, errQuery
 		}
 
@@ -145,7 +145,7 @@ func (ds *DataSourceConfigSQLServer) GetSchemaInfo(ctx context.Context, schemas 
 
 	schemaResult, err := ds.SQLServerRepository.GetDatabaseSchema(ctx, schemas)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "failed to get database schema", err)
+		libOpentelemetry.HandleSpanError(span, "failed to get database schema", err)
 		return nil, fmt.Errorf("failed to get SQL Server schema: %w", err)
 	}
 

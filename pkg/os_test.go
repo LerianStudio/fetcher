@@ -275,7 +275,6 @@ func TestSetConfigFromEnvVars(t *testing.T) {
 
 		cfg := &TestConfig{}
 		err := SetConfigFromEnvVars(cfg)
-
 		if err != nil {
 			t.Fatalf("SetConfigFromEnvVars() error = %v", err)
 		}
@@ -336,7 +335,6 @@ func TestSetConfigFromEnvVars(t *testing.T) {
 
 		cfg := &TestConfig{}
 		err := SetConfigFromEnvVars(cfg)
-
 		if err != nil {
 			t.Fatalf("SetConfigFromEnvVars() error = %v", err)
 		}

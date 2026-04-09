@@ -12,7 +12,6 @@ import (
 func TestConnectionMongoDBModel_ToDomain(t *testing.T) {
 	now := time.Now().UTC()
 	connID := uuid.New()
-	orgID := uuid.New()
 
 	tests := []struct {
 		name        string
@@ -30,8 +29,8 @@ func TestConnectionMongoDBModel_ToDomain(t *testing.T) {
 		{
 			name: "valid model without SSL",
 			model: &ConnectionMongoDBModel{
-				ID:                   connID,
-				OrganizationID:       orgID,
+				ID: connID,
+
 				ConfigName:           "test-connection",
 				Type:                 "POSTGRESQL",
 				Host:                 "localhost",
@@ -49,9 +48,6 @@ func TestConnectionMongoDBModel_ToDomain(t *testing.T) {
 			checkResult: func(t *testing.T, conn *model.Connection) {
 				if conn.ID != connID {
 					t.Fatalf("expected ID %s, got %s", connID, conn.ID)
-				}
-				if conn.OrganizationID != orgID {
-					t.Fatalf("expected OrganizationID %s, got %s", orgID, conn.OrganizationID)
 				}
 				if conn.ConfigName != "test-connection" {
 					t.Fatalf("expected ConfigName 'test-connection', got %s", conn.ConfigName)
@@ -94,8 +90,8 @@ func TestConnectionMongoDBModel_ToDomain(t *testing.T) {
 		{
 			name: "valid model with SSL",
 			model: &ConnectionMongoDBModel{
-				ID:                   connID,
-				OrganizationID:       orgID,
+				ID: connID,
+
 				ConfigName:           "ssl-connection",
 				Type:                 "POSTGRESQL",
 				Host:                 "localhost",
@@ -135,8 +131,8 @@ func TestConnectionMongoDBModel_ToDomain(t *testing.T) {
 		{
 			name: "valid model with DeletedAt",
 			model: &ConnectionMongoDBModel{
-				ID:                   connID,
-				OrganizationID:       orgID,
+				ID: connID,
+
 				ConfigName:           "deleted-connection",
 				Type:                 "POSTGRESQL",
 				Host:                 "localhost",
@@ -162,8 +158,8 @@ func TestConnectionMongoDBModel_ToDomain(t *testing.T) {
 		{
 			name: "invalid database type",
 			model: &ConnectionMongoDBModel{
-				ID:                   connID,
-				OrganizationID:       orgID,
+				ID: connID,
+
 				ConfigName:           "invalid-type-connection",
 				Type:                 "INVALID_TYPE",
 				Host:                 "localhost",
@@ -181,8 +177,8 @@ func TestConnectionMongoDBModel_ToDomain(t *testing.T) {
 		{
 			name: "empty database type",
 			model: &ConnectionMongoDBModel{
-				ID:                   connID,
-				OrganizationID:       orgID,
+				ID: connID,
+
 				ConfigName:           "empty-type-connection",
 				Type:                 "",
 				Host:                 "localhost",
@@ -246,8 +242,8 @@ func TestConnectionMongoDBModel_ToDomain_AllDatabaseTypes(t *testing.T) {
 	for _, tt := range dbTypes {
 		t.Run(tt.mongoType, func(t *testing.T) {
 			mongoModel := &ConnectionMongoDBModel{
-				ID:                   uuid.New(),
-				OrganizationID:       uuid.New(),
+				ID: uuid.New(),
+
 				ConfigName:           "test-" + tt.mongoType,
 				Type:                 tt.mongoType,
 				Host:                 "localhost",
@@ -276,7 +272,6 @@ func TestConnectionMongoDBModel_ToDomain_AllDatabaseTypes(t *testing.T) {
 func TestNewConnectionMongoDBModelFromDomain(t *testing.T) {
 	now := time.Now().UTC()
 	connID := uuid.New()
-	orgID := uuid.New()
 
 	tests := []struct {
 		name        string
@@ -286,8 +281,8 @@ func TestNewConnectionMongoDBModelFromDomain(t *testing.T) {
 		{
 			name: "valid connection without SSL",
 			connection: &model.Connection{
-				ID:                   connID,
-				OrganizationID:       orgID,
+				ID: connID,
+
 				ConfigName:           "test-connection",
 				Type:                 model.TypePostgreSQL,
 				Host:                 "localhost",
@@ -304,9 +299,6 @@ func TestNewConnectionMongoDBModelFromDomain(t *testing.T) {
 			checkResult: func(t *testing.T, mongoModel *ConnectionMongoDBModel) {
 				if mongoModel.ID != connID {
 					t.Fatalf("expected ID %s, got %s", connID, mongoModel.ID)
-				}
-				if mongoModel.OrganizationID != orgID {
-					t.Fatalf("expected OrganizationID %s, got %s", orgID, mongoModel.OrganizationID)
 				}
 				if mongoModel.ConfigName != "test-connection" {
 					t.Fatalf("expected ConfigName 'test-connection', got %s", mongoModel.ConfigName)
@@ -349,8 +341,8 @@ func TestNewConnectionMongoDBModelFromDomain(t *testing.T) {
 		{
 			name: "valid connection with SSL",
 			connection: &model.Connection{
-				ID:                   connID,
-				OrganizationID:       orgID,
+				ID: connID,
+
 				ConfigName:           "ssl-connection",
 				Type:                 model.TypePostgreSQL,
 				Host:                 "localhost",
@@ -389,8 +381,8 @@ func TestNewConnectionMongoDBModelFromDomain(t *testing.T) {
 		{
 			name: "valid connection with DeletedAt",
 			connection: &model.Connection{
-				ID:                   connID,
-				OrganizationID:       orgID,
+				ID: connID,
+
 				ConfigName:           "deleted-connection",
 				Type:                 model.TypePostgreSQL,
 				Host:                 "localhost",
@@ -415,8 +407,8 @@ func TestNewConnectionMongoDBModelFromDomain(t *testing.T) {
 		{
 			name: "valid connection with partial SSL (only mode and CA)",
 			connection: &model.Connection{
-				ID:                   connID,
-				OrganizationID:       orgID,
+				ID: connID,
+
 				ConfigName:           "partial-ssl-connection",
 				Type:                 model.TypePostgreSQL,
 				Host:                 "localhost",
@@ -487,8 +479,8 @@ func TestNewConnectionMongoDBModelFromDomain_AllDatabaseTypes(t *testing.T) {
 	for _, tt := range dbTypes {
 		t.Run(string(tt.domainType), func(t *testing.T) {
 			conn := &model.Connection{
-				ID:                   uuid.New(),
-				OrganizationID:       uuid.New(),
+				ID: uuid.New(),
+
 				ConfigName:           "test-" + string(tt.domainType),
 				Type:                 tt.domainType,
 				Host:                 "localhost",
@@ -514,7 +506,6 @@ func TestNewConnectionMongoDBModelFromDomain_AllDatabaseTypes(t *testing.T) {
 func TestConnectionMongoDBModel_RoundTrip(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Millisecond) // Truncate to avoid precision issues
 	connID := uuid.New()
-	orgID := uuid.New()
 
 	tests := []struct {
 		name       string
@@ -523,8 +514,8 @@ func TestConnectionMongoDBModel_RoundTrip(t *testing.T) {
 		{
 			name: "round trip without SSL",
 			connection: &model.Connection{
-				ID:                   connID,
-				OrganizationID:       orgID,
+				ID: connID,
+
 				ConfigName:           "roundtrip-no-ssl",
 				Type:                 model.TypePostgreSQL,
 				Host:                 "localhost",
@@ -542,8 +533,8 @@ func TestConnectionMongoDBModel_RoundTrip(t *testing.T) {
 		{
 			name: "round trip with SSL",
 			connection: &model.Connection{
-				ID:                   connID,
-				OrganizationID:       orgID,
+				ID: connID,
+
 				ConfigName:           "roundtrip-with-ssl",
 				Type:                 model.TypeMySQL,
 				Host:                 "db.example.com",
@@ -565,8 +556,8 @@ func TestConnectionMongoDBModel_RoundTrip(t *testing.T) {
 		{
 			name: "round trip with DeletedAt",
 			connection: &model.Connection{
-				ID:                   connID,
-				OrganizationID:       orgID,
+				ID: connID,
+
 				ConfigName:           "roundtrip-deleted",
 				Type:                 model.TypeMongoDB,
 				Host:                 "mongo.example.com",
@@ -596,9 +587,6 @@ func TestConnectionMongoDBModel_RoundTrip(t *testing.T) {
 			// Compare fields
 			if result.ID != tt.connection.ID {
 				t.Fatalf("ID mismatch: expected %s, got %s", tt.connection.ID, result.ID)
-			}
-			if result.OrganizationID != tt.connection.OrganizationID {
-				t.Fatalf("OrganizationID mismatch: expected %s, got %s", tt.connection.OrganizationID, result.OrganizationID)
 			}
 			if result.ConfigName != tt.connection.ConfigName {
 				t.Fatalf("ConfigName mismatch: expected %s, got %s", tt.connection.ConfigName, result.ConfigName)
@@ -677,12 +665,11 @@ func TestConnectionMongoDBModel_RoundTrip(t *testing.T) {
 func TestConnectionMongoDBModel_ToMapWithMask(t *testing.T) {
 	now := time.Now().UTC()
 	connID := uuid.New()
-	orgID := uuid.New()
 
 	t.Run("model without SSL", func(t *testing.T) {
 		mongoModel := &ConnectionMongoDBModel{
-			ID:                   connID,
-			OrganizationID:       orgID,
+			ID: connID,
+
 			ConfigName:           "test-connection",
 			Type:                 "POSTGRESQL",
 			Host:                 "localhost",
@@ -701,9 +688,6 @@ func TestConnectionMongoDBModel_ToMapWithMask(t *testing.T) {
 
 		if result["id"] != connID {
 			t.Fatalf("expected id %v, got %v", connID, result["id"])
-		}
-		if result["organization_id"] != orgID {
-			t.Fatalf("expected organization_id %v, got %v", orgID, result["organization_id"])
 		}
 		if result["config_name"] != "test-connection" {
 			t.Fatalf("expected config_name 'test-connection', got %v", result["config_name"])
@@ -738,8 +722,8 @@ func TestConnectionMongoDBModel_ToMapWithMask(t *testing.T) {
 
 	t.Run("model with SSL", func(t *testing.T) {
 		mongoModel := &ConnectionMongoDBModel{
-			ID:                   connID,
-			OrganizationID:       orgID,
+			ID: connID,
+
 			ConfigName:           "ssl-connection",
 			Type:                 "POSTGRESQL",
 			Host:                 "localhost",
@@ -782,8 +766,8 @@ func TestConnectionMongoDBModel_ToMapWithMask(t *testing.T) {
 
 	t.Run("model with empty password does not mask", func(t *testing.T) {
 		mongoModel := &ConnectionMongoDBModel{
-			ID:                   connID,
-			OrganizationID:       orgID,
+			ID: connID,
+
 			ConfigName:           "empty-password-connection",
 			Type:                 "POSTGRESQL",
 			Host:                 "localhost",
@@ -807,8 +791,8 @@ func TestConnectionMongoDBModel_ToMapWithMask(t *testing.T) {
 	t.Run("model with DeletedAt", func(t *testing.T) {
 		deletedTime := now.Add(time.Hour)
 		mongoModel := &ConnectionMongoDBModel{
-			ID:                   connID,
-			OrganizationID:       orgID,
+			ID: connID,
+
 			ConfigName:           "deleted-connection",
 			Type:                 "POSTGRESQL",
 			Host:                 "localhost",
@@ -835,8 +819,8 @@ func TestConnectionMongoDBModel_ToMapWithMask(t *testing.T) {
 
 	t.Run("model with SSL and empty optional fields", func(t *testing.T) {
 		mongoModel := &ConnectionMongoDBModel{
-			ID:                   connID,
-			OrganizationID:       orgID,
+			ID: connID,
+
 			ConfigName:           "partial-ssl-connection",
 			Type:                 "POSTGRESQL",
 			Host:                 "localhost",
@@ -884,8 +868,8 @@ func TestConnectionMongoDBModel_EdgeCases(t *testing.T) {
 
 	t.Run("special characters in fields", func(t *testing.T) {
 		mongoModel := &ConnectionMongoDBModel{
-			ID:                   uuid.New(),
-			OrganizationID:       uuid.New(),
+			ID: uuid.New(),
+
 			ConfigName:           "test-connection_123",
 			Type:                 "POSTGRESQL",
 			Host:                 "db.example.com",
@@ -916,8 +900,8 @@ func TestConnectionMongoDBModel_EdgeCases(t *testing.T) {
 
 	t.Run("zero UUID values", func(t *testing.T) {
 		mongoModel := &ConnectionMongoDBModel{
-			ID:                   uuid.Nil,
-			OrganizationID:       uuid.Nil,
+			ID: uuid.Nil,
+
 			ConfigName:           "nil-uuid-connection",
 			Type:                 "POSTGRESQL",
 			Host:                 "localhost",
@@ -938,15 +922,12 @@ func TestConnectionMongoDBModel_EdgeCases(t *testing.T) {
 		if conn.ID != uuid.Nil {
 			t.Fatalf("expected ID to be uuid.Nil, got %s", conn.ID)
 		}
-		if conn.OrganizationID != uuid.Nil {
-			t.Fatalf("expected OrganizationID to be uuid.Nil, got %s", conn.OrganizationID)
-		}
 	})
 
 	t.Run("zero port value", func(t *testing.T) {
 		mongoModel := &ConnectionMongoDBModel{
-			ID:                   uuid.New(),
-			OrganizationID:       uuid.New(),
+			ID: uuid.New(),
+
 			ConfigName:           "zero-port-connection",
 			Type:                 "POSTGRESQL",
 			Host:                 "localhost",
@@ -971,8 +952,8 @@ func TestConnectionMongoDBModel_EdgeCases(t *testing.T) {
 
 	t.Run("empty string fields", func(t *testing.T) {
 		mongoModel := &ConnectionMongoDBModel{
-			ID:                   uuid.New(),
-			OrganizationID:       uuid.New(),
+			ID: uuid.New(),
+
 			ConfigName:           "",
 			Type:                 "POSTGRESQL",
 			Host:                 "",
@@ -1011,8 +992,8 @@ func TestConnectionMongoDBModel_EdgeCases(t *testing.T) {
 		}
 
 		mongoModel := &ConnectionMongoDBModel{
-			ID:                   uuid.New(),
-			OrganizationID:       uuid.New(),
+			ID: uuid.New(),
+
 			ConfigName:           string(longString),
 			Type:                 "POSTGRESQL",
 			Host:                 "localhost",
@@ -1040,8 +1021,8 @@ func TestConnectionMongoDBModel_EdgeCases(t *testing.T) {
 
 	t.Run("negative port value", func(t *testing.T) {
 		mongoModel := &ConnectionMongoDBModel{
-			ID:                   uuid.New(),
-			OrganizationID:       uuid.New(),
+			ID: uuid.New(),
+
 			ConfigName:           "negative-port-connection",
 			Type:                 "POSTGRESQL",
 			Host:                 "localhost",
@@ -1066,8 +1047,8 @@ func TestConnectionMongoDBModel_EdgeCases(t *testing.T) {
 
 	t.Run("max port value", func(t *testing.T) {
 		mongoModel := &ConnectionMongoDBModel{
-			ID:                   uuid.New(),
-			OrganizationID:       uuid.New(),
+			ID: uuid.New(),
+
 			ConfigName:           "max-port-connection",
 			Type:                 "POSTGRESQL",
 			Host:                 "localhost",
@@ -1093,8 +1074,8 @@ func TestConnectionMongoDBModel_EdgeCases(t *testing.T) {
 	t.Run("zero time values", func(t *testing.T) {
 		zeroTime := time.Time{}
 		mongoModel := &ConnectionMongoDBModel{
-			ID:                   uuid.New(),
-			OrganizationID:       uuid.New(),
+			ID: uuid.New(),
+
 			ConfigName:           "zero-time-connection",
 			Type:                 "POSTGRESQL",
 			Host:                 "localhost",
@@ -1151,8 +1132,8 @@ func TestConnectionMongoDBModel_ToDomain_TypeCaseInsensitive(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.inputType, func(t *testing.T) {
 			mongoModel := &ConnectionMongoDBModel{
-				ID:                   uuid.New(),
-				OrganizationID:       uuid.New(),
+				ID: uuid.New(),
+
 				ConfigName:           "test-connection",
 				Type:                 tt.inputType,
 				Host:                 "localhost",

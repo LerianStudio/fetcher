@@ -102,11 +102,32 @@ func TestWriteToDir(t *testing.T) {
 		// Key files should be readable only by owner
 		info, err := os.Stat(bundle.CAKeyPath)
 		require.NoError(t, err)
-		assert.Equal(t, os.FileMode(0600), info.Mode().Perm())
+		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 
 		info, err = os.Stat(bundle.ServerKeyPath)
 		require.NoError(t, err)
-		assert.Equal(t, os.FileMode(0600), info.Mode().Perm())
+		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	})
+
+	t.Run("reused output paths are tightened to secure permissions", func(t *testing.T) {
+		require.NoError(t, os.Chmod(bundle.CAKeyPath, 0o666))
+		require.NoError(t, os.Chmod(bundle.ServerKeyPath, 0o666))
+		require.NoError(t, os.Chmod(bundle.ClientKeyPath, 0o666))
+
+		err := bundle.WriteToDir(tmpDir)
+		require.NoError(t, err)
+
+		info, err := os.Stat(bundle.CAKeyPath)
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+
+		info, err = os.Stat(bundle.ServerKeyPath)
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+
+		info, err = os.Stat(bundle.ClientKeyPath)
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 	})
 
 	t.Run("Files can be loaded back", func(t *testing.T) {

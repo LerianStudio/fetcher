@@ -134,11 +134,10 @@ func resolveSecretSource(secret BuildSecret) (srcPath, tmpPath string, err error
 }
 
 // createSecretTempFile creates a temporary file containing the secret value from an environment variable.
+// Missing environment variables produce an empty secret file so callers can opt into
+// Dockerfiles that treat the secret as optional.
 func createSecretTempFile(secret BuildSecret) (string, error) {
 	value := os.Getenv(secret.Env)
-	if value == "" {
-		return "", fmt.Errorf("e2ekit: environment variable %q for secret %q is empty or not set", secret.Env, secret.ID)
-	}
 
 	tmpFile, err := os.CreateTemp("", fmt.Sprintf("e2ekit-secret-%s-*", secret.ID))
 	if err != nil {

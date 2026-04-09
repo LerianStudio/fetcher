@@ -3,9 +3,9 @@ package in
 import (
 	"github.com/LerianStudio/fetcher/pkg/net/http"
 	middlewareAuth "github.com/LerianStudio/lib-auth/v2/auth/middleware"
-	"github.com/LerianStudio/lib-commons/v2/commons/log"
-	commonsHttp "github.com/LerianStudio/lib-commons/v2/commons/net/http"
-	"github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v4/commons/log"
+	commonsHttp "github.com/LerianStudio/lib-commons/v4/commons/net/http"
+	"github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
 	libLicense "github.com/LerianStudio/lib-license-go/v2/middleware"
 
 	"github.com/gofiber/fiber/v2"
@@ -20,6 +20,8 @@ const (
 )
 
 // NewRoutes creates a new fiber router with the specified handlers and middleware.
+// The tenantMiddleware parameter accepts a fiber.Handler for multi-tenant DB resolution.
+// Pass nil to disable tenant middleware (single-tenant mode).
 func NewRoutes(
 	lg log.Logger,
 	tl *opentelemetry.Telemetry,
@@ -28,11 +30,12 @@ func NewRoutes(
 	connectionHandler *ConnectionHandler,
 	migrationHandler *MigrationHandler,
 	fetcherHandler *FetcherHandler,
+	ttMiddleware fiber.Handler,
 ) *fiber.App {
 	f := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
 		ErrorHandler: func(ctx *fiber.Ctx, err error) error {
-			return commonsHttp.HandleFiberError(ctx, err)
+			return commonsHttp.FiberErrorHandler(ctx, err)
 		},
 	})
 	tlMid := commonsHttp.NewTelemetryMiddleware(tl)
@@ -41,8 +44,6 @@ func NewRoutes(
 	f.Use(tlMid.WithTelemetry(tl))
 	f.Use(cors.New())
 	f.Use(commonsHttp.WithHTTPLogging(commonsHttp.WithCustomLogger(lg)))
-	// TODO: Enable license middleware when ready
-	// f.Use(licenseClient.Middleware())
 
 	// Doc Swagger
 	f.Get("/swagger/*", WithSwaggerEnvConfig(), fiberSwagger.WrapHandler)
@@ -54,24 +55,35 @@ func NewRoutes(
 	f.Get("/version", commonsHttp.Version)
 
 	// Connections
-	f.Post("/v1/management/connections", auth.Authorize(applicationName, connectionsResource, "post"), connectionHandler.CreateConnection)
-	f.Get("/v1/management/connections", auth.Authorize(applicationName, connectionsResource, "get"), connectionHandler.ListConnections)
+	f.Post("/v1/management/connections", auth.Authorize(applicationName, connectionsResource, "post"), WhenEnabled(ttMiddleware), connectionHandler.CreateConnection)
+	f.Get("/v1/management/connections", auth.Authorize(applicationName, connectionsResource, "get"), WhenEnabled(ttMiddleware), connectionHandler.ListConnections)
 	// Schema Validation - must be before :id routes to avoid conflict
-	f.Post("/v1/management/connections/validate-schema", auth.Authorize(applicationName, connectionsResource, "post"), connectionHandler.ValidateSchema)
+	f.Post("/v1/management/connections/validate-schema", auth.Authorize(applicationName, connectionsResource, "post"), WhenEnabled(ttMiddleware), connectionHandler.ValidateSchema)
 	// Migration - must be before :id routes to avoid conflict
-	f.Get("/v1/management/connections/unassigned", auth.Authorize(applicationName, connectionsResource, "get"), migrationHandler.ListUnassignedConnections)
-	f.Post("/v1/management/connections/:id/assign", auth.Authorize(applicationName, connectionsResource, "post"), migrationHandler.AssignConnectionToProduct)
-	f.Get("/v1/management/connections/:id", auth.Authorize(applicationName, connectionsResource, "get"), connectionHandler.GetConnection)
-	f.Post("/v1/management/connections/:id/test", auth.Authorize(applicationName, connectionsResource, "post"), connectionHandler.TestConnection)
-	f.Get("/v1/management/connections/:id/schema", auth.Authorize(applicationName, connectionsResource, "get"), connectionHandler.GetConnectionSchema)
-	f.Patch("/v1/management/connections/:id", auth.Authorize(applicationName, connectionsResource, "patch"), connectionHandler.UpdateConnection)
-	f.Delete("/v1/management/connections/:id", auth.Authorize(applicationName, connectionsResource, "delete"), connectionHandler.DeleteConnection)
+	f.Get("/v1/management/connections/unassigned", auth.Authorize(applicationName, connectionsResource, "get"), WhenEnabled(ttMiddleware), migrationHandler.ListUnassignedConnections)
+	f.Post("/v1/management/connections/:id/assign", auth.Authorize(applicationName, connectionsResource, "post"), WhenEnabled(ttMiddleware), migrationHandler.AssignConnectionToProduct)
+	f.Get("/v1/management/connections/:id", auth.Authorize(applicationName, connectionsResource, "get"), WhenEnabled(ttMiddleware), connectionHandler.GetConnection)
+	f.Post("/v1/management/connections/:id/test", auth.Authorize(applicationName, connectionsResource, "post"), WhenEnabled(ttMiddleware), connectionHandler.TestConnection)
+	f.Get("/v1/management/connections/:id/schema", auth.Authorize(applicationName, connectionsResource, "get"), WhenEnabled(ttMiddleware), connectionHandler.GetConnectionSchema)
+	f.Patch("/v1/management/connections/:id", auth.Authorize(applicationName, connectionsResource, "patch"), WhenEnabled(ttMiddleware), connectionHandler.UpdateConnection)
+	f.Delete("/v1/management/connections/:id", auth.Authorize(applicationName, connectionsResource, "delete"), WhenEnabled(ttMiddleware), connectionHandler.DeleteConnection)
 
 	// Fetcher
-	f.Post("/v1/fetcher", auth.Authorize(applicationName, fetcherResource, "post"), fetcherHandler.CreateJob)
-	f.Get("/v1/fetcher/:id", auth.Authorize(applicationName, fetcherResource, "get"), fetcherHandler.GetJob)
+	f.Post("/v1/fetcher", auth.Authorize(applicationName, fetcherResource, "post"), WhenEnabled(ttMiddleware), fetcherHandler.CreateJob)
+	f.Get("/v1/fetcher/:id", auth.Authorize(applicationName, fetcherResource, "get"), WhenEnabled(ttMiddleware), fetcherHandler.GetJob)
 
 	f.Use(tlMid.EndTracingSpans)
 
 	return f
+}
+
+// WhenEnabled is a helper that conditionally applies a middleware if it's not nil.
+func WhenEnabled(middleware fiber.Handler) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		if middleware == nil {
+			return c.Next()
+		}
+
+		return middleware(c)
+	}
 }

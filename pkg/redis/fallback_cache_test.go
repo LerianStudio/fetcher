@@ -32,6 +32,7 @@ func setupFallbackCache(t *testing.T) (*miniredis.Miniredis, *FallbackCache[test
 
 	redisCache, err := NewRedisCache[testStruct](conn, time.Minute, "test:")
 	require.NoError(t, err)
+
 	fallback := NewFallbackCache[testStruct](redisCache, &mockLogger{}, time.Minute)
 
 	t.Cleanup(func() {
@@ -155,6 +156,7 @@ func TestFallbackCache_Close_Idempotent(t *testing.T) {
 
 	redisCache, err := NewRedisCache[testStruct](conn, time.Minute, "test:")
 	require.NoError(t, err)
+
 	fallback := NewFallbackCache[testStruct](redisCache, &mockLogger{}, time.Minute)
 
 	// First close should succeed
@@ -374,6 +376,7 @@ func TestFallbackCache_UseRedisFlag_Switch(t *testing.T) {
 
 	redisCache, err := NewRedisCache[testStruct](conn, time.Minute, "test:")
 	require.NoError(t, err)
+
 	cache := NewFallbackCache[testStruct](redisCache, &mockLogger{}, time.Minute)
 	defer cache.Close()
 
@@ -474,6 +477,7 @@ func TestFallbackCache_Close_StopsHealthMonitor(t *testing.T) {
 
 	redisCache, err := NewRedisCache[testStruct](conn, time.Minute, "test:")
 	require.NoError(t, err)
+
 	cache := NewFallbackCache[testStruct](redisCache, &mockLogger{}, time.Minute)
 
 	// Close should stop the health monitor goroutine

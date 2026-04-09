@@ -3,7 +3,7 @@ package services
 import (
 	"context"
 
-	libLog "github.com/LerianStudio/lib-commons/v2/commons/log"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
 
@@ -24,7 +24,7 @@ func testContext() context.Context {
 
 // testLogger creates a logger for testing that suppresses output.
 func testLogger() *libLog.GoLogger {
-	return &libLog.GoLogger{Level: libLog.ErrorLevel}
+	return &libLog.GoLogger{Level: libLog.LevelError}
 }
 
 // testMocks holds all mock dependencies for testing.
@@ -53,16 +53,16 @@ func newTestMocks(ctrl *gomock.Controller) *testMocks {
 // Now that UseCase uses interfaces, we can inject mocks directly.
 func newTestUseCase(mocks *testMocks) *UseCase {
 	uc := &UseCase{
-		ExternalDataSeaweedFS: mocks.seaweedFS,
-		JobRepository:         mocks.jobRepo,
-		ConnectionRepository:  mocks.connRepo,
-		Cryptor:               mocks.cryptor,
-		FileTTL:               "1h",
-		RabbitMQPublisher:     mocks.rabbitPublisher,
-		JobEventsExchange:     "test-exchange",
+		ExternalDataStorage:  mocks.seaweedFS,
+		JobRepository:        mocks.jobRepo,
+		ConnectionRepository: mocks.connRepo,
+		Cryptor:              mocks.cryptor,
+		FileTTL:              "1h",
+		RabbitMQPublisher:    mocks.rabbitPublisher,
+		JobEventsExchange:    "test-exchange",
 	}
 
-	uc.SetSeaweedFSSecrets("test-seaweedfs-encrypt-key", "test-seaweedfs-hash-key")
+	uc.SetStorageEncryptDerivedKey([]byte("test-seaweedfs-encrypt-key-32by"))
 	uc.SetCRMSecrets("test-crm-encrypt-key", "test-crm-hash-key")
 
 	return uc

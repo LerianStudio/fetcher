@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	libLog "github.com/LerianStudio/lib-commons/v2/commons/log"
-	libRabbitmq "github.com/LerianStudio/lib-commons/v2/commons/rabbitmq"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	libRabbitmq "github.com/LerianStudio/lib-commons/v4/commons/rabbitmq"
 )
 
 // stressTestConfig groups the RabbitMQ configuration required for the integration test.
@@ -73,7 +73,7 @@ func TestRabbitMQStressProducerAndConsumer(t *testing.T) {
 	}
 
 	cfg := loadStressConfig(t)
-	logger := &libLog.GoLogger{Level: libLog.InfoLevel}
+	logger := &libLog.GoLogger{Level: libLog.LevelInfo}
 
 	escapedUser := url.PathEscape(cfg.User)
 	escapedPass := url.QueryEscape(cfg.Pass)

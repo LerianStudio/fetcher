@@ -45,7 +45,7 @@ Lerian Fetcher is built as a cloud-native platform following Hexagonal Architect
 
    - Consumes jobs from RabbitMQ queue
    - Extracts data from configured external databases
-   - Encrypts and stores results in SeaweedFS
+   - Encrypts and stores results in configurable object storage (SeaweedFS or S3-compatible)
    - Publishes job completion/failure notifications
    - Configurable worker concurrency (default: 5)
 
@@ -53,7 +53,7 @@ Lerian Fetcher is built as a cloud-native platform following Hexagonal Architect
 
    - MongoDB for primary metadata storage
    - RabbitMQ for message queuing with DLQ support
-   - SeaweedFS for distributed file storage
+   - SeaweedFS for distributed file storage (default) or any S3-compatible service (AWS S3, MinIO)
    - Valkey/Redis for caching
    - KEDA for Kubernetes event-driven autoscaling
 
@@ -78,7 +78,7 @@ Lerian Fetcher is built as a cloud-native platform following Hexagonal Architect
 | `DELETE` | `/v1/management/connections/{id}` | Soft delete (409 if active jobs) |
 | `POST` | `/v1/management/connections/validate-schema` | Validate tables/fields exist in datasources |
 
-#### Fetcher Jobs
+#### Fetcher  Jobs
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -110,6 +110,7 @@ For hands-on API exploration and testing scenarios, the following resources are 
 - **Advanced Filtering**: 10 operators (eq, gt, gte, lt, lte, between, in, nin, ne, like)
 - **Schema Discovery**: Automatic table/column detection across all database types
 - **Message Signing**: HMAC-SHA256 signing with replay attack prevention
+- **Multi-Tenant Support**: Database-per-tenant isolation via JWT-based tenant context, with zero overhead when disabled
 - **OpenTelemetry**: Distributed tracing and metrics for comprehensive observability
 
 ### Data Extraction Capabilities
@@ -120,7 +121,7 @@ For hands-on API exploration and testing scenarios, the following resources are 
 - **Field Projection**: Select specific fields or use `["*"]` for all fields
 - **JSON/BSON Parsing**: Automatic parsing of JSON fields in relational databases
 - **Deduplication**: 5-minute window for duplicate job detection
-- **Result Storage**: Encrypted results stored in SeaweedFS with configurable TTL
+- **Result Storage**: Encrypted results stored in pluggable object storage (SeaweedFS or S3-compatible) with configurable TTL
 
 ## Getting Started
 
@@ -188,6 +189,21 @@ make derive-key KEY="<your-base64-master-key>"
 ```
 
 This outputs a hex-encoded HMAC key that consumers use to verify HMAC-SHA256 signatures on extracted data. See [scripts/crypto/derive-key/verification-guide.md](scripts/crypto/derive-key/verification-guide.md) for the full verification protocol.
+
+### Multi-Tenant Support
+
+Fetcher supports multi-tenant deployments with database-per-tenant isolation. When enabled, each tenant gets isolated MongoDB databases, Redis key namespaces, and S3 object paths.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `MULTI_TENANT_ENABLED` | Enable multi-tenant mode | `false` |
+| `MULTI_TENANT_URL` | Tenant Manager service URL | - |
+| `MULTI_TENANT_MAX_TENANT_POOLS` | Max concurrent tenant connection pools | `100` |
+| `MULTI_TENANT_IDLE_TIMEOUT_SEC` | Idle tenant connection timeout | `300` |
+| `MULTI_TENANT_CIRCUIT_BREAKER_THRESHOLD` | Circuit breaker failure threshold | `5` |
+| `MULTI_TENANT_CIRCUIT_BREAKER_TIMEOUT_SEC` | Circuit breaker reset timeout | `30` |
+
+When `MULTI_TENANT_ENABLED=false` (default), all multi-tenant code paths are bypassed with zero performance impact. See `docs/multi-tenant-guide.md` for activation instructions.
 
 ## About Lerian
 

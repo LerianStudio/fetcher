@@ -10,12 +10,13 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/ports/job"
 	"github.com/LerianStudio/fetcher/pkg/ports/publisher"
 	"github.com/LerianStudio/fetcher/pkg/ports/storage"
+	"github.com/LerianStudio/fetcher/pkg/resolver"
 )
 
 // UseCase is a struct that coordinates the handling of template files, report storage, external data sources, and report data.
 type UseCase struct {
-	// ExternalDataSeaweedFS is a repository used to retrieve external data from SeaweedFS storage.
-	ExternalDataSeaweedFS storage.Repository
+	// ExternalDataStorage is a repository used to retrieve external data from external data storage.
+	ExternalDataStorage storage.Repository
 
 	// JobRepository is a repository used to retrieve job data from MongoDB storage.
 	JobRepository job.Repository
@@ -42,23 +43,24 @@ type UseCase struct {
 	// dataSourceFactory creates DataSource instances from connections.
 	dataSourceFactory func(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor) (datasource.DataSource, error)
 
-	// seaweedFSEncryptSecretKey is the encryption secret key for SeaweedFS data-at-rest.
-	seaweedFSEncryptSecretKey string
-
-	// seaweedFSHashSecretKey is the hash secret key for SeaweedFS data-at-rest.
-	seaweedFSHashSecretKey string
+	// storageEncryptDerivedKey is the HKDF-derived AES-256 key for encrypting
+	// extracted data at rest. Derived from APP_ENC_KEY with context "fetcher-storage-encryption-v1".
+	storageEncryptDerivedKey []byte
 
 	// crmEncryptSecretKey is the encryption secret key for plugin_crm datasource.
 	crmEncryptSecretKey string
 
 	// crmHashSecretKey is the hash secret key for plugin_crm datasource.
 	crmHashSecretKey string
+
+	// ConnectionResolver resolves datasource connections (internal + external).
+	// When nil, falls back to ConnectionRepository.FindByConfigNames (backwards compatible).
+	ConnectionResolver resolver.ConnectionResolver
 }
 
-// SetSeaweedFSSecrets configures the SeaweedFS encryption and hash secret keys.
-func (uc *UseCase) SetSeaweedFSSecrets(encryptKey, hashKey string) {
-	uc.seaweedFSEncryptSecretKey = encryptKey
-	uc.seaweedFSHashSecretKey = hashKey
+// SetStorageEncryptDerivedKey configures the HKDF-derived AES-256 key for storage encryption.
+func (uc *UseCase) SetStorageEncryptDerivedKey(key []byte) {
+	uc.storageEncryptDerivedKey = key
 }
 
 // SetCRMSecrets configures the CRM plugin encryption and hash secret keys.

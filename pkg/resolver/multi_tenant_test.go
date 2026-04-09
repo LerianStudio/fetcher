@@ -1,0 +1,153 @@
+package resolver
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"github.com/LerianStudio/fetcher/pkg/model"
+	connPort "github.com/LerianStudio/fetcher/pkg/ports/connection"
+	tmcore "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/core"
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
+)
+
+func TestMultiTenantResolver_ResolveConnections_InternalDatasource(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockRepo := connPort.NewMockRepository(ctrl)
+	tenantID := uuid.New()
+
+	mockTenantConfig := NewMockTenantConfigProvider(ctrl)
+
+	mockTenantConfig.EXPECT().
+		GetServiceConnection(gomock.Any(), tenantID.String(), "ledger", "onboarding").
+		Return(&ServiceConnectionConfig{
+			Host:     "tenant-midaz.db.internal",
+			Port:     5432,
+			Database: "midaz_onboarding",
+			Username: "tenant_user",
+			Password: "tenant_pass",
+		}, nil)
+
+	resolver := NewMultiTenantResolver(mockRepo, NewInternalDatasourceRegistry(), mockTenantConfig)
+
+	ctx := tmcore.ContextWithTenantID(context.Background(), tenantID.String())
+
+	conns, err := resolver.ResolveConnections(ctx, []string{"midaz_onboarding"})
+	require.NoError(t, err)
+	require.Len(t, conns, 1)
+	assert.Equal(t, "tenant-midaz.db.internal", conns[0].Host)
+	assert.Equal(t, model.TypePostgreSQL, conns[0].Type)
+	assert.Equal(t, "midaz_onboarding", conns[0].ConfigName)
+	assert.Equal(t, 5432, conns[0].Port)
+	assert.Equal(t, "midaz_onboarding", conns[0].DatabaseName)
+	assert.Equal(t, "tenant_user", conns[0].Username)
+	// EncryptionKeyVersion should be empty for in-memory connections
+	assert.Empty(t, conns[0].EncryptionKeyVersion)
+}
+
+func TestMultiTenantResolver_ResolveConnections_MixedInternalAndExternal(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockRepo := connPort.NewMockRepository(ctrl)
+	tenantID := uuid.New()
+	mockTenantConfig := NewMockTenantConfigProvider(ctrl)
+
+	mockTenantConfig.EXPECT().
+		GetServiceConnection(gomock.Any(), tenantID.String(), "ledger", "onboarding").
+		Return(&ServiceConnectionConfig{
+			Host:     "tenant-db.internal",
+			Port:     5432,
+			Database: "midaz_onboarding",
+			Username: "user",
+			Password: "pass",
+		}, nil)
+
+	externalConn := &model.Connection{ConfigName: "my-oracle", Type: model.TypeOracle}
+	mockRepo.EXPECT().
+		FindByConfigNames(gomock.Any(), []string{"my-oracle"}).
+		Return([]*model.Connection{externalConn}, nil)
+
+	resolver := NewMultiTenantResolver(mockRepo, NewInternalDatasourceRegistry(), mockTenantConfig)
+	ctx := tmcore.ContextWithTenantID(context.Background(), tenantID.String())
+
+	conns, err := resolver.ResolveConnections(ctx, []string{"midaz_onboarding", "my-oracle"})
+	require.NoError(t, err)
+	assert.Len(t, conns, 2)
+}
+
+func TestMultiTenantResolver_ResolveConnections_NoTenantInContext(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockRepo := connPort.NewMockRepository(ctrl)
+	mockTenantConfig := NewMockTenantConfigProvider(ctrl)
+
+	resolver := NewMultiTenantResolver(mockRepo, NewInternalDatasourceRegistry(), mockTenantConfig)
+
+	// No tenant ID set in context
+	_, err := resolver.ResolveConnections(context.Background(), []string{"midaz_onboarding"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "tenant ID not found in context")
+}
+
+func TestMultiTenantResolver_ResolveConnections_TenantProviderError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockRepo := connPort.NewMockRepository(ctrl)
+	tenantID := uuid.New()
+	mockTenantConfig := NewMockTenantConfigProvider(ctrl)
+
+	mockTenantConfig.EXPECT().
+		GetServiceConnection(gomock.Any(), tenantID.String(), "ledger", "onboarding").
+		Return(nil, errors.New("tenant-manager unavailable"))
+
+	resolver := NewMultiTenantResolver(mockRepo, NewInternalDatasourceRegistry(), mockTenantConfig)
+	ctx := tmcore.ContextWithTenantID(context.Background(), tenantID.String())
+
+	_, err := resolver.ResolveConnections(ctx, []string{"midaz_onboarding"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "tenant-manager lookup")
+}
+
+func TestMultiTenantResolver_ResolveConnections_SSLModeSet(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockRepo := connPort.NewMockRepository(ctrl)
+	tenantID := uuid.New()
+	mockTenantConfig := NewMockTenantConfigProvider(ctrl)
+
+	mockTenantConfig.EXPECT().
+		GetServiceConnection(gomock.Any(), tenantID.String(), "ledger", "onboarding").
+		Return(&ServiceConnectionConfig{
+			Host:     "db.internal",
+			Port:     5432,
+			Database: "midaz",
+			Username: "user",
+			Password: "pass",
+			SSLMode:  "require",
+		}, nil)
+
+	resolver := NewMultiTenantResolver(mockRepo, NewInternalDatasourceRegistry(), mockTenantConfig)
+	ctx := tmcore.ContextWithTenantID(context.Background(), tenantID.String())
+
+	conns, err := resolver.ResolveConnections(ctx, []string{"midaz_onboarding"})
+	require.NoError(t, err)
+	require.Len(t, conns, 1)
+	require.NotNil(t, conns[0].SSL)
+	assert.Equal(t, "require", conns[0].SSL.Mode)
+}
+
+func TestMultiTenantResolver_IsInternalDatasource(t *testing.T) {
+	resolver := NewMultiTenantResolver(nil, NewInternalDatasourceRegistry(), nil)
+	assert.True(t, resolver.IsInternalDatasource("midaz_onboarding"))
+	assert.True(t, resolver.IsInternalDatasource("plugin_crm"))
+	assert.False(t, resolver.IsInternalDatasource("random-db"))
+}

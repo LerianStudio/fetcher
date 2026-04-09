@@ -1,17 +1,40 @@
 package itestkit
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 var (
 	hostGatewayIPOnce sync.Once
 	hostGatewayIP     string
 )
+
+const dockerProbeTimeout = 2 * time.Second
+
+func runDockerProbe(args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), dockerProbeTimeout)
+	defer cancel()
+
+	out, err := exec.CommandContext(ctx, "docker", args...).Output()
+	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return "", fmt.Errorf("docker %s timed out after %s", strings.Join(args, " "), dockerProbeTimeout)
+		}
+
+		return "", err
+	}
+
+	return strings.TrimSpace(string(out)), nil
+}
 
 // HostGatewayIP returns the address that containers should use to reach the host.
 // This is used to connect from containers to services running on the host.
@@ -32,9 +55,8 @@ func HostGatewayIP() string {
 		}
 
 		// Check if running on Docker Desktop
-		out, err := exec.Command("docker", "info", "-f", "{{.OperatingSystem}}").Output()
+		osName, err := runDockerProbe("info", "-f", "{{.OperatingSystem}}")
 		if err == nil {
-			osName := strings.TrimSpace(string(out))
 			if strings.Contains(strings.ToLower(osName), "docker desktop") {
 				// Docker Desktop: use host.docker.internal directly
 				// This works because e2ekit adds "host.docker.internal:host-gateway" as extraHost
@@ -44,9 +66,8 @@ func HostGatewayIP() string {
 		}
 
 		// Linux: Try to get the Docker bridge gateway IP
-		out, err = exec.Command("docker", "network", "inspect", "bridge", "-f", "{{range .IPAM.Config}}{{.Gateway}}{{end}}").Output()
+		ip, err := runDockerProbe("network", "inspect", "bridge", "-f", "{{range .IPAM.Config}}{{.Gateway}}{{end}}")
 		if err == nil {
-			ip := strings.TrimSpace(string(out))
 			if ip != "" && net.ParseIP(ip) != nil {
 				hostGatewayIP = ip
 				return
@@ -78,8 +99,8 @@ func HostGatewayIP() string {
 //   - localhost, 127.0.0.1, ::1 (loopback)
 //   - 0.0.0.0, :: (wildcard/all interfaces)
 //
-// This is automatically called by all infra HostPort() methods, so tests
-// don't need to manually handle this conversion.
+// Container-specific helpers call this so app containers can reach services
+// exposed on the Docker host.
 func NormalizeHost(host string) string {
 	switch host {
 	case "localhost", "127.0.0.1", "::1", "0.0.0.0", "::":
@@ -87,4 +108,59 @@ func NormalizeHost(host string) string {
 	default:
 		return host
 	}
+}
+
+// ParseHostPort parses host:port addresses used across itestkit endpoint helpers.
+func ParseHostPort(addr string) (host string, port int, err error) {
+	host, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "", 0, fmt.Errorf("invalid address format: %s: %w", addr, err)
+	}
+
+	port, err = strconv.Atoi(portStr)
+	if err != nil {
+		return "", 0, fmt.Errorf("invalid port: %s", portStr)
+	}
+
+	if port < 1 || port > 65535 {
+		return "", 0, fmt.Errorf("port out of range (1-65535): %d", port)
+	}
+
+	return host, port, nil
+}
+
+// ResolveHostHostPort returns the public, host-usable endpoint for an infra helper.
+// If a proxy is configured, proxyListen must be the host-mapped proxy endpoint.
+func ResolveHostHostPort(proxyListen, upstream string) (host string, port int, err error) {
+	if proxyListen != "" {
+		return ParseHostPort(proxyListen)
+	}
+
+	return ParseHostPort(upstream)
+}
+
+// ResolveContainerHostPort returns the endpoint that app containers should use.
+// Preference order:
+//  1. In-network proxy endpoint (toxiproxy alias) when chaos proxy is enabled
+//  2. Direct shared-network alias for the infra container
+//  3. Normalized host-mapped upstream when no shared network exists
+func ResolveContainerHostPort(proxyListenInNetwork, networkAlias string, internalPort int, upstream string) (host string, port int, err error) {
+	if proxyListenInNetwork != "" {
+		return ParseHostPort(proxyListenInNetwork)
+	}
+
+	if networkAlias != "" {
+		if internalPort < 1 || internalPort > 65535 {
+			return "", 0, fmt.Errorf("internal port out of range (1-65535): %d", internalPort)
+		}
+
+		return networkAlias, internalPort, nil
+	}
+
+	host, port, err = ParseHostPort(upstream)
+	if err != nil {
+		return "", 0, err
+	}
+
+	return NormalizeHost(host), port, nil
 }

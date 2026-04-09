@@ -9,9 +9,9 @@ import (
 
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/rabbitmq"
-	"github.com/LerianStudio/lib-commons/v2/commons/log"
-	"github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
-	libRabbitmq "github.com/LerianStudio/lib-commons/v2/commons/rabbitmq"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	"github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
+	libRabbitmq "github.com/LerianStudio/lib-commons/v4/commons/rabbitmq"
 )
 
 // ConsumerRepository provides an interface for Consumer related to rabbitmq.
@@ -30,7 +30,8 @@ type ConsumerRoutes struct {
 	adapter    rabbitmq.Adapter
 	routes     map[string]QueueHandlerFunc
 	numWorkers int
-	log.Logger
+	libLog.
+		Logger
 	opentelemetry.Telemetry
 	shutdownWg sync.WaitGroup
 }
@@ -39,7 +40,7 @@ type ConsumerRoutes struct {
 // The signer parameter is required in non-development environments.
 // In dev/local/test, nil signer disables signature verification and message signing.
 // The envName parameter should come from the bootstrap Config.EnvName field.
-func NewConsumerRoutes(conn *libRabbitmq.RabbitMQConnection, numWorkers int, logger log.Logger, telemetry *opentelemetry.Telemetry, signer crypto.Signer, envName string) (*ConsumerRoutes, error) {
+func NewConsumerRoutes(conn *libRabbitmq.RabbitMQConnection, numWorkers int, logger libLog.Logger, telemetry *opentelemetry.Telemetry, signer crypto.Signer, envName string) (*ConsumerRoutes, error) {
 	opts := rabbitmq.DefaultOptions()
 	opts.Signer = signer
 
@@ -50,7 +51,7 @@ func NewConsumerRoutes(conn *libRabbitmq.RabbitMQConnection, numWorkers int, log
 			return nil, fmt.Errorf("rabbitmq signature verification requires configured signer in env %q", envName)
 		}
 
-		logger.Warnf("RabbitMQ signer not configured in env %q; disabling signature verification", envName)
+		logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("RabbitMQ signer not configured in env %q; disabling signature verification", envName))
 
 		opts.EnableSignatureVerification = false
 		opts.EnableMessageSigning = false
@@ -62,7 +63,7 @@ func NewConsumerRoutes(conn *libRabbitmq.RabbitMQConnection, numWorkers int, log
 }
 
 // NewConsumerRoutesWithAdapter creates a new instance of ConsumerRoutes using a specific RabbitMQ adapter.
-func NewConsumerRoutesWithAdapter(adapter rabbitmq.Adapter, numWorkers int, logger log.Logger, telemetry *opentelemetry.Telemetry) *ConsumerRoutes {
+func NewConsumerRoutesWithAdapter(adapter rabbitmq.Adapter, numWorkers int, logger libLog.Logger, telemetry *opentelemetry.Telemetry) *ConsumerRoutes {
 	if numWorkers <= 0 {
 		numWorkers = 5
 	}
@@ -104,7 +105,9 @@ func (cr *ConsumerRoutes) Register(queueName string, handler QueueHandlerFunc) {
 // RunConsumers starts consumers for all registered queues using RabbitMQAdapter.
 func (cr *ConsumerRoutes) RunConsumers(ctx context.Context, wg *sync.WaitGroup) error {
 	for queueName, handler := range cr.routes {
-		cr.Info("Starting consumer for queue " + queueName)
+		cr.Log(ctx, libLog.LevelInfo, "starting consumer for queue",
+			libLog.String("queue", queueName),
+		)
 
 		queueName := queueName
 		handler := handler
@@ -118,7 +121,10 @@ func (cr *ConsumerRoutes) RunConsumers(ctx context.Context, wg *sync.WaitGroup) 
 
 			err := cr.adapter.ConsumerLoop(ctx, queueName, cr.numWorkers, handler)
 			if err != nil && ctx.Err() == nil {
-				cr.Errorf("Consumer loop for queue %s exited with error: %v", queueName, err)
+				cr.Log(ctx, libLog.LevelError, "consumer loop exited with error",
+					libLog.String("queue", queueName),
+					libLog.Err(err),
+				)
 			}
 		}()
 	}
@@ -128,17 +134,17 @@ func (cr *ConsumerRoutes) RunConsumers(ctx context.Context, wg *sync.WaitGroup) 
 
 // Shutdown gracefully shuts down all consumers and the RabbitMQ adapter.
 func (cr *ConsumerRoutes) Shutdown(ctx context.Context) error {
-	cr.Info("Shutting down ConsumerRoutes...")
+	cr.Log(ctx, libLog.LevelInfo, "shutting down consumer routes")
 
 	cr.shutdownWg.Wait()
 
 	// Shutdown the RabbitMQ adapter
 	if err := cr.adapter.Shutdown(ctx); err != nil {
-		cr.Errorf("Error shutting down RabbitMQ adapter: %v", err)
+		cr.Log(ctx, libLog.LevelError, "error shutting down RabbitMQ adapter", libLog.Err(err))
 		return err
 	}
 
-	cr.Info("ConsumerRoutes shutdown complete")
+	cr.Log(ctx, libLog.LevelInfo, "consumer routes shutdown complete")
 
 	return nil
 }

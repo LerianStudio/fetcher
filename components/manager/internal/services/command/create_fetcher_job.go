@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
+	"strings"
 	"time"
 
 	"github.com/LerianStudio/fetcher/pkg"
@@ -14,12 +16,13 @@ import (
 	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
 	jobRepo "github.com/LerianStudio/fetcher/pkg/ports/job"
 	"github.com/LerianStudio/fetcher/pkg/ports/messaging"
+	"github.com/LerianStudio/fetcher/pkg/resolver"
 
-	"github.com/LerianStudio/lib-commons/v2/commons"
-	libLog "github.com/LerianStudio/lib-commons/v2/commons/log"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v4/commons"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
+	tmcore "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/core"
 
-	"github.com/google/uuid"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -50,18 +53,20 @@ type ConnectionTester interface {
 
 // CreateFetcherJob is the command service for creating fetcher jobs.
 type CreateFetcherJob struct {
-	connRepo         connRepo.Repository
-	jobRepo          jobRepo.Repository
-	cryptor          crypto.Cryptor
-	rabbitMQ         messaging.MessagePublisher
-	connectionTester ConnectionTester
-	dsFactory        datasource.DataSourceFactory
-	queueName        string
+	connRepo           connRepo.Repository
+	jobRepo            jobRepo.Repository
+	cryptor            crypto.Cryptor
+	rabbitMQ           messaging.MessagePublisher
+	connectionTester   ConnectionTester
+	dsFactory          datasource.DataSourceFactory
+	queueName          string
+	connectionResolver resolver.ConnectionResolver
 }
 
 // NewCreateFetcherJob creates a new CreateFetcherJob service.
 // The queueName parameter specifies the RabbitMQ queue for publishing jobs.
 // If empty or whitespace-only, defaults to "fetcher.extract-external-data.queue" for backwards compatibility.
+// connResolver may be nil for backwards compatibility (falls back to direct repo lookup).
 func NewCreateFetcherJob(
 	connectionRepo connRepo.Repository,
 	jobRepository jobRepo.Repository,
@@ -69,14 +74,16 @@ func NewCreateFetcherJob(
 	rabbitMQ messaging.MessagePublisher,
 	queueName string,
 	factory datasource.DataSourceFactory,
+	connResolver resolver.ConnectionResolver,
 ) *CreateFetcherJob {
 	svc := &CreateFetcherJob{
-		connRepo:  connectionRepo,
-		jobRepo:   jobRepository,
-		cryptor:   cryptor,
-		rabbitMQ:  rabbitMQ,
-		queueName: queueName,
-		dsFactory: factory,
+		connRepo:           connectionRepo,
+		jobRepo:            jobRepository,
+		cryptor:            cryptor,
+		rabbitMQ:           rabbitMQ,
+		queueName:          queueName,
+		dsFactory:          factory,
+		connectionResolver: connResolver,
 	}
 	// Use default connection tester that tests real connections
 	svc.connectionTester = svc
@@ -114,7 +121,7 @@ func NewCreateFetcherJobWithTester(
 }
 
 // Execute creates a new fetcher job or returns an existing duplicate.
-func (s *CreateFetcherJob) Execute(ctx context.Context, organizationID uuid.UUID, request model.FetcherRequest) (*CreateFetcherJobResult, error) {
+func (s *CreateFetcherJob) Execute(ctx context.Context, request model.FetcherRequest) (*CreateFetcherJobResult, error) {
 	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "service.create_fetcher_job")
@@ -122,20 +129,19 @@ func (s *CreateFetcherJob) Execute(ctx context.Context, organizationID uuid.UUID
 
 	span.SetAttributes(
 		attribute.String("app.request.request_id", reqID),
-		attribute.String("app.request.organization_id", organizationID.String()),
 	)
 
-	err := libOpentelemetry.SetSpanAttributesFromStruct(&span, "app.request.payload", request)
+	err := libOpentelemetry.SetSpanAttributesFromValue(span, "app.request.payload", request, nil)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to convert fetcher request to JSON string", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to convert fetcher request to JSON string", err)
 	}
 
-	newJob, err := s.validateAndBuildJob(&span, organizationID, request)
+	newJob, err := s.validateAndBuildJob(span, request)
 	if err != nil {
 		return nil, err
 	}
 
-	dupResult, err := s.checkDuplicateJob(ctx, &span, logger, newJob)
+	dupResult, err := s.checkDuplicateJob(ctx, span, logger, newJob)
 	if err != nil {
 		return nil, err
 	}
@@ -144,22 +150,22 @@ func (s *CreateFetcherJob) Execute(ctx context.Context, organizationID uuid.UUID
 		return dupResult, nil
 	}
 
-	connections, err := s.resolveAndValidateConnections(ctx, &span, organizationID, newJob)
+	connections, err := s.resolveAndValidateConnections(ctx, span, newJob)
 	if err != nil {
 		return nil, err
 	}
 
-	if source, ok := request.Metadata["source"].(string); ok && source != "" {
-		if err := s.validateProductOwnership(ctx, &span, source, organizationID, connections); err != nil {
+	if source, ok := request.Metadata["source"].(string); ok && strings.TrimSpace(source) != "" {
+		if err := s.validateProductOwnership(ctx, span, source, connections); err != nil {
 			return nil, err
 		}
 	}
 
-	if err := s.testConnections(ctx, &span, connections); err != nil {
+	if err := s.testConnections(ctx, span, connections); err != nil {
 		return nil, err
 	}
 
-	createdJob, err := s.createJobWithConflictResolution(ctx, &span, logger, newJob)
+	createdJob, err := s.createJobWithConflictResolution(ctx, span, logger, newJob)
 	if err != nil {
 		return nil, err
 	}
@@ -169,9 +175,12 @@ func (s *CreateFetcherJob) Execute(ctx context.Context, organizationID uuid.UUID
 	}
 
 	span.SetAttributes(attribute.String("app.request.created_job_id", createdJob.job.ID.String()))
-	logger.Infof("Created fetcher job id=%s org=%s", createdJob.job.ID, organizationID)
 
-	if err := s.publishAndHandleFailure(ctx, &span, logger, createdJob.job); err != nil {
+	logger.Log(ctx, libLog.LevelInfo, "created fetcher job",
+		libLog.String("job_id", createdJob.job.ID.String()),
+	)
+
+	if err := s.publishAndHandleFailure(ctx, span, logger, createdJob.job); err != nil {
 		return nil, err
 	}
 
@@ -200,17 +209,16 @@ func (r *jobCreationResult) asResult() *CreateFetcherJobResult {
 
 // validateAndBuildJob computes the request hash, creates the job entity,
 // validates it, and validates filter references.
-func (s *CreateFetcherJob) validateAndBuildJob(span *trace.Span, organizationID uuid.UUID, request model.FetcherRequest) (*model.Job, error) {
+func (s *CreateFetcherJob) validateAndBuildJob(span trace.Span, request model.FetcherRequest) (*model.Job, error) {
 	requestHash, err := request.ComputeRequestHash()
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to compute request hash", err)
 		return nil, pkg.ValidateInternalError(err, "fetcher")
 	}
 
-	(*span).SetAttributes(attribute.String("app.request.request_hash", requestHash))
+	span.SetAttributes(attribute.String("app.request.request_hash", requestHash))
 
 	newJob, err := model.NewJob(
-		organizationID,
 		request.Metadata,
 		request.DataRequest.MappedFields,
 		request.DataRequest.Filters,
@@ -244,7 +252,7 @@ func (s *CreateFetcherJob) validateAndBuildJob(span *trace.Span, organizationID 
 
 // validateFilterReferences checks that any filters in the job reference valid
 // datasources and fields from mappedFields.
-func (s *CreateFetcherJob) validateFilterReferences(span *trace.Span, newJob *model.Job) error {
+func (s *CreateFetcherJob) validateFilterReferences(span trace.Span, newJob *model.Job) error {
 	if len(newJob.Filters) == 0 {
 		return nil
 	}
@@ -269,8 +277,8 @@ func (s *CreateFetcherJob) validateFilterReferences(span *trace.Span, newJob *mo
 // deduplication window. Returns a non-nil result if a non-failed duplicate is
 // found. Returns (nil, nil) if no duplicate exists or the existing job failed
 // (allowing a retry). Returns (nil, error) on lookup failure.
-func (s *CreateFetcherJob) checkDuplicateJob(ctx context.Context, span *trace.Span, logger libLog.Logger, newJob *model.Job) (*CreateFetcherJobResult, error) {
-	existingJob, err := s.jobRepo.FindByRequestHashWithinWindow(ctx, newJob.OrganizationID, newJob.RequestHash, DeduplicationWindowMinutes)
+func (s *CreateFetcherJob) checkDuplicateJob(ctx context.Context, span trace.Span, logger libLog.Logger, newJob *model.Job) (*CreateFetcherJobResult, error) {
+	existingJob, err := s.jobRepo.FindByRequestHashWithinWindow(ctx, newJob.RequestHash, DeduplicationWindowMinutes)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to check for duplicate job", err)
 		return nil, pkg.ValidateInternalError(err, "fetcher")
@@ -281,12 +289,17 @@ func (s *CreateFetcherJob) checkDuplicateJob(ctx context.Context, span *trace.Sp
 	}
 
 	if existingJob.Status == model.JobStatusFailed {
-		logger.Infof("Existing failed job found id=%s, allowing retry", existingJob.ID)
+		logger.Log(ctx, libLog.LevelInfo, "existing failed job found, allowing retry",
+			libLog.String("job_id", existingJob.ID.String()),
+		)
+
 		return nil, nil
 	}
 
-	logger.Infof("Duplicate request detected, returning existing job id=%s", existingJob.ID)
-	(*span).SetAttributes(
+	logger.Log(ctx, libLog.LevelInfo, "duplicate request detected, returning existing job",
+		libLog.String("job_id", existingJob.ID.String()),
+	)
+	span.SetAttributes(
 		attribute.Bool("app.request.is_duplicate", true),
 		attribute.String("app.request.existing_job_id", existingJob.ID.String()),
 	)
@@ -301,8 +314,18 @@ func (s *CreateFetcherJob) checkDuplicateJob(ctx context.Context, span *trace.Sp
 // resolveAndValidateConnections looks up connections for the job's datasource names,
 // ensures at least one connection exists, and verifies every requested datasource
 // has a corresponding connection.
-func (s *CreateFetcherJob) resolveAndValidateConnections(ctx context.Context, span *trace.Span, organizationID uuid.UUID, newJob *model.Job) ([]*model.Connection, error) {
-	connections, err := s.connRepo.FindByConfigNames(ctx, organizationID, newJob.GetDatasourceNames())
+func (s *CreateFetcherJob) resolveAndValidateConnections(ctx context.Context, span trace.Span, newJob *model.Job) ([]*model.Connection, error) {
+	var (
+		connections []*model.Connection
+		err         error
+	)
+
+	if s.connectionResolver != nil {
+		connections, err = s.connectionResolver.ResolveConnections(ctx, newJob.GetDatasourceNames())
+	} else {
+		connections, err = s.connRepo.FindByConfigNames(ctx, newJob.GetDatasourceNames())
+	}
+
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to find connections", err)
 		return nil, pkg.ValidateInternalError(err, "fetcher")
@@ -328,7 +351,7 @@ func (s *CreateFetcherJob) resolveAndValidateConnections(ctx context.Context, sp
 
 // ensureAllDatasourcesHaveConnections verifies that every requested datasource name
 // has a matching connection in the provided list.
-func (s *CreateFetcherJob) ensureAllDatasourcesHaveConnections(span *trace.Span, dsNames []string, connections []*model.Connection) error {
+func (s *CreateFetcherJob) ensureAllDatasourcesHaveConnections(span trace.Span, dsNames []string, connections []*model.Connection) error {
 	connMap := make(map[string]*model.Connection, len(connections))
 	for _, conn := range connections {
 		if conn == nil {
@@ -356,9 +379,14 @@ func (s *CreateFetcherJob) ensureAllDatasourcesHaveConnections(span *trace.Span,
 }
 
 // testConnections verifies that each connection is reachable.
-func (s *CreateFetcherJob) testConnections(ctx context.Context, span *trace.Span, connections []*model.Connection) error {
+func (s *CreateFetcherJob) testConnections(ctx context.Context, span trace.Span, connections []*model.Connection) error {
 	for _, conn := range connections {
 		if conn == nil {
+			continue
+		}
+
+		// Skip connection testing for internal datasources (D2: trust provisioning)
+		if s.connectionResolver != nil && s.connectionResolver.IsInternalDatasource(conn.ConfigName) {
 			continue
 		}
 
@@ -379,7 +407,7 @@ func (s *CreateFetcherJob) testConnections(ctx context.Context, span *trace.Span
 
 // createJobWithConflictResolution persists the job to the database, handling
 // duplicate key conflicts by looking up the active job or retrying once.
-func (s *CreateFetcherJob) createJobWithConflictResolution(ctx context.Context, span *trace.Span, logger libLog.Logger, newJob *model.Job) (*jobCreationResult, error) {
+func (s *CreateFetcherJob) createJobWithConflictResolution(ctx context.Context, span trace.Span, logger libLog.Logger, newJob *model.Job) (*jobCreationResult, error) {
 	createdJob, err := s.jobRepo.Create(ctx, newJob)
 	if err == nil {
 		return &jobCreationResult{job: createdJob}, nil
@@ -407,8 +435,8 @@ func (s *CreateFetcherJob) createJobWithConflictResolution(ctx context.Context, 
 
 // recoverFromDuplicateKey attempts to find the active duplicate job after a
 // duplicate key error during creation.
-func (s *CreateFetcherJob) recoverFromDuplicateKey(ctx context.Context, span *trace.Span, logger libLog.Logger, newJob *model.Job) (*jobCreationResult, error) {
-	existingActiveJob, findErr := s.findActiveDuplicateJob(ctx, newJob.OrganizationID, newJob.RequestHash)
+func (s *CreateFetcherJob) recoverFromDuplicateKey(ctx context.Context, span trace.Span, logger libLog.Logger, newJob *model.Job) (*jobCreationResult, error) {
+	existingActiveJob, findErr := s.findActiveDuplicateJob(ctx, newJob.RequestHash)
 	if findErr != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to load active job after duplicate create", findErr)
 		return nil, pkg.ValidateInternalError(findErr, "fetcher")
@@ -418,8 +446,10 @@ func (s *CreateFetcherJob) recoverFromDuplicateKey(ctx context.Context, span *tr
 		return nil, nil
 	}
 
-	logger.Infof("Concurrent duplicate request detected, returning active job id=%s", existingActiveJob.ID)
-	(*span).SetAttributes(
+	logger.Log(ctx, libLog.LevelInfo, "concurrent duplicate request detected, returning active job",
+		libLog.String("job_id", existingActiveJob.ID.String()),
+	)
+	span.SetAttributes(
 		attribute.Bool("app.request.is_duplicate", true),
 		attribute.String("app.request.existing_job_id", existingActiveJob.ID.String()),
 	)
@@ -430,7 +460,7 @@ func (s *CreateFetcherJob) recoverFromDuplicateKey(ctx context.Context, span *tr
 // retryCreateAfterConflict retries job creation once after the initial duplicate
 // key conflict and active-job lookup returned nothing. This is a bounded single
 // retry -- it must never be extended into a loop.
-func (s *CreateFetcherJob) retryCreateAfterConflict(ctx context.Context, span *trace.Span, logger libLog.Logger, newJob *model.Job) (*jobCreationResult, error) {
+func (s *CreateFetcherJob) retryCreateAfterConflict(ctx context.Context, span trace.Span, logger libLog.Logger, newJob *model.Job) (*jobCreationResult, error) {
 	createdJob, err := s.jobRepo.Create(ctx, newJob)
 	if err == nil {
 		return &jobCreationResult{job: createdJob}, nil
@@ -463,33 +493,39 @@ func (s *CreateFetcherJob) retryCreateAfterConflict(ctx context.Context, span *t
 // The unique active hash index prevents re-creation for the same request hash.
 // Mitigation: a TTL-based reaper for stale PENDING jobs can be added if this
 // edge case manifests in production (requires simultaneous RabbitMQ + MongoDB failure).
-func (s *CreateFetcherJob) publishAndHandleFailure(ctx context.Context, span *trace.Span, logger libLog.Logger, createdJob *model.Job) error {
+func (s *CreateFetcherJob) publishAndHandleFailure(ctx context.Context, span trace.Span, logger libLog.Logger, createdJob *model.Job) error {
 	err := s.publishToQueue(ctx, createdJob)
 	if err == nil {
 		return nil
 	}
 
 	libOpentelemetry.HandleSpanError(span, "Failed to publish job to queue", err)
-	logger.Errorf("Failed to publish job to queue id=%s: %v", createdJob.ID, err)
+	logger.Log(ctx, libLog.LevelError, "failed to publish job to queue",
+		libLog.String("job_id", createdJob.ID.String()),
+		libLog.Err(err),
+	)
 
 	createdJob.SetFailedStatus("process failed: unable to publish")
 
 	_, updateErr := s.jobRepo.Update(ctx, createdJob)
 	if updateErr != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to update job status to FAILED", updateErr)
-		logger.Errorf("Failed to update job status to FAILED for job id=%s: %v", createdJob.ID, updateErr)
+		logger.Log(ctx, libLog.LevelError, "failed to update job status to failed",
+			libLog.String("job_id", createdJob.ID.String()),
+			libLog.Err(updateErr),
+		)
 	}
 
 	return pkg.ValidateInternalError(err, "fetcher")
 }
 
-func (s *CreateFetcherJob) findActiveDuplicateJob(ctx context.Context, organizationID uuid.UUID, requestHash string) (*model.Job, error) {
-	return s.jobRepo.FindActiveByRequestHash(ctx, organizationID, requestHash)
+func (s *CreateFetcherJob) findActiveDuplicateJob(ctx context.Context, requestHash string) (*model.Job, error) {
+	return s.jobRepo.FindActiveByRequestHash(ctx, requestHash)
 }
 
 // validateMetadataSource validates that the request metadata contains a valid source field.
 // Returns an error if metadata is nil, source is missing, or source is not a non-empty string.
-func validateMetadataSource(span *trace.Span, metadata map[string]any) error {
+func validateMetadataSource(span trace.Span, metadata map[string]any) error {
 	if metadata == nil {
 		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Missing required metadata", nil)
 
@@ -514,7 +550,7 @@ func validateMetadataSource(span *trace.Span, metadata map[string]any) error {
 	}
 
 	sourceStr, ok := source.(string)
-	if !ok || sourceStr == "" {
+	if !ok || strings.TrimSpace(sourceStr) == "" {
 		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Invalid metadata.source type or empty value", nil)
 
 		return pkg.ValidationError{
@@ -531,9 +567,14 @@ func validateMetadataSource(span *trace.Span, metadata map[string]any) error {
 // validateProductOwnership validates that all connections belong to the product
 // identified by the given source name. It checks that every connection's ProductName
 // matches the expected source string.
-func (s *CreateFetcherJob) validateProductOwnership(_ context.Context, span *trace.Span, source string, _ uuid.UUID, connections []*model.Connection) error {
+func (s *CreateFetcherJob) validateProductOwnership(_ context.Context, span trace.Span, source string, connections []*model.Connection) error {
 	for _, conn := range connections {
 		if conn == nil {
+			continue
+		}
+
+		// Internal datasources are not product-scoped
+		if s.connectionResolver != nil && s.connectionResolver.IsInternalDatasource(conn.ConfigName) {
 			continue
 		}
 
@@ -588,13 +629,16 @@ func (s *CreateFetcherJob) TestConnection(ctx context.Context, conn *model.Conne
 
 	ds, err := s.dsFactory(testCtx, conn, s.cryptor)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Connection test failed", err)
+		libOpentelemetry.HandleSpanError(span, "Connection test failed", err)
 		return fmt.Errorf("connection test failed: %w", err)
 	}
 
 	// Close the connection after test
 	if err := ds.Close(testCtx); err != nil {
-		logger.Warnf("Failed to close test connection for %s: %v", conn.ConfigName, err)
+		logger.Log(testCtx, libLog.LevelWarn, "failed to close test connection",
+			libLog.String("config_name", conn.ConfigName),
+			libLog.Err(err),
+		)
 	}
 
 	return nil
@@ -603,16 +647,15 @@ func (s *CreateFetcherJob) TestConnection(ctx context.Context, conn *model.Conne
 // publishToQueue publishes a job to the RabbitMQ queue.
 // If RabbitMQ is not configured (nil), this method does nothing and returns nil.
 func (s *CreateFetcherJob) publishToQueue(ctx context.Context, j *model.Job) error {
-	if s.rabbitMQ == nil {
+	if isNilRabbitMQAdapter(s.rabbitMQ) {
 		return nil
 	}
 
 	message := map[string]any{
-		"jobId":          j.ID.String(),
-		"organizationId": j.OrganizationID.String(),
-		"mappedFields":   j.MappedFields,
-		"metadata":       j.Metadata,
-		"createdAt":      j.CreatedAt,
+		"jobId":        j.ID.String(),
+		"mappedFields": j.MappedFields,
+		"metadata":     j.Metadata,
+		"createdAt":    j.CreatedAt,
 	}
 
 	// Filters are already in the nested format expected by Worker
@@ -626,9 +669,33 @@ func (s *CreateFetcherJob) publishToQueue(ctx context.Context, j *model.Job) err
 	}
 
 	header := map[string]any{
-		"jobId":          j.ID.String(),
-		"organizationId": j.OrganizationID.String(),
+		"jobId": j.ID.String(),
+	}
+
+	// Propagate tenant ID to worker via AMQP header for multi-tenant isolation.
+	// When MULTI_TENANT_ENABLED=false, tenant context is empty and no header is added.
+	if tenantID := tmcore.GetTenantIDContext(ctx); tenantID != "" {
+		header["X-Tenant-ID"] = tenantID
 	}
 
 	return s.rabbitMQ.ProducerDefault(ctx, "", s.queueName, messageBytes, &header)
+}
+
+func isNilRabbitMQAdapter(adapter messaging.MessagePublisher) bool {
+	if adapter == nil {
+		return true
+	}
+
+	return isNilReferenceValue(adapter)
+}
+
+func isNilReferenceValue(value any) bool {
+	rv := reflect.ValueOf(value)
+
+	switch rv.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return rv.IsNil()
+	default:
+		return false
+	}
 }

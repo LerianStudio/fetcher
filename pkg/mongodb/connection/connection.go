@@ -12,13 +12,13 @@ import (
 // ConnectionMongoDBModel represents how a connection is stored in MongoDB.
 type ConnectionMongoDBModel struct {
 	ID                   uuid.UUID              `bson:"_id"`
-	OrganizationID       uuid.UUID              `bson:"organization_id"`
 	ProductName          string                 `bson:"product_name"`
 	ConfigName           string                 `bson:"config_name"`
 	Type                 string                 `bson:"type"`
 	Host                 string                 `bson:"host"`
 	Port                 int                    `bson:"port"`
 	DatabaseName         string                 `bson:"database_name"`
+	Schema               *string                `bson:"schema,omitempty"`
 	Username             string                 `bson:"username"`
 	PasswordEncrypted    string                 `bson:"password_encrypted"`
 	EncryptionKeyVersion string                 `bson:"encryption_key_version"`
@@ -65,13 +65,13 @@ func (cm *ConnectionMongoDBModel) ToEntity() (*model.Connection, error) {
 
 	return &model.Connection{
 		ID:                   cm.ID,
-		OrganizationID:       cm.OrganizationID,
 		ProductName:          cm.ProductName,
 		ConfigName:           cm.ConfigName,
 		Type:                 connType,
 		Host:                 cm.Host,
 		Port:                 cm.Port,
 		DatabaseName:         cm.DatabaseName,
+		Schema:               cm.Schema,
 		Username:             cm.Username,
 		PasswordEncrypted:    cm.PasswordEncrypted,
 		EncryptionKeyVersion: cm.EncryptionKeyVersion,
@@ -100,13 +100,13 @@ func (cm *ConnectionMongoDBModel) FromEntity(conn *model.Connection) error {
 	}
 
 	cm.ID = conn.ID
-	cm.OrganizationID = conn.OrganizationID
 	cm.ProductName = conn.ProductName
 	cm.ConfigName = conn.ConfigName
 	cm.Type = string(conn.Type)
 	cm.Host = conn.Host
 	cm.Port = conn.Port
 	cm.DatabaseName = conn.DatabaseName
+	cm.Schema = conn.Schema
 	cm.Username = conn.Username
 	cm.PasswordEncrypted = conn.PasswordEncrypted
 	cm.EncryptionKeyVersion = conn.EncryptionKeyVersion
@@ -136,7 +136,6 @@ func NewConnectionMongoDBModelFromDomain(conn *model.Connection) *ConnectionMong
 func (cm *ConnectionMongoDBModel) ToMapWithMask() map[string]any {
 	result := map[string]any{
 		"id":                     cm.ID,
-		"organization_id":        cm.OrganizationID,
 		"product_name":           cm.ProductName,
 		"config_name":            cm.ConfigName,
 		"type":                   cm.Type,

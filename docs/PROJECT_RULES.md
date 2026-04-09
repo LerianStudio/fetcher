@@ -12,7 +12,7 @@ Fetcher is a **data extraction microservices system** built with Go following **
 | **Web Framework** | Fiber | v2.52.10 |
 | **Message Queue** | RabbitMQ | v1.10.0 |
 | **Primary Database** | MongoDB | Latest |
-| **File Storage** | SeaweedFS | 3.97 |
+| **File Storage** | SeaweedFS (default) / S3-compatible | SeaweedFS 3.97 / AWS SDK v2 |
 | **Observability** | OpenTelemetry | v1.39.0 |
 | **API Documentation** | Swagger/Swaggo | v1.16.6 |
 
@@ -43,10 +43,13 @@ fetcher/
 │   ├── sqlserver/                 # SQL Server adapter
 │   ├── rabbitmq/                  # RabbitMQ adapter
 │   ├── seaweedfs/                 # SeaweedFS client
+│   ├── storage/                   # Storage factory (SeaweedFS / S3 abstraction)
 │   ├── crypto/                    # Encryption service
 │   ├── datasource/                # DataSource factory + SSL mode utils
 │   ├── redis/                     # Redis/Valkey client adapter
 │   ├── ratelimit/                 # Rate limiter (Redis-backed)
+│   ├── metrics/                   # Multi-tenant OTel metrics (no-op when disabled)
+│   ├── multitenant/               # Multi-tenant cross-cutting test suite
 │   ├── net/http/                  # HTTP utilities
 │   └── constant/                  # Application constants
 ├── tests/                         # Test infrastructure and integration tests
@@ -122,7 +125,7 @@ components/manager/
 └── internal/
     ├── adapters/
     │   └── http/in/
-    │       ├── routes.go           # HTTP route definitions (Primary Adapter)
+    │       ├── routes.go           # HTTP route definitions (Primary Adapter). Accepts optional tenantMiddleware for multi-tenant DB resolution.
     │       ├── middlewares.go      # HTTP middleware
     │       ├── connection.go       # Connection HTTP handlers
     │       ├── fetcher.go          # Fetcher job HTTP handlers
@@ -201,7 +204,7 @@ components/manager/
 **Responsibilities:**
 - Consume jobs from RabbitMQ queue
 - Extract data from configured external databases
-- Encrypt and store results in SeaweedFS
+- Encrypt and store results in configurable object storage (SeaweedFS or S3-compatible)
 - Publish job completion/failure notifications
 
 **Important:** This component has **NO HTTP routes** - it operates purely as a message consumer.
@@ -222,7 +225,7 @@ components/worker/
     ├── bootstrap/
     │   ├── config.go                # Dependency injection
     │   ├── service.go               # Application service wrapper
-    │   └── consumer.go              # Multi-queue consumer orchestration
+    │   └── consumer.go              # Multi-queue consumer orchestration with tenant ID extraction from AMQP headers and tenant MongoDB resolution
     └── services/
         ├── service.go               # UseCase struct definition
         ├── extract-data.go          # Main data extraction logic
@@ -250,7 +253,7 @@ Application-wide constants.
 
 | File | Purpose |
 |------|---------|
-| `app.go` | Application constants |
+| `app.go` | Application constants (includes `ApplicationName`, `ModuleManager`, `ModuleWorker` for multi-tenant service identification) |
 | `errors.go` | Error code constants |
 | `mongo.go` | MongoDB-specific constants |
 | `pagination.go` | Pagination defaults |
@@ -280,6 +283,7 @@ MongoDB connection and repository implementations.
 | File | Purpose |
 |------|---------|
 | `mongo.go` | MongoDB connection management |
+| `tenant.go` | Shared tenant-aware database resolution (ResolveDatabase) |
 
 **Subpackages:**
 
@@ -356,14 +360,25 @@ Resilient RabbitMQ adapter with connection management and message publishing.
 |------|---------|
 | `rabbitmq.go` | RabbitMQ connection, channel management, publishing |
 
-### seaweedfs (`pkg/seaweedfs/`)
+### storage (`pkg/storage/`)
 
-SeaweedFS client for distributed file storage.
+Provider-agnostic storage factory that selects between SeaweedFS and S3-compatible backends at startup.
 
 | File | Purpose |
 |------|---------|
-| `seaweedfs.go` | SeaweedFS client operations |
-| `external/external-data.go` | External data repository for storing extracted data |
+| `factory.go` | `NewRepository()` factory — selects backend from `STORAGE_PROVIDER` env var (`"seaweedfs"` or `"s3"`) |
+| `s3.go` | `S3Repository` — AWS SDK v2 implementation; supports AWS S3, MinIO, SeaweedFS S3, and any S3-compatible service |
+
+SSL for S3 is controlled by the URL scheme of `OBJECT_STORAGE_ENDPOINT` (`http://` → no SSL, `https://` → SSL). The factory defaults to SeaweedFS when `STORAGE_PROVIDER` is empty.
+
+### seaweedfs (`pkg/seaweedfs/`)
+
+SeaweedFS HTTP client. Used directly by `pkg/storage` when `STORAGE_PROVIDER=seaweedfs`.
+
+| File | Purpose |
+|------|---------|
+| `seaweedfs.go` | SeaweedFS HTTP client operations |
+| `external/external-data.go` | `SimpleRepository` — implements `storage.Repository` against SeaweedFS Filer |
 
 ### crypto (`pkg/crypto/`)
 
@@ -384,6 +399,22 @@ HTTP utilities for the Fiber framework.
 | `cursor.go` | Cursor-based pagination utilities |
 | `withBody.go` | Request body handling |
 | `http-utils.go` | General HTTP utilities |
+
+### metrics (`pkg/metrics/`)
+
+Multi-tenant metrics instrumentation using OpenTelemetry.
+
+| File | Purpose |
+|------|---------|
+| `tenant_metrics.go` | 4 canonical tenant metrics with no-op when disabled |
+
+### multitenant (`pkg/multitenant/`)
+
+Cross-cutting multi-tenant test suite (test-only package).
+
+| File | Purpose |
+|------|---------|
+| `multitenant_test.go` | Tenant isolation, backward compatibility, and context propagation tests |
 
 ---
 
@@ -442,7 +473,7 @@ The project follows hexagonal architecture (ports and adapters):
 │  │                     PORTS (Interfaces)                             │ │
 │  │                                                                    │ │
 │  │   - ConnectionRepository    - RabbitMQ Publisher                   │ │
-│  │   - JobRepository           - SeaweedFS Repository                 │ │
+│  │   - JobRepository           - Storage Repository                    │ │
 │  │   - SchemaCacheRepository   - Cryptor                              │ │
 │  │   - DataSource                                                     │ │
 │  └────────────────────────────────────────────────────────────────────┘ │
@@ -459,7 +490,7 @@ The project follows hexagonal architecture (ports and adapters):
                     │  └───────────┘  └───────────┘  └──────┘ │
                     │                                         │
                     │  ┌───────────┐  ┌───────────┐           │
-                    │  │ SeaweedFS │  │ Database  │           │
+                    │  │  Storage  │  │ Database  │           │
                     │  │   Repo    │  │ Adapters  │           │
                     │  └───────────┘  └───────────┘           │
                     └─────────────────────────────────────────┘
@@ -746,7 +777,7 @@ sequenceDiagram
     participant Cryptor as Crypto Service
     participant Factory as DataSourceFactory
     participant ExternalDB as External Database
-    participant SeaweedFS
+    participant Storage as Object Storage
     participant Publisher as RabbitMQ Publisher
     participant MongoDB
 
@@ -783,8 +814,8 @@ sequenceDiagram
 
         UseCase->>Cryptor: Encrypt(results)
         Cryptor-->>UseCase: encryptedData
-        UseCase->>SeaweedFS: Store(encryptedData, TTL)
-        SeaweedFS-->>UseCase: fileId
+        UseCase->>Storage: Store(encryptedData, TTL)
+        Storage-->>UseCase: fileId
 
         UseCase->>JobRepo: UpdateStatus(COMPLETED, resultUrl)
         JobRepo->>MongoDB: UpdateOne()
@@ -837,7 +868,7 @@ sequenceDiagram
 │      2. Parse job details                                                │
 │      3. Find connections by config name                                  │
 │      4. Query each external database                                     │
-│      5. Encrypt & store results in SeaweedFS                             │
+│      5. Encrypt & store results in object storage (SeaweedFS or S3)      │
 │      6. Update job status in MongoDB                                     │
 │      7. Publish notification to RabbitMQ topic                           │
 │      8. ACK message                                                      │
@@ -846,7 +877,7 @@ sequenceDiagram
                     ┌────────────────┼────────────────┐
                     │                │                │
                     ▼                ▼                ▼
-               MongoDB          SeaweedFS        RabbitMQ
+               MongoDB        Object Storage    RabbitMQ
            (shared data)    (extracted data)  (notifications)
 ```
 
@@ -859,7 +890,7 @@ sequenceDiagram
 | Redis/Valkey | Manager | Rate limiting (connection tests), schema caching |
 | RabbitMQ `fetcher.extract-external-data.queue` | Manager (publish), Worker (consume) | Job dispatch |
 | RabbitMQ `fetcher.job.events` exchange | Worker (publish) | Job status notifications |
-| SeaweedFS `external_data` bucket | Worker | Store encrypted extracted data |
+| Object storage `external_data` bucket (SeaweedFS or S3) | Worker | Store encrypted extracted data |
 | Encryption keys (env vars) | Manager, Worker | Encrypt/decrypt passwords & data |
 
 ---
@@ -925,7 +956,7 @@ sequenceDiagram
 | **Application Services** | `internal/services/command/` or `internal/services/query/` | Orchestrate business logic, coordinate domain operations | Domain, Ports |
 | **Domain** | `pkg/model/` | Business entities, value objects, domain logic | None (pure) |
 | **Ports** | Interfaces in `pkg/` packages | Define contracts for external dependencies | None (interfaces) |
-| **Secondary Adapters** | `pkg/mongodb/`, `pkg/rabbitmq/`, `pkg/seaweedfs/` | Implement ports, integrate with external systems | External libraries |
+| **Secondary Adapters** | `pkg/mongodb/`, `pkg/rabbitmq/`, `pkg/storage/`, `pkg/seaweedfs/` | Implement ports, integrate with external systems | External libraries |
 
 ### Best Practices for Evolution
 
@@ -961,6 +992,7 @@ The `tests/shared/` package provides a centralized test infrastructure library f
 | `tests/shared/config` | Configuration constants, ports, timeouts, infrastructure state |
 | `tests/shared/client` | HTTP clients for Manager API, RabbitMQ events, SeaweedFS |
 | `tests/shared/containers` | Docker container orchestration (PostgreSQL, MySQL, SQL Server, Oracle, MongoDB, RabbitMQ, Redis, SeaweedFS) |
+| `pkg/itestkit/infra/minio` | MinIO container for S3 integration and E2E tests (activated via `E2E_ENABLE_S3=true`) |
 | `tests/shared/network` | Docker network creation for container communication |
 | `tests/shared/fixtures` | Test data and SQL initialization scripts |
 | `tests/shared/topology` | RabbitMQ exchange and queue configuration |
@@ -999,6 +1031,7 @@ fmt.Println(pg.Internal.Port) // Internal port (int)
 | RabbitMQ | `rabbitmq:3-management` | `fetcher-rabbitmq` |
 | Redis/Valkey | `valkey/valkey:8` | `fetcher-valkey` |
 | SeaweedFS | `chrislusf/seaweedfs:*` | `fetcher-seaweedfs-*` |
+| MinIO (S3) | `minio/minio:*` | `fetcher-minio` (optional; requires `E2E_ENABLE_S3=true`) |
 
 ### Key Types
 
@@ -1101,16 +1134,19 @@ make generate-docs
 | Component | File | Purpose |
 |-----------|------|---------|
 | Manager | `components/manager/cmd/app/main.go` | Entry point |
-| Manager | `components/manager/internal/bootstrap/config.go` | DI container |
+| Manager | `components/manager/internal/bootstrap/config.go` | DI container + multi-tenant middleware init |
 | Manager | `components/manager/internal/adapters/http/in/routes.go` | Route definitions |
 | Manager | `components/manager/internal/services/command/create_fetcher_job.go` | Job creation logic |
 | Worker | `components/worker/cmd/app/main.go` | Entry point |
 | Worker | `components/worker/internal/bootstrap/config.go` | DI container |
-| Worker | `components/worker/internal/bootstrap/consumer.go` | Consumer orchestration |
+| Worker | `components/worker/internal/bootstrap/consumer.go` | Consumer orchestration + tenant DB resolution |
 | Worker | `components/worker/internal/services/extract-data.go` | Data extraction logic |
 | Shared | `pkg/model/connection.go` | Connection domain |
 | Shared | `pkg/model/job.go` | Job domain |
 | Shared | `pkg/datasource/datasource-factory.go` | DataSource factory |
+| Shared | `pkg/mongodb/tenant.go` | Shared tenant-aware database resolution |
+| Shared | `pkg/metrics/tenant_metrics.go` | Multi-tenant OTel metrics |
+| Shared | `pkg/constant/app.go` | Service and module constants |
 | Shared | `pkg/rabbitmq/rabbitmq.go` | RabbitMQ adapter |
 | Infra | `components/infra/docker-compose.yml` | Infrastructure |
 | Infra | `components/infra/rabbitmq/etc/definitions.json` | RabbitMQ topology |

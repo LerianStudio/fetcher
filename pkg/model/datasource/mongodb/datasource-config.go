@@ -8,10 +8,10 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/model/datasource"
 	"github.com/LerianStudio/fetcher/pkg/model/job"
 	"github.com/LerianStudio/fetcher/pkg/mongodb"
-	"github.com/LerianStudio/lib-commons/v2/commons"
-	libConstant "github.com/LerianStudio/lib-commons/v2/commons/constants"
-	"github.com/LerianStudio/lib-commons/v2/commons/log"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v4/commons"
+	libConstant "github.com/LerianStudio/lib-commons/v4/commons/constants"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -37,9 +37,9 @@ func (ds *DataSourceConfigMongoDB) GetType() string {
 
 // Connect establishes a connection to MongoDB.
 // This method is a no-op as the connection is established during factory creation.
-func (ds *DataSourceConfigMongoDB) Connect(ctx context.Context, logger log.Logger) error {
+func (ds *DataSourceConfigMongoDB) Connect(ctx context.Context, logger libLog.Logger) error {
 	ds.Status = libConstant.DataSourceStatusAvailable
-	logger.Infof("MongoDB connection ready for %s", ds.ConfigName)
+	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("MongoDB connection ready for %s", ds.ConfigName))
 
 	return nil
 }
@@ -58,7 +58,7 @@ func (ds *DataSourceConfigMongoDB) Close(ctx context.Context) error {
 }
 
 // Query executes queries on multiple MongoDB collections.
-func (ds *DataSourceConfigMongoDB) Query(ctx context.Context, collections map[string][]string, filters map[string]map[string]job.FilterCondition, logger log.Logger) (map[string][]map[string]any, error) {
+func (ds *DataSourceConfigMongoDB) Query(ctx context.Context, collections map[string][]string, filters map[string]map[string]job.FilterCondition, logger libLog.Logger) (map[string][]map[string]any, error) {
 	result := make(map[string][]map[string]any)
 
 	for collection, fields := range collections {
@@ -76,7 +76,7 @@ func (ds *DataSourceConfigMongoDB) Query(ctx context.Context, collections map[st
 		}
 
 		if errQuery != nil {
-			logger.Errorf("Error querying collection %s: %s", collection, errQuery.Error())
+			logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Error querying collection %s: %s", collection, errQuery.Error()))
 			return nil, fmt.Errorf("error querying collection %s: %w", collection, errQuery)
 		}
 
@@ -86,6 +86,24 @@ func (ds *DataSourceConfigMongoDB) Query(ctx context.Context, collections map[st
 	return result, nil
 }
 
+// QueryCollection queries a single MongoDB collection with the specified fields and optional filter.
+// Implements portDS.CRMQueryable.
+func (ds *DataSourceConfigMongoDB) QueryCollection(ctx context.Context, collection string, fields []string, filter map[string][]any) ([]map[string]any, error) {
+	return ds.MongoDBRepository.Query(ctx, collection, fields, filter)
+}
+
+// QueryCollectionWithAdvancedFilters queries a single MongoDB collection using advanced FilterCondition filters.
+// Implements portDS.CRMQueryable.
+func (ds *DataSourceConfigMongoDB) QueryCollectionWithAdvancedFilters(ctx context.Context, collection string, fields []string, filters map[string]job.FilterCondition) ([]map[string]any, error) {
+	return ds.MongoDBRepository.QueryWithAdvancedFilters(ctx, collection, fields, filters)
+}
+
+// ListCollectionNames returns all collection names in the MongoDB database.
+// Implements portDS.CRMQueryable.
+func (ds *DataSourceConfigMongoDB) ListCollectionNames(ctx context.Context) ([]string, error) {
+	return ds.MongoDBRepository.ListCollectionNames(ctx)
+}
+
 // getCollectionFilters extracts filters for a specific collection.
 func getCollectionFilters(databaseFilters map[string]map[string]job.FilterCondition, collectionName string) map[string]job.FilterCondition {
 	if databaseFilters == nil {
@@ -93,18 +111,6 @@ func getCollectionFilters(databaseFilters map[string]map[string]job.FilterCondit
 	}
 
 	return databaseFilters[collectionName]
-}
-
-// QueryCollection queries a single collection with the specified fields and optional filter.
-// This method implements the CRMQueryable interface (pkg/ports/datasource).
-func (ds *DataSourceConfigMongoDB) QueryCollection(ctx context.Context, collection string, fields []string, filter map[string][]any) ([]map[string]any, error) {
-	return ds.MongoDBRepository.Query(ctx, collection, fields, filter)
-}
-
-// QueryCollectionWithAdvancedFilters queries a single collection using advanced FilterCondition filters.
-// This method implements the CRMQueryable interface (pkg/ports/datasource).
-func (ds *DataSourceConfigMongoDB) QueryCollectionWithAdvancedFilters(ctx context.Context, collection string, fields []string, filters map[string]job.FilterCondition) ([]map[string]any, error) {
-	return ds.MongoDBRepository.QueryWithAdvancedFilters(ctx, collection, fields, filters)
 }
 
 // GetSchemaInfo returns the schema information for MongoDB.
@@ -121,7 +127,7 @@ func (ds *DataSourceConfigMongoDB) GetSchemaInfo(ctx context.Context, schemas []
 
 	schemaResult, err := ds.MongoDBRepository.GetDatabaseSchema(ctx)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "failed to get database schema", err)
+		libOpentelemetry.HandleSpanError(span, "failed to get database schema", err)
 		return nil, fmt.Errorf("failed to get MongoDB schema: %w", err)
 	}
 

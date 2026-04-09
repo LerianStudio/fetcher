@@ -9,8 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/LerianStudio/lib-commons/v2/commons"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v4/commons"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -86,7 +87,7 @@ func (c *SeaweedFSClient) UploadFileWithTTL(ctx context.Context, path string, da
 
 	path, err := pathIsValid(path)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Invalid path", err)
+		libOpentelemetry.HandleSpanError(span, "Invalid path", err)
 		return err
 	}
 
@@ -98,7 +99,7 @@ func (c *SeaweedFSClient) UploadFileWithTTL(ctx context.Context, path string, da
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, reqURL, bytes.NewReader(data))
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to create upload request", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to create upload request", err)
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
@@ -106,7 +107,7 @@ func (c *SeaweedFSClient) UploadFileWithTTL(ctx context.Context, path string, da
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to upload file", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to upload file", err)
 		return fmt.Errorf("failed to upload file: %w", err)
 	}
 	defer resp.Body.Close()
@@ -118,15 +119,15 @@ func (c *SeaweedFSClient) UploadFileWithTTL(ctx context.Context, path string, da
 		uploadErr := fmt.Errorf("upload failed with status %d: %s", resp.StatusCode, string(body))
 
 		if resp.StatusCode >= 400 && resp.StatusCode < 500 {
-			libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "Upload failed with client error", uploadErr)
+			libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Upload failed with client error", uploadErr)
 		} else {
-			libOpentelemetry.HandleSpanError(&span, "Upload failed with server error", uploadErr)
+			libOpentelemetry.HandleSpanError(span, "Upload failed with server error", uploadErr)
 		}
 
 		return uploadErr
 	}
 
-	logger.Debugf("SeaweedFS upload completed: %s", path)
+	logger.Log(ctx, libLog.LevelDebug, fmt.Sprintf("SeaweedFS upload completed: %s", path))
 
 	return nil
 }
@@ -145,7 +146,7 @@ func (c *SeaweedFSClient) DownloadFile(ctx context.Context, path string) ([]byte
 
 	path, err := pathIsValid(path)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Invalid path", err)
+		libOpentelemetry.HandleSpanError(span, "Invalid path", err)
 		return nil, err
 	}
 
@@ -153,13 +154,13 @@ func (c *SeaweedFSClient) DownloadFile(ctx context.Context, path string) ([]byte
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to create download request", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to create download request", err)
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to download file", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to download file", err)
 		return nil, fmt.Errorf("failed to download file: %w", err)
 	}
 	defer resp.Body.Close()
@@ -171,9 +172,9 @@ func (c *SeaweedFSClient) DownloadFile(ctx context.Context, path string) ([]byte
 		downloadErr := fmt.Errorf("download failed with status %d: %s", resp.StatusCode, string(body))
 
 		if resp.StatusCode >= 400 && resp.StatusCode < 500 {
-			libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "Download failed with client error", downloadErr)
+			libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Download failed with client error", downloadErr)
 		} else {
-			libOpentelemetry.HandleSpanError(&span, "Download failed with server error", downloadErr)
+			libOpentelemetry.HandleSpanError(span, "Download failed with server error", downloadErr)
 		}
 
 		return nil, downloadErr
@@ -186,12 +187,12 @@ func (c *SeaweedFSClient) DownloadFile(ctx context.Context, path string) ([]byte
 
 	data, err := io.ReadAll(reader)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to read response body", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to read response body", err)
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 
 	span.SetAttributes(attribute.Int("seaweedfs.response_size", len(data)))
-	logger.Debugf("SeaweedFS download completed: %s (%d bytes)", path, len(data))
+	logger.Log(ctx, libLog.LevelDebug, fmt.Sprintf("SeaweedFS download completed: %s (%d bytes)", path, len(data)))
 
 	return data, nil
 }
@@ -210,7 +211,7 @@ func (c *SeaweedFSClient) DownloadFileWithStream(ctx context.Context, path strin
 
 	path, err := pathIsValid(path)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Invalid path", err)
+		libOpentelemetry.HandleSpanError(span, "Invalid path", err)
 		return nil, err
 	}
 
@@ -218,13 +219,13 @@ func (c *SeaweedFSClient) DownloadFileWithStream(ctx context.Context, path strin
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to create download request", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to create download request", err)
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to download file", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to download file", err)
 		return nil, fmt.Errorf("failed to download file: %w", err)
 	}
 
@@ -234,7 +235,7 @@ func (c *SeaweedFSClient) DownloadFileWithStream(ctx context.Context, path strin
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		if closeErr := resp.Body.Close(); closeErr != nil {
 			closeErrWrapped := fmt.Errorf("download failed with status %d and error closing response body: %w", resp.StatusCode, closeErr)
-			libOpentelemetry.HandleSpanError(&span, "Download failed and error closing body", closeErrWrapped)
+			libOpentelemetry.HandleSpanError(span, "Download failed and error closing body", closeErrWrapped)
 
 			return nil, closeErrWrapped
 		}
@@ -242,9 +243,9 @@ func (c *SeaweedFSClient) DownloadFileWithStream(ctx context.Context, path strin
 		downloadErr := fmt.Errorf("download failed with status %d: %s", resp.StatusCode, string(body))
 
 		if resp.StatusCode >= 400 && resp.StatusCode < 500 {
-			libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "Download stream failed with client error", downloadErr)
+			libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Download stream failed with client error", downloadErr)
 		} else {
-			libOpentelemetry.HandleSpanError(&span, "Download stream failed with server error", downloadErr)
+			libOpentelemetry.HandleSpanError(span, "Download stream failed with server error", downloadErr)
 		}
 
 		return nil, downloadErr
@@ -267,7 +268,7 @@ func (c *SeaweedFSClient) DeleteFile(ctx context.Context, path string) error {
 
 	path, err := pathIsValid(path)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Invalid path", err)
+		libOpentelemetry.HandleSpanError(span, "Invalid path", err)
 		return err
 	}
 
@@ -275,13 +276,13 @@ func (c *SeaweedFSClient) DeleteFile(ctx context.Context, path string) error {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, reqURL, nil)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to create delete request", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to create delete request", err)
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to delete file", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to delete file", err)
 		return fmt.Errorf("failed to delete file: %w", err)
 	}
 	defer resp.Body.Close()
@@ -293,15 +294,15 @@ func (c *SeaweedFSClient) DeleteFile(ctx context.Context, path string) error {
 		deleteErr := fmt.Errorf("delete failed with status %d: %s", resp.StatusCode, string(body))
 
 		if resp.StatusCode >= 400 && resp.StatusCode < 500 {
-			libOpentelemetry.HandleSpanBusinessErrorEvent(&span, "Delete failed with client error", deleteErr)
+			libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Delete failed with client error", deleteErr)
 		} else {
-			libOpentelemetry.HandleSpanError(&span, "Delete failed with server error", deleteErr)
+			libOpentelemetry.HandleSpanError(span, "Delete failed with server error", deleteErr)
 		}
 
 		return deleteErr
 	}
 
-	logger.Debugf("SeaweedFS delete completed: %s", path)
+	logger.Log(ctx, libLog.LevelDebug, fmt.Sprintf("SeaweedFS delete completed: %s", path))
 
 	return nil
 }
@@ -319,13 +320,13 @@ func (c *SeaweedFSClient) HealthCheck(ctx context.Context) error {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to create health check request", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to create health check request", err)
 		return fmt.Errorf("failed to create health check request: %w", err)
 	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Health check failed", err)
+		libOpentelemetry.HandleSpanError(span, "Health check failed", err)
 		return fmt.Errorf("health check failed: %w", err)
 	}
 	defer resp.Body.Close()
@@ -334,7 +335,7 @@ func (c *SeaweedFSClient) HealthCheck(ctx context.Context) error {
 
 	if resp.StatusCode != http.StatusOK {
 		healthErr := fmt.Errorf("health check failed with status %d", resp.StatusCode)
-		libOpentelemetry.HandleSpanError(&span, "Health check returned non-OK status", healthErr)
+		libOpentelemetry.HandleSpanError(span, "Health check returned non-OK status", healthErr)
 
 		return healthErr
 	}

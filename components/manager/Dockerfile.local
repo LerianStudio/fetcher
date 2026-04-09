@@ -1,0 +1,22 @@
+FROM alpine:3.23
+
+WORKDIR /app
+
+RUN apk add --no-cache ca-certificates tzdata curl && \
+  update-ca-certificates
+
+RUN addgroup -g 1001 -S appgroup && \
+  adduser -u 1001 -S appuser -G appgroup
+
+COPY artifacts/docker/manager/manager /app/manager
+
+RUN chown -R appuser:appgroup /app
+
+USER appuser
+
+EXPOSE 4006
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD curl -f http://localhost:4006/health || exit 1
+
+ENTRYPOINT ["/app/manager"]

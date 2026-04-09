@@ -9,8 +9,8 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/LerianStudio/fetcher/pkg/model/job"
 	"github.com/LerianStudio/fetcher/pkg/testutil"
-	libCommons "github.com/LerianStudio/lib-commons/v2/commons"
-	libLog "github.com/LerianStudio/lib-commons/v2/commons/log"
+	libCommons "github.com/LerianStudio/lib-commons/v4/commons"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
 	"github.com/Masterminds/squirrel"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -21,7 +21,7 @@ import (
 // testContext creates a context with logger and tracer for testing
 func testContext(t *testing.T) context.Context {
 	t.Helper()
-	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 	values := &libCommons.CustomContextKeyValue{
 		HeaderID: "test-request-id",
 		Logger:   logger,
@@ -1881,7 +1881,7 @@ func TestConnect_ErrorHandling(t *testing.T) {
 				MaxIdleConnections: 5,
 			}
 
-			err := conn.Connect()
+			err := conn.Connect(context.Background())
 			if tt.wantErr {
 				assert.Error(t, err)
 				assert.False(t, conn.Connected)
@@ -1904,7 +1904,7 @@ func TestGetDB_WithNilConnection(t *testing.T) {
 		MaxIdleConnections: 5,
 	}
 
-	db, err := conn.GetDB()
+	db, err := conn.GetDB(context.Background())
 	assert.Error(t, err)
 	assert.Nil(t, db)
 }
@@ -1921,10 +1921,10 @@ func TestGetDB_MultipleCallsWithError(t *testing.T) {
 		MaxIdleConnections: 5,
 	}
 
-	_, err1 := conn.GetDB()
+	_, err1 := conn.GetDB(context.Background())
 	assert.Error(t, err1)
 
-	_, err2 := conn.GetDB()
+	_, err2 := conn.GetDB(context.Background())
 	assert.Error(t, err2)
 }
 
@@ -2981,7 +2981,7 @@ func TestGetDB_WithExistingConnection(t *testing.T) {
 		MaxIdleConnections: 5,
 	}
 
-	result, err := conn.GetDB()
+	result, err := conn.GetDB(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, db, result)
 }

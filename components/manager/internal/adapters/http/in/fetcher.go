@@ -1,6 +1,8 @@
 package in
 
 import (
+	"fmt"
+
 	"github.com/LerianStudio/fetcher/components/manager/internal/services/command"
 	"github.com/LerianStudio/fetcher/components/manager/internal/services/query"
 
@@ -9,8 +11,9 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/model"
 	httpUtils "github.com/LerianStudio/fetcher/pkg/net/http"
 
-	"github.com/LerianStudio/lib-commons/v2/commons"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v2/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v4/commons"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -39,7 +42,6 @@ func NewFetcherHandler(createJobCmd *command.CreateFetcherJob, getJobQuery *quer
 //	@Accept			json
 //	@Produce		json
 //	@Param			Authorization		header		string				false	"The authorization token in the 'Bearer access_token' format. Only required when auth plugin is enabled."
-//	@Param			X-Organization-Id	header		string				true	"Organization ID"
 //	@Param			request				body		model.FetcherRequest	true	"Fetcher request payload. metadata.source is required."
 //	@Success		200					{object}	model.FetcherResponse	"Duplicate request - returning existing job"
 //	@Success		202					{object}	model.FetcherResponse	"Job created and queued for processing"
@@ -57,20 +59,13 @@ func (h *FetcherHandler) CreateJob(c *fiber.Ctx) error {
 
 	c.SetUserContext(ctx)
 
-	orgID, err := httpUtils.GetOrganizationID(c)
-	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "missing or invalid org id", err)
-		return httpUtils.WithError(c, err)
-	}
-
 	span.SetAttributes(
 		attribute.String("app.request.request_id", reqID),
-		attribute.String("app.request.organization_id", orgID.String()),
 	)
 
 	var request model.FetcherRequest
 	if errParser := c.BodyParser(&request); errParser != nil {
-		libOpentelemetry.HandleSpanError(&span, "failed to parse payload", errParser)
+		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "failed to parse payload", errParser)
 
 		return httpUtils.WithError(c, pkg.ValidationError{
 			EntityType: "fetcher",
@@ -81,10 +76,10 @@ func (h *FetcherHandler) CreateJob(c *fiber.Ctx) error {
 		})
 	}
 
-	result, err := h.CreateJobCmd.Execute(ctx, orgID, request)
+	result, err := h.CreateJobCmd.Execute(ctx, request)
 	if err != nil {
-		logger.Errorf("Failed to execute create fetcher job command, Error: %s", err.Error())
-		libOpentelemetry.HandleSpanError(&span, "failed to create fetcher job", err)
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to execute create fetcher job command, Error: %s", err.Error()))
+		libOpentelemetry.HandleSpanError(span, "failed to create fetcher job", err)
 
 		return httpUtils.WithError(c, err)
 	}
@@ -99,14 +94,14 @@ func (h *FetcherHandler) CreateJob(c *fiber.Ctx) error {
 	if result.IsDuplicate {
 		response.Message = "Duplicate request detected - returning existing job"
 
-		logger.Infof("Duplicate fetcher job returned id=%s org=%s", result.Job.ID, orgID)
+		logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Duplicate fetcher job returned id=%s", result.Job.ID))
 
 		return httpUtils.OK(c, response)
 	}
 
 	response.Message = "Job created and queued for processing"
 
-	logger.Infof("Fetcher job created id=%s org=%s", result.Job.ID, orgID)
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Fetcher job created id=%s", result.Job.ID))
 
 	return httpUtils.Accepted(c, response)
 }
@@ -118,7 +113,6 @@ func (h *FetcherHandler) CreateJob(c *fiber.Ctx) error {
 //	@Tags			Fetcher
 //	@Produce		json
 //	@Param			Authorization		header		string	false	"The authorization token in the 'Bearer access_token' format. Only required when auth plugin is enabled."
-//	@Param			X-Organization-Id	header		string	true	"Organization ID"
 //	@Param			id					path		string	true	"Job ID"
 //	@Success		200					{object}	model.JobResponse
 //	@Failure		400					{object}	pkg.HTTPError
@@ -134,20 +128,13 @@ func (h *FetcherHandler) GetJob(c *fiber.Ctx) error {
 
 	c.SetUserContext(ctx)
 
-	orgID, err := httpUtils.GetOrganizationID(c)
-	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "missing or invalid org id", err)
-		return httpUtils.WithError(c, err)
-	}
-
 	span.SetAttributes(
 		attribute.String("app.request.request_id", reqID),
-		attribute.String("app.request.organization_id", orgID.String()),
 	)
 
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "invalid job id parameter", err)
+		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "invalid job id parameter", err)
 
 		return httpUtils.WithError(c, pkg.ValidationError{
 			EntityType: "job",
@@ -160,17 +147,17 @@ func (h *FetcherHandler) GetJob(c *fiber.Ctx) error {
 
 	span.SetAttributes(attribute.String("app.request.job_id", id.String()))
 
-	job, err := h.GetJobQuery.Execute(ctx, orgID, id)
+	job, err := h.GetJobQuery.Execute(ctx, id)
 	if err != nil {
-		logger.Errorf("Failed to execute get job query, Error: %s", err.Error())
-		libOpentelemetry.HandleSpanError(&span, "failed to get job", err)
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to execute get job query, Error: %s", err.Error()))
+		libOpentelemetry.HandleSpanError(span, "failed to get job", err)
 
 		return httpUtils.WithError(c, err)
 	}
 
 	resp := model.NewJobResponseFrom(job)
 
-	logger.Infof("job retrieved id=%s org=%s", id, orgID)
+	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("job retrieved id=%s", id))
 
 	return httpUtils.OK(c, resp)
 }

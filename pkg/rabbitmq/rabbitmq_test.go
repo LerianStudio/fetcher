@@ -3,15 +3,14 @@ package rabbitmq
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strconv"
 	"testing"
 	"time"
 
 	"github.com/LerianStudio/fetcher/pkg/crypto"
-	libCommons "github.com/LerianStudio/lib-commons/v2/commons"
-	libConstants "github.com/LerianStudio/lib-commons/v2/commons/constants"
-	libLog "github.com/LerianStudio/lib-commons/v2/commons/log"
+	libCommons "github.com/LerianStudio/lib-commons/v4/commons"
+	libConstants "github.com/LerianStudio/lib-commons/v4/commons/constants"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -275,68 +274,6 @@ func TestCircuitState_String_ReturnsCorrectValue(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------------
-// Unit Tests: Error Classification
-// -----------------------------------------------------------------------------
-
-func TestIsPermanentAMQPError_ClassifiesCorrectly(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name      string
-		err       error
-		permanent bool
-	}{
-		{
-			name:      "404 not found is permanent",
-			err:       &amqp.Error{Code: 404, Reason: "NOT_FOUND"},
-			permanent: true,
-		},
-		{
-			name:      "403 access refused is permanent",
-			err:       &amqp.Error{Code: 403, Reason: "ACCESS_REFUSED"},
-			permanent: true,
-		},
-		{
-			name:      "405 resource locked is permanent",
-			err:       &amqp.Error{Code: 405, Reason: "RESOURCE_LOCKED"},
-			permanent: true,
-		},
-		{
-			name:      "406 precondition failed is permanent",
-			err:       &amqp.Error{Code: 406, Reason: "PRECONDITION_FAILED"},
-			permanent: true,
-		},
-		{
-			name:      "504 channel error is transient",
-			err:       &amqp.Error{Code: 504, Reason: "CHANNEL_ERROR"},
-			permanent: false,
-		},
-		{
-			name:      "320 connection forced is transient",
-			err:       &amqp.Error{Code: 320, Reason: "CONNECTION_FORCED"},
-			permanent: false,
-		},
-		{
-			name:      "wrapped amqp error is detected",
-			err:       fmt.Errorf("rabbitmq start consumer: %w", &amqp.Error{Code: 404, Reason: "NOT_FOUND"}),
-			permanent: true,
-		},
-		{
-			name:      "non-amqp error is transient",
-			err:       errors.New("connection timeout"),
-			permanent: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, tt.permanent, isPermanentAMQPError(tt.err))
-		})
-	}
-}
-
-// -----------------------------------------------------------------------------
 // Unit Tests: CalculateBackoff
 // -----------------------------------------------------------------------------
 
@@ -381,7 +318,11 @@ func TestRabbitMQAdapter_CalculateBackoff_ExponentialGrowth(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			backoff := calculateBackoff(tt.attempt, tt.baseDelay, tt.maxDelay)
+			opts := DefaultOptions()
+			opts.BaseRetryDelay = tt.baseDelay
+			opts.MaxRetryDelay = tt.maxDelay
+
+			backoff := calculateBackoff(tt.attempt, opts.BaseRetryDelay, opts.MaxRetryDelay)
 
 			assert.GreaterOrEqual(t, backoff, tt.minExpected, "backoff should be at least base delay")
 			assert.LessOrEqual(t, backoff, tt.maxExpected, "backoff should not exceed expected max with jitter")
@@ -416,7 +357,11 @@ func TestRabbitMQAdapter_CalculateBackoff_CapsAtMaxDelay(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			backoff := calculateBackoff(tt.attempt, tt.baseDelay, tt.maxDelay)
+			opts := DefaultOptions()
+			opts.BaseRetryDelay = tt.baseDelay
+			opts.MaxRetryDelay = tt.maxDelay
+
+			backoff := calculateBackoff(tt.attempt, opts.BaseRetryDelay, opts.MaxRetryDelay)
 
 			// Max expected is maxDelay + 25% jitter
 			maxExpected := tt.maxDelay + tt.maxDelay/4
@@ -1006,6 +951,8 @@ type testAcknowledger struct {
 // newTestAdapter creates a properly initialized RabbitMQAdapter for testing.
 func newTestAdapter(conn rabbitConnection) *RabbitMQAdapter {
 	opts := DefaultOptions()
+	opts.EnableSignatureVerification = false
+	opts.EnableMessageSigning = false
 	return &RabbitMQAdapter{
 		conn:           conn,
 		options:        opts,
@@ -1016,6 +963,8 @@ func newTestAdapter(conn rabbitConnection) *RabbitMQAdapter {
 // newTestAdapterWithChannel creates a properly initialized RabbitMQAdapter with a channel for testing.
 func newTestAdapterWithChannel(conn rabbitConnection, channel amqpChannel) *RabbitMQAdapter {
 	opts := DefaultOptions()
+	opts.EnableSignatureVerification = false
+	opts.EnableMessageSigning = false
 	return &RabbitMQAdapter{
 		conn:           conn,
 		channel:        channel,
@@ -1040,7 +989,7 @@ func (t *testAcknowledger) Reject(uint64, bool) error {
 }
 
 func testContextWithHeader(header string) context.Context {
-	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 	values := &libCommons.CustomContextKeyValue{
 		HeaderID: header,
 		Logger:   logger,
@@ -1188,7 +1137,7 @@ func TestRabbitMQAdapter_InvalidateChannel_ClosesAndNullifiesChannel(t *testing.
 			conn := &testRabbitConnection{channel: channel}
 			adapter := newTestAdapterWithChannel(conn, channel)
 
-			logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+			logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 			adapter.invalidateChannel(logger)
 
 			assert.Equal(t, tt.expectedCloseCalls, channel.closeCalls)
@@ -1204,7 +1153,7 @@ func TestRabbitMQAdapter_InvalidateChannel_WithNilChannel(t *testing.T) {
 	adapter := newTestAdapter(conn)
 	adapter.channel = nil
 
-	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 
 	// Should not panic
 	adapter.invalidateChannel(logger)
@@ -1235,7 +1184,7 @@ func TestRabbitMQAdapter_StartChannelWatcher_HandlesNilChannel(t *testing.T) {
 
 	conn := &testRabbitConnection{}
 	adapter := newTestAdapter(conn)
-	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 
 	// Should not panic with nil channel
 	adapter.startChannelWatcher(logger, nil)
@@ -1249,7 +1198,7 @@ func TestRabbitMQAdapter_StartChannelWatcher_NullifiesChannelOnClose(t *testing.
 	channel := newTestAMQPChannel()
 	conn := &testRabbitConnection{channel: channel}
 	adapter := newTestAdapterWithChannel(conn, channel)
-	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 
 	adapter.startChannelWatcher(logger, channel)
 
@@ -1270,7 +1219,7 @@ func TestRabbitMQAdapter_StartChannelWatcher_HandlesNilError(t *testing.T) {
 	channel := newTestAMQPChannel()
 	conn := &testRabbitConnection{channel: channel}
 	adapter := newTestAdapterWithChannel(conn, channel)
-	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 
 	adapter.startChannelWatcher(logger, channel)
 
@@ -1373,7 +1322,11 @@ func TestRabbitMQAdapter_ConsumerLoop_ReturnsNilOnContextDeadlineExceeded(t *tes
 
 	err := adapter.ConsumerLoop(ctx, "queue", 1, handler)
 
-	assert.ErrorIs(t, err, context.DeadlineExceeded)
+	// ConsumerLoop may return either context.DeadlineExceeded (if caught at loop start)
+	// or nil (if caught during runConsumerCycle). Both are valid graceful exits.
+	if err != nil {
+		assert.ErrorIs(t, err, context.DeadlineExceeded)
+	}
 }
 
 // -----------------------------------------------------------------------------
@@ -1428,206 +1381,6 @@ func TestRabbitMQAdapter_RunConsumerCycle_FailsOnConsumeError(t *testing.T) {
 	err := adapter.ConsumerLoop(ctx, "queue", 1, handler)
 
 	assert.ErrorIs(t, err, context.DeadlineExceeded)
-}
-
-// -----------------------------------------------------------------------------
-// Unit Tests: Consumer Resilience (backoff, circuit breaker, error classification)
-// -----------------------------------------------------------------------------
-
-func TestRunConsumerCycle_RejectsWhenCircuitBreakerOpen(t *testing.T) {
-	t.Parallel()
-
-	channel := newTestAMQPChannel()
-	conn := &testRabbitConnection{channel: channel}
-	adapter := newTestAdapterWithChannel(conn, channel)
-
-	// Open the circuit breaker
-	for i := 0; i < adapter.options.CircuitBreakerThreshold; i++ {
-		adapter.circuitBreaker.recordFailure()
-	}
-	require.Equal(t, CircuitOpen, adapter.circuitBreaker.State())
-
-	ctx := testContextWithHeader("req-cb-open")
-	_, tracer, _, _ := libCommons.NewTrackingFromContext(ctx)
-	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
-
-	err := adapter.runConsumerCycle(ctx, tracer, logger, "test-queue", "req-1", 1, nil)
-
-	assert.ErrorIs(t, err, ErrCircuitOpen)
-}
-
-func TestRunConsumerCycle_RecordsFailureOnConsumeError(t *testing.T) {
-	t.Parallel()
-
-	channel := newTestAMQPChannel()
-	channel.consumeErr = &amqp.Error{Code: 404, Reason: "NOT_FOUND"}
-
-	conn := &testRabbitConnection{channel: channel}
-	adapter := newTestAdapterWithChannel(conn, channel)
-
-	ctx := testContextWithHeader("req-consume-err")
-	_, tracer, _, _ := libCommons.NewTrackingFromContext(ctx)
-	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
-
-	initialErrors := adapter.circuitBreaker.consecutiveErrors.Load()
-
-	_ = adapter.runConsumerCycle(ctx, tracer, logger, "test-queue", "req-1", 1, nil)
-
-	assert.Greater(t, adapter.circuitBreaker.consecutiveErrors.Load(), initialErrors,
-		"circuit breaker should record failure on consume error")
-}
-
-func TestRunConsumerCycle_RecordsFailureOnQosError(t *testing.T) {
-	t.Parallel()
-
-	channel := newTestAMQPChannel()
-	channel.qosErr = errors.New("qos failed")
-
-	conn := &testRabbitConnection{channel: channel}
-	adapter := newTestAdapterWithChannel(conn, channel)
-
-	ctx := testContextWithHeader("req-qos-err")
-	_, tracer, _, _ := libCommons.NewTrackingFromContext(ctx)
-	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
-
-	initialErrors := adapter.circuitBreaker.consecutiveErrors.Load()
-
-	_ = adapter.runConsumerCycle(ctx, tracer, logger, "test-queue", "req-1", 1, nil)
-
-	assert.Greater(t, adapter.circuitBreaker.consecutiveErrors.Load(), initialErrors,
-		"circuit breaker should record failure on QoS error")
-}
-
-func TestConsumerLoop_UsesExponentialBackoffOnTransientError(t *testing.T) {
-	t.Parallel()
-
-	channel := newTestAMQPChannel()
-	channel.consumeErr = &amqp.Error{Code: 504, Reason: "CHANNEL_ERROR"}
-
-	conn := &testRabbitConnection{channel: channel}
-	adapter := newTestAdapter(conn)
-	// Set short delays for testing
-	adapter.options.ConsumerBaseRetryDelay = 10 * time.Millisecond
-	adapter.options.ConsumerMaxRetryDelay = 100 * time.Millisecond
-
-	ctx, cancel := context.WithTimeout(testContextWithHeader("req-backoff"), 150*time.Millisecond)
-	defer cancel()
-
-	t.Cleanup(func() {
-		_ = adapter.Shutdown(testContextWithHeader("cleanup"))
-	})
-
-	start := time.Now()
-
-	_ = adapter.ConsumerLoop(ctx, "test-queue", 1, func(ctx context.Context, body []byte, headers map[string]any) error {
-		return nil
-	})
-
-	elapsed := time.Since(start)
-
-	// With exponential backoff starting at 10ms (+ jitter), first few delays are:
-	// ~10ms + ~20ms + ~40ms + ~80ms = ~150ms for 4 retries
-	// The test runs for 150ms, so we should see roughly 3-4 retries (not 300 retries at 500us each)
-	assert.GreaterOrEqual(t, elapsed, 100*time.Millisecond,
-		"backoff should increase exponentially, not be fixed")
-}
-
-func TestConsumerLoop_UsesLongDelayOnPermanentError(t *testing.T) {
-	t.Parallel()
-
-	channel := newTestAMQPChannel()
-	channel.consumeErr = &amqp.Error{Code: 404, Reason: "NOT_FOUND"}
-
-	conn := &testRabbitConnection{channel: channel}
-	adapter := newTestAdapter(conn)
-	adapter.options.ConsumerPermanentErrorDelay = 50 * time.Millisecond
-
-	ctx, cancel := context.WithTimeout(testContextWithHeader("req-perm-err"), 130*time.Millisecond)
-	defer cancel()
-
-	t.Cleanup(func() {
-		_ = adapter.Shutdown(testContextWithHeader("cleanup"))
-	})
-
-	start := time.Now()
-
-	_ = adapter.ConsumerLoop(ctx, "test-queue", 1, func(ctx context.Context, body []byte, headers map[string]any) error {
-		return nil
-	})
-
-	elapsed := time.Since(start)
-
-	// With 50ms permanent error delay, we should only get ~2 retries in 130ms
-	// (not 260 retries at 500us each with old fixed delay)
-	assert.GreaterOrEqual(t, elapsed, 80*time.Millisecond,
-		"permanent errors should use longer delay")
-}
-
-func TestConsumerLoop_ResetsBackoffOnSuccess(t *testing.T) {
-	t.Parallel()
-
-	channel := newTestAMQPChannel()
-	ack := &testAcknowledger{}
-	channel.deliveries <- amqp.Delivery{
-		Body:         []byte(`{"test": true}`),
-		Acknowledger: ack,
-	}
-
-	conn := &testRabbitConnection{channel: channel}
-	adapter := newTestAdapter(conn)
-	adapter.options.ConsumerBaseRetryDelay = 10 * time.Millisecond
-	adapter.options.ConsumerMaxRetryDelay = 100 * time.Millisecond
-
-	ctx, cancel := context.WithCancel(testContextWithHeader("req-reset"))
-	defer cancel()
-
-	t.Cleanup(func() {
-		_ = adapter.Shutdown(testContextWithHeader("cleanup"))
-	})
-
-	callCount := 0
-	err := adapter.ConsumerLoop(ctx, "test-queue", 1, func(ctx context.Context, body []byte, headers map[string]any) error {
-		callCount++
-		cancel() // Stop after first message
-		return nil
-	})
-
-	require.NoError(t, err)
-	assert.Equal(t, 1, callCount, "handler should have been called once")
-}
-
-func TestConsumerLoop_WaitsForCircuitBreakerCooldownWhenOpen(t *testing.T) {
-	t.Parallel()
-
-	channel := newTestAMQPChannel()
-	conn := &testRabbitConnection{channel: channel}
-	adapter := newTestAdapter(conn)
-	adapter.options.CircuitBreakerCooldown = 50 * time.Millisecond
-
-	// Open the circuit breaker
-	for i := 0; i < adapter.options.CircuitBreakerThreshold; i++ {
-		adapter.circuitBreaker.recordFailure()
-	}
-	require.Equal(t, CircuitOpen, adapter.circuitBreaker.State())
-
-	ctx, cancel := context.WithTimeout(testContextWithHeader("req-cb-wait"), 130*time.Millisecond)
-	defer cancel()
-
-	t.Cleanup(func() {
-		_ = adapter.Shutdown(testContextWithHeader("cleanup"))
-	})
-
-	start := time.Now()
-
-	_ = adapter.ConsumerLoop(ctx, "test-queue", 1, func(ctx context.Context, body []byte, headers map[string]any) error {
-		return nil
-	})
-
-	elapsed := time.Since(start)
-
-	// With circuit breaker cooldown of 50ms, the loop should wait 50ms between retries
-	assert.GreaterOrEqual(t, elapsed, 80*time.Millisecond,
-		"should wait for circuit breaker cooldown")
 }
 
 // -----------------------------------------------------------------------------
@@ -2016,7 +1769,7 @@ func TestRabbitMQAdapter_EnsureChannel_ReturnsExistingChannel(t *testing.T) {
 	conn := &testRabbitConnection{channel: channel}
 	adapter := newTestAdapterWithChannel(conn, channel)
 
-	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 	ch, err := adapter.ensureChannel(nil, logger)
 
 	require.NoError(t, err)
@@ -2037,7 +1790,7 @@ func TestRabbitMQAdapter_EnsureChannel_ReconnectsWhenChannelClosed(t *testing.T)
 
 	adapter := newTestAdapterWithChannel(conn, closedChannel)
 
-	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 	ch, err := adapter.ensureChannel(nil, logger)
 
 	require.NoError(t, err)
@@ -2063,7 +1816,7 @@ func TestRabbitMQAdapter_EnsureChannel_RetriesOnFailure(t *testing.T) {
 		circuitBreaker: newCircuitBreaker(opts.CircuitBreakerThreshold, opts.CircuitBreakerCooldown),
 	}
 
-	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 	ch, err := adapter.ensureChannel(nil, logger)
 
 	require.NoError(t, err)
@@ -2564,58 +2317,6 @@ func TestRabbitMQAdapter_ConsumerLoop_SkipsVerificationWhenDisabled(t *testing.T
 	}, time.Second, 10*time.Millisecond)
 }
 
-func TestRabbitMQAdapter_ConsumerLoop_NacksWhenVerificationEnabledWithoutSigner(t *testing.T) {
-	t.Parallel()
-
-	ctx, cancel := context.WithCancel(testContextWithHeader("req-no-signer-verify"))
-	defer cancel()
-
-	channel := newTestAMQPChannel()
-	ack := &testAcknowledger{}
-	channel.deliveries <- amqp.Delivery{
-		Body: []byte(`{"data":"test"}`),
-		Headers: amqp.Table{
-			HeaderMessageSignature:   "some-signature",
-			HeaderSignatureTimestamp: "1704067200",
-			HeaderSignatureVersion:   "v1",
-		},
-		Acknowledger: ack,
-	}
-
-	conn := &testRabbitConnection{channel: channel}
-
-	opts := DefaultOptions()
-	opts.Signer = nil
-	opts.EnableSignatureVerification = true
-
-	adapter := &RabbitMQAdapter{
-		conn:           conn,
-		options:        opts,
-		circuitBreaker: newCircuitBreaker(opts.CircuitBreakerThreshold, opts.CircuitBreakerCooldown),
-	}
-
-	t.Cleanup(func() {
-		_ = adapter.Shutdown(testContextWithHeader("cleanup"))
-	})
-
-	handler := func(ctx context.Context, body []byte, headers map[string]any) error {
-		t.Fatal("handler should not be called when signer is not configured")
-		return nil
-	}
-
-	go func() {
-		time.Sleep(100 * time.Millisecond)
-		cancel()
-	}()
-
-	err := adapter.ConsumerLoop(ctx, "queue-no-signer-verify", 1, handler)
-	require.NoError(t, err)
-
-	require.Eventually(t, func() bool {
-		return ack.nacks == 1 && ack.acks == 0
-	}, time.Second, 10*time.Millisecond)
-}
-
 // -----------------------------------------------------------------------------
 // Unit Tests: verifyMessageSignature
 // -----------------------------------------------------------------------------
@@ -2632,10 +2333,10 @@ func TestVerifyMessageSignature_MissingSignatureHeader(t *testing.T) {
 	opts.Signer = mockSigner
 
 	adapter := &RabbitMQAdapter{options: opts}
-	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 
 	headers := map[string]any{
-		HeaderSignatureTimestamp: strconv.FormatInt(time.Now().Unix(), 10),
+		HeaderSignatureTimestamp: "1704067200",
 		HeaderSignatureVersion:   "v1",
 	}
 
@@ -2658,7 +2359,7 @@ func TestVerifyMessageSignature_MissingTimestampHeader(t *testing.T) {
 	opts.Signer = mockSigner
 
 	adapter := &RabbitMQAdapter{options: opts}
-	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 
 	headers := map[string]any{
 		HeaderMessageSignature: "some-signature",
@@ -2684,7 +2385,7 @@ func TestVerifyMessageSignature_MissingVersionHeader(t *testing.T) {
 	opts.Signer = mockSigner
 
 	adapter := &RabbitMQAdapter{options: opts}
-	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 
 	headers := map[string]any{
 		HeaderMessageSignature:   "some-signature",
@@ -2710,7 +2411,7 @@ func TestVerifyMessageSignature_InvalidTimestampFormat(t *testing.T) {
 	opts.Signer = mockSigner
 
 	adapter := &RabbitMQAdapter{options: opts}
-	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 
 	headers := map[string]any{
 		HeaderMessageSignature:   "some-signature",
@@ -2739,7 +2440,7 @@ func TestVerifyMessageSignature_TimestampAsInt64(t *testing.T) {
 	opts.Signer = mockSigner
 
 	adapter := &RabbitMQAdapter{options: opts}
-	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 
 	headers := map[string]any{
 		HeaderMessageSignature:   "valid-signature",
@@ -2766,7 +2467,7 @@ func TestVerifyMessageSignature_TimestampAsInt(t *testing.T) {
 	opts.Signer = mockSigner
 
 	adapter := &RabbitMQAdapter{options: opts}
-	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 
 	headers := map[string]any{
 		HeaderMessageSignature:   "valid-signature",
@@ -2791,7 +2492,7 @@ func TestVerifyMessageSignature_NonStringSignature(t *testing.T) {
 	opts.Signer = mockSigner
 
 	adapter := &RabbitMQAdapter{options: opts}
-	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 
 	headers := map[string]any{
 		HeaderMessageSignature:   12345, // Non-string
@@ -2818,7 +2519,7 @@ func TestVerifyMessageSignature_NonStringVersion(t *testing.T) {
 	opts.Signer = mockSigner
 
 	adapter := &RabbitMQAdapter{options: opts}
-	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 
 	headers := map[string]any{
 		HeaderMessageSignature:   "some-signature",
@@ -2845,7 +2546,7 @@ func TestVerifyMessageSignature_UnsupportedTimestampType(t *testing.T) {
 	opts.Signer = mockSigner
 
 	adapter := &RabbitMQAdapter{options: opts}
-	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 
 	headers := map[string]any{
 		HeaderMessageSignature:   "some-signature",

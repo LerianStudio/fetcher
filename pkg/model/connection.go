@@ -17,13 +17,13 @@ import (
 
 type Connection struct {
 	ID                   uuid.UUID
-	OrganizationID       uuid.UUID
 	ProductName          string
 	ConfigName           string
 	Type                 DBType
 	Host                 string
 	Port                 int
 	DatabaseName         string
+	Schema               *string
 	Username             string
 	PasswordEncrypted    string
 	EncryptionKeyVersion string
@@ -45,13 +45,13 @@ type SSLConfig struct {
 func NewConnection(
 	ctx context.Context,
 	cryptor crypto.Cryptor,
-	organizationID uuid.UUID,
 	productName string,
 	configName string,
 	typ string,
 	host string,
 	port int,
 	databaseName string,
+	schema *string,
 	username string,
 	password string,
 	metadata *map[string]any,
@@ -103,13 +103,13 @@ func NewConnection(
 
 	connection := Connection{
 		ID:                   id,
-		OrganizationID:       organizationID,
 		ProductName:          productName,
 		ConfigName:           configName,
 		Type:                 dbType,
 		Host:                 host,
 		Port:                 port,
 		DatabaseName:         databaseName,
+		Schema:               schema,
 		Username:             username,
 		PasswordEncrypted:    passwordEncrypted,
 		EncryptionKeyVersion: encryptionKeyVersion,
@@ -153,10 +153,6 @@ func (conn *Connection) normalizeFields() {
 // validateRequiredFields validates that all required fields are present
 func (conn *Connection) validateRequiredFields() map[string]string {
 	requiredFields := make(map[string]string)
-
-	if conn.OrganizationID == uuid.Nil {
-		requiredFields["organization_id"] = "organization ID is required"
-	}
 
 	if conn.ProductName == "" {
 		requiredFields["product_name"] = "product name is required"
@@ -270,6 +266,7 @@ func (conn *Connection) ApplyPatch(
 	host *string,
 	port *int,
 	dbName *string,
+	schema *string,
 	username *string,
 	password *string,
 	metadata *map[string]any,
@@ -306,6 +303,10 @@ func (conn *Connection) ApplyPatch(
 
 	if dbName != nil {
 		conn.DatabaseName = *dbName
+	}
+
+	if schema != nil {
+		conn.Schema = schema
 	}
 
 	if username != nil {
@@ -380,6 +381,21 @@ func (conn *Connection) AssignProductName(productName string) error {
 	return nil
 }
 
+// SetPlaintextPassword sets the internal password field directly.
+// Used for in-memory connections resolved from tenant-manager where
+// the password is not encrypted.
+func (conn *Connection) SetPlaintextPassword(password string) {
+	conn.password = password
+}
+
+// GetPlaintextPassword returns the internal password field.
+// For in-memory connections (EncryptionKeyVersion == ""), this returns the plaintext password
+// set by SetPlaintextPassword. For encrypted connections, this returns the decrypted password
+// after DecryptPassword or GetPasswordDecrypted has been called.
+func (conn *Connection) GetPlaintextPassword() string {
+	return conn.password
+}
+
 // GetPasswordDecrypted decrypts and returns the connection password.
 func (conn *Connection) GetPasswordDecrypted(ctx context.Context, cryptor crypto.Cryptor) (string, error) {
 	if cryptor == nil {
@@ -426,13 +442,13 @@ func (conn *Connection) ToMapWithMask() map[string]any {
 
 	return map[string]any{
 		"id":                     conn.ID,
-		"organization_id":        conn.OrganizationID,
 		"product_name":           conn.ProductName,
 		"config_name":            conn.ConfigName,
 		"type":                   string(conn.Type),
 		"host":                   conn.Host,
 		"port":                   conn.Port,
 		"database_name":          conn.DatabaseName,
+		"schema":                 conn.Schema,
 		"username":               conn.Username,
 		"metadata":               conn.Metadata,
 		"password_encrypted":     pkg.MaskSecret(conn.PasswordEncrypted),
@@ -453,6 +469,7 @@ type ConnectionInput struct {
 	Host         string          `json:"host" validate:"required,hostname|ip" example:"db.example.com"`
 	Port         int             `json:"port" validate:"required,min=1,max=65535" example:"5432"`
 	DatabaseName string          `json:"databaseName" validate:"required" example:"mydatabase"`
+	Schema       string          `json:"schema,omitempty" example:"my_schema"`
 	Username     string          `json:"userName" validate:"required" example:"dbuser"`
 	Password     string          `json:"password" validate:"required" example:"secretpassword"`
 	SSL          *SSLInput       `json:"ssl,omitempty"`
@@ -483,6 +500,7 @@ func (conn *ConnectionInput) ToMapWithMask() map[string]any {
 		"host":          conn.Host,
 		"port":          conn.Port,
 		"database_name": conn.DatabaseName,
+		"schema":        conn.Schema,
 		"username":      conn.Username,
 		"password":      pkg.MaskSecret(conn.Password),
 		"metadata":      conn.Metadata,
@@ -501,6 +519,7 @@ func (conn *ConnectionInput) IsEmpty() bool {
 		conn.Host == "" &&
 		conn.Port == 0 &&
 		conn.DatabaseName == "" &&
+		conn.Schema == "" &&
 		conn.Username == "" &&
 		conn.Password == "" &&
 		(conn.SSL == nil || conn.SSL.IsEmpty()) &&
@@ -526,6 +545,7 @@ type ConnectionUpdateInput struct {
 	Host         *string         `json:"host,omitempty" validate:"omitempty" example:"db.example.com"`
 	Port         *int            `json:"port,omitempty" validate:"omitempty,min=1,max=65535" example:"5432"`
 	DatabaseName *string         `json:"databaseName,omitempty" validate:"omitempty" example:"mydatabase"`
+	Schema       *string         `json:"schema,omitempty" example:"my_schema"`
 	Username     *string         `json:"userName,omitempty" validate:"omitempty" example:"dbuser"`
 	Password     *string         `json:"password,omitempty" validate:"omitempty" example:"secretpassword"`
 	SSL          *SSLUpdateInput `json:"ssl,omitempty"`
@@ -564,6 +584,10 @@ func (conn *ConnectionUpdateInput) ToMapWithMask() map[string]any {
 
 	if conn.DatabaseName != nil {
 		result["database_name"] = *conn.DatabaseName
+	}
+
+	if conn.Schema != nil {
+		result["schema"] = *conn.Schema
 	}
 
 	if conn.Username != nil {
@@ -613,6 +637,7 @@ func (conn *ConnectionUpdateInput) IsEmpty() bool {
 		conn.Host != nil ||
 		conn.Port != nil ||
 		conn.DatabaseName != nil ||
+		conn.Schema != nil ||
 		conn.Username != nil ||
 		conn.Password != nil ||
 		conn.Metadata != nil {
@@ -643,6 +668,7 @@ type ConnectionResponse struct {
 	Host         string          `json:"host"`
 	Port         int             `json:"port"`
 	DatabaseName string          `json:"databaseName"`
+	Schema       *string         `json:"schema,omitempty"`
 	Username     string          `json:"userName"`
 	SSL          *SSLResponse    `json:"ssl,omitempty"`
 	Metadata     *map[string]any `json:"metadata,omitempty"`
@@ -674,6 +700,7 @@ func NewConnectionResponseFrom(conn *Connection) *ConnectionResponse {
 		Host:         conn.Host,
 		Port:         conn.Port,
 		DatabaseName: conn.DatabaseName,
+		Schema:       conn.Schema,
 		Username:     conn.Username,
 		Metadata:     conn.Metadata,
 		CreatedAt:    conn.CreatedAt,

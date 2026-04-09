@@ -6,7 +6,7 @@ import (
 
 	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/model/job"
-	"github.com/LerianStudio/lib-commons/v2/commons/log"
+	"github.com/LerianStudio/lib-commons/v4/commons/log"
 )
 
 //go:generate mockgen --destination=datasource-config.mock.go --package=datasource . DataSource
@@ -14,7 +14,6 @@ import (
 // DataSourceConfig represents the base configuration for all data sources.
 type DataSourceConfig struct {
 	ID                string
-	OrganizationID    string
 	ConfigName        string
 	Type              string
 	Host              string

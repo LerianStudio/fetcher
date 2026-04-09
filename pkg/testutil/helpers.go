@@ -3,7 +3,7 @@ package testutil
 import (
 	"github.com/google/uuid"
 
-	libLog "github.com/LerianStudio/lib-commons/v2/commons/log"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -30,7 +30,7 @@ func TestJobID() uuid.UUID {
 
 // TestLogger returns a GoLogger at DebugLevel for use in unit tests.
 func TestLogger() *libLog.GoLogger {
-	return &libLog.GoLogger{Level: libLog.DebugLevel}
+	return &libLog.GoLogger{Level: libLog.LevelDebug}
 }
 
 // TestTracer returns a no-op tracer for use in unit tests.

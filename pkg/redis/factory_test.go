@@ -4,13 +4,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/LerianStudio/lib-commons/v2/commons/zap"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestNewCacheWithFallback_RedisUnavailable_ReturnsMemoryOnlyCache(t *testing.T) {
-	logger := zap.InitializeLogger()
+	logger := libLog.NewNop()
 
 	// Use invalid Redis config that will fail to connect
 	cfg := RedisConfig{
@@ -39,7 +39,7 @@ func TestNewCacheWithFallback_RedisUnavailable_ReturnsMemoryOnlyCache(t *testing
 }
 
 func TestNewCacheWithFallback_ZeroTTL_UsesDefault(t *testing.T) {
-	logger := zap.InitializeLogger()
+	logger := libLog.NewNop()
 
 	// Use invalid Redis config that will fail to connect
 	cfg := RedisConfig{
@@ -66,7 +66,7 @@ func TestNewCacheWithFallback_RedisAvailable_ReturnsFallbackCache(t *testing.T) 
 	// Skip if Redis is not available in test environment
 	t.Skip("Requires Redis to be running - run manually or in integration tests")
 
-	logger := zap.InitializeLogger()
+	logger := libLog.NewNop()
 
 	cfg := RedisConfig{
 		Host:     "localhost",
@@ -89,7 +89,7 @@ func TestNewCacheWithFallback_RedisAvailable_ReturnsFallbackCache(t *testing.T) 
 }
 
 func TestMustNewCacheWithFallback_RedisUnavailable_ReturnsMemoryOnlyCache(t *testing.T) {
-	logger := zap.InitializeLogger()
+	logger := libLog.NewNop()
 
 	cfg := RedisConfig{
 		Host:        "invalid-host-that-does-not-exist",
@@ -115,7 +115,7 @@ func TestMustNewCacheWithFallback_RedisUnavailable_ReturnsMemoryOnlyCache(t *tes
 }
 
 func TestMustNewCacheWithFallback_ZeroTTL_UsesDefault(t *testing.T) {
-	logger := zap.InitializeLogger()
+	logger := libLog.NewNop()
 
 	cfg := RedisConfig{
 		Host:        "invalid-host-that-does-not-exist",
@@ -136,7 +136,7 @@ func TestMustNewCacheWithFallback_ZeroTTL_UsesDefault(t *testing.T) {
 }
 
 func TestNewCacheWithFallback_NegativeTTL_UsesDefault(t *testing.T) {
-	logger := zap.InitializeLogger()
+	logger := libLog.NewNop()
 
 	cfg := RedisConfig{
 		Host:        "invalid-host-that-does-not-exist",

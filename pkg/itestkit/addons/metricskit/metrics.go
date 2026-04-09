@@ -388,5 +388,7 @@ func (m *ChaosMetrics) Reset() {
 }
 
 // Compile-time interface verification
-var _ MetricsProvider = (*ChaosMetrics)(nil)
-var _ MetricsSnapshot = (*ChaosMetrics)(nil)
+var (
+	_ MetricsProvider = (*ChaosMetrics)(nil)
+	_ MetricsSnapshot = (*ChaosMetrics)(nil)
+)

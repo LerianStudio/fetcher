@@ -1,6 +1,7 @@
 package redis
 
 import (
+	"encoding/base64"
 	"testing"
 	"time"
 
@@ -344,4 +345,107 @@ func TestRedisConnection_WithDB(t *testing.T) {
 	defer conn.Close()
 
 	assert.True(t, conn.IsConnected())
+}
+
+func TestBuildRedisAddr(t *testing.T) {
+	tests := []struct {
+		name string
+		host string
+		port string
+		want string
+	}{
+		{
+			name: "host and port separate",
+			host: "localhost",
+			port: "6379",
+			want: "localhost:6379",
+		},
+		{
+			name: "host already contains port - ignores port param",
+			host: "valkey.dev.clotilde.lerian.net:6379",
+			port: "6379",
+			want: "valkey.dev.clotilde.lerian.net:6379",
+		},
+		{
+			name: "host with port and different port param - uses host port",
+			host: "redis.example.com:6380",
+			port: "6379",
+			want: "redis.example.com:6380",
+		},
+		{
+			name: "host only without port",
+			host: "redis.example.com",
+			port: "",
+			want: "redis.example.com",
+		},
+		{
+			name: "IPv6 with port in brackets",
+			host: "[::1]:6379",
+			port: "6379",
+			want: "[::1]:6379",
+		},
+		{
+			name: "IPv6 without port",
+			host: "::1",
+			port: "6379",
+			want: "[::1]:6379",
+		},
+		{
+			name: "empty host with port",
+			host: "",
+			port: "6379",
+			want: ":6379",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := buildRedisAddr(tt.host, tt.port)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestRedisConfig_UseTLS_DefaultFalse(t *testing.T) {
+	cfg := RedisConfig{}
+	assert.False(t, cfg.UseTLS, "UseTLS should default to false")
+	assert.Empty(t, cfg.CACert, "CACert should default to empty")
+}
+
+func TestRedisConfig_WithDefaults_PreservesTLSFields(t *testing.T) {
+	cfg := RedisConfig{
+		UseTLS: true,
+		CACert: "dGVzdC1jYS1jZXJ0",
+	}
+	resolved := cfg.WithDefaults()
+	assert.True(t, resolved.UseTLS, "UseTLS should be preserved after WithDefaults")
+	assert.Equal(t, "dGVzdC1jYS1jZXJ0", resolved.CACert, "CACert should be preserved after WithDefaults")
+}
+
+func TestNewRedisConnection_InvalidBase64CACert(t *testing.T) {
+	cfg := RedisConfig{
+		Host:   "localhost",
+		Port:   "6379",
+		UseTLS: true,
+		CACert: "not-valid-base64!!!",
+	}
+
+	conn, err := NewRedisConnection(cfg, &mockLogger{})
+	assert.Nil(t, conn)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to decode Redis CA certificate")
+}
+
+func TestNewRedisConnection_InvalidPEMCACert(t *testing.T) {
+	cfg := RedisConfig{
+		Host:   "localhost",
+		Port:   "6379",
+		UseTLS: true,
+		CACert: base64.StdEncoding.EncodeToString([]byte("not a cert")),
+	}
+
+	conn, err := NewRedisConnection(cfg, &mockLogger{})
+	assert.Nil(t, conn)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to parse Redis CA certificate")
 }

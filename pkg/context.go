@@ -3,7 +3,7 @@ package pkg
 import (
 	"context"
 
-	"github.com/LerianStudio/lib-commons/v2/commons/log"
+	"github.com/LerianStudio/lib-commons/v4/commons/log"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -24,7 +24,7 @@ func NewLoggerFromContext(ctx context.Context) log.Logger {
 		return customContext.Logger
 	}
 
-	return &log.NoneLogger{}
+	return log.NewNop()
 }
 
 // NewTracerFromContext returns a new tracer from the context.
