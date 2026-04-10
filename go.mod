@@ -4,8 +4,8 @@ go 1.25.7
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
-	github.com/LerianStudio/lib-auth/v2 v2.5.0
-	github.com/LerianStudio/lib-commons/v4 v4.5.0-beta.19
+	github.com/LerianStudio/lib-auth/v2 v2.6.0
+	github.com/LerianStudio/lib-commons/v4 v4.6.0
 	github.com/LerianStudio/lib-license-go/v2 v2.3.3
 	github.com/Masterminds/squirrel v1.5.4
 	github.com/Shopify/toxiproxy/v2 v2.12.0
@@ -44,10 +44,10 @@ require (
 	github.com/tryvium-travels/memongo v0.12.0
 	go.mongodb.org/mongo-driver v1.17.9
 	go.mongodb.org/mongo-driver/v2 v2.5.0
-	go.opentelemetry.io/otel v1.42.0
-	go.opentelemetry.io/otel/metric v1.42.0
-	go.opentelemetry.io/otel/sdk/metric v1.42.0
-	go.opentelemetry.io/otel/trace v1.42.0
+	go.opentelemetry.io/otel v1.43.0
+	go.opentelemetry.io/otel/metric v1.43.0
+	go.opentelemetry.io/otel/sdk/metric v1.43.0
+	go.opentelemetry.io/otel/trace v1.43.0
 	go.uber.org/mock v0.6.0
 	golang.org/x/crypto v0.49.0
 	golang.org/x/sync v0.20.0
@@ -168,7 +168,7 @@ require (
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.42.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.42.0 // indirect
 	go.opentelemetry.io/otel/log v0.18.0 // indirect
-	go.opentelemetry.io/otel/sdk v1.42.0 // indirect
+	go.opentelemetry.io/otel/sdk v1.43.0 // indirect
 	go.opentelemetry.io/otel/sdk/log v0.18.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.10.0 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
