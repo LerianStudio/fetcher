@@ -109,7 +109,7 @@ func (r *S3Repository) Get(ctx context.Context, objectName string) ([]byte, erro
 	ctx, span := tracer.Start(ctx, "s3.external_data.get")
 	defer span.End()
 
-	tenantObjectName, err := tms3.GetS3KeyStorageContext(ctx, objectName)
+	tenantObjectName, err := tms3.GetObjectStorageKeyForTenant(ctx, objectName)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to resolve tenant object key", err)
 		return nil, fmt.Errorf("tenant object key for %s: %w", objectName, err)
@@ -160,7 +160,7 @@ func (r *S3Repository) Put(ctx context.Context, objectName string, data []byte) 
 	ctx, span := tracer.Start(ctx, "s3.external_data.put")
 	defer span.End()
 
-	tenantObjectName, err := tms3.GetS3KeyStorageContext(ctx, objectName)
+	tenantObjectName, err := tms3.GetObjectStorageKeyForTenant(ctx, objectName)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to resolve tenant object key", err)
 		return fmt.Errorf("tenant object key for %s: %w", objectName, err)
