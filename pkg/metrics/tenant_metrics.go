@@ -6,8 +6,9 @@ package metrics
 
 import (
 	"context"
-	"fmt"
 
+	"github.com/LerianStudio/fetcher/pkg"
+	"github.com/LerianStudio/fetcher/pkg/constant"
 	"go.opentelemetry.io/otel/attribute"
 	otelmetric "go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/metric/noop"
@@ -45,7 +46,7 @@ func NewTenantMetrics(multiTenantEnabled bool, provider otelmetric.MeterProvider
 	}
 
 	if provider == nil {
-		return nil, fmt.Errorf("meter provider is required when multi-tenant is enabled")
+		return nil, pkg.ValidateBusinessError(constant.ErrMissingFieldsInRequest, "meterProvider", "meter provider is required when multi-tenant is enabled")
 	}
 
 	return newOTelTenantMetrics(provider)

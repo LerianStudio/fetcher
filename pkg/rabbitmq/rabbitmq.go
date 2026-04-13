@@ -634,7 +634,12 @@ func FullJitter(baseDelay time.Duration) time.Duration {
 }
 
 // NextBackoff doubles the given delay, capping at DefaultMaxRetryDelay.
+// Non-positive inputs are seeded with DefaultBaseRetryDelay to prevent zero-delay retry loops.
 func NextBackoff(current time.Duration) time.Duration {
+	if current <= 0 {
+		return DefaultBaseRetryDelay
+	}
+
 	next := current * 2
 	if next > DefaultMaxRetryDelay {
 		return DefaultMaxRetryDelay

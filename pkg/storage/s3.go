@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/LerianStudio/fetcher/pkg"
+	"github.com/LerianStudio/fetcher/pkg/constant"
 	portStorage "github.com/LerianStudio/fetcher/pkg/ports/storage"
 	libCommons "github.com/LerianStudio/lib-commons/v4/commons"
 	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
@@ -72,7 +74,7 @@ func NewS3Repository(ctx context.Context, cfg S3Config) (*S3Repository, error) {
 			credentials.NewStaticCredentialsProvider(cfg.AccessKeyID, cfg.SecretAccessKey, ""),
 		))
 	} else if cfg.AccessKeyID != "" || cfg.SecretAccessKey != "" {
-		return nil, fmt.Errorf("both S3 access key ID and secret access key must be provided together (got partial credentials)")
+		return nil, pkg.ValidateBusinessError(constant.ErrInvalidDataRequest, "s3_credentials", "both S3 access key ID and secret access key must be provided together (got partial credentials)")
 	}
 
 	awsCfg, err := awsConfig.LoadDefaultConfig(ctx, opts...)
