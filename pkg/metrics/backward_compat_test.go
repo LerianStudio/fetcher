@@ -95,7 +95,8 @@ func TestMultiTenant_BackwardCompatibility(t *testing.T) {
 		ctx := context.Background()
 		objectName := "reports/template-123/report-456.html"
 
-		result, _ := tms3.GetObjectStorageKeyForTenant(ctx, objectName)
+		result, err := tms3.GetObjectStorageKeyForTenant(ctx, objectName)
+		require.NoError(t, err)
 		assert.Equal(t, objectName, result,
 			"GetObjectStorageKeyForTenant must return original objectName when no tenant in context")
 	})
@@ -172,7 +173,8 @@ func TestMultiTenant_BackwardCompatibility(t *testing.T) {
 		ctx := tmcore.ContextWithTenantID(context.Background(), "org_abc123")
 		objectName := "reports/report.html"
 
-		result, _ := tms3.GetObjectStorageKeyForTenant(ctx, objectName)
+		result, err := tms3.GetObjectStorageKeyForTenant(ctx, objectName)
+		require.NoError(t, err)
 		assert.Contains(t, result, "org_abc123",
 			"GetObjectStorageKeyForTenant must include tenant ID when tenant is in context")
 		assert.Contains(t, result, "reports/report.html",

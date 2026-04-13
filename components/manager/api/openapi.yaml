@@ -720,6 +720,9 @@ components:
           maximum: 65535
           minimum: 1
           type: integer
+        schema:
+          example: my_schema
+          type: string
         ssl:
           $ref: '#/components/schemas/github_com_LerianStudio_fetcher_pkg_model.SSLInput'
         type:
@@ -746,18 +749,19 @@ components:
     github_com_LerianStudio_fetcher_pkg_model.ConnectionResponse:
       example:
         configName: configName
-        createdAt: createdAt
+        schema: schema
         metadata:
           key: '{}'
         databaseName: databaseName
-        port: 0
-        host: host
-        id: id
         type: type
         userName: userName
         ssl:
           mode: mode
         productName: productName
+        createdAt: createdAt
+        port: 0
+        host: host
+        id: id
         updatedAt: updatedAt
       properties:
         configName:
@@ -777,6 +781,8 @@ components:
         port:
           type: integer
         productName:
+          type: string
+        schema:
           type: string
         ssl:
           $ref: '#/components/schemas/github_com_LerianStudio_fetcher_pkg_model.SSLResponse'
@@ -841,6 +847,9 @@ components:
           maximum: 65535
           minimum: 1
           type: integer
+        schema:
+          example: my_schema
+          type: string
         ssl:
           $ref: '#/components/schemas/github_com_LerianStudio_fetcher_pkg_model.SSLUpdateInput'
         type:
@@ -1267,32 +1276,34 @@ components:
         page: 1
         items:
         - configName: configName
-          createdAt: createdAt
+          schema: schema
           metadata:
             key: '{}'
           databaseName: databaseName
-          port: 0
-          host: host
-          id: id
           type: type
           userName: userName
           ssl:
             mode: mode
           productName: productName
+          createdAt: createdAt
+          port: 0
+          host: host
+          id: id
           updatedAt: updatedAt
         - configName: configName
-          createdAt: createdAt
+          schema: schema
           metadata:
             key: '{}'
           databaseName: databaseName
-          port: 0
-          host: host
-          id: id
           type: type
           userName: userName
           ssl:
             mode: mode
           productName: productName
+          createdAt: createdAt
+          port: 0
+          host: host
+          id: id
           updatedAt: updatedAt
       properties:
         Pagination:

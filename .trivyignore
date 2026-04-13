@@ -3,3 +3,13 @@
 # No fix available upstream (v1.7.8 is latest and still affected)
 # Low impact: EventStream Decoder not used directly by this service
 GHSA-xmrv-pmrh-hhx2
+
+# 2026-04-13 — CVE-2026-40200
+# Stack-based issue in musl libc 0.7.10 through 1.2.6 (Alpine base image)
+# No fix available upstream; severity LOW
+CVE-2026-40200
+
+# 2026-04-13 — CVE-2026-6042
+# Security flaw in musl libc up to 1.2.6 (Alpine base image)
+# No fix available upstream; severity LOW
+CVE-2026-6042
