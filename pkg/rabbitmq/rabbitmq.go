@@ -622,6 +622,27 @@ func calculateBackoff(attempt int, baseDelay, maxDelay time.Duration) time.Durat
 	return delay + jitter
 }
 
+// FullJitter returns a random duration in [0, baseDelay) for use as a retry delay.
+// This implements the "full jitter" strategy from the AWS Architecture Blog,
+// which provides the best spread across retrying clients.
+func FullJitter(baseDelay time.Duration) time.Duration {
+	if baseDelay <= 0 {
+		return 0
+	}
+
+	return time.Duration(rand.Int63n(int64(baseDelay))) // #nosec G404 -- jitter for backoff timing is not security-sensitive
+}
+
+// NextBackoff doubles the given delay, capping at DefaultMaxRetryDelay.
+func NextBackoff(current time.Duration) time.Duration {
+	next := current * 2
+	if next > DefaultMaxRetryDelay {
+		return DefaultMaxRetryDelay
+	}
+
+	return next
+}
+
 // ensureChannel checks and establishes a RabbitMQ channel if not already available.
 func (prmq *RabbitMQAdapter) ensureChannel(span trace.Span, logger libLog.Logger) (amqpChannel, error) {
 	prmq.mu.Lock()

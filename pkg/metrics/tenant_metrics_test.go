@@ -197,6 +197,15 @@ func TestTenantMetrics_NoOpWhenDisabled(t *testing.T) {
 	}, "IncrementTenantMessagesProcessedTotal should be no-op when disabled")
 }
 
+func TestTenantMetrics_NilProviderWithMultiTenantEnabled(t *testing.T) {
+	// When multi-tenant is enabled, a nil provider must return an error
+	// instead of panicking on provider.Meter().
+	tm, err := NewTenantMetrics(true, nil)
+	require.Error(t, err)
+	assert.Nil(t, tm)
+	assert.Contains(t, err.Error(), "meter provider is required")
+}
+
 func TestTenantMetrics_MultipleTenants(t *testing.T) {
 	reader := metric.NewManualReader()
 	mp := metric.NewMeterProvider(metric.WithReader(reader))
