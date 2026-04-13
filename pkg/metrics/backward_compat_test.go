@@ -21,7 +21,7 @@ import (
 //  1. Config defaults: MultiTenantEnabled defaults to false
 //  2. Metrics: no-op when disabled (covered by TestTenantMetrics_NoOpWhenDisabled)
 //  3. Redis: cacheKey returns unprefixed key without tenant context
-//  4. S3: GetS3KeyStorageContext returns original objectName without tenant context
+//  4. S3: GetObjectStorageKeyForTenant returns original objectName without tenant context
 //  5. RabbitMQ: extractTenantIDFromHeaders returns unmodified context for messages without X-Tenant-ID
 //  6. MongoDB: GetMongoForTenant returns error without tenant context (falls back to static)
 func TestMultiTenant_BackwardCompatibility(t *testing.T) {
@@ -90,15 +90,15 @@ func TestMultiTenant_BackwardCompatibility(t *testing.T) {
 	})
 
 	t.Run("s3_object_key_unprefixed_without_tenant", func(t *testing.T) {
-		// When no tenant is in context, GetS3KeyStorageContext must return
+		// When no tenant is in context, GetObjectStorageKeyForTenant must return
 		// the original objectName. This ensures S3 operations work normally.
 		ctx := context.Background()
 		objectName := "reports/template-123/report-456.html"
 
-		result, err := tms3.GetS3KeyStorageContext(ctx, objectName)
+		result, err := tms3.GetObjectStorageKeyForTenant(ctx, objectName)
 		require.NoError(t, err)
 		assert.Equal(t, objectName, result,
-			"GetS3KeyStorageContext must return original objectName when no tenant in context")
+			"GetObjectStorageKeyForTenant must return original objectName when no tenant in context")
 	})
 
 	t.Run("rabbitmq_message_without_tenant_id_header", func(t *testing.T) {
@@ -173,11 +173,11 @@ func TestMultiTenant_BackwardCompatibility(t *testing.T) {
 		ctx := tmcore.ContextWithTenantID(context.Background(), "org_abc123")
 		objectName := "reports/report.html"
 
-		result, err := tms3.GetS3KeyStorageContext(ctx, objectName)
+		result, err := tms3.GetObjectStorageKeyForTenant(ctx, objectName)
 		require.NoError(t, err)
 		assert.Contains(t, result, "org_abc123",
-			"GetS3KeyStorageContext must include tenant ID when tenant is in context")
+			"GetObjectStorageKeyForTenant must include tenant ID when tenant is in context")
 		assert.Contains(t, result, "reports/report.html",
-			"GetS3KeyStorageContext must include the original key")
+			"GetObjectStorageKeyForTenant must include the original key")
 	})
 }

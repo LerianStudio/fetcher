@@ -232,9 +232,9 @@ func TestTenantIsolation_S3KeyIsolation(t *testing.T) {
 			ctxA := tmcore.ContextWithTenantID(context.Background(), tt.tenantAID)
 			ctxB := tmcore.ContextWithTenantID(context.Background(), tt.tenantBID)
 
-			keyA, errA := tms3.GetS3KeyStorageContext(ctxA, tt.objectName)
+			keyA, errA := tms3.GetObjectStorageKeyForTenant(ctxA, tt.objectName)
 			require.NoError(t, errA)
-			keyB, errB := tms3.GetS3KeyStorageContext(ctxB, tt.objectName)
+			keyB, errB := tms3.GetObjectStorageKeyForTenant(ctxB, tt.objectName)
 			require.NoError(t, errB)
 
 			// Keys for different tenants must be different
@@ -326,7 +326,7 @@ func TestTenantContext_MissingJWTFallback(t *testing.T) {
 				"Redis key must be unprefixed when no tenant context (single-tenant fallback)")
 
 			// S3 key must return unmodified object name (single-tenant fallback)
-			s3Key, err := tms3.GetS3KeyStorageContext(ctx, "reports/data.json")
+			s3Key, err := tms3.GetObjectStorageKeyForTenant(ctx, "reports/data.json")
 			require.NoError(t, err)
 			assert.Equal(t, "reports/data.json", s3Key,
 				"S3 key must be unmodified when no tenant context (single-tenant fallback)")
@@ -453,7 +453,7 @@ func TestTenantContext_InvalidRabbitMQTenantIDHeader(t *testing.T) {
 				assert.Equal(t, "some-key", redisKey,
 					"with invalid tenant header, Redis key must remain unprefixed")
 
-				s3Key, err := tms3.GetS3KeyStorageContext(ctx, "some/object.json")
+				s3Key, err := tms3.GetObjectStorageKeyForTenant(ctx, "some/object.json")
 				require.NoError(t, err)
 				assert.Equal(t, "some/object.json", s3Key,
 					"with invalid tenant header, S3 key must remain unmodified")
@@ -462,7 +462,7 @@ func TestTenantContext_InvalidRabbitMQTenantIDHeader(t *testing.T) {
 				assert.Contains(t, redisKey, tt.expectTenantID,
 					"with valid tenant header, Redis key must contain tenant ID")
 
-				s3Key, err := tms3.GetS3KeyStorageContext(ctx, "some/object.json")
+				s3Key, err := tms3.GetObjectStorageKeyForTenant(ctx, "some/object.json")
 				require.NoError(t, err)
 				assert.Contains(t, s3Key, tt.expectTenantID,
 					"with valid tenant header, S3 key must contain tenant ID")
@@ -508,7 +508,7 @@ func TestTenantContext_EmptyTenantPropagation(t *testing.T) {
 			assert.Equal(t, tt.key, redisKey,
 				"empty tenant context must not add prefix to Redis key")
 
-			s3Key, err := tms3.GetS3KeyStorageContext(ctx, tt.objectName)
+			s3Key, err := tms3.GetObjectStorageKeyForTenant(ctx, tt.objectName)
 			require.NoError(t, err)
 			assert.Equal(t, tt.objectName, s3Key,
 				"empty tenant context must not add prefix to S3 key")
@@ -573,7 +573,7 @@ func TestContextPropagation_EndToEndFlow(t *testing.T) {
 				"Redis key must be tenant-prefixed when tenant context is present")
 
 			// Step 5: Verify S3 layer applies tenant prefix
-			s3Key, err := tms3.GetS3KeyStorageContext(ctx, "output/data.json")
+			s3Key, err := tms3.GetObjectStorageKeyForTenant(ctx, "output/data.json")
 			require.NoError(t, err)
 			expectedS3Key := tt.tenantID + "/output/data.json"
 			assert.Equal(t, expectedS3Key, s3Key,
@@ -640,7 +640,7 @@ func TestContextPropagation_NoCrossGoroutineLeakage(t *testing.T) {
 			}
 
 			// Verify S3 key
-			s3Key, s3Err := tms3.GetS3KeyStorageContext(ctx, "obj.json")
+			s3Key, s3Err := tms3.GetObjectStorageKeyForTenant(ctx, "obj.json")
 			if s3Err != nil {
 				muA.Lock()
 				errorsA = append(errorsA, "s3 key error: "+s3Err.Error())
@@ -689,7 +689,7 @@ func TestContextPropagation_NoCrossGoroutineLeakage(t *testing.T) {
 			}
 
 			// Verify S3 key
-			s3Key, s3Err := tms3.GetS3KeyStorageContext(ctx, "obj.json")
+			s3Key, s3Err := tms3.GetObjectStorageKeyForTenant(ctx, "obj.json")
 			if s3Err != nil {
 				muB.Lock()
 				errorsB = append(errorsB, "s3 key error: "+s3Err.Error())
@@ -762,7 +762,7 @@ func TestContextPropagation_ChildContextInheritsTenantID(t *testing.T) {
 			assert.Equal(t, expectedRedis, redisKey,
 				"child context must produce correct tenant-prefixed Redis key")
 
-			s3Key, err := tms3.GetS3KeyStorageContext(grandchild, "nested/object.json")
+			s3Key, err := tms3.GetObjectStorageKeyForTenant(grandchild, "nested/object.json")
 			require.NoError(t, err)
 			expectedS3 := tt.tenantID + "/nested/object.json"
 			assert.Equal(t, expectedS3, s3Key,
@@ -999,7 +999,7 @@ func TestSingleTenantFallback_AllInfrastructure(t *testing.T) {
 		}
 
 		for _, name := range objectNames {
-			result, err := tms3.GetS3KeyStorageContext(ctx, name)
+			result, err := tms3.GetObjectStorageKeyForTenant(ctx, name)
 			require.NoError(t, err)
 			assert.Equal(t, name, result,
 				"S3 key %q must be unchanged in single-tenant mode", name)
