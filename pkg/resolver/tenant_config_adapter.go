@@ -3,8 +3,11 @@ package resolver
 import (
 	"context"
 	"fmt"
+	"net/url"
+	"strings"
 
 	tmclient "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/client"
+	tmcore "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/core"
 )
 
 // TenantManagerAdapter implements TenantConfigProvider by wrapping the
@@ -58,29 +61,66 @@ func (a *TenantManagerAdapter) GetServiceConnection(ctx context.Context, tenantI
 	}
 
 	if dbConfig.MongoDB != nil {
-		sslMode := ""
-		if dbConfig.MongoDB.TLS {
-			if dbConfig.MongoDB.TLSSkipVerify {
-				sslMode = "insecure"
-			} else {
-				sslMode = "enable"
-			}
-		}
-
-		return &ServiceConnectionConfig{
-			Host:             dbConfig.MongoDB.Host,
-			Port:             dbConfig.MongoDB.Port,
-			Database:         dbConfig.MongoDB.Database,
-			Username:         dbConfig.MongoDB.Username,
-			Password:         dbConfig.MongoDB.Password,
-			SSLMode:          sslMode,
-			DirectConnection: dbConfig.MongoDB.DirectConnection,
-			AuthSource:       dbConfig.MongoDB.AuthSource,
-		}, nil
+		return buildMongoServiceConfig(dbConfig.MongoDB), nil
 	}
 
 	return nil, fmt.Errorf("no database configuration found for module '%s' in service '%s' for tenant %s",
 		module, service, tenantID)
+}
+
+// buildMongoServiceConfig builds a ServiceConnectionConfig from a MongoDBConfig.
+// The tenant-manager may provide TLS settings either as explicit boolean fields
+// (TLS, TLSSkipVerify) or embedded in a raw URI string. This function handles
+// both cases: explicit fields take precedence, falling back to URI parsing.
+func buildMongoServiceConfig(cfg *tmcore.MongoDBConfig) *ServiceConnectionConfig {
+	sslMode := ""
+	directConn := cfg.DirectConnection
+	authSource := cfg.AuthSource
+
+	// Explicit boolean fields take precedence.
+	if cfg.TLS {
+		if cfg.TLSSkipVerify {
+			sslMode = "insecure"
+		} else {
+			sslMode = "enable"
+		}
+	}
+
+	// When a raw URI is provided and explicit TLS fields are not set,
+	// parse the URI to extract connection options.
+	if cfg.URI != "" && !cfg.TLS {
+		parsed, err := url.Parse(cfg.URI)
+		if err == nil {
+			q := parsed.Query()
+
+			if strings.EqualFold(q.Get("tls"), "true") || strings.EqualFold(q.Get("ssl"), "true") {
+				if strings.EqualFold(q.Get("tlsInsecure"), "true") {
+					sslMode = "insecure"
+				} else {
+					sslMode = "enable"
+				}
+			}
+
+			if strings.EqualFold(q.Get("directConnection"), "true") {
+				directConn = true
+			}
+
+			if as := q.Get("authSource"); as != "" && authSource == "" {
+				authSource = as
+			}
+		}
+	}
+
+	return &ServiceConnectionConfig{
+		Host:             cfg.Host,
+		Port:             cfg.Port,
+		Database:         cfg.Database,
+		Username:         cfg.Username,
+		Password:         cfg.Password,
+		SSLMode:          sslMode,
+		DirectConnection: directConn,
+		AuthSource:       authSource,
+	}
 }
 
 // availableModules extracts keys from the databases map for error reporting.
