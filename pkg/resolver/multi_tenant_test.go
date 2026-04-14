@@ -145,6 +145,50 @@ func TestMultiTenantResolver_ResolveConnections_SSLModeSet(t *testing.T) {
 	assert.Equal(t, "require", conns[0].SSL.Mode)
 }
 
+func TestMultiTenantResolver_ResolveConnections_MongoDBTLSAndMetadata(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockRepo := connPort.NewMockRepository(ctrl)
+	tenantID := uuid.New()
+	mockTenantConfig := NewMockTenantConfigProvider(ctrl)
+
+	mockTenantConfig.EXPECT().
+		GetServiceConnection(gomock.Any(), tenantID.String(), "ledger", "crm").
+		Return(&ServiceConnectionConfig{
+			Host:             "docdb.cluster.amazonaws.com",
+			Port:             27017,
+			Database:         "crm_tenant1",
+			Username:         "crm_user",
+			Password:         "crm_pass",
+			SSLMode:          "insecure",
+			DirectConnection: true,
+			AuthSource:       "crm_tenant1",
+		}, nil)
+
+	resolver := NewMultiTenantResolver(mockRepo, NewInternalDatasourceRegistry(), mockTenantConfig)
+	ctx := tmcore.ContextWithTenantID(context.Background(), tenantID.String())
+
+	conns, err := resolver.ResolveConnections(ctx, []string{"plugin_crm"})
+	require.NoError(t, err)
+	require.Len(t, conns, 1)
+
+	conn := conns[0]
+	assert.Equal(t, model.TypeMongoDB, conn.Type)
+	assert.Equal(t, "plugin_crm", conn.ConfigName)
+	assert.Equal(t, "docdb.cluster.amazonaws.com", conn.Host)
+	assert.Equal(t, 27017, conn.Port)
+
+	// SSL should be set with insecure mode for DocumentDB with TLSSkipVerify
+	require.NotNil(t, conn.SSL)
+	assert.Equal(t, "insecure", conn.SSL.Mode)
+
+	// Metadata should carry directConnection and authSource for the datasource factory
+	require.NotNil(t, conn.Metadata)
+	assert.Equal(t, "true", (*conn.Metadata)["directConnection"])
+	assert.Equal(t, "crm_tenant1", (*conn.Metadata)["authSource"])
+}
+
 func TestMultiTenantResolver_IsInternalDatasource(t *testing.T) {
 	resolver := NewMultiTenantResolver(nil, NewInternalDatasourceRegistry(), nil)
 	assert.True(t, resolver.IsInternalDatasource("midaz_onboarding"))
