@@ -58,12 +58,24 @@ func (a *TenantManagerAdapter) GetServiceConnection(ctx context.Context, tenantI
 	}
 
 	if dbConfig.MongoDB != nil {
+		sslMode := ""
+		if dbConfig.MongoDB.TLS {
+			if dbConfig.MongoDB.TLSSkipVerify {
+				sslMode = "insecure"
+			} else {
+				sslMode = "enable"
+			}
+		}
+
 		return &ServiceConnectionConfig{
-			Host:     dbConfig.MongoDB.Host,
-			Port:     dbConfig.MongoDB.Port,
-			Database: dbConfig.MongoDB.Database,
-			Username: dbConfig.MongoDB.Username,
-			Password: dbConfig.MongoDB.Password,
+			Host:             dbConfig.MongoDB.Host,
+			Port:             dbConfig.MongoDB.Port,
+			Database:         dbConfig.MongoDB.Database,
+			Username:         dbConfig.MongoDB.Username,
+			Password:         dbConfig.MongoDB.Password,
+			SSLMode:          sslMode,
+			DirectConnection: dbConfig.MongoDB.DirectConnection,
+			AuthSource:       dbConfig.MongoDB.AuthSource,
 		}, nil
 	}
 

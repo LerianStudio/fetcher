@@ -11,12 +11,14 @@ import (
 
 // ServiceConnectionConfig holds connection details returned by the tenant-manager.
 type ServiceConnectionConfig struct {
-	Host     string
-	Port     int
-	Database string
-	Username string
-	Password string
-	SSLMode  string
+	Host             string
+	Port             int
+	Database         string
+	Username         string
+	Password         string
+	SSLMode          string
+	DirectConnection bool
+	AuthSource       string
 }
 
 // TenantConfigProvider abstracts the tenant-manager client for resolving
@@ -123,6 +125,22 @@ func (r *MultiTenantResolver) resolveInternalConnection(ctx context.Context, con
 
 	if svcConn.SSLMode != "" {
 		conn.SSL = &model.SSLConfig{Mode: svcConn.SSLMode}
+	}
+
+	// Propagate MongoDB-specific connection options from tenant-manager config.
+	// These are read by buildMongoDBOptions in the datasource factory.
+	metadata := make(map[string]any)
+
+	if svcConn.DirectConnection {
+		metadata["directConnection"] = "true"
+	}
+
+	if svcConn.AuthSource != "" {
+		metadata["authSource"] = svcConn.AuthSource
+	}
+
+	if len(metadata) > 0 {
+		conn.Metadata = &metadata
 	}
 
 	return conn, nil
