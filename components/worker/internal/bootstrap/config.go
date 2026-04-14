@@ -86,9 +86,10 @@ type Config struct {
 	MongoDBName     string `env:"MONGO_NAME"`
 	MongoDBUser     string `env:"MONGO_USER"`
 	MongoDBPassword string `env:"MONGO_PASSWORD"`
-	MongoDBPort     string `env:"MONGO_PORT"`
-	MongoTLSCACert  string `env:"MONGO_TLS_CA_CERT"`
-	MaxPoolSize     int    `env:"MONGO_MAX_POOL_SIZE"`
+	MongoDBPort       string `env:"MONGO_PORT"`
+	MongoDBParameters string `env:"MONGO_PARAMETERS"`
+	MongoTLSCACert    string `env:"MONGO_TLS_CA_CERT"`
+	MaxPoolSize       int    `env:"MONGO_MAX_POOL_SIZE"`
 	// License configuration envs
 	LicenseKey      string `env:"LICENSE_KEY"`
 	OrganizationIDs string `env:"ORGANIZATION_IDS"`
@@ -442,6 +443,10 @@ func initMongoConnection(ctx context.Context, cfg *Config, logger libLog.Logger)
 	escapedPass := url.QueryEscape(cfg.MongoDBPassword)
 	mongoSource := fmt.Sprintf("%s://%s:%s@%s:%s",
 		cfg.MongoURI, cfg.MongoDBUser, escapedPass, cfg.MongoDBHost, cfg.MongoDBPort)
+
+	if cfg.MongoDBParameters != "" {
+		mongoSource += "/?" + cfg.MongoDBParameters
+	}
 
 	if cfg.MaxPoolSize <= 0 {
 		cfg.MaxPoolSize = 100
