@@ -113,6 +113,7 @@ type Config struct {
 	MultiTenantServiceAPIKey            string `env:"MULTI_TENANT_SERVICE_API_KEY"`
 	MultiTenantCacheTTLSec              int    `env:"MULTI_TENANT_CACHE_TTL_SEC" default:"120"`
 	MultiTenantTimeout                  int    `env:"MULTI_TENANT_TIMEOUT" default:"30"`
+	MultiTenantAllowInsecureHTTP        bool   `env:"MULTI_TENANT_ALLOW_INSECURE_HTTP" default:"false"`
 }
 
 var (
@@ -495,8 +496,8 @@ func initTenantManagerClient(cfg *Config, logger libLog.Logger) (*tmclient.Clien
 		tmclient.WithServiceAPIKey(cfg.MultiTenantServiceAPIKey),
 	)
 
-	// Allow plaintext HTTP for local/dev environments where TLS is not configured.
-	if strings.HasPrefix(strings.ToLower(cfg.MultiTenantURL), "http://") && strings.ToLower(cfg.EnvName) != "production" {
+	// Allow plaintext HTTP when explicitly configured via MULTI_TENANT_ALLOW_INSECURE_HTTP.
+	if cfg.MultiTenantAllowInsecureHTTP {
 		clientOpts = append(clientOpts, tmclient.WithAllowInsecureHTTP())
 	}
 
