@@ -76,8 +76,9 @@ type Config struct {
 	MongoDBName     string `env:"MONGO_NAME"`
 	MongoDBUser     string `env:"MONGO_USER"`
 	MongoDBPassword string `env:"MONGO_PASSWORD"`
-	MongoDBPort     string `env:"MONGO_PORT"`
-	MongoTLSCACert  string `env:"MONGO_TLS_CA_CERT"`
+	MongoDBPort       string `env:"MONGO_PORT"`
+	MongoDBParameters string `env:"MONGO_PARAMETERS"`
+	MongoTLSCACert    string `env:"MONGO_TLS_CA_CERT"`
 	// RabbitMQ configuration envs
 	RabbitURI                   string `env:"RABBITMQ_URI"`
 	RabbitMQHost                string `env:"RABBITMQ_HOST"`
@@ -786,7 +787,13 @@ func initManagerEventDiscovery(
 }
 
 func buildMongoSource(cfg *Config) string {
-	return buildCredentialURL(cfg.MongoURI, cfg.MongoDBUser, cfg.MongoDBPassword, cfg.MongoDBHost, cfg.MongoDBPort)
+	base := buildCredentialURL(cfg.MongoURI, cfg.MongoDBUser, cfg.MongoDBPassword, cfg.MongoDBHost, cfg.MongoDBPort)
+
+	if cfg.MongoDBParameters != "" {
+		base += "/?" + cfg.MongoDBParameters
+	}
+
+	return base
 }
 
 func buildRabbitMQSource(cfg *Config) string {
