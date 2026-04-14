@@ -87,6 +87,7 @@ type Config struct {
 	RabbitMQUser                string `env:"RABBITMQ_DEFAULT_USER"`
 	RabbitMQPass                string `env:"RABBITMQ_DEFAULT_PASS"`
 	RabbitMQGenerateReportQueue string `env:"RABBITMQ_FETCHER_WORK_QUEUE"`
+	RabbitMQTLS                bool   `env:"RABBITMQ_TLS" default:"false"`
 	// Auth envs
 	AuthAddress string `env:"PLUGIN_AUTH_ADDRESS"`
 	AuthEnabled bool   `env:"PLUGIN_AUTH_ENABLED"`
@@ -371,6 +372,10 @@ func initPlatformDependencies(cfg *Config, logger libLog.Logger, messageSigner c
 			rabbitOpts = append(rabbitOpts, tmrabbitmq.WithIdleTimeout(
 				time.Duration(cfg.MultiTenantIdleTimeoutSec)*time.Second,
 			))
+		}
+
+		if cfg.RabbitMQTLS {
+			rabbitOpts = append(rabbitOpts, tmrabbitmq.WithTLS())
 		}
 
 		rabbitMQManager := tmrabbitmq.NewManager(tmClient, constant.ApplicationName, rabbitOpts...)
