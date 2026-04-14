@@ -59,6 +59,7 @@ type Config struct {
 	RabbitMQHealthCheckURL      string `env:"RABBITMQ_HEALTH_CHECK_URL"`
 	RabbitMQGenerateReportQueue string `env:"RABBITMQ_FETCHER_WORK_QUEUE"`
 	RabbitMQJobEventsExchange   string `env:"RABBITMQ_JOB_EVENTS_EXCHANGE"`
+	RabbitMQTLS                bool   `env:"RABBITMQ_TLS" default:"false"`
 	// Otel Collector configurations
 	OtelServiceName         string `env:"OTEL_RESOURCE_SERVICE_NAME"`
 	OtelLibraryName         string `env:"OTEL_LIBRARY_NAME"`
@@ -590,6 +591,10 @@ func initMultiTenantManagers(cfg *Config, logger libLog.Logger) (*tmmongo.Manage
 		rabbitOpts = append(rabbitOpts, tmrabbitmq.WithIdleTimeout(
 			time.Duration(cfg.MultiTenantIdleTimeoutSec)*time.Second,
 		))
+	}
+
+	if cfg.RabbitMQTLS {
+		rabbitOpts = append(rabbitOpts, tmrabbitmq.WithTLS())
 	}
 
 	rabbitManager := tmrabbitmq.NewManager(tmClient, constant.ApplicationName, rabbitOpts...)
