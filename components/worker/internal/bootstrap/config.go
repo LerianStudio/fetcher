@@ -666,6 +666,9 @@ func initMultiTenantStack(
 	mtConfig.ServiceAPIKey = cfg.MultiTenantServiceAPIKey
 	mtConfig.PrefetchCount = constant.DefaultPrefetchCount
 
+	if cfg.MultiTenantAllowInsecureHTTP {
+		mtConfig.AllowInsecureHTTP = true
+	}
 
 	var consumerOpts []tmconsumer.Option
 
