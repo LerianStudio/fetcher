@@ -59,7 +59,7 @@ type Config struct {
 	RabbitMQHealthCheckURL      string `env:"RABBITMQ_HEALTH_CHECK_URL"`
 	RabbitMQGenerateReportQueue string `env:"RABBITMQ_FETCHER_WORK_QUEUE"`
 	RabbitMQJobEventsExchange   string `env:"RABBITMQ_JOB_EVENTS_EXCHANGE"`
-	RabbitMQTLS                bool   `env:"RABBITMQ_TLS" default:"false"`
+	RabbitMQTLS                 bool   `env:"RABBITMQ_TLS" default:"false"`
 	// Otel Collector configurations
 	OtelServiceName         string `env:"OTEL_RESOURCE_SERVICE_NAME"`
 	OtelLibraryName         string `env:"OTEL_LIBRARY_NAME"`
@@ -82,11 +82,11 @@ type Config struct {
 	ObjectStorageTTL string `env:"OBJECT_STORAGE_TTL"`
 	// OBJECT_STORAGE_DISABLE_SSL omitted — SSL controlled by endpoint URL scheme.
 	// MongoDB
-	MongoURI        string `env:"MONGO_URI"`
-	MongoDBHost     string `env:"MONGO_HOST"`
-	MongoDBName     string `env:"MONGO_NAME"`
-	MongoDBUser     string `env:"MONGO_USER"`
-	MongoDBPassword string `env:"MONGO_PASSWORD"`
+	MongoURI          string `env:"MONGO_URI"`
+	MongoDBHost       string `env:"MONGO_HOST"`
+	MongoDBName       string `env:"MONGO_NAME"`
+	MongoDBUser       string `env:"MONGO_USER"`
+	MongoDBPassword   string `env:"MONGO_PASSWORD"`
 	MongoDBPort       string `env:"MONGO_PORT"`
 	MongoDBParameters string `env:"MONGO_PARAMETERS"`
 	MongoTLSCACert    string `env:"MONGO_TLS_CA_CERT"`
@@ -428,12 +428,12 @@ func initCryptoServices(cfg *Config) (*crypto.AESGCMService, *crypto.HMACSigner,
 // initStorageRepository initializes the S3-compatible storage repository.
 func initStorageRepository(ctx context.Context, cfg *Config) (portStorage.Repository, error) {
 	return pkgStorage.NewRepository(ctx, pkgStorage.ProviderConfig{
-		Provider:      pkgStorage.ProviderS3,
-		S3Endpoint:    cfg.ObjectStorageEndpoint,
-		S3Region:      cfg.ObjectStorageRegion,
-		S3Bucket:      cfg.ObjectStorageBucket,
-		S3KeyPrefix:   cfg.ObjectStorageKeyPrefix,
-		S3AccessKeyID: cfg.ObjectStorageAccessKeyID,
+		Provider:          pkgStorage.ProviderS3,
+		S3Endpoint:        cfg.ObjectStorageEndpoint,
+		S3Region:          cfg.ObjectStorageRegion,
+		S3Bucket:          cfg.ObjectStorageBucket,
+		S3KeyPrefix:       cfg.ObjectStorageKeyPrefix,
+		S3AccessKeyID:     cfg.ObjectStorageAccessKeyID,
 		S3SecretAccessKey: cfg.ObjectStorageSecretKey,
 		S3UsePathStyle:    cfg.ObjectStorageUsePathStyle,
 	})
@@ -665,7 +665,7 @@ func initMultiTenantStack(
 	mtConfig.MultiTenantURL = cfg.MultiTenantURL
 	mtConfig.ServiceAPIKey = cfg.MultiTenantServiceAPIKey
 	mtConfig.PrefetchCount = constant.DefaultPrefetchCount
-
+	mtConfig.AllowInsecureHTTP = cfg.MultiTenantAllowInsecureHTTP
 
 	var consumerOpts []tmconsumer.Option
 
