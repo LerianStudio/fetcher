@@ -16,10 +16,9 @@ import (
 )
 
 // newListTestConnection creates a test Connection with the given parameters for list tests.
-func newListTestConnection(orgID, connID uuid.UUID, configName string, dbType model.DBType) *model.Connection {
+func newListTestConnection(connID uuid.UUID, configName string, dbType model.DBType) *model.Connection {
 	return &model.Connection{
 		ID:                   connID,
-		OrganizationID:       orgID,
 		ConfigName:           configName,
 		Type:                 dbType,
 		Host:                 "localhost",
@@ -40,25 +39,24 @@ func TestListConnections_Execute_Success(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewListConnections(mockConnRepo)
+	svc := NewListConnections(mockConnRepo, nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	filters := http.QueryHeader{
 		Limit: 10,
 		Page:  1,
 	}
 
-	conn1 := newListTestConnection(orgID, uuid.New(), "connection-1", model.TypePostgreSQL)
-	conn2 := newListTestConnection(orgID, uuid.New(), "connection-2", model.TypeMySQL)
+	conn1 := newListTestConnection(uuid.New(), "connection-1", model.TypePostgreSQL)
+	conn2 := newListTestConnection(uuid.New(), "connection-2", model.TypeMySQL)
 	expectedList := []*model.Connection{conn1, conn2}
 
 	// Mock: list returns connections
 	mockConnRepo.EXPECT().
-		List(gomock.Any(), orgID, filters).
+		List(gomock.Any(), filters).
 		Return(expectedList, int64(2), nil)
 
-	result, err := svc.Execute(ctx, orgID, "", filters)
+	result, err := svc.Execute(ctx, "", filters)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -89,10 +87,9 @@ func TestListConnections_Execute_EmptyList(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewListConnections(mockConnRepo)
+	svc := NewListConnections(mockConnRepo, nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	filters := http.QueryHeader{
 		Limit: 10,
 		Page:  1,
@@ -100,10 +97,10 @@ func TestListConnections_Execute_EmptyList(t *testing.T) {
 
 	// Mock: list returns nil (no connections found)
 	mockConnRepo.EXPECT().
-		List(gomock.Any(), orgID, filters).
+		List(gomock.Any(), filters).
 		Return(nil, int64(0), nil)
 
-	result, err := svc.Execute(ctx, orgID, "", filters)
+	result, err := svc.Execute(ctx, "", filters)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -124,10 +121,9 @@ func TestListConnections_Execute_RepositoryError(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewListConnections(mockConnRepo)
+	svc := NewListConnections(mockConnRepo, nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	filters := http.QueryHeader{
 		Limit: 10,
 		Page:  1,
@@ -137,10 +133,10 @@ func TestListConnections_Execute_RepositoryError(t *testing.T) {
 
 	// Mock: list returns error
 	mockConnRepo.EXPECT().
-		List(gomock.Any(), orgID, filters).
+		List(gomock.Any(), filters).
 		Return(nil, int64(0), dbError)
 
-	result, err := svc.Execute(ctx, orgID, "", filters)
+	result, err := svc.Execute(ctx, "", filters)
 
 	if result != nil {
 		t.Fatalf("expected nil result, got %+v", result)
@@ -162,7 +158,7 @@ func TestNewListConnections(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewListConnections(mockConnRepo)
+	svc := NewListConnections(mockConnRepo, nil)
 
 	if svc == nil {
 		t.Fatal("expected non-nil service")
@@ -179,7 +175,7 @@ func TestListConnections_Execute_TableDriven(t *testing.T) {
 	tests := []struct {
 		name            string
 		filters         http.QueryHeader
-		setupMocks      func(*connRepo.MockRepository, uuid.UUID, http.QueryHeader)
+		setupMocks      func(*connRepo.MockRepository, http.QueryHeader)
 		wantErr         bool
 		wantResultCount int
 	}{
@@ -189,14 +185,14 @@ func TestListConnections_Execute_TableDriven(t *testing.T) {
 				Limit: 10,
 				Page:  1,
 			},
-			setupMocks: func(mock *connRepo.MockRepository, orgID uuid.UUID, filters http.QueryHeader) {
+			setupMocks: func(mock *connRepo.MockRepository, filters http.QueryHeader) {
 				connections := []*model.Connection{
-					newListTestConnection(orgID, uuid.New(), "conn-1", model.TypePostgreSQL),
-					newListTestConnection(orgID, uuid.New(), "conn-2", model.TypeMySQL),
-					newListTestConnection(orgID, uuid.New(), "conn-3", model.TypeMongoDB),
+					newListTestConnection(uuid.New(), "conn-1", model.TypePostgreSQL),
+					newListTestConnection(uuid.New(), "conn-2", model.TypeMySQL),
+					newListTestConnection(uuid.New(), "conn-3", model.TypeMongoDB),
 				}
 				mock.EXPECT().
-					List(gomock.Any(), orgID, filters).
+					List(gomock.Any(), filters).
 					Return(connections, int64(3), nil)
 			},
 			wantErr:         false,
@@ -208,9 +204,9 @@ func TestListConnections_Execute_TableDriven(t *testing.T) {
 				Limit: 10,
 				Page:  1,
 			},
-			setupMocks: func(mock *connRepo.MockRepository, orgID uuid.UUID, filters http.QueryHeader) {
+			setupMocks: func(mock *connRepo.MockRepository, filters http.QueryHeader) {
 				mock.EXPECT().
-					List(gomock.Any(), orgID, filters).
+					List(gomock.Any(), filters).
 					Return(nil, int64(0), nil)
 			},
 			wantErr:         false,
@@ -222,9 +218,9 @@ func TestListConnections_Execute_TableDriven(t *testing.T) {
 				Limit: 10,
 				Page:  1,
 			},
-			setupMocks: func(mock *connRepo.MockRepository, orgID uuid.UUID, filters http.QueryHeader) {
+			setupMocks: func(mock *connRepo.MockRepository, filters http.QueryHeader) {
 				mock.EXPECT().
-					List(gomock.Any(), orgID, filters).
+					List(gomock.Any(), filters).
 					Return(nil, int64(0), errors.New("database error"))
 			},
 			wantErr:         true,
@@ -236,13 +232,13 @@ func TestListConnections_Execute_TableDriven(t *testing.T) {
 				Limit: 5,
 				Page:  2,
 			},
-			setupMocks: func(mock *connRepo.MockRepository, orgID uuid.UUID, filters http.QueryHeader) {
+			setupMocks: func(mock *connRepo.MockRepository, filters http.QueryHeader) {
 				connections := []*model.Connection{
-					newListTestConnection(orgID, uuid.New(), "conn-6", model.TypePostgreSQL),
-					newListTestConnection(orgID, uuid.New(), "conn-7", model.TypeMySQL),
+					newListTestConnection(uuid.New(), "conn-6", model.TypePostgreSQL),
+					newListTestConnection(uuid.New(), "conn-7", model.TypeMySQL),
 				}
 				mock.EXPECT().
-					List(gomock.Any(), orgID, filters).
+					List(gomock.Any(), filters).
 					Return(connections, int64(7), nil)
 			},
 			wantErr:         false,
@@ -254,12 +250,12 @@ func TestListConnections_Execute_TableDriven(t *testing.T) {
 				Limit: 1,
 				Page:  1,
 			},
-			setupMocks: func(mock *connRepo.MockRepository, orgID uuid.UUID, filters http.QueryHeader) {
+			setupMocks: func(mock *connRepo.MockRepository, filters http.QueryHeader) {
 				connections := []*model.Connection{
-					newListTestConnection(orgID, uuid.New(), "conn-1", model.TypePostgreSQL),
+					newListTestConnection(uuid.New(), "conn-1", model.TypePostgreSQL),
 				}
 				mock.EXPECT().
-					List(gomock.Any(), orgID, filters).
+					List(gomock.Any(), filters).
 					Return(connections, int64(1), nil)
 			},
 			wantErr:         false,
@@ -271,13 +267,13 @@ func TestListConnections_Execute_TableDriven(t *testing.T) {
 				Limit: 100,
 				Page:  1,
 			},
-			setupMocks: func(mock *connRepo.MockRepository, orgID uuid.UUID, filters http.QueryHeader) {
+			setupMocks: func(mock *connRepo.MockRepository, filters http.QueryHeader) {
 				connections := make([]*model.Connection, 50)
 				for i := 0; i < 50; i++ {
-					connections[i] = newListTestConnection(orgID, uuid.New(), "conn", model.TypePostgreSQL)
+					connections[i] = newListTestConnection(uuid.New(), "conn", model.TypePostgreSQL)
 				}
 				mock.EXPECT().
-					List(gomock.Any(), orgID, filters).
+					List(gomock.Any(), filters).
 					Return(connections, int64(50), nil)
 			},
 			wantErr:         false,
@@ -292,13 +288,12 @@ func TestListConnections_Execute_TableDriven(t *testing.T) {
 
 			mockConnRepo := connRepo.NewMockRepository(ctrl)
 			ctx := testContext()
-			orgID := uuid.New()
 
-			tt.setupMocks(mockConnRepo, orgID, tt.filters)
+			tt.setupMocks(mockConnRepo, tt.filters)
 
-			svc := NewListConnections(mockConnRepo)
+			svc := NewListConnections(mockConnRepo, nil)
 
-			result, err := svc.Execute(ctx, orgID, "", tt.filters)
+			result, err := svc.Execute(ctx, "", tt.filters)
 
 			if tt.wantErr {
 				if err == nil {
@@ -331,10 +326,9 @@ func TestListConnections_Execute_OrganizationIsolation(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewListConnections(mockConnRepo)
+	svc := NewListConnections(mockConnRepo, nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	filters := http.QueryHeader{
 		Limit: 10,
 		Page:  1,
@@ -342,16 +336,16 @@ func TestListConnections_Execute_OrganizationIsolation(t *testing.T) {
 
 	// Only connections for the specified organization should be returned
 	org1Connections := []*model.Connection{
-		newListTestConnection(orgID, uuid.New(), "org1-conn-1", model.TypePostgreSQL),
-		newListTestConnection(orgID, uuid.New(), "org1-conn-2", model.TypeMySQL),
+		newListTestConnection(uuid.New(), "org1-conn-1", model.TypePostgreSQL),
+		newListTestConnection(uuid.New(), "org1-conn-2", model.TypeMySQL),
 	}
 
 	// Mock: list returns only connections for the given organization
 	mockConnRepo.EXPECT().
-		List(gomock.Any(), orgID, filters).
+		List(gomock.Any(), filters).
 		Return(org1Connections, int64(2), nil)
 
-	result, err := svc.Execute(ctx, orgID, "", filters)
+	result, err := svc.Execute(ctx, "", filters)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -379,11 +373,9 @@ func TestListConnections_Execute_DifferentOrganizations(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewListConnections(mockConnRepo)
+	svc := NewListConnections(mockConnRepo, nil)
 
 	ctx := testContext()
-	org1ID := uuid.New()
-	org2ID := uuid.New()
 	filters := http.QueryHeader{
 		Limit: 10,
 		Page:  1,
@@ -391,19 +383,19 @@ func TestListConnections_Execute_DifferentOrganizations(t *testing.T) {
 
 	// Create connections for different organizations
 	org1Connections := []*model.Connection{
-		newListTestConnection(org1ID, uuid.New(), "org1-conn", model.TypePostgreSQL),
+		newListTestConnection(uuid.New(), "org1-conn", model.TypePostgreSQL),
 	}
 	org2Connections := []*model.Connection{
-		newListTestConnection(org2ID, uuid.New(), "org2-conn-1", model.TypeMySQL),
-		newListTestConnection(org2ID, uuid.New(), "org2-conn-2", model.TypeMongoDB),
+		newListTestConnection(uuid.New(), "org2-conn-1", model.TypeMySQL),
+		newListTestConnection(uuid.New(), "org2-conn-2", model.TypeMongoDB),
 	}
 
 	// Mock: list for org1
 	mockConnRepo.EXPECT().
-		List(gomock.Any(), org1ID, filters).
+		List(gomock.Any(), filters).
 		Return(org1Connections, int64(1), nil)
 
-	result1, err := svc.Execute(ctx, org1ID, "", filters)
+	result1, err := svc.Execute(ctx, "", filters)
 	if err != nil {
 		t.Fatalf("unexpected error for org1: %v", err)
 	}
@@ -416,10 +408,10 @@ func TestListConnections_Execute_DifferentOrganizations(t *testing.T) {
 
 	// Mock: list for org2
 	mockConnRepo.EXPECT().
-		List(gomock.Any(), org2ID, filters).
+		List(gomock.Any(), filters).
 		Return(org2Connections, int64(2), nil)
 
-	result2, err := svc.Execute(ctx, org2ID, "", filters)
+	result2, err := svc.Execute(ctx, "", filters)
 	if err != nil {
 		t.Fatalf("unexpected error for org2: %v", err)
 	}
@@ -438,10 +430,9 @@ func TestListConnections_Execute_WithMetadataFilter(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewListConnections(mockConnRepo)
+	svc := NewListConnections(mockConnRepo, nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
 
 	metadata := map[string]string{"environment": "production"}
 	filters := http.QueryHeader{
@@ -452,15 +443,15 @@ func TestListConnections_Execute_WithMetadataFilter(t *testing.T) {
 	}
 
 	connections := []*model.Connection{
-		newListTestConnection(orgID, uuid.New(), "prod-conn", model.TypePostgreSQL),
+		newListTestConnection(uuid.New(), "prod-conn", model.TypePostgreSQL),
 	}
 
 	// Mock: list with metadata filter
 	mockConnRepo.EXPECT().
-		List(gomock.Any(), orgID, filters).
+		List(gomock.Any(), filters).
 		Return(connections, int64(1), nil)
 
-	result, err := svc.Execute(ctx, orgID, "", filters)
+	result, err := svc.Execute(ctx, "", filters)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -479,10 +470,9 @@ func TestListConnections_Execute_WithDateFilters(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewListConnections(mockConnRepo)
+	svc := NewListConnections(mockConnRepo, nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
 
 	startDate := time.Now().UTC().Add(-7 * 24 * time.Hour) // 7 days ago
 	endDate := time.Now().UTC()
@@ -495,15 +485,15 @@ func TestListConnections_Execute_WithDateFilters(t *testing.T) {
 	}
 
 	connections := []*model.Connection{
-		newListTestConnection(orgID, uuid.New(), "recent-conn", model.TypePostgreSQL),
+		newListTestConnection(uuid.New(), "recent-conn", model.TypePostgreSQL),
 	}
 
 	// Mock: list with date filters
 	mockConnRepo.EXPECT().
-		List(gomock.Any(), orgID, filters).
+		List(gomock.Any(), filters).
 		Return(connections, int64(1), nil)
 
-	result, err := svc.Execute(ctx, orgID, "", filters)
+	result, err := svc.Execute(ctx, "", filters)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -538,10 +528,9 @@ func TestListConnections_Execute_WithSortOrder(t *testing.T) {
 
 			mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-			svc := NewListConnections(mockConnRepo)
+			svc := NewListConnections(mockConnRepo, nil)
 
 			ctx := testContext()
-			orgID := uuid.New()
 			filters := http.QueryHeader{
 				Limit:     10,
 				Page:      1,
@@ -549,16 +538,16 @@ func TestListConnections_Execute_WithSortOrder(t *testing.T) {
 			}
 
 			connections := []*model.Connection{
-				newListTestConnection(orgID, uuid.New(), "conn-1", model.TypePostgreSQL),
-				newListTestConnection(orgID, uuid.New(), "conn-2", model.TypeMySQL),
+				newListTestConnection(uuid.New(), "conn-1", model.TypePostgreSQL),
+				newListTestConnection(uuid.New(), "conn-2", model.TypeMySQL),
 			}
 
 			// Mock: list with sort order
 			mockConnRepo.EXPECT().
-				List(gomock.Any(), orgID, filters).
+				List(gomock.Any(), filters).
 				Return(connections, int64(2), nil)
 
-			result, err := svc.Execute(ctx, orgID, "", filters)
+			result, err := svc.Execute(ctx, "", filters)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -579,10 +568,9 @@ func TestListConnections_Execute_ConnectionTypes(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewListConnections(mockConnRepo)
+	svc := NewListConnections(mockConnRepo, nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	filters := http.QueryHeader{
 		Limit: 10,
 		Page:  1,
@@ -590,19 +578,19 @@ func TestListConnections_Execute_ConnectionTypes(t *testing.T) {
 
 	// Create connections of all supported types
 	connections := []*model.Connection{
-		newListTestConnection(orgID, uuid.New(), "postgres-conn", model.TypePostgreSQL),
-		newListTestConnection(orgID, uuid.New(), "mysql-conn", model.TypeMySQL),
-		newListTestConnection(orgID, uuid.New(), "mongo-conn", model.TypeMongoDB),
-		newListTestConnection(orgID, uuid.New(), "oracle-conn", model.TypeOracle),
-		newListTestConnection(orgID, uuid.New(), "sqlserver-conn", model.TypeSQLServer),
+		newListTestConnection(uuid.New(), "postgres-conn", model.TypePostgreSQL),
+		newListTestConnection(uuid.New(), "mysql-conn", model.TypeMySQL),
+		newListTestConnection(uuid.New(), "mongo-conn", model.TypeMongoDB),
+		newListTestConnection(uuid.New(), "oracle-conn", model.TypeOracle),
+		newListTestConnection(uuid.New(), "sqlserver-conn", model.TypeSQLServer),
 	}
 
 	// Mock: list returns connections of all types
 	mockConnRepo.EXPECT().
-		List(gomock.Any(), orgID, filters).
+		List(gomock.Any(), filters).
 		Return(connections, int64(5), nil)
 
-	result, err := svc.Execute(ctx, orgID, "", filters)
+	result, err := svc.Execute(ctx, "", filters)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -641,25 +629,24 @@ func TestListConnections_Execute_WithCursor(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewListConnections(mockConnRepo)
+	svc := NewListConnections(mockConnRepo, nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	filters := http.QueryHeader{
 		Limit:  10,
 		Cursor: "encoded-cursor-value",
 	}
 
 	connections := []*model.Connection{
-		newListTestConnection(orgID, uuid.New(), "conn-after-cursor", model.TypePostgreSQL),
+		newListTestConnection(uuid.New(), "conn-after-cursor", model.TypePostgreSQL),
 	}
 
 	// Mock: list with cursor
 	mockConnRepo.EXPECT().
-		List(gomock.Any(), orgID, filters).
+		List(gomock.Any(), filters).
 		Return(connections, int64(1), nil)
 
-	result, err := svc.Execute(ctx, orgID, "", filters)
+	result, err := svc.Execute(ctx, "", filters)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -678,22 +665,21 @@ func TestListConnections_Execute_EmptyFilters(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewListConnections(mockConnRepo)
+	svc := NewListConnections(mockConnRepo, nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	filters := http.QueryHeader{} // Empty filters
 
 	connections := []*model.Connection{
-		newListTestConnection(orgID, uuid.New(), "conn-1", model.TypePostgreSQL),
+		newListTestConnection(uuid.New(), "conn-1", model.TypePostgreSQL),
 	}
 
 	// Mock: list with empty filters
 	mockConnRepo.EXPECT().
-		List(gomock.Any(), orgID, filters).
+		List(gomock.Any(), filters).
 		Return(connections, int64(1), nil)
 
-	result, err := svc.Execute(ctx, orgID, "", filters)
+	result, err := svc.Execute(ctx, "", filters)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -746,10 +732,9 @@ func TestListConnections_Execute_Pagination(t *testing.T) {
 
 			mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-			svc := NewListConnections(mockConnRepo)
+			svc := NewListConnections(mockConnRepo, nil)
 
 			ctx := testContext()
-			orgID := uuid.New()
 			filters := http.QueryHeader{
 				Limit: tt.limit,
 				Page:  tt.page,
@@ -760,16 +745,16 @@ func TestListConnections_Execute_Pagination(t *testing.T) {
 			if tt.expect > 0 {
 				connections = make([]*model.Connection, tt.expect)
 				for i := 0; i < tt.expect; i++ {
-					connections[i] = newListTestConnection(orgID, uuid.New(), "conn", model.TypePostgreSQL)
+					connections[i] = newListTestConnection(uuid.New(), "conn", model.TypePostgreSQL)
 				}
 			}
 
 			// Mock: list returns connections based on pagination
 			mockConnRepo.EXPECT().
-				List(gomock.Any(), orgID, filters).
+				List(gomock.Any(), filters).
 				Return(connections, int64(tt.expect), nil)
 
-			result, err := svc.Execute(ctx, orgID, "", filters)
+			result, err := svc.Execute(ctx, "", filters)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -790,16 +775,15 @@ func TestListConnections_Execute_ConnectionWithSSL(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewListConnections(mockConnRepo)
+	svc := NewListConnections(mockConnRepo, nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	filters := http.QueryHeader{
 		Limit: 10,
 		Page:  1,
 	}
 
-	connWithSSL := newListTestConnection(orgID, uuid.New(), "ssl-conn", model.TypePostgreSQL)
+	connWithSSL := newListTestConnection(uuid.New(), "ssl-conn", model.TypePostgreSQL)
 	connWithSSL.SSL = &model.SSLConfig{
 		Mode: "require",
 		CA:   "-----BEGIN CERTIFICATE-----\ntest-ca\n-----END CERTIFICATE-----",
@@ -807,16 +791,16 @@ func TestListConnections_Execute_ConnectionWithSSL(t *testing.T) {
 		Key:  "-----BEGIN PRIVATE KEY-----\ntest-key\n-----END PRIVATE KEY-----",
 	}
 
-	connWithoutSSL := newListTestConnection(orgID, uuid.New(), "no-ssl-conn", model.TypeMySQL)
+	connWithoutSSL := newListTestConnection(uuid.New(), "no-ssl-conn", model.TypeMySQL)
 
 	connections := []*model.Connection{connWithSSL, connWithoutSSL}
 
 	// Mock: list returns connections with and without SSL
 	mockConnRepo.EXPECT().
-		List(gomock.Any(), orgID, filters).
+		List(gomock.Any(), filters).
 		Return(connections, int64(2), nil)
 
-	result, err := svc.Execute(ctx, orgID, "", filters)
+	result, err := svc.Execute(ctx, "", filters)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -853,32 +837,32 @@ func TestListConnections_Execute_ConnectionWithSSL(t *testing.T) {
 func TestListConnections_Execute_ErrorScenarios(t *testing.T) {
 	tests := []struct {
 		name      string
-		setupMock func(*connRepo.MockRepository, uuid.UUID, http.QueryHeader)
+		setupMock func(*connRepo.MockRepository, http.QueryHeader)
 		errorMsg  string
 	}{
 		{
 			name: "database connection error",
-			setupMock: func(mock *connRepo.MockRepository, orgID uuid.UUID, filters http.QueryHeader) {
+			setupMock: func(mock *connRepo.MockRepository, filters http.QueryHeader) {
 				mock.EXPECT().
-					List(gomock.Any(), orgID, filters).
+					List(gomock.Any(), filters).
 					Return(nil, int64(0), errors.New("database connection failed"))
 			},
 			errorMsg: "database connection failed",
 		},
 		{
 			name: "timeout error",
-			setupMock: func(mock *connRepo.MockRepository, orgID uuid.UUID, filters http.QueryHeader) {
+			setupMock: func(mock *connRepo.MockRepository, filters http.QueryHeader) {
 				mock.EXPECT().
-					List(gomock.Any(), orgID, filters).
+					List(gomock.Any(), filters).
 					Return(nil, int64(0), errors.New("context deadline exceeded"))
 			},
 			errorMsg: "context deadline exceeded",
 		},
 		{
 			name: "permission denied error",
-			setupMock: func(mock *connRepo.MockRepository, orgID uuid.UUID, filters http.QueryHeader) {
+			setupMock: func(mock *connRepo.MockRepository, filters http.QueryHeader) {
 				mock.EXPECT().
-					List(gomock.Any(), orgID, filters).
+					List(gomock.Any(), filters).
 					Return(nil, int64(0), errors.New("permission denied"))
 			},
 			errorMsg: "permission denied",
@@ -892,18 +876,17 @@ func TestListConnections_Execute_ErrorScenarios(t *testing.T) {
 
 			mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-			svc := NewListConnections(mockConnRepo)
+			svc := NewListConnections(mockConnRepo, nil)
 
 			ctx := testContext()
-			orgID := uuid.New()
 			filters := http.QueryHeader{
 				Limit: 10,
 				Page:  1,
 			}
 
-			tt.setupMock(mockConnRepo, orgID, filters)
+			tt.setupMock(mockConnRepo, filters)
 
-			result, err := svc.Execute(ctx, orgID, "", filters)
+			result, err := svc.Execute(ctx, "", filters)
 
 			if result != nil {
 				t.Fatalf("expected nil result, got %+v", result)
@@ -927,10 +910,10 @@ func TestListConnections_Execute_EmptyOrganizationID(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewListConnections(mockConnRepo)
+	svc := NewListConnections(mockConnRepo, nil)
 
 	ctx := testContext()
-	emptyOrgID := uuid.Nil
+
 	filters := http.QueryHeader{
 		Limit: 10,
 		Page:  1,
@@ -938,10 +921,10 @@ func TestListConnections_Execute_EmptyOrganizationID(t *testing.T) {
 
 	// Repository should handle empty org ID - it may return empty list or error
 	mockConnRepo.EXPECT().
-		List(gomock.Any(), emptyOrgID, filters).
+		List(gomock.Any(), filters).
 		Return([]*model.Connection{}, int64(0), nil)
 
-	result, err := svc.Execute(ctx, emptyOrgID, "", filters)
+	result, err := svc.Execute(ctx, "", filters)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -959,10 +942,9 @@ func TestListConnections_Execute_WithProductNameFilter(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewListConnections(mockConnRepo)
+	svc := NewListConnections(mockConnRepo, nil)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	filters := http.QueryHeader{}
 
 	// After setting productName, filters.ProductName is set; connRepo.List is called with updated filters.
@@ -970,15 +952,15 @@ func TestListConnections_Execute_WithProductNameFilter(t *testing.T) {
 	expectedFilters.ProductName = "test-product"
 
 	expectedConnections := []*model.Connection{
-		newListTestConnection(orgID, uuid.New(), "product-conn-1", model.TypePostgreSQL),
-		newListTestConnection(orgID, uuid.New(), "product-conn-2", model.TypeMySQL),
+		newListTestConnection(uuid.New(), "product-conn-1", model.TypePostgreSQL),
+		newListTestConnection(uuid.New(), "product-conn-2", model.TypeMySQL),
 	}
 
 	mockConnRepo.EXPECT().
-		List(gomock.Any(), orgID, expectedFilters).
+		List(gomock.Any(), expectedFilters).
 		Return(expectedConnections, int64(2), nil)
 
-	result, err := svc.Execute(ctx, orgID, "test-product", filters)
+	result, err := svc.Execute(ctx, "test-product", filters)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

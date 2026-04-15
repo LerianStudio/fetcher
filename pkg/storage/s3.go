@@ -7,10 +7,13 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/LerianStudio/fetcher/pkg"
+	"github.com/LerianStudio/fetcher/pkg/constant"
 	portStorage "github.com/LerianStudio/fetcher/pkg/ports/storage"
-	libCommons "github.com/LerianStudio/lib-commons/v3/commons"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v3/commons/opentelemetry"
-	tms3 "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/s3"
+	libCommons "github.com/LerianStudio/lib-commons/v4/commons"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
+	tms3 "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/s3"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsConfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -71,7 +74,7 @@ func NewS3Repository(ctx context.Context, cfg S3Config) (*S3Repository, error) {
 			credentials.NewStaticCredentialsProvider(cfg.AccessKeyID, cfg.SecretAccessKey, ""),
 		))
 	} else if cfg.AccessKeyID != "" || cfg.SecretAccessKey != "" {
-		return nil, fmt.Errorf("both S3 access key ID and secret access key must be provided together (got partial credentials)")
+		return nil, pkg.ValidateBusinessError(constant.ErrInvalidDataRequest, "s3_credentials", "both S3 access key ID and secret access key must be provided together (got partial credentials)")
 	}
 
 	awsCfg, err := awsConfig.LoadDefaultConfig(ctx, opts...)
@@ -110,7 +113,12 @@ func (r *S3Repository) Get(ctx context.Context, objectName string) ([]byte, erro
 	ctx, span := tracer.Start(ctx, "s3.external_data.get")
 	defer span.End()
 
-	tenantObjectName := tms3.GetObjectStorageKeyForTenant(ctx, objectName)
+	tenantObjectName, err := tms3.GetS3KeyStorageContext(ctx, objectName)
+	if err != nil {
+		libOpentelemetry.HandleSpanError(span, "Failed to resolve tenant object key", err)
+		return nil, fmt.Errorf("tenant object key for %s: %w", objectName, err)
+	}
+
 	key := r.cfg.KeyPrefix + tenantObjectName
 
 	span.SetAttributes(
@@ -128,11 +136,11 @@ func (r *S3Repository) Get(ctx context.Context, objectName string) ([]byte, erro
 	if err != nil {
 		var nsk *types.NoSuchKey
 		if errors.As(err, &nsk) {
-			libOpentelemetry.HandleSpanError(&span, "Object not found in S3", err)
+			libOpentelemetry.HandleSpanError(span, "Object not found in S3", err)
 			return nil, fmt.Errorf("object not found: %s", objectName)
 		}
 
-		libOpentelemetry.HandleSpanError(&span, "Failed to download object from S3", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to download object from S3", err)
 
 		return nil, fmt.Errorf("s3 download failed for %s: %w", objectName, err)
 	}
@@ -140,7 +148,7 @@ func (r *S3Repository) Get(ctx context.Context, objectName string) ([]byte, erro
 
 	data, err := io.ReadAll(result.Body)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to read S3 response body", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to read S3 response body", err)
 		return nil, fmt.Errorf("s3 read response failed for %s: %w", objectName, err)
 	}
 
@@ -156,7 +164,12 @@ func (r *S3Repository) Put(ctx context.Context, objectName string, data []byte) 
 	ctx, span := tracer.Start(ctx, "s3.external_data.put")
 	defer span.End()
 
-	tenantObjectName := tms3.GetObjectStorageKeyForTenant(ctx, objectName)
+	tenantObjectName, err := tms3.GetS3KeyStorageContext(ctx, objectName)
+	if err != nil {
+		libOpentelemetry.HandleSpanError(span, "Failed to resolve tenant object key", err)
+		return fmt.Errorf("tenant object key for %s: %w", objectName, err)
+	}
+
 	key := r.cfg.KeyPrefix + tenantObjectName
 
 	span.SetAttributes(
@@ -174,8 +187,8 @@ func (r *S3Repository) Put(ctx context.Context, objectName string, data []byte) 
 	}
 
 	if _, err := r.s3Client.PutObject(ctx, input); err != nil {
-		libOpentelemetry.HandleSpanError(&span, "Failed to upload object to S3", err)
-		logger.Errorf("Error communicating with S3: %v", err)
+		libOpentelemetry.HandleSpanError(span, "Failed to upload object to S3", err)
+		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Error communicating with S3: %v", err))
 
 		return fmt.Errorf("s3 upload failed for %s: %w", objectName, err)
 	}

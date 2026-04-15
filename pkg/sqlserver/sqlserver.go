@@ -1,13 +1,13 @@
 package sqlserver
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
 
 	"github.com/LerianStudio/fetcher/pkg/constant"
-
-	"github.com/LerianStudio/lib-commons/v3/commons/log"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
 	_ "github.com/microsoft/go-mssqldb" // SQL Server driver
 )
 
@@ -17,30 +17,40 @@ type Connection struct {
 	DBName             string
 	ConnectionDB       *sql.DB
 	Connected          bool
-	Logger             log.Logger
+	Logger             libLog.Logger
 	MaxOpenConnections int
 	MaxIdleConnections int
 }
 
 // Connect initializes the connection with the SQL Server DB.
-func (c *Connection) Connect() error {
-	c.Logger.Info("Connecting to SQL Server...")
+func (c *Connection) Connect(ctx context.Context) error {
+	c.Logger.Log(ctx, libLog.LevelInfo, "Connecting to SQL Server...")
 
 	db, err := sql.Open("sqlserver", c.ConnectionString)
 	if err != nil {
-		c.Logger.Errorf("Error opening connection: %v", err)
-		return fmt.Errorf("failed to open SQL Server connection: %w", err)
+		c.Logger.Log(ctx, libLog.LevelError, "error opening SQL Server connection",
+			libLog.String("db_name", c.DBName),
+			libLog.Err(err),
+		)
+
+		return err
 	}
 
-	if err := db.Ping(); err != nil {
+	if err := db.PingContext(ctx); err != nil {
 		closeErr := db.Close()
 		if closeErr != nil {
-			c.Logger.Errorf("Error closing connection: %v", closeErr)
+			c.Logger.Log(ctx, libLog.LevelError, "error closing SQL Server connection after ping failure",
+				libLog.String("db_name", c.DBName),
+				libLog.Err(closeErr),
+			)
 		}
 
-		c.Logger.Errorf("Error pinging SQL Server: %v", err)
+		c.Logger.Log(ctx, libLog.LevelError, "error pinging SQL Server",
+			libLog.String("db_name", c.DBName),
+			libLog.Err(err),
+		)
 
-		return fmt.Errorf("failed to ping SQL Server: %w", err)
+		return err
 	}
 
 	db.SetMaxOpenConns(c.MaxOpenConnections)
@@ -51,17 +61,21 @@ func (c *Connection) Connect() error {
 	c.ConnectionDB = db
 	c.Connected = true
 
-	c.Logger.Infof("Connected to SQL Server [%s] with pool settings (maxOpen: %d, maxIdle: %d, maxLifetime: %v, maxIdleTime: %v)",
-		c.DBName, c.MaxOpenConnections, c.MaxIdleConnections, constant.SQLServerConnMaxLifetime, constant.SQLServerConnMaxIdleTime)
+	c.Logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Connected to SQL Server [%s] with pool settings (maxOpen: %d, maxIdle: %d, maxLifetime: %v, maxIdleTime: %v)",
+		c.DBName, c.MaxOpenConnections, c.MaxIdleConnections, constant.SQLServerConnMaxLifetime, constant.SQLServerConnMaxIdleTime))
 
 	return nil
 }
 
 // GetDB returns a pointer to the SQL Server connection, initializing it if necessary.
-func (sc *Connection) GetDB() (*sql.DB, error) {
+func (sc *Connection) GetDB(ctx context.Context) (*sql.DB, error) {
 	if sc.ConnectionDB == nil {
-		if err := sc.Connect(); err != nil {
-			sc.Logger.Errorf("ERR_CONNECT: failed to connect to SQL Server: %v", err)
+		if err := sc.Connect(ctx); err != nil {
+			sc.Logger.Log(ctx, libLog.LevelError, "failed to connect to SQL Server",
+				libLog.String("db_name", sc.DBName),
+				libLog.Err(err),
+			)
+
 			return nil, err
 		}
 	}

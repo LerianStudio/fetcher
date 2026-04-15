@@ -203,7 +203,7 @@ func TestTenantMetrics_NilProviderWithMultiTenantEnabled(t *testing.T) {
 	tm, err := NewTenantMetrics(true, nil)
 	require.Error(t, err)
 	assert.Nil(t, tm)
-	assert.Contains(t, err.Error(), "meter provider is required")
+	assert.Contains(t, err.Error(), "FET-0402")
 }
 
 func TestTenantMetrics_MultipleTenants(t *testing.T) {

@@ -41,17 +41,17 @@ func (m *MockmongoDatabaseProvider) EXPECT() *MockmongoDatabaseProviderMockRecor
 	return m.recorder
 }
 
-// GetDB mocks base method.
-func (m *MockmongoDatabaseProvider) GetDB(ctx context.Context) (*mongo.Client, error) {
+// Client mocks base method.
+func (m *MockmongoDatabaseProvider) Client(ctx context.Context) (*mongo.Client, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetDB", ctx)
+	ret := m.ctrl.Call(m, "Client", ctx)
 	ret0, _ := ret[0].(*mongo.Client)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// GetDB indicates an expected call of GetDB.
-func (mr *MockmongoDatabaseProviderMockRecorder) GetDB(ctx any) *gomock.Call {
+// Client indicates an expected call of Client.
+func (mr *MockmongoDatabaseProviderMockRecorder) Client(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDB", reflect.TypeOf((*MockmongoDatabaseProvider)(nil).GetDB), ctx)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Client", reflect.TypeOf((*MockmongoDatabaseProvider)(nil).Client), ctx)
 }

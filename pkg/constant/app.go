@@ -5,6 +5,6 @@ const (
 	HeaderJobID     = "jobId"
 
 	// Module constants for multi-tenant middleware
-	ModuleManager = "manager"
-	ModuleWorker  = "worker"
+	ModuleManager = "fetcher-manager"
+	ModuleWorker  = "fetcher-worker"
 )

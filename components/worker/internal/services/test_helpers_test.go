@@ -3,7 +3,7 @@ package services
 import (
 	"context"
 
-	libLog "github.com/LerianStudio/lib-commons/v3/commons/log"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
 
@@ -24,7 +24,7 @@ func testContext() context.Context {
 
 // testLogger creates a logger for testing that suppresses output.
 func testLogger() *libLog.GoLogger {
-	return &libLog.GoLogger{Level: libLog.ErrorLevel}
+	return &libLog.GoLogger{Level: libLog.LevelError}
 }
 
 // testMocks holds all mock dependencies for testing.
@@ -62,7 +62,7 @@ func newTestUseCase(mocks *testMocks) *UseCase {
 		JobEventsExchange:    "test-exchange",
 	}
 
-	uc.SetStorageSecrets("test-seaweedfs-encrypt-key", "test-seaweedfs-hash-key")
+	uc.SetStorageEncryptDerivedKey([]byte("test-seaweedfs-encrypt-key-32by"))
 	uc.SetCRMSecrets("test-crm-encrypt-key", "test-crm-hash-key")
 
 	return uc

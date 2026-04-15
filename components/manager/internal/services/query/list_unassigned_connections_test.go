@@ -22,22 +22,21 @@ func TestListUnassignedConnections_Execute_Success(t *testing.T) {
 	svc := NewListUnassignedConnections(mockConnRepo)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	filters := http.QueryHeader{
 		Limit: 10,
 		Page:  1,
 	}
 
-	conn1 := newListTestConnection(orgID, uuid.New(), "unassigned-conn-1", model.TypePostgreSQL)
-	conn2 := newListTestConnection(orgID, uuid.New(), "unassigned-conn-2", model.TypeMySQL)
+	conn1 := newListTestConnection(uuid.New(), "unassigned-conn-1", model.TypePostgreSQL)
+	conn2 := newListTestConnection(uuid.New(), "unassigned-conn-2", model.TypeMySQL)
 	expectedList := []*model.Connection{conn1, conn2}
 
 	// Mock: ListUnassigned returns connections
 	mockConnRepo.EXPECT().
-		ListUnassigned(gomock.Any(), orgID, filters).
+		ListUnassigned(gomock.Any(), filters).
 		Return(expectedList, int64(2), nil)
 
-	result, err := svc.Execute(ctx, orgID, filters)
+	result, err := svc.Execute(ctx, filters)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -73,7 +72,6 @@ func TestListUnassignedConnections_Execute_EmptyList(t *testing.T) {
 	svc := NewListUnassignedConnections(mockConnRepo)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	filters := http.QueryHeader{
 		Limit: 10,
 		Page:  1,
@@ -81,10 +79,10 @@ func TestListUnassignedConnections_Execute_EmptyList(t *testing.T) {
 
 	// Mock: ListUnassigned returns nil (no connections found)
 	mockConnRepo.EXPECT().
-		ListUnassigned(gomock.Any(), orgID, filters).
+		ListUnassigned(gomock.Any(), filters).
 		Return(nil, int64(0), nil)
 
-	result, err := svc.Execute(ctx, orgID, filters)
+	result, err := svc.Execute(ctx, filters)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -107,7 +105,6 @@ func TestListUnassignedConnections_Execute_RepositoryError(t *testing.T) {
 	svc := NewListUnassignedConnections(mockConnRepo)
 
 	ctx := testContext()
-	orgID := uuid.New()
 	filters := http.QueryHeader{
 		Limit: 10,
 		Page:  1,
@@ -117,10 +114,10 @@ func TestListUnassignedConnections_Execute_RepositoryError(t *testing.T) {
 
 	// Mock: ListUnassigned returns error
 	mockConnRepo.EXPECT().
-		ListUnassigned(gomock.Any(), orgID, filters).
+		ListUnassigned(gomock.Any(), filters).
 		Return(nil, int64(0), dbError)
 
-	result, err := svc.Execute(ctx, orgID, filters)
+	result, err := svc.Execute(ctx, filters)
 
 	if result != nil {
 		t.Fatalf("expected nil result, got %+v", result)
@@ -157,7 +154,7 @@ func TestListUnassignedConnections_Execute_TableDriven(t *testing.T) {
 	tests := []struct {
 		name            string
 		filters         http.QueryHeader
-		setupMocks      func(*connRepo.MockRepository, uuid.UUID, http.QueryHeader)
+		setupMocks      func(*connRepo.MockRepository, http.QueryHeader)
 		wantErr         bool
 		wantResultCount int
 	}{
@@ -167,14 +164,14 @@ func TestListUnassignedConnections_Execute_TableDriven(t *testing.T) {
 				Limit: 10,
 				Page:  1,
 			},
-			setupMocks: func(mock *connRepo.MockRepository, orgID uuid.UUID, filters http.QueryHeader) {
+			setupMocks: func(mock *connRepo.MockRepository, filters http.QueryHeader) {
 				connections := []*model.Connection{
-					newListTestConnection(orgID, uuid.New(), "conn-1", model.TypePostgreSQL),
-					newListTestConnection(orgID, uuid.New(), "conn-2", model.TypeMySQL),
-					newListTestConnection(orgID, uuid.New(), "conn-3", model.TypeMongoDB),
+					newListTestConnection(uuid.New(), "conn-1", model.TypePostgreSQL),
+					newListTestConnection(uuid.New(), "conn-2", model.TypeMySQL),
+					newListTestConnection(uuid.New(), "conn-3", model.TypeMongoDB),
 				}
 				mock.EXPECT().
-					ListUnassigned(gomock.Any(), orgID, filters).
+					ListUnassigned(gomock.Any(), filters).
 					Return(connections, int64(3), nil)
 			},
 			wantErr:         false,
@@ -186,9 +183,9 @@ func TestListUnassignedConnections_Execute_TableDriven(t *testing.T) {
 				Limit: 10,
 				Page:  1,
 			},
-			setupMocks: func(mock *connRepo.MockRepository, orgID uuid.UUID, filters http.QueryHeader) {
+			setupMocks: func(mock *connRepo.MockRepository, filters http.QueryHeader) {
 				mock.EXPECT().
-					ListUnassigned(gomock.Any(), orgID, filters).
+					ListUnassigned(gomock.Any(), filters).
 					Return(nil, int64(0), nil)
 			},
 			wantErr:         false,
@@ -200,9 +197,9 @@ func TestListUnassignedConnections_Execute_TableDriven(t *testing.T) {
 				Limit: 10,
 				Page:  1,
 			},
-			setupMocks: func(mock *connRepo.MockRepository, orgID uuid.UUID, filters http.QueryHeader) {
+			setupMocks: func(mock *connRepo.MockRepository, filters http.QueryHeader) {
 				mock.EXPECT().
-					ListUnassigned(gomock.Any(), orgID, filters).
+					ListUnassigned(gomock.Any(), filters).
 					Return(nil, int64(0), errors.New("database error"))
 			},
 			wantErr:         true,
@@ -214,13 +211,13 @@ func TestListUnassignedConnections_Execute_TableDriven(t *testing.T) {
 				Limit: 5,
 				Page:  2,
 			},
-			setupMocks: func(mock *connRepo.MockRepository, orgID uuid.UUID, filters http.QueryHeader) {
+			setupMocks: func(mock *connRepo.MockRepository, filters http.QueryHeader) {
 				connections := []*model.Connection{
-					newListTestConnection(orgID, uuid.New(), "conn-6", model.TypePostgreSQL),
-					newListTestConnection(orgID, uuid.New(), "conn-7", model.TypeMySQL),
+					newListTestConnection(uuid.New(), "conn-6", model.TypePostgreSQL),
+					newListTestConnection(uuid.New(), "conn-7", model.TypeMySQL),
 				}
 				mock.EXPECT().
-					ListUnassigned(gomock.Any(), orgID, filters).
+					ListUnassigned(gomock.Any(), filters).
 					Return(connections, int64(2), nil)
 			},
 			wantErr:         false,
@@ -229,12 +226,12 @@ func TestListUnassignedConnections_Execute_TableDriven(t *testing.T) {
 		{
 			name:    "list with empty filters",
 			filters: http.QueryHeader{},
-			setupMocks: func(mock *connRepo.MockRepository, orgID uuid.UUID, filters http.QueryHeader) {
+			setupMocks: func(mock *connRepo.MockRepository, filters http.QueryHeader) {
 				connections := []*model.Connection{
-					newListTestConnection(orgID, uuid.New(), "conn-1", model.TypePostgreSQL),
+					newListTestConnection(uuid.New(), "conn-1", model.TypePostgreSQL),
 				}
 				mock.EXPECT().
-					ListUnassigned(gomock.Any(), orgID, filters).
+					ListUnassigned(gomock.Any(), filters).
 					Return(connections, int64(1), nil)
 			},
 			wantErr:         false,
@@ -249,13 +246,12 @@ func TestListUnassignedConnections_Execute_TableDriven(t *testing.T) {
 
 			mockConnRepo := connRepo.NewMockRepository(ctrl)
 			ctx := testContext()
-			orgID := uuid.New()
 
-			tt.setupMocks(mockConnRepo, orgID, tt.filters)
+			tt.setupMocks(mockConnRepo, tt.filters)
 
 			svc := NewListUnassignedConnections(mockConnRepo)
 
-			result, err := svc.Execute(ctx, orgID, tt.filters)
+			result, err := svc.Execute(ctx, tt.filters)
 
 			if tt.wantErr {
 				if err == nil {
@@ -288,8 +284,7 @@ func TestListUnassignedConnections_Execute_OrganizationIsolation(t *testing.T) {
 	svc := NewListUnassignedConnections(mockConnRepo)
 
 	ctx := testContext()
-	org1ID := uuid.New()
-	org2ID := uuid.New()
+
 	filters := http.QueryHeader{
 		Limit: 10,
 		Page:  1,
@@ -297,15 +292,15 @@ func TestListUnassignedConnections_Execute_OrganizationIsolation(t *testing.T) {
 
 	// Mock: org1 has 2 unassigned connections
 	org1Connections := []*model.Connection{
-		newListTestConnection(org1ID, uuid.New(), "org1-conn-1", model.TypePostgreSQL),
-		newListTestConnection(org1ID, uuid.New(), "org1-conn-2", model.TypeMySQL),
+		newListTestConnection(uuid.New(), "org1-conn-1", model.TypePostgreSQL),
+		newListTestConnection(uuid.New(), "org1-conn-2", model.TypeMySQL),
 	}
 
 	mockConnRepo.EXPECT().
-		ListUnassigned(gomock.Any(), org1ID, filters).
+		ListUnassigned(gomock.Any(), filters).
 		Return(org1Connections, int64(2), nil)
 
-	result1, err := svc.Execute(ctx, org1ID, filters)
+	result1, err := svc.Execute(ctx, filters)
 	if err != nil {
 		t.Fatalf("unexpected error for org1: %v", err)
 	}
@@ -316,14 +311,14 @@ func TestListUnassignedConnections_Execute_OrganizationIsolation(t *testing.T) {
 
 	// Mock: org2 has 1 unassigned connection
 	org2Connections := []*model.Connection{
-		newListTestConnection(org2ID, uuid.New(), "org2-conn-1", model.TypeMongoDB),
+		newListTestConnection(uuid.New(), "org2-conn-1", model.TypeMongoDB),
 	}
 
 	mockConnRepo.EXPECT().
-		ListUnassigned(gomock.Any(), org2ID, filters).
+		ListUnassigned(gomock.Any(), filters).
 		Return(org2Connections, int64(1), nil)
 
-	result2, err := svc.Execute(ctx, org2ID, filters)
+	result2, err := svc.Execute(ctx, filters)
 	if err != nil {
 		t.Fatalf("unexpected error for org2: %v", err)
 	}
@@ -337,32 +332,32 @@ func TestListUnassignedConnections_Execute_OrganizationIsolation(t *testing.T) {
 func TestListUnassignedConnections_Execute_ErrorScenarios(t *testing.T) {
 	tests := []struct {
 		name      string
-		setupMock func(*connRepo.MockRepository, uuid.UUID, http.QueryHeader)
+		setupMock func(*connRepo.MockRepository, http.QueryHeader)
 		errorMsg  string
 	}{
 		{
 			name: "database connection error",
-			setupMock: func(mock *connRepo.MockRepository, orgID uuid.UUID, filters http.QueryHeader) {
+			setupMock: func(mock *connRepo.MockRepository, filters http.QueryHeader) {
 				mock.EXPECT().
-					ListUnassigned(gomock.Any(), orgID, filters).
+					ListUnassigned(gomock.Any(), filters).
 					Return(nil, int64(0), errors.New("database connection failed"))
 			},
 			errorMsg: "database connection failed",
 		},
 		{
 			name: "timeout error",
-			setupMock: func(mock *connRepo.MockRepository, orgID uuid.UUID, filters http.QueryHeader) {
+			setupMock: func(mock *connRepo.MockRepository, filters http.QueryHeader) {
 				mock.EXPECT().
-					ListUnassigned(gomock.Any(), orgID, filters).
+					ListUnassigned(gomock.Any(), filters).
 					Return(nil, int64(0), errors.New("context deadline exceeded"))
 			},
 			errorMsg: "context deadline exceeded",
 		},
 		{
 			name: "permission denied error",
-			setupMock: func(mock *connRepo.MockRepository, orgID uuid.UUID, filters http.QueryHeader) {
+			setupMock: func(mock *connRepo.MockRepository, filters http.QueryHeader) {
 				mock.EXPECT().
-					ListUnassigned(gomock.Any(), orgID, filters).
+					ListUnassigned(gomock.Any(), filters).
 					Return(nil, int64(0), errors.New("permission denied"))
 			},
 			errorMsg: "permission denied",
@@ -378,15 +373,14 @@ func TestListUnassignedConnections_Execute_ErrorScenarios(t *testing.T) {
 			svc := NewListUnassignedConnections(mockConnRepo)
 
 			ctx := testContext()
-			orgID := uuid.New()
 			filters := http.QueryHeader{
 				Limit: 10,
 				Page:  1,
 			}
 
-			tt.setupMock(mockConnRepo, orgID, filters)
+			tt.setupMock(mockConnRepo, filters)
 
-			result, err := svc.Execute(ctx, orgID, filters)
+			result, err := svc.Execute(ctx, filters)
 
 			if result != nil {
 				t.Fatalf("expected nil result, got %+v", result)

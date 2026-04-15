@@ -2,11 +2,12 @@ package redis
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
-	"github.com/LerianStudio/lib-commons/v3/commons"
-	"github.com/LerianStudio/lib-commons/v3/commons/log"
+	"github.com/LerianStudio/lib-commons/v4/commons"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -20,7 +21,7 @@ const (
 type FallbackCache[T any] struct {
 	redis    *RedisCache[T]
 	inMemory *InMemoryCache[T]
-	logger   log.Logger
+	logger   libLog.Logger
 	useRedis bool
 	mu       sync.RWMutex
 	stopCh   chan struct{}
@@ -32,13 +33,13 @@ type FallbackCache[T any] struct {
 // IMPORTANT: Caller MUST call Close() when done to stop the health monitor goroutine.
 // Failing to call Close() will result in a goroutine leak.
 // Close() is idempotent and safe to call multiple times.
-func NewFallbackCache[T any](redisCache *RedisCache[T], logger log.Logger, ttl time.Duration) *FallbackCache[T] {
+func NewFallbackCache[T any](redisCache *RedisCache[T], logger libLog.Logger, ttl time.Duration) *FallbackCache[T] {
 	if ttl <= 0 {
-		logger.Warnf("invalid TTL %v, using default %v", ttl, DefaultCacheTTL)
+		logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("invalid TTL %v, using default %v", ttl, DefaultCacheTTL))
 		ttl = DefaultCacheTTL
 	}
 
-	logger.Infof("creating fallback cache with TTL %v", ttl)
+	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("creating fallback cache with TTL %v", ttl))
 
 	fc := &FallbackCache[T]{
 		redis:    redisCache,
@@ -74,7 +75,7 @@ func (c *FallbackCache[T]) Get(ctx context.Context, key string) (T, bool, error)
 
 		value, found, err := c.redis.Get(ctx, key)
 		if err != nil {
-			logger.Warnf("redis cache error for key %s, falling back to in-memory: %v", key, err)
+			logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("redis cache error for key %s, falling back to in-memory: %v", key, err))
 		} else if found {
 			return value, true, nil
 		}
@@ -99,7 +100,7 @@ func (c *FallbackCache[T]) Set(ctx context.Context, key string, value T, ttl tim
 
 	// Always store in in-memory for fallback
 	if err := c.inMemory.Set(ctx, key, value, ttl); err != nil {
-		logger.Warnf("failed to set in in-memory cache: %v", err)
+		logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("failed to set in in-memory cache: %v", err))
 	}
 
 	c.mu.RLock()
@@ -110,7 +111,7 @@ func (c *FallbackCache[T]) Set(ctx context.Context, key string, value T, ttl tim
 		span.SetAttributes(attribute.String("app.cache.backend", "redis+memory"))
 
 		if err := c.redis.Set(ctx, key, value, ttl); err != nil {
-			logger.Warnf("failed to set in redis, using in-memory only: %v", err)
+			logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("failed to set in redis, using in-memory only: %v", err))
 		}
 	} else {
 		span.SetAttributes(attribute.String("app.cache.backend", "memory"))
@@ -141,7 +142,7 @@ func (c *FallbackCache[T]) Delete(ctx context.Context, key string) error {
 		span.SetAttributes(attribute.String("app.cache.backend", "redis+memory"))
 
 		if err := c.redis.Delete(ctx, key); err != nil {
-			logger.Warnf("failed to delete from redis: %v", err)
+			logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("failed to delete from redis: %v", err))
 		}
 	} else {
 		span.SetAttributes(attribute.String("app.cache.backend", "memory"))
@@ -169,7 +170,7 @@ func (c *FallbackCache[T]) Clear(ctx context.Context) error {
 		span.SetAttributes(attribute.String("app.cache.backend", "redis+memory"))
 
 		if err := c.redis.Clear(ctx); err != nil {
-			logger.Warnf("failed to clear redis cache: %v", err)
+			logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("failed to clear redis cache: %v", err))
 		}
 	} else {
 		span.SetAttributes(attribute.String("app.cache.backend", "memory"))
@@ -208,12 +209,12 @@ func (c *FallbackCache[T]) Close() error {
 
 	err := c.inMemory.Close()
 	if err != nil {
-		c.logger.Warnf("failed to close in-memory cache: %v", err)
+		c.logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("failed to close in-memory cache: %v", err))
 	}
 
 	err = c.redis.Close()
 	if err != nil {
-		c.logger.Warnf("failed to close redis cache: %v", err)
+		c.logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("failed to close redis cache: %v", err))
 	}
 
 	return err
@@ -236,9 +237,9 @@ func (c *FallbackCache[T]) monitorRedisHealth() {
 
 			if healthy != c.useRedis {
 				if healthy {
-					c.logger.Info("redis connection restored, switching to redis cache")
+					c.logger.Log(context.Background(), libLog.LevelInfo, "redis connection restored, switching to redis cache")
 				} else {
-					c.logger.Warn("redis connection lost, falling back to in-memory cache")
+					c.logger.Log(context.Background(), libLog.LevelWarn, "redis connection lost, falling back to in-memory cache")
 				}
 
 				c.useRedis = healthy
@@ -246,7 +247,7 @@ func (c *FallbackCache[T]) monitorRedisHealth() {
 
 			c.mu.Unlock()
 		case <-c.stopCh:
-			c.logger.Debug("stopping redis health monitor goroutine")
+			c.logger.Log(context.Background(), libLog.LevelDebug, "stopping redis health monitor goroutine")
 			return
 		}
 	}

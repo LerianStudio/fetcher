@@ -1,0 +1,28 @@
+# 2026-04-08 — GHSA-xmrv-pmrh-hhx2
+# DoS via panic in AWS SDK for Go v2 EventStream Decoder
+# No fix available upstream (v1.7.8 is latest and still affected)
+# Low impact: EventStream Decoder not used directly by this service
+GHSA-xmrv-pmrh-hhx2
+
+# 2026-04-13 — OpenSSL + zlib CVEs in Alpine base image
+# Cannot apply via --upgrade without breaking AWS credential chain
+# Will address by upgrading Alpine base image or pinning specific packages
+CVE-2026-28390
+CVE-2026-28388
+CVE-2026-28389
+CVE-2026-31790
+CVE-2026-2673
+CVE-2026-28387
+CVE-2026-31789
+CVE-2026-22184
+CVE-2026-27171
+
+# 2026-04-13 — CVE-2026-40200
+# Stack-based issue in musl libc 0.7.10 through 1.2.6 (Alpine base image)
+# No fix available upstream; severity LOW
+CVE-2026-40200
+
+# 2026-04-13 — CVE-2026-6042
+# Security flaw in musl libc up to 1.2.6 (Alpine base image)
+# No fix available upstream; severity LOW
+CVE-2026-6042

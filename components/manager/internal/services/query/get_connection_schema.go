@@ -13,12 +13,16 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/datasource"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
+	"github.com/LerianStudio/fetcher/pkg/resolver"
 
-	"github.com/LerianStudio/lib-commons/v3/commons"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v3/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v4/commons"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
+	tmcore "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/core"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // GetConnectionSchema retrieves the database schema for a connection.
@@ -26,6 +30,8 @@ type GetConnectionSchema struct {
 	connRepo          connRepo.Repository
 	cryptor           crypto.Cryptor
 	dataSourceFactory datasource.DataSourceFactory
+	resolver          resolver.ConnectionResolver          // nil-safe
+	registry          *resolver.InternalDatasourceRegistry // nil-safe
 }
 
 // NewGetConnectionSchema creates a new GetConnectionSchema service.
@@ -33,16 +39,20 @@ func NewGetConnectionSchema(
 	connectionRepo connRepo.Repository,
 	cryptor crypto.Cryptor,
 	factory datasource.DataSourceFactory,
+	connResolver resolver.ConnectionResolver,
+	dsRegistry *resolver.InternalDatasourceRegistry,
 ) *GetConnectionSchema {
 	return &GetConnectionSchema{
 		connRepo:          connectionRepo,
 		cryptor:           cryptor,
 		dataSourceFactory: factory,
+		resolver:          connResolver,
+		registry:          dsRegistry,
 	}
 }
 
 // Execute retrieves the database schema for the specified connection.
-func (s *GetConnectionSchema) Execute(ctx context.Context, organizationID, connectionID uuid.UUID) (*model.ConnectionSchemaResponse, error) {
+func (s *GetConnectionSchema) Execute(ctx context.Context, connectionID uuid.UUID) (*model.ConnectionSchemaResponse, error) {
 	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "service.get_connection_schema")
@@ -50,29 +60,22 @@ func (s *GetConnectionSchema) Execute(ctx context.Context, organizationID, conne
 
 	span.SetAttributes(
 		attribute.String("app.request.request_id", reqID),
-		attribute.String("app.request.organization_id", organizationID.String()),
 		attribute.String("app.request.connection_id", connectionID.String()),
 	)
 
-	// Find connection by ID
-	conn, err := s.connRepo.FindByID(ctx, connectionID, organizationID)
+	conn, err := s.resolveConnection(ctx, connectionID, span)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "failed to find connection", err)
-		return nil, fmt.Errorf("failed to find connection by id: %w", err)
-	}
-
-	if conn == nil {
-		return nil, pkg.ValidateBusinessError(
-			constant.ErrEntityNotFound,
-			"connection",
-		)
+		return nil, err
 	}
 
 	// Create datasource
 	ds, err := s.dataSourceFactory(ctx, conn, s.cryptor)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "failed to create datasource", err)
-		logger.Errorf("failed to create datasource for connection %s: %v", connectionID, err)
+		libOpentelemetry.HandleSpanError(span, "failed to create datasource", err)
+		logger.Log(ctx, libLog.LevelError, "failed to create datasource",
+			libLog.String("connection_id", connectionID.String()),
+			libLog.Err(err),
+		)
 
 		return nil, pkg.ResponseError{
 			Code:    http.StatusInternalServerError,
@@ -83,15 +86,32 @@ func (s *GetConnectionSchema) Execute(ctx context.Context, organizationID, conne
 
 	defer func() {
 		if closeErr := ds.Close(ctx); closeErr != nil {
-			logger.Warnf("failed to close datasource for connection %s: %v", connectionID, closeErr)
+			logger.Log(ctx, libLog.LevelWarn, "failed to close datasource",
+				libLog.String("connection_id", connectionID.String()),
+				libLog.Err(closeErr),
+			)
 		}
 	}()
 
+	// Determine which PostgreSQL schema(s) to discover.
+	// Priority: explicit Schema field > username-based (internal connections) > default ("public").
+	var schemas []string
+	if conn.Schema != nil && *conn.Schema != "" {
+		schemas = []string{*conn.Schema}
+	} else if conn.EncryptionKeyVersion == "" && conn.Username != "" &&
+		(conn.Type == model.TypePostgreSQL) {
+		// Internal connections: tenant-manager provisions schemas named after the database user.
+		schemas = []string{conn.Username}
+	}
+
 	// Get schema info
-	schema, err := ds.GetSchemaInfo(ctx, nil)
+	schema, err := ds.GetSchemaInfo(ctx, schemas)
 	if err != nil {
-		libOpentelemetry.HandleSpanError(&span, "failed to get schema info", err)
-		logger.Errorf("failed to get schema info for connection %s: %v", connectionID, err)
+		libOpentelemetry.HandleSpanError(span, "failed to get schema info", err)
+		logger.Log(ctx, libLog.LevelError, "failed to get schema info",
+			libLog.String("connection_id", connectionID.String()),
+			libLog.Err(err),
+		)
 
 		return nil, pkg.ResponseError{
 			Code:    http.StatusInternalServerError,
@@ -130,6 +150,45 @@ func (s *GetConnectionSchema) Execute(ctx context.Context, organizationID, conne
 	span.SetAttributes(attribute.Int("app.schema.table_count", len(tables)))
 
 	return model.NewConnectionSchemaFrom(conn, tables), nil
+}
+
+// resolveConnection finds a connection by ID, checking internal datasources first then MongoDB.
+func (s *GetConnectionSchema) resolveConnection(ctx context.Context, connectionID uuid.UUID, span trace.Span) (*model.Connection, error) {
+	if s.registry != nil && s.resolver != nil {
+		tenantID := tmcore.GetTenantIDContext(ctx)
+		if configName, _, found := s.registry.FindConfigByID(connectionID, tenantID); found {
+			resolved, resolveErr := s.resolver.ResolveInternalByConfigName(ctx, configName)
+			if resolveErr != nil {
+				libOpentelemetry.HandleSpanError(span, "failed to resolve internal datasource", resolveErr)
+				return nil, fmt.Errorf("failed to resolve internal datasource '%s': %w", configName, resolveErr)
+			}
+
+			if resolved == nil {
+				return nil, pkg.ValidateBusinessError(
+					constant.ErrEntityNotFound,
+					"connection",
+					connectionID,
+				)
+			}
+
+			return resolved, nil
+		}
+	}
+
+	conn, findErr := s.connRepo.FindByID(ctx, connectionID)
+	if findErr != nil {
+		libOpentelemetry.HandleSpanError(span, "failed to find connection", findErr)
+		return nil, fmt.Errorf("failed to find connection by id: %w", findErr)
+	}
+
+	if conn == nil {
+		return nil, pkg.ValidateBusinessError(
+			constant.ErrEntityNotFound,
+			"connection",
+		)
+	}
+
+	return conn, nil
 }
 
 // isSystemTable checks if a table/collection is a system table that should be filtered out.

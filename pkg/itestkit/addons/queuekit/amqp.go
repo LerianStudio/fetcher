@@ -371,8 +371,10 @@ func (p *AMQPPublisher) Close() error {
 }
 
 // Compile-time interface verification
-var _ QueueConsumer = (*AMQPConsumer)(nil)
-var _ QueuePublisher = (*AMQPPublisher)(nil)
+var (
+	_ QueueConsumer  = (*AMQPConsumer)(nil)
+	_ QueuePublisher = (*AMQPPublisher)(nil)
+)
 
 // AMQPConsumerBuilder provides a fluent API for building AMQP consumers.
 type AMQPConsumerBuilder struct {

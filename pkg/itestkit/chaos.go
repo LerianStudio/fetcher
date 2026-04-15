@@ -11,9 +11,10 @@ type ChaosConfig struct {
 }
 
 type ProxyRef struct {
-	Name       string
-	ListenAddr string // host:port para o app usar
-	Upstream   string // host:port real
+	Name                string
+	ListenAddr          string // host-usable host:port for test code running outside Docker
+	InNetworkListenAddr string // optional shared-network host:port for app containers inside Docker
+	Upstream            string // host:port real
 }
 
 type ChaosInterface interface {

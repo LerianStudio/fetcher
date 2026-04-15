@@ -4,10 +4,11 @@ import (
 	"context"
 	"testing"
 
-	tms3 "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/s3"
-	"github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/valkey"
+	"github.com/LerianStudio/fetcher/pkg/testutil"
+	tms3 "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/s3"
+	"github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/valkey"
 
-	tmcore "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/core"
+	tmcore "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/core"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -20,9 +21,9 @@ import (
 //  1. Config defaults: MultiTenantEnabled defaults to false
 //  2. Metrics: no-op when disabled (covered by TestTenantMetrics_NoOpWhenDisabled)
 //  3. Redis: cacheKey returns unprefixed key without tenant context
-//  4. S3: GetObjectStorageKeyForTenant returns original objectName without tenant context
+//  4. S3: GetS3KeyStorageContext returns original objectName without tenant context
 //  5. RabbitMQ: extractTenantIDFromHeaders returns unmodified context for messages without X-Tenant-ID
-//  6. MongoDB: GetMongoFromContext returns nil without tenant context (falls back to static)
+//  6. MongoDB: GetMongoForTenant returns error without tenant context (falls back to static)
 func TestMultiTenant_BackwardCompatibility(t *testing.T) {
 	t.Run("config_defaults_multi_tenant_disabled", func(t *testing.T) {
 		// When no MULTI_TENANT_* env vars are set, MultiTenantEnabled must default to false.
@@ -30,7 +31,9 @@ func TestMultiTenant_BackwardCompatibility(t *testing.T) {
 		type multiTenantConfig struct {
 			MultiTenantEnabled                  bool   `env:"MULTI_TENANT_ENABLED"`
 			MultiTenantURL                      string `env:"MULTI_TENANT_URL"`
-			MultiTenantEnvironment              string `env:"MULTI_TENANT_ENVIRONMENT"`
+			MultiTenantRedisHost                string `env:"MULTI_TENANT_REDIS_HOST"`
+			MultiTenantRedisPort                string `env:"MULTI_TENANT_REDIS_PORT"`
+			MultiTenantRedisPassword            string `env:"MULTI_TENANT_REDIS_PASSWORD"`
 			MultiTenantMaxTenantPools           int    `env:"MULTI_TENANT_MAX_TENANT_POOLS"`
 			MultiTenantIdleTimeoutSec           int    `env:"MULTI_TENANT_IDLE_TIMEOUT_SEC"`
 			MultiTenantCircuitBreakerThreshold  int    `env:"MULTI_TENANT_CIRCUIT_BREAKER_THRESHOLD"`
@@ -42,8 +45,12 @@ func TestMultiTenant_BackwardCompatibility(t *testing.T) {
 			"MultiTenantEnabled must default to false when no MULTI_TENANT_ENABLED env var is set")
 		assert.Empty(t, cfg.MultiTenantURL,
 			"MultiTenantURL must default to empty string")
-		assert.Empty(t, cfg.MultiTenantEnvironment,
-			"MultiTenantEnvironment must default to empty string")
+		assert.Empty(t, cfg.MultiTenantRedisHost,
+			"MultiTenantRedisHost must default to empty string")
+		assert.Empty(t, cfg.MultiTenantRedisPort,
+			"MultiTenantRedisPort must default to empty string")
+		assert.Empty(t, cfg.MultiTenantRedisPassword,
+			"MultiTenantRedisPassword must default to empty string")
 		assert.Equal(t, 0, cfg.MultiTenantMaxTenantPools,
 			"MultiTenantMaxTenantPools must default to 0")
 		assert.Equal(t, 0, cfg.MultiTenantIdleTimeoutSec,
@@ -71,25 +78,27 @@ func TestMultiTenant_BackwardCompatibility(t *testing.T) {
 	})
 
 	t.Run("redis_cache_key_unprefixed_without_tenant", func(t *testing.T) {
-		// When no tenant is in context, valkey.GetKeyFromContext must return the key unchanged.
+		// When no tenant is in context, valkey.GetKeyContext must return the key unchanged.
 		// This ensures Redis operations work normally in single-tenant mode.
 		ctx := context.Background()
 		key := "mykey"
 
-		result := valkey.GetKeyFromContext(ctx, key)
+		result, err := valkey.GetKeyContext(ctx, key)
+		assert.NoError(t, err)
 		assert.Equal(t, key, result,
-			"valkey.GetKeyFromContext must return key unchanged when no tenant in context")
+			"valkey.GetKeyContext must return key unchanged when no tenant in context")
 	})
 
 	t.Run("s3_object_key_unprefixed_without_tenant", func(t *testing.T) {
-		// When no tenant is in context, GetObjectStorageKeyForTenant must return
+		// When no tenant is in context, GetS3KeyStorageContext must return
 		// the original objectName. This ensures S3 operations work normally.
 		ctx := context.Background()
 		objectName := "reports/template-123/report-456.html"
 
-		result := tms3.GetObjectStorageKeyForTenant(ctx, objectName)
+		result, err := tms3.GetS3KeyStorageContext(ctx, objectName)
+		require.NoError(t, err)
 		assert.Equal(t, objectName, result,
-			"GetObjectStorageKeyForTenant must return original objectName when no tenant in context")
+			"GetS3KeyStorageContext must return original objectName when no tenant in context")
 	})
 
 	t.Run("rabbitmq_message_without_tenant_id_header", func(t *testing.T) {
@@ -103,7 +112,7 @@ func TestMultiTenant_BackwardCompatibility(t *testing.T) {
 			"jobId":        "test-job-123",
 		}
 
-		tenantIDFromEmpty := tmcore.GetTenantIDFromContext(ctx)
+		tenantIDFromEmpty := tmcore.GetTenantIDContext(ctx)
 		assert.Empty(t, tenantIDFromEmpty,
 			"context without tenant ID must return empty string from GetTenantIDFromContext")
 
@@ -119,54 +128,56 @@ func TestMultiTenant_BackwardCompatibility(t *testing.T) {
 		// nil headers must not cause a panic.
 		ctx := context.Background()
 
-		tenantID := tmcore.GetTenantIDFromContext(ctx)
+		tenantID := tmcore.GetTenantIDContext(ctx)
 		assert.Empty(t, tenantID,
 			"nil headers must not produce a tenant ID in context")
 	})
 
 	t.Run("mongodb_fallback_to_static_without_tenant", func(t *testing.T) {
-		// When no tenant is in context, tmcore.GetMongoFromContext must return nil,
+		// When no tenant is in context, tmcore.GetMBContext must return nil,
 		// which signals the repository to fall back to its static connection.
-		ctx := context.Background()
+		ctx := testutil.TestContext()
 
-		db := tmcore.GetMongoFromContext(ctx)
+		db := tmcore.GetMBContext(ctx)
 		assert.Nil(t, db,
-			"GetMongoFromContext must return nil database when no tenant in context, triggering static fallback")
+			"GetMongoFromContext must return nil database when no tenant in context")
 	})
 
 	t.Run("tenant_context_isolation", func(t *testing.T) {
 		// Setting tenant in one context must not leak into another.
-		ctx1 := tmcore.SetTenantIDInContext(context.Background(), "tenant-1")
+		ctx1 := tmcore.ContextWithTenantID(context.Background(), "tenant-1")
 		ctx2 := context.Background()
 
-		assert.Equal(t, "tenant-1", tmcore.GetTenantIDFromContext(ctx1),
+		assert.Equal(t, "tenant-1", tmcore.GetTenantIDContext(ctx1),
 			"context with tenant must return the set tenant ID")
-		assert.Empty(t, tmcore.GetTenantIDFromContext(ctx2),
+		assert.Empty(t, tmcore.GetTenantIDContext(ctx2),
 			"context without tenant must return empty string (no leaking)")
 	})
 
 	t.Run("redis_key_with_tenant_is_prefixed", func(t *testing.T) {
 		// Verify that when tenant IS in context, the key IS prefixed.
 		// This ensures the prefixing mechanism works correctly (both paths tested).
-		ctx := tmcore.SetTenantIDInContext(context.Background(), "org_abc123")
+		ctx := tmcore.ContextWithTenantID(context.Background(), "org_abc123")
 		key := "mykey"
 
-		result := valkey.GetKeyFromContext(ctx, key)
+		result, err := valkey.GetKeyContext(ctx, key)
+		assert.NoError(t, err)
 		assert.Contains(t, result, "org_abc123",
-			"valkey.GetKeyFromContext must include tenant ID when tenant is in context")
+			"valkey.GetKeyContext must include tenant ID when tenant is in context")
 		assert.Contains(t, result, key,
-			"valkey.GetKeyFromContext must include the original key")
+			"valkey.GetKeyContext must include the original key")
 	})
 
 	t.Run("s3_key_with_tenant_is_prefixed", func(t *testing.T) {
 		// Verify that when tenant IS in context, the S3 key IS prefixed.
-		ctx := tmcore.SetTenantIDInContext(context.Background(), "org_abc123")
+		ctx := tmcore.ContextWithTenantID(context.Background(), "org_abc123")
 		objectName := "reports/report.html"
 
-		result := tms3.GetObjectStorageKeyForTenant(ctx, objectName)
+		result, err := tms3.GetS3KeyStorageContext(ctx, objectName)
+		require.NoError(t, err)
 		assert.Contains(t, result, "org_abc123",
-			"GetObjectStorageKeyForTenant must include tenant ID when tenant is in context")
+			"GetS3KeyStorageContext must include tenant ID when tenant is in context")
 		assert.Contains(t, result, "reports/report.html",
-			"GetObjectStorageKeyForTenant must include the original key")
+			"GetS3KeyStorageContext must include the original key")
 	})
 }

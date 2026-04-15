@@ -2,28 +2,14 @@ name: Fuzz Tests
 
 on:
   schedule:
-    - cron: '0 0 * * 0'  # Weekly on Sunday at midnight
-  workflow_dispatch:      # Manual trigger
+    - cron: '0 0 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   fuzz:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Set up Go
-        uses: actions/setup-go@v6
-        with:
-          go-version: '1.25'
-
-      - name: Run Fuzz Tests
-        run: make fuzz-ci
-
-      - name: Upload Fuzz Artifacts
-        if: failure()
-        uses: actions/upload-artifact@v6
-        with:
-          name: fuzz-failures
-          path: |
-            tests/fuzz/**/testdata/fuzz/
-          retention-days: 7
+    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/go-fuzz.yml@v1.23.1
+    with:
+      go_version: '1.25.7'

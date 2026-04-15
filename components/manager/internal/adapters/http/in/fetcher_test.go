@@ -18,8 +18,8 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/ports/messaging"
 
-	libCommons "github.com/LerianStudio/lib-commons/v3/commons"
-	libLog "github.com/LerianStudio/lib-commons/v3/commons/log"
+	libCommons "github.com/LerianStudio/lib-commons/v4/commons"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -36,7 +36,7 @@ func setupTestApp() *fiber.App {
 
 	// Middleware to inject test context with logger and tracer
 	app.Use(func(c *fiber.Ctx) error {
-		logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+		logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 		values := &libCommons.CustomContextKeyValue{
 			HeaderID: "test-request-id",
 			Logger:   logger,
@@ -54,11 +54,10 @@ func setupTestApp() *fiber.App {
 }
 
 // createTestJob creates a test job with default values.
-func createTestJob(id, orgID uuid.UUID) *model.Job {
+func createTestJob(id uuid.UUID) *model.Job {
 	now := time.Now().UTC()
 	return &model.Job{
-		ID:             id,
-		OrganizationID: orgID,
+		ID: id,
 		MappedFields: map[string]map[string][]string{
 			"ds1": {
 				"table1": {"field1", "field2"},
@@ -141,58 +140,6 @@ func TestFetcherHandler_CreateJob_InvalidJSON(t *testing.T) {
 	}
 }
 
-func TestFetcherHandler_CreateJob_MissingOrgHeader(t *testing.T) {
-	app := setupTestApp()
-
-	handler := &FetcherHandler{CreateJobCmd: nil}
-	app.Post("/v1/fetcher", handler.CreateJob)
-
-	tests := []struct {
-		name      string
-		orgHeader string
-		setHeader bool
-		wantCode  int
-	}{
-		{
-			name:      "missing X-Organization-Id header",
-			orgHeader: "",
-			setHeader: false,
-			wantCode:  fiber.StatusBadRequest,
-		},
-		{
-			name:      "invalid UUID format",
-			orgHeader: "not-a-uuid",
-			setHeader: true,
-			wantCode:  fiber.StatusBadRequest,
-		},
-		{
-			name:      "whitespace only header",
-			orgHeader: "   ",
-			setHeader: true,
-			wantCode:  fiber.StatusBadRequest,
-		},
-	}
-
-	validPayload := `{"dataRequest":{"mappedFields":{"ds1":{"t1":["f1"]}}}}`
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest("POST", "/v1/fetcher", strings.NewReader(validPayload))
-			req.Header.Set("Content-Type", "application/json")
-
-			if tt.setHeader {
-				req.Header.Set("X-Organization-Id", tt.orgHeader)
-			}
-
-			resp, err := app.Test(req)
-			require.NoError(t, err)
-			defer resp.Body.Close()
-
-			assert.Equal(t, tt.wantCode, resp.StatusCode)
-		})
-	}
-}
-
 func TestFetcherHandler_CreateJob_ContentTypeValidation(t *testing.T) {
 	app := setupTestApp()
 
@@ -234,6 +181,86 @@ func TestFetcherHandler_CreateJob_ContentTypeValidation(t *testing.T) {
 	}
 }
 
+// TestFetcherHandler_CreateJob_MetadataSourceValidation tests required metadata.source validation.
+func TestFetcherHandler_CreateJob_MetadataSourceValidation(t *testing.T) {
+	app := setupTestApp()
+
+	handler := &FetcherHandler{CreateJobCmd: nil}
+	app.Post("/v1/fetcher", handler.CreateJob)
+
+	tests := []struct {
+		name     string
+		body     string
+		wantCode int
+	}{
+		{
+			name:     "missing metadata",
+			body:     `{"dataRequest":{"mappedFields":{"ds1":{"t1":["f1"]}}}}`,
+			wantCode: fiber.StatusBadRequest,
+		},
+		{
+			name:     "missing metadata source",
+			body:     `{"dataRequest":{"mappedFields":{"ds1":{"t1":["f1"]}}},"metadata":{}}`,
+			wantCode: fiber.StatusBadRequest,
+		},
+		{
+			name:     "whitespace metadata source",
+			body:     `{"dataRequest":{"mappedFields":{"ds1":{"t1":["f1"]}}},"metadata":{"source":"   "}}`,
+			wantCode: fiber.StatusBadRequest,
+		},
+		{
+			name:     "non-string metadata source",
+			body:     `{"dataRequest":{"mappedFields":{"ds1":{"t1":["f1"]}}},"metadata":{"source":123}}`,
+			wantCode: fiber.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("POST", "/v1/fetcher", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("X-Organization-Id", uuid.New().String())
+
+			resp, err := app.Test(req)
+			require.NoError(t, err)
+			defer resp.Body.Close()
+
+			assert.Equal(t, tt.wantCode, resp.StatusCode)
+		})
+	}
+}
+
+// createLargePayload generates a valid JSON payload of approximately the specified size.
+func createLargePayload(targetSize int) []byte {
+	// Build a JSON structure with enough data to exceed targetSize
+	var sb strings.Builder
+	sb.WriteString(`{"dataRequest":{"mappedFields":{`)
+
+	// Add datasources until we reach target size
+	datasourceNum := 0
+	for sb.Len() < targetSize-100 { // Leave room for closing braces
+		if datasourceNum > 0 {
+			sb.WriteString(",")
+		}
+		sb.WriteString(`"datasource`)
+		sb.WriteString(strings.Repeat("x", 50)) // Pad datasource name
+		sb.WriteString(`_`)
+		sb.WriteString(string(rune('0' + (datasourceNum % 10))))
+		sb.WriteString(`":{"table1":["field1","field2","field3","field4","field5","field6","field7","field8","field9","field10"]}`)
+		datasourceNum++
+	}
+
+	sb.WriteString(`}},"metadata":{"padding":"`)
+	// Add padding to reach exact size
+	remaining := targetSize - sb.Len() - 5 // Account for closing characters
+	if remaining > 0 {
+		sb.WriteString(strings.Repeat("x", remaining))
+	}
+	sb.WriteString(`"}}`)
+
+	return []byte(sb.String())
+}
+
 // ============================================================================
 // CreateJob Handler Tests - Success Cases (refactored to use real handler + mocks)
 // ============================================================================
@@ -248,22 +275,20 @@ func TestFetcherHandler_CreateJob_Success_NewJob(t *testing.T) {
 	mockRabbitMQ := messaging.NewMockMessagePublisher(ctrl)
 	mockTester := command.NewMockConnectionTester(ctrl)
 
-	orgID := uuid.New()
-
 	testConn := &model.Connection{
-		ID:             uuid.New(),
-		OrganizationID: orgID,
-		ProductName:    "test-product",
-		ConfigName:     "ds1",
-		Type:           model.TypePostgreSQL,
+		ID: uuid.New(),
+
+		ProductName: "test-product",
+		ConfigName:  "ds1",
+		Type:        model.TypePostgreSQL,
 	}
 
 	// CreateFetcherJob service flow:
 	// 1. ComputeRequestHash + NewJob + IsValid -> no mocks needed (pure model)
 	// 2. Check for duplicate within deduplication window
-	mockJobRepo.EXPECT().FindByRequestHashWithinWindow(gomock.Any(), orgID, gomock.Any(), command.DeduplicationWindowMinutes).Return(nil, nil)
+	mockJobRepo.EXPECT().FindByRequestHashWithinWindow(gomock.Any(), gomock.Any(), command.DeduplicationWindowMinutes).Return(nil, nil)
 	// 3. Find connections by datasource names
-	mockConnRepo.EXPECT().FindByConfigNames(gomock.Any(), orgID, gomock.Any()).Return([]*model.Connection{testConn}, nil)
+	mockConnRepo.EXPECT().FindByConfigNames(gomock.Any(), gomock.Any()).Return([]*model.Connection{testConn}, nil)
 	// 4. Test each connection
 	mockTester.EXPECT().TestConnection(gomock.Any(), testConn).Return(nil)
 	// 5. Create the job in the repository
@@ -283,7 +308,6 @@ func TestFetcherHandler_CreateJob_Success_NewJob(t *testing.T) {
 
 	req := httptest.NewRequest("POST", "/v1/fetcher", strings.NewReader(validFetcherRequestPayload()))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Organization-Id", orgID.String())
 
 	resp, err := app.Test(req)
 	require.NoError(t, err)
@@ -309,12 +333,11 @@ func TestFetcherHandler_CreateJob_Success_DuplicateJob(t *testing.T) {
 	mockRabbitMQ := messaging.NewMockMessagePublisher(ctrl)
 	mockTester := command.NewMockConnectionTester(ctrl)
 
-	orgID := uuid.New()
 	jobID := uuid.New()
-	existingJob := createTestJob(jobID, orgID)
+	existingJob := createTestJob(jobID)
 
 	// Service finds existing job within dedup window -> returns duplicate
-	mockJobRepo.EXPECT().FindByRequestHashWithinWindow(gomock.Any(), orgID, gomock.Any(), command.DeduplicationWindowMinutes).Return(existingJob, nil)
+	mockJobRepo.EXPECT().FindByRequestHashWithinWindow(gomock.Any(), gomock.Any(), command.DeduplicationWindowMinutes).Return(existingJob, nil)
 
 	createCmd := command.NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, mockCryptor, mockRabbitMQ, mockTester, "test-queue", nil)
 	handler := &FetcherHandler{CreateJobCmd: createCmd}
@@ -324,7 +347,6 @@ func TestFetcherHandler_CreateJob_Success_DuplicateJob(t *testing.T) {
 
 	req := httptest.NewRequest("POST", "/v1/fetcher", strings.NewReader(validFetcherRequestPayload()))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Organization-Id", orgID.String())
 
 	resp, err := app.Test(req)
 	require.NoError(t, err)
@@ -353,12 +375,10 @@ func TestFetcherHandler_CreateJob_Conflict(t *testing.T) {
 	mockRabbitMQ := messaging.NewMockMessagePublisher(ctrl)
 	mockTester := command.NewMockConnectionTester(ctrl)
 
-	orgID := uuid.New()
-
 	// No duplicate found
-	mockJobRepo.EXPECT().FindByRequestHashWithinWindow(gomock.Any(), orgID, gomock.Any(), command.DeduplicationWindowMinutes).Return(nil, nil)
+	mockJobRepo.EXPECT().FindByRequestHashWithinWindow(gomock.Any(), gomock.Any(), command.DeduplicationWindowMinutes).Return(nil, nil)
 	// No connections found for the datasource -> returns "No Connections Found" error
-	mockConnRepo.EXPECT().FindByConfigNames(gomock.Any(), orgID, gomock.Any()).Return(nil, nil)
+	mockConnRepo.EXPECT().FindByConfigNames(gomock.Any(), gomock.Any()).Return(nil, nil)
 
 	createCmd := command.NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, mockCryptor, mockRabbitMQ, mockTester, "test-queue", nil)
 	handler := &FetcherHandler{CreateJobCmd: createCmd}
@@ -368,7 +388,6 @@ func TestFetcherHandler_CreateJob_Conflict(t *testing.T) {
 
 	req := httptest.NewRequest("POST", "/v1/fetcher", strings.NewReader(validFetcherRequestPayload()))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Organization-Id", orgID.String())
 
 	resp, err := app.Test(req)
 	require.NoError(t, err)
@@ -391,10 +410,8 @@ func TestFetcherHandler_CreateJob_InternalError(t *testing.T) {
 	mockRabbitMQ := messaging.NewMockMessagePublisher(ctrl)
 	mockTester := command.NewMockConnectionTester(ctrl)
 
-	orgID := uuid.New()
-
 	// FindByRequestHashWithinWindow returns an error -> internal server error
-	mockJobRepo.EXPECT().FindByRequestHashWithinWindow(gomock.Any(), orgID, gomock.Any(), command.DeduplicationWindowMinutes).Return(nil, assert.AnError)
+	mockJobRepo.EXPECT().FindByRequestHashWithinWindow(gomock.Any(), gomock.Any(), command.DeduplicationWindowMinutes).Return(nil, assert.AnError)
 
 	createCmd := command.NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, mockCryptor, mockRabbitMQ, mockTester, "test-queue", nil)
 	handler := &FetcherHandler{CreateJobCmd: createCmd}
@@ -404,7 +421,6 @@ func TestFetcherHandler_CreateJob_InternalError(t *testing.T) {
 
 	req := httptest.NewRequest("POST", "/v1/fetcher", strings.NewReader(validFetcherRequestPayload()))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Organization-Id", orgID.String())
 
 	resp, err := app.Test(req)
 	require.NoError(t, err)
@@ -424,10 +440,10 @@ func TestFetcherHandler_GetJob_Success(t *testing.T) {
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 
 	jobID := uuid.New()
-	orgID := uuid.New()
-	testJob := createTestJob(jobID, orgID)
 
-	mockJobRepo.EXPECT().FindByID(gomock.Any(), jobID, orgID).Return(testJob, nil)
+	testJob := createTestJob(jobID)
+
+	mockJobRepo.EXPECT().FindByID(gomock.Any(), jobID).Return(testJob, nil)
 
 	getJobQuery := query.NewGetJob(mockJobRepo)
 	handler := &FetcherHandler{GetJobQuery: getJobQuery}
@@ -436,7 +452,6 @@ func TestFetcherHandler_GetJob_Success(t *testing.T) {
 	app.Get("/v1/fetcher/:id", handler.GetJob)
 
 	req := httptest.NewRequest("GET", "/v1/fetcher/"+jobID.String(), nil)
-	req.Header.Set("X-Organization-Id", orgID.String())
 
 	resp, err := app.Test(req)
 	require.NoError(t, err)
@@ -458,10 +473,9 @@ func TestFetcherHandler_GetJob_NotFound(t *testing.T) {
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 
 	jobID := uuid.New()
-	orgID := uuid.New()
 
 	// Service returns nil -> not found
-	mockJobRepo.EXPECT().FindByID(gomock.Any(), jobID, orgID).Return(nil, nil)
+	mockJobRepo.EXPECT().FindByID(gomock.Any(), jobID).Return(nil, nil)
 
 	getJobQuery := query.NewGetJob(mockJobRepo)
 	handler := &FetcherHandler{GetJobQuery: getJobQuery}
@@ -470,7 +484,6 @@ func TestFetcherHandler_GetJob_NotFound(t *testing.T) {
 	app.Get("/v1/fetcher/:id", handler.GetJob)
 
 	req := httptest.NewRequest("GET", "/v1/fetcher/"+jobID.String(), nil)
-	req.Header.Set("X-Organization-Id", orgID.String())
 
 	resp, err := app.Test(req)
 	require.NoError(t, err)
@@ -521,22 +534,6 @@ func TestFetcherHandler_GetJob_InvalidID(t *testing.T) {
 	}
 }
 
-func TestFetcherHandler_GetJob_MissingOrgHeader(t *testing.T) {
-	app := setupTestApp()
-
-	handler := &FetcherHandler{GetJobQuery: nil}
-	app.Get("/v1/fetcher/:id", handler.GetJob)
-
-	req := httptest.NewRequest("GET", "/v1/fetcher/"+uuid.New().String(), nil)
-	// Not setting X-Organization-Id header
-
-	resp, err := app.Test(req)
-	require.NoError(t, err)
-	defer resp.Body.Close()
-
-	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
-}
-
 func TestFetcherHandler_GetJob_InternalError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
@@ -544,10 +541,9 @@ func TestFetcherHandler_GetJob_InternalError(t *testing.T) {
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 
 	jobID := uuid.New()
-	orgID := uuid.New()
 
 	// Repository returns an error -> internal server error
-	mockJobRepo.EXPECT().FindByID(gomock.Any(), jobID, orgID).Return(nil, assert.AnError)
+	mockJobRepo.EXPECT().FindByID(gomock.Any(), jobID).Return(nil, assert.AnError)
 
 	getJobQuery := query.NewGetJob(mockJobRepo)
 	handler := &FetcherHandler{GetJobQuery: getJobQuery}
@@ -556,7 +552,6 @@ func TestFetcherHandler_GetJob_InternalError(t *testing.T) {
 	app.Get("/v1/fetcher/:id", handler.GetJob)
 
 	req := httptest.NewRequest("GET", "/v1/fetcher/"+jobID.String(), nil)
-	req.Header.Set("X-Organization-Id", orgID.String())
 
 	resp, err := app.Test(req)
 	require.NoError(t, err)
@@ -619,18 +614,16 @@ func TestFetcherHandler_CreateJob_WithMetadata(t *testing.T) {
 	mockRabbitMQ := messaging.NewMockMessagePublisher(ctrl)
 	mockTester := command.NewMockConnectionTester(ctrl)
 
-	orgID := uuid.New()
-
 	testConn := &model.Connection{
-		ID:             uuid.New(),
-		OrganizationID: orgID,
-		ProductName:    "test",
-		ConfigName:     "ds1",
-		Type:           model.TypePostgreSQL,
+		ID: uuid.New(),
+
+		ProductName: "test",
+		ConfigName:  "ds1",
+		Type:        model.TypePostgreSQL,
 	}
 
-	mockJobRepo.EXPECT().FindByRequestHashWithinWindow(gomock.Any(), orgID, gomock.Any(), command.DeduplicationWindowMinutes).Return(nil, nil)
-	mockConnRepo.EXPECT().FindByConfigNames(gomock.Any(), orgID, gomock.Any()).Return([]*model.Connection{testConn}, nil)
+	mockJobRepo.EXPECT().FindByRequestHashWithinWindow(gomock.Any(), gomock.Any(), command.DeduplicationWindowMinutes).Return(nil, nil)
+	mockConnRepo.EXPECT().FindByConfigNames(gomock.Any(), gomock.Any()).Return([]*model.Connection{testConn}, nil)
 	mockTester.EXPECT().TestConnection(gomock.Any(), testConn).Return(nil)
 	mockJobRepo.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, j *model.Job) (*model.Job, error) {
@@ -660,7 +653,6 @@ func TestFetcherHandler_CreateJob_WithMetadata(t *testing.T) {
 
 	req := httptest.NewRequest("POST", "/v1/fetcher", strings.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Organization-Id", orgID.String())
 
 	resp, err := app.Test(req)
 	require.NoError(t, err)
@@ -679,18 +671,16 @@ func TestFetcherHandler_CreateJob_WithFilters(t *testing.T) {
 	mockRabbitMQ := messaging.NewMockMessagePublisher(ctrl)
 	mockTester := command.NewMockConnectionTester(ctrl)
 
-	orgID := uuid.New()
-
 	testConn := &model.Connection{
-		ID:             uuid.New(),
-		OrganizationID: orgID,
-		ProductName:    "test-product",
-		ConfigName:     "ds1",
-		Type:           model.TypePostgreSQL,
+		ID: uuid.New(),
+
+		ProductName: "test-product",
+		ConfigName:  "ds1",
+		Type:        model.TypePostgreSQL,
 	}
 
-	mockJobRepo.EXPECT().FindByRequestHashWithinWindow(gomock.Any(), orgID, gomock.Any(), command.DeduplicationWindowMinutes).Return(nil, nil)
-	mockConnRepo.EXPECT().FindByConfigNames(gomock.Any(), orgID, gomock.Any()).Return([]*model.Connection{testConn}, nil)
+	mockJobRepo.EXPECT().FindByRequestHashWithinWindow(gomock.Any(), gomock.Any(), command.DeduplicationWindowMinutes).Return(nil, nil)
+	mockConnRepo.EXPECT().FindByConfigNames(gomock.Any(), gomock.Any()).Return([]*model.Connection{testConn}, nil)
 	mockTester.EXPECT().TestConnection(gomock.Any(), testConn).Return(nil)
 	mockJobRepo.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, j *model.Job) (*model.Job, error) {
@@ -725,7 +715,6 @@ func TestFetcherHandler_CreateJob_WithFilters(t *testing.T) {
 
 	req := httptest.NewRequest("POST", "/v1/fetcher", strings.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Organization-Id", orgID.String())
 
 	resp, err := app.Test(req)
 	require.NoError(t, err)
@@ -741,14 +730,14 @@ func TestFetcherHandler_GetJob_CompletedJob(t *testing.T) {
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 
 	jobID := uuid.New()
-	orgID := uuid.New()
+
 	completedAt := time.Now().UTC()
-	testJob := createTestJob(jobID, orgID)
+	testJob := createTestJob(jobID)
 	testJob.Status = model.JobStatusCompleted
 	testJob.CompletedAt = &completedAt
 	testJob.ResultPath = "s3://bucket/results/job-123.json"
 
-	mockJobRepo.EXPECT().FindByID(gomock.Any(), jobID, orgID).Return(testJob, nil)
+	mockJobRepo.EXPECT().FindByID(gomock.Any(), jobID).Return(testJob, nil)
 
 	getJobQuery := query.NewGetJob(mockJobRepo)
 	handler := &FetcherHandler{GetJobQuery: getJobQuery}
@@ -757,7 +746,6 @@ func TestFetcherHandler_GetJob_CompletedJob(t *testing.T) {
 	app.Get("/v1/fetcher/:id", handler.GetJob)
 
 	req := httptest.NewRequest("GET", "/v1/fetcher/"+jobID.String(), nil)
-	req.Header.Set("X-Organization-Id", orgID.String())
 
 	resp, err := app.Test(req)
 	require.NoError(t, err)
@@ -780,16 +768,16 @@ func TestFetcherHandler_GetJob_FailedJob(t *testing.T) {
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 
 	jobID := uuid.New()
-	orgID := uuid.New()
+
 	completedAt := time.Now().UTC()
-	testJob := createTestJob(jobID, orgID)
+	testJob := createTestJob(jobID)
 	testJob.Status = model.JobStatusFailed
 	testJob.CompletedAt = &completedAt
 	testJob.Metadata = map[string]any{
 		"error": "connection timeout",
 	}
 
-	mockJobRepo.EXPECT().FindByID(gomock.Any(), jobID, orgID).Return(testJob, nil)
+	mockJobRepo.EXPECT().FindByID(gomock.Any(), jobID).Return(testJob, nil)
 
 	getJobQuery := query.NewGetJob(mockJobRepo)
 	handler := &FetcherHandler{GetJobQuery: getJobQuery}
@@ -798,7 +786,6 @@ func TestFetcherHandler_GetJob_FailedJob(t *testing.T) {
 	app.Get("/v1/fetcher/:id", handler.GetJob)
 
 	req := httptest.NewRequest("GET", "/v1/fetcher/"+jobID.String(), nil)
-	req.Header.Set("X-Organization-Id", orgID.String())
 
 	resp, err := app.Test(req)
 	require.NoError(t, err)
@@ -829,36 +816,3 @@ func TestNewFetcherHandler(t *testing.T) {
 // ============================================================================
 // Handler Direct Tests - Missing Org Header
 // ============================================================================
-
-func TestFetcherHandler_CreateJob_HandlerDirectly_MissingOrgHeader(t *testing.T) {
-	app := setupTestApp()
-
-	handler := NewFetcherHandler(nil, nil)
-	app.Post("/v1/fetcher", handler.CreateJob)
-
-	req := httptest.NewRequest("POST", "/v1/fetcher", strings.NewReader(validFetcherRequestPayload()))
-	req.Header.Set("Content-Type", "application/json")
-	// Not setting X-Organization-Id header
-
-	resp, err := app.Test(req)
-	require.NoError(t, err)
-	defer resp.Body.Close()
-
-	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
-}
-
-func TestFetcherHandler_GetJob_HandlerDirectly_MissingOrgHeader(t *testing.T) {
-	app := setupTestApp()
-
-	handler := NewFetcherHandler(nil, nil)
-	app.Get("/v1/fetcher/:id", handler.GetJob)
-
-	req := httptest.NewRequest("GET", "/v1/fetcher/"+uuid.New().String(), nil)
-	// Not setting X-Organization-Id header
-
-	resp, err := app.Test(req)
-	require.NoError(t, err)
-	defer resp.Body.Close()
-
-	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
-}

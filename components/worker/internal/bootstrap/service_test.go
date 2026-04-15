@@ -9,8 +9,8 @@ func TestService_StructComposition(t *testing.T) {
 	// Run() requires real dependencies, so we test the struct directly.
 	svc := &Service{}
 
-	if svc.Consumer != nil {
-		t.Error("Consumer should be nil by default")
+	if svc.MultiQueueConsumer != nil {
+		t.Error("MultiQueueConsumer should be nil by default")
 	}
 
 	if svc.Logger != nil {
@@ -19,5 +19,9 @@ func TestService_StructComposition(t *testing.T) {
 
 	if svc.licenseShutdown != nil {
 		t.Error("licenseShutdown should be nil by default")
+	}
+
+	if svc.mtCleanup != nil {
+		t.Error("mtCleanup should be nil by default")
 	}
 }

@@ -3,8 +3,8 @@ package testutil
 import (
 	"context"
 
-	libCommons "github.com/LerianStudio/lib-commons/v3/commons"
-	libLog "github.com/LerianStudio/lib-commons/v3/commons/log"
+	libCommons "github.com/LerianStudio/lib-commons/v4/commons"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
 	"go.opentelemetry.io/otel"
 )
 
@@ -13,7 +13,7 @@ import (
 // which is sufficient for unit tests that call functions requiring
 // tracking information from context.
 func TestContext() context.Context {
-	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 	values := &libCommons.CustomContextKeyValue{
 		HeaderID: "test-request-id",
 		Logger:   logger,

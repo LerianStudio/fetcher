@@ -233,9 +233,64 @@ build:
 	@CGO_ENABLED=0 go build ./...
 	@echo "[ok] Build completed successfully"
 
+.PHONY: build-manager
+build-manager:
+	$(call print_title,Building Manager E2E image)
+	@mkdir -p $(ARTIFACTS_DIR)/docker/manager
+	@CGO_ENABLED=0 GOOS=linux go build -tags netgo \
+	  -ldflags='-w -s -extldflags "-static"' \
+	  -o $(ARTIFACTS_DIR)/docker/manager/manager ./components/manager/cmd/app/main.go
+	@docker build -t $(MANAGER_IMAGE) -f components/manager/Dockerfile.local .
+	@echo "[ok] Manager image built successfully ($(MANAGER_IMAGE))"
+
+.PHONY: build-worker
+build-worker:
+	$(call print_title,Building Worker E2E image)
+	@mkdir -p $(ARTIFACTS_DIR)/docker/worker
+	@CGO_ENABLED=0 GOOS=linux go build -tags netgo \
+	  -ldflags='-w -s -extldflags "-static"' \
+	  -o $(ARTIFACTS_DIR)/docker/worker/worker ./components/worker/cmd/app/main.go
+	@docker build -t $(WORKER_IMAGE) -f components/worker/Dockerfile.local .
+	@echo "[ok] Worker image built successfully ($(WORKER_IMAGE))"
+
 #-------------------------------------------------------
 # Test Commands
 #-------------------------------------------------------
+
+.PHONY: test
+test: test-unit ## Alias for unit test suite
+
+.PHONY: test-integration
+test-integration: ## Alias for integration (E2E) suite
+	$(call check_command,docker,Install Docker from https://docs.docker.com/get-docker/)
+	@skip_build="$${E2E_SKIP_BUILD:-true}"; \
+	manager_image="$${MANAGER_IMAGE:-fetcher-manager:latest}"; \
+	worker_image="$${WORKER_IMAGE:-fetcher-worker:latest}"; \
+	if [ "$$skip_build" = "true" ]; then \
+	  missing_images=""; \
+	  for image in "$$manager_image" "$$worker_image"; do \
+	    if ! docker image inspect "$$image" >/dev/null 2>&1; then \
+	      missing_images="$$missing_images $$image"; \
+	    fi; \
+	  done; \
+	  if [ -n "$$missing_images" ]; then \
+	    echo "Missing local E2E images:$$missing_images"; \
+	    echo "Building local E2E images from host binaries."; \
+	    $(MAKE) build-manager build-worker; \
+	  else \
+	    echo "Using pre-built images for integration tests (E2E_SKIP_BUILD=$$skip_build)"; \
+	  fi; \
+	fi; \
+	if [ "$$skip_build" = "false" ]; then \
+	  if [ -n "$$GITHUB_TOKEN" ]; then \
+	    echo "Building current-branch images for integration tests using GITHUB_TOKEN."; \
+	  else \
+	    echo "GITHUB_TOKEN is not set; building local E2E images from host binaries instead."; \
+	    $(MAKE) build-manager build-worker; \
+	    skip_build=true; \
+	  fi; \
+	fi; \
+	E2E_SKIP_BUILD=$$skip_build $(MAKE) test-e2e
 
 .PHONY: test-unit
 test-unit: ## Run unit tests on all components
@@ -518,7 +573,7 @@ sec:
 	fi
 	@if find . -name "*.go" -type f | grep -q .; then \
 		echo "Running security checks..."; \
-		gosec -quiet ./...; \
+		gosec -quiet -exclude-dir=.docs -exclude-dir=docs ./...; \
 		echo "[ok] Security checks completed"; \
 	else \
 		echo "No Go files found, skipping security checks"; \
@@ -912,3 +967,4 @@ generate-master-key: ## Generate a new cryptographically secure master key
 	echo "" && \
 	echo "IMPORTANT: Store this key securely. It cannot be recovered if lost." && \
 	echo "Add to your environment as APP_ENC_KEY."
+

@@ -12,7 +12,7 @@ import (
 
 	"github.com/LerianStudio/fetcher/pkg/storage"
 	"github.com/LerianStudio/fetcher/pkg/testutil"
-	tmcore "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/core"
+	tmcore "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/core"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -633,7 +633,7 @@ func TestS3Repository_TenantKeyPrefix(t *testing.T) {
 
 			ctx := testutil.TestContext()
 			if tt.tenantID != "" {
-				ctx = tmcore.SetTenantIDInContext(ctx, tt.tenantID)
+				ctx = tmcore.ContextWithTenantID(ctx, tt.tenantID)
 			}
 
 			_, err := repo.Get(ctx, tt.objectName)
@@ -661,7 +661,7 @@ func TestS3Repository_TenantKeyPrefix(t *testing.T) {
 
 			ctx := testutil.TestContext()
 			if tt.tenantID != "" {
-				ctx = tmcore.SetTenantIDInContext(ctx, tt.tenantID)
+				ctx = tmcore.ContextWithTenantID(ctx, tt.tenantID)
 			}
 
 			err := repo.Put(ctx, tt.objectName, []byte("test-data"))

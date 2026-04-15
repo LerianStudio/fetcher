@@ -8,9 +8,8 @@ import (
 
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
-	libCommons "github.com/LerianStudio/lib-commons/commons"
+	libCommons "github.com/LerianStudio/lib-commons/v4/commons"
 	"github.com/gofiber/fiber/v2"
-	"github.com/google/uuid"
 )
 
 // QueryHeader entity from query parameter from get apis
@@ -24,6 +23,7 @@ type QueryHeader struct {
 	EndDate     time.Time
 	UseMetadata bool
 	ProductName string
+	Type        string
 }
 
 // Pagination entity from query parameter from get apis
@@ -53,13 +53,14 @@ func ValidateParameters(params map[string]string) (*QueryHeader, error) {
 		startDate   time.Time
 		endDate     time.Time
 		cursor      string
+		connType    string
 		limit       = 10
 		page        = 1
 		sortOrder   = "desc"
 		useMetadata = false
 	)
 
-	if err := parseParameters(params, metadata, &startDate, &endDate, &cursor, &limit, &page, &sortOrder); err != nil {
+	if err := parseParameters(params, metadata, &startDate, &endDate, &cursor, &limit, &page, &sortOrder, &connType); err != nil {
 		return nil, err
 	}
 
@@ -88,6 +89,7 @@ func ValidateParameters(params map[string]string) (*QueryHeader, error) {
 		StartDate:   startDate,
 		EndDate:     endDate,
 		UseMetadata: useMetadata,
+		Type:        connType,
 	}
 
 	return query, nil
@@ -100,6 +102,7 @@ func parseParameters(
 	cursor *string,
 	limit, page *int,
 	sortOrder *string,
+	connType *string,
 ) error {
 	for key, value := range params {
 		if value == "" {
@@ -110,59 +113,79 @@ func parseParameters(
 		case strings.HasPrefix(key, "metadata."):
 			metadata[key] = value
 		case key == "limit":
-			parsed, err := strconv.Atoi(value)
-			if err != nil {
-				return pkg.ValidateBusinessError(constant.ErrInvalidQueryParameter, "limit")
+			if err := parseIntParam(value, "limit", limit); err != nil {
+				return err
 			}
-
-			*limit = parsed
 		case key == "page":
-			parsed, err := strconv.Atoi(value)
-			if err != nil {
-				return pkg.ValidateBusinessError(constant.ErrInvalidQueryParameter, "page")
+			if err := parseIntParam(value, "page", page); err != nil {
+				return err
 			}
-
-			*page = parsed
 		case key == "cursor":
 			*cursor = value
+		case key == "type":
+			*connType = strings.ToUpper(value)
 		case key == "sortOrder":
 			*sortOrder = strings.ToLower(value)
 		case key == "startDate":
-			parsed, err := time.Parse("2006-01-02", value)
-			if err != nil {
-				return pkg.ValidateBusinessError(constant.ErrInvalidDateFormat, "startDate")
+			if err := parseDateParam(value, "startDate", startDate); err != nil {
+				return err
 			}
-
-			*startDate = parsed
 		case key == "endDate":
-			parsed, err := time.Parse("2006-01-02", value)
-			if err != nil {
-				return pkg.ValidateBusinessError(constant.ErrInvalidDateFormat, "endDate")
+			if err := parseDateParam(value, "endDate", endDate); err != nil {
+				return err
 			}
-
-			*endDate = parsed
 		default:
-			// Reject keys that start with "$" to prevent MongoDB operator
-			// injection (e.g. $where, $ne, $regex). Also reject keys starting
-			// with underscore (internal fields like _id).
-			if strings.HasPrefix(key, "$") || strings.HasPrefix(key, "_") {
-				return pkg.ValidateBusinessError(constant.ErrInvalidQueryParameter, key)
+			if err := validateUnknownParam(key, value); err != nil {
+				return err
 			}
-
-			// Cap key/value length to prevent abuse via oversized query payloads.
-			const (
-				maxFilterKeyLen   = 64
-				maxFilterValueLen = 256
-			)
-
-			if len(key) > maxFilterKeyLen || len(value) > maxFilterValueLen {
-				return pkg.ValidateBusinessError(constant.ErrInvalidQueryParameter, key)
-			}
-
-			// Unknown keys that pass safety checks are silently ignored.
-			// Only keys with the "metadata." prefix are captured as filters.
 		}
 	}
+
+	return nil
+}
+
+// validateUnknownParam rejects unsafe query parameter keys (MongoDB operator injection, oversized payloads).
+func validateUnknownParam(key, value string) error {
+	// Reject keys that start with "$" to prevent MongoDB operator
+	// injection (e.g. $where, $ne, $regex). Also reject keys starting
+	// with underscore (internal fields like _id).
+	if strings.HasPrefix(key, "$") || strings.HasPrefix(key, "_") {
+		return pkg.ValidateBusinessError(constant.ErrInvalidQueryParameter, key)
+	}
+
+	// Cap key/value length to prevent abuse via oversized query payloads.
+	const (
+		maxFilterKeyLen   = 64
+		maxFilterValueLen = 256
+	)
+
+	if len(key) > maxFilterKeyLen || len(value) > maxFilterValueLen {
+		return pkg.ValidateBusinessError(constant.ErrInvalidQueryParameter, key)
+	}
+
+	// Unknown keys that pass safety checks are silently ignored.
+	// Only keys with the "metadata." prefix are captured as filters.
+	return nil
+}
+
+func parseIntParam(value, name string, dest *int) error {
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return pkg.ValidateBusinessError(constant.ErrInvalidQueryParameter, name)
+	}
+
+	*dest = parsed
+
+	return nil
+}
+
+func parseDateParam(value, name string, dest *time.Time) error {
+	parsed, err := time.Parse("2006-01-02", value)
+	if err != nil {
+		return pkg.ValidateBusinessError(constant.ErrInvalidDateFormat, name)
+	}
+
+	*dest = parsed
 
 	return nil
 }
@@ -212,24 +235,6 @@ func validateDates(startDate, endDate *time.Time) error {
 	}
 
 	return nil
-}
-
-// GetOrganizationID extracts and validates X-Organization-Id header as UUID.
-func GetOrganizationID(c *fiber.Ctx) (uuid.UUID, error) {
-	orgHeader := strings.TrimSpace(c.Get("X-Organization-Id"))
-
-	orgID, err := uuid.Parse(orgHeader)
-	if err != nil {
-		return uuid.Nil, pkg.ValidationError{
-			EntityType: "request",
-			Code:       constant.ErrInvalidHeaderParameter.Error(),
-			Title:      "Invalid header",
-			Message:    "X-Organization-Id header is required and must be a valid UUID",
-			Err:        err,
-		}
-	}
-
-	return orgID, nil
 }
 
 // productNameRegex validates product name format: alphanumeric with underscores and hyphens.

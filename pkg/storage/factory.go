@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/LerianStudio/fetcher/pkg/constant"
 	portStorage "github.com/LerianStudio/fetcher/pkg/ports/storage"
 	simpleClient "github.com/LerianStudio/fetcher/pkg/seaweedfs"
 	"github.com/LerianStudio/fetcher/pkg/seaweedfs/external"
@@ -56,7 +55,7 @@ func NewRepository(ctx context.Context, cfg ProviderConfig) (portStorage.Reposit
 
 		bucket := cfg.Bucket
 		if bucket == "" {
-			bucket = constant.ExternalDataBucketName
+			return nil, fmt.Errorf("bucket name is required (set OBJECT_STORAGE_BUCKET)")
 		}
 
 		client := simpleClient.NewSeaweedFSClient(cfg.SeaweedFSEndpoint)
@@ -73,7 +72,7 @@ func NewRepository(ctx context.Context, cfg ProviderConfig) (portStorage.Reposit
 		}
 
 		if s3Bucket == "" {
-			s3Bucket = constant.ExternalDataBucketName
+			return nil, fmt.Errorf("bucket name is required (set OBJECT_STORAGE_BUCKET)")
 		}
 
 		return NewS3Repository(ctx, S3Config{

@@ -19,6 +19,10 @@ import (
 // It provides a consistent tenant identifier across test scenarios.
 const TestOrganizationID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 
+// DefaultE2EStorageBucket is the default bucket name used in E2E tests
+// when not running with MinIO/S3 (i.e., SeaweedFS Filer mode).
+const DefaultE2EStorageBucket = "fetcher-e2e-storage"
+
 // AppStartConfig configures how to start a Fetcher application container (Manager or Worker).
 type AppStartConfig struct {
 	// Image is the Docker image name/tag to use when SkipBuild is true.
@@ -52,13 +56,13 @@ type AppEnv struct {
 	RedisPort     string
 	RedisPassword string
 
-	// SeaweedFS connection configuration (used when StorageProvider is "seaweedfs" or empty).
+	// SeaweedFS connection configuration (fallback S3 endpoint when MinIO is not available).
 	SeaweedFSHost string
 	SeaweedFSPort string
 
 	// S3/MinIO storage configuration (populated when E2E_ENABLE_S3=true).
-	// When StorageProvider is "s3", the Worker uses these values instead of SeaweedFS.
-	StorageProvider string // "s3" or "" (defaults to seaweedfs)
+	// When StorageProvider is "s3", MinIO is used as the S3 backend.
+	StorageProvider string // "s3" when MinIO available, "" for SeaweedFS fallback
 	S3Endpoint      string // http://minio-alias:9000 (container-to-container URL)
 	S3Bucket        string
 	S3AccessKeyID   string
@@ -129,6 +133,16 @@ func BuildAppEnv(network string, mongo *mongodb.MongoDBInfra, rabbit *rabbitmq.R
 	return appEnv, nil
 }
 
+// StorageBucket returns the bucket name for the current storage provider.
+// S3 mode uses the MinIO bucket; SeaweedFS mode uses a default test bucket name.
+func (e *AppEnv) StorageBucket() string {
+	if e.S3Bucket != "" {
+		return e.S3Bucket
+	}
+
+	return DefaultE2EStorageBucket
+}
+
 // ManagerEnv returns the complete set of environment variables required by the Manager container.
 // It includes MongoDB, RabbitMQ, and Redis configuration, plus encryption keys and logging settings.
 // The returned map can be passed directly to e2ekit.Builder.WithEnv().
@@ -174,10 +188,9 @@ func (e *AppEnv) ManagerEnv() map[string]string {
 // It includes MongoDB, RabbitMQ, and storage configuration, plus encryption keys for data storage.
 // The returned map can be passed directly to e2ekit.Builder.WithEnv().
 //
-// Storage backend selection:
-//   - When StorageProvider is "s3" (E2E_ENABLE_S3=true): configures STORAGE_PROVIDER=s3
-//     and OBJECT_STORAGE_* variables pointing to MinIO.
-//   - Otherwise (default): configures SEAWEEDFS_* variables for the HTTP Filer backend.
+// Storage backend selection (always S3 protocol):
+//   - When E2E_ENABLE_S3=true: OBJECT_STORAGE_* points to MinIO.
+//   - Otherwise: OBJECT_STORAGE_* points to SeaweedFS (S3-compatible endpoint).
 func (e *AppEnv) WorkerEnv() map[string]string {
 	env := map[string]string{
 		"ENV_NAME":                             "test",
@@ -200,8 +213,6 @@ func (e *AppEnv) WorkerEnv() map[string]string {
 		"RABBITMQ_NUMBERS_OF_WORKERS":          "1",
 		"LOG_LEVEL":                            "debug",
 		"ENABLE_TELEMETRY":                     "true",
-		"CRYPTO_ENCRYPT_FILE_STORAGE":          "3132333435363738393031323334353637383930313233343536373839303132",
-		"CRYPTO_HASH_SECRET_KEY_FILE_STORAGE":  "3132333435363738393031323334353637383930313233343536373839303132",
 		"OTEL_RESOURCE_SERVICE_NAME":           "fetcher",
 		"OTEL_LIBRARY_NAME":                    "github.com/LerianStudio/fetcher",
 		"OTEL_RESOURCE_SERVICE_VERSION":        "v1.0.0",
@@ -211,20 +222,22 @@ func (e *AppEnv) WorkerEnv() map[string]string {
 		"MULTI_TENANT_ENABLED":                 "false",
 	}
 
+	// S3-compatible storage — always uses S3 provider.
+	// When E2E_ENABLE_S3=true: MinIO endpoint with real credentials.
+	// Otherwise: SeaweedFS Filer endpoint (supports S3 API via path-style).
+	env["OBJECT_STORAGE_BUCKET"] = e.StorageBucket()
+	env["OBJECT_STORAGE_USE_PATH_STYLE"] = "true"
+	env["OBJECT_STORAGE_REGION"] = "us-east-1"
+
 	if e.StorageProvider == "s3" {
-		// S3-compatible storage (MinIO) — set when E2E_ENABLE_S3=true
-		env["STORAGE_PROVIDER"] = "s3"
 		env["OBJECT_STORAGE_ENDPOINT"] = e.S3Endpoint
-		env["OBJECT_STORAGE_BUCKET"] = e.S3Bucket
 		env["OBJECT_STORAGE_ACCESS_KEY_ID"] = e.S3AccessKeyID
 		env["OBJECT_STORAGE_SECRET_KEY"] = e.S3SecretKey
-		env["OBJECT_STORAGE_USE_PATH_STYLE"] = "true"
-		env["OBJECT_STORAGE_REGION"] = "us-east-1"
 	} else {
-		// SeaweedFS HTTP Filer backend (default)
-		env["SEAWEEDFS_HOST"] = e.SeaweedFSHost
-		env["SEAWEEDFS_FILER_PORT"] = e.SeaweedFSPort
-		env["SEAWEEDFS_TTL"] = "24h"
+		// SeaweedFS Filer also supports S3 API on the same port
+		env["OBJECT_STORAGE_ENDPOINT"] = fmt.Sprintf("http://%s:%s", e.SeaweedFSHost, e.SeaweedFSPort)
+		env["OBJECT_STORAGE_ACCESS_KEY_ID"] = "any"
+		env["OBJECT_STORAGE_SECRET_KEY"] = "any"
 	}
 
 	return env
@@ -287,7 +300,7 @@ func StartManager(t *testing.T, ctx context.Context, env *AppEnv, cfg AppStartCo
 //   - SkipBuild=false: Builds the image from components/worker/Dockerfile using BuildKit secrets
 //
 // The container is configured with:
-//   - Log-based readiness detection (waits for "Starting consumer for queue" message)
+//   - Log-based readiness detection (waits for the worker consumer startup log message)
 //   - Shared Docker network for container-to-container communication
 //   - All required environment variables from AppEnv
 //
@@ -306,7 +319,7 @@ func StartWorker(t *testing.T, ctx context.Context, env *AppEnv, cfg AppStartCon
 	builder := e2ekit.New(t).
 		WithContext(ctx).
 		WithEnv(env.WorkerEnv()).
-		WithWait(e2ekit.WaitLog("Starting consumer for queue", 60*time.Second))
+		WithWait(e2ekit.WaitLog("starting consumer for queue", 60*time.Second))
 
 	// Add to shared network for container-to-container communication
 	if env.Network != "" {

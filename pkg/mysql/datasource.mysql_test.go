@@ -9,8 +9,8 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/LerianStudio/fetcher/pkg/model/job"
 	"github.com/LerianStudio/fetcher/pkg/testutil"
-	libCommons "github.com/LerianStudio/lib-commons/v3/commons"
-	libLog "github.com/LerianStudio/lib-commons/v3/commons/log"
+	libCommons "github.com/LerianStudio/lib-commons/v4/commons"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
 	"github.com/Masterminds/squirrel"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -19,7 +19,7 @@ import (
 )
 
 func testContext() context.Context {
-	logger := &libLog.GoLogger{Level: libLog.DebugLevel}
+	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 	values := &libCommons.CustomContextKeyValue{
 		HeaderID: "test-request-id",
 		Logger:   logger,

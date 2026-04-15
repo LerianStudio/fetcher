@@ -8,7 +8,7 @@ import (
 
 	"github.com/LerianStudio/fetcher/pkg/seaweedfs"
 	"github.com/LerianStudio/fetcher/pkg/testutil"
-	tmcore "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/core"
+	tmcore "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/core"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -356,7 +356,7 @@ func TestSimpleRepository_TenantKeyPrefixing(t *testing.T) {
 
 			ctx := testutil.TestContext()
 			if tt.tenantID != "" {
-				ctx = tmcore.SetTenantIDInContext(ctx, tt.tenantID)
+				ctx = tmcore.ContextWithTenantID(ctx, tt.tenantID)
 			}
 
 			switch tt.operation {

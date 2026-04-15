@@ -59,14 +59,14 @@ func WithRabbitDefinitions(hostPath string) RabbitOption {
 				testcontainers.ContainerFile{
 					HostFilePath:      hostPath,
 					ContainerFilePath: "/etc/rabbitmq/definitions.json",
-					FileMode:          0644,
+					FileMode:          0o644,
 				},
 			),
 			testcontainers.WithFiles(
 				testcontainers.ContainerFile{
 					Reader:            rabbitConfReader(),
 					ContainerFilePath: "/etc/rabbitmq/conf.d/20-definitions.conf",
-					FileMode:          0644,
+					FileMode:          0o644,
 				},
 			),
 		)

@@ -12,17 +12,16 @@ import (
 
 // JobMongoDBModel represents how a job is stored in MongoDB.
 type JobMongoDBModel struct {
-	ID             uuid.UUID                      `bson:"_id"`
-	OrganizationID uuid.UUID                      `bson:"organization_id"`
-	Metadata       map[string]any                 `bson:"metadata,omitempty"`
-	MappedFields   map[string]map[string][]string `bson:"mapped_fields"`
-	Filters        model.NestedFilters            `bson:"filters,omitempty"`
-	Status         string                         `bson:"status"`
-	ResultPath     string                         `bson:"result_path,omitempty"`
-	ResultHMAC     string                         `bson:"result_hmac,omitempty"`
-	RequestHash    string                         `bson:"request_hash,omitempty"`
-	CreatedAt      time.Time                      `bson:"created_at"`
-	CompletedAt    *time.Time                     `bson:"completed_at"`
+	ID           uuid.UUID                      `bson:"_id"`
+	Metadata     map[string]any                 `bson:"metadata,omitempty"`
+	MappedFields map[string]map[string][]string `bson:"mapped_fields"`
+	Filters      model.NestedFilters            `bson:"filters,omitempty"`
+	Status       string                         `bson:"status"`
+	ResultPath   string                         `bson:"result_path,omitempty"`
+	ResultHMAC   string                         `bson:"result_hmac,omitempty"`
+	RequestHash  string                         `bson:"request_hash,omitempty"`
+	CreatedAt    time.Time                      `bson:"created_at"`
+	CompletedAt  *time.Time                     `bson:"completed_at"`
 }
 
 // ToEntity converts a MongoDB model into the API entity representation.
@@ -37,17 +36,16 @@ func (jm *JobMongoDBModel) ToEntity() (*model.Job, error) {
 	}
 
 	return &model.Job{
-		ID:             jm.ID,
-		OrganizationID: jm.OrganizationID,
-		Metadata:       jm.Metadata,
-		MappedFields:   jm.MappedFields,
-		Filters:        jm.Filters,
-		Status:         jobStatus,
-		ResultPath:     jm.ResultPath,
-		ResultHMAC:     jm.ResultHMAC,
-		RequestHash:    jm.RequestHash,
-		CreatedAt:      jm.CreatedAt,
-		CompletedAt:    jm.CompletedAt,
+		ID:           jm.ID,
+		Metadata:     jm.Metadata,
+		MappedFields: jm.MappedFields,
+		Filters:      jm.Filters,
+		Status:       jobStatus,
+		ResultPath:   jm.ResultPath,
+		ResultHMAC:   jm.ResultHMAC,
+		RequestHash:  jm.RequestHash,
+		CreatedAt:    jm.CreatedAt,
+		CompletedAt:  jm.CompletedAt,
 	}, nil
 }
 
@@ -59,7 +57,6 @@ func (jm *JobMongoDBModel) FromEntity(job *model.Job) error {
 	}
 
 	jm.ID = job.ID
-	jm.OrganizationID = job.OrganizationID
 	jm.Metadata = job.Metadata
 	jm.MappedFields = job.MappedFields
 	jm.Filters = job.Filters

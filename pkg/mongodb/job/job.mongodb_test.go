@@ -14,9 +14,9 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/mongodb"
 
-	libLog "github.com/LerianStudio/lib-commons/v3/commons/log"
-	libMongo "github.com/LerianStudio/lib-commons/v3/commons/mongo"
-	tmcore "github.com/LerianStudio/lib-commons/v3/commons/tenant-manager/core"
+	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	libMongo "github.com/LerianStudio/lib-commons/v4/commons/mongo"
+	tmcore "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/core"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -29,7 +29,7 @@ import (
 
 var (
 	jobTestMongoServer *memongo.Server
-	jobTestMongoConn   *libMongo.MongoConnection
+	jobTestMongoConn   *libMongo.Client
 )
 
 const jobTestDatabaseName = "fetcher_job_test"
@@ -43,12 +43,16 @@ func TestMain(m *testing.M) {
 		os.Exit(0)
 	}
 	jobTestMongoServer = server
-	jobTestMongoConn = &libMongo.MongoConnection{
-		ConnectionStringSource: server.URI(),
-		Database:               jobTestDatabaseName,
-		Logger:                 &libLog.GoLogger{Level: libLog.ErrorLevel},
-		MaxPoolSize:            5,
+	client, err := libMongo.NewClient(context.Background(), libMongo.Config{
+		URI:         server.URI(),
+		Database:    jobTestDatabaseName,
+		Logger:      &libLog.GoLogger{Level: libLog.LevelError},
+		MaxPoolSize: 5,
+	})
+	if err != nil {
+		log.Fatalf("failed to create mongo client: %v", err)
 	}
+	jobTestMongoConn = client
 
 	code := m.Run()
 
@@ -59,7 +63,7 @@ func TestMain(m *testing.M) {
 func newJobRepository(t *testing.T) *JobMongoDBRepository {
 	t.Helper()
 	clearJobsCollection(t)
-	repo, err := NewJobMongoDBRepository(context.Background(), jobTestMongoConn)
+	repo, err := NewJobMongoDBRepository(context.Background(), jobTestMongoConn, jobTestDatabaseName)
 	if err != nil {
 		t.Fatalf("failed to create repository: %v", err)
 	}
@@ -71,11 +75,15 @@ func clearJobsCollection(t *testing.T) {
 	if jobTestMongoConn == nil {
 		t.Fatalf("mongo connection not initialized")
 	}
-	client, err := jobTestMongoConn.GetDB(context.Background())
+	client, err := jobTestMongoConn.Client(context.Background())
 	if err != nil {
 		t.Fatalf("failed to get db: %v", err)
 	}
-	coll := client.Database(strings.ToLower(jobTestMongoConn.Database)).Collection(strings.ToLower(constant.MongoCollectionJob))
+	dbName, err := jobTestMongoConn.DatabaseName()
+	if err != nil {
+		t.Fatalf("failed to get db name: %v", err)
+	}
+	coll := client.Database(strings.ToLower(dbName)).Collection(strings.ToLower(constant.MongoCollectionJob))
 	if err := coll.Drop(context.Background()); err != nil {
 		var cmdErr mongo.CommandError
 		if errors.As(err, &cmdErr) && cmdErr.Code == 26 {
@@ -88,8 +96,7 @@ func clearJobsCollection(t *testing.T) {
 func jobFixture() *model.Job {
 	id, _ := uuid.NewV7()
 	return &model.Job{
-		ID:             id,
-		OrganizationID: uuid.New(),
+		ID: id,
 		Metadata: map[string]any{
 			"source": "unit-test",
 		},
@@ -117,12 +124,12 @@ func createJob(t *testing.T, repo *JobMongoDBRepository, job *model.Job) *model.
 
 func stubJobSpanAttributes(t *testing.T, retErr error) {
 	t.Helper()
-	original := setSpanAttributesFromStruct
-	setSpanAttributesFromStruct = func(span *trace.Span, key string, valueStruct any) error {
+	original := setSpanAttributesFromValue
+	setSpanAttributesFromValue = func(span trace.Span, key string, value any) error {
 		return retErr
 	}
 	t.Cleanup(func() {
-		setSpanAttributesFromStruct = original
+		setSpanAttributesFromValue = original
 	})
 }
 
@@ -190,7 +197,7 @@ func TestJobMongoDBRepository_Create(t *testing.T) {
 
 		mockConn := mongodb.NewMockMongoClientProvider(ctrl)
 		mockConn.EXPECT().
-			GetDB(gomock.Any()).
+			Client(gomock.Any()).
 			Return(nil, errors.New("db down"))
 
 		repo := &JobMongoDBRepository{
@@ -246,20 +253,11 @@ func TestJobMongoDBRepository_Update(t *testing.T) {
 		}
 	})
 
-	t.Run("validation error", func(t *testing.T) {
-		repo := newJobRepository(t)
-		created := createJob(t, repo, jobFixture())
-		created.OrganizationID = uuid.Nil
-		if _, err := repo.Update(context.Background(), created); err == nil {
-			t.Fatalf("expected validation error")
-		}
-	})
-
 	t.Run("not found", func(t *testing.T) {
 		repo := newJobRepository(t)
 		missing := jobFixture()
 		missing.ID = uuid.New()
-		missing.OrganizationID = uuid.New()
+
 		if _, err := repo.Update(context.Background(), missing); err == nil {
 			t.Fatalf("expected not found error")
 		}
@@ -281,7 +279,7 @@ func TestJobMongoDBRepository_Update(t *testing.T) {
 
 		mockConn := mongodb.NewMockMongoClientProvider(ctrl)
 		mockConn.EXPECT().
-			GetDB(gomock.Any()).
+			Client(gomock.Any()).
 			Return(nil, errors.New("db down"))
 
 		repo := &JobMongoDBRepository{
@@ -304,7 +302,7 @@ func TestJobMongoDBRepository_FindByID(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		repo := newJobRepository(t)
 		created := createJob(t, repo, jobFixture())
-		found, err := repo.FindByID(context.Background(), created.ID, created.OrganizationID)
+		found, err := repo.FindByID(context.Background(), created.ID)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -315,7 +313,7 @@ func TestJobMongoDBRepository_FindByID(t *testing.T) {
 
 	t.Run("not found", func(t *testing.T) {
 		repo := newJobRepository(t)
-		job, err := repo.FindByID(context.Background(), uuid.New(), uuid.New())
+		job, err := repo.FindByID(context.Background(), uuid.New())
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -330,14 +328,14 @@ func TestJobMongoDBRepository_FindByID(t *testing.T) {
 
 		mockConn := mongodb.NewMockMongoClientProvider(ctrl)
 		mockConn.EXPECT().
-			GetDB(gomock.Any()).
+			Client(gomock.Any()).
 			Return(nil, errors.New("db down"))
 
 		repo := &JobMongoDBRepository{
 			connection: mockConn,
 			Database:   jobTestDatabaseName,
 		}
-		_, err := repo.FindByID(context.Background(), uuid.New(), uuid.New())
+		_, err := repo.FindByID(context.Background(), uuid.New())
 		if err == nil {
 			t.Fatal("expected error, got nil")
 		}
@@ -350,32 +348,29 @@ func TestJobMongoDBRepository_FindByID(t *testing.T) {
 func TestJobMongoDBRepository_List(t *testing.T) {
 	t.Run("applies filters and pagination", func(t *testing.T) {
 		repo := newJobRepository(t)
-		orgID := uuid.New()
-		otherOrg := uuid.New()
 
 		older := jobFixture()
-		older.OrganizationID = orgID
+
 		older.Status = model.JobStatusPending
 		older.CreatedAt = time.Now().UTC().Add(-2 * time.Hour)
 		createJob(t, repo, older)
 
 		newer := jobFixture()
-		newer.OrganizationID = orgID
+
 		newer.Status = model.JobStatusProcessing
 		createJob(t, repo, newer)
 
 		other := jobFixture()
-		other.OrganizationID = otherOrg
+
 		createJob(t, repo, other)
 
 		since := time.Now().UTC().Add(-90 * time.Minute)
 		filters := &ListFilter{
-			OrganizationID: orgID,
-			Statuses:       []model.JobStatus{model.JobStatusProcessing},
-			CreatedFrom:    &since,
-			Limit:          1,
-			Page:           1,
-			SortOrder:      constant.Desc,
+			Statuses:    []model.JobStatus{model.JobStatusProcessing},
+			CreatedFrom: &since,
+			Limit:       1,
+			Page:        1,
+			SortOrder:   constant.Desc,
 		}
 
 		list, err := repo.List(context.Background(), filters)
@@ -390,10 +385,10 @@ func TestJobMongoDBRepository_List(t *testing.T) {
 	t.Run("limit boundaries and nil filters", func(t *testing.T) {
 		repo := newJobRepository(t)
 		createJob(t, repo, jobFixture())
-		if _, err := repo.List(context.Background(), &ListFilter{OrganizationID: uuid.New(), Limit: -1}); err != nil {
+		if _, err := repo.List(context.Background(), &ListFilter{Limit: -1}); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if _, err := repo.List(context.Background(), &ListFilter{OrganizationID: uuid.New(), Limit: 999}); err != nil {
+		if _, err := repo.List(context.Background(), &ListFilter{Limit: 999}); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if _, err := repo.List(context.Background(), nil); err != nil {
@@ -405,7 +400,7 @@ func TestJobMongoDBRepository_List(t *testing.T) {
 		repo := newJobRepository(t)
 		createJob(t, repo, jobFixture())
 		stubJobSpanAttributes(t, errors.New("span failure"))
-		if _, err := repo.List(context.Background(), &ListFilter{OrganizationID: uuid.New()}); err != nil {
+		if _, err := repo.List(context.Background(), &ListFilter{}); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
@@ -416,14 +411,14 @@ func TestJobMongoDBRepository_List(t *testing.T) {
 
 		mockConn := mongodb.NewMockMongoClientProvider(ctrl)
 		mockConn.EXPECT().
-			GetDB(gomock.Any()).
+			Client(gomock.Any()).
 			Return(nil, errors.New("db down"))
 
 		repo := &JobMongoDBRepository{
 			connection: mockConn,
 			Database:   jobTestDatabaseName,
 		}
-		_, err := repo.List(context.Background(), &ListFilter{OrganizationID: uuid.New()})
+		_, err := repo.List(context.Background(), &ListFilter{})
 		if err == nil {
 			t.Fatal("expected error, got nil")
 		}
@@ -436,7 +431,7 @@ func TestJobMongoDBRepository_List(t *testing.T) {
 		repo := newJobRepository(t)
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
-		if _, err := repo.List(ctx, &ListFilter{OrganizationID: uuid.New()}); err == nil {
+		if _, err := repo.List(ctx, &ListFilter{}); err == nil {
 			t.Fatalf("expected error")
 		}
 	})
@@ -447,13 +442,13 @@ func TestJobMongoDBRepository_UpdateStatus(t *testing.T) {
 		repo := newJobRepository(t)
 		created := createJob(t, repo, jobFixture())
 
-		err := repo.UpdateStatus(context.Background(), created.ID, created.OrganizationID, model.JobStatusCompleted, "/external-data/test.json", "", nil)
+		err := repo.UpdateStatus(context.Background(), created.ID, model.JobStatusCompleted, "/external-data/test.json", "", nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
 		// Verify the job was updated
-		found, err := repo.FindByID(context.Background(), created.ID, created.OrganizationID)
+		found, err := repo.FindByID(context.Background(), created.ID)
 		if err != nil {
 			t.Fatalf("failed to find job: %v", err)
 		}
@@ -472,12 +467,12 @@ func TestJobMongoDBRepository_UpdateStatus(t *testing.T) {
 		repo := newJobRepository(t)
 		created := createJob(t, repo, jobFixture())
 
-		err := repo.UpdateStatus(context.Background(), created.ID, created.OrganizationID, model.JobStatusFailed, "", "", nil)
+		err := repo.UpdateStatus(context.Background(), created.ID, model.JobStatusFailed, "", "", nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		found, err := repo.FindByID(context.Background(), created.ID, created.OrganizationID)
+		found, err := repo.FindByID(context.Background(), created.ID)
 		if err != nil {
 			t.Fatalf("failed to find job: %v", err)
 		}
@@ -497,12 +492,12 @@ func TestJobMongoDBRepository_UpdateStatus(t *testing.T) {
 		job.CompletedAt = &now
 		created := createJob(t, repo, job)
 
-		err := repo.UpdateStatus(context.Background(), created.ID, created.OrganizationID, model.JobStatusProcessing, "", "", nil)
+		err := repo.UpdateStatus(context.Background(), created.ID, model.JobStatusProcessing, "", "", nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		found, err := repo.FindByID(context.Background(), created.ID, created.OrganizationID)
+		found, err := repo.FindByID(context.Background(), created.ID)
 		if err != nil {
 			t.Fatalf("failed to find job: %v", err)
 		}
@@ -522,12 +517,12 @@ func TestJobMongoDBRepository_UpdateStatus(t *testing.T) {
 			"error_message": "something went wrong",
 			"retry_count":   3,
 		}
-		err := repo.UpdateStatus(context.Background(), created.ID, created.OrganizationID, model.JobStatusFailed, "", "", metadata)
+		err := repo.UpdateStatus(context.Background(), created.ID, model.JobStatusFailed, "", "", metadata)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		found, err := repo.FindByID(context.Background(), created.ID, created.OrganizationID)
+		found, err := repo.FindByID(context.Background(), created.ID)
 		if err != nil {
 			t.Fatalf("failed to find job: %v", err)
 		}
@@ -540,7 +535,7 @@ func TestJobMongoDBRepository_UpdateStatus(t *testing.T) {
 		repo := newJobRepository(t)
 		created := createJob(t, repo, jobFixture())
 
-		err := repo.UpdateStatus(context.Background(), created.ID, created.OrganizationID, "invalid-status", "", "", nil)
+		err := repo.UpdateStatus(context.Background(), created.ID, "invalid-status", "", "", nil)
 		if err == nil {
 			t.Fatalf("expected error for invalid status")
 		}
@@ -549,7 +544,7 @@ func TestJobMongoDBRepository_UpdateStatus(t *testing.T) {
 	t.Run("returns error for non-existent job", func(t *testing.T) {
 		repo := newJobRepository(t)
 
-		err := repo.UpdateStatus(context.Background(), uuid.New(), uuid.New(), model.JobStatusCompleted, "", "", nil)
+		err := repo.UpdateStatus(context.Background(), uuid.New(), model.JobStatusCompleted, "", "", nil)
 		if err == nil {
 			t.Fatalf("expected error for non-existent job")
 		}
@@ -561,14 +556,14 @@ func TestJobMongoDBRepository_UpdateStatus(t *testing.T) {
 
 		mockConn := mongodb.NewMockMongoClientProvider(ctrl)
 		mockConn.EXPECT().
-			GetDB(gomock.Any()).
+			Client(gomock.Any()).
 			Return(nil, errors.New("db down"))
 
 		repo := &JobMongoDBRepository{
 			connection: mockConn,
 			Database:   jobTestDatabaseName,
 		}
-		err := repo.UpdateStatus(context.Background(), uuid.New(), uuid.New(), model.JobStatusCompleted, "", "", nil)
+		err := repo.UpdateStatus(context.Background(), uuid.New(), model.JobStatusCompleted, "", "", nil)
 		if err == nil {
 			t.Fatal("expected error, got nil")
 		}
@@ -582,10 +577,10 @@ func TestJobMongoDBRepository_UpdateStatus(t *testing.T) {
 		created := createJob(t, repo, jobFixture())
 
 		resultHMAC := "hmac-sha256:abc123def456"
-		err := repo.UpdateStatus(context.Background(), created.ID, created.OrganizationID, model.JobStatusCompleted, "/external-data/test.json", resultHMAC, nil)
+		err := repo.UpdateStatus(context.Background(), created.ID, model.JobStatusCompleted, "/external-data/test.json", resultHMAC, nil)
 		require.NoError(t, err, "unexpected error updating status")
 
-		found, err := repo.FindByID(context.Background(), created.ID, created.OrganizationID)
+		found, err := repo.FindByID(context.Background(), created.ID)
 		require.NoError(t, err, "failed to find job")
 		require.Equal(t, resultHMAC, found.ResultHMAC, "expected result_hmac to be set")
 	})
@@ -594,17 +589,17 @@ func TestJobMongoDBRepository_UpdateStatus(t *testing.T) {
 func TestJobMongoDBRepository_FindByRequestHashWithinWindow(t *testing.T) {
 	t.Run("finds job within time window", func(t *testing.T) {
 		repo := newJobRepository(t)
-		org := uuid.New()
+
 		hash := "abc123def456"
 
 		job := jobFixture()
-		job.OrganizationID = org
+
 		job.RequestHash = hash
 		job.CreatedAt = time.Now().UTC()
 		created := createJob(t, repo, job)
 
 		// Look for job within 60 minute window
-		found, err := repo.FindByRequestHashWithinWindow(context.Background(), org, hash, 60)
+		found, err := repo.FindByRequestHashWithinWindow(context.Background(), hash, 60)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -619,7 +614,7 @@ func TestJobMongoDBRepository_FindByRequestHashWithinWindow(t *testing.T) {
 	t.Run("returns nil for empty request hash", func(t *testing.T) {
 		repo := newJobRepository(t)
 
-		found, err := repo.FindByRequestHashWithinWindow(context.Background(), uuid.New(), "", 60)
+		found, err := repo.FindByRequestHashWithinWindow(context.Background(), "", 60)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -630,18 +625,18 @@ func TestJobMongoDBRepository_FindByRequestHashWithinWindow(t *testing.T) {
 
 	t.Run("returns nil when job is outside time window", func(t *testing.T) {
 		repo := newJobRepository(t)
-		org := uuid.New()
+
 		hash := "oldhashold123"
 
 		job := jobFixture()
-		job.OrganizationID = org
+
 		job.RequestHash = hash
 		// Force created_at to be older than the lookup window
 		job.CreatedAt = time.Now().UTC().Add(-2 * time.Hour)
 		createJob(t, repo, job)
 
 		// Look for job within a 60 minute window – should not find this older job
-		found, err := repo.FindByRequestHashWithinWindow(context.Background(), org, hash, 60)
+		found, err := repo.FindByRequestHashWithinWindow(context.Background(), hash, 60)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -652,25 +647,25 @@ func TestJobMongoDBRepository_FindByRequestHashWithinWindow(t *testing.T) {
 
 	t.Run("returns most recent job when multiple exist", func(t *testing.T) {
 		repo := newJobRepository(t)
-		org := uuid.New()
+
 		hash := "duplicatehash123"
 
 		// Create two jobs with same hash, different times
 		older := jobFixture()
-		older.OrganizationID = org
+
 		older.RequestHash = hash
 		older.ResultPath = "/older"
 		older.CreatedAt = time.Now().UTC().Add(-30 * time.Minute)
 		createJob(t, repo, older)
 
 		newer := jobFixture()
-		newer.OrganizationID = org
+
 		newer.RequestHash = hash
 		newer.ResultPath = "/newer"
 		newer.CreatedAt = time.Now().UTC()
 		createJob(t, repo, newer)
 
-		found, err := repo.FindByRequestHashWithinWindow(context.Background(), org, hash, 60)
+		found, err := repo.FindByRequestHashWithinWindow(context.Background(), hash, 60)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -682,41 +677,20 @@ func TestJobMongoDBRepository_FindByRequestHashWithinWindow(t *testing.T) {
 		}
 	})
 
-	t.Run("respects organization scope", func(t *testing.T) {
-		repo := newJobRepository(t)
-		org1 := uuid.New()
-		org2 := uuid.New()
-		hash := "sharedhash456"
-
-		job := jobFixture()
-		job.OrganizationID = org1
-		job.RequestHash = hash
-		createJob(t, repo, job)
-
-		// Search in different org
-		found, err := repo.FindByRequestHashWithinWindow(context.Background(), org2, hash, 60)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if found != nil {
-			t.Fatalf("expected nil for different org")
-		}
-	})
-
 	t.Run("database error surfaces", func(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		defer ctrl.Finish()
 
 		mockConn := mongodb.NewMockMongoClientProvider(ctrl)
 		mockConn.EXPECT().
-			GetDB(gomock.Any()).
+			Client(gomock.Any()).
 			Return(nil, errors.New("db down"))
 
 		repo := &JobMongoDBRepository{
 			connection: mockConn,
 			Database:   jobTestDatabaseName,
 		}
-		_, err := repo.FindByRequestHashWithinWindow(context.Background(), uuid.New(), "hash", 60)
+		_, err := repo.FindByRequestHashWithinWindow(context.Background(), "hash", 60)
 		if err == nil {
 			t.Fatal("expected error, got nil")
 		}
@@ -729,24 +703,24 @@ func TestJobMongoDBRepository_FindByRequestHashWithinWindow(t *testing.T) {
 func TestJobMongoDBRepository_FindActiveByRequestHash(t *testing.T) {
 	t.Run("finds most recent active job", func(t *testing.T) {
 		repo := newJobRepository(t)
-		org := uuid.New()
+
 		hash := "active-hash-123"
 
 		older := jobFixture()
-		older.OrganizationID = org
+
 		older.RequestHash = hash
 		older.Status = model.JobStatusPending
 		older.CreatedAt = time.Now().UTC().Add(-2 * time.Minute)
 		createJob(t, repo, older)
 
 		newer := jobFixture()
-		newer.OrganizationID = org
+
 		newer.RequestHash = hash
 		newer.Status = model.JobStatusProcessing
 		newer.CreatedAt = time.Now().UTC().Add(-1 * time.Minute)
 		createdNewer := createJob(t, repo, newer)
 
-		found, err := repo.FindActiveByRequestHash(context.Background(), org, hash)
+		found, err := repo.FindActiveByRequestHash(context.Background(), hash)
 		require.NoError(t, err)
 		require.NotNil(t, found)
 		require.Equal(t, createdNewer.ID, found.ID)
@@ -754,74 +728,55 @@ func TestJobMongoDBRepository_FindActiveByRequestHash(t *testing.T) {
 
 	t.Run("returns nil when only terminal jobs exist", func(t *testing.T) {
 		repo := newJobRepository(t)
-		org := uuid.New()
+
 		hash := "terminal-hash-123"
 
 		failedJob := jobFixture()
-		failedJob.OrganizationID = org
+
 		failedJob.RequestHash = hash
 		failedJob.Status = model.JobStatusFailed
 		now := time.Now().UTC()
 		failedJob.CompletedAt = &now
 		createJob(t, repo, failedJob)
 
-		found, err := repo.FindActiveByRequestHash(context.Background(), org, hash)
+		found, err := repo.FindActiveByRequestHash(context.Background(), hash)
 		require.NoError(t, err)
 		require.Nil(t, found)
 	})
 }
 
-func TestEnsureIndexes_RemediatesDuplicateActiveJobs(t *testing.T) {
+func TestEnsureIndexes_DuplicateActiveJobsPreventsUniqueIndex(t *testing.T) {
 	repo := newJobRepository(t)
-	org := uuid.New()
+
 	hash := "dup-active-hash-123"
 
 	older := jobFixture()
-	older.OrganizationID = org
+
 	older.RequestHash = hash
 	older.Status = model.JobStatusPending
 	older.CreatedAt = time.Now().UTC().Add(-2 * time.Minute)
-	createdOlder := createJob(t, repo, older)
+	createJob(t, repo, older)
 
 	newer := jobFixture()
-	newer.OrganizationID = org
+
 	newer.RequestHash = hash
 	newer.Status = model.JobStatusProcessing
 	newer.CreatedAt = time.Now().UTC().Add(-1 * time.Minute)
-	createdNewer := createJob(t, repo, newer)
+	createJob(t, repo, newer)
 
-	require.NoError(t, repo.EnsureIndexes(context.Background()))
-
-	updatedOlder, err := repo.FindByID(context.Background(), createdOlder.ID, org)
-	require.NoError(t, err)
-	require.NotNil(t, updatedOlder)
-	require.Equal(t, model.JobStatusFailed, updatedOlder.Status)
-	require.NotNil(t, updatedOlder.CompletedAt)
-
-	// Verify the newer (surviving) job is still in its original active status
-	updatedNewer, err := repo.FindByID(context.Background(), createdNewer.ID, org)
-	require.NoError(t, err)
-	require.NotNil(t, updatedNewer)
-	require.Equal(t, model.JobStatusProcessing, updatedNewer.Status, "newer job should survive remediation in its original status")
-
-	duplicateAttempt := jobFixture()
-	duplicateAttempt.OrganizationID = org
-	duplicateAttempt.RequestHash = hash
-	duplicateAttempt.Status = model.JobStatusPending
-	duplicateAttempt.CreatedAt = time.Now().UTC()
-
-	_, createErr := repo.Create(context.Background(), duplicateAttempt)
-	require.Error(t, createErr)
-	require.True(t, mongo.IsDuplicateKeyError(createErr), "expected duplicate key after unique active index creation")
+	// With the unique active hash index restored, EnsureIndexes returns an error
+	// when duplicate active jobs exist (same org_id + request_hash).
+	// Manual cleanup is required before the index can be created.
+	err := repo.EnsureIndexes(context.Background())
+	require.Error(t, err, "EnsureIndexes should fail when duplicate active jobs prevent unique index creation")
 }
 
 func TestJobMongoDBRepository_ExistsRunningByMappedFieldKey(t *testing.T) {
 	t.Run("returns true when pending job exists with key", func(t *testing.T) {
 		repo := newJobRepository(t)
-		org := uuid.New()
 
 		job := jobFixture()
-		job.OrganizationID = org
+
 		job.Status = model.JobStatusPending
 		job.MappedFields = map[string]map[string][]string{
 			"my-config": {
@@ -830,7 +785,7 @@ func TestJobMongoDBRepository_ExistsRunningByMappedFieldKey(t *testing.T) {
 		}
 		createJob(t, repo, job)
 
-		exists, err := repo.ExistsRunningByMappedFieldKey(context.Background(), org, "my-config")
+		exists, err := repo.ExistsRunningByMappedFieldKey(context.Background(), "my-config")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -841,10 +796,9 @@ func TestJobMongoDBRepository_ExistsRunningByMappedFieldKey(t *testing.T) {
 
 	t.Run("returns true when processing job exists with key", func(t *testing.T) {
 		repo := newJobRepository(t)
-		org := uuid.New()
 
 		job := jobFixture()
-		job.OrganizationID = org
+
 		job.Status = model.JobStatusProcessing
 		job.MappedFields = map[string]map[string][]string{
 			"processing-config": {
@@ -853,7 +807,7 @@ func TestJobMongoDBRepository_ExistsRunningByMappedFieldKey(t *testing.T) {
 		}
 		createJob(t, repo, job)
 
-		exists, err := repo.ExistsRunningByMappedFieldKey(context.Background(), org, "processing-config")
+		exists, err := repo.ExistsRunningByMappedFieldKey(context.Background(), "processing-config")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -864,10 +818,9 @@ func TestJobMongoDBRepository_ExistsRunningByMappedFieldKey(t *testing.T) {
 
 	t.Run("returns false when job is completed", func(t *testing.T) {
 		repo := newJobRepository(t)
-		org := uuid.New()
 
 		job := jobFixture()
-		job.OrganizationID = org
+
 		job.Status = model.JobStatusCompleted
 		now := time.Now()
 		job.CompletedAt = &now
@@ -878,7 +831,7 @@ func TestJobMongoDBRepository_ExistsRunningByMappedFieldKey(t *testing.T) {
 		}
 		createJob(t, repo, job)
 
-		exists, err := repo.ExistsRunningByMappedFieldKey(context.Background(), org, "completed-config")
+		exists, err := repo.ExistsRunningByMappedFieldKey(context.Background(), "completed-config")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -889,10 +842,9 @@ func TestJobMongoDBRepository_ExistsRunningByMappedFieldKey(t *testing.T) {
 
 	t.Run("returns false when key does not exist", func(t *testing.T) {
 		repo := newJobRepository(t)
-		org := uuid.New()
 
 		job := jobFixture()
-		job.OrganizationID = org
+
 		job.Status = model.JobStatusPending
 		job.MappedFields = map[string]map[string][]string{
 			"other-config": {
@@ -901,7 +853,7 @@ func TestJobMongoDBRepository_ExistsRunningByMappedFieldKey(t *testing.T) {
 		}
 		createJob(t, repo, job)
 
-		exists, err := repo.ExistsRunningByMappedFieldKey(context.Background(), org, "nonexistent-config")
+		exists, err := repo.ExistsRunningByMappedFieldKey(context.Background(), "nonexistent-config")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -910,34 +862,10 @@ func TestJobMongoDBRepository_ExistsRunningByMappedFieldKey(t *testing.T) {
 		}
 	})
 
-	t.Run("respects organization scope", func(t *testing.T) {
-		repo := newJobRepository(t)
-		org1 := uuid.New()
-		org2 := uuid.New()
-
-		job := jobFixture()
-		job.OrganizationID = org1
-		job.Status = model.JobStatusPending
-		job.MappedFields = map[string]map[string][]string{
-			"shared-config": {
-				"table1": {"field1"},
-			},
-		}
-		createJob(t, repo, job)
-
-		exists, err := repo.ExistsRunningByMappedFieldKey(context.Background(), org2, "shared-config")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if exists {
-			t.Fatalf("expected false for different org")
-		}
-	})
-
 	t.Run("returns error for invalid key pattern", func(t *testing.T) {
 		repo := newJobRepository(t)
 
-		_, err := repo.ExistsRunningByMappedFieldKey(context.Background(), uuid.New(), "invalid.key.with.dots")
+		_, err := repo.ExistsRunningByMappedFieldKey(context.Background(), "invalid.key.with.dots")
 		if err == nil {
 			t.Fatalf("expected error for invalid key pattern")
 		}
@@ -949,7 +877,7 @@ func TestJobMongoDBRepository_ExistsRunningByMappedFieldKey(t *testing.T) {
 		// These should not error
 		validPatterns := []string{"config", "my-config", "config_name", "config123", "Config-Name_123"}
 		for _, pattern := range validPatterns {
-			_, err := repo.ExistsRunningByMappedFieldKey(context.Background(), uuid.New(), pattern)
+			_, err := repo.ExistsRunningByMappedFieldKey(context.Background(), pattern)
 			if err != nil {
 				t.Fatalf("unexpected error for pattern %s: %v", pattern, err)
 			}
@@ -962,14 +890,14 @@ func TestJobMongoDBRepository_ExistsRunningByMappedFieldKey(t *testing.T) {
 
 		mockConn := mongodb.NewMockMongoClientProvider(ctrl)
 		mockConn.EXPECT().
-			GetDB(gomock.Any()).
+			Client(gomock.Any()).
 			Return(nil, errors.New("db down"))
 
 		repo := &JobMongoDBRepository{
 			connection: mockConn,
 			Database:   jobTestDatabaseName,
 		}
-		_, err := repo.ExistsRunningByMappedFieldKey(context.Background(), uuid.New(), "config")
+		_, err := repo.ExistsRunningByMappedFieldKey(context.Background(), "config")
 		if err == nil {
 			t.Fatalf("expected db error")
 		}
@@ -1039,7 +967,7 @@ func TestEnsureIndexes_DatabaseError(t *testing.T) {
 
 	mockConn := mongodb.NewMockMongoClientProvider(ctrl)
 	mockConn.EXPECT().
-		GetDB(gomock.Any()).
+		Client(gomock.Any()).
 		Return(nil, errors.New("db down"))
 
 	repo := &JobMongoDBRepository{
@@ -1057,7 +985,7 @@ func TestDropIndexes_DatabaseError(t *testing.T) {
 
 	mockConn := mongodb.NewMockMongoClientProvider(ctrl)
 	mockConn.EXPECT().
-		GetDB(gomock.Any()).
+		Client(gomock.Any()).
 		Return(nil, errors.New("db down"))
 
 	repo := &JobMongoDBRepository{
@@ -1070,7 +998,7 @@ func TestDropIndexes_DatabaseError(t *testing.T) {
 }
 
 func TestNewJobMongoDBRepository_ValidatesDB(t *testing.T) {
-	repo, err := NewJobMongoDBRepository(context.Background(), jobTestMongoConn)
+	repo, err := NewJobMongoDBRepository(context.Background(), jobTestMongoConn, jobTestDatabaseName)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1081,18 +1009,17 @@ func TestNewJobMongoDBRepository_ValidatesDB(t *testing.T) {
 
 func TestList_CompletedRangeFilter(t *testing.T) {
 	repo := newJobRepository(t)
-	org := uuid.New()
 
 	completedAt := time.Now().UTC().Add(-time.Hour)
 	completedJob := jobFixture()
-	completedJob.OrganizationID = org
+
 	completedJob.Status = model.JobStatusCompleted
 	completedJob.CompletedAt = &completedAt
 	createJob(t, repo, completedJob)
 
 	from := completedAt.Add(-time.Minute)
 	to := completedAt.Add(time.Minute)
-	filters := &ListFilter{OrganizationID: org, CompletedFrom: &from, CompletedTo: &to}
+	filters := &ListFilter{CompletedFrom: &from, CompletedTo: &to}
 	list, err := repo.List(context.Background(), filters)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1104,18 +1031,17 @@ func TestList_CompletedRangeFilter(t *testing.T) {
 
 func TestList_UsesDescendingByDefault(t *testing.T) {
 	repo := newJobRepository(t)
-	org := uuid.New()
 
 	first := jobFixture()
-	first.OrganizationID = org
+
 	first.CreatedAt = time.Now().UTC().Add(-time.Hour)
 	createJob(t, repo, first)
 
 	second := jobFixture()
-	second.OrganizationID = org
+
 	createJob(t, repo, second)
 
-	list, err := repo.List(context.Background(), &ListFilter{OrganizationID: org, Limit: 2})
+	list, err := repo.List(context.Background(), &ListFilter{Limit: 2})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1129,14 +1055,13 @@ func TestList_UsesDescendingByDefault(t *testing.T) {
 
 func TestList_PartialFilters(t *testing.T) {
 	repo := newJobRepository(t)
-	org := uuid.New()
 
 	job := jobFixture()
-	job.OrganizationID = org
+
 	job.Status = model.JobStatusFailed
 	createJob(t, repo, job)
 
-	filters := &ListFilter{OrganizationID: org, Status: model.JobStatusFailed}
+	filters := &ListFilter{Status: model.JobStatusFailed}
 	list, err := repo.List(context.Background(), filters)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1186,14 +1111,14 @@ func TestUpdate_WithoutCompletedAtWhenFailed(t *testing.T) {
 
 func TestList_PaginationSecondPageEmpty(t *testing.T) {
 	repo := newJobRepository(t)
-	org := uuid.New()
+
 	for i := 0; i < 2; i++ {
 		job := jobFixture()
-		job.OrganizationID = org
+
 		job.ResultPath = fmt.Sprintf("/res-%d", i)
 		createJob(t, repo, job)
 	}
-	list, err := repo.List(context.Background(), &ListFilter{OrganizationID: org, Limit: 2, Page: 2})
+	list, err := repo.List(context.Background(), &ListFilter{Limit: 2, Page: 2})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1206,13 +1131,13 @@ func TestJobMongoDBRepository_getDatabase(t *testing.T) {
 	t.Run("returns tenant database when tenant context is set", func(t *testing.T) {
 		repo := newJobRepository(t)
 
-		client, err := jobTestMongoConn.GetDB(context.Background())
+		client, err := jobTestMongoConn.Client(context.Background())
 		if err != nil {
 			t.Fatalf("failed to get db client: %v", err)
 		}
 
 		tenantDB := client.Database("tenant_xyz789")
-		ctx := tmcore.ContextWithTenantMongo(context.Background(), tenantDB)
+		ctx := tmcore.ContextWithMB(context.Background(), tenantDB)
 
 		db, err := repo.getDatabase(ctx)
 		if err != nil {
@@ -1239,7 +1164,7 @@ func TestJobMongoDBRepository_getDatabase(t *testing.T) {
 
 		mockConn := NewMockmongoDatabaseProvider(ctrl)
 		mockConn.EXPECT().
-			GetDB(gomock.Any()).
+			Client(gomock.Any()).
 			Return(nil, errors.New("db down"))
 
 		repo := &JobMongoDBRepository{

@@ -2,14 +2,16 @@ package shared
 
 import (
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"testing"
 
-	libCrypto "github.com/LerianStudio/lib-commons/v3/commons/crypto"
-	libLog "github.com/LerianStudio/lib-commons/v3/commons/log"
+	fetcherCrypto "github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
@@ -36,12 +38,9 @@ func CreateTestConnection(t *testing.T, client *ManagerClient, ctx context.Conte
 	return conn
 }
 
-// SeaweedFS encryption keys used in the test Worker environment.
-// These match the values in WorkerEnv() (apps.go).
-const (
-	seaweedFSEncryptKey = "3132333435363738393031323334353637383930313233343536373839303132"
-	seaweedFSHashKey    = "3132333435363738393031323334353637383930313233343536373839303132"
-)
+// testAppEncKey is the APP_ENC_KEY used in the test Worker environment.
+// It matches the value in WorkerEnv() (apps.go).
+const testAppEncKey = "kV2RgskAt2gr+rtJmldM0gVEQNXduXXp3Le8VFCQKj8="
 
 // ExtractionResult is the parsed structure of a job result file.
 // The keys are: datasource name -> table name -> rows (each row is a map of field -> value).
@@ -52,12 +51,13 @@ type ExtractionResult = map[string]map[string][]map[string]any
 //
 // Parameters:
 //   - seaweedFSURL: the SeaweedFS filer HTTP URL (e.g., "http://localhost:8888")
-//   - resultPath: the ResultPath from JobResponse (e.g., "/external-data/<jobID>.json")
-func DownloadAndDecryptResult(t *testing.T, ctx context.Context, seaweedFSURL, resultPath string) ExtractionResult {
+//   - bucket: the storage bucket name (maps to a filer directory, e.g., "fetcher-storage")
+//   - resultPath: the S3 key from JobResponse (e.g., "external-data/<jobID>.json")
+func DownloadAndDecryptResult(t *testing.T, ctx context.Context, seaweedFSURL, bucket, resultPath string) ExtractionResult {
 	t.Helper()
 
-	// Download encrypted file from SeaweedFS
-	reqURL := seaweedFSURL + resultPath
+	// Download encrypted file from SeaweedFS filer — bucket maps to a filer directory
+	reqURL := fmt.Sprintf("%s/%s/%s", seaweedFSURL, bucket, resultPath)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	require.NoError(t, err, "create download request")
@@ -73,26 +73,37 @@ func DownloadAndDecryptResult(t *testing.T, ctx context.Context, seaweedFSURL, r
 	require.NoError(t, err, "read SeaweedFS response body")
 	require.NotEmpty(t, rawBytes, "result file should not be empty")
 
-	// Decrypt using the same keys as the Worker
-	crypto := &libCrypto.Crypto{
-		EncryptSecretKey: seaweedFSEncryptKey,
-		HashSecretKey:    seaweedFSHashKey,
-		Logger:           &libLog.NoneLogger{},
-	}
+	// Derive the same storage encryption key the Worker uses via HKDF
+	masterKey, err := base64.StdEncoding.DecodeString(testAppEncKey)
+	require.NoError(t, err, "decode APP_ENC_KEY")
 
-	err = crypto.InitializeCipher()
-	require.NoError(t, err, "initialize crypto cipher")
+	keyDeriver, err := fetcherCrypto.NewHKDFKeyDeriver(masterKey)
+	require.NoError(t, err, "create HKDF key deriver")
 
-	encryptedStr := string(rawBytes)
+	storageKey := keyDeriver.GetStorageEncryptKey()
 
-	plaintext, err := crypto.Decrypt(&encryptedStr)
+	// Decrypt AES-GCM: the encrypted file is Base64(nonce[12] || ciphertext + auth_tag)
+	ciphertextWithNonce, err := base64.StdEncoding.DecodeString(string(rawBytes))
+	require.NoError(t, err, "base64-decode encrypted data")
+
+	block, err := aes.NewCipher(storageKey)
+	require.NoError(t, err, "create AES cipher")
+
+	gcm, err := cipher.NewGCM(block)
+	require.NoError(t, err, "create GCM")
+
+	nonceSize := gcm.NonceSize()
+	require.True(t, len(ciphertextWithNonce) > nonceSize, "ciphertext too short")
+
+	nonce, ciphertext := ciphertextWithNonce[:nonceSize], ciphertextWithNonce[nonceSize:]
+
+	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
 	require.NoError(t, err, "decrypt result file")
-	require.NotNil(t, plaintext, "decrypted result should not be nil")
 
 	// Parse JSON
 	var result ExtractionResult
 
-	err = json.Unmarshal([]byte(*plaintext), &result)
+	err = json.Unmarshal(plaintext, &result)
 	require.NoError(t, err, "unmarshal result JSON")
 
 	return result

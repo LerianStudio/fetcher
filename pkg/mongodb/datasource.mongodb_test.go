@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/LerianStudio/fetcher/pkg/model/job"
-	"github.com/LerianStudio/lib-commons/v3/commons/log"
+	"github.com/LerianStudio/lib-commons/v4/commons/log"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1045,23 +1045,13 @@ func TestNewDataSourceRepository_UnitTests(t *testing.T) {
 		assert.Nil(t, ds)
 	})
 
-	t.Run("accepts empty database name (validation deferred to query time)", func(t *testing.T) {
+	t.Run("returns error with empty database name", func(t *testing.T) {
 		logger := testLogger()
 
-		// lib-commons v3.0.0-beta.11+ no longer validates empty database name at construction time.
-		// The validation is deferred to query time when the database is actually used.
-		// If MongoDB is running on localhost, this will succeed; the empty dbName
-		// will cause issues only when actually querying.
 		ds, err := NewDataSourceRepository("mongodb://localhost:27017", "", logger)
 
-		// If MongoDB is available, connection succeeds even with empty dbName
-		if err == nil {
-			assert.NotNil(t, ds)
-			assert.Empty(t, ds.Database)
-		} else {
-			// If MongoDB is not available, connection fails
-			assert.Nil(t, ds)
-		}
+		assert.Error(t, err)
+		assert.Nil(t, ds)
 	})
 }
 
@@ -1147,5 +1137,5 @@ func TestProcessQueryResults_FieldFiltering(t *testing.T) {
 
 // testLogger creates a logger for testing that suppresses output.
 func testLogger() log.Logger {
-	return &log.GoLogger{Level: log.ErrorLevel}
+	return &log.GoLogger{Level: log.LevelError}
 }
