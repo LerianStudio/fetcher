@@ -553,7 +553,7 @@ func (uc *UseCase) saveExternalData(
 
 	// Construct the result path (S3 key) for job status updates and notifications.
 	// The tenant-aware key matches what Put() stored, so consumers can download directly.
-	tenantObjectName, tenantKeyErr := tms3.GetObjectStorageKeyForTenant(ctx, objectName)
+	tenantObjectName, tenantKeyErr := tms3.GetS3KeyStorageContext(ctx, objectName)
 	if tenantKeyErr != nil {
 		return nil, pkg.FailedPreconditionError{Code: "FET-0066", Title: "Tenant Path Resolution Failed", Message: fmt.Sprintf("resolving tenant storage path: %s", tenantKeyErr.Error()), Err: tenantKeyErr}
 	}

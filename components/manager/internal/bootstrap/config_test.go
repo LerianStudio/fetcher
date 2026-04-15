@@ -880,6 +880,7 @@ func TestInitMultiTenantMiddleware(t *testing.T) {
 			cfg: &Config{
 				MultiTenantEnabled:                  true,
 				MultiTenantURL:                      "http://tenant-manager:8080",
+				MultiTenantAllowInsecureHTTP:        true,
 				MultiTenantMaxTenantPools:           100,
 				MultiTenantIdleTimeoutSec:           300,
 				MultiTenantCircuitBreakerThreshold:  5,
@@ -894,6 +895,7 @@ func TestInitMultiTenantMiddleware(t *testing.T) {
 			cfg: &Config{
 				MultiTenantEnabled:                  true,
 				MultiTenantURL:                      "http://tenant-manager:8080",
+				MultiTenantAllowInsecureHTTP:        true,
 				MultiTenantCircuitBreakerThreshold:  0,
 				MultiTenantCircuitBreakerTimeoutSec: 0,
 				MultiTenantServiceAPIKey:            "test-api-key",
