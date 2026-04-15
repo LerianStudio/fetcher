@@ -1,5 +1,31 @@
 # Fetcher Changelog
 
+## [1.3.0](https://github.com/LerianStudio/fetcher/releases/tag/v1.3.0)
+
+Features:
+- Added `MONGO_PARAMETERS` environment variable for MongoDB connection query parameters.
+- Introduced `MULTI_TENANT_ALLOW_INSECURE_HTTP` environment variable for explicit HTTP control.
+- Added `RABBITMQ_TLS` environment variable for multi-tenant RabbitMQ TLS connections.
+- Implemented TLS environment variable support for MongoDB, Redis, and multi-tenant Redis.
+
+Fixes:
+- Resolved parsing of TLS parameters from raw MongoDB URI when boolean fields are unset.
+- Propagated MongoDB TLS, DirectConnection, and AuthSource from tenant-manager.
+- Addressed CodeRabbit review findings.
+- Fixed security issues by ignoring certain CVEs pending safe upgrade paths.
+
+Improvements:
+- Updated lib-commons to the latest version and added new functions.
+- Improved struct field formatting and simplified `AllowInsecureHTTP` assignment.
+- Enhanced test assertions with testify and removed redundant handler validation.
+- Aligned module and CI toolchain to version 1.25.7.
+
+Contributors: @arthur.ribeiro, @arthurkz, @bedatty, @bruno.souza, @brunoblsouza, @dependabot[bot], @fred, @gandalf, @jefferson.comff, @lucas.bedatty
+
+[Compare changes](https://github.com/LerianStudio/fetcher/compare/v1.2.0...v1.3.0)
+
+---
+
 ## [1.1.0](https://github.com/LerianStudio/fetcher/releases/tag/v1.1.0)
 
 Features:
