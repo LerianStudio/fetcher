@@ -12,6 +12,7 @@ import (
 
 	"github.com/LerianStudio/fetcher/components/worker/internal/adapters/rabbitmq"
 	"github.com/LerianStudio/fetcher/components/worker/internal/services"
+	"github.com/LerianStudio/fetcher/pkg/bootstrap/readyz"
 	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
 	"github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
 	tmconsumer "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/consumer"
@@ -49,10 +50,21 @@ type MultiQueueConsumer struct {
 	queueName      string           // Stored for multi-tenant handler registration
 	mongoManager   *tmmongo.Manager // For per-tenant MongoDB resolution (nil in single-tenant mode)
 	initErr        error            // Deferred initialization error for multi-tenant handler registration
+	// drainDelay is how long the consumer waits after SIGTERM before
+	// cancelling the base context. Gate 7 of ring:dev-readyz: the window
+	// lets /readyz flip to 503 and Kubernetes remove the pod from the
+	// Service endpoints before RabbitMQ ack/nack traffic stops. Zero
+	// disables the sleep; negative values are clamped to zero at the call
+	// site.
+	drainDelay time.Duration
 }
 
 // NewMultiQueueConsumer creates a new instance of MultiQueueConsumer for single-tenant mode.
-func NewMultiQueueConsumer(routes *rabbitmq.ConsumerRoutes, useCase *services.UseCase, queueName string, logger libLog.Logger, mongoManager *tmmongo.Manager) *MultiQueueConsumer {
+func NewMultiQueueConsumer(routes *rabbitmq.ConsumerRoutes, useCase *services.UseCase, queueName string, logger libLog.Logger, mongoManager *tmmongo.Manager, drainDelay time.Duration) *MultiQueueConsumer {
+	if drainDelay < 0 {
+		drainDelay = 0
+	}
+
 	consumer := &MultiQueueConsumer{
 		consumerRoutes: routes,
 		mtConsumer:     nil, // Single-tenant mode
@@ -60,6 +72,7 @@ func NewMultiQueueConsumer(routes *rabbitmq.ConsumerRoutes, useCase *services.Us
 		logger:         logger,
 		queueName:      queueName,
 		mongoManager:   mongoManager,
+		drainDelay:     drainDelay,
 	}
 
 	// Registry handlers for each queue
@@ -79,7 +92,12 @@ func NewMultiQueueConsumerMultiTenant(
 	queueName string,
 	logger libLog.Logger,
 	mongoManager *tmmongo.Manager,
+	drainDelay time.Duration,
 ) *MultiQueueConsumer {
+	if drainDelay < 0 {
+		drainDelay = 0
+	}
+
 	consumer := &MultiQueueConsumer{
 		consumerRoutes: nil, // Multi-tenant mode uses mtConsumer
 		mtConsumer:     mtConsumer,
@@ -87,6 +105,7 @@ func NewMultiQueueConsumerMultiTenant(
 		logger:         logger,
 		queueName:      queueName,
 		mongoManager:   mongoManager,
+		drainDelay:     drainDelay,
 	}
 
 	// Register handler with MultiTenantConsumer
@@ -143,8 +162,28 @@ func (mq *MultiQueueConsumer) Run(l *commons.Launcher) error {
 	go func() {
 		<-sigs
 
+		// Gate 7 of ring:dev-readyz — graceful drain sequence:
+		// SetDraining(true) → sleep grace period → cancel consumer context.
+		// The grace window lets Kubernetes observe /readyz=503 and remove
+		// the pod from the Service endpoints before RabbitMQ ack/nack
+		// traffic stops. Reversing this order drops in-flight messages.
+		readyz.SetDraining(true)
+
 		if mq.logger != nil {
-			mq.logger.Log(baseCtx, libLog.LevelInfo, "received shutdown signal, starting graceful shutdown")
+			mq.logger.Log(baseCtx, libLog.LevelInfo,
+				"received shutdown signal; readyz draining flag set, sleeping drain grace period")
+		}
+
+		if mq.drainDelay > 0 {
+			select {
+			case <-time.After(mq.drainDelay):
+			case <-baseCtx.Done():
+			}
+		}
+
+		if mq.logger != nil {
+			mq.logger.Log(baseCtx, libLog.LevelInfo,
+				"drain grace period elapsed; cancelling consumer context")
 		}
 
 		cancel()

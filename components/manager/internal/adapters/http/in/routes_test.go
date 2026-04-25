@@ -32,6 +32,10 @@ func TestNewRoutes_Constants(t *testing.T) {
 // a fiber.Handler parameter for tenant middleware. This is a compile-time check --
 // if NewRoutes does not accept the parameter, this file will not compile.
 // We use a type alias to verify the signature without triggering the telemetry race.
+//
+// The signature was extended in Gate 2 of ring:dev-readyz to additionally accept
+// readyzHandler, readyzTenantHandler and metricsHandler fiber.Handler parameters
+// — the compile-time check below asserts that exact, current signature.
 func TestNewRoutes_SignatureAcceptsTenantMiddleware(t *testing.T) {
 	// Verify NewRoutes function signature includes tenantMiddleware parameter.
 	// This is a compile-time assertion: if NewRoutes does not accept fiber.Handler
@@ -45,6 +49,9 @@ func TestNewRoutes_SignatureAcceptsTenantMiddleware(t *testing.T) {
 		migrationHandler *MigrationHandler,
 		fetcherHandler *FetcherHandler,
 		tenantMiddleware fiber.Handler,
+		readyzHandler fiber.Handler,
+		readyzTenantHandler fiber.Handler,
+		metricsHandler fiber.Handler,
 	) *fiber.App
 
 	var _ expectedSignature = NewRoutes

@@ -7,11 +7,21 @@ import (
 	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
 )
 
-var runLauncher = func(logger libLog.Logger, consumer *MultiQueueConsumer) {
-	commons.NewLauncher(
+// runLauncher starts the RabbitMQ consumer and (optionally) the /readyz
+// health-port micro-server under a single commons.Launcher so that a single
+// SIGTERM tears both down. healthServer is nil in environments where the
+// health server was deliberately not constructed (e.g. narrow unit tests).
+var runLauncher = func(logger libLog.Logger, consumer *MultiQueueConsumer, healthServer *HealthServer) {
+	opts := []commons.LauncherOption{
 		commons.WithLogger(logger),
 		commons.RunApp("RabbitMQ Consumer", consumer),
-	).Run()
+	}
+
+	if healthServer != nil {
+		opts = append(opts, commons.RunApp("Health Server", healthServer))
+	}
+
+	commons.NewLauncher(opts...).Run()
 }
 
 type licenseTerminator interface {
@@ -26,12 +36,19 @@ type Service struct {
 	licenseShutdown licenseTerminator
 	// mtCleanup is the cleanup function for multi-tenant resources (Redis, etc.)
 	mtCleanup func()
+	// healthServer exposes /health, /readyz and /metrics on HEALTH_PORT
+	// (Gate 2 of ring:dev-readyz). nil-safe — runLauncher skips if absent.
+	healthServer *HealthServer
+	// readyzCloser releases resources owned exclusively by the readyz
+	// wiring (e.g. a dedicated multi-tenant Redis client used only for
+	// probing). Invoked during graceful shutdown. Nil-safe.
+	readyzCloser func()
 }
 
 // Run starts the application.
 // This is the only necessary code to run an app in main.go
 func (app *Service) Run() {
-	runLauncher(app.Logger, app.MultiQueueConsumer)
+	runLauncher(app.Logger, app.MultiQueueConsumer, app.healthServer)
 
 	// Graceful shutdown
 	app.Log(context.Background(), libLog.LevelInfo, "Starting graceful shutdown...")
@@ -43,6 +60,11 @@ func (app *Service) Run() {
 		app.Log(context.Background(), libLog.LevelInfo, "Closing multi-tenant resources (Redis)...")
 		app.mtCleanup()
 		app.Log(context.Background(), libLog.LevelInfo, "Multi-tenant resources closed")
+	}
+
+	// Close readyz-owned resources (e.g. dedicated MT-Redis probe client).
+	if app.readyzCloser != nil {
+		app.readyzCloser()
 	}
 
 	// After all consumers are done, shutdown license

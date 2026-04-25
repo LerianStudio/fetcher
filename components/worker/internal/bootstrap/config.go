@@ -13,6 +13,7 @@ import (
 
 	"github.com/LerianStudio/fetcher/components/worker/internal/adapters/rabbitmq"
 	"github.com/LerianStudio/fetcher/components/worker/internal/services"
+	"github.com/LerianStudio/fetcher/pkg/bootstrap/readyz"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/datasource"
@@ -116,6 +117,12 @@ type Config struct {
 	MultiTenantCacheTTLSec              int    `env:"MULTI_TENANT_CACHE_TTL_SEC" default:"120"`
 	MultiTenantTimeout                  int    `env:"MULTI_TENANT_TIMEOUT" default:"30"`
 	MultiTenantAllowInsecureHTTP        bool   `env:"MULTI_TENANT_ALLOW_INSECURE_HTTP" default:"false"`
+	// /readyz configuration (Gate 2 of ring:dev-readyz). The worker has no
+	// primary HTTP server, so a dedicated health-port micro-server exposes
+	// /health, /readyz and /metrics on HEALTH_PORT (default 4007).
+	DeploymentMode      string `env:"DEPLOYMENT_MODE" default:"local"`
+	HealthPort          int    `env:"HEALTH_PORT" default:"4007"`
+	ReadyzDrainDelaySec int    `env:"READYZ_DRAIN_DELAY_SEC" default:"12"`
 }
 
 var (
@@ -128,6 +135,11 @@ var (
 	}
 	decodeMasterKey = crypto.DecodeMasterKey
 	newKeyDeriver   = crypto.NewHKDFKeyDeriver
+	// validateSaaSTLSFn is package-level so tests can override it. In
+	// production it points to readyz.ValidateSaaSTLS. Gate 4 of
+	// ring:dev-readyz: runs BEFORE any platform connection (including the
+	// S3 storage repository) opens.
+	validateSaaSTLSFn = readyz.ValidateSaaSTLS
 )
 
 // InitWorker initializes and configures the application's dependencies and returns the Service instance.
@@ -150,6 +162,14 @@ func InitWorker() (*Service, error) {
 	}
 
 	logger.Log(ctx, libLog.LevelInfo, "Key derivation initialized successfully")
+
+	// Gate 4 of ring:dev-readyz — centralized SaaS TLS enforcement.
+	// MUST run BEFORE any platform connection opens (S3, MongoDB,
+	// RabbitMQ, Redis). Returns immediately when DEPLOYMENT_MODE != "saas".
+	// Worker owns the S3 object-storage dependency, so hasS3=true.
+	if err := validateSaaSTLSFn(buildSaaSTLSConfig(cfg, true)); err != nil {
+		return nil, fmt.Errorf("tls enforcement failed: %w", err)
+	}
 
 	storageRepository, err := initStorageRepository(ctx, cfg)
 	if err != nil {
@@ -256,35 +276,57 @@ func InitWorker() (*Service, error) {
 
 		service.RabbitMQPublisher = publisherRoutes
 
-		multiQueueConsumer := NewMultiQueueConsumerMultiTenant(mtConsumer, service, cfg.RabbitMQGenerateReportQueue, logger, mongoManager)
+		multiQueueConsumer := NewMultiQueueConsumerMultiTenant(mtConsumer, service, cfg.RabbitMQGenerateReportQueue, logger, mongoManager, defaultDrain(cfg.ReadyzDrainDelaySec))
 
 		// Discover existing tenants on startup so consumers start immediately.
 		// Called AFTER handler registration so EnsureConsumerStarted can spawn
 		// consumer goroutines for all registered queues.
 		performInitialTenantSync(ctx, logger, tmClient, mtConsumer)
 
+		readyzDeps := newWorkerReadyzDepsMT(cfg, mongoConnection, storageRepository, tmClient, mongoManager, rabbitMQManager)
+
+		// Gate 7 of ring:dev-readyz — run the startup self-probe AFTER every
+		// dep is constructed and BEFORE the consumer + health server start.
+		// A failing probe is logged but does not abort boot; /health stays
+		// 503 until the flag flips.
+		runWorkerSelfProbe(ctx, logger, buildWorkerReadyzCheckers(readyzDeps))
+
 		return &Service{
 			MultiQueueConsumer: multiQueueConsumer,
 			Logger:             logger,
 			licenseShutdown:    licenseClient.GetLicenseManagerShutdown(),
 			mtCleanup:          mtCleanup,
+			healthServer:       NewHealthServer(cfg, logger, telemetry, readyzDeps),
+			readyzCloser:       readyzDeps.close,
 		}, nil
 	}
 
-	multiQueueConsumer, err := initSingleTenantRabbitMQ(cfg, logger, telemetry, keyDeriver, cryptoWithExternalHMAC, service, mongoManager)
+	multiQueueConsumer, consumerRoutes, err := initSingleTenantRabbitMQ(cfg, logger, telemetry, keyDeriver, cryptoWithExternalHMAC, service, mongoManager)
 	if err != nil {
 		return nil, err
 	}
+
+	readyzDeps := newWorkerReadyzDepsST(cfg, mongoConnection, storageRepository, consumerRoutes)
+
+	// Gate 7 of ring:dev-readyz — single-tenant path.
+	runWorkerSelfProbe(ctx, logger, buildWorkerReadyzCheckers(readyzDeps))
 
 	return &Service{
 		MultiQueueConsumer: multiQueueConsumer,
 		Logger:             logger,
 		licenseShutdown:    licenseClient.GetLicenseManagerShutdown(),
+		healthServer:       NewHealthServer(cfg, logger, telemetry, readyzDeps),
+		readyzCloser:       readyzDeps.close,
 	}, nil
 }
 
 // initSingleTenantRabbitMQ initializes RabbitMQ consumer and publisher for single-tenant mode.
 // Consumer and Publisher use SEPARATE connections to avoid channel interference.
+//
+// The second return value is the underlying *rabbitmq.ConsumerRoutes whose
+// adapter is surfaced in /readyz (Gate 6 of ring:dev-readyz) so the
+// readiness probe can inspect the circuit-breaker state. It is nil on the
+// error path.
 func initSingleTenantRabbitMQ(
 	cfg *Config,
 	logger libLog.Logger,
@@ -293,7 +335,7 @@ func initSingleTenantRabbitMQ(
 	cryptoWithExternalHMAC *crypto.HMACSigner,
 	service *services.UseCase,
 	mongoManager *tmmongo.Manager,
-) (*MultiQueueConsumer, error) {
+) (*MultiQueueConsumer, *rabbitmq.ConsumerRoutes, error) {
 	// URL-encode credentials to handle special characters (@ : / etc.)
 	escapedUserRMQ := url.PathEscape(cfg.RabbitMQUser)
 	escapedPassRMQ := url.QueryEscape(cfg.RabbitMQPass)
@@ -325,20 +367,20 @@ func initSingleTenantRabbitMQ(
 	// Init message signer for RabbitMQ with derived internal HMAC key
 	cryptoWithInternalHMAC, errSigner := crypto.NewHMACSigner(keyDeriver.GetInternalHMACKey(), crypto.SignatureVersion)
 	if errSigner != nil {
-		return nil, fmt.Errorf("initialize internal message signer: %w", errSigner)
+		return nil, nil, fmt.Errorf("initialize internal message signer: %w", errSigner)
 	}
 
 	// Initialize RabbitMQ consumer and publisher with separate connections
 	consumerRoutes, errRoutes := rabbitmq.NewConsumerRoutes(consumerConnection, cfg.RabbitMQNumWorkers, logger, telemetry, cryptoWithInternalHMAC, cfg.EnvName)
 	if errRoutes != nil {
-		return nil, fmt.Errorf("initialize consumer routes: %w", errRoutes)
+		return nil, nil, fmt.Errorf("initialize consumer routes: %w", errRoutes)
 	}
 
 	publisherRoutes := rabbitmq.NewPublisherRoutes(publisherConnection, logger, telemetry, cryptoWithExternalHMAC)
 
 	service.RabbitMQPublisher = publisherRoutes
 
-	return NewMultiQueueConsumer(consumerRoutes, service, cfg.RabbitMQGenerateReportQueue, logger, mongoManager), nil
+	return NewMultiQueueConsumer(consumerRoutes, service, cfg.RabbitMQGenerateReportQueue, logger, mongoManager, defaultDrain(cfg.ReadyzDrainDelaySec)), consumerRoutes, nil
 }
 
 // initObservability initializes the logger and telemetry pipeline.
@@ -826,4 +868,90 @@ func wrapBootstrapError(action string, err error) error {
 	}
 
 	return nil
+}
+
+// buildSaaSTLSConfig assembles the SaaSTLSConfig passed to
+// readyz.ValidateSaaSTLS at bootstrap (Gate 4 of ring:dev-readyz).
+//
+// It mirrors the URL composition rules used by the real initMongoConnection,
+// initSingleTenantRabbitMQ and initStorageRepository call sites so the
+// validator checks exactly the strings that will later be opened.
+//
+// hasS3 is a caller-supplied flag: the worker passes true (S3 is the
+// object-storage dependency). Keeping this as an argument documents the
+// two-service symmetry with manager/.
+func buildSaaSTLSConfig(cfg *Config, hasS3 bool) readyz.SaaSTLSConfig {
+	return readyz.SaaSTLSConfig{
+		DeploymentMode:      cfg.DeploymentMode,
+		MongoURI:            buildWorkerMongoURI(cfg),
+		RedisURL:            "", // Worker has no direct Redis dep (only multi-tenant Redis).
+		MultiTenantRedisURL: readyz.ComposeRedisURL(cfg.MultiTenantRedisHost, cfg.MultiTenantRedisPort, cfg.MultiTenantRedisTLS),
+		RabbitMQURL:         buildWorkerRabbitMQURL(cfg),
+		S3Endpoint:          cfg.ObjectStorageEndpoint,
+		TenantManagerURL:    cfg.MultiTenantURL,
+		MultiTenantEnabled:  cfg.MultiTenantEnabled,
+		HasS3:               hasS3,
+		AllowInsecureHTTPTM: cfg.MultiTenantAllowInsecureHTTP,
+	}
+}
+
+// buildWorkerMongoURI composes the Mongo URI exactly the way
+// initMongoConnection does at startup, so Gate 4 validates the string that
+// will actually be dialed. Returns "" when the MongoURI scheme is unset
+// (dep-not-configured contract).
+func buildWorkerMongoURI(cfg *Config) string {
+	if cfg.MongoURI == "" {
+		return ""
+	}
+
+	escapedPass := url.QueryEscape(cfg.MongoDBPassword)
+
+	source := fmt.Sprintf("%s://%s:%s@%s:%s",
+		cfg.MongoURI, cfg.MongoDBUser, escapedPass, cfg.MongoDBHost, cfg.MongoDBPort)
+
+	if cfg.MongoDBParameters != "" {
+		source += "/?" + cfg.MongoDBParameters
+	}
+
+	return source
+}
+
+// workerSelfProbeTimeout bounds the overall duration of the worker startup
+// self-probe. Same rationale as the manager: large enough to cover the
+// worst-case per-dep timeout with a small fan-out factor, small enough that
+// a totally-unreachable dep cloud cannot delay boot indefinitely.
+const workerSelfProbeTimeout = 15 * time.Second
+
+// runWorkerSelfProbe runs readyz.RunSelfProbe with the worker's logger and
+// a bounded context. Mirrors runManagerSelfProbe — a failing probe is logged
+// but does NOT return an error. The zero-panic policy requires the pod
+// stays up so /health can serve 503 and Kubernetes can restart the pod on
+// its own schedule.
+var runWorkerSelfProbe = func(ctx context.Context, logger libLog.Logger, checkers []readyz.DependencyChecker) {
+	probeCtx, cancel := context.WithTimeout(ctx, workerSelfProbeTimeout)
+	defer cancel()
+
+	if err := readyz.RunSelfProbe(probeCtx, checkers, logger); err != nil {
+		if logger != nil {
+			logger.Log(ctx, libLog.LevelError,
+				"startup self-probe reported unhealthy deps; /health will return 503 until a successful probe",
+				libLog.Err(err),
+			)
+		}
+	}
+}
+
+// buildWorkerRabbitMQURL composes the RabbitMQ URL exactly the way
+// initSingleTenantRabbitMQ does at startup. Returns "" when RabbitURI is
+// unset.
+func buildWorkerRabbitMQURL(cfg *Config) string {
+	if cfg.RabbitURI == "" {
+		return ""
+	}
+
+	escapedUser := url.PathEscape(cfg.RabbitMQUser)
+	escapedPass := url.QueryEscape(cfg.RabbitMQPass)
+
+	return fmt.Sprintf("%s://%s:%s@%s:%s",
+		cfg.RabbitURI, escapedUser, escapedPass, cfg.RabbitMQHost, cfg.RabbitMQPortAMQP)
 }

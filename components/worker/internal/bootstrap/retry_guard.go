@@ -114,19 +114,19 @@ func isNonRetryableDomainError(err error) bool {
 // permanent error message from the extraction pipeline.
 func isPermanentErrorByPattern(errMsg string) bool {
 	permanentPatterns := []string{
-		"key not configured",              // crypto/storage config missing
-		"client is not configured",        // storage client not injected
-		"payload is null",                 // nil message body
-		"has no tables",                   // empty mappedFields entry
-		"does not support crm queries",    // type assertion failure for CRM datasource
-		"connection not found for database", // datasource not in connections list
-		"no collections found matching prefix", // CRM collection prefix has no matches
-		"unsupported database type",       // unknown datasource type in config
-		"unexpected schema result type",   // circuit breaker returned wrong type
-		"unexpected query result type",    // circuit breaker returned wrong type
+		"key not configured",                     // crypto/storage config missing
+		"client is not configured",               // storage client not injected
+		"payload is null",                        // nil message body
+		"has no tables",                          // empty mappedFields entry
+		"does not support crm queries",           // type assertion failure for CRM datasource
+		"connection not found for database",      // datasource not in connections list
+		"no collections found matching prefix",   // CRM collection prefix has no matches
+		"unsupported database type",              // unknown datasource type in config
+		"unexpected schema result type",          // circuit breaker returned wrong type
+		"unexpected query result type",           // circuit breaker returned wrong type
 		"is unavailable (initialization failed)", // datasource permanently failed init
-		"failed to initialize cipher",     // crypto key invalid
-		"no job data found",               // job not in database
+		"failed to initialize cipher",            // crypto key invalid
+		"no job data found",                      // job not in database
 	}
 
 	lower := strings.ToLower(errMsg)
