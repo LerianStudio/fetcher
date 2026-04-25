@@ -1,0 +1,115 @@
+{
+  "cycle": "readyz-implementation",
+  "language": "go",
+  "service_type": "dual (api + worker)",
+  "services": {
+    "manager": {
+      "type": "api",
+      "framework": "fiber v2",
+      "port_env": "SERVER_PORT",
+      "port_default": 4006,
+      "has_http_server": true
+    },
+    "worker": {
+      "type": "worker",
+      "framework": "rabbitmq consumer",
+      "has_http_server": true,
+      "needs_dedicated_health_port": true,
+      "port_env_to_introduce": "HEALTH_PORT",
+      "port_default": 4007
+    }
+  },
+  "deployment_mode": "configurable_via_DEPLOYMENT_MODE_env",
+  "dependencies_detected": {
+    "postgres": false,
+    "mongodb": true,
+    "redis": true,
+    "rabbitmq": true,
+    "s3": true,
+    "http_upstream": true,
+    "tenant_manager_client": true
+  },
+  "dependencies_covered": 5,
+  "existing_readyz": false,
+  "existing_health": {
+    "manager": "commonsHttp.Ping (replaced with HealthHandler gated by selfProbeOK)",
+    "worker": "added on dedicated health port"
+  },
+  "multi_tenant": {
+    "enabled_flag": "MULTI_TENANT_ENABLED",
+    "tenant_scoped_deps": ["mongodb", "rabbitmq"],
+    "global_deps_in_mt_mode": ["redis", "s3", "tenant_manager_http"],
+    "carve_out_endpoint": "/readyz/tenant/:id",
+    "tenant_endpoint_auth": "none (Bruno approved — possession proof via URL)"
+  },
+  "circuit_breakers": [
+    {
+      "dep": "tenant_manager_http",
+      "library": "lib-commons/v4/commons/tenant-manager/client (tmclient.WithCircuitBreaker)",
+      "config_envs": ["MULTI_TENANT_CIRCUIT_BREAKER_THRESHOLD", "MULTI_TENANT_CIRCUIT_BREAKER_TIMEOUT_SEC"],
+      "state_query": "opaque (probe-and-catch via errors.Is(err, tmcore.ErrCircuitBreakerOpen))"
+    },
+    {
+      "dep": "rabbitmq_single_tenant",
+      "library": "fetcher pkg/rabbitmq.RabbitMQAdapter",
+      "state_query": "direct via CircuitBreakerState() CircuitState"
+    }
+  ],
+  "compliance_audit": "not_applicable_greenfield",
+  "anti_patterns_detected": {
+    "N1_caching": false,
+    "N2_ready_alias": false,
+    "N3_health_split": false,
+    "N4_substring_tls": false,
+    "N5_reflection_tls": false,
+    "N6_inline_saas_tls": false,
+    "N7_next_process_exit": false
+  },
+  "gates": {
+    "0": "PASS",
+    "1": "PASS",
+    "1.5": "PASS",
+    "2": "PASS",
+    "3": "PASS",
+    "4": "PASS",
+    "5": "PASS",
+    "6": "PASS",
+    "7": "PASS",
+    "8": "PASS",
+    "9": "PASS-WITH-NITS (9/10 PASS, 1 BLOCK on cross-repo coordination)",
+    "10": "PASS (user validated)",
+    "11": "PASS (docs/readyz-guide.md generated)"
+  },
+  "current_gate": "complete",
+  "metrics": {
+    "gates_passed": 13,
+    "gates_failed": 0,
+    "dependencies_detected": 5,
+    "dependencies_covered": 5,
+    "metrics_emitted": true,
+    "saas_tls_enforced": true,
+    "graceful_drain_wired": true,
+    "response_caching_removed": true,
+    "anti_patterns_removed": 0,
+    "package_coverage_pct": 96.9,
+    "reviewers_passed": 9,
+    "reviewers_blocked": 1,
+    "post_review_fixes_applied": ["M-A", "M-B", "M-G"]
+  },
+  "follow_up_prs": [
+    "Dead code cleanup (ensureCloseAMQP chain, multiTenantRedisURLFromCfg, TenantHandler alias, panickingChecker)",
+    "sanitize() extension for bearer/JWT/AWS keys",
+    "Probe-only Redis PoolSize=2",
+    "Worker CPU limit 200m → 500m",
+    "WARN log on MULTI_TENANT_ALLOW_INSECURE_HTTP=true in SaaS",
+    "runtime.SafeGo wrapping for /readyz fanout goroutines",
+    "LoadConfig refactor to commons.SetConfigFromEnvVars",
+    "lib-commons v4 → v5 migration"
+  ],
+  "cross_repo_coordination_required": [
+    {"repo": "repos/helm", "files": ["charts/fetcher/templates/manager/deployment.yaml", "charts/fetcher/templates/worker/deployment.yaml", "charts/fetcher/values.yaml"], "actions": ["Split liveness/readiness probes", "Add worker ports/probes/Service", "Set terminationGracePeriodSeconds: 45", "Expose new env vars in configmap"]},
+    {"repo": "repos/midaz-firmino-gitops", "files": ["environments/firmino/{prd,stg}/fetcher/values.yaml"], "actions": ["Set DEPLOYMENT_MODE: \"saas\""]},
+    {"repo": "repos/lerian-aws-gitops", "files": ["environments/staging/staging-fetcher-mt/values.yaml"], "actions": ["Set DEPLOYMENT_MODE: \"saas\""]},
+    {"repo": "repos/fetcher", "files": ["components/worker/docker-compose.yml"], "actions": ["Publish HEALTH_PORT=4007 + healthcheck"]}
+  ]
+}

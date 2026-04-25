@@ -1,0 +1,1273 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Preview de Implementação do /readyz do Fetcher — Gate 1.5</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.0/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #0d1117;
+    --bg-elev: #161b22;
+    --bg-code: #0a0f17;
+    --fg: #c9d1d9;
+    --fg-muted: #8b949e;
+    --fg-strong: #f0f6fc;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --green-bg: rgba(63, 185, 80, 0.15);
+    --blue: #58a6ff;
+    --blue-bg: rgba(88, 166, 255, 0.15);
+    --amber: #d29922;
+    --amber-bg: rgba(210, 153, 34, 0.15);
+    --red: #f85149;
+    --red-bg: rgba(248, 81, 73, 0.15);
+    --purple: #a371f7;
+    --purple-bg: rgba(163, 113, 247, 0.15);
+    --border: #30363d;
+    --border-soft: #21262d;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    line-height: 1.6;
+    font-size: 15px;
+  }
+
+  code, pre, .mono {
+    font-family: "SF Mono", Menlo, Monaco, "Cascadia Mono", "Roboto Mono", Consolas, monospace;
+    font-size: 13px;
+  }
+
+  nav.topnav {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: rgba(13, 17, 23, 0.95);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--border);
+    padding: 12px 24px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    align-items: center;
+  }
+  nav.topnav .brand {
+    font-weight: 700;
+    color: var(--fg-strong);
+    margin-right: 20px;
+    font-size: 14px;
+    letter-spacing: 0.02em;
+  }
+  nav.topnav .brand .tag {
+    color: var(--accent);
+    font-weight: 500;
+  }
+  nav.topnav a {
+    color: var(--fg-muted);
+    text-decoration: none;
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 13px;
+    transition: all 0.15s;
+  }
+  nav.topnav a:hover {
+    background: var(--bg-elev);
+    color: var(--fg-strong);
+  }
+
+  main {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 40px 32px 80px;
+  }
+
+  h1 {
+    font-size: 34px;
+    color: var(--fg-strong);
+    margin: 0 0 6px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+  h1 .sub {
+    display: block;
+    font-size: 16px;
+    color: var(--fg-muted);
+    font-weight: 400;
+    margin-top: 6px;
+  }
+  h2 {
+    font-size: 24px;
+    color: var(--fg-strong);
+    margin: 56px 0 16px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+    letter-spacing: -0.01em;
+  }
+  h2 .anchor {
+    color: var(--fg-muted);
+    font-size: 14px;
+    font-weight: 400;
+    margin-left: 8px;
+  }
+  h3 {
+    font-size: 17px;
+    color: var(--fg-strong);
+    margin: 28px 0 10px;
+  }
+  h4 {
+    font-size: 14px;
+    color: var(--accent);
+    margin: 20px 0 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 600;
+  }
+
+  p { margin: 10px 0; }
+
+  .hero {
+    background: linear-gradient(135deg, rgba(88,166,255,0.08) 0%, rgba(163,113,247,0.05) 100%);
+    border: 1px solid var(--border);
+    padding: 28px 32px;
+    border-radius: 10px;
+    margin: 20px 0 40px;
+  }
+  .hero-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 16px;
+  }
+  .hero-meta .pill {
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    padding: 4px 12px;
+    border-radius: 16px;
+    font-size: 12px;
+    color: var(--fg-muted);
+  }
+  .hero-meta .pill strong { color: var(--fg-strong); }
+
+  .toc {
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px 24px;
+    margin: 20px 0 36px;
+  }
+  .toc ol {
+    margin: 0;
+    padding-left: 20px;
+    columns: 2;
+    column-gap: 36px;
+  }
+  .toc li { margin: 4px 0; }
+  .toc a {
+    color: var(--fg);
+    text-decoration: none;
+  }
+  .toc a:hover { color: var(--accent); }
+
+  .badge {
+    display: inline-block;
+    padding: 2px 9px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    font-family: inherit;
+  }
+  .badge-new    { background: var(--green-bg); color: var(--green); border: 1px solid var(--green); }
+  .badge-modify { background: var(--blue-bg);  color: var(--blue);  border: 1px solid var(--blue); }
+  .badge-warn   { background: var(--amber-bg); color: var(--amber); border: 1px solid var(--amber); }
+  .badge-block  { background: var(--red-bg);   color: var(--red);   border: 1px solid var(--red); }
+  .badge-ok     { background: var(--green-bg); color: var(--green); border: 1px solid var(--green); }
+  .badge-na     { background: rgba(139,148,158,0.15); color: var(--fg-muted); border: 1px solid var(--border); }
+  .badge-purple { background: var(--purple-bg); color: var(--purple); border: 1px solid var(--purple); }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 14px 0 20px;
+    font-size: 13px;
+  }
+  th, td {
+    text-align: left;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border-soft);
+    vertical-align: top;
+  }
+  th {
+    background: var(--bg-elev);
+    color: var(--fg-strong);
+    font-weight: 600;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    border-bottom: 1px solid var(--border);
+  }
+  td code {
+    background: var(--bg-code);
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: var(--accent);
+    border: 1px solid var(--border-soft);
+  }
+  tr:hover td { background: rgba(88,166,255,0.03); }
+
+  pre.code-block {
+    background: var(--bg-code);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 18px;
+    overflow-x: auto;
+    margin: 12px 0;
+    line-height: 1.55;
+  }
+  pre.code-block code { color: var(--fg); }
+  .k   { color: #ff7b72; }
+  .s   { color: #a5d6ff; }
+  .n   { color: #d2a8ff; }
+  .c   { color: #8b949e; font-style: italic; }
+  .f   { color: #d2a8ff; }
+  .t   { color: #ffa657; }
+  .op  { color: #c9d1d9; }
+  .pun { color: #8b949e; }
+
+  .diff-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+    margin: 14px 0;
+  }
+  .diff-panel {
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .diff-panel .diff-head {
+    padding: 10px 14px;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    border-bottom: 1px solid var(--border);
+  }
+  .diff-panel.before .diff-head { background: rgba(248,81,73,0.08); color: var(--red); }
+  .diff-panel.after  .diff-head { background: rgba(63,185,80,0.08); color: var(--green); }
+  .diff-panel pre.code-block {
+    margin: 0;
+    border: none;
+    border-radius: 0;
+    background: var(--bg-code);
+  }
+  .file-label {
+    font-family: "SF Mono", Menlo, monospace;
+    font-size: 12px;
+    color: var(--accent);
+    background: var(--bg-code);
+    padding: 8px 14px;
+    border: 1px solid var(--border);
+    border-bottom: none;
+    border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
+    display: inline-block;
+    margin-top: 16px;
+  }
+  .file-label + .diff-grid { margin-top: 0; border-top-left-radius: 0; }
+  .file-label + .diff-grid .diff-panel:first-child { border-top-left-radius: 0; }
+
+  .mermaid {
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px;
+    margin: 16px 0;
+    text-align: center;
+    overflow-x: auto;
+  }
+
+  .json-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+    margin: 14px 0;
+  }
+
+  .callout {
+    padding: 16px 20px;
+    border-radius: 8px;
+    margin: 16px 0;
+    border-left: 4px solid;
+  }
+  .callout h4 { margin-top: 0; color: inherit; }
+  .callout.info    { background: rgba(88,166,255,0.08); border-left-color: var(--accent); }
+  .callout.warn    { background: var(--amber-bg); border-left-color: var(--amber); }
+  .callout.ok      { background: var(--green-bg); border-left-color: var(--green); }
+  .callout.danger  { background: var(--red-bg);   border-left-color: var(--red); }
+
+  .approval-block {
+    background: linear-gradient(135deg, rgba(63,185,80,0.12) 0%, rgba(88,166,255,0.08) 100%);
+    border: 2px solid var(--green);
+    border-radius: 12px;
+    padding: 32px 36px;
+    margin: 32px 0;
+    text-align: center;
+  }
+  .approval-block h2 {
+    border: none;
+    color: var(--green);
+    font-size: 28px;
+    margin: 0 0 10px;
+  }
+  .approval-block .subtitle {
+    color: var(--fg-muted);
+    font-size: 14px;
+    margin-bottom: 24px;
+  }
+  .approval-checklist {
+    text-align: left;
+    display: inline-block;
+    margin: 16px auto;
+  }
+  .approval-checklist li {
+    margin: 10px 0;
+    list-style: none;
+    padding-left: 32px;
+    position: relative;
+  }
+  .approval-checklist li::before {
+    content: "✅";
+    position: absolute;
+    left: 0;
+    top: 0;
+  }
+  .approval-checklist li strong { color: var(--fg-strong); }
+  .reply-footer {
+    margin-top: 24px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+    color: var(--fg-muted);
+    font-size: 13px;
+  }
+  .reply-footer code { color: var(--green); background: var(--bg-code); padding: 2px 8px; border-radius: 4px; }
+
+  .section-group {
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px 24px;
+    margin: 18px 0;
+  }
+  .section-group h3 {
+    margin-top: 0;
+  }
+
+  .gate-header {
+    background: linear-gradient(90deg, var(--bg-elev), transparent);
+    padding: 6px 12px;
+    border-left: 3px solid var(--accent);
+    margin: 20px 0 6px;
+    font-weight: 600;
+    color: var(--fg-strong);
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .status-up       { color: var(--green); font-weight: 600; }
+  .status-down     { color: var(--red); font-weight: 600; }
+  .status-degraded { color: var(--amber); font-weight: 600; }
+  .status-skipped  { color: var(--fg-muted); font-style: italic; }
+  .status-na       { color: var(--purple); font-weight: 600; }
+
+  ul.tight li, ol.tight li { margin: 4px 0; }
+
+  @media (max-width: 900px) {
+    .diff-grid, .json-grid { grid-template-columns: 1fr; }
+    .toc ol { columns: 1; }
+  }
+
+  @media print {
+    nav.topnav { display: none; }
+    body { background: white; color: black; }
+    .mermaid, table, pre { page-break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+
+<nav class="topnav">
+  <div class="brand">Fetcher <span class="tag">/readyz</span> · Gate 1.5</div>
+  <a href="#sec-current">Estado Atual</a>
+  <a href="#sec-target">Estado Alvo</a>
+  <a href="#sec-changes">Mapa de Mudanças</a>
+  <a href="#sec-diffs">Diffs</a>
+  <a href="#sec-contract">Contrato</a>
+  <a href="#sec-scope">Cerca de Escopo</a>
+  <a href="#sec-risk">Riscos</a>
+  <a href="#sec-deps">Deps</a>
+  <a href="#sec-approval">Aprovação</a>
+</nav>
+
+<main>
+
+<header>
+  <h1>Preview de Implementação do <code style="font-size:inherit;color:var(--accent);background:transparent;">/readyz</code> do Fetcher
+    <span class="sub">Ciclo Ring <code>dev-readyz</code> &middot; Gate 1.5 &middot; Artefato de aprovação pré-implementação</span>
+  </h1>
+  <div class="hero">
+    <p style="margin:0;color:var(--fg);">
+      Esta página é o <strong>gate visual</strong> entre planejamento e mudanças de código. Ela mostra o estado atual dos
+      probes de prontidão no <code>fetcher</code>, o estado alvo após a implementação, os arquivos exatos e números de linha
+      que serão tocados e o contrato de resposta que os usuários verão. <strong>Nenhum código Go foi escrito ainda</strong> —
+      a aprovação abaixo destrava o Gate 2 (scaffolding).
+    </p>
+    <div class="hero-meta">
+      <span class="pill"><strong>Repo:</strong> LerianStudio/fetcher</span>
+      <span class="pill"><strong>Serviços:</strong> manager (4006) + worker (4007 novo)</span>
+      <span class="pill"><strong>Stack:</strong> Go · Fiber v2 · Mongo · RabbitMQ · Redis · S3</span>
+      <span class="pill"><strong>Modos:</strong> single-tenant / multi-tenant / saas / byoc / local</span>
+      <span class="pill"><strong>Ciclo:</strong> auditoria Gate 0 → <strong>preview Gate 1.5 (VOCÊ ESTÁ AQUI)</strong> → Gates 2–11</span>
+    </div>
+  </div>
+</header>
+
+<div class="toc">
+  <h3 style="margin-top:0;">Conteúdo</h3>
+  <ol>
+    <li><a href="#sec-current">Estado Atual — Antes</a></li>
+    <li><a href="#sec-target">Estado Alvo — Depois</a></li>
+    <li><a href="#sec-changes">Mapa de Mudanças (por arquivo, por gate)</a></li>
+    <li><a href="#sec-diffs">Painéis de Diff por Arquivo</a></li>
+    <li><a href="#sec-contract">Preview do Contrato de Resposta</a></li>
+    <li><a href="#sec-scope">Cerca de Escopo — O Que NÃO Estamos Fazendo</a></li>
+    <li><a href="#sec-risk">Avaliação de Riscos</a></li>
+    <li><a href="#sec-deps">Dependências Adicionadas</a></li>
+    <li><a href="#sec-approval">Bloco de Aprovação</a></li>
+  </ol>
+</div>
+
+<!-- ============================== SECTION 1 ============================== -->
+<section id="sec-current">
+  <h2>1 · Estado Atual <span class="anchor">— antes desta mudança</span></h2>
+
+  <p>
+    Hoje, o <code>fetcher</code> possui um endpoint mínimo de liveness no serviço manager e absolutamente nada no worker.
+    Não existe probe de prontidão conectado ao Kubernetes, nenhuma agregação de dependências, nenhum self-probe, nenhuma validação de postura TLS
+    e nenhum 503 acoplado ao drain. Um restart de qualquer dependência downstream pode deixar qualquer um dos serviços aceitando tráfego que não consegue atender.
+  </p>
+
+  <div class="mermaid">
+flowchart TB
+  classDef svc fill:#161b22,stroke:#30363d,color:#c9d1d9
+  classDef k8s fill:#1f2937,stroke:#58a6ff,color:#c9d1d9
+  classDef gap fill:#2a1a1a,stroke:#f85149,color:#f85149,stroke-dasharray: 5 3
+  classDef dep fill:#0a1f2a,stroke:#3fb950,color:#c9d1d9
+
+  subgraph K8S [Probes do Kubernetes]
+    direction LR
+    ReadinessNone["readinessProbe<br/>(NENHUM HOJE)"]:::gap
+    LivenessMgr["livenessProbe → /health"]:::k8s
+    WorkerNoProbe["worker: sem probes<br/>(apenas restart do Docker)"]:::gap
+  end
+
+  subgraph MANAGER [fetcher-manager :4006]
+    HealthMgr["/health<br/>commonsHttp.Ping → 200 estático"]:::svc
+    VersionMgr["/version"]:::svc
+    NoReadyzMgr["/readyz<br/>(não existe)"]:::gap
+    NoMetricsMgr["/metrics<br/>(não existe)"]:::gap
+    NoSelfProbe["self-probe<br/>(não existe)"]:::gap
+    NoDrain["503 acoplado ao drain<br/>(não existe)"]:::gap
+  end
+
+  subgraph WORKER [fetcher-worker]
+    Consumer["Consumer RabbitMQ"]:::svc
+    NoHealthPort["SEM servidor HTTP<br/>(sem /health /readyz /metrics)"]:::gap
+  end
+
+  subgraph DEPS [Dependências da plataforma — SEM PROBE]
+    Mongo["MongoDB"]:::dep
+    Rabbit["RabbitMQ"]:::dep
+    Redis["Redis (opcional)"]:::dep
+    S3["S3 (apenas worker)"]:::dep
+    TM["Tenant Manager (apenas MT)"]:::dep
+  end
+
+  LivenessMgr --> HealthMgr
+  Consumer -.usa.-> Mongo
+  Consumer -.usa.-> Rabbit
+  Consumer -.usa.-> S3
+  HealthMgr -.ignora.-> Mongo
+  HealthMgr -.ignora.-> Rabbit
+  HealthMgr -.ignora.-> Redis
+  HealthMgr -.ignora.-> TM
+
+  style K8S fill:#0d1117,stroke:#30363d
+  style MANAGER fill:#0d1117,stroke:#30363d
+  style WORKER fill:#0d1117,stroke:#30363d
+  style DEPS fill:#0d1117,stroke:#30363d
+  </div>
+
+  <h3>Auditoria de Compliance do Gate 0 — Padrão Ring S1–S9</h3>
+  <p>A auditoria do Gate 0 rodou contra o padrão readyz do Ring e produziu o seguinte resultado:</p>
+  <table>
+    <thead><tr><th>Padrão</th><th>Título</th><th>Status</th><th>Nota</th></tr></thead>
+    <tbody>
+      <tr><td><code>S1</code></td><td>Endpoint de probe existe</td><td><span class="badge badge-na">NÃO APLICÁVEL</span></td><td>greenfield (implementação do zero) — <code>/readyz</code> não existe no código</td></tr>
+      <tr><td><code>S2</code></td><td>Contrato agregado por dependência</td><td><span class="badge badge-na">NÃO APLICÁVEL</span></td><td>greenfield</td></tr>
+      <tr><td><code>S3</code></td><td>Vocabulário de status (up/down/degraded/skipped/n/a)</td><td><span class="badge badge-na">NÃO APLICÁVEL</span></td><td>greenfield</td></tr>
+      <tr><td><code>S4</code></td><td>Gate de self-probe no /health</td><td><span class="badge badge-na">NÃO APLICÁVEL</span></td><td>greenfield</td></tr>
+      <tr><td><code>S5</code></td><td>Detecção de postura TLS</td><td><span class="badge badge-na">NÃO APLICÁVEL</span></td><td>greenfield</td></tr>
+      <tr><td><code>S6</code></td><td>Enforcement de TLS em SaaS</td><td><span class="badge badge-na">NÃO APLICÁVEL</span></td><td>greenfield</td></tr>
+      <tr><td><code>S7</code></td><td>503 acoplado ao drain</td><td><span class="badge badge-na">NÃO APLICÁVEL</span></td><td>greenfield</td></tr>
+      <tr><td><code>S8</code></td><td>Métricas Prometheus</td><td><span class="badge badge-na">NÃO APLICÁVEL</span></td><td>greenfield</td></tr>
+      <tr><td><code>S9</code></td><td>Carve-out multi-tenant</td><td><span class="badge badge-na">NÃO APLICÁVEL</span></td><td>greenfield</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Detecção de anti-patterns — Ring N1–N7</h3>
+  <table>
+    <thead><tr><th>Anti-pattern</th><th>Assinatura</th><th>Contagem</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr><td><code>N1</code></td><td>Caching de resultados de probe</td><td>0</td><td><span class="badge badge-ok">ZERO ocorrências</span></td></tr>
+      <tr><td><code>N2</code></td><td><code>/ready</code> como alias de <code>/readyz</code></td><td>0</td><td><span class="badge badge-ok">ZERO ocorrências</span></td></tr>
+      <tr><td><code>N3</code></td><td>Separação entre probe e dono da dependência</td><td>0</td><td><span class="badge badge-ok">ZERO ocorrências</span></td></tr>
+      <tr><td><code>N4</code></td><td>Detecção de TLS baseada em substring</td><td>0</td><td><span class="badge badge-ok">ZERO ocorrências</span></td></tr>
+      <tr><td><code>N5</code></td><td>Detecção de TLS baseada em reflection</td><td>0</td><td><span class="badge badge-ok">ZERO ocorrências</span></td></tr>
+      <tr><td><code>N6</code></td><td>Validação TLS SaaS inline por call site</td><td>0</td><td><span class="badge badge-ok">ZERO ocorrências</span></td></tr>
+      <tr><td><code>N7</code></td><td><code>os.Exit</code> / <code>process.exit</code> no caminho do probe</td><td>0</td><td><span class="badge badge-ok">ZERO ocorrências</span></td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout ok">
+    <h4>Início limpo</h4>
+    Todos os sete anti-patterns estão em zero, e todos os nove padrões mapeiam para NÃO APLICÁVEL porque o endpoint ainda não
+    existe. Esta é uma implementação greenfield — não estamos adaptando em torno de comportamento legado.
+  </div>
+</section>
+
+<!-- ============================== SECTION 2 ============================== -->
+<section id="sec-target">
+  <h2>2 · Estado Alvo <span class="anchor">— após esta mudança</span></h2>
+
+  <p>
+    O estado alvo conecta <code>/readyz</code> em ambos os serviços, o vincula a probes reais de dependências com
+    timeouts configuráveis, protege <code>/health</code> com um self-probe único, valida a postura TLS no boot em modo SaaS
+    e acopla SIGTERM a um estado de drain para que o Kubernetes pare de rotear para o pod ~12s antes do shutdown.
+  </p>
+
+  <div class="mermaid">
+flowchart TB
+  classDef boot fill:#1a2332,stroke:#a371f7,color:#c9d1d9
+  classDef k8s fill:#1f2937,stroke:#58a6ff,color:#c9d1d9
+  classDef http fill:#0a2a1a,stroke:#3fb950,color:#c9d1d9
+  classDef dep fill:#0a1f2a,stroke:#3fb950,color:#c9d1d9
+  classDef drain fill:#2a1f0a,stroke:#d29922,color:#d29922
+
+  subgraph BOOT [Caminho de bootstrap]
+    direction TB
+    LC["LoadConfig"]:::boot --> VT["ValidateSaaSTLS()"]:::boot
+    VT --> OC["abrir conexões<br/>Mongo · Rabbit · Redis · S3"]:::boot
+    OC --> SP["RunSelfProbe(ctx)"]:::boot
+    SP --> Flag["selfProbeOK.Store(true)"]:::boot
+    Flag --> Listen["server.Listen()"]:::boot
+  end
+
+  subgraph K8S [Probes do Kubernetes]
+    direction LR
+    Readi["readinessProbe → /readyz<br/>period=5s · failure=2"]:::k8s
+    Live["livenessProbe → /health<br/>period=10s · failure=3"]:::k8s
+  end
+
+  subgraph HANDLERS [Handlers HTTP]
+    direction TB
+    Readyz["/readyz<br/>probes paralelos + agregação"]:::http
+    Health["/health<br/>selfProbeOK.Load()?200:503"]:::http
+    Metrics["/metrics<br/>prom promhttp"]:::http
+    TenantReadyz["/readyz/tenant/:id<br/>apenas MT"]:::http
+  end
+
+  subgraph DEPS [Probers de dependências]
+    direction TB
+    PM["mongo: client.Ping()"]:::dep
+    PR["rabbitmq: CircuitBreakerState()<br/>+ probe de canal"]:::dep
+    PRe["redis: client.Ping()"]:::dep
+    PS["s3: HeadBucket()"]:::dep
+    PT["tenant_mgr: tmclient.GetActiveTenantsByService()<br/>+ errors.Is(ErrCircuitBreakerOpen)"]:::dep
+  end
+
+  subgraph DRAIN [Drain SIGTERM]
+    direction TB
+    Sig["SIGTERM"]:::drain --> Drain["readyz.SetDraining(true)"]:::drain
+    Drain --> Short["/readyz → 503 imediatamente"]:::drain
+    Short --> Grace["sleep READYZ_DRAIN_DELAY_SEC=12s"]:::drain
+    Grace --> Shut["server.Shutdown()"]:::drain
+    Shut --> Close["deps.Close()"]:::drain
+  end
+
+  Readi --> Readyz
+  Live --> Health
+  Readyz --> PM
+  Readyz --> PR
+  Readyz --> PRe
+  Readyz --> PS
+  Readyz --> PT
+  TenantReadyz -.resolve via tmmongo/tmrabbitmq.-> DEPS
+
+  style BOOT fill:#0d1117,stroke:#30363d
+  style K8S fill:#0d1117,stroke:#30363d
+  style HANDLERS fill:#0d1117,stroke:#30363d
+  style DEPS fill:#0d1117,stroke:#30363d
+  style DRAIN fill:#0d1117,stroke:#30363d
+  </div>
+
+  <h3>Vocabulário de status aplicado às dependências do fetcher</h3>
+  <table>
+    <thead><tr><th>Dependência</th><th>Escopo do serviço</th><th>Status possíveis</th><th>Quando cada um se aplica</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>MongoDB</strong></td>
+        <td>manager, worker</td>
+        <td><span class="status-up">up</span> · <span class="status-down">down</span> · <span class="status-na">n/a</span></td>
+        <td>single-tenant: probe global. multi-tenant: <code>n/a</code>, ver endpoint de tenant.</td>
+      </tr>
+      <tr>
+        <td><strong>RabbitMQ</strong></td>
+        <td>manager, worker</td>
+        <td><span class="status-up">up</span> · <span class="status-degraded">degraded</span> · <span class="status-down">down</span> · <span class="status-na">n/a</span></td>
+        <td>single-tenant: o <code>CircuitBreakerState()</code> do adaptador mapeia closed→probe, half-open→degraded, open→down. MT: <code>n/a</code>.</td>
+      </tr>
+      <tr>
+        <td><strong>Redis</strong></td>
+        <td>manager (cache global + descoberta de eventos MT)</td>
+        <td><span class="status-up">up</span> · <span class="status-down">down</span> · <span class="status-skipped">skipped</span></td>
+        <td><code>skipped</code> quando Redis não está configurado; caso contrário, é probeado tanto em ST quanto em MT.</td>
+      </tr>
+      <tr>
+        <td><strong>S3</strong></td>
+        <td><strong>apenas worker</strong></td>
+        <td><span class="status-up">up</span> · <span class="status-down">down</span> · <span class="status-skipped">skipped</span></td>
+        <td>HeadBucket contra <code>OBJECT_STORAGE_BUCKET</code>; ausente no manager.</td>
+      </tr>
+      <tr>
+        <td><strong>Tenant Manager HTTP</strong></td>
+        <td>manager, worker (apenas MT)</td>
+        <td><span class="status-up">up</span> · <span class="status-down">down</span> · <span class="status-skipped">skipped</span></td>
+        <td><code>skipped</code> quando <code>MULTI_TENANT_ENABLED=false</code>. Breaker open → <code>down</code> com <code>breaker_state:"open"</code>.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>Contrato de resposta — formato canônico</h3>
+  <div class="json-grid">
+    <div>
+      <h4>Single-tenant, tudo saudável</h4>
+      <pre class="code-block"><code>{
+  <span class="s">"status"</span>: <span class="s">"healthy"</span>,
+  <span class="s">"checks"</span>: {
+    <span class="s">"mongodb"</span>:  { <span class="s">"status"</span>: <span class="s">"up"</span>, <span class="s">"latency_ms"</span>: <span class="n">3</span>, <span class="s">"tls"</span>: <span class="k">true</span> },
+    <span class="s">"rabbitmq"</span>: { <span class="s">"status"</span>: <span class="s">"up"</span>, <span class="s">"latency_ms"</span>: <span class="n">5</span>, <span class="s">"tls"</span>: <span class="k">true</span>, <span class="s">"breaker_state"</span>: <span class="s">"closed"</span> },
+    <span class="s">"redis"</span>:    { <span class="s">"status"</span>: <span class="s">"up"</span>, <span class="s">"latency_ms"</span>: <span class="n">1</span>, <span class="s">"tls"</span>: <span class="k">true</span> },
+    <span class="s">"tenant_manager"</span>: { <span class="s">"status"</span>: <span class="s">"skipped"</span>, <span class="s">"reason"</span>: <span class="s">"MULTI_TENANT_ENABLED=false"</span> }
+  },
+  <span class="s">"version"</span>: <span class="s">"1.4.2"</span>,
+  <span class="s">"deployment_mode"</span>: <span class="s">"saas"</span>
+}</code></pre>
+    </div>
+    <div>
+      <h4>Modo multi-tenant</h4>
+      <pre class="code-block"><code>{
+  <span class="s">"status"</span>: <span class="s">"healthy"</span>,
+  <span class="s">"checks"</span>: {
+    <span class="s">"mongodb"</span>:  { <span class="s">"status"</span>: <span class="s">"n/a"</span>, <span class="s">"tls"</span>: <span class="k">true</span>,
+                    <span class="s">"reason"</span>: <span class="s">"multi-tenant: see /readyz/tenant/:id"</span> },
+    <span class="s">"rabbitmq"</span>: { <span class="s">"status"</span>: <span class="s">"n/a"</span>, <span class="s">"tls"</span>: <span class="k">true</span>,
+                    <span class="s">"reason"</span>: <span class="s">"multi-tenant: see /readyz/tenant/:id"</span> },
+    <span class="s">"redis"</span>:    { <span class="s">"status"</span>: <span class="s">"up"</span>, <span class="s">"latency_ms"</span>: <span class="n">1</span>, <span class="s">"tls"</span>: <span class="k">true</span> },
+    <span class="s">"tenant_manager"</span>: { <span class="s">"status"</span>: <span class="s">"up"</span>, <span class="s">"latency_ms"</span>: <span class="n">12</span>,
+                          <span class="s">"tls"</span>: <span class="k">true</span>, <span class="s">"breaker_state"</span>: <span class="s">"closed"</span> }
+  },
+  <span class="s">"version"</span>: <span class="s">"1.4.2"</span>,
+  <span class="s">"deployment_mode"</span>: <span class="s">"saas"</span>
+}</code></pre>
+    </div>
+  </div>
+</section>
+
+<!-- ============================== SECTION 3 ============================== -->
+<section id="sec-changes">
+  <h2>3 · Mapa de Mudanças <span class="anchor">— por gate, por arquivo</span></h2>
+
+  <p>
+    Cada arquivo tocado pela implementação, agrupado por gate. <span class="badge badge-new">NOVO</span> = arquivo será
+    criado. <span class="badge badge-modify">MODIFICAR</span> = arquivo existente editado na linha indicada.
+  </p>
+
+  <div class="gate-header">Gate 2 · Scaffolding (pacote compartilhado + wiring de rotas + health server do worker)</div>
+  <table>
+    <thead><tr><th>Ação</th><th>Arquivo</th><th>Propósito</th><th>~LoC</th></tr></thead>
+    <tbody>
+      <tr><td><span class="badge badge-new">NOVO</span></td><td><code>pkg/bootstrap/readyz/types.go</code></td><td>DTOs DependencyStatus, ReadyzResponse</td><td>60</td></tr>
+      <tr><td><span class="badge badge-new">NOVO</span></td><td><code>pkg/bootstrap/readyz/state.go</code></td><td>drainingState atomic.Bool + SetDraining/IsDraining</td><td>30</td></tr>
+      <tr><td><span class="badge badge-new">NOVO</span></td><td><code>pkg/bootstrap/readyz/handler.go</code></td><td>Handler Fiber do /readyz + agregação + verificação de draining</td><td>180</td></tr>
+      <tr><td><span class="badge badge-new">NOVO</span></td><td><code>pkg/bootstrap/readyz/config.go</code></td><td>HEALTH_PORT, DRAIN_DELAY_SEC, DEPLOYMENT_MODE, TLS_REQUIRED</td><td>50</td></tr>
+      <tr><td><span class="badge badge-modify">MODIFICAR</span></td><td><code>components/manager/internal/adapters/http/in/routes.go:53</code></td><td>inserir /readyz + /metrics + /readyz/tenant/:id entre /health e /version</td><td>8</td></tr>
+      <tr><td><span class="badge badge-modify">MODIFICAR</span></td><td><code>components/manager/internal/adapters/http/in/routes.go:25–34</code></td><td>assinatura de NewRoutes recebe <code>readyzDeps *readyz.Dependencies</code></td><td>3</td></tr>
+      <tr><td><span class="badge badge-new">NOVO</span></td><td><code>components/worker/internal/bootstrap/health_server.go</code></td><td>micro-servidor Fiber em HEALTH_PORT=4007; monta /health /readyz /metrics</td><td>80</td></tr>
+      <tr><td><span class="badge badge-modify">MODIFICAR</span></td><td><code>components/worker/internal/bootstrap/service.go:33</code></td><td>lançar o health server como segundo <code>commons.RunApp</code></td><td>5</td></tr>
+    </tbody>
+  </table>
+
+  <div class="gate-header">Gate 3 · Detecção de postura TLS</div>
+  <table>
+    <thead><tr><th>Ação</th><th>Arquivo</th><th>Propósito</th><th>~LoC</th></tr></thead>
+    <tbody>
+      <tr><td><span class="badge badge-new">NOVO</span></td><td><code>pkg/bootstrap/readyz/tls.go</code></td><td>detectMongoTLS / detectAMQPTLS / detectRedisTLS / detectS3TLS / detectHTTPUpstreamTLS (via <code>url.Parse</code>)</td><td>100</td></tr>
+    </tbody>
+  </table>
+
+  <div class="gate-header">Gate 4 · Enforcement de TLS em SaaS (fail-closed no boot)</div>
+  <table>
+    <thead><tr><th>Ação</th><th>Arquivo</th><th>Propósito</th><th>~LoC</th></tr></thead>
+    <tbody>
+      <tr><td><span class="badge badge-new">NOVO</span></td><td><code>pkg/bootstrap/readyz/tls_enforcement.go</code></td><td><code>ValidateSaaSTLS(cfg)</code> centralizado chamado ANTES de qualquer conexão</td><td>70</td></tr>
+      <tr><td><span class="badge badge-modify">MODIFICAR</span></td><td><code>components/manager/internal/bootstrap/config.go:196</code></td><td>chamar <code>ValidateSaaSTLS</code> antes de <code>initMongoRepositoriesFn</code></td><td>3</td></tr>
+      <tr><td><span class="badge badge-modify">MODIFICAR</span></td><td><code>components/worker/internal/bootstrap/config.go:153</code></td><td>chamar <code>ValidateSaaSTLS</code> antes de <code>initStorageRepository</code></td><td>3</td></tr>
+    </tbody>
+  </table>
+
+  <div class="gate-header">Gate 5 · Métricas</div>
+  <table>
+    <thead><tr><th>Ação</th><th>Arquivo</th><th>Propósito</th><th>~LoC</th></tr></thead>
+    <tbody>
+      <tr><td><span class="badge badge-new">NOVO</span></td><td><code>pkg/bootstrap/readyz/metrics.go</code></td><td>registry Prometheus + 3 métricas (<code>readyz_check_duration_ms</code> histogram, <code>readyz_check_status</code> counter, <code>selfprobe_result</code> gauge)</td><td>90</td></tr>
+    </tbody>
+  </table>
+
+  <div class="gate-header">Gate 6 · Probers por dependência + endpoint de tenant</div>
+  <table>
+    <thead><tr><th>Ação</th><th>Arquivo</th><th>Propósito</th><th>~LoC</th></tr></thead>
+    <tbody>
+      <tr><td><span class="badge badge-new">NOVO</span></td><td><code>pkg/bootstrap/readyz/probe.go</code></td><td>probers por dependência (mongo, rabbit, redis, s3, tmclient) + integração com breaker</td><td>200</td></tr>
+      <tr><td><span class="badge badge-new">NOVO</span></td><td><code>pkg/bootstrap/readyz/tenant.go</code></td><td>handler <code>/readyz/tenant/:id</code> (valida via <code>tmclient.GetActiveTenantsByService</code>; Mongo + Rabbit por tenant)</td><td>120</td></tr>
+    </tbody>
+  </table>
+
+  <div class="gate-header">Gate 7 · Self-probe + hooks de drain + gating do /health</div>
+  <table>
+    <thead><tr><th>Ação</th><th>Arquivo</th><th>Propósito</th><th>~LoC</th></tr></thead>
+    <tbody>
+      <tr><td><span class="badge badge-new">NOVO</span></td><td><code>pkg/bootstrap/readyz/selfprobe.go</code></td><td><code>RunSelfProbe</code> + <code>selfProbeOK atomic.Bool</code></td><td>80</td></tr>
+      <tr><td><span class="badge badge-modify">MODIFICAR</span></td><td><code>components/manager/internal/adapters/http/in/routes.go:52</code></td><td>handler de /health protegido por <code>selfProbeOK.Load()</code> (envolve <code>commonsHttp.Ping</code>)</td><td>10</td></tr>
+      <tr><td><span class="badge badge-modify">MODIFICAR</span></td><td><code>components/manager/internal/bootstrap/server.go:53</code></td><td>hook de shutdown em PRIMEIRA posição: <code>readyz.SetDraining(true)</code> + sleep de drain</td><td>8</td></tr>
+      <tr><td><span class="badge badge-modify">MODIFICAR</span></td><td><code>components/manager/internal/bootstrap/config.go:212</code></td><td>rodar <code>readyz.RunSelfProbe(ctx)</code> antes de montar as rotas</td><td>5</td></tr>
+      <tr><td><span class="badge badge-modify">MODIFICAR</span></td><td><code>components/worker/internal/bootstrap/consumer.go:144</code></td><td><code>readyz.SetDraining(true)</code> como PRIMEIRA ação na goroutine de SIGTERM (antes de cancel())</td><td>3</td></tr>
+      <tr><td><span class="badge badge-modify">MODIFICAR</span></td><td><code>components/worker/internal/bootstrap/config.go:278</code></td><td>rodar <code>readyz.RunSelfProbe(ctx)</code> antes de retornar Service</td><td>5</td></tr>
+    </tbody>
+  </table>
+
+  <div class="gate-header">Gate 8 · Testes (unit + e2e + chaos)</div>
+  <table>
+    <thead><tr><th>Ação</th><th>Arquivo</th><th>Propósito</th><th>~LoC</th></tr></thead>
+    <tbody>
+      <tr><td><span class="badge badge-new">NOVO</span></td><td><code>pkg/bootstrap/readyz/*_test.go</code></td><td>testes unitários de handler / tls / state / probe / tenant / selfprobe</td><td>800</td></tr>
+      <tr><td><span class="badge badge-new">NOVO</span></td><td><code>tests/e2e/readyz_test.go</code></td><td>teste e2e de contrato (build tag <code>e2e</code>)</td><td>250</td></tr>
+      <tr><td><span class="badge badge-new">NOVO</span></td><td><code>tests/chaos/readyz_chaos_test.go</code></td><td>testes de caos com toxiproxy (build tag <code>chaos</code>)</td><td>200</td></tr>
+    </tbody>
+  </table>
+
+  <div class="gate-header">Diversos</div>
+  <table>
+    <thead><tr><th>Ação</th><th>Arquivo</th><th>Propósito</th><th>~LoC</th></tr></thead>
+    <tbody>
+      <tr><td><span class="badge badge-modify">MODIFICAR</span></td><td><code>Makefile:241,251</code></td><td>LDflags injetam <code>BuildTime</code> + <code>BuildCommit</code></td><td>2</td></tr>
+      <tr><td><span class="badge badge-modify">MODIFICAR</span></td><td><code>components/manager/.env.example</code>, <code>components/worker/.env.example</code></td><td>adicionar <code>DEPLOYMENT_MODE</code>, <code>HEALTH_PORT</code>, <code>READYZ_DRAIN_DELAY_SEC</code></td><td>6</td></tr>
+      <tr><td><span class="badge badge-modify">MODIFICAR</span></td><td><code>go.mod</code> / <code>go.sum</code></td><td>adicionar <code>github.com/prometheus/client_golang</code></td><td>1</td></tr>
+    </tbody>
+  </table>
+
+  <div class="gate-header">Gate 11 · Documentação</div>
+  <table>
+    <thead><tr><th>Ação</th><th>Arquivo</th><th>Propósito</th><th>~LoC</th></tr></thead>
+    <tbody>
+      <tr><td><span class="badge badge-new">NOVO</span></td><td><code>docs/readyz-guide.md</code></td><td>guia de ativação para operadores</td><td>300</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ============================== SECTION 4 ============================== -->
+<section id="sec-diffs">
+  <h2>4 · Painéis de Diff por Arquivo <span class="anchor">— os seis pontos críticos</span></h2>
+
+  <p>Seis pontos de mudança concentram a maior parte do raio de impacto — mostrando o Antes/Depois exato de cada um. Os demais arquivos NOVOS são apresentados como esqueletos de alto nível.</p>
+
+  <!-- DIFF 1 -->
+  <div class="file-label">components/manager/internal/adapters/http/in/routes.go : 52–55</div>
+  <div class="diff-grid">
+    <div class="diff-panel before">
+      <div class="diff-head">Antes</div>
+<pre class="code-block"><code><span class="c">// Health &amp; Version</span>
+app.<span class="f">Get</span>(<span class="s">"/health"</span>, commonsHttp.<span class="f">Ping</span>)
+app.<span class="f">Get</span>(<span class="s">"/version"</span>, commonsHttp.<span class="f">Version</span>(cfg.OtelServiceVersion))</code></pre>
+    </div>
+    <div class="diff-panel after">
+      <div class="diff-head">Depois</div>
+<pre class="code-block"><code><span class="c">// Health, Readiness, Metrics, Version</span>
+app.<span class="f">Get</span>(<span class="s">"/health"</span>, readyzDeps.<span class="f">HealthHandler</span>(commonsHttp.Ping))
+app.<span class="f">Get</span>(<span class="s">"/readyz"</span>, readyzDeps.<span class="f">Handler</span>())
+app.<span class="f">Get</span>(<span class="s">"/readyz/tenant/:id"</span>, readyzDeps.<span class="f">TenantHandler</span>())
+app.<span class="f">Get</span>(<span class="s">"/metrics"</span>, adaptor.<span class="f">HTTPHandler</span>(promhttp.<span class="f">Handler</span>()))
+app.<span class="f">Get</span>(<span class="s">"/version"</span>, commonsHttp.<span class="f">Version</span>(cfg.OtelServiceVersion))</code></pre>
+    </div>
+  </div>
+
+  <!-- DIFF 2 -->
+  <div class="file-label">components/manager/internal/bootstrap/config.go : 196</div>
+  <div class="diff-grid">
+    <div class="diff-panel before">
+      <div class="diff-head">Antes</div>
+<pre class="code-block"><code><span class="c">// initMongoRepositoriesFn chamada diretamente — conecta antes de qualquer verificação de TLS</span>
+mongoRepos, err := <span class="f">initMongoRepositoriesFn</span>(ctx, cfg, logger)
+<span class="k">if</span> err != <span class="k">nil</span> {
+    <span class="k">return</span> nil, err
+}</code></pre>
+    </div>
+    <div class="diff-panel after">
+      <div class="diff-head">Depois</div>
+<pre class="code-block"><code><span class="c">// ValidateSaaSTLS roda ANTES de qualquer conexão de dependência.</span>
+<span class="c">// Se DEPLOYMENT_MODE=saas, qualquer dep em plaintext aborta o boot.</span>
+<span class="k">if</span> err := readyz.<span class="f">ValidateSaaSTLS</span>(cfg); err != <span class="k">nil</span> {
+    <span class="k">return</span> nil, fmt.<span class="f">Errorf</span>(<span class="s">"saas tls validation failed: %w"</span>, err)
+}
+
+mongoRepos, err := <span class="f">initMongoRepositoriesFn</span>(ctx, cfg, logger)
+<span class="k">if</span> err != <span class="k">nil</span> {
+    <span class="k">return</span> nil, err
+}</code></pre>
+    </div>
+  </div>
+
+  <!-- DIFF 3 -->
+  <div class="file-label">components/worker/internal/bootstrap/consumer.go : 144</div>
+  <div class="diff-grid">
+    <div class="diff-panel before">
+      <div class="diff-head">Antes</div>
+<pre class="code-block"><code><span class="k">go</span> <span class="f">func</span>() {
+    sig := &lt;-sigCh
+    logger.<span class="f">Info</span>(<span class="s">"received signal"</span>, <span class="s">"sig"</span>, sig)
+    <span class="f">cancel</span>()
+}()</code></pre>
+    </div>
+    <div class="diff-panel after">
+      <div class="diff-head">Depois</div>
+<pre class="code-block"><code><span class="k">go</span> <span class="f">func</span>() {
+    sig := &lt;-sigCh
+    <span class="c">// Vira a readiness PRIMEIRO para que o K8s pare de rotear trabalho antes de cancelarmos os consumers.</span>
+    readyz.<span class="f">SetDraining</span>(<span class="k">true</span>)
+    logger.<span class="f">Info</span>(<span class="s">"received signal; draining"</span>, <span class="s">"sig"</span>, sig)
+    time.<span class="f">Sleep</span>(cfg.ReadyzDrainDelay)  <span class="c">// default 12s</span>
+    <span class="f">cancel</span>()
+}()</code></pre>
+    </div>
+  </div>
+
+  <!-- DIFF 4 -->
+  <div class="file-label">components/manager/internal/bootstrap/server.go : 53</div>
+  <div class="diff-grid">
+    <div class="diff-panel before">
+      <div class="diff-head">Antes</div>
+<pre class="code-block"><code>shutdownHooks := []commons.ShutdownHook{
+    licenseTerminator.<span class="f">Stop</span>,
+    fiberApp.<span class="f">Shutdown</span>,
+    deps.<span class="f">Close</span>,
+}</code></pre>
+    </div>
+    <div class="diff-panel after">
+      <div class="diff-head">Depois</div>
+<pre class="code-block"><code>shutdownHooks := []commons.ShutdownHook{
+    <span class="c">// PRIMEIRO: vira a flag de drain + sleep para que os 503s da readiness propaguem para o K8s.</span>
+    <span class="f">func</span>(ctx context.Context) <span class="k">error</span> {
+        readyz.<span class="f">SetDraining</span>(<span class="k">true</span>)
+        <span class="k">select</span> {
+        <span class="k">case</span> &lt;-time.<span class="f">After</span>(cfg.ReadyzDrainDelay):
+        <span class="k">case</span> &lt;-ctx.<span class="f">Done</span>():
+        }
+        <span class="k">return</span> <span class="k">nil</span>
+    },
+    licenseTerminator.<span class="f">Stop</span>,
+    fiberApp.<span class="f">Shutdown</span>,
+    deps.<span class="f">Close</span>,
+}</code></pre>
+    </div>
+  </div>
+
+  <!-- DIFF 5 -->
+  <div class="file-label">pkg/bootstrap/readyz/handler.go (NOVO — esqueleto)</div>
+<pre class="code-block"><code><span class="k">package</span> readyz
+
+<span class="k">import</span> (
+    <span class="s">"context"</span>
+    <span class="s">"net/http"</span>
+    <span class="s">"sync"</span>
+    <span class="s">"time"</span>
+
+    <span class="s">"github.com/gofiber/fiber/v2"</span>
+)
+
+<span class="k">func</span> (d *Dependencies) <span class="f">Handler</span>() fiber.Handler {
+    <span class="k">return</span> <span class="f">func</span>(c *fiber.Ctx) <span class="k">error</span> {
+        <span class="c">// 1. Short-circuit de drain — o K8s precisa parar de rotear para este pod AGORA.</span>
+        <span class="k">if</span> <span class="f">IsDraining</span>() {
+            <span class="k">return</span> c.<span class="f">Status</span>(http.StatusServiceUnavailable).<span class="f">JSON</span>(ReadyzResponse{
+                Status: <span class="s">"draining"</span>,
+                Version: d.Version, DeploymentMode: d.Mode,
+            })
+        }
+
+        ctx, cancel := context.<span class="f">WithTimeout</span>(c.<span class="f">Context</span>(), <span class="n">2</span>*time.Second)
+        <span class="k">defer</span> <span class="f">cancel</span>()
+
+        <span class="c">// 2. Probes paralelos por dependência (cada um respeita seu próprio sub-timeout + carve-out MT).</span>
+        <span class="k">var</span> wg sync.WaitGroup
+        results := <span class="f">make</span>(<span class="k">map</span>[<span class="k">string</span>]DependencyStatus, <span class="f">len</span>(d.Probers))
+        <span class="k">var</span> mu sync.Mutex
+
+        <span class="k">for</span> name, probe := <span class="k">range</span> d.Probers {
+            wg.<span class="f">Add</span>(<span class="n">1</span>)
+            <span class="k">go</span> <span class="f">func</span>(name <span class="k">string</span>, p Prober) {
+                <span class="k">defer</span> wg.<span class="f">Done</span>()
+                start := time.<span class="f">Now</span>()
+                ds := p.<span class="f">Probe</span>(ctx)
+                d.Metrics.<span class="f">ObserveCheck</span>(name, ds.Status, time.<span class="f">Since</span>(start))
+                mu.<span class="f">Lock</span>(); results[name] = ds; mu.<span class="f">Unlock</span>()
+            }(name, probe)
+        }
+        wg.<span class="f">Wait</span>()
+
+        <span class="c">// 3. Agregação — qualquer "down" =&gt; 503; todos "up"/"skipped"/"n/a" =&gt; 200.</span>
+        overall, httpCode := <span class="f">aggregate</span>(results)
+
+        <span class="k">return</span> c.<span class="f">Status</span>(httpCode).<span class="f">JSON</span>(ReadyzResponse{
+            Status:         overall,
+            Checks:         results,
+            Version:        d.Version,
+            DeploymentMode: d.Mode,
+        })
+    }
+}</code></pre>
+
+  <!-- DIFF 6 -->
+  <div class="file-label">pkg/bootstrap/readyz/tls_enforcement.go (NOVO — esqueleto)</div>
+<pre class="code-block"><code><span class="k">package</span> readyz
+
+<span class="k">import</span> (
+    <span class="s">"errors"</span>
+    <span class="s">"fmt"</span>
+)
+
+<span class="k">var</span> ErrSaaSPlaintextDep = errors.<span class="f">New</span>(<span class="s">"saas mode requires TLS on all platform dependencies"</span>)
+
+<span class="k">func</span> <span class="f">ValidateSaaSTLS</span>(cfg *Config) <span class="k">error</span> {
+    <span class="k">if</span> cfg.DeploymentMode != ModeSaaS {
+        <span class="k">return</span> <span class="k">nil</span>  <span class="c">// byoc / local — a postura é apenas informativa</span>
+    }
+
+    checks := []<span class="k">struct</span> {
+        name string
+        tls  <span class="k">func</span>(*Config) <span class="k">bool</span>
+        skip <span class="k">func</span>(*Config) <span class="k">bool</span>
+    }{
+        {<span class="s">"mongodb"</span>,       detectMongoTLS,        <span class="k">nil</span>},
+        {<span class="s">"rabbitmq"</span>,      detectAMQPTLS,         <span class="k">nil</span>},
+        {<span class="s">"redis"</span>,         detectRedisTLS,        redisSkipped},
+        {<span class="s">"s3"</span>,            detectS3TLS,           s3Skipped},
+        {<span class="s">"tenant_manager"</span>, detectHTTPUpstreamTLS, tenantMgrSkipped},
+    }
+
+    <span class="k">for</span> _, ck := <span class="k">range</span> checks {
+        <span class="k">if</span> ck.skip != <span class="k">nil</span> &amp;&amp; ck.<span class="f">skip</span>(cfg) { <span class="k">continue</span> }
+        <span class="k">if</span> !ck.<span class="f">tls</span>(cfg) {
+            <span class="k">return</span> fmt.<span class="f">Errorf</span>(<span class="s">"%w: %s not using TLS"</span>, ErrSaaSPlaintextDep, ck.name)
+        }
+    }
+    <span class="k">return</span> <span class="k">nil</span>
+}</code></pre>
+
+</section>
+
+<!-- ============================== SECTION 5 ============================== -->
+<section id="sec-contract">
+  <h2>5 · Preview do Contrato de Resposta <span class="anchor">— JSON realista preenchido</span></h2>
+
+  <p>Dois modos que os usuários de fato verão em produção. A resposta multi-tenant mostra o circuit breaker em estado open para ilustrar a semântica do campo <code>breaker_state</code>.</p>
+
+  <div class="json-grid">
+    <div>
+      <h4>Single-tenant · tudo saudável · <code>200 OK</code></h4>
+<pre class="code-block"><code>HTTP/1.1 200 OK
+Content-Type: application/json
+
+{
+  <span class="s">"status"</span>: <span class="s">"healthy"</span>,
+  <span class="s">"checks"</span>: {
+    <span class="s">"mongodb"</span>: {
+      <span class="s">"status"</span>: <span class="s">"up"</span>,
+      <span class="s">"latency_ms"</span>: <span class="n">3</span>,
+      <span class="s">"tls"</span>: <span class="k">true</span>
+    },
+    <span class="s">"rabbitmq"</span>: {
+      <span class="s">"status"</span>: <span class="s">"up"</span>,
+      <span class="s">"latency_ms"</span>: <span class="n">5</span>,
+      <span class="s">"tls"</span>: <span class="k">true</span>,
+      <span class="s">"breaker_state"</span>: <span class="s">"closed"</span>
+    },
+    <span class="s">"redis"</span>: {
+      <span class="s">"status"</span>: <span class="s">"up"</span>,
+      <span class="s">"latency_ms"</span>: <span class="n">1</span>,
+      <span class="s">"tls"</span>: <span class="k">true</span>
+    },
+    <span class="s">"tenant_manager"</span>: {
+      <span class="s">"status"</span>: <span class="s">"skipped"</span>,
+      <span class="s">"reason"</span>: <span class="s">"MULTI_TENANT_ENABLED=false"</span>
+    }
+  },
+  <span class="s">"version"</span>: <span class="s">"1.4.2"</span>,
+  <span class="s">"deployment_mode"</span>: <span class="s">"saas"</span>
+}</code></pre>
+    </div>
+    <div>
+      <h4>Multi-tenant · breaker do TM aberto · <code>503</code></h4>
+<pre class="code-block"><code>HTTP/1.1 503 Service Unavailable
+Content-Type: application/json
+
+{
+  <span class="s">"status"</span>: <span class="s">"unhealthy"</span>,
+  <span class="s">"checks"</span>: {
+    <span class="s">"mongodb"</span>: {
+      <span class="s">"status"</span>: <span class="s">"n/a"</span>,
+      <span class="s">"tls"</span>: <span class="k">true</span>,
+      <span class="s">"reason"</span>: <span class="s">"multi-tenant: see /readyz/tenant/:id"</span>
+    },
+    <span class="s">"rabbitmq"</span>: {
+      <span class="s">"status"</span>: <span class="s">"n/a"</span>,
+      <span class="s">"tls"</span>: <span class="k">true</span>,
+      <span class="s">"reason"</span>: <span class="s">"multi-tenant: see /readyz/tenant/:id"</span>
+    },
+    <span class="s">"redis"</span>: {
+      <span class="s">"status"</span>: <span class="s">"up"</span>,
+      <span class="s">"latency_ms"</span>: <span class="n">1</span>,
+      <span class="s">"tls"</span>: <span class="k">true</span>
+    },
+    <span class="s">"tenant_manager"</span>: {
+      <span class="s">"status"</span>: <span class="s">"down"</span>,
+      <span class="s">"tls"</span>: <span class="k">true</span>,
+      <span class="s">"breaker_state"</span>: <span class="s">"open"</span>,
+      <span class="s">"error"</span>: <span class="s">"circuit breaker open"</span>
+    }
+  },
+  <span class="s">"version"</span>: <span class="s">"1.4.2"</span>,
+  <span class="s">"deployment_mode"</span>: <span class="s">"saas"</span>
+}</code></pre>
+    </div>
+  </div>
+
+  <div class="callout info">
+    <h4>Regra de agregação</h4>
+    O <code>status</code> geral é <code>healthy</code> (HTTP 200) somente quando cada dependência está <code>up</code>, <code>skipped</code> ou <code>n/a</code>.
+    Qualquer único <code>down</code> ou <code>degraded</code> força <code>unhealthy</code> e HTTP <code>503</code>. Isso segue o padrão readyz do Ring e mantém o roteamento do K8s alinhado à capacidade real.
+  </div>
+</section>
+
+<!-- ============================== SECTION 6 ============================== -->
+<section id="sec-scope">
+  <h2>6 · Cerca de Escopo <span class="anchor">— considerado, e então excluído</span></h2>
+
+  <p>Estes itens foram avaliados e deliberadamente deixados de fora. Cada um tem uma razão específica e nenhum pertence dentro do <code>/readyz</code>.</p>
+
+  <table>
+    <thead><tr><th>Considerado</th><th>Status</th><th>Por que está fora de escopo</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>Probe de PostgreSQL</td>
+        <td><span class="badge badge-block">EXCLUÍDO</span></td>
+        <td>o fetcher usa Postgres <strong>apenas como datasource do usuário</strong> (DBs externos de clientes via conectores de ingestão de dados). Não é estado interno da plataforma. A saúde dele é problema do cliente, não nosso.</td>
+      </tr>
+      <tr>
+        <td>Verificações sintéticas de transação de negócio</td>
+        <td><span class="badge badge-block">EXCLUÍDO</span></td>
+        <td>Prontidão de infraestrutura ≠ validade de negócio. Transações sintéticas pertencem a canários / monitoramento sintético, não ao <code>/readyz</code>.</td>
+      </tr>
+      <tr>
+        <td>Validação de expiração de certificado</td>
+        <td><span class="badge badge-block">EXCLUÍDO</span></td>
+        <td>Reportamos a postura TLS (ligado/desligado) no momento do probe. Monitoramento de expiração é uma preocupação de cert-manager / alerta, fora do orçamento de latência do probe.</td>
+      </tr>
+      <tr>
+        <td>SLIs de latência p99 no <code>/readyz</code></td>
+        <td><span class="badge badge-block">EXCLUÍDO</span></td>
+        <td>Percentis de latência vivem em dashboards do Grafana (o histogram <code>readyz_check_duration_ms</code> é suficiente para isso). O probe reporta uma única amostra de latência, não um agregado.</td>
+      </tr>
+      <tr>
+        <td>Regras de negócio por tenant no <code>/readyz/tenant/:id</code></td>
+        <td><span class="badge badge-block">EXCLUÍDO</span></td>
+        <td>O endpoint de tenant é apenas de infraestrutura: o Mongo e o Rabbit do tenant funcionam? A validação de regras de negócio pertence ao interior da aplicação, não ao probe.</td>
+      </tr>
+      <tr>
+        <td>Substituir <code>/readyz</code> por <code>commonsHttp.HealthWithDependencies</code></td>
+        <td><span class="badge badge-block">EXCLUÍDO</span></td>
+        <td>Esse helper cobre apenas a agregação de dependências. Ele não fornece: gating por self-probe, 503 acoplado ao drain, gauge Prometheus de self-probe, carve-out multi-tenant, nem postura TLS na resposta. Usá-lo deixaria seis lacunas.</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ============================== SECTION 7 ============================== -->
+<section id="sec-risk">
+  <h2>7 · Avaliação de Riscos <span class="anchor">— cinco riscos canônicos, mitigados</span></h2>
+
+  <table>
+    <thead><tr><th>Risco</th><th>Severidade</th><th>Mitigação (específica do fetcher)</th><th>Verificado em</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><code>/readyz</code> acidentalmente atrás do middleware de auth</td>
+        <td><span class="badge badge-warn">MÉDIA</span></td>
+        <td>O auth no fetcher-manager é anexado por grupo de rotas, não globalmente. <code>/readyz</code> é montado na L53 no grupo público entre <code>/health</code> e <code>/version</code> — no mesmo nível dos endpoints sem auth existentes.</td>
+        <td><code>routes.go:52–55</code> · teste e2e afirma que não há <code>401</code> sem token</td>
+      </tr>
+      <tr>
+        <td>Grace de drain curto demais — K8s ainda roteia no shutdown</td>
+        <td><span class="badge badge-warn">MÉDIA</span></td>
+        <td>O default <code>READYZ_DRAIN_DELAY_SEC=12s</code> satisfaz <code>periodSeconds=5 × failureThreshold=2 = 10s</code> mais 2s de buffer. Ajustável por env. Teste de caos valida a propagação SIGTERM→503 dentro da janela de grace.</td>
+        <td>teste de caos <code>readyz_chaos_test.go</code> · default do Helm <code>terminationGracePeriodSeconds ≥ 30</code></td>
+      </tr>
+      <tr>
+        <td>Modo SaaS bootando com dep em plaintext (downgrade silencioso de TLS)</td>
+        <td><span class="badge badge-block">ALTA</span></td>
+        <td><code>ValidateSaaSTLS</code> é chamado em <code>manager config.go:196</code> e <code>worker config.go:153</code> <strong>antes</strong> da primeira chamada a <code>initMongoRepositoriesFn</code> / <code>initStorageRepository</code>. Falha com <code>ErrSaaSPlaintextDep</code> envolvendo o nome da dep.</td>
+        <td>teste unitário <code>tls_enforcement_test.go</code> por dep · e2e boota SaaS com Mongo em plaintext → espera fatal</td>
+      </tr>
+      <tr>
+        <td>Métricas Prometheus registradas mas nunca emitidas</td>
+        <td><span class="badge badge-warn">MÉDIA</span></td>
+        <td>Cada chamada de probe roda <code>d.Metrics.ObserveCheck(name, status, duration)</code> dentro do handler. Teste de integração bate em <code>/readyz</code> uma vez, depois em <code>/metrics</code>, e afirma amostras não-zero para <code>readyz_check_duration_ms</code> e <code>readyz_check_status</code>.</td>
+        <td>teste e2e <code>readyz_test.go</code> · asserções de scrape</td>
+      </tr>
+      <tr>
+        <td>Self-probe passa no boot, dep diverge depois, liveness ainda verde</td>
+        <td><span class="badge badge-warn">MÉDIA</span></td>
+        <td>Self-probe protege o <code>/health</code> para garantir que o boot não estava quebrado; <code>/readyz</code> roda ao vivo a cada request para que o drift seja capturado pela readiness (o sinal visível para o K8s). Restart por liveness é reservado para deadlock de processo, não para falha de dep.</td>
+        <td>teste de caos mata o Mongo em pleno voo, afirma <code>/readyz</code> 503 em até 2s, <code>/health</code> permanece 200</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ============================== SECTION 8 ============================== -->
+<section id="sec-deps">
+  <h2>8 · Dependências Adicionadas <span class="anchor">— imports Go introduzidos</span></h2>
+
+  <table>
+    <thead><tr><th>Pacote</th><th>Usado por</th><th>Propósito</th></tr></thead>
+    <tbody>
+      <tr><td><code>github.com/prometheus/client_golang/prometheus</code></td><td><code>pkg/bootstrap/readyz/metrics.go</code></td><td>registrar histogram + counter + gauge</td></tr>
+      <tr><td><code>github.com/prometheus/client_golang/prometheus/promhttp</code></td><td>wiring de rotas (manager + health server do worker)</td><td>expor o endpoint <code>/metrics</code></td></tr>
+      <tr><td><code>github.com/gofiber/fiber/v2/middleware/adaptor</code></td><td>wiring de rotas</td><td>integrar o <code>promhttp.Handler</code> de <code>net/http</code> ao Fiber v2 (já vendored via fiber v2)</td></tr>
+      <tr><td><code>sync/atomic</code></td><td><code>state.go</code>, <code>selfprobe.go</code></td><td><code>atomic.Bool</code> para <code>drainingState</code> e <code>selfProbeOK</code></td></tr>
+      <tr><td><code>net/url</code></td><td><code>tls.go</code></td><td><code>url.Parse</code> para detecção de TLS baseada em scheme (Mongo, AMQP, S3, upstream HTTP)</td></tr>
+      <tr><td><code>errors</code></td><td><code>probe.go</code></td><td><code>errors.Is(err, tmcore.ErrCircuitBreakerOpen)</code> para detecção de breaker</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <h4>Mudança no go.mod</h4>
+    Apenas os dois pacotes <code>prometheus/client_golang</code> são genuinamente novos. Todo o resto já está na árvore transitiva de
+    dependências (Fiber, stdlib). O <code>go.sum</code> ganhará algumas linhas para o cliente Prometheus e suas dependências indiretas.
+  </div>
+</section>
+
+<!-- ============================== SECTION 9 ============================== -->
+<section id="sec-approval">
+  <div class="approval-block">
+    <h2>APROVAÇÃO DO GATE 1.5 NECESSÁRIA</h2>
+    <p class="subtitle">As sete decisões abaixo estão pré-aprovadas. Confirme para destravar o Gate 2 (scaffolding).</p>
+
+    <ul class="approval-checklist">
+      <li>
+        <strong>Escopo — apenas deps internas de plataforma</strong><br/>
+        MongoDB · RabbitMQ · Redis · S3 (apenas worker) · Tenant Manager HTTP (apenas MT).
+        Postgres excluído (datasource do usuário, não estado da plataforma).
+      </li>
+      <li>
+        <strong>HEALTH_PORT=4007 do worker</strong><br/>
+        Novo micro-servidor Fiber monta <code>/health</code>, <code>/readyz</code>, <code>/metrics</code> via um segundo
+        <code>commons.RunApp</code> em <code>service.Run</code>, compartilhando o shutdown gracioso com o consumer.
+      </li>
+      <li>
+        <strong>Carve-out multi-tenant</strong><br/>
+        O <code>/readyz</code> global reporta Mongo + RabbitMQ como <code>n/a</code> com ponteiro para
+        <code>/readyz/tenant/:id</code>. O endpoint de tenant valida via <code>tmclient.GetActiveTenantsByService</code>
+        e resolve managers por tenant. <strong>Sem auth</strong> — o id do tenant na URL serve como prova de posse.
+      </li>
+      <li>
+        <strong>Tratamento de circuit breaker</strong><br/>
+        Tenant Manager: estado opaco, <code>errors.Is(ErrCircuitBreakerOpen)</code> mapeia para <code>down</code>.
+        Adaptador RabbitMQ: <code>CircuitBreakerState()</code> → <code>closed</code>/<code>half-open</code>/<code>open</code>
+        → <code>up</code>/<code>degraded</code>/<code>down</code>.
+      </li>
+      <li>
+        <strong>Enforcement de TLS em SaaS</strong><br/>
+        <code>DEPLOYMENT_MODE=saas|byoc|local</code> (default <code>local</code>). <code>ValidateSaaSTLS()</code>
+        roda <strong>antes</strong> de qualquer conexão em <code>manager:196</code> e <code>worker:153</code>.
+        Dep em plaintext aborta o boot em SaaS.
+      </li>
+      <li>
+        <strong>Grace de drain = 12s</strong><br/>
+        O default <code>READYZ_DRAIN_DELAY_SEC=12</code> satisfaz <code>periodSeconds=5 × failureThreshold=2 + 2s</code> do K8s.
+        Ajustável por env em cada ambiente.
+      </li>
+      <li>
+        <strong>Prioridade da fonte de versão</strong><br/>
+        env <code>OTEL_RESOURCE_SERVICE_VERSION</code> → env <code>VERSION</code> → <code>"unknown"</code>.
+        Já parseado em <code>cfg.OtelServiceVersion</code> em <code>manager config.go:68</code> /
+        <code>worker config.go:66</code>.
+      </li>
+    </ul>
+
+    <div class="reply-footer">
+      Responda no chat: <code>aprovado</code> · <code>ajustes necessários: &lt;descrição&gt;</code>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'dark',
+    themeVariables: {
+      background: '#0d1117',
+      primaryColor: '#161b22',
+      primaryTextColor: '#c9d1d9',
+      primaryBorderColor: '#30363d',
+      lineColor: '#8b949e',
+      secondaryColor: '#1a2332',
+      tertiaryColor: '#0a1f2a',
+      fontFamily: '-apple-system, BlinkMacSystemFont, Segoe UI, system-ui, sans-serif',
+    },
+    flowchart: { curve: 'basis', htmlLabels: true },
+  });
+</script>
+
+</body>
+</html>
