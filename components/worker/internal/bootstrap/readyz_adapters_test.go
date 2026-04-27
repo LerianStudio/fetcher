@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"context"
+	"crypto/tls"
 	"testing"
 
 	"github.com/LerianStudio/fetcher/pkg/bootstrap/readyz"
@@ -144,4 +145,46 @@ func TestNewWorkerReadyzConfig_NilCfg_FallsBackToLoadConfig(t *testing.T) {
 		require.NotNil(t, got)
 		assert.NotEmpty(t, got.Version)
 	})
+}
+
+// TestNewReadyzMTRedis_TLS_EnablesTLSConfig is a regression for the
+// CodeRabbit PR #223 finding (#8): the worker's dedicated MT-Redis readyz
+// client built plaintext-only options even when MULTI_TENANT_REDIS_TLS=true,
+// so the readyz Ping failed with a TLS-on-plaintext error and reported
+// multi_tenant_redis=down on healthy TLS-only deployments. The fix mirrors
+// the manager's newReadyzMultiTenantRedisClient: opts.TLSConfig is populated
+// with TLS 1.2 as the floor.
+func TestNewReadyzMTRedis_TLS_EnablesTLSConfig(t *testing.T) {
+	cfg := &Config{
+		MultiTenantRedisHost: "mt-redis.local",
+		MultiTenantRedisTLS:  true,
+	}
+
+	client := newReadyzMTRedis(cfg)
+	require.NotNil(t, client, "client must be returned for non-empty MULTI_TENANT_REDIS_HOST")
+
+	t.Cleanup(func() { _ = client.Close() })
+
+	opts := client.Options()
+	require.NotNil(t, opts.TLSConfig, "TLSConfig must be non-nil when MultiTenantRedisTLS=true")
+	assert.Equal(t, uint16(tls.VersionTLS12), opts.TLSConfig.MinVersion,
+		"TLS minimum version must be 1.2 to match the worker's main MT-Redis client")
+}
+
+// TestNewReadyzMTRedis_NoTLS_NilTLSConfig is the inverse:
+// MULTI_TENANT_REDIS_TLS=false leaves TLSConfig nil so the client speaks
+// plaintext. This is the local-dev path with no broker certificate.
+func TestNewReadyzMTRedis_NoTLS_NilTLSConfig(t *testing.T) {
+	cfg := &Config{
+		MultiTenantRedisHost: "mt-redis.local",
+		MultiTenantRedisTLS:  false,
+	}
+
+	client := newReadyzMTRedis(cfg)
+	require.NotNil(t, client)
+
+	t.Cleanup(func() { _ = client.Close() })
+
+	opts := client.Options()
+	assert.Nil(t, opts.TLSConfig, "TLSConfig must be nil when MultiTenantRedisTLS=false")
 }

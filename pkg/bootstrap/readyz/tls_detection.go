@@ -30,6 +30,20 @@ func truthyQueryValue(v string) bool {
 	}
 }
 
+// falseyQueryValue is the explicit "off" counterpart to truthyQueryValue.
+// Empty string is intentionally NOT falsey — empty means "param unset"
+// and the caller falls through to scheme-default rules. Mongo driver spec
+// allows ?tls=false (or ?ssl=false) to override the implicit TLS that
+// mongodb+srv enables; this helper detects that override.
+func falseyQueryValue(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "false", "0":
+		return true
+	default:
+		return false
+	}
+}
+
 // parseOrWrap names the failing dependency in the parse error so the
 // operator-visible error can identify which connection string was bad.
 func parseOrWrap(dep, raw string) (*url.URL, error) {
@@ -42,8 +56,14 @@ func parseOrWrap(dep, raw string) (*url.URL, error) {
 }
 
 // DetectMongoTLS:
-//   - "mongodb+srv" → true (driver upgrades automatically).
-//   - "mongodb" → true iff query "tls" or "ssl" is "true"/"1".
+//   - Explicit "tls=false" or "ssl=false" → false, regardless of scheme.
+//     The MongoDB driver spec allows operators to opt out of the implicit
+//     TLS that mongodb+srv enables; the readyz posture must reflect that.
+//   - Explicit "tls=true" / "ssl=true" → true (covers the redundant case
+//     on srv schemes and the only way to enable TLS on plain mongodb).
+//   - "mongodb+srv" with no explicit tls/ssl override → true (driver
+//     upgrades automatically per the SRV spec).
+//   - "mongodb" with no explicit override → false.
 //   - "tlsCACert" alone is not TLS — the driver still requires tls=true.
 //
 // Exported because the multi-tenant carve-out at the bootstrap layer needs
@@ -58,12 +78,21 @@ func DetectMongoTLS(uri string) (bool, error) {
 		return false, err
 	}
 
-	if strings.EqualFold(u.Scheme, "mongodb+srv") {
+	q := u.Query()
+	tlsParam := q.Get("tls")
+	sslParam := q.Get("ssl")
+
+	// Explicit overrides win over scheme defaults.
+	if falseyQueryValue(tlsParam) || falseyQueryValue(sslParam) {
+		return false, nil
+	}
+
+	if truthyQueryValue(tlsParam) || truthyQueryValue(sslParam) {
 		return true, nil
 	}
 
-	q := u.Query()
-	if truthyQueryValue(q.Get("tls")) || truthyQueryValue(q.Get("ssl")) {
+	// Scheme default: mongodb+srv implies TLS per the SRV spec.
+	if strings.EqualFold(u.Scheme, "mongodb+srv") {
 		return true, nil
 	}
 

@@ -94,6 +94,59 @@ func TestDetectMongoTLS(t *testing.T) {
 			uri:     "mongodb://host/db?tlsCACert=/etc/ssl/ca.pem",
 			wantTLS: false,
 		},
+		// --- mongodb+srv override behaviour -----------------------------
+		// MongoDB driver spec: mongodb+srv enables TLS by default, but
+		// operators can opt out with ?tls=false or ?ssl=false. Without
+		// the explicit-override branch the detector reported tls=true on
+		// these URIs, masking a known operational opt-out path.
+		{
+			name:    "mongodb+srv with tls=false explicit override",
+			uri:     "mongodb+srv://cluster0.example.com/db?tls=false",
+			wantTLS: false,
+		},
+		{
+			name:    "mongodb+srv with ssl=false explicit override",
+			uri:     "mongodb+srv://cluster0.example.com/db?ssl=false",
+			wantTLS: false,
+		},
+		{
+			name:    "mongodb+srv with explicit redundant tls=true",
+			uri:     "mongodb+srv://cluster0.example.com/db?tls=true",
+			wantTLS: true,
+		},
+		{
+			name:    "mongodb+srv default scheme implies TLS without param",
+			uri:     "mongodb+srv://cluster0.example.com/db",
+			wantTLS: true,
+		},
+		{
+			name:    "case-insensitive tls=FALSE override on srv",
+			uri:     "mongodb+srv://cluster0.example.com/db?tls=FALSE",
+			wantTLS: false,
+		},
+		{
+			name:    "tls=0 numeric falsey override on srv",
+			uri:     "mongodb+srv://cluster0.example.com/db?tls=0",
+			wantTLS: false,
+		},
+		{
+			name:    "ssl=0 numeric falsey override on srv",
+			uri:     "mongodb+srv://cluster0.example.com/db?ssl=0",
+			wantTLS: false,
+		},
+		{
+			name:    "empty tls param on srv falls through to scheme default",
+			uri:     "mongodb+srv://cluster0.example.com/db?tls=",
+			wantTLS: true,
+		},
+		// --- plain mongodb scheme regression coverage -------------------
+		// Belt-and-braces: verify the new override-first ordering does
+		// not regress the plain "mongodb" scheme paths.
+		{
+			name:    "plain mongodb with tls=false stays false (no regression)",
+			uri:     "mongodb://host/db?tls=false",
+			wantTLS: false,
+		},
 	}
 
 	for _, tc := range tests {

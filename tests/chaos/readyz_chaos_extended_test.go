@@ -47,12 +47,17 @@ import (
 // gives the prior chaos a generous window to clear before we start anew.
 const baselineHealthyTimeout = 90 * time.Second
 
-// waitForBaselineHealthy polls the given /readyz until both Manager and the
-// supplied URL return 200+healthy, or the timeout fires. Use at the start of
-// every test that depends on a clean baseline. Not a `require` — silently
-// returns once healthy so tests can proceed; on timeout it t.Skips so the
-// suite continues with the next test rather than chaining failures across
-// the whole sprint.
+// waitForBaselineHealthy polls the given /readyz until it returns
+// 200+healthy, or the budget fires. Use at the start of every test that
+// depends on a clean baseline.
+//
+// Failure semantics:
+//   - ctx canceled → t.Skip. The harness signaled an outer timeout (test
+//     shutdown, parent ctx cleanup); failing here would mask the real signal.
+//   - budget exceeded → t.Fatalf. A baseline that never becomes healthy is
+//     a real /readyz regression, not cross-test contamination — Skipping
+//     here would let a first-time readiness boot bug go green via cascading
+//     SKIPs across every test in the sprint.
 func waitForBaselineHealthy(t *testing.T, ctx context.Context, baseURL string) {
 	t.Helper()
 
@@ -72,7 +77,7 @@ func waitForBaselineHealthy(t *testing.T, ctx context.Context, baseURL string) {
 		}
 	}
 
-	t.Skipf("baseline /readyz at %s did not become healthy within %v — likely cross-test contamination from a prior failure",
+	t.Fatalf("baseline /readyz at %s did not become healthy within %v — this is a real readyz regression, not cross-test contamination",
 		baseURL, baselineHealthyTimeout)
 }
 
