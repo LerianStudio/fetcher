@@ -136,7 +136,17 @@ func setup(ctx context.Context) error {
 		return fmt.Errorf("start manager: %w", err)
 	}
 
-	// 7. Start Worker container
+	// 7. Pre-create the object-storage bucket so the Worker's startup
+	// self-probe (Gate 7 of ring:dev-readyz) can satisfy its s3 HeadBucket
+	// check. Without this, /health stays 503 forever and StartWorker's
+	// WaitHTTP /health gate times out. We hit SeaweedFS's host-mapped
+	// proxy port — at setup time no toxics are active, so the proxy is
+	// transparent and the bucket lands on the real SeaweedFS.
+	if err := ensureChaosBucket(ctx, appEnv.ToAppEnv()); err != nil {
+		return fmt.Errorf("ensure chaos bucket: %w", err)
+	}
+
+	// 8. Start Worker container
 	log.Println("Starting Worker container...")
 	workerApp, err = e2eshared.StartWorker(nil, ctx, appEnv.ToAppEnv(), e2eshared.AppStartConfig{
 		Image:     workerImage(),
@@ -215,4 +225,23 @@ func skipBuild() bool {
 // fixturesPath returns the absolute path to a fixture file in tests/shared/fixtures.
 func fixturesPath(name string) string {
 	return filepath.Join(e2ekit.ProjectRoot(), "tests", "shared", "fixtures", name)
+}
+
+// ensureChaosBucket pre-creates the configured object-storage bucket on the
+// host-mapped SeaweedFS endpoint so the Worker's startup self-probe finds it.
+// Mirrors the e2e suite's ensureStorageBucket — same rationale, different
+// SeaweedFS handle (chaosInfra vs coreInfra).
+//
+// Setup-time call: no toxics are active yet, so the SeaweedFS proxy is a
+// transparent pass-through and the CreateBucket request lands on the real
+// SeaweedFS Filer.
+func ensureChaosBucket(ctx context.Context, env *e2eshared.AppEnv) error {
+	endpoint, err := chaosInfra.SeaweedFS.URL()
+	if err != nil {
+		return fmt.Errorf("resolve seaweedfs URL: %w", err)
+	}
+
+	log.Printf("Ensuring chaos object-storage bucket %q on %s", env.StorageBucket(), endpoint)
+
+	return e2eshared.EnsureS3BucketAtHost(ctx, endpoint, env.StorageBucket(), "any", "any")
 }
