@@ -133,11 +133,20 @@ func (h *Handler) Run(ctx context.Context) ReadyzResponse {
 // its deadline cannot block aggregation indefinitely. On deadline fire the
 // handler substitutes a synthetic "down" with a timeout-flagged error so
 // operators see a consistent failure shape.
+//
+// A child context is created and cancelled before returning. This is the
+// only signal we have with the inner Check — well-behaved checkers will
+// observe ctx.Done() and exit. The buffered done channel ensures even
+// checkers that ignore ctx can still send their eventual result without
+// leaking the goroutine on a channel with no receiver.
 func runWithDeadline(ctx context.Context, c DependencyChecker) DependencyCheck {
+	childCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	done := make(chan DependencyCheck, 1)
 
 	go func() {
-		done <- c.Check(ctx)
+		done <- c.Check(childCtx)
 	}()
 
 	select {

@@ -160,3 +160,19 @@ func TestTenantRabbitMQChecker_Timeout(t *testing.T) {
 func TestTenantRabbitMQChecker_Name(t *testing.T) {
 	assert.Equal(t, "rabbitmq", NewTenantRabbitMQChecker(nil).Name())
 }
+
+// TestTenantRabbitMQChecker_NilChannel_ReturnsDown is a regression for the
+// case where the underlying tmrabbitmq.Manager returns (nil, nil) from
+// GetChannel — the resolver succeeded (no error) but the channel was
+// torn down between resolution and allocation. Before the fix the checker
+// would proceed to defer-close, never observe the missing channel, and
+// report StatusUp, masking a genuinely missing tenant channel. The probe
+// must surface a "channel not available" Down so dashboards reflect the
+// real state.
+func TestTenantRabbitMQChecker_NilChannel_ReturnsDown(t *testing.T) {
+	res := NewTenantRabbitMQChecker(&fakeRabbitResolver{ch: nil, err: nil}).
+		CheckForTenant(context.Background(), "t1")
+
+	assert.Equal(t, StatusDown, res.Status)
+	assert.Contains(t, res.Error, "channel")
+}

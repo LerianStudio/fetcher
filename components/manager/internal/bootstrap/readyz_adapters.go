@@ -2,6 +2,9 @@ package bootstrap
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/base64"
 	"net"
 
 	"github.com/LerianStudio/fetcher/pkg/bootstrap/readyz"
@@ -82,6 +85,17 @@ func (e *adapterError) Error() string { return e.msg }
 // the probe bypasses the schema cache's in-memory fallback wrapper, which
 // would otherwise always report success even when Redis is down. Returns
 // nil when REDIS_HOST is unset; the caller must omit the dep in that case.
+//
+// When cfg.RedisTLS is true, opts.TLSConfig is populated with TLS 1.2 as
+// the floor and the optional base64-encoded REDIS_CA_CERT bundle. This
+// mirrors the multi-tenant Redis client in initManagerEventDiscovery —
+// without it, the readyz Ping speaks plaintext on a TLS-only Redis and
+// reports redis=down even when Redis is healthy. CA-cert decode failures
+// here intentionally fall back to a system-trust-store TLS config: the
+// bootstrap caller (initPlatformDependencies) does not propagate errors
+// from the readyz client, so erroring out would crash the manager. The
+// downstream Ping will still surface a TLS handshake failure as redis=down
+// if the system trust store cannot validate the broker.
 func newReadyzRedisClient(cfg *Config) *redis.Client {
 	if cfg == nil || cfg.RedisHost == "" {
 		return nil
@@ -96,6 +110,21 @@ func newReadyzRedisClient(cfg *Config) *redis.Client {
 		Addr:     net.JoinHostPort(cfg.RedisHost, port),
 		Password: cfg.RedisPassword,
 		DB:       getRedisDB(cfg.RedisDB),
+	}
+
+	if cfg.RedisTLS {
+		tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
+
+		if cfg.RedisCACert != "" {
+			if caCert, err := base64.StdEncoding.DecodeString(cfg.RedisCACert); err == nil {
+				pool := x509.NewCertPool()
+				if pool.AppendCertsFromPEM(caCert) {
+					tlsCfg.RootCAs = pool
+				}
+			}
+		}
+
+		opts.TLSConfig = tlsCfg
 	}
 
 	return redis.NewClient(opts)

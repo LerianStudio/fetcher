@@ -162,11 +162,21 @@ func (h *TenantFiberHandler) runTenantChecks(ctx context.Context, tenantID strin
 
 // runTenantWithDeadline mirrors runWithDeadline for TenantChecker so a
 // misbehaving checker cannot stall aggregation.
+//
+// A child context is created and cancelled on return. The cancel signal
+// is the only contract we have with the inner CheckForTenant — well-behaved
+// checkers will observe ctx.Done() and exit promptly. Checkers that ignore
+// ctx cannot be forced to terminate, but the buffered done channel still
+// allows their eventual send to land without leaking the goroutine forever
+// on a channel with no receiver.
 func runTenantWithDeadline(ctx context.Context, c TenantChecker, tenantID string) DependencyCheck {
+	childCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	done := make(chan DependencyCheck, 1)
 
 	go func() {
-		done <- c.CheckForTenant(ctx, tenantID)
+		done <- c.CheckForTenant(childCtx, tenantID)
 	}()
 
 	select {

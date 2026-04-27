@@ -14,6 +14,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/goleak"
 )
 
 // fakeChecker is a test double that returns a canned DependencyCheck and
@@ -339,6 +340,72 @@ func TestAggregateStatus_MatchesContract(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			assert.Equal(t, tc.want, aggregateStatus(tc.in))
 		})
+	}
+}
+
+// blockingChecker blocks until release is closed OR ctx is cancelled.
+// It records whether ctx cancellation was observed so tests can assert that
+// the deadline-driven cancel actually propagates into the checker — which is
+// the contract the runWithDeadline fix enforces.
+type blockingChecker struct {
+	name        string
+	release     chan struct{}
+	ctxObserved chan struct{}
+	once        bool
+}
+
+func (b *blockingChecker) Name() string { return b.name }
+
+func (b *blockingChecker) Check(ctx context.Context) DependencyCheck {
+	select {
+	case <-b.release:
+		return DependencyCheck{Status: StatusUp}
+	case <-ctx.Done():
+		if !b.once {
+			b.once = true
+			close(b.ctxObserved)
+		}
+
+		return DependencyCheck{Status: StatusDown, Error: "ctx cancelled"}
+	}
+}
+
+// TestRunWithDeadline_LeakBoundedByCtxCancel is the global-handler counterpart
+// of TestRunTenantWithDeadline_LeakBoundedByCtxCancel. The same goroutine
+// leak shape exists in handler.go's runWithDeadline; the fix introduces a
+// child cancellable context that is cancelled BEFORE returning from the
+// deadline branch so the inner goroutine receives a cancel signal even when
+// the outer caller has moved on.
+func TestRunWithDeadline_LeakBoundedByCtxCancel(t *testing.T) {
+	ck := &blockingChecker{
+		name:        "redis",
+		release:     make(chan struct{}),
+		ctxObserved: make(chan struct{}),
+	}
+
+	t.Cleanup(func() {
+		select {
+		case <-ck.release:
+		default:
+			close(ck.release)
+		}
+	})
+
+	defer goleak.VerifyNone(t, goleakIgnores()...)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	res := runWithDeadline(ctx, ck)
+
+	require.Equal(t, StatusDown, res.Status, "deadline branch must report down")
+	require.Contains(t, res.Error, "check timeout")
+
+	select {
+	case <-ck.ctxObserved:
+		// Good: ctx cancel propagated into the checker, bounding the leak.
+	case <-time.After(time.Second):
+		t.Fatal("checker did not observe ctx cancel within 1s — leak is unbounded")
 	}
 }
 

@@ -15,6 +15,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/goleak"
 )
 
 // staticTenantChecker is a helper producing canned DependencyCheck responses
@@ -202,6 +203,86 @@ func TestDisabledTenantHandler_Returns400(t *testing.T) {
 
 	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
 	assert.Contains(t, string(body), "multi-tenant mode is disabled")
+}
+
+// blockingTenantChecker blocks until release is closed OR ctx is cancelled.
+// It records whether ctx cancellation was observed so tests can assert that
+// the deadline-driven cancel actually propagates into the checker — which is
+// the contract the runTenantWithDeadline fix enforces.
+type blockingTenantChecker struct {
+	name        string
+	release     chan struct{}
+	ctxObserved chan struct{}
+	once        bool
+}
+
+func (b *blockingTenantChecker) Name() string { return b.name }
+
+func (b *blockingTenantChecker) CheckForTenant(ctx context.Context, _ string) DependencyCheck {
+	select {
+	case <-b.release:
+		return DependencyCheck{Status: StatusUp}
+	case <-ctx.Done():
+		// Signal once that we observed the cancel. Closing the channel may
+		// be racy if a future test variant calls CheckForTenant twice on the
+		// same fake; guard with a sentinel.
+		if !b.once {
+			b.once = true
+			close(b.ctxObserved)
+		}
+
+		return DependencyCheck{Status: StatusDown, Error: "ctx cancelled"}
+	}
+}
+
+// TestRunTenantWithDeadline_LeakBoundedByCtxCancel is a regression for the
+// goroutine leak where the deadline branch returned without cancelling the
+// child context, leaving the inner CheckForTenant goroutine running forever
+// even after the handler had moved on. Repeated /readyz/tenant/:id polls
+// would accumulate unbounded leaked goroutines.
+//
+// The fix introduces a child cancellable context that is cancelled BEFORE
+// returning from the deadline branch. This test asserts:
+//  1. The handler's deadline branch fires.
+//  2. The checker observes ctx.Done() within a bounded window — proof that
+//     ctx cancellation propagated into the checker even though the outer
+//     handler had already returned.
+//  3. After the test cleanup releases the checker (defensive — should be
+//     unnecessary since ctx cancel already returned the goroutine), goleak
+//     reports no leak.
+func TestRunTenantWithDeadline_LeakBoundedByCtxCancel(t *testing.T) {
+	ck := &blockingTenantChecker{
+		name:        "rabbitmq",
+		release:     make(chan struct{}),
+		ctxObserved: make(chan struct{}),
+	}
+
+	t.Cleanup(func() {
+		// Defensive release in case the checker is still parked. Closing a
+		// channel that the checker no longer reads is harmless.
+		select {
+		case <-ck.release:
+		default:
+			close(ck.release)
+		}
+	})
+
+	defer goleak.VerifyNone(t, goleakIgnores()...)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	res := runTenantWithDeadline(ctx, ck, "t1")
+
+	require.Equal(t, StatusDown, res.Status, "deadline branch must report down")
+	require.Contains(t, res.Error, "check timeout")
+
+	select {
+	case <-ck.ctxObserved:
+		// Good: ctx cancel propagated into the checker, bounding the leak.
+	case <-time.After(time.Second):
+		t.Fatal("checker did not observe ctx cancel within 1s — leak is unbounded")
+	}
 }
 
 func TestTenantExists(t *testing.T) {

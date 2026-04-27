@@ -105,6 +105,18 @@ func (c *TenantRabbitMQChecker) CheckForTenant(ctx context.Context, tenantID str
 		return classifyTenantErr(ctx, err, start)
 	}
 
+	// GetChannel may return (nil, nil) on edge cases (e.g. pool resolved
+	// the tenant but the underlying connection was reaped between resolve
+	// and channel allocation). Returning StatusUp in that scenario would
+	// mask a genuinely missing channel — surface it as down.
+	if ch == nil {
+		return DependencyCheck{
+			Status:    StatusDown,
+			LatencyMs: time.Since(start).Milliseconds(),
+			Error:     "tenant rabbitmq channel not available",
+		}
+	}
+
 	defer func() {
 		if ch != nil {
 			_ = ch.Close()

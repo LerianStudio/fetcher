@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"context"
+	"crypto/tls"
 	"testing"
 
 	"github.com/LerianStudio/fetcher/pkg/bootstrap/readyz"
@@ -114,4 +115,45 @@ func TestNewReadyzConfig_NilCfg_FallsBackToLoadConfig(t *testing.T) {
 		// of OTEL_RESOURCE_SERVICE_VERSION / VERSION).
 		assert.NotEmpty(t, got.Version)
 	})
+}
+
+// TestNewReadyzRedisClient_TLS_EnablesTLSConfig is a regression for the
+// CodeRabbit PR #223 finding: the dedicated /readyz Redis client built
+// plaintext-only options even when REDIS_TLS=true, so the readyz Ping
+// failed with a TLS-on-plaintext error and reported redis=down on
+// healthy TLS-only deployments. The fix mirrors the multi-tenant Redis
+// client: opts.TLSConfig is populated with TLS 1.2 as the floor.
+func TestNewReadyzRedisClient_TLS_EnablesTLSConfig(t *testing.T) {
+	cfg := &Config{
+		RedisTLS:  true,
+		RedisHost: "localhost",
+	}
+
+	client := newReadyzRedisClient(cfg)
+	require.NotNil(t, client, "client must be returned for non-empty REDIS_HOST")
+
+	t.Cleanup(func() { _ = client.Close() })
+
+	opts := client.Options()
+	require.NotNil(t, opts.TLSConfig, "TLSConfig must be non-nil when RedisTLS=true")
+	assert.Equal(t, uint16(tls.VersionTLS12), opts.TLSConfig.MinVersion,
+		"TLS minimum version must be 1.2 to match the multi-tenant Redis client")
+}
+
+// TestNewReadyzRedisClient_NoTLS_NilTLSConfig verifies the counterpart:
+// when REDIS_TLS=false, opts.TLSConfig must remain nil so the client
+// speaks plaintext. This is the legacy single-tenant local-dev path.
+func TestNewReadyzRedisClient_NoTLS_NilTLSConfig(t *testing.T) {
+	cfg := &Config{
+		RedisTLS:  false,
+		RedisHost: "localhost",
+	}
+
+	client := newReadyzRedisClient(cfg)
+	require.NotNil(t, client)
+
+	t.Cleanup(func() { _ = client.Close() })
+
+	opts := client.Options()
+	assert.Nil(t, opts.TLSConfig, "TLSConfig must be nil when RedisTLS=false")
 }

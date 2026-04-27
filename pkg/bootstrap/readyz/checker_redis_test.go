@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRedisClientChecker_Up(t *testing.T) {
@@ -81,6 +82,23 @@ func TestRedisClientChecker_DepName(t *testing.T) {
 		"redis://host:6379",
 	)
 	assert.Equal(t, "multi_tenant_redis", c.Name())
+}
+
+// TestRedisClientCheckerFromFn_NilPing_DoesNotPanic is a regression for the
+// nil-interface trap: passing a nil func to NewRedisClientCheckerFromFn used
+// to wrap it as redisPingerFunc(nil), producing a non-nil interface holding
+// a nil function value. The "ping == nil" guard inside Check() did not fire
+// for that shape, so the next call to PingErr would panic invoking the nil
+// func. The constructor now forwards a typed-nil interface so the guard
+// triggers and the checker reports "down" cleanly.
+func TestRedisClientCheckerFromFn_NilPing_DoesNotPanic(t *testing.T) {
+	c := NewRedisClientCheckerFromFn("redis", nil, "redis://localhost:6379")
+
+	require.NotPanics(t, func() {
+		res := c.Check(context.Background())
+		assert.Equal(t, StatusDown, res.Status)
+		assert.Equal(t, "redis client not initialized", res.Error)
+	})
 }
 
 func TestRedisClientChecker_RedactsPasswordInError(t *testing.T) {

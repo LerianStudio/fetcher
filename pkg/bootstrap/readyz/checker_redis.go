@@ -33,7 +33,17 @@ func NewRedisClientChecker(name string, ping RedisPinger, rawURL string) *RedisC
 
 // NewRedisClientCheckerFromFn adapts a plain ping function (e.g.
 // rdb.Ping(ctx).Err()) into the checker's interface.
+//
+// A nil ping value is forwarded as a typed-nil interface so the
+// "client not initialized" guard in Check() fires. Wrapping a nil
+// function value inside redisPingerFunc would otherwise produce a
+// non-nil interface holding a nil func, which would slip past the
+// guard and panic on PingErr at the first probe.
 func NewRedisClientCheckerFromFn(name string, ping func(ctx context.Context) error, rawURL string) *RedisClientChecker {
+	if ping == nil {
+		return NewRedisClientChecker(name, nil, rawURL)
+	}
+
 	return NewRedisClientChecker(name, redisPingerFunc(ping), rawURL)
 }
 
