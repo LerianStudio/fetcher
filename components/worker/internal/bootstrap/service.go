@@ -7,11 +7,20 @@ import (
 	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
 )
 
-var runLauncher = func(logger libLog.Logger, consumer *MultiQueueConsumer) {
-	commons.NewLauncher(
+// runLauncher launches the consumer and (when present) the health-port
+// micro-server under a single Launcher so one SIGTERM tears both down.
+// healthServer is nil under narrow unit tests that opt out of the server.
+var runLauncher = func(logger libLog.Logger, consumer *MultiQueueConsumer, healthServer *HealthServer) {
+	opts := []commons.LauncherOption{
 		commons.WithLogger(logger),
 		commons.RunApp("RabbitMQ Consumer", consumer),
-	).Run()
+	}
+
+	if healthServer != nil {
+		opts = append(opts, commons.RunApp("Health Server", healthServer))
+	}
+
+	commons.NewLauncher(opts...).Run()
 }
 
 type licenseTerminator interface {
@@ -26,12 +35,18 @@ type Service struct {
 	licenseShutdown licenseTerminator
 	// mtCleanup is the cleanup function for multi-tenant resources (Redis, etc.)
 	mtCleanup func()
+	// healthServer exposes /health, /readyz and /metrics on HEALTH_PORT.
+	// runLauncher skips it when nil.
+	healthServer *HealthServer
+	// readyzCloser releases resources owned exclusively by the readyz
+	// wiring (e.g. a dedicated MT-Redis probe client). Nil-safe.
+	readyzCloser func()
 }
 
 // Run starts the application.
 // This is the only necessary code to run an app in main.go
 func (app *Service) Run() {
-	runLauncher(app.Logger, app.MultiQueueConsumer)
+	runLauncher(app.Logger, app.MultiQueueConsumer, app.healthServer)
 
 	// Graceful shutdown
 	app.Log(context.Background(), libLog.LevelInfo, "Starting graceful shutdown...")
@@ -43,6 +58,11 @@ func (app *Service) Run() {
 		app.Log(context.Background(), libLog.LevelInfo, "Closing multi-tenant resources (Redis)...")
 		app.mtCleanup()
 		app.Log(context.Background(), libLog.LevelInfo, "Multi-tenant resources closed")
+	}
+
+	// Close readyz-owned resources (e.g. dedicated MT-Redis probe client).
+	if app.readyzCloser != nil {
+		app.readyzCloser()
 	}
 
 	// After all consumers are done, shutdown license

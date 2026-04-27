@@ -28,10 +28,10 @@ func TestNewRoutes_Constants(t *testing.T) {
 	assert.Equal(t, "fetcher", fetcherResource)
 }
 
-// TestNewRoutes_SignatureAcceptsTenantMiddleware verifies that NewRoutes accepts
-// a fiber.Handler parameter for tenant middleware. This is a compile-time check --
-// if NewRoutes does not accept the parameter, this file will not compile.
-// We use a type alias to verify the signature without triggering the telemetry race.
+// TestNewRoutes_SignatureAcceptsTenantMiddleware is a compile-time signature
+// assertion: a type alias must match NewRoutes's parameter list, including
+// the readyz / metrics handler trio. Avoids invoking NewRoutes to keep the
+// telemetry race at bay.
 func TestNewRoutes_SignatureAcceptsTenantMiddleware(t *testing.T) {
 	// Verify NewRoutes function signature includes tenantMiddleware parameter.
 	// This is a compile-time assertion: if NewRoutes does not accept fiber.Handler
@@ -45,6 +45,9 @@ func TestNewRoutes_SignatureAcceptsTenantMiddleware(t *testing.T) {
 		migrationHandler *MigrationHandler,
 		fetcherHandler *FetcherHandler,
 		tenantMiddleware fiber.Handler,
+		readyzHandler fiber.Handler,
+		readyzTenantHandler fiber.Handler,
+		metricsHandler fiber.Handler,
 	) *fiber.App
 
 	var _ expectedSignature = NewRoutes

@@ -299,7 +299,20 @@ func setup(ctx context.Context) error {
 		log.Println("Skipping Manager container (E2E_SKIP_MANAGER=true)")
 	}
 
-	// 12. Start Worker message consumer container (unless skipped for debugging)
+	// 12. Pre-create the object-storage bucket so the Worker's startup
+	// self-probe (Gate 7 of ring:dev-readyz) can satisfy its s3 HeadBucket
+	// check. Without this the Worker boots, self-probe reports s3=down,
+	// /health stays 503 forever and StartWorker's WaitHTTP /health gate
+	// times out. MinIO already pre-creates the bucket inside MinioInfra.Start;
+	// SeaweedFS does not, so we do it here against whichever provider the
+	// AppEnv selected.
+	if !skipWorker() {
+		if err := ensureStorageBucket(ctx, appEnv); err != nil {
+			return fmt.Errorf("ensure storage bucket: %w", err)
+		}
+	}
+
+	// 13. Start Worker message consumer container (unless skipped for debugging)
 	if !skipWorker() {
 		log.Println("Starting Worker container...")
 		workerApp, err = e2eshared.StartWorker(nil, ctx, appEnv, e2eshared.AppStartConfig{
@@ -388,6 +401,48 @@ func fixturesPath(name string) string {
 func isInfraEnabled(infraType string) bool {
 	envVar := fmt.Sprintf("E2E_ENABLE_%s", infraType)
 	return os.Getenv(envVar) == "true"
+}
+
+// ensureStorageBucket pre-creates the configured object-storage bucket so the
+// Worker's startup self-probe finds it. The endpoint differs by provider:
+//   - MinIO (E2E_ENABLE_S3=true): host:port from MinioInfra.HostPort()
+//   - SeaweedFS (default): host:port from coreInfra.SeaweedFS.HostPort()
+//
+// Both expose an S3-compatible API on their host-mapped port; we use the
+// AWS SDK with path-style addressing so the same code path works for both.
+//
+// MinIO already creates the bucket inside its Start hook (MinioInfra.ensureBucket),
+// so when E2E_ENABLE_S3=true this is a no-op via BucketAlreadyOwnedByYou.
+// We still call it unconditionally so the contract is stable across providers.
+func ensureStorageBucket(ctx context.Context, env *e2eshared.AppEnv) error {
+	// SeaweedFS / MinIO HostPort() returns the docker network alias when the
+	// infra is on a shared suite network — perfect for container-to-container
+	// communication (used by the Worker) but unreachable from the test runner
+	// process on the host. URL() / network-independent host:port is what we
+	// need here. SeaweedFS.URL() already returns http://<docker-host>:<mapped-port>;
+	// MinIO does not expose URL() so we compose it from Container.Host + MappedPort.
+	endpoint, err := coreInfra.SeaweedFS.URL()
+	if err != nil {
+		return fmt.Errorf("resolve seaweedfs URL: %w", err)
+	}
+
+	access := "any"
+	secret := "any"
+
+	if coreInfra.Minio != nil {
+		mHost, mPort, mErr := coreInfra.Minio.HostPort()
+		if mErr != nil {
+			return fmt.Errorf("resolve minio host/port: %w", mErr)
+		}
+
+		endpoint = fmt.Sprintf("http://%s:%d", mHost, mPort)
+		access = env.S3AccessKeyID
+		secret = env.S3SecretKey
+	}
+
+	log.Printf("Ensuring object-storage bucket %q on %s", env.StorageBucket(), endpoint)
+
+	return e2eshared.EnsureS3BucketAtHost(ctx, endpoint, env.StorageBucket(), access, secret)
 }
 
 // setupReuseInfra configures the test to use already-running infrastructure.

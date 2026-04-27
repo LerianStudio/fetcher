@@ -8,6 +8,7 @@ import (
 
 	cacheRepo "github.com/LerianStudio/fetcher/components/manager/internal/adapters/cache"
 	"github.com/LerianStudio/fetcher/pkg"
+	"github.com/LerianStudio/fetcher/pkg/bootstrap/readyz"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	redisCache "github.com/LerianStudio/fetcher/pkg/redis"
@@ -950,4 +951,146 @@ func TestInitMultiTenantMiddleware(t *testing.T) {
 			}
 		})
 	}
+}
+
+// --- Gate 4 of ring:dev-readyz --------------------------------------------
+//
+// ValidateSaaSTLS MUST run before any platform connection opens. The
+// following tests assert that:
+//
+//  1. InitServers refuses to start when DEPLOYMENT_MODE=saas and a
+//     dependency (here: MongoDB URI "mongodb") is non-TLS. The returned
+//     error MUST wrap readyz.ErrSaaSTLSRequired so alerting can key off
+//     it.
+//
+//  2. The TLS check runs BEFORE initMongoRepositoriesFn is invoked, proving
+//     the hard-gate ordering contract holds.
+//
+//  3. buildSaaSTLSConfig maps the Config fields into the right
+//     SaaSTLSConfig fields — notably HasS3 is false for the manager and
+//     AllowInsecureHTTPTM mirrors MultiTenantAllowInsecureHTTP.
+
+func TestInitServers_SaaSMode_RefusesNonTLSMongo(t *testing.T) {
+	originalLoadConfig := loadConfigFn
+	originalLoggerAndTelemetry := initLoggerAndTelemetryFn
+	originalMongoRepos := initMongoRepositoriesFn
+	originalCrypto := initCryptoFn
+	originalPlatform := initPlatformDependenciesFn
+	originalAssemble := assembleServiceFn
+
+	t.Cleanup(func() {
+		loadConfigFn = originalLoadConfig
+		initLoggerAndTelemetryFn = originalLoggerAndTelemetry
+		initMongoRepositoriesFn = originalMongoRepos
+		initCryptoFn = originalCrypto
+		initPlatformDependenciesFn = originalPlatform
+		assembleServiceFn = originalAssemble
+	})
+
+	loadConfigFn = func() (*Config, error) {
+		return &Config{
+			DeploymentMode: "saas",
+			MongoURI:       "mongodb",
+			MongoDBHost:    "host",
+			MongoDBPort:    "27017",
+		}, nil
+	}
+	initLoggerAndTelemetryFn = func(*Config) (libLog.Logger, *libOtel.Telemetry, error) {
+		return testManagerBootstrapLogger(), &libOtel.Telemetry{}, nil
+	}
+
+	mongoCalled := false
+
+	initMongoRepositoriesFn = func(context.Context, *Config, libLog.Logger) (*managerRepositories, error) {
+		mongoCalled = true
+		return &managerRepositories{}, nil
+	}
+
+	service, err := InitServers()
+	assert.Nil(t, service)
+	require.Error(t, err)
+	require.ErrorIs(t, err, readyz.ErrSaaSTLSRequired,
+		"error must wrap ErrSaaSTLSRequired so operators can detect the SaaS-gate failure")
+	assert.False(t, mongoCalled,
+		"Gate 4 must fire BEFORE initMongoRepositoriesFn — Mongo client must not be dialed")
+}
+
+func TestInitServers_LocalMode_SkipsSaaSTLSEnforcement(t *testing.T) {
+	originalLoadConfig := loadConfigFn
+	originalLoggerAndTelemetry := initLoggerAndTelemetryFn
+	originalMongoRepos := initMongoRepositoriesFn
+	originalCrypto := initCryptoFn
+	originalPlatform := initPlatformDependenciesFn
+	originalAssemble := assembleServiceFn
+
+	t.Cleanup(func() {
+		loadConfigFn = originalLoadConfig
+		initLoggerAndTelemetryFn = originalLoggerAndTelemetry
+		initMongoRepositoriesFn = originalMongoRepos
+		initCryptoFn = originalCrypto
+		initPlatformDependenciesFn = originalPlatform
+		assembleServiceFn = originalAssemble
+	})
+
+	loadConfigFn = func() (*Config, error) {
+		return &Config{
+			DeploymentMode: "local",
+			MongoURI:       "mongodb",
+			MongoDBHost:    "host",
+			MongoDBPort:    "27017",
+		}, nil
+	}
+	initLoggerAndTelemetryFn = func(*Config) (libLog.Logger, *libOtel.Telemetry, error) {
+		return testManagerBootstrapLogger(), &libOtel.Telemetry{}, nil
+	}
+	initMongoRepositoriesFn = func(context.Context, *Config, libLog.Logger) (*managerRepositories, error) {
+		return &managerRepositories{}, nil
+	}
+	initCryptoFn = func(*Config, libLog.Logger) (*managerCrypto, error) {
+		return &managerCrypto{service: &crypto.AESGCMService{}}, nil
+	}
+	initPlatformDependenciesFn = func(*Config, libLog.Logger, crypto.Signer) (*managerPlatformDependencies, error) {
+		return &managerPlatformDependencies{}, nil
+	}
+	assembleServiceFn = func(*Config, libLog.Logger, *libOtel.Telemetry, *managerRepositories, *crypto.AESGCMService, *managerPlatformDependencies) (*Service, error) {
+		return &Service{}, nil
+	}
+
+	service, err := InitServers()
+	require.NoError(t, err, "local mode must bypass SaaS TLS enforcement")
+	require.NotNil(t, service)
+}
+
+func TestBuildSaaSTLSConfig_ManagerNeverClaimsS3(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{
+		DeploymentMode:               "saas",
+		MongoURI:                     "mongodb+srv",
+		MongoDBHost:                  "host",
+		RedisHost:                    "redis",
+		RedisPort:                    "6379",
+		RedisTLS:                     true,
+		MultiTenantRedisHost:         "mt-redis",
+		MultiTenantRedisPort:         "6379",
+		MultiTenantRedisTLS:          true,
+		RabbitURI:                    "amqps",
+		RabbitMQHost:                 "rabbit",
+		RabbitMQPortAMQP:             "5671",
+		RabbitMQUser:                 "user",
+		RabbitMQPass:                 "pass",
+		MultiTenantURL:               "https://tm",
+		MultiTenantEnabled:           true,
+		MultiTenantAllowInsecureHTTP: true,
+	}
+
+	got := buildSaaSTLSConfig(cfg, false)
+	assert.Equal(t, "saas", got.DeploymentMode)
+	assert.Equal(t, "https://tm", got.TenantManagerURL)
+	assert.True(t, got.MultiTenantEnabled)
+	assert.True(t, got.AllowInsecureHTTPTM)
+	assert.False(t, got.HasS3, "manager must not claim S3 ownership")
+	assert.Equal(t, "", got.S3Endpoint)
+	assert.Equal(t, "rediss://redis:6379", got.RedisURL)
+	assert.Equal(t, "rediss://mt-redis:6379", got.MultiTenantRedisURL)
 }

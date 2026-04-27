@@ -84,6 +84,17 @@ func NewConsumerRoutesWithAdapter(adapter rabbitmq.Adapter, numWorkers int, logg
 	return cr
 }
 
+// Adapter exposes the underlying adapter so /readyz can inspect the
+// circuit-breaker state and liveness without reaching into unexported
+// fields.
+func (c *ConsumerRoutes) Adapter() rabbitmq.Adapter {
+	if c == nil {
+		return nil
+	}
+
+	return c.adapter
+}
+
 // isNonDevelopmentEnvironment returns true unless envName is an explicitly
 // allowlisted development environment. Empty/unknown values default to true
 // (fail-closed: unknown environment is treated as production).

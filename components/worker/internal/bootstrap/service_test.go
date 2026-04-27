@@ -24,4 +24,8 @@ func TestService_StructComposition(t *testing.T) {
 	if svc.mtCleanup != nil {
 		t.Error("mtCleanup should be nil by default")
 	}
+
+	if svc.healthServer != nil {
+		t.Error("healthServer should be nil by default")
+	}
 }

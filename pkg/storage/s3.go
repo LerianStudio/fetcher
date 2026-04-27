@@ -106,6 +106,34 @@ func NewS3Repository(ctx context.Context, cfg S3Config) (*S3Repository, error) {
 	}, nil
 }
 
+// Client exposes the underlying *s3.Client so /readyz can probe with
+// HeadBucket without constructing a second AWS SDK client.
+func (r *S3Repository) Client() *s3.Client {
+	if r == nil {
+		return nil
+	}
+
+	return r.s3Client
+}
+
+func (r *S3Repository) Bucket() string {
+	if r == nil {
+		return ""
+	}
+
+	return r.cfg.Bucket
+}
+
+// Endpoint returns the configured endpoint URL; empty means the AWS
+// default endpoint (HTTPS).
+func (r *S3Repository) Endpoint() string {
+	if r == nil {
+		return ""
+	}
+
+	return r.cfg.Endpoint
+}
+
 // Get downloads the object identified by objectName from the S3 bucket.
 func (r *S3Repository) Get(ctx context.Context, objectName string) ([]byte, error) {
 	_, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
