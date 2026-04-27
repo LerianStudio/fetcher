@@ -20,15 +20,10 @@ const (
 	fetcherResource     = "fetcher"
 )
 
-// NewRoutes creates a new fiber router with the specified handlers and middleware.
-// The tenantMiddleware parameter accepts a fiber.Handler for multi-tenant DB resolution.
-// Pass nil to disable tenant middleware (single-tenant mode).
-//
-// The readyzHandler, readyzTenantHandler and metricsHandler parameters wire the
-// /readyz, /readyz/tenant/:id and /metrics routes introduced in Gate 2 of the
-// ring:dev-readyz cycle. These routes are mounted BEFORE any auth middleware
-// so they remain unauthenticated — Kubernetes and external load-balancers must
-// be able to probe readiness without a token.
+// NewRoutes wires the fiber router. ttMiddleware is the multi-tenant DB
+// resolver; pass nil for single-tenant mode. readyzHandler /
+// readyzTenantHandler / metricsHandler are mounted before auth so probes
+// from Kubernetes and load-balancers stay unauthenticated.
 func NewRoutes(
 	lg log.Logger,
 	tl *opentelemetry.Telemetry,
@@ -58,14 +53,11 @@ func NewRoutes(
 	// Doc Swagger
 	f.Get("/swagger/*", WithSwaggerEnvConfig(), fiberSwagger.WrapHandler)
 
-	// Health — Gate 7 of ring:dev-readyz: gated on the startup self-probe so
-	// Kubernetes' livenessProbe can restart the pod when a dep was
-	// unreachable at boot. Returns 503 until RunSelfProbe flips the flag.
+	// /health is gated on the startup self-probe — returns 503 until
+	// RunSelfProbe flips the flag, so the kubelet restarts the pod when a
+	// dep was unreachable at boot.
 	f.Get("/health", readyz.HealthHandler())
 
-	// Readiness (Gate 2 of ring:dev-readyz). Mounted before auth — probes must
-	// be unauthenticated. readyzTenantHandler is a Gate 2 stub that always
-	// returns "skipped"; Gate 6 replaces it with the per-tenant prober.
 	if readyzHandler != nil {
 		f.Get("/readyz", readyzHandler)
 	}

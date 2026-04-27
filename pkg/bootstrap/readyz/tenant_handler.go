@@ -11,23 +11,15 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-// tenantExistenceTimeout is the budget for the tmclient call that validates
-// the URL-path tenant ID. Kept equal to PerDepTimeout("tenant_manager") so
-// the handler's latency envelope stays consistent with the global /readyz.
+// tenantExistenceTimeout matches PerDepTimeout("tenant_manager") so the
+// handler's latency envelope stays consistent with the global /readyz.
 const tenantExistenceTimeout = 1 * time.Second
 
-// TenantFiberHandler is the /readyz/tenant/:id handler. It validates the
-// URL-path tenant ID against the Tenant Manager active-tenants list, then
-// runs every registered TenantChecker in parallel with the tenant ID carried
-// on ctx via tmcore.ContextWithTenantID.
-//
-// The response shape is identical to the global /readyz response plus an
-// informational tenant_id field (omitempty). Aggregation follows the same
-// rule: healthy iff every check is in {up, skipped, n/a}.
-//
-// The draining short-circuit works identically to the global handler: when
-// IsDraining() is true the handler emits the synthetic "draining" check and
-// returns 503 without looking at checkers.
+// TenantFiberHandler serves /readyz/tenant/:id. It validates the path tenant
+// ID against the active-tenants list, then runs every TenantChecker in
+// parallel with the tenant ID installed on ctx via
+// tmcore.ContextWithTenantID. Aggregation and draining behavior mirror the
+// global handler; the response carries an additional tenant_id field.
 type TenantFiberHandler struct {
 	cfg      *Config
 	tmClient TMClient
@@ -35,9 +27,8 @@ type TenantFiberHandler struct {
 	checkers []TenantChecker
 }
 
-// NewTenantHandler constructs a /readyz/tenant/:id handler. Pass nil for
-// tmClient to let the handler decline to serve (returns 503) — the
-// bootstrap is expected to use NewDisabledTenantHandler in that case.
+// NewTenantHandler accepts a nil tmClient, in which case the handler returns
+// 503; the bootstrap should pair that with NewDisabledTenantHandler.
 func NewTenantHandler(cfg *Config, tmClient TMClient, service string, checkers ...TenantChecker) *TenantFiberHandler {
 	if cfg == nil {
 		cfg = LoadConfig()
@@ -51,8 +42,6 @@ func NewTenantHandler(cfg *Config, tmClient TMClient, service string, checkers .
 	}
 }
 
-// Fiber returns the fiber.Handler. Extracted so it can be wired into an
-// existing router or registered via readyz.Register.
 func (h *TenantFiberHandler) Fiber() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		if IsDraining() {
@@ -71,8 +60,6 @@ func (h *TenantFiberHandler) Fiber() fiber.Handler {
 				JSON(fiber.Map{"error": "tenant manager client not configured"})
 		}
 
-		// Phase 1: validate tenant exists. Short 1s budget — the probe
-		// below still needs to fit under the Kubernetes readiness probe.
 		vctx, cancel := context.WithTimeout(c.UserContext(), tenantExistenceTimeout)
 		defer cancel()
 
@@ -92,9 +79,6 @@ func (h *TenantFiberHandler) Fiber() fiber.Handler {
 				JSON(fiber.Map{"error": "tenant not found", "tenant_id": id})
 		}
 
-		// Phase 2: run per-tenant checks under the ctx with tenant ID
-		// installed. The per-dep deadline comes from PerDepTimeout by
-		// checker name (same budgets as /readyz).
 		runCtx := tmcore.ContextWithTenantID(c.UserContext(), id)
 		resp := h.runTenantChecks(runCtx, id)
 
@@ -107,9 +91,9 @@ func (h *TenantFiberHandler) Fiber() fiber.Handler {
 	}
 }
 
-// runTenantChecks executes every TenantChecker in parallel with a per-check
-// deadline derived from PerDepTimeout(checker.Name()). It is exported on
-// purpose: tests can call it without going through Fiber.
+// runTenantChecks runs every TenantChecker in parallel under
+// PerDepTimeout(checker.Name()). Exported so tests can drive it without
+// Fiber.
 func (h *TenantFiberHandler) runTenantChecks(ctx context.Context, tenantID string) ReadyzResponse {
 	checks := make(map[string]DependencyCheck, len(h.checkers))
 
@@ -147,8 +131,8 @@ func (h *TenantFiberHandler) runTenantChecks(ctx context.Context, tenantID strin
 			check := runTenantWithDeadline(depCtx, c, tenantID)
 			elapsed := time.Since(start)
 
-			// Re-use the same handler metrics as the global /readyz so
-			// cardinality stays bounded (dep + status, no tenant_id).
+			// Reuse the global metrics (dep + status only) to keep
+			// cardinality bounded — tenant_id is intentionally omitted.
 			emitCheckDuration(name, check.Status, elapsed)
 			emitCheckStatus(name, check.Status)
 
@@ -176,9 +160,8 @@ func (h *TenantFiberHandler) runTenantChecks(ctx context.Context, tenantID strin
 	}
 }
 
-// runTenantWithDeadline mirrors runWithDeadline for TenantChecker. A
-// misbehaving checker cannot stall aggregation — ctx.Done() short-circuits
-// to a synthetic down.
+// runTenantWithDeadline mirrors runWithDeadline for TenantChecker so a
+// misbehaving checker cannot stall aggregation.
 func runTenantWithDeadline(ctx context.Context, c TenantChecker, tenantID string) DependencyCheck {
 	done := make(chan DependencyCheck, 1)
 
@@ -197,8 +180,7 @@ func runTenantWithDeadline(ctx context.Context, c TenantChecker, tenantID string
 	}
 }
 
-// drainingResponse emits the synthetic draining check. Mirrors the global
-// handler's buildDrainingResponse but carries the tenant ID.
+// drainingResponse mirrors buildDrainingResponse but carries the tenant ID.
 func (h *TenantFiberHandler) drainingResponse(tenantID string) ReadyzResponse {
 	emitCheckDuration(drainingDepName, StatusDown, 0)
 	emitCheckStatus(drainingDepName, StatusDown)
@@ -217,8 +199,6 @@ func (h *TenantFiberHandler) drainingResponse(tenantID string) ReadyzResponse {
 	}
 }
 
-// tenantExists reports whether id appears in the tenants slice. Kept as a
-// standalone helper so unit tests don't need a fake tmclient to exercise it.
 func tenantExists(tenants []*tmclient.TenantSummary, id string) bool {
 	for _, t := range tenants {
 		if t != nil && t.ID == id {
@@ -229,11 +209,9 @@ func tenantExists(tenants []*tmclient.TenantSummary, id string) bool {
 	return false
 }
 
-// NewDisabledTenantHandler returns a Fiber handler that responds 400 with a
-// stable JSON body when multi-tenant mode is disabled. The bootstrap wires
-// this when MULTI_TENANT_ENABLED=false so the route stays mounted (operators
-// can tell the difference between "route missing" and "MT disabled" without
-// reading code).
+// NewDisabledTenantHandler keeps the route mounted (returning 400) when
+// multi-tenant mode is disabled, so operators can distinguish "MT disabled"
+// from "route missing" without reading code.
 func NewDisabledTenantHandler() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).

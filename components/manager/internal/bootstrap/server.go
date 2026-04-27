@@ -16,9 +16,8 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-// serverNotifySignals is the signal.Notify indirection used by Server.Run so
-// tests can inject a synthetic signal channel without racing against
-// lib-commons' own signal handler. In production it points at signal.Notify.
+// serverNotifySignals is overridable so tests can drive a synthetic signal
+// channel without racing the real signal handler.
 var serverNotifySignals = signal.Notify
 
 type licenseTerminator interface {
@@ -33,11 +32,7 @@ type Server struct {
 	logger        libCommonsLog.Logger
 	telemetry     libCommonsOtel.Telemetry
 	shutdownHooks []func(context.Context) error
-	// drainDelay controls how long Run blocks after SIGTERM before allowing
-	// the lib-commons ServerManager to tear down the HTTP listener. Copied
-	// from Config.ReadyzDrainDelaySec so the Server does not need a back-ref
-	// to the whole config struct.
-	drainDelay time.Duration
+	drainDelay    time.Duration
 }
 
 // ServerAddress returns is a convenience method to return the server address.
@@ -59,10 +54,9 @@ func NewServer(cfg *Config, app *fiber.App, logger libCommonsLog.Logger, telemet
 	}
 }
 
-// resolveServerDrainDelay converts Config.ReadyzDrainDelaySec into a
-// time.Duration, applying the same clamps as readyz.LoadConfig: zero falls
-// back to 12s, negative values to 1s. Kept local so the server package does
-// not import readyz for a single helper.
+// resolveServerDrainDelay mirrors readyz.LoadConfig's clamps: zero → 12s,
+// negative → 1s. Defined locally so the package doesn't import readyz for
+// a single helper.
 func resolveServerDrainDelay(cfg *Config) time.Duration {
 	switch {
 	case cfg == nil || cfg.ReadyzDrainDelaySec == 0:
@@ -74,23 +68,12 @@ func resolveServerDrainDelay(cfg *Config) time.Duration {
 	}
 }
 
-// Run runs the server.
-//
-// Gate 7 of ring:dev-readyz — graceful drain:
-//
-// lib-commons' ServerManager.WithShutdownHook invokes hooks AFTER the HTTP
-// listener is closed (see lib-commons v4.6.0 commons/server/shutdown.go,
-// executeShutdown, line ~397). That ordering is too late for our drain
-// contract — we need readyz.SetDraining(true) to fire BEFORE connections
-// are drained so Kubernetes' readinessProbe flips to 503 and the kube-proxy
-// stops routing new traffic to this pod. Otherwise in-flight requests would
-// be dropped as the listener closes.
-//
-// Solution: intercept SIGTERM ourselves via signal.Notify, flip the drain
-// flag, sleep for the grace period, and THEN close the ServerManager's
-// injected shutdown channel via WithShutdownChannel. ServerManager blocks on
-// that channel instead of installing its own signal handler, so the drain
-// sequence is strictly: SetDraining → grace → HTTP shutdown → hooks.
+// Run drives the graceful drain sequence: SetDraining → grace period →
+// HTTP shutdown → hooks. lib-commons' ServerManager runs hooks after the
+// HTTP listener closes, which is too late for the drain flag — kube-proxy
+// must see /readyz=503 before connections are drained, otherwise in-flight
+// requests are dropped. We intercept SIGTERM ourselves, flip the flag,
+// sleep, and only then close ServerManager's injected shutdown channel.
 func (s *Server) Run(l *libCommons.Launcher) error {
 	_ = l
 
@@ -122,19 +105,15 @@ func (s *Server) Run(l *libCommons.Launcher) error {
 
 	manager.StartWithGracefulShutdown()
 
-	// Stop listening for OS signals; tears down the goroutine above if it
-	// has not already returned.
 	signal.Stop(sig)
 	drainCancel()
 
 	return nil
 }
 
-// drainLoop is the sidecar shutdown coordinator invoked from Run. It waits
-// for SIGTERM/SIGINT, flips the readyz drain flag, sleeps for the grace
-// window and finally closes shutdownCh to unblock the lib-commons
-// ServerManager. Extracted as a method so tests can drive it deterministically
-// without the full Run wiring.
+// drainLoop waits for SIGTERM/SIGINT, flips the readyz drain flag, sleeps
+// the grace window, then closes shutdownCh to unblock ServerManager.
+// Extracted so tests can drive it without the full Run wiring.
 func (s *Server) drainLoop(ctx context.Context, sig <-chan os.Signal, shutdownCh chan<- struct{}) {
 	select {
 	case <-sig:

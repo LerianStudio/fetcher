@@ -117,9 +117,8 @@ type Config struct {
 	MultiTenantCacheTTLSec              int    `env:"MULTI_TENANT_CACHE_TTL_SEC" default:"120"`
 	MultiTenantTimeout                  int    `env:"MULTI_TENANT_TIMEOUT" default:"30"`
 	MultiTenantAllowInsecureHTTP        bool   `env:"MULTI_TENANT_ALLOW_INSECURE_HTTP" default:"false"`
-	// /readyz configuration (Gate 2 of ring:dev-readyz). The worker has no
-	// primary HTTP server, so a dedicated health-port micro-server exposes
-	// /health, /readyz and /metrics on HEALTH_PORT (default 4007).
+	// The worker has no primary HTTP server; a dedicated micro-server
+	// exposes /health, /readyz and /metrics on HEALTH_PORT.
 	DeploymentMode      string `env:"DEPLOYMENT_MODE" default:"local"`
 	HealthPort          int    `env:"HEALTH_PORT" default:"4007"`
 	ReadyzDrainDelaySec int    `env:"READYZ_DRAIN_DELAY_SEC" default:"12"`
@@ -135,10 +134,9 @@ var (
 	}
 	decodeMasterKey = crypto.DecodeMasterKey
 	newKeyDeriver   = crypto.NewHKDFKeyDeriver
-	// validateSaaSTLSFn is package-level so tests can override it. In
-	// production it points to readyz.ValidateSaaSTLS. Gate 4 of
-	// ring:dev-readyz: runs BEFORE any platform connection (including the
-	// S3 storage repository) opens.
+	// validateSaaSTLSFn is overridable for tests. In production it points
+	// to readyz.ValidateSaaSTLS and runs before any platform connection
+	// (including the S3 storage repository) opens.
 	validateSaaSTLSFn = readyz.ValidateSaaSTLS
 )
 
@@ -163,9 +161,7 @@ func InitWorker() (*Service, error) {
 
 	logger.Log(ctx, libLog.LevelInfo, "Key derivation initialized successfully")
 
-	// Gate 4 of ring:dev-readyz — centralized SaaS TLS enforcement.
-	// MUST run BEFORE any platform connection opens (S3, MongoDB,
-	// RabbitMQ, Redis). Returns immediately when DEPLOYMENT_MODE != "saas".
+	// SaaS TLS enforcement must run before any platform connection opens.
 	// Worker owns the S3 object-storage dependency, so hasS3=true.
 	if err := validateSaaSTLSFn(buildSaaSTLSConfig(cfg, true)); err != nil {
 		return nil, fmt.Errorf("tls enforcement failed: %w", err)
@@ -285,10 +281,9 @@ func InitWorker() (*Service, error) {
 
 		readyzDeps := newWorkerReadyzDepsMT(cfg, mongoConnection, storageRepository, tmClient, mongoManager, rabbitMQManager)
 
-		// Gate 7 of ring:dev-readyz — run the startup self-probe AFTER every
-		// dep is constructed and BEFORE the consumer + health server start.
-		// A failing probe is logged but does not abort boot; /health stays
-		// 503 until the flag flips.
+		// Self-probe runs after every dep is constructed and before the
+		// consumer + health server start; failure does not abort boot,
+		// /health serves 503 until the probe succeeds.
 		runWorkerSelfProbe(ctx, logger, buildWorkerReadyzCheckers(readyzDeps))
 
 		return &Service{
@@ -308,7 +303,6 @@ func InitWorker() (*Service, error) {
 
 	readyzDeps := newWorkerReadyzDepsST(cfg, mongoConnection, storageRepository, consumerRoutes)
 
-	// Gate 7 of ring:dev-readyz — single-tenant path.
 	runWorkerSelfProbe(ctx, logger, buildWorkerReadyzCheckers(readyzDeps))
 
 	return &Service{
@@ -320,13 +314,10 @@ func InitWorker() (*Service, error) {
 	}, nil
 }
 
-// initSingleTenantRabbitMQ initializes RabbitMQ consumer and publisher for single-tenant mode.
-// Consumer and Publisher use SEPARATE connections to avoid channel interference.
-//
-// The second return value is the underlying *rabbitmq.ConsumerRoutes whose
-// adapter is surfaced in /readyz (Gate 6 of ring:dev-readyz) so the
-// readiness probe can inspect the circuit-breaker state. It is nil on the
-// error path.
+// initSingleTenantRabbitMQ creates RabbitMQ consumer and publisher with
+// SEPARATE connections to avoid channel interference. The returned
+// *rabbitmq.ConsumerRoutes is what /readyz uses to inspect the
+// circuit-breaker state; nil on the error path.
 func initSingleTenantRabbitMQ(
 	cfg *Config,
 	logger libLog.Logger,
@@ -870,21 +861,14 @@ func wrapBootstrapError(action string, err error) error {
 	return nil
 }
 
-// buildSaaSTLSConfig assembles the SaaSTLSConfig passed to
-// readyz.ValidateSaaSTLS at bootstrap (Gate 4 of ring:dev-readyz).
-//
-// It mirrors the URL composition rules used by the real initMongoConnection,
-// initSingleTenantRabbitMQ and initStorageRepository call sites so the
-// validator checks exactly the strings that will later be opened.
-//
-// hasS3 is a caller-supplied flag: the worker passes true (S3 is the
-// object-storage dependency). Keeping this as an argument documents the
-// two-service symmetry with manager/.
+// buildSaaSTLSConfig mirrors the URL composition done by initMongoConnection,
+// initSingleTenantRabbitMQ and initStorageRepository so ValidateSaaSTLS
+// inspects exactly the strings that will later be dialed.
 func buildSaaSTLSConfig(cfg *Config, hasS3 bool) readyz.SaaSTLSConfig {
 	return readyz.SaaSTLSConfig{
 		DeploymentMode:      cfg.DeploymentMode,
 		MongoURI:            buildWorkerMongoURI(cfg),
-		RedisURL:            "", // Worker has no direct Redis dep (only multi-tenant Redis).
+		RedisURL:            "",
 		MultiTenantRedisURL: readyz.ComposeRedisURL(cfg.MultiTenantRedisHost, cfg.MultiTenantRedisPort, cfg.MultiTenantRedisTLS),
 		RabbitMQURL:         buildWorkerRabbitMQURL(cfg),
 		S3Endpoint:          cfg.ObjectStorageEndpoint,
@@ -895,10 +879,9 @@ func buildSaaSTLSConfig(cfg *Config, hasS3 bool) readyz.SaaSTLSConfig {
 	}
 }
 
-// buildWorkerMongoURI composes the Mongo URI exactly the way
-// initMongoConnection does at startup, so Gate 4 validates the string that
-// will actually be dialed. Returns "" when the MongoURI scheme is unset
-// (dep-not-configured contract).
+// buildWorkerMongoURI composes the Mongo URI the same way
+// initMongoConnection does, so the validator sees the dialed string. "" when
+// MongoURI is unset (dep not configured).
 func buildWorkerMongoURI(cfg *Config) string {
 	if cfg.MongoURI == "" {
 		return ""
@@ -916,17 +899,15 @@ func buildWorkerMongoURI(cfg *Config) string {
 	return source
 }
 
-// workerSelfProbeTimeout bounds the overall duration of the worker startup
-// self-probe. Same rationale as the manager: large enough to cover the
-// worst-case per-dep timeout with a small fan-out factor, small enough that
-// a totally-unreachable dep cloud cannot delay boot indefinitely.
+// workerSelfProbeTimeout caps the worker's startup probe — large enough
+// to cover the worst-case per-dep timeout with a small fan-out, small
+// enough that an unreachable dep cannot delay boot indefinitely.
 const workerSelfProbeTimeout = 15 * time.Second
 
-// runWorkerSelfProbe runs readyz.RunSelfProbe with the worker's logger and
-// a bounded context. Mirrors runManagerSelfProbe — a failing probe is logged
-// but does NOT return an error. The zero-panic policy requires the pod
-// stays up so /health can serve 503 and Kubernetes can restart the pod on
-// its own schedule.
+// runWorkerSelfProbe wraps readyz.RunSelfProbe with the worker's logger
+// and a bounded context. A failing probe is logged but never returned —
+// the pod must stay up so /health serves 503 and the kubelet handles
+// restarts.
 var runWorkerSelfProbe = func(ctx context.Context, logger libLog.Logger, checkers []readyz.DependencyChecker) {
 	probeCtx, cancel := context.WithTimeout(ctx, workerSelfProbeTimeout)
 	defer cancel()
@@ -941,9 +922,8 @@ var runWorkerSelfProbe = func(ctx context.Context, logger libLog.Logger, checker
 	}
 }
 
-// buildWorkerRabbitMQURL composes the RabbitMQ URL exactly the way
-// initSingleTenantRabbitMQ does at startup. Returns "" when RabbitURI is
-// unset.
+// buildWorkerRabbitMQURL composes the URL the same way
+// initSingleTenantRabbitMQ does. "" when RabbitURI is unset.
 func buildWorkerRabbitMQURL(cfg *Config) string {
 	if cfg.RabbitURI == "" {
 		return ""

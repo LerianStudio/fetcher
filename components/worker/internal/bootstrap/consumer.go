@@ -51,11 +51,10 @@ type MultiQueueConsumer struct {
 	mongoManager   *tmmongo.Manager // For per-tenant MongoDB resolution (nil in single-tenant mode)
 	initErr        error            // Deferred initialization error for multi-tenant handler registration
 	// drainDelay is how long the consumer waits after SIGTERM before
-	// cancelling the base context. Gate 7 of ring:dev-readyz: the window
-	// lets /readyz flip to 503 and Kubernetes remove the pod from the
-	// Service endpoints before RabbitMQ ack/nack traffic stops. Zero
-	// disables the sleep; negative values are clamped to zero at the call
-	// site.
+	// cancelling the base context. The window lets Kubernetes observe
+	// /readyz=503 and remove the pod from the Service endpoints before
+	// RabbitMQ ack/nack traffic stops. Zero disables the sleep; negatives
+	// are clamped to zero at the call site.
 	drainDelay time.Duration
 }
 
@@ -162,11 +161,9 @@ func (mq *MultiQueueConsumer) Run(l *commons.Launcher) error {
 	go func() {
 		<-sigs
 
-		// Gate 7 of ring:dev-readyz — graceful drain sequence:
-		// SetDraining(true) → sleep grace period → cancel consumer context.
-		// The grace window lets Kubernetes observe /readyz=503 and remove
-		// the pod from the Service endpoints before RabbitMQ ack/nack
-		// traffic stops. Reversing this order drops in-flight messages.
+		// SetDraining(true) → sleep grace period → cancel consumer ctx.
+		// Reversing the order drops in-flight messages because consumers
+		// stop ack/nack traffic before kube-proxy sees /readyz=503.
 		readyz.SetDraining(true)
 
 		if mq.logger != nil {

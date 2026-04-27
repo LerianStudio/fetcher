@@ -106,9 +106,8 @@ func NewS3Repository(ctx context.Context, cfg S3Config) (*S3Repository, error) {
 	}, nil
 }
 
-// Client returns the underlying *s3.Client. Exposed so the worker's
-// /readyz wiring (Gate 6 of ring:dev-readyz) can issue a HeadBucket probe
-// without constructing a second AWS SDK client.
+// Client exposes the underlying *s3.Client so /readyz can probe with
+// HeadBucket without constructing a second AWS SDK client.
 func (r *S3Repository) Client() *s3.Client {
 	if r == nil {
 		return nil
@@ -117,8 +116,6 @@ func (r *S3Repository) Client() *s3.Client {
 	return r.s3Client
 }
 
-// Bucket returns the configured bucket name. Exposed for the same reason as
-// Client — the /readyz probe needs the bucket to pass to HeadBucket.
 func (r *S3Repository) Bucket() string {
 	if r == nil {
 		return ""
@@ -127,8 +124,8 @@ func (r *S3Repository) Bucket() string {
 	return r.cfg.Bucket
 }
 
-// Endpoint returns the configured endpoint URL (may be empty for AWS
-// defaults). Used by /readyz to derive TLS posture.
+// Endpoint returns the configured endpoint URL; empty means the AWS
+// default endpoint (HTTPS).
 func (r *S3Repository) Endpoint() string {
 	if r == nil {
 		return ""

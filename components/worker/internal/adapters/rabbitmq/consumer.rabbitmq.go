@@ -84,10 +84,9 @@ func NewConsumerRoutesWithAdapter(adapter rabbitmq.Adapter, numWorkers int, logg
 	return cr
 }
 
-// Adapter returns the underlying rabbitmq.Adapter used by this consumer.
-// Exposed so bootstrap code (Gate 6 of ring:dev-readyz) can inspect the
-// adapter's circuit-breaker state and liveness without reaching into
-// unexported fields.
+// Adapter exposes the underlying adapter so /readyz can inspect the
+// circuit-breaker state and liveness without reaching into unexported
+// fields.
 func (c *ConsumerRoutes) Adapter() rabbitmq.Adapter {
 	if c == nil {
 		return nil

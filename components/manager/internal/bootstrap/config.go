@@ -124,9 +124,8 @@ type Config struct {
 	MultiTenantCacheTTLSec              int    `env:"MULTI_TENANT_CACHE_TTL_SEC" default:"120"`
 	MultiTenantTimeout                  int    `env:"MULTI_TENANT_TIMEOUT" default:"30"`
 	MultiTenantAllowInsecureHTTP        bool   `env:"MULTI_TENANT_ALLOW_INSECURE_HTTP" default:"false"`
-	// /readyz configuration (Gate 2 of ring:dev-readyz). The manager reuses
-	// SERVER_PORT and therefore does not expose a separate health port —
-	// /readyz, /metrics and /health are mounted on the main HTTP server.
+	// /readyz, /metrics and /health are mounted on the main HTTP server
+	// (the manager reuses SERVER_PORT).
 	DeploymentMode      string `env:"DEPLOYMENT_MODE" default:"local"`
 	ReadyzDrainDelaySec int    `env:"READYZ_DRAIN_DELAY_SEC" default:"12"`
 }
@@ -134,10 +133,8 @@ type Config struct {
 type managerRepositories struct {
 	connection *connection.ConnectionMongoDBRepository
 	job        *job.JobMongoDBRepository
-	// mongoClient is the raw lib-commons Mongo client. Kept alongside the
-	// repositories so /readyz (Gate 6) can run a Ping against it without
-	// re-wiring a second connection. In multi-tenant mode this is still the
-	// platform-level client — tenant-scoped probes use tmmongo.Manager.
+	// mongoClient is reused by /readyz to Ping the platform-level connection
+	// without opening a second one. Tenant-scoped probes use tmmongo.Manager.
 	mongoClient *libMongo.Client
 }
 
@@ -153,26 +150,18 @@ type managerPlatformDependencies struct {
 	licenseClient       *libLicense.LicenseClient
 	connectionTestStore *ratelimit.RateLimiter
 	schemaCache         cacheRepo.SchemaCacheRepository
-	// rabbitMQAdapter is the concrete pkg/rabbitmq adapter used in
-	// single-tenant mode. Kept here so /readyz (Gate 6) can surface the
-	// adapter's circuit-breaker state in the readiness response. In
-	// multi-tenant mode this is nil — the global /readyz emits "n/a" and the
-	// per-tenant probe runs through tmrabbitmq.Manager.
+	// rabbitMQAdapter exposes the concrete adapter to /readyz so it can
+	// surface the circuit-breaker state. Nil in multi-tenant mode — the
+	// global response emits "n/a" and per-tenant probes use tmrabbitmq.
 	rabbitMQAdapter rabbitmq.Adapter
-	// tmClient is the Tenant Manager HTTP client used for the
-	// /readyz "tenant_manager" dep and for /readyz/tenant/:id tenant
-	// existence validation. Nil when MULTI_TENANT_ENABLED=false.
-	tmClient *tmclient.Client
-	// tmMongoManager is the per-tenant Mongo pool manager used by the
-	// /readyz/tenant/:id handler. Nil when MULTI_TENANT_ENABLED=false.
-	tmMongoManager *tmmongo.Manager
-	// tmRabbitMQManager is the per-tenant AMQP vhost manager used by the
-	// /readyz/tenant/:id handler. Nil when MULTI_TENANT_ENABLED=false.
+	tmClient        *tmclient.Client
+	// tmMongoManager / tmRabbitMQManager back the /readyz/tenant/:id
+	// handler. Both are nil when MULTI_TENANT_ENABLED=false.
+	tmMongoManager    *tmmongo.Manager
 	tmRabbitMQManager *tmrabbitmq.Manager
-	// readyzRedisClient is a dedicated *redis.Client for /readyz probing of
-	// the schema-cache Redis. We do NOT reuse the cache's internal client
-	// because it is wrapped by a memory fallback that would always report
-	// the probe as healthy. Nil when REDIS_HOST is unset.
+	// readyzRedisClient is dedicated to /readyz so the probe is not
+	// short-circuited by the schema cache's in-memory fallback. Nil when
+	// REDIS_HOST is unset.
 	readyzRedisClient *redis.Client
 }
 
@@ -196,9 +185,8 @@ var (
 	initCryptoFn               = initCrypto
 	initPlatformDependenciesFn = initPlatformDependencies
 	assembleServiceFn          = assembleService
-	// validateSaaSTLSFn is package-level so tests can override it. In
-	// production it points to readyz.ValidateSaaSTLS. Gate 4 of
-	// ring:dev-readyz: runs BEFORE any connection opens.
+	// validateSaaSTLSFn is overridable for tests. In production it points
+	// to readyz.ValidateSaaSTLS and runs before any connection opens.
 	validateSaaSTLSFn = readyz.ValidateSaaSTLS
 )
 
@@ -230,10 +218,8 @@ func InitServers() (*Service, error) {
 		logger.Log(ctx, libLog.LevelInfo, "Running in SINGLE-TENANT MODE")
 	}
 
-	// Gate 4 of ring:dev-readyz — centralized SaaS TLS enforcement.
-	// MUST run BEFORE any platform connection opens. Returns immediately
-	// when DEPLOYMENT_MODE != "saas" (no enforcement in byoc/local).
-	// Manager has no S3 dependency (worker-only), so hasS3=false.
+	// SaaS TLS enforcement must run before any platform connection opens.
+	// Manager has no S3 dependency (worker-only).
 	if err := validateSaaSTLSFn(buildSaaSTLSConfig(cfg, false)); err != nil {
 		return nil, fmt.Errorf("tls enforcement failed: %w", err)
 	}
@@ -395,8 +381,8 @@ func initPlatformDependencies(cfg *Config, logger libLog.Logger, messageSigner c
 
 	var rabbitMQCleanup func()
 
-	// Concrete handles carried through to assembleService for /readyz
-	// wiring. All remain nil when their mode/feature is not active.
+	// Concrete handles forwarded to assembleService for /readyz wiring.
+	// All remain nil when their mode/feature is not active.
 	var rabbitAdapter rabbitmq.Adapter
 
 	var tmClientForReadyz *tmclient.Client
@@ -450,11 +436,9 @@ func initPlatformDependencies(cfg *Config, logger libLog.Logger, messageSigner c
 			}
 		}
 
-		// Capture MT handles for Gate 6 readyz wiring. The tmMongo manager
-		// is built separately by initMultiTenantMiddleware; here we create
-		// one dedicated to readyz so the /readyz probe does not depend on
-		// middleware startup ordering. Pool caps / idle timeouts mirror
-		// the main manager to keep observability consistent.
+		// readyz uses a dedicated tmMongo manager so /readyz does not
+		// depend on initMultiTenantMiddleware's startup ordering. Pool
+		// caps and idle timeouts mirror the main manager.
 		var readyzMongoOpts []tmmongo.Option
 
 		readyzMongoOpts = append(readyzMongoOpts,
@@ -631,18 +615,14 @@ func assembleService(
 		return nil, err
 	}
 
-	// Readiness wiring (Gate 6 of ring:dev-readyz). Real checkers replace
-	// Gate 2's stubs. The set of checkers is assembled below based on
-	// deployment flags: tenant-scoped deps carve out to NAChecker in MT
-	// mode; the tenant-manager checker only appears when MT is enabled.
+	// In multi-tenant mode tenant-scoped deps carve out to NAChecker; the
+	// tenant-manager checker is only registered when MT is enabled.
 	readyzCfg := newReadyzConfig(cfg)
 	globalCheckers := buildManagerReadyzCheckers(cfg, repositories, platformDependencies)
 
-	// Gate 7 of ring:dev-readyz — startup self-probe. Runs every registered
-	// checker once, flipping selfProbeOK to true only if all are up / skipped
-	// / n/a. Errors are logged but NEVER crash the pod — /health returns 503
-	// and Kubernetes' livenessProbe restarts the pod if a dep was
-	// unreachable at boot.
+	// Startup self-probe — failure flips selfProbeOK to false but does not
+	// crash the pod, so /health serves 503 until a successful probe and
+	// the kubelet handles restarts.
 	runManagerSelfProbe(context.Background(), logger, globalCheckers)
 
 	readyzHandler := readyz.NewHandler(readyzCfg, globalCheckers...).Fiber()
@@ -660,10 +640,6 @@ func assembleService(
 		tenantHandler,
 		readyzHandler,
 		tenantFiberHandler,
-		// Gate 5 of ring:dev-readyz: /metrics now serves Prometheus
-		// exposition, including both the three readyz_* metrics and the Go
-		// runtime metrics from the default registerer. Replaces the Gate 2
-		// MetricsPlaceholder empty-body shim.
 		readyz.NewMetricsHandler(),
 	)
 
@@ -687,8 +663,7 @@ func assembleService(
 		})
 	}
 
-	// Gate 6 of ring:dev-readyz: release the readyz-dedicated Redis client
-	// and the tmMongo manager used exclusively by the tenant-scoped probe.
+	// Release the readyz-dedicated Redis client and tmMongo manager.
 	if platformDependencies.readyzRedisClient != nil {
 		rdb := platformDependencies.readyzRedisClient
 
@@ -1040,17 +1015,11 @@ func resolvedMaxTenantPools(cfg *Config) int {
 	return defaultMaxTenantPools
 }
 
-// buildSaaSTLSConfig assembles the SaaSTLSConfig passed to
-// readyz.ValidateSaaSTLS at bootstrap (Gate 4 of ring:dev-readyz).
-//
-// It is the ONLY place where the manager's Config is translated into the
-// six platform-dependency URLs that Gate 4 validates. Redis and RabbitMQ
-// URLs are composed here via the canonical helpers to guarantee the
-// validator sees exactly what the real clients will later open.
-//
-// hasS3 is a caller-supplied flag: the manager passes false (S3 is a
-// worker-only dependency). Keeping this as an argument rather than
-// hard-coding false documents the two-service symmetry with worker/.
+// buildSaaSTLSConfig translates the manager's Config into the URLs that
+// readyz.ValidateSaaSTLS inspects, composing Redis / RabbitMQ via the
+// canonical helpers so the validator sees exactly what the real clients
+// will later open. hasS3 stays as an argument (rather than hard-coded
+// false) so the call site reads symmetrically with the worker bootstrap.
 func buildSaaSTLSConfig(cfg *Config, hasS3 bool) readyz.SaaSTLSConfig {
 	return readyz.SaaSTLSConfig{
 		DeploymentMode:      cfg.DeploymentMode,
@@ -1058,8 +1027,6 @@ func buildSaaSTLSConfig(cfg *Config, hasS3 bool) readyz.SaaSTLSConfig {
 		RedisURL:            readyz.ComposeRedisURL(cfg.RedisHost, cfg.RedisPort, cfg.RedisTLS),
 		MultiTenantRedisURL: readyz.ComposeRedisURL(cfg.MultiTenantRedisHost, cfg.MultiTenantRedisPort, cfg.MultiTenantRedisTLS),
 		RabbitMQURL:         buildRabbitMQSource(cfg),
-		// Manager has no object storage dependency; the hasS3 argument is
-		// passed through so the call site reads symmetrically with worker.
 		S3Endpoint:          "",
 		TenantManagerURL:    cfg.MultiTenantURL,
 		MultiTenantEnabled:  cfg.MultiTenantEnabled,
@@ -1068,15 +1035,11 @@ func buildSaaSTLSConfig(cfg *Config, hasS3 bool) readyz.SaaSTLSConfig {
 	}
 }
 
-// newReadyzConfig derives the readyz-specific configuration from the manager's
-// top-level Config. It preserves the same precedence rules as
-// readyz.LoadConfig (OTEL_RESOURCE_SERVICE_VERSION → VERSION → "unknown")
-// without reading the environment a second time — the values already live on
-// the Config struct, so we forward them directly.
+// newReadyzConfig forwards the values already on the manager's Config to
+// readyz.Config without re-reading the environment. nil cfg falls through
+// to readyz.LoadConfig so test seams and misconfigured callers do not
+// panic.
 func newReadyzConfig(cfg *Config) *readyz.Config {
-	// Mirror readyz.NewHandler's nil-tolerance: a nil manager Config falls
-	// through to readyz.LoadConfig (env-driven). Prevents panic under test
-	// seams or misconfigured callers.
 	if cfg == nil {
 		return readyz.LoadConfig()
 	}
@@ -1190,18 +1153,15 @@ func wrapBootstrapError(action string, err error) error {
 	return nil
 }
 
-// selfProbeTimeout bounds the overall duration of the startup self-probe. It
-// is deliberately larger than the worst-case per-dep timeout (2s) multiplied
-// by a small fan-out factor — parallel execution keeps the realised wall
-// time close to the slowest individual dep.
+// selfProbeTimeout caps the whole startup probe; sized larger than the
+// worst-case per-dep timeout (2s) so parallel execution finishes inside
+// the budget even with a small fan-out factor.
 const selfProbeTimeout = 15 * time.Second
 
-// runManagerSelfProbe is a tiny bootstrap-side wrapper that runs
-// readyz.RunSelfProbe with the manager's logger and a bounded context. A
-// failing probe is logged but does NOT return an error — the zero-panic
-// policy of ring:dev-readyz requires that the pod stay up so /health can
-// serve 503 and Kubernetes can restart it (and collect logs) on its own
-// schedule.
+// runManagerSelfProbe wraps readyz.RunSelfProbe with the manager's logger
+// and a bounded context. A failing probe is logged but never returned —
+// the pod must stay up so /health serves 503 and the kubelet handles
+// restarts on its own schedule.
 var runManagerSelfProbe = func(ctx context.Context, logger libLog.Logger, checkers []readyz.DependencyChecker) {
 	probeCtx, cancel := context.WithTimeout(ctx, selfProbeTimeout)
 	defer cancel()

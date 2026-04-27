@@ -19,14 +19,10 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// workerReadyzDeps bundles the concrete handles the worker bootstrap passes
-// to NewHealthServer for /readyz wiring. Fields are all nullable — the
-// checker-building logic handles missing deps by either skipping or carving
-// out the corresponding dep entry.
-//
-// This indirection keeps NewHealthServer's signature small and lets the
-// single-tenant and multi-tenant construction paths share the same wiring
-// code.
+// workerReadyzDeps bundles the handles the worker bootstrap forwards to
+// NewHealthServer. All fields are nullable — the checker-building logic
+// either skips a missing dep or carves out an NA entry. closers are
+// invoked by the top-level Service on shutdown.
 type workerReadyzDeps struct {
 	cfg            *Config
 	mongoClient    *libMongo.Client
@@ -37,15 +33,12 @@ type workerReadyzDeps struct {
 	tmMongoManager *tmmongo.Manager
 	tmRabbitMgr    *tmrabbitmq.Manager
 
-	// closers are cleanup hooks attached to deps the readyz_adapters layer
-	// owns (e.g. a dedicated redis client). The top-level Service is
-	// responsible for invoking these on shutdown.
 	closers []func() error
 }
 
-// newWorkerReadyzDepsST constructs readyz deps for the single-tenant path.
-// The tenant-scoped fields remain nil — the /readyz/tenant/:id handler will
-// fall back to the disabled variant.
+// newWorkerReadyzDepsST builds deps for the single-tenant path. Tenant-
+// scoped fields stay nil and /readyz/tenant/:id falls back to the disabled
+// handler.
 func newWorkerReadyzDepsST(
 	cfg *Config,
 	mongoClient *libMongo.Client,
@@ -65,14 +58,11 @@ func newWorkerReadyzDepsST(
 	return deps
 }
 
-// newWorkerReadyzDepsMT constructs readyz deps for the multi-tenant path.
-// The single-tenant rabbit adapter is nil (the global /readyz will register
-// an NAChecker); tenant-scoped probes go through the tmrabbitmq.Manager.
-//
-// We also create an independent *redis.Client for the multi-tenant-Redis
-// probe because the event listener's redis client is constructed inside
-// initMultiTenantStack and is cleaned up there — sharing it would tangle
-// the two lifecycles.
+// newWorkerReadyzDepsMT builds deps for the multi-tenant path. The
+// single-tenant Rabbit adapter is nil (the global /readyz emits an
+// NAChecker; tenant-scoped probes go through tmrabbitmq.Manager). The
+// MT-Redis client is owned by readyz so its lifecycle stays independent
+// of the event listener's own Redis client.
 func newWorkerReadyzDepsMT(
 	cfg *Config,
 	mongoClient *libMongo.Client,
@@ -102,10 +92,8 @@ func newWorkerReadyzDepsMT(
 	return deps
 }
 
-// close invokes every registered closer in order. Kept as a method so
-// callers can assign it to Service.readyzCloser without writing another
-// wrapper. Returns nothing because we want the shutdown path to keep going
-// on individual cleanup errors.
+// close runs every closer in order, ignoring errors so a single cleanup
+// failure does not abort shutdown.
 func (d *workerReadyzDeps) close() {
 	if d == nil {
 		return
@@ -118,8 +106,8 @@ func (d *workerReadyzDeps) close() {
 	}
 }
 
-// newReadyzMTRedis builds the standalone multi-tenant-Redis client used
-// exclusively by /readyz. Returns nil when MT Redis is not configured.
+// newReadyzMTRedis builds the standalone MT-Redis client used by /readyz.
+// Returns nil when MT-Redis is not configured.
 func newReadyzMTRedis(cfg *Config) *redis.Client {
 	if cfg == nil || cfg.MultiTenantRedisHost == "" {
 		return nil
@@ -138,11 +126,9 @@ func newReadyzMTRedis(cfg *Config) *redis.Client {
 	return redis.NewClient(opts)
 }
 
-// workerRabbitMQAdapterProbe adapts the fetcher's rabbitmq.Adapter interface
-// onto readyz.RabbitMQAdapterProbe. This mirrors the manager-side adapter,
-// but lives here so the readyz wiring is localised to each component's
-// bootstrap package (the adapter is a tiny nothing — duplicating it is
-// cheaper than introducing a cross-component utility package).
+// workerRabbitMQAdapterProbe duplicates the manager-side adapter so each
+// component's readyz wiring stays self-contained — the adapter is small
+// enough that a cross-component utility package would not pay off.
 type workerRabbitMQAdapterProbe struct {
 	adapter pkgRabbitmq.Adapter
 }
@@ -172,8 +158,6 @@ func (r *workerRabbitMQAdapterProbe) State() readyz.BreakerState {
 	}
 }
 
-// Ping uses the adapter's IsHealthy snapshot — mirrors the manager adapter.
-// See manager/internal/bootstrap/readyz_adapters.go for the rationale.
 func (r *workerRabbitMQAdapterProbe) Ping(ctx context.Context) error {
 	if r == nil || r.adapter == nil {
 		return errWorkerAdapterNil
@@ -199,11 +183,8 @@ type workerAdapterError struct{ msg string }
 
 func (e *workerAdapterError) Error() string { return e.msg }
 
-// s3HeadBucketShim wraps *s3.Client's HeadBucket method so we can pass the
-// real client where readyz.S3HeadBucketAPI is expected without needing to
-// expose the S3Repository's internals. The wrapper is a thin passthrough —
-// most of the value lives in constructing it against the worker's
-// storageRepository.
+// s3HeadBucketShim adapts *s3.Client to readyz.S3HeadBucketAPI without
+// exposing the worker's S3Repository internals.
 type s3HeadBucketShim struct {
 	client *s3.Client
 }
@@ -218,33 +199,22 @@ func (s *s3HeadBucketShim) HeadBucket(ctx context.Context, params *s3.HeadBucket
 
 var errS3ClientNil = &workerAdapterError{msg: "s3 client not initialized"}
 
-// workerApplicationServiceName returns the fetcher service name used on
-// tmclient calls. Mirrors the manager's helper.
 func workerApplicationServiceName() string { return constant.ApplicationName }
 
-// buildWorkerReadyzCheckers assembles the ordered set of DependencyCheckers
-// the worker's /readyz micro-server registers.
-//
-// Composition differences versus the manager:
-//   - Worker has an S3 bucket dep → S3BucketChecker always present.
-//   - Worker's multi-tenant Redis is the ONLY Redis dep (no schema cache).
-//   - Same Mongo / RabbitMQ MT carve-out rules.
+// buildWorkerReadyzCheckers composes the worker's /readyz checkers.
+// Compared to the manager: worker always probes S3, the only Redis dep is
+// multi-tenant Redis (no schema cache), and the Mongo / RabbitMQ MT
+// carve-outs match.
 func buildWorkerReadyzCheckers(deps *workerReadyzDeps) []readyz.DependencyChecker {
-	// Nil-cfg guard: extending the existing deps == nil guard so a deps with
-	// a nil cfg cannot panic on the cfg.* dereferences below.
 	if deps == nil || deps.cfg == nil {
 		return nil
 	}
 
 	checkers := make([]readyz.DependencyChecker, 0, 6)
 
-	// --- MongoDB ---
 	if deps.cfg.MultiTenantEnabled {
-		// TLS posture: prefer URI-derived detection (mongodb+srv is implicit TLS,
-		// query tls=true on plain mongodb is explicit). Fall back to CA-cert
-		// presence so explicit operator-supplied CA configs still surface as
-		// TLS-on for legacy deployments. Parse error is non-fatal — a malformed
-		// URI cannot disprove TLS.
+		// CA-cert fallback covers legacy deployments that supply a CA
+		// without a TLS-signaling URI (mongodb+srv or tls=true).
 		mongoTLS, _ := readyz.DetectMongoTLS(buildWorkerMongoURI(deps.cfg))
 		checkers = append(checkers, readyz.NewNAChecker(
 			"mongodb",
@@ -257,7 +227,6 @@ func buildWorkerReadyzCheckers(deps *workerReadyzDeps) []readyz.DependencyChecke
 		))
 	}
 
-	// --- RabbitMQ ---
 	if deps.cfg.MultiTenantEnabled {
 		checkers = append(checkers, readyz.NewNAChecker(
 			"rabbitmq",
@@ -271,7 +240,6 @@ func buildWorkerReadyzCheckers(deps *workerReadyzDeps) []readyz.DependencyChecke
 		))
 	}
 
-	// --- Multi-tenant Redis (event discovery, MT mode only) ---
 	if deps.mtRedisClient != nil {
 		client := deps.mtRedisClient
 
@@ -282,7 +250,6 @@ func buildWorkerReadyzCheckers(deps *workerReadyzDeps) []readyz.DependencyChecke
 		))
 	}
 
-	// --- S3 (worker-only) ---
 	if deps.s3Client != nil {
 		checkers = append(checkers, readyz.NewS3BucketChecker(
 			&s3HeadBucketShim{client: deps.s3Client},
@@ -291,7 +258,6 @@ func buildWorkerReadyzCheckers(deps *workerReadyzDeps) []readyz.DependencyChecke
 		))
 	}
 
-	// --- Tenant Manager ---
 	if deps.cfg.MultiTenantEnabled {
 		checkers = append(checkers, readyz.NewTenantManagerClientChecker(
 			deps.tmClient,
@@ -304,11 +270,9 @@ func buildWorkerReadyzCheckers(deps *workerReadyzDeps) []readyz.DependencyChecke
 	return checkers
 }
 
-// buildWorkerTenantHandler mirrors the manager's helper. Returns a 400
-// handler when MT is off or any MT prerequisite is missing.
+// buildWorkerTenantHandler returns a 400 handler when MT is off or any MT
+// prerequisite is missing, so the route stays mounted.
 func buildWorkerTenantHandler(readyzCfg *readyz.Config, deps *workerReadyzDeps) fiber.Handler {
-	// Extend nil safety: deps.cfg may be nil under test seams; short-circuit
-	// to the disabled handler before dereferencing deps.cfg.MultiTenantEnabled.
 	if deps == nil || deps.cfg == nil || !deps.cfg.MultiTenantEnabled ||
 		deps.tmClient == nil || deps.tmMongoManager == nil || deps.tmRabbitMgr == nil {
 		return readyz.NewDisabledTenantHandler()

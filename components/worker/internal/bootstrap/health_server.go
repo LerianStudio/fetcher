@@ -13,17 +13,13 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-// defaultHealthPort matches readyz.defaultHealthPort / resolveHealthPort.
 const defaultHealthPort = 4007
 
-// defaultReadyzDrainDelay is the fallback drain window when
-// READYZ_DRAIN_DELAY_SEC is unset or non-positive. 12s mirrors the default
-// kube-proxy sync window — see readyz.defaultDrainDelay for the rationale.
+// defaultReadyzDrainDelay matches the default kube-proxy sync window.
 const defaultReadyzDrainDelay = 12 * time.Second
 
-// defaultDrain applies the clamp rules for READYZ_DRAIN_DELAY_SEC. Zero or
-// negative values collapse to 1s, empty values to 12s — matching the
-// readyz.LoadConfig behaviour so the manager and worker agree.
+// defaultDrain mirrors readyz.LoadConfig's clamps so worker and manager
+// agree: 0 → 12s, negative → 1s.
 func defaultDrain(sec int) time.Duration {
 	switch {
 	case sec < 0:
@@ -35,17 +31,12 @@ func defaultDrain(sec int) time.Duration {
 	}
 }
 
-// HealthServer is the worker-side micro-HTTP-server that exposes /health,
-// /readyz, /readyz/tenant/:id and /metrics. The worker itself has no primary
-// HTTP server (it is a RabbitMQ consumer), but Kubernetes still requires a
-// readiness endpoint to decide whether to route tenant events and to reap
-// dead pods — this server fills that gap.
-//
-// The server is started by Service.Run via a second commons.RunApp, which
-// means it participates in the same Launcher lifecycle as the consumer:
-// a single SIGTERM tears both down, and the graceful-drain flag (set in
-// Gate 7) flips /readyz to 503 before Kubernetes removes the pod from the
-// Service endpoints.
+// HealthServer is a worker-side micro-HTTP server that exposes /health,
+// /readyz, /readyz/tenant/:id and /metrics. The worker is a RabbitMQ
+// consumer with no primary HTTP server, but Kubernetes still needs a
+// readiness endpoint to schedule tenant events and reap dead pods.
+// It runs under the same Launcher lifecycle as the consumer, so a single
+// SIGTERM tears both down via the shared drain flag.
 type HealthServer struct {
 	app       *fiber.App
 	addr      string
@@ -53,16 +44,10 @@ type HealthServer struct {
 	telemetry *libOtel.Telemetry
 }
 
-// NewHealthServer constructs the worker's /readyz micro-server. It mounts
-//   - GET /health              → lib-commons Ping (Gate 7 will wrap with self-probe)
-//   - GET /readyz              → the canonical /readyz handler
-//   - GET /readyz/tenant/:id   → real per-tenant handler (Gate 6); disabled
-//     variant returning 400 when MT is off or any MT prerequisite missing
-//   - GET /metrics             → Prometheus exposition (Gate 5)
-//
-// Gate 6 of ring:dev-readyz wires the real checkers. deps may be nil —
-// NewHealthServer still produces a working server (with an empty checker
-// set) so misconfigured bootstraps are not fatal at startup.
+// NewHealthServer mounts /health, /readyz, /readyz/tenant/:id and /metrics.
+// /readyz/tenant/:id falls back to a 400 disabled handler when MT is off or
+// any MT prerequisite is missing. deps may be nil — the server still works
+// with an empty checker set, so a misconfigured bootstrap is not fatal.
 func NewHealthServer(
 	cfg *Config,
 	logger libLog.Logger,
@@ -77,17 +62,12 @@ func NewHealthServer(
 		DisableStartupMessage: true,
 	})
 
-	// Mount global endpoints first (these already come from readyz.Register),
-	// then override /readyz/tenant/:id with the real Gate 6 handler.
-	// Gate 7 of ring:dev-readyz: /health is gated on the startup self-probe
-	// so K8s' livenessProbe restarts the pod when a dep was unreachable at
-	// boot.
 	app.Get("/health", readyz.HealthHandler())
 	app.Get("/readyz", handler.Fiber())
 	app.Get("/readyz/tenant/:id", buildWorkerTenantHandler(readyzCfg, deps))
 	app.Get("/metrics", readyz.NewMetricsHandler())
 
-	// Use the normalised port from readyzCfg so misconfigured values
+	// readyzCfg.HealthPort is already normalised so misconfigured values
 	// (0, negative, >65535) collapse to the safe default rather than
 	// producing an invalid listen address like ":0".
 	return &HealthServer{
@@ -98,17 +78,12 @@ func NewHealthServer(
 	}
 }
 
-// App exposes the underlying fiber.App for testing and for the manager's
-// lib-commons ServerManager wiring.
 func (s *HealthServer) App() *fiber.App { return s.app }
 
-// Address returns the listen address (e.g. ":4007").
 func (s *HealthServer) Address() string { return s.addr }
 
-// Run starts the server under a lib-commons Launcher. Matching the existing
-// worker Service pattern, it accepts *libCommons.Launcher but does not use it
-// directly — the ServerManager owns the listener lifecycle including
-// graceful shutdown and telemetry flushing.
+// Run accepts *libCommons.Launcher for lifecycle parity with the worker
+// Service but delegates listener ownership to ServerManager.
 func (s *HealthServer) Run(_ *libCommons.Launcher) error {
 	if s.logger != nil {
 		s.logger.Log(context.Background(), libLog.LevelInfo,
@@ -123,14 +98,11 @@ func (s *HealthServer) Run(_ *libCommons.Launcher) error {
 	return nil
 }
 
-// newWorkerReadyzConfig bridges the worker Config to the readyz package's
-// self-contained Config struct. Missing / invalid values fall back to sane
-// defaults — /readyz must remain bootable on a misconfigured worker so
-// operators can see the error in the response body instead of a crashed pod.
+// newWorkerReadyzConfig forwards the worker's Config into readyz.Config,
+// keeping /readyz bootable on misconfigured input so operators see the
+// error in the response body rather than a crashed pod. nil cfg falls
+// through to readyz.LoadConfig.
 func newWorkerReadyzConfig(cfg *Config) *readyz.Config {
-	// Mirror readyz.NewHandler's nil-tolerance: a nil worker Config falls
-	// through to readyz.LoadConfig which reads env directly. Prevents panic
-	// under test seams or misconfigured callers.
 	if cfg == nil {
 		return readyz.LoadConfig()
 	}

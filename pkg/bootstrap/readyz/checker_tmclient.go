@@ -9,27 +9,23 @@ import (
 	tmcore "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/core"
 )
 
-// TMClient is the narrow Tenant-Manager-client surface needed by the
-// readiness checker AND the per-tenant handler's tenant-existence validation.
-// The real *tmclient.Client satisfies this — tests inject a fake.
+// TMClient is the narrow Tenant-Manager-client surface used both by the
+// readiness checker and the per-tenant handler's tenant-existence
+// validation. *tmclient.Client satisfies it; tests inject a fake.
 //
-// GetActiveTenantsByService is chosen because it is the same call the
-// worker's initial-tenant-sync uses on startup; reusing it in /readyz
-// exercises the cache warming behaviour in both codepaths.
+// GetActiveTenantsByService is the same call used by the worker's
+// initial-tenant-sync on startup; reusing it here exercises cache warming
+// in both codepaths.
 type TMClient interface {
 	GetActiveTenantsByService(ctx context.Context, service string) ([]*tmclient.TenantSummary, error)
 }
 
 // TenantManagerClientChecker probes the Tenant Manager HTTP service. The
-// client is wrapped by a circuit breaker whose state is OPAQUE (the tmclient
-// package does not expose a State() method). The contract is therefore
-// "probe-and-catch": issue the call, and if the error chain contains
-// tmcore.ErrCircuitBreakerOpen, classify the response as breaker=open.
-//
-// The checker is wired ONLY when MULTI_TENANT_ENABLED=true. The bootstrap
-// constructs an instance with enabled=true on the multi-tenant path and
-// omits it entirely on the single-tenant path (so /readyz does not emit a
-// "tenant_manager" dep at all).
+// underlying client's circuit breaker has no exported State(), so the
+// checker uses a probe-and-catch model: it issues the call and, if the
+// error chain contains tmcore.ErrCircuitBreakerOpen, reports breaker=open.
+// When enabled=false the checker reports "skipped" rather than being
+// omitted, so operators can distinguish "unused" from "not wired".
 type TenantManagerClientChecker struct {
 	name    string
 	client  TMClient
@@ -38,16 +34,9 @@ type TenantManagerClientChecker struct {
 	enabled bool
 }
 
-// NewTenantManagerClientChecker constructs a probe-and-catch checker.
-//
-// Parameters:
-//   - client:   the tmclient. May be nil only when enabled=false.
-//   - service:  the service name to probe (fetcher uses constant.ApplicationName
-//     = "fetcher"). Used as the GetActiveTenantsByService argument.
-//   - url:      the Tenant Manager base URL; used only for TLS detection.
-//   - enabled:  the MULTI_TENANT_ENABLED flag. When false the checker returns
-//     Status="skipped" with a reason — we don't omit the dep so operators
-//     can distinguish "tenant manager is unused" from "dep forgot to wire".
+// NewTenantManagerClientChecker reports under dep name "tenant_manager".
+// client may be nil only when enabled=false; url is used only for TLS
+// detection.
 func NewTenantManagerClientChecker(client TMClient, service, url string, enabled bool) *TenantManagerClientChecker {
 	return &TenantManagerClientChecker{
 		name:    "tenant_manager",
@@ -58,16 +47,8 @@ func NewTenantManagerClientChecker(client TMClient, service, url string, enabled
 	}
 }
 
-// Name returns the stable dep identifier ("tenant_manager").
 func (c *TenantManagerClientChecker) Name() string { return c.name }
 
-// Check is the probe-and-catch implementation. Outcomes:
-//
-//	enabled=false                              → skipped, reason="MULTI_TENANT_ENABLED=false"
-//	err == nil                                 → up,      breaker_state="closed"
-//	errors.Is(err, tmcore.ErrCircuitBreakerOpen) → down,   breaker_state="open"
-//	ctx deadline / canceled                     → down,   breaker_state="closed", error="timeout"/"canceled"
-//	other                                       → down,   breaker_state="closed", sanitized error
 func (c *TenantManagerClientChecker) Check(ctx context.Context) DependencyCheck {
 	tlsOn := tlsOrFalse(detectHTTPUpstreamTLS(c.url))
 

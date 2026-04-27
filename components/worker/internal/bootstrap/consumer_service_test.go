@@ -167,10 +167,9 @@ func TestMultiQueueConsumerRun(t *testing.T) {
 		}
 	})
 
-	// Gate 7 of ring:dev-readyz — on SIGTERM the consumer MUST flip the
-	// readyz draining flag BEFORE cancelling the consumer context. Otherwise
-	// in-flight RabbitMQ deliveries would be nacked while Kubernetes is
-	// still routing /readyz=200 to the pod.
+	// On SIGTERM the consumer must flip the draining flag BEFORE cancelling
+	// the consumer context — otherwise in-flight deliveries get nacked
+	// while kube-proxy still sees /readyz=200.
 	t.Run("sets readyz draining before cancelling context", func(t *testing.T) {
 		readyz.SetDraining(false)
 		t.Cleanup(func() { readyz.SetDraining(false) })

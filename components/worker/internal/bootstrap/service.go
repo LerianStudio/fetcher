@@ -7,10 +7,9 @@ import (
 	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
 )
 
-// runLauncher starts the RabbitMQ consumer and (optionally) the /readyz
-// health-port micro-server under a single commons.Launcher so that a single
-// SIGTERM tears both down. healthServer is nil in environments where the
-// health server was deliberately not constructed (e.g. narrow unit tests).
+// runLauncher launches the consumer and (when present) the health-port
+// micro-server under a single Launcher so one SIGTERM tears both down.
+// healthServer is nil under narrow unit tests that opt out of the server.
 var runLauncher = func(logger libLog.Logger, consumer *MultiQueueConsumer, healthServer *HealthServer) {
 	opts := []commons.LauncherOption{
 		commons.WithLogger(logger),
@@ -36,12 +35,11 @@ type Service struct {
 	licenseShutdown licenseTerminator
 	// mtCleanup is the cleanup function for multi-tenant resources (Redis, etc.)
 	mtCleanup func()
-	// healthServer exposes /health, /readyz and /metrics on HEALTH_PORT
-	// (Gate 2 of ring:dev-readyz). nil-safe — runLauncher skips if absent.
+	// healthServer exposes /health, /readyz and /metrics on HEALTH_PORT.
+	// runLauncher skips it when nil.
 	healthServer *HealthServer
 	// readyzCloser releases resources owned exclusively by the readyz
-	// wiring (e.g. a dedicated multi-tenant Redis client used only for
-	// probing). Invoked during graceful shutdown. Nil-safe.
+	// wiring (e.g. a dedicated MT-Redis probe client). Nil-safe.
 	readyzCloser func()
 }
 
