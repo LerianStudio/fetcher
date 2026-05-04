@@ -5,7 +5,7 @@ import (
 
 	"github.com/LerianStudio/fetcher/components/worker/internal/bootstrap"
 	"github.com/LerianStudio/fetcher/pkg/startup"
-	libCommons "github.com/LerianStudio/lib-commons/v4/commons"
+	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
 )
 
 func main() {

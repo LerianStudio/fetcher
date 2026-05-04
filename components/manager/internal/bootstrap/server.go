@@ -8,10 +8,10 @@ import (
 	"time"
 
 	"github.com/LerianStudio/fetcher/pkg/bootstrap/readyz"
-	libCommons "github.com/LerianStudio/lib-commons/v4/commons"
-	libCommonsLog "github.com/LerianStudio/lib-commons/v4/commons/log"
-	libCommonsOtel "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
-	libCommonsServer "github.com/LerianStudio/lib-commons/v4/commons/server"
+	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
+	libCommonsLog "github.com/LerianStudio/lib-commons/v5/commons/log"
+	libCommonsOtel "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
+	libCommonsServer "github.com/LerianStudio/lib-commons/v5/commons/server"
 	libLicense "github.com/LerianStudio/lib-license-go/v2/middleware"
 	"github.com/gofiber/fiber/v2"
 )

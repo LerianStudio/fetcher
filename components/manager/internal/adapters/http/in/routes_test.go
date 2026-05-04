@@ -4,8 +4,8 @@ import (
 	"testing"
 
 	middlewareAuth "github.com/LerianStudio/lib-auth/v2/auth/middleware"
-	"github.com/LerianStudio/lib-commons/v4/commons/log"
-	"github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v5/commons/log"
+	"github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
 	libLicense "github.com/LerianStudio/lib-license-go/v2/middleware"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
@@ -16,7 +16,7 @@ import (
 // telemetry middleware has a data race issue when running with -race flag.
 // The race occurs between ContextWithLogger() and NewLoggerFromContext() in
 // background goroutines spawned by the telemetry metrics collection.
-// See: lib-commons/v4/commons/net/http/withTelemetry.go:158
+// See: lib-commons/v5/commons/net/http/withTelemetry.go:158
 //
 // Routes are tested indirectly through connection_test.go and fetcher_test.go
 // which test the handlers directly without the telemetry middleware.

@@ -6,7 +6,7 @@ import (
 
 	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/model/job"
-	"github.com/LerianStudio/lib-commons/v4/commons/log"
+	"github.com/LerianStudio/lib-commons/v5/commons/log"
 )
 
 //go:generate mockgen --destination=datasource-config.mock.go --package=datasource . DataSource

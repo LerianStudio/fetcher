@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/LerianStudio/fetcher/pkg"
-	tmcore "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/core"
+	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
 	"github.com/stretchr/testify/assert"
 )
 

@@ -6,11 +6,11 @@ import (
 	"testing"
 
 	"github.com/LerianStudio/fetcher/pkg/bootstrap/readyz"
-	libCommons "github.com/LerianStudio/lib-commons/v4/commons"
-	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
-	mongoDB "github.com/LerianStudio/lib-commons/v4/commons/mongo"
-	libOtel "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
-	libZap "github.com/LerianStudio/lib-commons/v4/commons/zap"
+	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
+	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
+	mongoDB "github.com/LerianStudio/lib-commons/v5/commons/mongo"
+	libOtel "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
+	libZap "github.com/LerianStudio/lib-commons/v5/commons/zap"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

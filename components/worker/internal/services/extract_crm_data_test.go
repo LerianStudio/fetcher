@@ -8,8 +8,8 @@ import (
 
 	modelJob "github.com/LerianStudio/fetcher/pkg/model/job"
 	portDS "github.com/LerianStudio/fetcher/pkg/ports/datasource"
-	libCrypto "github.com/LerianStudio/lib-commons/v4/commons/crypto"
-	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	libCrypto "github.com/LerianStudio/lib-commons/v5/commons/crypto"
+	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
 	"go.uber.org/mock/gomock"
 )
 

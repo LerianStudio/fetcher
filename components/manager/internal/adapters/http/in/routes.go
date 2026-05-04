@@ -4,9 +4,9 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/bootstrap/readyz"
 	"github.com/LerianStudio/fetcher/pkg/net/http"
 	middlewareAuth "github.com/LerianStudio/lib-auth/v2/auth/middleware"
-	"github.com/LerianStudio/lib-commons/v4/commons/log"
-	commonsHttp "github.com/LerianStudio/lib-commons/v4/commons/net/http"
-	"github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v5/commons/log"
+	commonsHttp "github.com/LerianStudio/lib-commons/v5/commons/net/http"
+	"github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
 	libLicense "github.com/LerianStudio/lib-license-go/v2/middleware"
 
 	"github.com/gofiber/fiber/v2"
