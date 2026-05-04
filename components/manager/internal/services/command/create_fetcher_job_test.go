@@ -19,7 +19,7 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/ports/messaging"
 	pkgRabbitMQ "github.com/LerianStudio/fetcher/pkg/rabbitmq"
 
-	tmcore "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/core"
+	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"

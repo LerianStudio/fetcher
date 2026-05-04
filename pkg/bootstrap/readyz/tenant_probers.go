@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	tmcore "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/core"
+	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/readpref"
 	amqp "github.com/rabbitmq/amqp091-go"

@@ -5,8 +5,8 @@ import (
 	"errors"
 	"time"
 
-	tmclient "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/client"
-	tmcore "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/core"
+	tmclient "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/client"
+	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
 )
 
 // TMClient is the narrow Tenant-Manager-client surface used both by the

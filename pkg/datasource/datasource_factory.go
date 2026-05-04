@@ -23,9 +23,9 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/oracle"
 	"github.com/LerianStudio/fetcher/pkg/postgres"
 	"github.com/LerianStudio/fetcher/pkg/sqlserver"
-	libCommons "github.com/LerianStudio/lib-commons/v4/commons"
-	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
+	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
+	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
 
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"

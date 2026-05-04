@@ -6,7 +6,7 @@ import (
 	"fmt"
 
 	"github.com/LerianStudio/fetcher/pkg/constant"
-	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
 	_ "github.com/jackc/pgx/v5/stdlib" // Registers the "pgx" driver with database/sql via init() – required for sql.Open("pgx", ...)
 )
 

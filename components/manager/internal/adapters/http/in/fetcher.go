@@ -11,9 +11,9 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/model"
 	httpUtils "github.com/LerianStudio/fetcher/pkg/net/http"
 
-	"github.com/LerianStudio/lib-commons/v4/commons"
-	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v5/commons"
+	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"

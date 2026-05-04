@@ -3,8 +3,8 @@ package bootstrap
 import (
 	"context"
 
-	"github.com/LerianStudio/lib-commons/v4/commons"
-	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	"github.com/LerianStudio/lib-commons/v5/commons"
+	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
 )
 
 // runLauncher launches the consumer and (when present) the health-port

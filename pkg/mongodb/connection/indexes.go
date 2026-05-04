@@ -8,9 +8,9 @@ import (
 
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	sharedMongo "github.com/LerianStudio/fetcher/pkg/mongodb"
-	"github.com/LerianStudio/lib-commons/v4/commons"
-	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v5/commons"
+	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"

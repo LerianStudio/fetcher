@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
-	tmclient "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/client"
+	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
+	tmclient "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/client"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
@@ -45,25 +45,11 @@ import (
 //   4. RunSelfProbe — same fanout as Handler.Run but on the startup path.
 //   5. TenantFiberHandler.runTenantChecks — per-tenant fanout.
 //
-// Known-safe background goroutines are declared in goleakIgnores and shared
-// across every assertion. These are process-level singletons owned by imported
-// libraries (fasthttp's date-updater loop) that we cannot and should not
-// terminate from test code.
-
-// goleakIgnores declares goroutines we intentionally exclude from leak
-// detection. These are parked by third-party libraries (fasthttp) at process
-// scope — once the first fiber.App.Test runs, a singleton goroutine loops
-// forever updating Date headers. It is not owned by any /readyz code path.
-func goleakIgnores() []goleak.Option {
-	return []goleak.Option{
-		// fasthttp parks a permanent "update server date" goroutine once its
-		// HTTP server code is first exercised. It is a well-known background
-		// task documented by goleak users across the ecosystem. Using
-		// IgnoreAnyFunction because the goroutine's top-of-stack is the stdlib
-		// time.Sleep — the signature frame is updateServerDate.func1 deeper in.
-		goleak.IgnoreAnyFunction("github.com/valyala/fasthttp.updateServerDate.func1"),
-	}
-}
+// Known-safe background goroutines are declared in goleakIgnores (defined in
+// goleak_helpers_test.go, untagged so it is visible to handler_test.go and
+// tenant_handler_test.go as well). These are process-level singletons owned by
+// imported libraries (fasthttp's date-updater loop) that we cannot and should
+// not terminate from test code.
 
 // leakySleepChecker sleeps for a configurable duration, respecting ctx. It is
 // the worst case for leak detection: if the handler's deadline mechanism is

@@ -12,7 +12,7 @@ import (
 
 	"github.com/LerianStudio/fetcher/pkg/model"
 
-	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
 )
 
 // LoadInternalConnectionsFromEnv scans DATASOURCE_{NAME}_* env vars and builds

@@ -9,10 +9,10 @@ import (
 	"github.com/LerianStudio/fetcher/pkg"
 	modelJob "github.com/LerianStudio/fetcher/pkg/model/job"
 	portDS "github.com/LerianStudio/fetcher/pkg/ports/datasource"
-	libCommons "github.com/LerianStudio/lib-commons/v4/commons"
-	libCrypto "github.com/LerianStudio/lib-commons/v4/commons/crypto"
-	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
-	libOtel "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
+	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
+	libCrypto "github.com/LerianStudio/lib-commons/v5/commons/crypto"
+	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
+	libOtel "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
 	"go.opentelemetry.io/otel/attribute"
 )
 
