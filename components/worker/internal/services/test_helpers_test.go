@@ -2,8 +2,10 @@ package services
 
 import (
 	"context"
+	"fmt"
 
 	libLog "github.com/LerianStudio/lib-observability/log"
+	streaming "github.com/LerianStudio/lib-streaming"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
 
@@ -53,13 +55,15 @@ func newTestMocks(ctrl *gomock.Controller) *testMocks {
 // Now that UseCase uses interfaces, we can inject mocks directly.
 func newTestUseCase(mocks *testMocks) *UseCase {
 	uc := &UseCase{
-		ExternalDataStorage:  mocks.seaweedFS,
-		JobRepository:        mocks.jobRepo,
-		ConnectionRepository: mocks.connRepo,
-		Cryptor:              mocks.cryptor,
-		FileTTL:              "1h",
-		RabbitMQPublisher:    mocks.rabbitPublisher,
-		JobEventsExchange:    "test-exchange",
+		ExternalDataStorage:      mocks.seaweedFS,
+		JobRepository:            mocks.jobRepo,
+		ConnectionRepository:     mocks.connRepo,
+		Cryptor:                  mocks.cryptor,
+		FileTTL:                  "1h",
+		RabbitMQPublisher:        mocks.rabbitPublisher,
+		JobEventEmitter:          publisherBackedJobEmitter{publisher: mocks.rabbitPublisher, exchange: "test-exchange"},
+		JobEventStreamingEnabled: true,
+		JobEventsExchange:        "test-exchange",
 	}
 
 	uc.SetStorageEncryptDerivedKey([]byte("test-seaweedfs-encrypt-key-32by"))
@@ -82,3 +86,24 @@ func newTestOrgID() uuid.UUID {
 func testTracer() trace.Tracer {
 	return otel.Tracer("test")
 }
+
+type publisherBackedJobEmitter struct {
+	publisher publisherPort.Repository
+	exchange  string
+}
+
+func (e publisherBackedJobEmitter) Emit(ctx context.Context, request streaming.EmitRequest) error {
+	if e.publisher == nil || e.exchange == "" {
+		return nil
+	}
+
+	if request.DefinitionKey == "" {
+		return fmt.Errorf("missing definition key")
+	}
+
+	return e.publisher.Publish(ctx, e.exchange, request.DefinitionKey, request.Payload)
+}
+
+func (e publisherBackedJobEmitter) Close() error { return nil }
+
+func (e publisherBackedJobEmitter) Healthy(context.Context) error { return nil }

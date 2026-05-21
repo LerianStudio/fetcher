@@ -156,13 +156,9 @@ func multiTenantRedisURLFromCfg(cfg *Config) string {
 // disabled or MULTI_TENANT_REDIS_HOST is unset; the caller must omit the
 // dep in that case.
 //
-// Mirrors initManagerEventDiscovery's TLS branch (config.go around the
-// MultiTenantRedisTLS block): TLS 1.2 floor, optional base64-encoded
-// MULTI_TENANT_REDIS_CA_CERT bundle. CA-cert decode failures fall back to
-// the system trust store with no error — bootstrap callers do not propagate
-// errors from the readyz client and erroring out would crash the manager.
-// A real TLS handshake failure surfaces as multi_tenant_redis=down via the
-// downstream Ping.
+// Mirrors the canonical lib-commons Pub/Sub client shape. Custom CA bundles via
+// MULTI_TENANT_REDIS_CA_CERT are rejected during bootstrap; readyz therefore
+// uses the runtime system trust store when TLS is enabled.
 func newReadyzMultiTenantRedisClient(cfg *Config) *redis.Client {
 	if cfg == nil || !cfg.MultiTenantEnabled || cfg.MultiTenantRedisHost == "" {
 		return nil
@@ -179,18 +175,7 @@ func newReadyzMultiTenantRedisClient(cfg *Config) *redis.Client {
 	}
 
 	if cfg.MultiTenantRedisTLS {
-		tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
-
-		if cfg.MultiTenantRedisCACert != "" {
-			if caCert, err := base64.StdEncoding.DecodeString(cfg.MultiTenantRedisCACert); err == nil {
-				pool := x509.NewCertPool()
-				if pool.AppendCertsFromPEM(caCert) {
-					tlsCfg.RootCAs = pool
-				}
-			}
-		}
-
-		opts.TLSConfig = tlsCfg
+		opts.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
 	}
 
 	return redis.NewClient(opts)

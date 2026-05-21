@@ -127,7 +127,14 @@ func (pr *PublisherRoutes) PublishWithHeaders(ctx context.Context, exchange, rou
 	)
 
 	// Multi-tenant mode: use tmrabbitmq.Manager for per-tenant vhost
-	if pr.multiTenantMode && pr.rabbitMQManager != nil {
+	if pr.multiTenantMode {
+		if pr.rabbitMQManager == nil {
+			err := fmt.Errorf("multi-tenant RabbitMQ manager is not configured")
+			opentelemetry.HandleSpanError(span, "RabbitMQ manager is nil", err)
+
+			return err
+		}
+
 		tenantID := tmcore.GetTenantIDContext(ctx)
 		if tenantID == "" {
 			opentelemetry.HandleSpanError(span, "No tenant ID in context for multi-tenant publish", fmt.Errorf("tenant ID required"))

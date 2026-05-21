@@ -34,7 +34,7 @@ func TestExtractExternalData_ParseError_UpdatesJobAndPublishesNotification(t *te
 
 	// Expect failure notification to be published
 	mocks.rabbitPublisher.EXPECT().
-		Publish(gomock.Any(), "test-exchange", "job.failed.unknown", gomock.Any()).
+		Publish(gomock.Any(), "test-exchange", "job.failed", gomock.Any()).
 		DoAndReturn(func(_ interface{}, exchange, routingKey string, body []byte) error {
 			var notification JobNotificationMessage
 			if err := json.Unmarshal(body, &notification); err != nil {
@@ -187,7 +187,7 @@ func TestExtractExternalData_ConnectionNotFound(t *testing.T) {
 
 	// Expect failure notification to be published
 	mocks.rabbitPublisher.EXPECT().
-		Publish(gomock.Any(), "test-exchange", "job.failed.test-service", gomock.Any()).
+		Publish(gomock.Any(), "test-exchange", "job.failed", gomock.Any()).
 		Return(nil)
 
 	err = uc.ExtractExternalData(ctx, body, nil)
@@ -237,7 +237,7 @@ func TestExtractExternalData_JobNotFound(t *testing.T) {
 
 	// Expect failure notification
 	mocks.rabbitPublisher.EXPECT().
-		Publish(gomock.Any(), "test-exchange", "job.failed.test-service", gomock.Any()).
+		Publish(gomock.Any(), "test-exchange", "job.failed", gomock.Any()).
 		Return(nil)
 
 	err = uc.ExtractExternalData(ctx, body, nil)

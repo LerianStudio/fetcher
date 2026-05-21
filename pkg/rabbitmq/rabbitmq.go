@@ -89,6 +89,14 @@ const (
 
 	// HeaderSignatureVersion contains the version of the signature algorithm (e.g., "v1")
 	HeaderSignatureVersion = "signature-version"
+
+	// AllowLegacyBodyOnlySignatureFallback gates the rolling-drain compatibility
+	// path for messages signed before the tenant/exchange/routing envelope was
+	// introduced. Risk: a body-only signature does not bind tenant or route, so
+	// multi-tenant workers must validate X-Tenant-ID against authoritative context
+	// before calling VerifyMessageSignature. Remove this after the 5-minute default
+	// timestamp tolerance has elapsed across all producers and queues are drained.
+	AllowLegacyBodyOnlySignatureFallback = true
 )
 
 // AMQP error codes for error classification.
@@ -733,7 +741,7 @@ func (prmq *RabbitMQAdapter) ProducerDefault(ctx context.Context, exchange, key 
 		}
 	}
 
-	if prmq.options.Signer != nil && prmq.options.EnableMessageSigning {
+	if !isNilSigner(prmq.options.Signer) && prmq.options.EnableMessageSigning {
 		timestamp := time.Now().UTC().Unix()
 
 		spanProducer.SetAttributes(
@@ -1108,7 +1116,7 @@ func (prmq *RabbitMQAdapter) processDelivery(
 
 	// Use the logger with fields created above (logWithFields) for all logging.
 	// Nack on panic, then re-panic for lib-observability/runtime to recover and report.
-	defer obsRuntime.RecoverWithPolicy(logWithFields, "rabbitmq-consumer-handle-message", obsRuntime.KeepRunning)
+	defer obsRuntime.RecoverWithPolicyAndContext(hctx, logWithFields, "rabbitmq", "rabbitmq-consumer-handle-message", obsRuntime.KeepRunning)
 	defer func() {
 		if r := recover(); r != nil {
 			if nackErr := d.Nack(false, false); nackErr != nil {
@@ -1308,8 +1316,16 @@ func VerifyMessageSignature(
 	// Build the signature payload and verify.
 	payload := BuildMessageSignaturePayload(timestamp, version, tenantID, jobID, exchange, routingKey, body)
 	if err := signer.Verify(payload, signature); err != nil {
+		if !AllowLegacyBodyOnlySignatureFallback {
+			return fmt.Errorf("%w: %v", ErrSignatureVerificationFailed, err)
+		}
+
 		legacyPayload := crypto.BuildSignaturePayload(timestamp, body)
 		if legacyErr := signer.Verify(legacyPayload, signature); legacyErr == nil {
+			if logger != nil {
+				logger.Log(context.Background(), libLog.LevelWarn, "accepted legacy body-only RabbitMQ message signature during rolling drain")
+			}
+
 			return nil
 		}
 

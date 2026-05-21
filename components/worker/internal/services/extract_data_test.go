@@ -1167,7 +1167,7 @@ func TestExtractExternalData_JobRepositoryFindError(t *testing.T) {
 
 	// Expect failure notification
 	mocks.rabbitPublisher.EXPECT().
-		Publish(gomock.Any(), "test-exchange", "job.failed.test-service", gomock.Any()).
+		Publish(gomock.Any(), "test-exchange", "job.failed", gomock.Any()).
 		Return(nil)
 
 	err = uc.ExtractExternalData(ctx, body, nil)
@@ -1858,7 +1858,7 @@ func TestExtractExternalData_ConnectionRepositoryError(t *testing.T) {
 
 	// Expect failure notification
 	mocks.rabbitPublisher.EXPECT().
-		Publish(gomock.Any(), "test-exchange", "job.failed.test-service", gomock.Any()).
+		Publish(gomock.Any(), "test-exchange", "job.failed", gomock.Any()).
 		Return(nil)
 
 	err = uc.ExtractExternalData(ctx, body, nil)
@@ -1908,7 +1908,7 @@ func TestExtractExternalData_ProcessingStatusUpdateError(t *testing.T) {
 		Return(nil)
 
 	mocks.rabbitPublisher.EXPECT().
-		Publish(gomock.Any(), "test-exchange", "job.failed.test-service", gomock.Any()).
+		Publish(gomock.Any(), "test-exchange", "job.failed", gomock.Any()).
 		Return(nil)
 
 	err = uc.ExtractExternalData(ctx, body, nil)
@@ -1955,7 +1955,7 @@ func TestCompleteJob_CompletedStatusUpdateError(t *testing.T) {
 		Return(nil)
 
 	mocks.rabbitPublisher.EXPECT().
-		Publish(gomock.Any(), "test-exchange", "job.failed.test-service", gomock.Any()).
+		Publish(gomock.Any(), "test-exchange", "job.failed", gomock.Any()).
 		Return(nil)
 
 	err := uc.completeJob(ctx, tracer, message, resultData, time.Now().Add(-time.Second), span, logger)
@@ -1989,7 +1989,7 @@ func TestExtractExternalData_ParseErrorWithJobIDInHeaders(t *testing.T) {
 
 	// Expect failure notification due to parse error
 	mocks.rabbitPublisher.EXPECT().
-		Publish(gomock.Any(), "test-exchange", "job.failed.unknown", gomock.Any()).
+		Publish(gomock.Any(), "test-exchange", "job.failed", gomock.Any()).
 		Return(nil)
 
 	err := uc.ExtractExternalData(ctx, invalidBody, headers)
@@ -2266,7 +2266,7 @@ func TestCompleteJob_NotificationFailure_StillReturnsNil(t *testing.T) {
 
 	// Notification publish fails
 	mocks.rabbitPublisher.EXPECT().
-		Publish(gomock.Any(), "test-exchange", "job.completed.test-service", gomock.Any()).
+		Publish(gomock.Any(), "test-exchange", "job.completed", gomock.Any()).
 		Return(errors.New("connection refused"))
 
 	err := uc.completeJob(ctx, tracer, message, resultData, time.Now().Add(-time.Second), span, logger)
@@ -2314,7 +2314,7 @@ func TestCompleteJob_NilResultData(t *testing.T) {
 
 	// Expect failure notification
 	mocks.rabbitPublisher.EXPECT().
-		Publish(gomock.Any(), "test-exchange", "job.failed.test-service", gomock.Any()).
+		Publish(gomock.Any(), "test-exchange", "job.failed", gomock.Any()).
 		Return(nil)
 
 	err := uc.completeJob(ctx, tracer, message, nil, time.Now().Add(-time.Second), span, logger)

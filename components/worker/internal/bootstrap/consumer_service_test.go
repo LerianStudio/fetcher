@@ -130,6 +130,8 @@ func TestHandlerGenerateReportDelivery_VerifiesTenantBoundSignatures(t *testing.
 		return signer.Sign(pkgRabbitMQ.BuildMessageSignaturePayload(now, signer.SignatureVersion(), tenantID, "123e4567-e89b-12d3-a456-426614174000", "worker.exchange", "worker.key", body))
 	}
 	legacySignature := signer.Sign(crypto.BuildSignaturePayload(now, body))
+	oldTimestamp := time.Now().Add(-(pkgRabbitMQ.DefaultSignatureTimestampTolerance + time.Minute)).Unix()
+	oldLegacySignature := signer.Sign(crypto.BuildSignaturePayload(oldTimestamp, body))
 
 	tests := []struct {
 		name        string
@@ -179,6 +181,15 @@ func TestHandlerGenerateReportDelivery_VerifiesTenantBoundSignatures(t *testing.
 				pkgRabbitMQ.HeaderTenantID:           "tenant-a",
 				pkgRabbitMQ.HeaderMessageSignature:   "tampered",
 				pkgRabbitMQ.HeaderSignatureTimestamp: strconv.FormatInt(now, 10),
+				pkgRabbitMQ.HeaderSignatureVersion:   signer.SignatureVersion(),
+			},
+		},
+		{
+			name: "old legacy body-only signature rejected after tolerance",
+			headers: amqp.Table{
+				pkgRabbitMQ.HeaderTenantID:           "tenant-a",
+				pkgRabbitMQ.HeaderMessageSignature:   oldLegacySignature,
+				pkgRabbitMQ.HeaderSignatureTimestamp: strconv.FormatInt(oldTimestamp, 10),
 				pkgRabbitMQ.HeaderSignatureVersion:   signer.SignatureVersion(),
 			},
 		},

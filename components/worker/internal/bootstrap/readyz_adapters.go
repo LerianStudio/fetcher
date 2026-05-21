@@ -3,15 +3,13 @@ package bootstrap
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
-	"encoding/base64"
 	"net"
 
 	workerRabbitAdapters "github.com/LerianStudio/fetcher/components/worker/internal/adapters/rabbitmq"
 	"github.com/LerianStudio/fetcher/pkg/bootstrap/readyz"
 	"github.com/LerianStudio/fetcher/pkg/constant"
-	pkgRabbitmq "github.com/LerianStudio/fetcher/pkg/rabbitmq"
 	portStorage "github.com/LerianStudio/fetcher/pkg/ports/storage"
+	pkgRabbitmq "github.com/LerianStudio/fetcher/pkg/rabbitmq"
 	pkgStorage "github.com/LerianStudio/fetcher/pkg/storage"
 	libMongo "github.com/LerianStudio/lib-commons/v5/commons/mongo"
 	tmclient "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/client"
@@ -112,18 +110,9 @@ func (d *workerReadyzDeps) close() {
 // newReadyzMTRedis builds the standalone MT-Redis client used by /readyz.
 // Returns nil when MT-Redis is not configured.
 //
-// When cfg.MultiTenantRedisTLS is true, opts.TLSConfig is populated with
-// TLS 1.2 as the floor and the optional base64-encoded
-// MULTI_TENANT_REDIS_CA_CERT bundle. This mirrors the manager-side
-// newReadyzMultiTenantRedisClient and the worker's main MT-Redis client in
-// initMultiTenantStack — without it, the readyz Ping speaks plaintext on a
-// TLS-only Redis and reports multi_tenant_redis=down even when Redis is
-// healthy. CA-cert decode failures intentionally fall back to a system-
-// trust-store TLS config: the bootstrap caller does not propagate errors
-// from the readyz client, so erroring out would crash the worker. The
-// downstream Ping will still surface a TLS handshake failure as
-// multi_tenant_redis=down if the system trust store cannot validate the
-// broker.
+// When cfg.MultiTenantRedisTLS is true, opts.TLSConfig is populated with TLS
+// 1.2 as the floor. Custom CA bundles via MULTI_TENANT_REDIS_CA_CERT are
+// rejected during bootstrap; readyz uses the runtime system trust store.
 func newReadyzMTRedis(cfg *Config) *redis.Client {
 	if cfg == nil || cfg.MultiTenantRedisHost == "" {
 		return nil
@@ -140,18 +129,7 @@ func newReadyzMTRedis(cfg *Config) *redis.Client {
 	}
 
 	if cfg.MultiTenantRedisTLS {
-		tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
-
-		if cfg.MultiTenantRedisCACert != "" {
-			if caCert, err := base64.StdEncoding.DecodeString(cfg.MultiTenantRedisCACert); err == nil {
-				pool := x509.NewCertPool()
-				if pool.AppendCertsFromPEM(caCert) {
-					tlsCfg.RootCAs = pool
-				}
-			}
-		}
-
-		opts.TLSConfig = tlsCfg
+		opts.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
 	}
 
 	return redis.NewClient(opts)

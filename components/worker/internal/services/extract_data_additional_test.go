@@ -39,7 +39,7 @@ func TestExtractExternalData_JobNotFoundMarksFailed(t *testing.T) {
 		UpdateStatus(gomock.Any(), jobID, model.JobStatusFailed, gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil)
 	mocks.rabbitPublisher.EXPECT().
-		Publish(gomock.Any(), "test-exchange", "job.failed.test-service", gomock.Any()).
+		Publish(gomock.Any(), "test-exchange", "job.failed", gomock.Any()).
 		Return(nil)
 
 	err := uc.ExtractExternalData(ctx, body, nil)
@@ -75,7 +75,7 @@ func TestExtractExternalData_NoConnectionsMarksFailed(t *testing.T) {
 		UpdateStatus(gomock.Any(), jobID, model.JobStatusFailed, gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil)
 	mocks.rabbitPublisher.EXPECT().
-		Publish(gomock.Any(), "test-exchange", "job.failed.test-service", gomock.Any()).
+		Publish(gomock.Any(), "test-exchange", "job.failed", gomock.Any()).
 		Return(nil)
 
 	err := uc.ExtractExternalData(ctx, body, nil)
@@ -131,7 +131,7 @@ func TestExtractExternalData_CompletedStatusUpdateFailureMarksJobFailed(t *testi
 		UpdateStatus(gomock.Any(), jobID, model.JobStatusFailed, "", "", gomock.Any()).
 		Return(nil)
 	mocks.rabbitPublisher.EXPECT().
-		Publish(gomock.Any(), "test-exchange", "job.failed.test-service", gomock.Any()).
+		Publish(gomock.Any(), "test-exchange", "job.failed", gomock.Any()).
 		Return(nil)
 
 	err := uc.ExtractExternalData(ctx, body, nil)

@@ -2,9 +2,6 @@ package bootstrap
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
-	"encoding/base64"
 	"fmt"
 	"net"
 	"net/url"
@@ -23,7 +20,6 @@ import (
 	portStorage "github.com/LerianStudio/fetcher/pkg/ports/storage"
 	"github.com/LerianStudio/fetcher/pkg/resolver"
 	pkgStorage "github.com/LerianStudio/fetcher/pkg/storage"
-	redisv9 "github.com/redis/go-redis/v9"
 
 	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
 	mongoDB "github.com/LerianStudio/lib-commons/v5/commons/mongo"
@@ -37,6 +33,7 @@ import (
 	"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/tenantcache"
 	libLicense "github.com/LerianStudio/lib-license-go/v2/middleware"
 	libLog "github.com/LerianStudio/lib-observability/log"
+	obsRuntime "github.com/LerianStudio/lib-observability/runtime"
 	libOtel "github.com/LerianStudio/lib-observability/tracing"
 	libZap "github.com/LerianStudio/lib-observability/zap"
 	streaming "github.com/LerianStudio/lib-streaming"
@@ -104,12 +101,14 @@ type Config struct {
 	CryptoEncryptSecretKeyPluginCRM string `env:"CRYPTO_ENCRYPT_SECRET_KEY_PLUGIN_CRM"`
 	CryptoHashSecretKeyPluginCRM    string `env:"CRYPTO_HASH_SECRET_KEY_PLUGIN_CRM"`
 	// Multi-Tenant configuration
-	MultiTenantEnabled                  bool   `env:"MULTI_TENANT_ENABLED"`
-	MultiTenantURL                      string `env:"MULTI_TENANT_URL"`
-	MultiTenantRedisHost                string `env:"MULTI_TENANT_REDIS_HOST"`
-	MultiTenantRedisPort                string `env:"MULTI_TENANT_REDIS_PORT" default:"6379"`
-	MultiTenantRedisPassword            string `env:"MULTI_TENANT_REDIS_PASSWORD"`
-	MultiTenantRedisTLS                 bool   `env:"MULTI_TENANT_REDIS_TLS" default:"false"`
+	MultiTenantEnabled       bool   `env:"MULTI_TENANT_ENABLED"`
+	MultiTenantURL           string `env:"MULTI_TENANT_URL"`
+	MultiTenantRedisHost     string `env:"MULTI_TENANT_REDIS_HOST"`
+	MultiTenantRedisPort     string `env:"MULTI_TENANT_REDIS_PORT" default:"6379"`
+	MultiTenantRedisPassword string `env:"MULTI_TENANT_REDIS_PASSWORD"`
+	MultiTenantRedisTLS      bool   `env:"MULTI_TENANT_REDIS_TLS" default:"false"`
+	// Deprecated: unsupported for tenant Pub/Sub Redis until lib-commons exposes
+	// canonical CA bundle support. Non-empty values fail startup.
 	MultiTenantRedisCACert              string `env:"MULTI_TENANT_REDIS_CA_CERT"`
 	MultiTenantMaxTenantPools           int    `env:"MULTI_TENANT_MAX_TENANT_POOLS" default:"100"`
 	MultiTenantIdleTimeoutSec           int    `env:"MULTI_TENANT_IDLE_TIMEOUT_SEC" default:"300"`
@@ -453,23 +452,22 @@ func initJobEventEmitter(ctx context.Context, cfg *Config, logger libLog.Logger,
 	}
 
 	targetName := "fetcher-job-events-rabbitmq"
-	// Job notifications are observational fan-out, not a durability boundary.
-	// The MongoDB job state is the source of truth and there is no outbox in this
-	// task, so route names and requirements must not imply required delivery.
+	// Job notifications intentionally use stable lib-streaming event keys. Source
+	// belongs to the event payload metadata, never the RabbitMQ routing key.
 	routes := []streaming.RouteDefinition{
 		{
-			Key:           "job.completed.rabbitmq.observational",
+			Key:           "job.completed.rabbitmq",
 			DefinitionKey: "job.completed",
 			Target:        targetName,
 			Destination:   streaming.RabbitMQRoute(cfg.RabbitMQJobEventsExchange, "job.completed"),
-			Requirement:   streaming.RouteOptional,
+			Requirement:   streaming.RouteRequired,
 		},
 		{
-			Key:           "job.failed.rabbitmq.observational",
+			Key:           "job.failed.rabbitmq",
 			DefinitionKey: "job.failed",
 			Target:        targetName,
 			Destination:   streaming.RabbitMQRoute(cfg.RabbitMQJobEventsExchange, "job.failed"),
-			Requirement:   streaming.RouteOptional,
+			Requirement:   streaming.RouteRequired,
 		},
 	}
 
@@ -522,6 +520,8 @@ func initObservability(cfg *Config) (libLog.Logger, *libOtel.Telemetry, error) {
 		return nil, nil, err
 	}
 
+	obsRuntime.InitPanicMetrics(telemetry.MetricsFactory, logger)
+
 	return logger, telemetry, nil
 }
 
@@ -540,6 +540,10 @@ func validateMultiTenantConfig(cfg *Config, logger libLog.Logger) error {
 
 		if cfg.MultiTenantRedisHost == "" {
 			return fmt.Errorf("MULTI_TENANT_REDIS_HOST is required when MULTI_TENANT_ENABLED=true (used for tenant event-driven discovery)")
+		}
+
+		if cfg.MultiTenantRedisCACert != "" {
+			return fmt.Errorf("MULTI_TENANT_REDIS_CA_CERT is deprecated and unsupported: tenant Pub/Sub Redis must use lib-commons canonical NewTenantPubSubRedisClient with system trust; install the CA in the runtime trust store or update lib-commons to support CA bundles")
 		}
 	} else {
 		logger.Log(context.Background(), libLog.LevelInfo, "Running in SINGLE-TENANT MODE")
@@ -852,12 +856,12 @@ func initMultiTenantStack(
 		redisPort = "6379"
 	}
 
-	redisClient, err := newTenantPubSubRedisClient(ctx, tmredis.TenantPubSubRedisConfig{
+	redisClient, err := tmredis.NewTenantPubSubRedisClient(ctx, tmredis.TenantPubSubRedisConfig{
 		Host:     cfg.MultiTenantRedisHost,
 		Port:     redisPort,
 		Password: cfg.MultiTenantRedisPassword,
 		TLS:      cfg.MultiTenantRedisTLS,
-	}, cfg.MultiTenantRedisCACert)
+	})
 	if err != nil {
 		return nil, nil, nil, wrapBootstrapError("create worker tenant Pub/Sub Redis client", err)
 	}
@@ -895,41 +899,6 @@ func initMultiTenantStack(
 	cleanup := listenerCleanup
 
 	return mtConsumer, tmClient, cleanup, nil
-}
-
-func newTenantPubSubRedisClient(ctx context.Context, cfg tmredis.TenantPubSubRedisConfig, caCertBase64 string) (redisv9.UniversalClient, error) {
-	if caCertBase64 == "" {
-		return tmredis.NewTenantPubSubRedisClient(ctx, cfg)
-	}
-
-	opts, err := tmredis.BuildOptions(cfg)
-	if err != nil {
-		return nil, err
-	}
-
-	caCert, err := base64.StdEncoding.DecodeString(caCertBase64)
-	if err != nil {
-		return nil, fmt.Errorf("decode MULTI_TENANT_REDIS_CA_CERT: %w", err)
-	}
-
-	rootCAs := x509.NewCertPool()
-	if !rootCAs.AppendCertsFromPEM(caCert) {
-		return nil, fmt.Errorf("parse MULTI_TENANT_REDIS_CA_CERT: no PEM certificates found")
-	}
-
-	if opts.TLSConfig == nil {
-		opts.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
-	}
-
-	opts.TLSConfig.RootCAs = rootCAs
-
-	client := redisv9.NewClient(opts)
-	if err := client.Ping(ctx).Err(); err != nil {
-		_ = client.Close()
-		return nil, fmt.Errorf("tenant pubsub redis: ping failed: %w", err)
-	}
-
-	return client, nil
 }
 
 // performInitialTenantSync fetches all active tenants from the Tenant Manager API

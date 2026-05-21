@@ -5,7 +5,7 @@ go 1.26.3
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/LerianStudio/lib-auth/v2 v2.8.0
-	github.com/LerianStudio/lib-commons/v5 v5.2.0
+	github.com/LerianStudio/lib-commons/v5 v5.2.0 // pinned: v5.3.0 currently breaks Fetcher MongoDB manager API compatibility; upgrade after compatibility is resolved
 	github.com/LerianStudio/lib-license-go/v2 v2.3.5
 	github.com/LerianStudio/lib-observability v1.0.0
 	github.com/LerianStudio/lib-streaming v1.3.1

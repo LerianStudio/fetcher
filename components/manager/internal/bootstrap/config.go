@@ -2,9 +2,6 @@ package bootstrap
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
-	"encoding/base64"
 	"fmt"
 	"net"
 	"net/url"
@@ -47,6 +44,7 @@ import (
 	libLicense "github.com/LerianStudio/lib-license-go/v2/middleware"
 	observability "github.com/LerianStudio/lib-observability"
 	libLog "github.com/LerianStudio/lib-observability/log"
+	obsRuntime "github.com/LerianStudio/lib-observability/runtime"
 	libOtel "github.com/LerianStudio/lib-observability/tracing"
 	"github.com/LerianStudio/lib-observability/zap"
 	"github.com/gofiber/fiber/v2"
@@ -111,12 +109,14 @@ type Config struct {
 	// Schema cache TTL
 	SchemaCacheTTLSeconds string `env:"SCHEMA_CACHE_TTL_SECONDS"`
 	// Multi-Tenant configuration
-	MultiTenantEnabled                  bool   `env:"MULTI_TENANT_ENABLED"`
-	MultiTenantURL                      string `env:"MULTI_TENANT_URL"`
-	MultiTenantRedisHost                string `env:"MULTI_TENANT_REDIS_HOST"`
-	MultiTenantRedisPort                string `env:"MULTI_TENANT_REDIS_PORT" default:"6379"`
-	MultiTenantRedisPassword            string `env:"MULTI_TENANT_REDIS_PASSWORD"`
-	MultiTenantRedisTLS                 bool   `env:"MULTI_TENANT_REDIS_TLS" default:"false"`
+	MultiTenantEnabled       bool   `env:"MULTI_TENANT_ENABLED"`
+	MultiTenantURL           string `env:"MULTI_TENANT_URL"`
+	MultiTenantRedisHost     string `env:"MULTI_TENANT_REDIS_HOST"`
+	MultiTenantRedisPort     string `env:"MULTI_TENANT_REDIS_PORT" default:"6379"`
+	MultiTenantRedisPassword string `env:"MULTI_TENANT_REDIS_PASSWORD"`
+	MultiTenantRedisTLS      bool   `env:"MULTI_TENANT_REDIS_TLS" default:"false"`
+	// Deprecated: unsupported for tenant Pub/Sub Redis until lib-commons exposes
+	// canonical CA bundle support. Non-empty values fail startup.
 	MultiTenantRedisCACert              string `env:"MULTI_TENANT_REDIS_CA_CERT"`
 	MultiTenantMaxTenantPools           int    `env:"MULTI_TENANT_MAX_TENANT_POOLS" default:"100"`
 	MultiTenantIdleTimeoutSec           int    `env:"MULTI_TENANT_IDLE_TIMEOUT_SEC" default:"300"`
@@ -226,6 +226,10 @@ func InitServers() (*Service, error) {
 		if cfg.MultiTenantRedisHost == "" {
 			return nil, fmt.Errorf("MULTI_TENANT_REDIS_HOST is required when MULTI_TENANT_ENABLED=true")
 		}
+
+		if cfg.MultiTenantRedisCACert != "" {
+			return nil, fmt.Errorf("MULTI_TENANT_REDIS_CA_CERT is deprecated and unsupported: tenant Pub/Sub Redis must use lib-commons canonical NewTenantPubSubRedisClient with system trust; install the CA in the runtime trust store or update lib-commons to support CA bundles")
+		}
 	} else {
 		logger.Log(ctx, libLog.LevelInfo, "Running in SINGLE-TENANT MODE")
 	}
@@ -297,6 +301,8 @@ func initLoggerAndTelemetry(cfg *Config) (libLog.Logger, *libOtel.Telemetry, err
 	if err := applyTelemetryGlobals(telemetry); err != nil {
 		return nil, nil, err
 	}
+
+	obsRuntime.InitPanicMetrics(telemetry.MetricsFactory, logger)
 
 	return logger, telemetry, nil
 }
@@ -847,12 +853,12 @@ func initManagerEventDiscovery(
 		redisPort = "6379"
 	}
 
-	redisClient, err := newTenantPubSubRedisClient(context.Background(), tmredis.TenantPubSubRedisConfig{
+	redisClient, err := tmredis.NewTenantPubSubRedisClient(context.Background(), tmredis.TenantPubSubRedisConfig{
 		Host:     cfg.MultiTenantRedisHost,
 		Port:     redisPort,
 		Password: cfg.MultiTenantRedisPassword,
 		TLS:      cfg.MultiTenantRedisTLS,
-	}, cfg.MultiTenantRedisCACert)
+	})
 	if err != nil {
 		return nil, wrapBootstrapError("create manager tenant Pub/Sub Redis client", err)
 	}
@@ -900,41 +906,6 @@ func initManagerEventDiscovery(
 	}
 
 	return cleanup, nil
-}
-
-func newTenantPubSubRedisClient(ctx context.Context, cfg tmredis.TenantPubSubRedisConfig, caCertBase64 string) (redis.UniversalClient, error) {
-	if caCertBase64 == "" {
-		return tmredis.NewTenantPubSubRedisClient(ctx, cfg)
-	}
-
-	opts, err := tmredis.BuildOptions(cfg)
-	if err != nil {
-		return nil, err
-	}
-
-	caCert, err := base64.StdEncoding.DecodeString(caCertBase64)
-	if err != nil {
-		return nil, fmt.Errorf("decode MULTI_TENANT_REDIS_CA_CERT: %w", err)
-	}
-
-	rootCAs := x509.NewCertPool()
-	if !rootCAs.AppendCertsFromPEM(caCert) {
-		return nil, fmt.Errorf("parse MULTI_TENANT_REDIS_CA_CERT: no PEM certificates found")
-	}
-
-	if opts.TLSConfig == nil {
-		opts.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
-	}
-
-	opts.TLSConfig.RootCAs = rootCAs
-
-	client := redis.NewClient(opts)
-	if err := client.Ping(ctx).Err(); err != nil {
-		_ = client.Close()
-		return nil, fmt.Errorf("tenant pubsub redis: ping failed: %w", err)
-	}
-
-	return client, nil
 }
 
 func buildMongoSource(cfg *Config) string {
@@ -1144,6 +1115,10 @@ type multiTenantPublisher struct {
 // ProducerDefault publishes a message to a tenant-specific RabbitMQ vhost.
 // The tenant ID is extracted from context (set by the TenantMiddleware).
 func (p *multiTenantPublisher) ProducerDefault(ctx context.Context, exchange, key string, queueMessage []byte, header *map[string]any) error {
+	if p.manager == nil {
+		return fmt.Errorf("multi-tenant RabbitMQ: publisher manager is not configured")
+	}
+
 	tenantID := tmcore.GetTenantIDContext(ctx)
 	if tenantID == "" {
 		return fmt.Errorf("multi-tenant RabbitMQ: no tenant ID in context")
