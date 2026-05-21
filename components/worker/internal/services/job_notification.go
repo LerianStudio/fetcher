@@ -88,9 +88,10 @@ func (uc *UseCase) publishJobNotification(
 	logger = normalizeJobNotificationLogger(ctx, logger)
 
 	if !uc.JobEventStreamingEnabled {
-		logger.Log(ctx, libLog.LevelDebug, "lib-streaming job event emission disabled, skipping job notification")
+		err := fmt.Errorf("mandatory lib-streaming job event emission is disabled")
+		logger.Log(ctx, libLog.LevelError, "mandatory lib-streaming job event emission is disabled", libLog.Err(err))
 
-		return nil
+		return err
 	}
 
 	var notificationTracer trace.Tracer
@@ -166,7 +167,7 @@ func (uc *UseCase) publishJobNotificationViaStreaming(ctx context.Context, span 
 
 func (uc *UseCase) emitJobNotificationEvent(ctx context.Context, status, subject string, payload []byte) error {
 	if uc.JobEventEmitter == nil {
-		return nil
+		return fmt.Errorf("mandatory lib-streaming job event emitter is not configured")
 	}
 
 	tenantID := core.GetTenantIDContext(ctx)

@@ -123,6 +123,20 @@ For hands-on API exploration and testing scenarios, the following resources are 
 - **Deduplication**: 5-minute window for duplicate job detection
 - **Result Storage**: Encrypted results stored in pluggable object storage (SeaweedFS or S3-compatible) with configurable TTL
 
+### Worker Job Event Streaming
+
+Worker startup fails closed unless lib-streaming is enabled for mandatory `job.completed` and `job.failed` notifications:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `STREAMING_ENABLED` | Must be `true` for Worker job notifications | `false` in lib-streaming; Fetcher Worker requires `true` |
+| `STREAMING_BROKERS` | Kafka/Redpanda bootstrap servers used by lib-streaming config validation | `localhost:9092` |
+| `STREAMING_CLOUDEVENTS_SOURCE` | CloudEvents source for Fetcher Worker events | - |
+| `RABBITMQ_JOB_EVENTS_EXCHANGE` | RabbitMQ exchange used by the streaming RabbitMQ route target | `fetcher.job.events` |
+| `RABBITMQ_ALLOW_LEGACY_BODY_SIGNATURE_FALLBACK` | Temporary migration flag for pre-envelope body-only HMAC signatures | `false` |
+
+Single-tenant deployments emit with stable tenant ID `single-tenant`; multi-tenant deployments require tenant context from the consumer before emitting.
+
 ## Getting Started
 
 ### Prerequisites

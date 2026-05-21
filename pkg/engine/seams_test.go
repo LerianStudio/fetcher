@@ -84,7 +84,7 @@ func requiredSeams() []seam {
 		{
 			Name:       "notification_publishing",
 			SourcePath: "components/worker/internal/services/job_notification.go",
-			Reason:     "job status notifications are serialized with source metadata, routed by status and product, and published to the RabbitMQ job events exchange",
+			Reason:     "job status notifications are serialized with source in payload metadata and emitted through the mandatory lib-streaming contract using stable job.completed/job.failed event keys, never product/source routing-key segments",
 		},
 	}
 }
@@ -146,7 +146,7 @@ func TestRequiredSeams_Characterization_IsComplete(t *testing.T) {
 		},
 		"notification_publishing": {
 			sourcePath: "components/worker/internal/services/job_notification.go",
-			keywords:   []string{"notifications", "product", "RabbitMQ"},
+			keywords:   []string{"notifications", "source", "job.completed", "job.failed", "lib-streaming"},
 		},
 	}
 

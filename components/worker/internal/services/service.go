@@ -8,7 +8,6 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/model/datasource"
 	"github.com/LerianStudio/fetcher/pkg/ports/connection"
 	"github.com/LerianStudio/fetcher/pkg/ports/job"
-	"github.com/LerianStudio/fetcher/pkg/ports/publisher"
 	"github.com/LerianStudio/fetcher/pkg/ports/storage"
 	"github.com/LerianStudio/fetcher/pkg/resolver"
 	streaming "github.com/LerianStudio/lib-streaming"
@@ -35,9 +34,6 @@ type UseCase struct {
 	// FileTTL defines the Time To Live for file (e.g., "1m", "1h", "7d", "30d"). Empty means no TTL.
 	FileTTL string
 
-	// RabbitMQPublisher is used to publish job event notifications to RabbitMQ topic exchange.
-	RabbitMQPublisher publisher.Repository
-
 	// JobEventEmitter publishes past-tense job business events through lib-streaming.
 	// This is the public job notification event contract; legacy direct RabbitMQ
 	// routing is not used for completed/failed business notifications.
@@ -48,9 +44,6 @@ type UseCase struct {
 
 	// JobEventStreamingRequireTenant makes missing tenant IDs fail loudly in multi-tenant mode.
 	JobEventStreamingRequireTenant bool
-
-	// JobEventsExchange is the name of the RabbitMQ topic exchange for job events.
-	JobEventsExchange string
 
 	// dataSourceFactory creates DataSource instances from connections.
 	dataSourceFactory func(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor) (datasource.DataSource, error)

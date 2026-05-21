@@ -59,7 +59,7 @@ func TestNewMultiQueueConsumerMultiTenant_SetsFields(t *testing.T) {
 	logger := &mockBootstrapLogger{}
 	mgr := &tmmongo.Manager{}
 
-	consumer := NewMultiQueueConsumerMultiTenant(mockConsumer, nil, "my-queue", logger, mgr, nil, 0)
+	consumer := NewMultiQueueConsumerMultiTenant(mockConsumer, nil, "my-queue", logger, mgr, nil, false, 0)
 
 	assert.Equal(t, "my-queue", consumer.queueName)
 	assert.Equal(t, logger, consumer.logger)
@@ -295,7 +295,8 @@ func TestNewMultiQueueConsumerMultiTenant_RegistersHandler(t *testing.T) {
 		logger,
 		nil, // mongoManager
 		nil, // messageVerifier
-		0,   // drainDelay (skip sleep in tests)
+		false,
+		0, // drainDelay (skip sleep in tests)
 	)
 
 	assert.NotNil(t, mqConsumer)
@@ -309,7 +310,7 @@ func TestNewMultiQueueConsumerMultiTenant_StoresRegistrationError(t *testing.T) 
 	mockConsumer := &mockMultiTenantConsumer{registerErr: errors.New("register failed")}
 	logger := &mockBootstrapLogger{}
 
-	consumer := NewMultiQueueConsumerMultiTenant(mockConsumer, nil, "test-queue", logger, nil, nil, 0)
+	consumer := NewMultiQueueConsumerMultiTenant(mockConsumer, nil, "test-queue", logger, nil, nil, false, 0)
 
 	require.Error(t, consumer.initErr)
 	assert.Contains(t, consumer.initErr.Error(), "register multi-tenant handler")

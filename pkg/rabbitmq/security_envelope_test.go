@@ -158,7 +158,10 @@ func TestVerifyMessageSignature_TamperAndLegacyCompatibility(t *testing.T) {
 		HeaderSignatureTimestamp: strconv.FormatInt(timestamp, 10),
 		HeaderSignatureVersion:   signer.SignatureVersion(),
 	}
-	require.NoError(t, VerifyMessageSignature(body, legacyHeaders, "exchange", "route", signer, time.Minute, libLogNop(), nil))
+	err = VerifyMessageSignature(body, legacyHeaders, "exchange", "route", signer, time.Minute, libLogNop(), nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrSignatureVerificationFailed)
+	require.NoError(t, VerifyMessageSignature(body, legacyHeaders, "exchange", "route", signer, time.Minute, libLogNop(), nil, true))
 
 	legacyTenantHeaders := map[string]any{
 		HeaderTenantID:           "tenant-123",
@@ -166,7 +169,43 @@ func TestVerifyMessageSignature_TamperAndLegacyCompatibility(t *testing.T) {
 		HeaderSignatureTimestamp: strconv.FormatInt(timestamp, 10),
 		HeaderSignatureVersion:   signer.SignatureVersion(),
 	}
-	require.NoError(t, VerifyMessageSignature(body, legacyTenantHeaders, "exchange", "route", signer, time.Minute, libLogNop(), nil))
+	require.NoError(t, VerifyMessageSignature(body, legacyTenantHeaders, "exchange", "route", signer, time.Minute, libLogNop(), nil, true))
+}
+
+func TestVerifyMessageSignature_RejectsRouteAndBodyTamper(t *testing.T) {
+	t.Parallel()
+
+	signer, err := crypto.NewHMACSigner([]byte("0123456789abcdef0123456789abcdef"), crypto.SignatureVersion)
+	require.NoError(t, err)
+
+	timestamp := time.Now().Add(-time.Second).Unix()
+	body := []byte(`{"jobId":"job-123"}`)
+	signature := signer.Sign(BuildMessageSignaturePayload(timestamp, signer.SignatureVersion(), "tenant-123", "job-123", "exchange", "route", body))
+	headers := map[string]any{
+		HeaderTenantID:           "tenant-123",
+		HeaderMessageSignature:   signature,
+		HeaderSignatureTimestamp: strconv.FormatInt(timestamp, 10),
+		HeaderSignatureVersion:   signer.SignatureVersion(),
+	}
+
+	for _, tt := range []struct {
+		name       string
+		body       []byte
+		exchange   string
+		routingKey string
+	}{
+		{name: "exchange tamper", body: body, exchange: "other-exchange", routingKey: "route"},
+		{name: "routing key tamper", body: body, exchange: "exchange", routingKey: "other-route"},
+		{name: "body tamper", body: []byte(`{"jobId":"job-456"}`), exchange: "exchange", routingKey: "route"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := VerifyMessageSignature(tt.body, headers, tt.exchange, tt.routingKey, signer, time.Minute, libLogNop(), nil)
+			require.Error(t, err)
+			assert.ErrorIs(t, err, ErrSignatureVerificationFailed)
+		})
+	}
 }
 
 func TestVerifyMessageSignature_TypedNilSigner(t *testing.T) {

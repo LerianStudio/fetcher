@@ -49,17 +49,18 @@ type Config struct {
 	EnvName  string `env:"ENV_NAME"`
 	LogLevel string `env:"LOG_LEVEL"`
 	// RabbitMQ envs
-	RabbitURI                   string `env:"RABBITMQ_URI"`
-	RabbitMQHost                string `env:"RABBITMQ_HOST"`
-	RabbitMQPortHost            string `env:"RABBITMQ_PORT_HOST"`
-	RabbitMQPortAMQP            string `env:"RABBITMQ_PORT_AMQP"`
-	RabbitMQUser                string `env:"RABBITMQ_DEFAULT_USER"`
-	RabbitMQPass                string `env:"RABBITMQ_DEFAULT_PASS"`
-	RabbitMQNumWorkers          int    `env:"RABBITMQ_NUMBERS_OF_WORKERS"`
-	RabbitMQHealthCheckURL      string `env:"RABBITMQ_HEALTH_CHECK_URL"`
-	RabbitMQGenerateReportQueue string `env:"RABBITMQ_FETCHER_WORK_QUEUE"`
-	RabbitMQJobEventsExchange   string `env:"RABBITMQ_JOB_EVENTS_EXCHANGE"`
-	RabbitMQTLS                 bool   `env:"RABBITMQ_TLS" default:"false"`
+	RabbitURI                                string `env:"RABBITMQ_URI"`
+	RabbitMQHost                             string `env:"RABBITMQ_HOST"`
+	RabbitMQPortHost                         string `env:"RABBITMQ_PORT_HOST"`
+	RabbitMQPortAMQP                         string `env:"RABBITMQ_PORT_AMQP"`
+	RabbitMQUser                             string `env:"RABBITMQ_DEFAULT_USER"`
+	RabbitMQPass                             string `env:"RABBITMQ_DEFAULT_PASS"`
+	RabbitMQNumWorkers                       int    `env:"RABBITMQ_NUMBERS_OF_WORKERS"`
+	RabbitMQHealthCheckURL                   string `env:"RABBITMQ_HEALTH_CHECK_URL"`
+	RabbitMQGenerateReportQueue              string `env:"RABBITMQ_FETCHER_WORK_QUEUE"`
+	RabbitMQJobEventsExchange                string `env:"RABBITMQ_JOB_EVENTS_EXCHANGE"`
+	RabbitMQTLS                              bool   `env:"RABBITMQ_TLS" default:"false"`
+	RabbitMQAllowLegacyBodySignatureFallback bool   `env:"RABBITMQ_ALLOW_LEGACY_BODY_SIGNATURE_FALLBACK" default:"false"`
 	// Otel Collector configurations
 	OtelServiceName         string `env:"OTEL_RESOURCE_SERVICE_NAME"`
 	OtelLibraryName         string `env:"OTEL_LIBRARY_NAME"`
@@ -214,7 +215,6 @@ func InitWorker() (*Service, error) {
 		DocumentSigner:       cryptoWithExternalHMAC,
 		JobEventEmitter:      streaming.NewNoopEmitter(),
 		FileTTL:              cfg.ObjectStorageTTL,
-		JobEventsExchange:    cfg.RabbitMQJobEventsExchange,
 	}
 	service.SetStorageEncryptDerivedKey(keyDeriver.GetStorageEncryptKey())
 	service.SetCRMSecrets(cfg.CryptoEncryptSecretKeyPluginCRM, cfg.CryptoHashSecretKeyPluginCRM)
@@ -313,13 +313,11 @@ func initMultiTenantWorkerService(
 		cryptoWithExternalHMAC,
 	)
 
-	service.RabbitMQPublisher = publisherRoutes
-
 	if err := configureJobEventEmitter(ctx, cfg, logger, telemetry, publisherRoutes, service); err != nil {
 		return nil, err
 	}
 
-	multiQueueConsumer := NewMultiQueueConsumerMultiTenant(mtConsumer, service, cfg.RabbitMQGenerateReportQueue, logger, mongoManager, messageVerifier, defaultDrain(cfg.ReadyzDrainDelaySec))
+	multiQueueConsumer := NewMultiQueueConsumerMultiTenant(mtConsumer, service, cfg.RabbitMQGenerateReportQueue, logger, mongoManager, messageVerifier, cfg.RabbitMQAllowLegacyBodySignatureFallback, defaultDrain(cfg.ReadyzDrainDelaySec))
 	performInitialTenantSync(ctx, logger, tmClient, mtConsumer)
 
 	readyzDeps := newWorkerReadyzDepsMT(cfg, mongoConnection, storageRepository, tmClient, mongoManager, rabbitMQManager)
@@ -384,14 +382,12 @@ func initSingleTenantRabbitMQ(
 	}
 
 	// Initialize RabbitMQ consumer and publisher with separate connections
-	consumerRoutes, errRoutes := rabbitmq.NewConsumerRoutes(consumerConnection, cfg.RabbitMQNumWorkers, logger, telemetry, cryptoWithInternalHMAC, cfg.EnvName)
+	consumerRoutes, errRoutes := rabbitmq.NewConsumerRoutes(consumerConnection, cfg.RabbitMQNumWorkers, logger, telemetry, cryptoWithInternalHMAC, cfg.EnvName, cfg.RabbitMQAllowLegacyBodySignatureFallback)
 	if errRoutes != nil {
 		return nil, nil, fmt.Errorf("initialize consumer routes: %w", errRoutes)
 	}
 
 	publisherRoutes := rabbitmq.NewPublisherRoutes(publisherConnection, logger, telemetry, cryptoWithExternalHMAC)
-
-	service.RabbitMQPublisher = publisherRoutes
 
 	if err := configureJobEventEmitter(context.Background(), cfg, logger, telemetry, publisherRoutes, service); err != nil {
 		return nil, nil, err
@@ -436,11 +432,11 @@ func initJobEventEmitter(ctx context.Context, cfg *Config, logger libLog.Logger,
 	}
 
 	if !streamingCfg.Enabled {
-		return streaming.NewNoopEmitter(), false, nil
+		return nil, false, fmt.Errorf("STREAMING_ENABLED=true is required for mandatory job event notifications")
 	}
 
-	if !cfg.MultiTenantEnabled {
-		return nil, false, fmt.Errorf("STREAMING_ENABLED=true requires MULTI_TENANT_ENABLED=true so job events carry a tenant ID")
+	if strings.TrimSpace(cfg.RabbitMQJobEventsExchange) == "" {
+		return nil, false, fmt.Errorf("RABBITMQ_JOB_EVENTS_EXCHANGE is required for mandatory job event notifications")
 	}
 
 	catalog, err := streaming.NewCatalog(

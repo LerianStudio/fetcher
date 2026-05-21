@@ -165,12 +165,6 @@ type managerPlatformDependencies struct {
 	// short-circuited by the schema cache's in-memory fallback. Nil when
 	// REDIS_HOST is unset.
 	readyzRedisClient *redis.Client
-	// multiTenantReadyzRedisClient is dedicated to /readyz on the
-	// multi-tenant event-discovery Redis. It is independent of the
-	// initManagerEventDiscovery client so its lifecycle does not race the
-	// event listener's Start/Stop. Nil when MT is disabled or
-	// MULTI_TENANT_REDIS_HOST is unset.
-	multiTenantReadyzRedisClient *redis.Client
 }
 
 var (
@@ -548,14 +542,13 @@ func initPlatformDependencies(cfg *Config, logger libLog.Logger, messageSigner c
 			cfg.OrganizationIDs,
 			&licenseLogger,
 		),
-		connectionTestStore:          ratelimit.New(10, time.Minute),
-		schemaCache:                  cacheAdapter.NewSchemaCache(genericCache, schemaCacheTTL),
-		rabbitMQAdapter:              rabbitAdapter,
-		tmClient:                     tmClientForReadyz,
-		tmMongoManager:               tmMongoMgrForReadyz,
-		tmRabbitMQManager:            tmRabbitMgrForReadyz,
-		readyzRedisClient:            newReadyzRedisClient(cfg),
-		multiTenantReadyzRedisClient: newReadyzMultiTenantRedisClient(cfg),
+		connectionTestStore: ratelimit.New(10, time.Minute),
+		schemaCache:         cacheAdapter.NewSchemaCache(genericCache, schemaCacheTTL),
+		rabbitMQAdapter:     rabbitAdapter,
+		tmClient:            tmClientForReadyz,
+		tmMongoManager:      tmMongoMgrForReadyz,
+		tmRabbitMQManager:   tmRabbitMgrForReadyz,
+		readyzRedisClient:   newReadyzRedisClient(cfg),
 	}, nil
 }
 
@@ -688,17 +681,6 @@ func assembleService(
 
 		shutdownHooks = append(shutdownHooks, func(context.Context) error {
 			_ = rdb.Close()
-			return nil
-		})
-	}
-
-	// Release the readyz-dedicated multi-tenant Redis client. Lifecycle is
-	// independent of the event-listener client owned by initManagerEventDiscovery.
-	if platformDependencies.multiTenantReadyzRedisClient != nil {
-		mtRDB := platformDependencies.multiTenantReadyzRedisClient
-
-		shutdownHooks = append(shutdownHooks, func(context.Context) error {
-			_ = mtRDB.Close()
 			return nil
 		})
 	}

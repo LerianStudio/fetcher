@@ -204,6 +204,49 @@ func TestPublishJobNotification_StreamingCallerErrorStillFails(t *testing.T) {
 	assert.ErrorIs(t, err, streaming.ErrMissingTenantID)
 }
 
+func TestPublishJobNotification_StreamingRequireTenantRejectsMissingContext(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+	emitter := streamingtest.NewMockEmitter()
+	uc.JobEventEmitter = emitter
+	uc.JobEventStreamingRequireTenant = true
+
+	message := ExtractExternalDataMessage{
+		JobID:    newTestJobID(),
+		Metadata: map[string]any{"source": "test-service"},
+	}
+
+	err := uc.publishJobNotification(testContext(), nil, message, "completed", nil, nil, testLogger())
+	require.Error(t, err)
+	assert.ErrorIs(t, err, streaming.ErrMissingTenantID)
+	assert.Empty(t, emitter.Requests())
+}
+
+func TestPublishJobNotification_SingleTenantUsesStableFallbackTenant(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+	emitter := streamingtest.NewMockEmitter()
+	uc.JobEventEmitter = emitter
+
+	message := ExtractExternalDataMessage{
+		JobID:    newTestJobID(),
+		Metadata: map[string]any{"source": "test-service"},
+	}
+
+	require.NoError(t, uc.publishJobNotification(testContext(), nil, message, "completed", nil, nil, testLogger()))
+	streamingtest.AssertTenantID(t, emitter, "single-tenant")
+}
+
 // TestPublishJobNotification_PublisherNotConfigured tests that no error is returned when publisher is nil.
 func TestPublishJobNotification_PublisherNotConfigured(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -212,13 +255,13 @@ func TestPublishJobNotification_PublisherNotConfigured(t *testing.T) {
 	mocks := newTestMocks(ctrl)
 	// Create UseCase without publisher
 	uc := &UseCase{
-		ExternalDataStorage:  mocks.seaweedFS,
-		JobRepository:        mocks.jobRepo,
-		ConnectionRepository: mocks.connRepo,
-		Cryptor:              mocks.cryptor,
-		FileTTL:              "1h",
-		RabbitMQPublisher:    nil, // No publisher
-		JobEventsExchange:    "",
+		ExternalDataStorage:      mocks.seaweedFS,
+		JobRepository:            mocks.jobRepo,
+		ConnectionRepository:     mocks.connRepo,
+		Cryptor:                  mocks.cryptor,
+		FileTTL:                  "1h",
+		JobEventEmitter:          nil,
+		JobEventStreamingEnabled: true,
 	}
 
 	ctx := testContext()
@@ -229,10 +272,10 @@ func TestPublishJobNotification_PublisherNotConfigured(t *testing.T) {
 		Metadata: map[string]any{"source": "test"},
 	}
 
-	// Should return nil without calling publish
+	// Mandatory streaming must fail closed when no emitter is configured.
 	err := uc.publishJobNotification(ctx, nil, message, "completed", nil, nil, logger)
-	if err != nil {
-		t.Fatalf("expected no error when publisher not configured, got: %v", err)
+	if err == nil {
+		t.Fatal("expected error when mandatory job event emitter is not configured")
 	}
 }
 
@@ -409,13 +452,13 @@ func TestPublishJobNotification_EmptyExchange(t *testing.T) {
 	mocks := newTestMocks(ctrl)
 	// Create UseCase with empty exchange
 	uc := &UseCase{
-		ExternalDataStorage:  mocks.seaweedFS,
-		JobRepository:        mocks.jobRepo,
-		ConnectionRepository: mocks.connRepo,
-		Cryptor:              mocks.cryptor,
-		FileTTL:              "1h",
-		RabbitMQPublisher:    mocks.rabbitPublisher,
-		JobEventsExchange:    "", // Empty exchange
+		ExternalDataStorage:      mocks.seaweedFS,
+		JobRepository:            mocks.jobRepo,
+		ConnectionRepository:     mocks.connRepo,
+		Cryptor:                  mocks.cryptor,
+		FileTTL:                  "1h",
+		JobEventEmitter:          nil,
+		JobEventStreamingEnabled: true,
 	}
 
 	ctx := testContext()
@@ -426,10 +469,10 @@ func TestPublishJobNotification_EmptyExchange(t *testing.T) {
 		Metadata: map[string]any{"source": "test"},
 	}
 
-	// Should return nil without calling publish
+	// Mandatory streaming must fail closed when no emitter is configured.
 	err := uc.publishJobNotification(ctx, nil, message, "completed", nil, nil, logger)
-	if err != nil {
-		t.Fatalf("expected no error when exchange not configured, got: %v", err)
+	if err == nil {
+		t.Fatal("expected error when mandatory job event emitter is not configured")
 	}
 }
 

@@ -140,47 +140,6 @@ func redisURLFromCfg(host, port string, useTLS bool) string {
 	return readyz.ComposeRedisURL(host, port, useTLS)
 }
 
-// multiTenantRedisURLFromCfg is the MT-Redis variant — same as
-// redisURLFromCfg but reads the MT-specific fields.
-func multiTenantRedisURLFromCfg(cfg *Config) string {
-	if cfg == nil {
-		return ""
-	}
-
-	return readyz.ComposeRedisURL(cfg.MultiTenantRedisHost, cfg.MultiTenantRedisPort, cfg.MultiTenantRedisTLS)
-}
-
-// newReadyzMultiTenantRedisClient builds a standalone *redis.Client for the
-// /readyz multi_tenant_redis dep so the probe is not coupled to the event
-// listener's Redis client lifecycle (Start/Stop). Returns nil when MT is
-// disabled or MULTI_TENANT_REDIS_HOST is unset; the caller must omit the
-// dep in that case.
-//
-// Mirrors the canonical lib-commons Pub/Sub client shape. Custom CA bundles via
-// MULTI_TENANT_REDIS_CA_CERT are rejected during bootstrap; readyz therefore
-// uses the runtime system trust store when TLS is enabled.
-func newReadyzMultiTenantRedisClient(cfg *Config) *redis.Client {
-	if cfg == nil || !cfg.MultiTenantEnabled || cfg.MultiTenantRedisHost == "" {
-		return nil
-	}
-
-	port := cfg.MultiTenantRedisPort
-	if port == "" {
-		port = "6379"
-	}
-
-	opts := &redis.Options{
-		Addr:     net.JoinHostPort(cfg.MultiTenantRedisHost, port),
-		Password: cfg.MultiTenantRedisPassword,
-	}
-
-	if cfg.MultiTenantRedisTLS {
-		opts.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
-	}
-
-	return redis.NewClient(opts)
-}
-
 func applicationServiceName() string { return constant.ApplicationName }
 
 // buildManagerReadyzCheckers assembles the DependencyCheckers registered on
@@ -239,20 +198,6 @@ func buildManagerReadyzCheckers(
 			"redis",
 			func(ctx context.Context) error { return client.Ping(ctx).Err() },
 			redisURLFromCfg(cfg.RedisHost, cfg.RedisPort, cfg.RedisTLS),
-		))
-	}
-
-	// Multi-tenant event-discovery Redis: surfaces tenant Pub/Sub Redis
-	// health on the global /readyz so an MT deployment with a dead MT-Redis
-	// is visible as multi_tenant_redis=down (the schema-cache redis dep is
-	// a different host, so a healthy schema-cache cannot mask MT-Redis).
-	if cfg.MultiTenantEnabled && plat != nil && plat.multiTenantReadyzRedisClient != nil {
-		mtClient := plat.multiTenantReadyzRedisClient
-
-		checkers = append(checkers, readyz.NewRedisClientCheckerFromFn(
-			"multi_tenant_redis",
-			func(ctx context.Context) error { return mtClient.Ping(ctx).Err() },
-			multiTenantRedisURLFromCfg(cfg),
 		))
 	}
 

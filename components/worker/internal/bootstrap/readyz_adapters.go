@@ -2,8 +2,6 @@ package bootstrap
 
 import (
 	"context"
-	"crypto/tls"
-	"net"
 
 	workerRabbitAdapters "github.com/LerianStudio/fetcher/components/worker/internal/adapters/rabbitmq"
 	"github.com/LerianStudio/fetcher/pkg/bootstrap/readyz"
@@ -17,7 +15,6 @@ import (
 	tmrabbitmq "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/rabbitmq"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gofiber/fiber/v2"
-	"github.com/redis/go-redis/v9"
 )
 
 // workerReadyzDeps bundles the handles the worker bootstrap forwards to
@@ -29,7 +26,6 @@ type workerReadyzDeps struct {
 	mongoClient    *libMongo.Client
 	rabbitAdapter  pkgRabbitmq.Adapter
 	s3Client       *s3.Client
-	mtRedisClient  *redis.Client
 	tmClient       readyz.TMClient
 	tmMongoManager *tmmongo.Manager
 	tmRabbitMgr    *tmrabbitmq.Manager
@@ -84,12 +80,6 @@ func newWorkerReadyzDepsMT(
 		deps.s3Client = s3Repo.Client()
 	}
 
-	rdb := newReadyzMTRedis(cfg)
-	if rdb != nil {
-		deps.mtRedisClient = rdb
-		deps.closers = append(deps.closers, func() error { return rdb.Close() })
-	}
-
 	return deps
 }
 
@@ -105,34 +95,6 @@ func (d *workerReadyzDeps) close() {
 			_ = fn()
 		}
 	}
-}
-
-// newReadyzMTRedis builds the standalone MT-Redis client used by /readyz.
-// Returns nil when MT-Redis is not configured.
-//
-// When cfg.MultiTenantRedisTLS is true, opts.TLSConfig is populated with TLS
-// 1.2 as the floor. Custom CA bundles via MULTI_TENANT_REDIS_CA_CERT are
-// rejected during bootstrap; readyz uses the runtime system trust store.
-func newReadyzMTRedis(cfg *Config) *redis.Client {
-	if cfg == nil || cfg.MultiTenantRedisHost == "" {
-		return nil
-	}
-
-	port := cfg.MultiTenantRedisPort
-	if port == "" {
-		port = "6379"
-	}
-
-	opts := &redis.Options{
-		Addr:     net.JoinHostPort(cfg.MultiTenantRedisHost, port),
-		Password: cfg.MultiTenantRedisPassword,
-	}
-
-	if cfg.MultiTenantRedisTLS {
-		opts.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
-	}
-
-	return redis.NewClient(opts)
 }
 
 // workerRabbitMQAdapterProbe duplicates the manager-side adapter so each
@@ -246,16 +208,6 @@ func buildWorkerReadyzCheckers(deps *workerReadyzDeps) []readyz.DependencyChecke
 		checkers = append(checkers, readyz.NewRabbitMQAdapterChecker(
 			newWorkerRabbitMQAdapterProbe(deps.rabbitAdapter),
 			buildWorkerRabbitMQURL(deps.cfg),
-		))
-	}
-
-	if deps.mtRedisClient != nil {
-		client := deps.mtRedisClient
-
-		checkers = append(checkers, readyz.NewRedisClientCheckerFromFn(
-			"multi_tenant_redis",
-			func(ctx context.Context) error { return client.Ping(ctx).Err() },
-			readyz.ComposeRedisURL(deps.cfg.MultiTenantRedisHost, deps.cfg.MultiTenantRedisPort, deps.cfg.MultiTenantRedisTLS),
 		))
 	}
 

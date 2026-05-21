@@ -60,10 +60,8 @@ func newTestUseCase(mocks *testMocks) *UseCase {
 		ConnectionRepository:     mocks.connRepo,
 		Cryptor:                  mocks.cryptor,
 		FileTTL:                  "1h",
-		RabbitMQPublisher:        mocks.rabbitPublisher,
 		JobEventEmitter:          publisherBackedJobEmitter{publisher: mocks.rabbitPublisher, exchange: "test-exchange"},
 		JobEventStreamingEnabled: true,
-		JobEventsExchange:        "test-exchange",
 	}
 
 	uc.SetStorageEncryptDerivedKey([]byte("test-seaweedfs-encrypt-key-32by"))
@@ -94,7 +92,7 @@ type publisherBackedJobEmitter struct {
 
 func (e publisherBackedJobEmitter) Emit(ctx context.Context, request streaming.EmitRequest) error {
 	if e.publisher == nil || e.exchange == "" {
-		return nil
+		return fmt.Errorf("job event streaming publisher is not configured")
 	}
 
 	if request.DefinitionKey == "" {

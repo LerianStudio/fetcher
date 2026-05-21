@@ -89,14 +89,6 @@ const (
 
 	// HeaderSignatureVersion contains the version of the signature algorithm (e.g., "v1")
 	HeaderSignatureVersion = "signature-version"
-
-	// AllowLegacyBodyOnlySignatureFallback gates the rolling-drain compatibility
-	// path for messages signed before the tenant/exchange/routing envelope was
-	// introduced. Risk: a body-only signature does not bind tenant or route, so
-	// multi-tenant workers must validate X-Tenant-ID against authoritative context
-	// before calling VerifyMessageSignature. Remove this after the 5-minute default
-	// timestamp tolerance has elapsed across all producers and queues are drained.
-	AllowLegacyBodyOnlySignatureFallback = true
 )
 
 // AMQP error codes for error classification.
@@ -151,9 +143,6 @@ const (
 	attrAppRequestExchange             = obsConstants.AttrPrefixAppRequest + "exchange"
 	attrAppRequestKey                  = obsConstants.AttrPrefixAppRequest + "key"
 	attrAppRequestQueue                = obsConstants.AttrPrefixAppRequest + "queue"
-	attrAppRequestRabbitMQMessage      = obsConstants.AttrPrefixAppRequest + "rabbitmq.message"
-	attrAppRequestRabbitMQHeaders      = obsConstants.AttrPrefixAppRequest + "rabbitmq.headers"
-	attrAppRequestRabbitMQConsumerMsg  = obsConstants.AttrPrefixAppRequest + "rabbitmq.consumer.message"
 	attrMessagingSystem                = "messaging.system"
 	attrMessagingDestinationName       = "messaging.destination.name"
 	attrMessagingOperation             = "messaging.operation"
@@ -224,6 +213,10 @@ type AdapterOptions struct {
 	// Messages with timestamps older than this will be rejected to prevent replay attacks.
 	// Default: 5 minutes
 	SignatureTimestampTolerance time.Duration
+
+	// AllowLegacyBodyOnlySignatureFallback gates the rolling-drain compatibility
+	// path for body-only signatures. Default: false.
+	AllowLegacyBodyOnlySignatureFallback bool
 }
 
 // DefaultOptions returns the default adapter options.
@@ -725,20 +718,10 @@ func (prmq *RabbitMQAdapter) ProducerDefault(ctx context.Context, exchange, key 
 		attribute.Int64(attrMessagingMessageBodySize, int64(len(queueMessage))),
 	)
 
-	err := libOpentelemetry.SetSpanAttributesFromValue(spanProducer, attrAppRequestRabbitMQMessage, string(queueMessage), nil)
-	if err != nil {
-		libOpentelemetry.HandleSpanError(spanProducer, "Failed to convert queue message to JSON string", err)
-	}
-
 	headers := map[string]any(nil)
 
 	if header != nil {
 		headers = *header
-
-		err := libOpentelemetry.SetSpanAttributesFromValue(spanProducer, attrAppRequestRabbitMQHeaders, *header, nil)
-		if err != nil {
-			libOpentelemetry.HandleSpanError(spanProducer, "Failed to convert headers to JSON string", err)
-		}
 	}
 
 	if !isNilSigner(prmq.options.Signer) && prmq.options.EnableMessageSigning {
@@ -768,7 +751,7 @@ func (prmq *RabbitMQAdapter) ProducerDefault(ctx context.Context, exchange, key 
 			attribute.Int(attrAttempt, attempt),
 		)
 
-		err = prmq.executeWithCircuitBreaker(func() error {
+		err := prmq.executeWithCircuitBreaker(func() error {
 			channel, err := prmq.ensureChannel(spanProducer, logger)
 			if err != nil {
 				return fmt.Errorf("rabbitmq ensure channel for publish: %w", err)
@@ -1077,11 +1060,6 @@ func (prmq *RabbitMQAdapter) processDelivery(
 		attribute.Int64(attrMessagingMessageBodySize, int64(len(d.Body))),
 	)
 
-	err := libOpentelemetry.SetSpanAttributesFromValue(hspan, attrAppRequestRabbitMQConsumerMsg, d, nil)
-	if err != nil {
-		libOpentelemetry.HandleSpanError(hspan, "Failed to convert message to JSON string", err)
-	}
-
 	if prmq.options.EnableSignatureVerification {
 		if isNilSigner(prmq.options.Signer) {
 			if nackErr := d.Nack(false, false); nackErr != nil {
@@ -1098,7 +1076,7 @@ func (prmq *RabbitMQAdapter) processDelivery(
 			return
 		}
 
-		if err := VerifyMessageSignature(d.Body, headers, d.Exchange, d.RoutingKey, prmq.options.Signer, prmq.options.SignatureTimestampTolerance, logWithFields, hspan); err != nil {
+		if err := VerifyMessageSignature(d.Body, headers, d.Exchange, d.RoutingKey, prmq.options.Signer, prmq.options.SignatureTimestampTolerance, logWithFields, hspan, prmq.options.AllowLegacyBodyOnlySignatureFallback); err != nil {
 			if nackErr := d.Nack(false, false); nackErr != nil {
 				logWithFields.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("Failed to Nack message after signature verification failure: %v", nackErr))
 			}
@@ -1224,6 +1202,7 @@ func VerifyMessageSignature(
 	tolerance time.Duration,
 	logger libLog.Logger,
 	span trace.Span,
+	allowLegacyBodyOnlyFallback ...bool,
 ) error {
 	if isNilSigner(signer) {
 		return ErrSignatureVerifierNotConfigured
@@ -1316,12 +1295,17 @@ func VerifyMessageSignature(
 	// Build the signature payload and verify.
 	payload := BuildMessageSignaturePayload(timestamp, version, tenantID, jobID, exchange, routingKey, body)
 	if err := signer.Verify(payload, signature); err != nil {
-		if !AllowLegacyBodyOnlySignatureFallback {
+		allowLegacy := len(allowLegacyBodyOnlyFallback) > 0 && allowLegacyBodyOnlyFallback[0]
+		if !allowLegacy {
 			return fmt.Errorf("%w: %v", ErrSignatureVerificationFailed, err)
 		}
 
 		legacyPayload := crypto.BuildSignaturePayload(timestamp, body)
 		if legacyErr := signer.Verify(legacyPayload, signature); legacyErr == nil {
+			if span != nil {
+				span.SetAttributes(attribute.Bool("app.request.signature_legacy_fallback", true))
+			}
+
 			if logger != nil {
 				logger.Log(context.Background(), libLog.LevelWarn, "accepted legacy body-only RabbitMQ message signature during rolling drain")
 			}

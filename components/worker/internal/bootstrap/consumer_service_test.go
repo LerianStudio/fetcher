@@ -136,6 +136,8 @@ func TestHandlerGenerateReportDelivery_VerifiesTenantBoundSignatures(t *testing.
 	tests := []struct {
 		name        string
 		headers     amqp.Table
+		ctxTenant   string
+		allowLegacy bool
 		wantHandled bool
 	}{
 		{
@@ -146,16 +148,29 @@ func TestHandlerGenerateReportDelivery_VerifiesTenantBoundSignatures(t *testing.
 				pkgRabbitMQ.HeaderSignatureTimestamp: strconv.FormatInt(now, 10),
 				pkgRabbitMQ.HeaderSignatureVersion:   signer.SignatureVersion(),
 			},
+			ctxTenant:   "tenant-a",
 			wantHandled: true,
 		},
 		{
-			name: "legacy body-only signature with matching tenant header",
+			name: "legacy body-only signature disabled rejects before handler",
 			headers: amqp.Table{
 				pkgRabbitMQ.HeaderTenantID:           "tenant-a",
 				pkgRabbitMQ.HeaderMessageSignature:   legacySignature,
 				pkgRabbitMQ.HeaderSignatureTimestamp: strconv.FormatInt(now, 10),
 				pkgRabbitMQ.HeaderSignatureVersion:   signer.SignatureVersion(),
 			},
+			ctxTenant: "tenant-a",
+		},
+		{
+			name: "legacy body-only signature enabled accepts matching tenant header",
+			headers: amqp.Table{
+				pkgRabbitMQ.HeaderTenantID:           "tenant-a",
+				pkgRabbitMQ.HeaderMessageSignature:   legacySignature,
+				pkgRabbitMQ.HeaderSignatureTimestamp: strconv.FormatInt(now, 10),
+				pkgRabbitMQ.HeaderSignatureVersion:   signer.SignatureVersion(),
+			},
+			ctxTenant:   "tenant-a",
+			allowLegacy: true,
 			wantHandled: true,
 		},
 		{
@@ -166,11 +181,22 @@ func TestHandlerGenerateReportDelivery_VerifiesTenantBoundSignatures(t *testing.
 				pkgRabbitMQ.HeaderSignatureTimestamp: strconv.FormatInt(now, 10),
 				pkgRabbitMQ.HeaderSignatureVersion:   signer.SignatureVersion(),
 			},
+			ctxTenant: "tenant-a",
 		},
 		{
 			name: "missing tenant header rejected",
 			headers: amqp.Table{
 				pkgRabbitMQ.HeaderMessageSignature:   legacySignature,
+				pkgRabbitMQ.HeaderSignatureTimestamp: strconv.FormatInt(now, 10),
+				pkgRabbitMQ.HeaderSignatureVersion:   signer.SignatureVersion(),
+			},
+			ctxTenant: "tenant-a",
+		},
+		{
+			name: "missing authoritative context rejected before verification",
+			headers: amqp.Table{
+				pkgRabbitMQ.HeaderTenantID:           "tenant-a",
+				pkgRabbitMQ.HeaderMessageSignature:   signatureFor("tenant-a"),
 				pkgRabbitMQ.HeaderSignatureTimestamp: strconv.FormatInt(now, 10),
 				pkgRabbitMQ.HeaderSignatureVersion:   signer.SignatureVersion(),
 			},
@@ -183,6 +209,7 @@ func TestHandlerGenerateReportDelivery_VerifiesTenantBoundSignatures(t *testing.
 				pkgRabbitMQ.HeaderSignatureTimestamp: strconv.FormatInt(now, 10),
 				pkgRabbitMQ.HeaderSignatureVersion:   signer.SignatureVersion(),
 			},
+			ctxTenant: "tenant-a",
 		},
 		{
 			name: "old legacy body-only signature rejected after tolerance",
@@ -192,6 +219,7 @@ func TestHandlerGenerateReportDelivery_VerifiesTenantBoundSignatures(t *testing.
 				pkgRabbitMQ.HeaderSignatureTimestamp: strconv.FormatInt(oldTimestamp, 10),
 				pkgRabbitMQ.HeaderSignatureVersion:   signer.SignatureVersion(),
 			},
+			ctxTenant: "tenant-a",
 		},
 	}
 
@@ -203,8 +231,11 @@ func TestHandlerGenerateReportDelivery_VerifiesTenantBoundSignatures(t *testing.
 				return nil
 			}
 
-			consumer := &MultiQueueConsumer{UseCase: &services.UseCase{}, logger: testBootstrapLogger(), messageVerifier: signer}
-			ctx := tmcore.ContextWithTenantID(contextWithBootstrapTracking(t), "tenant-a")
+			consumer := &MultiQueueConsumer{UseCase: &services.UseCase{}, logger: testBootstrapLogger(), messageVerifier: signer, allowLegacyBodySignatureFallback: tt.allowLegacy}
+			ctx := contextWithBootstrapTracking(t)
+			if tt.ctxTenant != "" {
+				ctx = tmcore.ContextWithTenantID(ctx, tt.ctxTenant)
+			}
 			err := consumer.handlerGenerateReportDelivery(ctx, amqp.Delivery{
 				Exchange:   "worker.exchange",
 				RoutingKey: "worker.key",

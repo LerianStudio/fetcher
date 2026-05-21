@@ -48,14 +48,15 @@ type MultiTenantConsumerInterface interface {
 //   - Single-tenant: Uses consumerRoutes with static RabbitMQ connection
 //   - Multi-tenant: Uses mtConsumer (tmconsumer.MultiTenantConsumer) with per-tenant vhost isolation
 type MultiQueueConsumer struct {
-	consumerRoutes  *rabbitmq.ConsumerRoutes
-	mtConsumer      MultiTenantConsumerInterface // Multi-tenant consumer (nil in single-tenant mode)
-	UseCase         *services.UseCase
-	logger          libLog.Logger
-	queueName       string           // Stored for multi-tenant handler registration
-	mongoManager    *tmmongo.Manager // For per-tenant MongoDB resolution (nil in single-tenant mode)
-	messageVerifier crypto.Signer
-	initErr         error // Deferred initialization error for multi-tenant handler registration
+	consumerRoutes                   *rabbitmq.ConsumerRoutes
+	mtConsumer                       MultiTenantConsumerInterface // Multi-tenant consumer (nil in single-tenant mode)
+	UseCase                          *services.UseCase
+	logger                           libLog.Logger
+	queueName                        string           // Stored for multi-tenant handler registration
+	mongoManager                     *tmmongo.Manager // For per-tenant MongoDB resolution (nil in single-tenant mode)
+	messageVerifier                  crypto.Signer
+	allowLegacyBodySignatureFallback bool
+	initErr                          error // Deferred initialization error for multi-tenant handler registration
 	// drainDelay is how long the consumer waits after SIGTERM before
 	// cancelling the base context. The window lets Kubernetes observe
 	// /readyz=503 and remove the pod from the Service endpoints before
@@ -98,6 +99,7 @@ func NewMultiQueueConsumerMultiTenant(
 	logger libLog.Logger,
 	mongoManager *tmmongo.Manager,
 	messageVerifier crypto.Signer,
+	allowLegacyBodySignatureFallback bool,
 	drainDelay time.Duration,
 ) *MultiQueueConsumer {
 	if drainDelay < 0 {
@@ -105,14 +107,15 @@ func NewMultiQueueConsumerMultiTenant(
 	}
 
 	consumer := &MultiQueueConsumer{
-		consumerRoutes:  nil, // Multi-tenant mode uses mtConsumer
-		mtConsumer:      mtConsumer,
-		UseCase:         useCase,
-		logger:          logger,
-		queueName:       queueName,
-		mongoManager:    mongoManager,
-		messageVerifier: messageVerifier,
-		drainDelay:      drainDelay,
+		consumerRoutes:                   nil, // Multi-tenant mode uses mtConsumer
+		mtConsumer:                       mtConsumer,
+		UseCase:                          useCase,
+		logger:                           logger,
+		queueName:                        queueName,
+		mongoManager:                     mongoManager,
+		messageVerifier:                  messageVerifier,
+		allowLegacyBodySignatureFallback: allowLegacyBodySignatureFallback,
+		drainDelay:                       drainDelay,
 	}
 
 	// Register handler with MultiTenantConsumer
@@ -269,7 +272,7 @@ func (mq *MultiQueueConsumer) handlerGenerateReportDelivery(ctx context.Context,
 	}
 
 	if mq.messageVerifier != nil {
-		if err := pkgRabbitmq.VerifyMessageSignature(delivery.Body, headers, delivery.Exchange, delivery.RoutingKey, mq.messageVerifier, pkgRabbitmq.DefaultSignatureTimestampTolerance, mq.logger, nil); err != nil {
+		if err := pkgRabbitmq.VerifyMessageSignature(delivery.Body, headers, delivery.Exchange, delivery.RoutingKey, mq.messageVerifier, pkgRabbitmq.DefaultSignatureTimestampTolerance, mq.logger, nil, mq.allowLegacyBodySignatureFallback); err != nil {
 			if mq.logger != nil {
 				mq.logger.Log(ctx, libLog.LevelError, "multi-tenant RabbitMQ signature verification failed", libLog.Err(err))
 			}
@@ -310,7 +313,7 @@ func (mq *MultiQueueConsumer) handlerGenerateReportDelivery(ctx context.Context,
 func validateAuthoritativeTenantHeader(ctx context.Context, headers map[string]any) error {
 	authoritativeTenantID := tmcore.GetTenantIDContext(ctx)
 	if authoritativeTenantID == "" {
-		return nil
+		return fmt.Errorf("authoritative tenant context is required before verifying RabbitMQ message signature")
 	}
 
 	headerTenantID, ok := headers[pkgRabbitmq.HeaderTenantID].(string)

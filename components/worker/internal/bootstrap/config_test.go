@@ -83,6 +83,39 @@ func TestStreamingRabbitMQPublisher_UsesConfiguredRouteDestination(t *testing.T)
 	require.NoError(t, err)
 }
 
+func TestInitJobEventEmitter_DisabledFailsStartup(t *testing.T) {
+	t.Setenv("STREAMING_ENABLED", "false")
+	t.Setenv("STREAMING_BROKERS", "")
+	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "")
+
+	emitter, enabled, err := initJobEventEmitter(context.Background(), &Config{}, testBootstrapLogger(), &libOtel.Telemetry{}, nil)
+	require.Error(t, err)
+	assert.Nil(t, emitter)
+	assert.False(t, enabled)
+	assert.Contains(t, err.Error(), "STREAMING_ENABLED=true is required")
+}
+
+func TestInitJobEventEmitter_EnabledSupportsSingleTenant(t *testing.T) {
+	t.Setenv("STREAMING_ENABLED", "true")
+	t.Setenv("STREAMING_BROKERS", "broker:9092")
+	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.fetcher/worker")
+
+	telemetry, err := libOtel.NewTelemetry(libOtel.TelemetryConfig{Logger: testBootstrapLogger()})
+	require.NoError(t, err)
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	adapter := pkgRabbitMQ.NewMockAdapter(ctrl)
+	publisher := workerRabbitMQ.NewPublisherRoutesWithAdapter(adapter, testBootstrapLogger(), telemetry)
+
+	emitter, enabled, err := initJobEventEmitter(context.Background(), &Config{RabbitMQJobEventsExchange: "job.events", OtelLibraryName: "test"}, testBootstrapLogger(), telemetry, publisher)
+	require.NoError(t, err)
+	assert.True(t, enabled)
+	assert.NotNil(t, emitter)
+	require.NoError(t, emitter.Close())
+}
+
 func TestInitWorker_ReturnsErrorWhenConfigLoadFails(t *testing.T) {
 	originalSetConfigFromEnvVars := setConfigFromEnvVars
 	t.Cleanup(func() { setConfigFromEnvVars = originalSetConfigFromEnvVars })

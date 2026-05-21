@@ -41,9 +41,10 @@ type ConsumerRoutes struct {
 // The signer parameter is required in non-development environments.
 // In dev/local/test, nil signer disables signature verification and message signing.
 // The envName parameter should come from the bootstrap Config.EnvName field.
-func NewConsumerRoutes(conn *libRabbitmq.RabbitMQConnection, numWorkers int, logger libLog.Logger, telemetry *opentelemetry.Telemetry, signer crypto.Signer, envName string) (*ConsumerRoutes, error) {
+func NewConsumerRoutes(conn *libRabbitmq.RabbitMQConnection, numWorkers int, logger libLog.Logger, telemetry *opentelemetry.Telemetry, signer crypto.Signer, envName string, allowLegacyBodySignatureFallback ...bool) (*ConsumerRoutes, error) {
 	opts := rabbitmq.DefaultOptions()
 	opts.Signer = signer
+	opts.AllowLegacyBodyOnlySignatureFallback = len(allowLegacyBodySignatureFallback) > 0 && allowLegacyBodySignatureFallback[0]
 
 	envName = strings.TrimSpace(envName)
 
