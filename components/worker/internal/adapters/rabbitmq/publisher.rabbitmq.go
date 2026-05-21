@@ -141,7 +141,10 @@ func (pr *PublisherRoutes) Publish(ctx context.Context, exchange, routingKey str
 
 		msg := amqp.Publishing{
 			ContentType: "application/json",
-			Body:        body,
+			Headers: amqp.Table{
+				"X-Tenant-ID": tenantID,
+			},
+			Body: body,
 		}
 
 		if err := ch.PublishWithContext(ctx, exchange, routingKey, false, false, msg); err != nil {

@@ -301,24 +301,23 @@ func TestInMemoryCache_GetSet_WithTenantContext(t *testing.T) {
 	t.Run("tenant-scoped keys are isolated", func(t *testing.T) {
 		tenant1Ctx := tmcore.ContextWithTenantID(context.Background(), "tenant1")
 		tenant2Ctx := tmcore.ContextWithTenantID(context.Background(), "tenant2")
+		key := "shared-schema-key"
 
-		// In v4, the cache does not automatically scope keys by tenant.
-		// Use distinct keys to achieve tenant isolation.
 		value1 := testStruct{ID: "1", Name: "Tenant1"}
 		value2 := testStruct{ID: "2", Name: "Tenant2"}
 
-		err := cache.Set(tenant1Ctx, "tenant1:shared-key", value1, 0)
+		err := cache.Set(tenant1Ctx, key, value1, 0)
 		require.NoError(t, err)
 
-		err = cache.Set(tenant2Ctx, "tenant2:shared-key", value2, 0)
+		err = cache.Set(tenant2Ctx, key, value2, 0)
 		require.NoError(t, err)
 
-		result1, found1, err := cache.Get(tenant1Ctx, "tenant1:shared-key")
+		result1, found1, err := cache.Get(tenant1Ctx, key)
 		assert.NoError(t, err)
 		assert.True(t, found1)
 		assert.Equal(t, value1, result1)
 
-		result2, found2, err := cache.Get(tenant2Ctx, "tenant2:shared-key")
+		result2, found2, err := cache.Get(tenant2Ctx, key)
 		assert.NoError(t, err)
 		assert.True(t, found2)
 		assert.Equal(t, value2, result2)
@@ -341,29 +340,55 @@ func TestInMemoryCache_GetSet_WithTenantContext(t *testing.T) {
 	t.Run("delete only affects the tenant that owns the key", func(t *testing.T) {
 		tenant1Ctx := tmcore.ContextWithTenantID(context.Background(), "tenant_del_1")
 		tenant2Ctx := tmcore.ContextWithTenantID(context.Background(), "tenant_del_2")
+		key := "delete-test-key"
 
 		value1 := testStruct{ID: "d1", Name: "DelTenant1"}
 		value2 := testStruct{ID: "d2", Name: "DelTenant2"}
 
-		// In v4, use distinct keys for tenant isolation since the cache
-		// does not automatically prefix keys with tenant ID.
-		err := cache.Set(tenant1Ctx, "del_1:delete-test-key", value1, 0)
+		err := cache.Set(tenant1Ctx, key, value1, 0)
 		require.NoError(t, err)
 
-		err = cache.Set(tenant2Ctx, "del_2:delete-test-key", value2, 0)
+		err = cache.Set(tenant2Ctx, key, value2, 0)
 		require.NoError(t, err)
 
 		// Delete tenant1's key
-		err = cache.Delete(tenant1Ctx, "del_1:delete-test-key")
+		err = cache.Delete(tenant1Ctx, key)
 		require.NoError(t, err)
 
 		// Tenant1's key should be gone
-		_, found, err := cache.Get(tenant1Ctx, "del_1:delete-test-key")
+		_, found, err := cache.Get(tenant1Ctx, key)
 		assert.NoError(t, err)
 		assert.False(t, found)
 
 		// Tenant2's key should still exist
-		result, found, err := cache.Get(tenant2Ctx, "del_2:delete-test-key")
+		result, found, err := cache.Get(tenant2Ctx, key)
+		assert.NoError(t, err)
+		assert.True(t, found)
+		assert.Equal(t, value2, result)
+	})
+
+	t.Run("clear only affects the tenant in context", func(t *testing.T) {
+		tenant1Ctx := tmcore.ContextWithTenantID(context.Background(), "tenant_clear_1")
+		tenant2Ctx := tmcore.ContextWithTenantID(context.Background(), "tenant_clear_2")
+		key := "clear-test-key"
+
+		value1 := testStruct{ID: "c1", Name: "ClearTenant1"}
+		value2 := testStruct{ID: "c2", Name: "ClearTenant2"}
+
+		err := cache.Set(tenant1Ctx, key, value1, 0)
+		require.NoError(t, err)
+
+		err = cache.Set(tenant2Ctx, key, value2, 0)
+		require.NoError(t, err)
+
+		err = cache.Clear(tenant1Ctx)
+		require.NoError(t, err)
+
+		_, found, err := cache.Get(tenant1Ctx, key)
+		assert.NoError(t, err)
+		assert.False(t, found)
+
+		result, found, err := cache.Get(tenant2Ctx, key)
 		assert.NoError(t, err)
 		assert.True(t, found)
 		assert.Equal(t, value2, result)

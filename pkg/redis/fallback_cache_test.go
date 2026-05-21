@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
@@ -353,6 +354,48 @@ func TestFallbackCache_Clear_RedisError(t *testing.T) {
 		assert.NoError(t, err)
 		assert.False(t, found)
 	}
+}
+
+func TestFallbackCache_MemoryFallback_TenantScopedRawKeys(t *testing.T) {
+	_, cache := setupFallbackCache(t)
+	key := "same-config-name"
+	ctxA := tmcore.ContextWithTenantID(context.Background(), "tenant-fallback-a")
+	ctxB := tmcore.ContextWithTenantID(context.Background(), "tenant-fallback-b")
+
+	cache.mu.Lock()
+	cache.useRedis = false
+	cache.mu.Unlock()
+
+	valueA := testStruct{ID: "a", Name: "Tenant A"}
+	valueB := testStruct{ID: "b", Name: "Tenant B"}
+
+	err := cache.Set(ctxA, key, valueA, 0)
+	require.NoError(t, err)
+
+	err = cache.Set(ctxB, key, valueB, 0)
+	require.NoError(t, err)
+
+	gotA, foundA, err := cache.Get(ctxA, key)
+	require.NoError(t, err)
+	require.True(t, foundA)
+	assert.Equal(t, valueA, gotA)
+
+	gotB, foundB, err := cache.Get(ctxB, key)
+	require.NoError(t, err)
+	require.True(t, foundB)
+	assert.Equal(t, valueB, gotB)
+
+	err = cache.Delete(ctxA, key)
+	require.NoError(t, err)
+
+	_, foundA, err = cache.Get(ctxA, key)
+	require.NoError(t, err)
+	assert.False(t, foundA)
+
+	gotB, foundB, err = cache.Get(ctxB, key)
+	require.NoError(t, err)
+	require.True(t, foundB)
+	assert.Equal(t, valueB, gotB)
 }
 
 func TestFallbackCache_UseRedisFlag_Switch(t *testing.T) {

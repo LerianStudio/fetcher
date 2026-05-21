@@ -3,11 +3,13 @@ package redis
 import (
 	"context"
 	"fmt"
+	"path"
 	"sync"
 	"time"
 
 	"github.com/LerianStudio/lib-commons/v5/commons"
 	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
+	"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/valkey"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -50,6 +52,14 @@ func NewInMemoryCache[T any](ttl time.Duration, logger libLog.Logger) *InMemoryC
 	return c
 }
 
+func (c *InMemoryCache[T]) scopedKey(ctx context.Context, key string) (string, error) {
+	return valkey.GetKeyContext(ctx, key)
+}
+
+func (c *InMemoryCache[T]) scopedPattern(ctx context.Context) (string, error) {
+	return valkey.GetPatternFromContext(ctx, "*")
+}
+
 // Get retrieves a cached value by key.
 func (c *InMemoryCache[T]) Get(ctx context.Context, key string) (T, bool, error) {
 	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
@@ -64,10 +74,15 @@ func (c *InMemoryCache[T]) Get(ctx context.Context, key string) (T, bool, error)
 
 	var zero T
 
+	scopedKey, err := c.scopedKey(ctx, key)
+	if err != nil {
+		return zero, false, fmt.Errorf("failed to resolve cache key: %w", err)
+	}
+
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	entry, exists := c.entries[key]
+	entry, exists := c.entries[scopedKey]
 	if !exists {
 		span.SetAttributes(attribute.Bool("app.cache.hit", false))
 		logger.Log(context.Background(), libLog.LevelDebug, fmt.Sprintf("in-memory cache miss for key %s", key))
@@ -99,6 +114,11 @@ func (c *InMemoryCache[T]) Set(ctx context.Context, key string, value T, ttl tim
 		ttl = c.ttl
 	}
 
+	scopedKey, err := c.scopedKey(ctx, key)
+	if err != nil {
+		return fmt.Errorf("failed to resolve cache key: %w", err)
+	}
+
 	span.SetAttributes(
 		attribute.String("app.cache.key", key),
 		attribute.String("app.request.request_id", reqID),
@@ -108,7 +128,7 @@ func (c *InMemoryCache[T]) Set(ctx context.Context, key string, value T, ttl tim
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.entries[key] = &cacheEntry[T]{
+	c.entries[scopedKey] = &cacheEntry[T]{
 		value:     value,
 		expiresAt: time.Now().UTC().Add(ttl),
 	}
@@ -130,18 +150,43 @@ func (c *InMemoryCache[T]) Delete(ctx context.Context, key string) error {
 		attribute.String("app.request.request_id", reqID),
 	)
 
+	scopedKey, err := c.scopedKey(ctx, key)
+	if err != nil {
+		return fmt.Errorf("failed to resolve cache key: %w", err)
+	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	delete(c.entries, key)
+	delete(c.entries, scopedKey)
 
 	return nil
 }
 
 // Clear removes all cache entries.
 func (c *InMemoryCache[T]) Clear(ctx context.Context) error {
+	pattern, err := c.scopedPattern(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to resolve cache key pattern: %w", err)
+	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	if pattern != "*" {
+		for key := range c.entries {
+			matched, err := path.Match(pattern, key)
+			if err != nil {
+				return fmt.Errorf("failed to match cache key pattern: %w", err)
+			}
+
+			if matched {
+				delete(c.entries, key)
+			}
+		}
+
+		return nil
+	}
 
 	c.entries = make(map[string]*cacheEntry[T])
 

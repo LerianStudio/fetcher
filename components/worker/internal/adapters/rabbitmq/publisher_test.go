@@ -33,6 +33,7 @@ func (m *mockRabbitMQManager) GetChannel(_ context.Context, _ string) (RabbitMQC
 type mockChannel struct {
 	exchangeDeclareErr error
 	publishErr         error
+	published          amqp.Publishing
 	closed             bool
 }
 
@@ -40,7 +41,8 @@ func (m *mockChannel) ExchangeDeclare(_, _ string, _, _, _, _ bool, _ amqp.Table
 	return m.exchangeDeclareErr
 }
 
-func (m *mockChannel) PublishWithContext(_ context.Context, _, _ string, _, _ bool, _ amqp.Publishing) error {
+func (m *mockChannel) PublishWithContext(_ context.Context, _, _ string, _, _ bool, msg amqp.Publishing) error {
+	m.published = msg
 	return m.publishErr
 }
 
@@ -206,6 +208,23 @@ func TestPublish_MultiTenant_Success(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.True(t, mockCh.closed, "channel should be closed after publish")
+}
+
+func TestPublish_MultiTenant_AddsTenantIDHeader(t *testing.T) {
+	t.Parallel()
+
+	tenantID := "tenant-header-123"
+	mockCh := &mockChannel{}
+	mockMgr := &mockRabbitMQManager{channel: mockCh}
+	logger := log.NewNop()
+	publisher := NewPublisherRoutesMultiTenant(mockMgr, logger, nil)
+
+	ctx := tmcore.ContextWithTenantID(context.Background(), tenantID)
+	err := publisher.Publish(ctx, "test-exchange", "test.key", []byte(`{"status":"completed"}`))
+
+	require.NoError(t, err)
+	require.NotNil(t, mockCh.published.Headers)
+	assert.Equal(t, tenantID, mockCh.published.Headers["X-Tenant-ID"])
 }
 
 func TestPublish_MultiTenant_GetChannelError(t *testing.T) {

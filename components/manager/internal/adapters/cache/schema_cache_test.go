@@ -7,6 +7,9 @@ import (
 	"time"
 
 	"github.com/LerianStudio/fetcher/pkg/model"
+	rediscache "github.com/LerianStudio/fetcher/pkg/redis"
+	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
+	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -119,6 +122,46 @@ func TestSchemaCache_GetSet(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSchemaCache_InMemoryBackend_TenantScopedRawConfigNames(t *testing.T) {
+	backend := rediscache.NewInMemoryCache[model.DataSourceSchema](time.Minute, libLog.NewNop())
+	defer backend.Close()
+
+	cache := NewSchemaCache(backend, time.Minute)
+	configName := "shared_config"
+	ctxA := tmcore.ContextWithTenantID(context.Background(), "tenant-schema-a")
+	ctxB := tmcore.ContextWithTenantID(context.Background(), "tenant-schema-b")
+	schemaA := &model.DataSourceSchema{
+		ConfigName: configName,
+		Tables: map[string]*model.TableSchema{
+			"tenant_a_table": model.NewTableSchema("tenant_a_table", []string{"id"}),
+		},
+	}
+	schemaB := &model.DataSourceSchema{
+		ConfigName: configName,
+		Tables: map[string]*model.TableSchema{
+			"tenant_b_table": model.NewTableSchema("tenant_b_table", []string{"id"}),
+		},
+	}
+
+	err := cache.Set(ctxA, configName, schemaA, 0)
+	require.NoError(t, err)
+
+	err = cache.Set(ctxB, configName, schemaB, 0)
+	require.NoError(t, err)
+
+	gotA, err := cache.Get(ctxA, configName)
+	require.NoError(t, err)
+	require.NotNil(t, gotA)
+	assert.True(t, gotA.HasTable("tenant_a_table"))
+	assert.False(t, gotA.HasTable("tenant_b_table"))
+
+	gotB, err := cache.Get(ctxB, configName)
+	require.NoError(t, err)
+	require.NotNil(t, gotB)
+	assert.True(t, gotB.HasTable("tenant_b_table"))
+	assert.False(t, gotB.HasTable("tenant_a_table"))
 }
 
 func TestSchemaCache_SetAppliesTimestamps(t *testing.T) {
