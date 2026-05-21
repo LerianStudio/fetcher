@@ -94,6 +94,21 @@ func TestHealthServer_ServesHealthAndMetrics(t *testing.T) {
 	}
 }
 
+func TestHealthServer_DoesNotExposeUnauthenticatedStreamingManifest(t *testing.T) {
+	cfg := &Config{HealthPort: 4007}
+	srv := NewHealthServer(cfg, nil, nil, nil)
+
+	paths := []string{"/streaming", "/streaming/manifest", "/manifest"}
+	for _, path := range paths {
+		req := httptest.NewRequest("GET", path, nil)
+		res, err := srv.App().Test(req, 2000)
+		require.NoError(t, err, "path %s", path)
+		_ = res.Body.Close()
+
+		assert.Equal(t, fiber.StatusNotFound, res.StatusCode, "path %s must not become an unauthenticated manifest endpoint", path)
+	}
+}
+
 // TestHealthServer_HealthReturns503BeforeSelfProbe asserts the Gate 7
 // contract: before RunSelfProbe has succeeded, GET /health returns 503 with
 // the canonical unhealthy body so K8s' livenessProbe restarts the pod.

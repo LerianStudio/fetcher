@@ -469,16 +469,19 @@ func initJobEventEmitter(ctx context.Context, cfg *Config, logger libLog.Logger,
 	}
 
 	targetName := "fetcher-job-events-rabbitmq"
+	// Job notifications are observational fan-out, not a durability boundary.
+	// The MongoDB job state is the source of truth and there is no outbox in this
+	// task, so route names and requirements must not imply required delivery.
 	routes := []streaming.RouteDefinition{
 		{
-			Key:           "job.completed.rabbitmq.primary",
+			Key:           "job.completed.rabbitmq.observational",
 			DefinitionKey: "job.completed",
 			Target:        targetName,
 			Destination:   streaming.RabbitMQRoute(cfg.RabbitMQJobEventsExchange, "job.completed.*"),
 			Requirement:   streaming.RouteOptional,
 		},
 		{
-			Key:           "job.failed.rabbitmq.primary",
+			Key:           "job.failed.rabbitmq.observational",
 			DefinitionKey: "job.failed",
 			Target:        targetName,
 			Destination:   streaming.RabbitMQRoute(cfg.RabbitMQJobEventsExchange, "job.failed.*"),

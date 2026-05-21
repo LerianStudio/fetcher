@@ -12,10 +12,21 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/rabbitmq"
 	libRabbitmq "github.com/LerianStudio/lib-commons/v5/commons/rabbitmq"
 	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
+	obsConstants "github.com/LerianStudio/lib-observability/constants"
 	libLog "github.com/LerianStudio/lib-observability/log"
 	opentelemetry "github.com/LerianStudio/lib-observability/tracing"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"go.opentelemetry.io/otel/attribute"
+)
+
+const (
+	attrAppRequestRequestID     = obsConstants.AttrPrefixAppRequest + "request_id"
+	attrAppTenantID             = obsConstants.AttrPrefixAppRequest + "tenant_id"
+	attrMessagingExchange       = "messaging.exchange"
+	attrMessagingRoutingKey     = "messaging.routing_key"
+	attrMessagingBodySize       = "messaging.body_size"
+	attrPublishRationale        = obsConstants.AttrPrefixAppRequest + "publish_rationale"
+	multiTenantPublishRationale = "tenant-manager exposes tenant-scoped AMQP channels but not a confirmable publisher factory; single-tenant publishing uses pkg/rabbitmq's lib-commons-backed adapter"
 )
 
 // PublisherRepository is an alias for the port interface.
@@ -104,10 +115,10 @@ func (pr *PublisherRoutes) PublishWithHeaders(ctx context.Context, exchange, rou
 	defer span.End()
 
 	span.SetAttributes(
-		attribute.String("app.request.request_id", reqID),
-		attribute.String("messaging.exchange", exchange),
-		attribute.String("messaging.routing_key", routingKey),
-		attribute.Int("messaging.body_size", len(body)),
+		attribute.String(attrAppRequestRequestID, reqID),
+		attribute.String(attrMessagingExchange, exchange),
+		attribute.String(attrMessagingRoutingKey, routingKey),
+		attribute.Int(attrMessagingBodySize, len(body)),
 	)
 
 	pr.Log(ctx, libLog.LevelDebug, "publishing message",
@@ -123,7 +134,7 @@ func (pr *PublisherRoutes) PublishWithHeaders(ctx context.Context, exchange, rou
 			return fmt.Errorf("multi-tenant publish requires tenant ID in context")
 		}
 
-		span.SetAttributes(attribute.String("app.tenant.id", tenantID))
+		span.SetAttributes(attribute.String(attrAppTenantID, tenantID))
 
 		ch, err := pr.rabbitMQManager.GetChannel(ctx, tenantID)
 		if err != nil {
@@ -156,6 +167,14 @@ func (pr *PublisherRoutes) PublishWithHeaders(ctx context.Context, exchange, rou
 		if contentType != "" {
 			msg.ContentType = contentType
 		}
+
+		// This is the only remaining direct AMQP publish path: tenant-manager
+		// owns tenant-vhost channel resolution and does not expose a confirmable
+		// publisher factory yet. The single-tenant path below delegates to
+		// pkg/rabbitmq, where lib-commons backoff/circuit-breaker primitives are
+		// enforced. Do not add retries or circuit breakers here; add that to
+		// tenant-manager/lib-commons first.
+		span.SetAttributes(attribute.String(attrPublishRationale, multiTenantPublishRationale))
 
 		if err := ch.PublishWithContext(ctx, exchange, routingKey, false, false, msg); err != nil {
 			opentelemetry.HandleSpanError(span, "Failed to publish message to tenant vhost", err)

@@ -21,6 +21,13 @@ const HeaderTenantID = "X-Tenant-ID"
 // BuildSecurePublishing creates the canonical RabbitMQ publish envelope used by
 // all Fetcher AMQP publish paths. It preserves caller headers, injects request
 // and trace metadata, and signs the payload when a signer is configured.
+//
+// lib-commons currently exposes webhook HMAC helpers, but those bind HTTP
+// webhook wire fields (X-Webhook-Signature plus timestamp/body). Fetcher's AMQP
+// envelope must bind tenant ID, job ID, exchange, and routing key so cross-tenant
+// or cross-route replay fails. Until lib-commons grows a queue-envelope signing
+// primitive, this file is the canonical Fetcher-specific envelope; keep signing
+// changes here and covered by security_envelope_test.go.
 func BuildSecurePublishing(ctx context.Context, reqID, exchange, routingKey string, body []byte, headers map[string]any, signer crypto.Signer, enableSigning bool) amqp.Publishing {
 	publishHeaders := amqp.Table{}
 	maps.Copy(publishHeaders, headers)

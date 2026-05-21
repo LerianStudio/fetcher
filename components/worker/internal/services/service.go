@@ -38,7 +38,9 @@ type UseCase struct {
 	// RabbitMQPublisher is used to publish job event notifications to RabbitMQ topic exchange.
 	RabbitMQPublisher publisher.Repository
 
-	// JobEventEmitter publishes past-tense job business events through lib-streaming.
+	// JobEventEmitter publishes optional/observational past-tense job business
+	// events through lib-streaming. Job durability remains the MongoDB status row;
+	// there is no outbox-backed guarantee for this fan-out path yet.
 	// RabbitMQPublisher remains wired for backward-compatible public event contracts.
 	JobEventEmitter streaming.Emitter
 

@@ -79,6 +79,8 @@ type JobNotificationMessage struct {
 }
 
 // publishJobNotification publishes a job event notification to RabbitMQ topic exchange.
+// The lib-streaming event is explicitly optional/observational: MongoDB job
+// state is the durable source of truth until a transactional outbox is wired.
 func (uc *UseCase) publishJobNotification(
 	ctx context.Context,
 	tracer trace.Tracer,
@@ -171,10 +173,8 @@ func (uc *UseCase) publishJobNotification(
 	}
 
 	if err := uc.emitJobNotificationEvent(ctx, status, message.JobID.String(), notificationJSON, logger); err != nil {
-		libOtel.HandleSpanError(notifySpan, "Error emitting job notification with lib-streaming", err)
-		logger.Log(ctx, libLog.LevelError, "error emitting job notification with lib-streaming", libLog.Err(err))
-
-		return fmt.Errorf("emitting job notification event: %w", err)
+		libOtel.HandleSpanError(notifySpan, "Optional job notification event emit failed", err)
+		logger.Log(ctx, libLog.LevelWarn, "optional job notification event emit failed", libLog.Err(err))
 	}
 
 	logger.Log(ctx, libLog.LevelInfo, "published job notification successfully",
@@ -199,7 +199,9 @@ func (uc *UseCase) publishJobNotificationViaStreaming(ctx context.Context, span 
 			return fmt.Errorf("emitting job notification event caller error: %w", err)
 		}
 
-		return fmt.Errorf("emitting job notification event: %w", err)
+		logger.Log(ctx, libLog.LevelWarn, "optional job notification event emit failed", libLog.Err(err))
+
+		return nil
 	}
 
 	logger.Log(ctx, libLog.LevelInfo, "published job notification successfully",

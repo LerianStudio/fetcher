@@ -9,6 +9,7 @@ import (
 	"time"
 
 	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
+	streaming "github.com/LerianStudio/lib-streaming"
 	"github.com/LerianStudio/lib-streaming/streamingtest"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -136,6 +137,80 @@ func TestPublishJobNotification_EmitsLibStreamingEventWhenTenantPresent(t *testi
 	var notification JobNotificationMessage
 	require.NoError(t, json.Unmarshal(requests[0].Payload, &notification))
 	assert.Equal(t, "completed", notification.Status)
+}
+
+func TestPublishJobNotification_OptionalStreamingFailureDoesNotFailLegacyPublish(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+	emitter := streamingtest.NewMockEmitter()
+	emitter.SetError(errors.New("observational broker unavailable"))
+	uc.JobEventEmitter = emitter
+
+	ctx := tmcore.ContextWithTenantID(testContext(), "tenant-job-events")
+	message := ExtractExternalDataMessage{
+		JobID:    newTestJobID(),
+		Metadata: map[string]any{"source": "test-service"},
+	}
+
+	mocks.rabbitPublisher.EXPECT().
+		Publish(gomock.Any(), "test-exchange", "job.completed.test-service", gomock.Any()).
+		Return(nil)
+
+	err := uc.publishJobNotification(ctx, nil, message, "completed", nil, nil, testLogger())
+	require.NoError(t, err, "lib-streaming fan-out is optional/observational until an outbox exists")
+	assert.Empty(t, emitter.Requests())
+}
+
+func TestPublishJobNotification_StreamingOnlyOptionalInfraFailureDoesNotFail(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+	emitter := streamingtest.NewMockEmitter()
+	emitter.SetError(errors.New("observational route unavailable"))
+	uc.JobEventEmitter = emitter
+	uc.JobEventStreamingEnabled = true
+
+	ctx := tmcore.ContextWithTenantID(testContext(), "tenant-job-events")
+	message := ExtractExternalDataMessage{
+		JobID:    newTestJobID(),
+		Metadata: map[string]any{"source": "test-service"},
+	}
+
+	err := uc.publishJobNotification(ctx, nil, message, "completed", nil, nil, testLogger())
+	require.NoError(t, err, "optional lib-streaming infra failures must not make job notification durable-by-accident")
+}
+
+func TestPublishJobNotification_StreamingCallerErrorStillFails(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+	emitter := streamingtest.NewMockEmitter()
+	emitter.SetError(streaming.ErrMissingTenantID)
+	uc.JobEventEmitter = emitter
+	uc.JobEventStreamingEnabled = true
+
+	ctx := tmcore.ContextWithTenantID(testContext(), "tenant-job-events")
+	message := ExtractExternalDataMessage{
+		JobID:    newTestJobID(),
+		Metadata: map[string]any{"source": "test-service"},
+	}
+
+	err := uc.publishJobNotification(ctx, nil, message, "completed", nil, nil, testLogger())
+	require.Error(t, err)
+	assert.ErrorIs(t, err, streaming.ErrMissingTenantID)
 }
 
 // TestPublishJobNotification_PublisherNotConfigured tests that no error is returned when publisher is nil.

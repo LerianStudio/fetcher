@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/LerianStudio/fetcher/pkg/crypto"
+	libCircuitBreaker "github.com/LerianStudio/lib-commons/v5/commons/circuitbreaker"
 	libConstants "github.com/LerianStudio/lib-commons/v5/commons/constants"
 	observability "github.com/LerianStudio/lib-observability"
 	libLog "github.com/LerianStudio/lib-observability/log"
@@ -173,14 +174,17 @@ func TestCircuitBreaker_OpensAfterThresholdFailures(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			cb := newCircuitBreaker(tt.threshold, time.Minute)
+			adapter := newTestAdapter(&testRabbitConnection{})
+			adapter.options.CircuitBreakerThreshold = tt.threshold
+			adapter.circuitBreaker = newTestCircuitBreakerManager(adapter.options)
 
 			for i := 0; i < tt.failures; i++ {
-				cb.recordFailure()
+				err := adapter.executeWithCircuitBreaker(func() error { return errors.New("boom") })
+				require.Error(t, err)
 			}
 
-			assert.Equal(t, tt.expectedState, cb.State(), "circuit state mismatch")
-			assert.Equal(t, tt.canExecute, cb.canExecute(), "canExecute mismatch")
+			assert.Equal(t, tt.expectedState, adapter.CircuitBreakerState(), "circuit state mismatch")
+			assert.Equal(t, tt.canExecute, adapter.CircuitBreakerState() != CircuitOpen, "execute eligibility mismatch")
 		})
 	}
 }
@@ -189,65 +193,27 @@ func TestCircuitBreaker_HalfOpensAfterCooldown(t *testing.T) {
 	t.Parallel()
 
 	cooldown := 10 * time.Millisecond
-	cb := newCircuitBreaker(1, cooldown)
+	adapter := newTestAdapter(&testRabbitConnection{})
+	adapter.options.CircuitBreakerThreshold = 1
+	adapter.options.CircuitBreakerCooldown = cooldown
+	adapter.circuitBreaker = newTestCircuitBreakerManager(adapter.options)
 
-	// Record failure to open the circuit
-	cb.recordFailure()
-	require.Equal(t, CircuitOpen, cb.State(), "circuit should be open after failure")
+	err := adapter.executeWithCircuitBreaker(func() error { return errors.New("boom") })
+	require.Error(t, err)
+	require.Equal(t, CircuitOpen, adapter.CircuitBreakerState(), "circuit should be open after failure")
 
-	// Wait for cooldown
 	time.Sleep(cooldown + 5*time.Millisecond)
 
-	// canExecute should transition to half-open
-	canExec := cb.canExecute()
-	require.True(t, canExec, "should allow execution after cooldown")
-	assert.Equal(t, CircuitHalfOpen, cb.State(), "circuit should be half-open")
+	assert.Equal(t, CircuitHalfOpen, adapter.CircuitBreakerState(), "lib-commons breaker should half-open after cooldown")
 }
 
 func TestCircuitBreaker_ClosesOnSuccess(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name          string
-		initialState  func(cb *circuitBreaker)
-		expectedState CircuitState
-	}{
-		{
-			name: "closes from half-open on success",
-			initialState: func(cb *circuitBreaker) {
-				cb.state.Store(int32(CircuitHalfOpen))
-			},
-			expectedState: CircuitClosed,
-		},
-		{
-			name: "stays closed on success",
-			initialState: func(cb *circuitBreaker) {
-				cb.state.Store(int32(CircuitClosed))
-			},
-			expectedState: CircuitClosed,
-		},
-		{
-			name: "closes from open state on success",
-			initialState: func(cb *circuitBreaker) {
-				cb.state.Store(int32(CircuitOpen))
-			},
-			expectedState: CircuitClosed,
-		},
-	}
+	adapter := newTestAdapter(&testRabbitConnection{})
+	require.NoError(t, adapter.executeWithCircuitBreaker(func() error { return nil }))
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			cb := newCircuitBreaker(5, time.Minute)
-			tt.initialState(cb)
-
-			cb.recordSuccess()
-
-			assert.Equal(t, tt.expectedState, cb.State(), "circuit state mismatch after success")
-			assert.Equal(t, int32(0), cb.consecutiveErrors.Load(), "consecutive errors should be reset")
-		})
-	}
+	assert.Equal(t, CircuitClosed, adapter.CircuitBreakerState(), "lib-commons breaker should remain closed on success")
 }
 
 func TestCircuitState_String_ReturnsCorrectValue(t *testing.T) {
@@ -261,7 +227,7 @@ func TestCircuitState_String_ReturnsCorrectValue(t *testing.T) {
 		{name: "closed state", state: CircuitClosed, expected: "closed"},
 		{name: "open state", state: CircuitOpen, expected: "open"},
 		{name: "half-open state", state: CircuitHalfOpen, expected: "half-open"},
-		{name: "unknown state", state: CircuitState(99), expected: "unknown"},
+		{name: "unknown state", state: CircuitUnknown, expected: "unknown"},
 	}
 
 	for _, tt := range tests {
@@ -281,36 +247,32 @@ func TestRabbitMQAdapter_CalculateBackoff_ExponentialGrowth(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name        string
-		attempt     int
-		baseDelay   time.Duration
-		maxDelay    time.Duration
-		minExpected time.Duration
-		maxExpected time.Duration
+		name      string
+		attempt   int
+		baseDelay time.Duration
+		maxDelay  time.Duration
+		maxBound  time.Duration
 	}{
 		{
-			name:        "first attempt returns base delay with jitter",
-			attempt:     1,
-			baseDelay:   100 * time.Millisecond,
-			maxDelay:    2 * time.Second,
-			minExpected: 100 * time.Millisecond,
-			maxExpected: 125 * time.Millisecond, // base + 25% jitter
+			name:      "first attempt uses base delay as full-jitter ceiling",
+			attempt:   1,
+			baseDelay: 100 * time.Millisecond,
+			maxDelay:  2 * time.Second,
+			maxBound:  100 * time.Millisecond,
 		},
 		{
-			name:        "second attempt doubles delay",
-			attempt:     2,
-			baseDelay:   100 * time.Millisecond,
-			maxDelay:    2 * time.Second,
-			minExpected: 200 * time.Millisecond,
-			maxExpected: 250 * time.Millisecond,
+			name:      "second attempt doubles full-jitter ceiling",
+			attempt:   2,
+			baseDelay: 100 * time.Millisecond,
+			maxDelay:  2 * time.Second,
+			maxBound:  200 * time.Millisecond,
 		},
 		{
-			name:        "third attempt quadruples delay",
-			attempt:     3,
-			baseDelay:   100 * time.Millisecond,
-			maxDelay:    2 * time.Second,
-			minExpected: 400 * time.Millisecond,
-			maxExpected: 500 * time.Millisecond,
+			name:      "third attempt quadruples full-jitter ceiling",
+			attempt:   3,
+			baseDelay: 100 * time.Millisecond,
+			maxDelay:  2 * time.Second,
+			maxBound:  400 * time.Millisecond,
 		},
 	}
 
@@ -324,8 +286,8 @@ func TestRabbitMQAdapter_CalculateBackoff_ExponentialGrowth(t *testing.T) {
 
 			backoff := calculateBackoff(tt.attempt, opts.BaseRetryDelay, opts.MaxRetryDelay)
 
-			assert.GreaterOrEqual(t, backoff, tt.minExpected, "backoff should be at least base delay")
-			assert.LessOrEqual(t, backoff, tt.maxExpected, "backoff should not exceed expected max with jitter")
+			assert.GreaterOrEqual(t, backoff, time.Duration(0), "full jitter must never be negative")
+			assert.Less(t, backoff, tt.maxBound, "lib-commons full jitter should stay below the exponential ceiling")
 		})
 	}
 }
@@ -363,9 +325,8 @@ func TestRabbitMQAdapter_CalculateBackoff_CapsAtMaxDelay(t *testing.T) {
 
 			backoff := calculateBackoff(tt.attempt, opts.BaseRetryDelay, opts.MaxRetryDelay)
 
-			// Max expected is maxDelay + 25% jitter
-			maxExpected := tt.maxDelay + tt.maxDelay/4
-			assert.LessOrEqual(t, backoff, maxExpected, "backoff should be capped at max delay plus jitter")
+			assert.GreaterOrEqual(t, backoff, time.Duration(0), "full jitter must never be negative")
+			assert.Less(t, backoff, tt.maxDelay, "backoff should be capped by max delay before full jitter")
 		})
 	}
 }
@@ -557,10 +518,7 @@ func TestRabbitMQAdapter_ProducerDefault_ReturnsError_WhenCircuitOpen(t *testing
 	conn := &testRabbitConnection{channel: newTestAMQPChannel()}
 	adapter := newTestAdapter(conn)
 
-	// Open the circuit breaker by recording failures
-	for i := 0; i < adapter.options.CircuitBreakerThreshold; i++ {
-		adapter.circuitBreaker.recordFailure()
-	}
+	forceCircuitOpenForTest(t, adapter)
 
 	t.Cleanup(func() {
 		adapter.shutdown.Store(true)
@@ -956,7 +914,7 @@ func newTestAdapter(conn rabbitConnection) *RabbitMQAdapter {
 	return &RabbitMQAdapter{
 		conn:           conn,
 		options:        opts,
-		circuitBreaker: newCircuitBreaker(opts.CircuitBreakerThreshold, opts.CircuitBreakerCooldown),
+		circuitBreaker: newTestCircuitBreakerManager(opts),
 	}
 }
 
@@ -969,7 +927,20 @@ func newTestAdapterWithChannel(conn rabbitConnection, channel amqpChannel) *Rabb
 		conn:           conn,
 		channel:        channel,
 		options:        opts,
-		circuitBreaker: newCircuitBreaker(opts.CircuitBreakerThreshold, opts.CircuitBreakerCooldown),
+		circuitBreaker: newTestCircuitBreakerManager(opts),
+	}
+}
+
+func newTestCircuitBreakerManager(opts AdapterOptions) libCircuitBreaker.Manager {
+	return newRabbitMQCircuitBreakerManager(libLog.NewNop(), opts)
+}
+
+func forceCircuitOpenForTest(t *testing.T, adapter *RabbitMQAdapter) {
+	t.Helper()
+
+	for adapter.CircuitBreakerState() != CircuitOpen {
+		err := adapter.executeWithCircuitBreaker(func() error { return errors.New("forced circuit failure") })
+		require.Error(t, err)
 	}
 }
 
@@ -1005,27 +976,33 @@ func TestRabbitMQAdapter_CircuitBreakerState_ReturnsCorrectState(t *testing.T) {
 
 	tests := []struct {
 		name          string
-		setupState    func(cb *circuitBreaker)
+		setupState    func(t *testing.T, adapter *RabbitMQAdapter)
 		expectedState CircuitState
 	}{
 		{
 			name: "returns closed state",
-			setupState: func(cb *circuitBreaker) {
-				cb.state.Store(int32(CircuitClosed))
+			setupState: func(t *testing.T, adapter *RabbitMQAdapter) {
+				t.Helper()
+				require.NoError(t, adapter.executeWithCircuitBreaker(func() error { return nil }))
 			},
 			expectedState: CircuitClosed,
 		},
 		{
 			name: "returns open state",
-			setupState: func(cb *circuitBreaker) {
-				cb.state.Store(int32(CircuitOpen))
+			setupState: func(t *testing.T, adapter *RabbitMQAdapter) {
+				forceCircuitOpenForTest(t, adapter)
 			},
 			expectedState: CircuitOpen,
 		},
 		{
 			name: "returns half-open state",
-			setupState: func(cb *circuitBreaker) {
-				cb.state.Store(int32(CircuitHalfOpen))
+			setupState: func(t *testing.T, adapter *RabbitMQAdapter) {
+				t.Helper()
+				adapter.options.CircuitBreakerThreshold = 1
+				adapter.options.CircuitBreakerCooldown = 10 * time.Millisecond
+				adapter.circuitBreaker = newTestCircuitBreakerManager(adapter.options)
+				forceCircuitOpenForTest(t, adapter)
+				time.Sleep(15 * time.Millisecond)
 			},
 			expectedState: CircuitHalfOpen,
 		},
@@ -1037,54 +1014,13 @@ func TestRabbitMQAdapter_CircuitBreakerState_ReturnsCorrectState(t *testing.T) {
 
 			conn := &testRabbitConnection{channel: newTestAMQPChannel()}
 			adapter := newTestAdapter(conn)
-			tt.setupState(adapter.circuitBreaker)
+			tt.setupState(t, adapter)
 
 			state := adapter.CircuitBreakerState()
 
 			assert.Equal(t, tt.expectedState, state)
 		})
 	}
-}
-
-// -----------------------------------------------------------------------------
-// Unit Tests: CircuitBreaker canExecute edge cases
-// -----------------------------------------------------------------------------
-
-func TestCircuitBreaker_CanExecute_UnknownStateReturnsFalse(t *testing.T) {
-	t.Parallel()
-
-	cb := newCircuitBreaker(5, time.Minute)
-	// Set an unknown state value
-	cb.state.Store(int32(99))
-
-	canExec := cb.canExecute()
-
-	assert.False(t, canExec, "unknown state should return false")
-}
-
-func TestCircuitBreaker_CanExecute_HalfOpenAllowsExecution(t *testing.T) {
-	t.Parallel()
-
-	cb := newCircuitBreaker(5, time.Minute)
-	cb.state.Store(int32(CircuitHalfOpen))
-
-	canExec := cb.canExecute()
-
-	assert.True(t, canExec, "half-open state should allow execution")
-}
-
-func TestCircuitBreaker_CanExecute_OpenBeforeCooldownReturnsFalse(t *testing.T) {
-	t.Parallel()
-
-	cb := newCircuitBreaker(1, time.Hour) // Long cooldown
-
-	// Record failure to open circuit
-	cb.recordFailure()
-	require.Equal(t, CircuitOpen, cb.State())
-
-	canExec := cb.canExecute()
-
-	assert.False(t, canExec, "open circuit before cooldown should return false")
 }
 
 // -----------------------------------------------------------------------------
@@ -1690,7 +1626,7 @@ func TestRabbitMQAdapter_Shutdown_TimeoutWithActiveConsumers(t *testing.T) {
 		conn:           conn,
 		channel:        channel,
 		options:        opts,
-		circuitBreaker: newCircuitBreaker(opts.CircuitBreakerThreshold, opts.CircuitBreakerCooldown),
+		circuitBreaker: newTestCircuitBreakerManager(opts),
 	}
 
 	// Simulate a stuck consumer
@@ -1809,7 +1745,7 @@ func TestRabbitMQAdapter_EnsureChannel_RetriesOnFailure(t *testing.T) {
 	adapter := &RabbitMQAdapter{
 		conn:           failingConn,
 		options:        opts,
-		circuitBreaker: newCircuitBreaker(opts.CircuitBreakerThreshold, opts.CircuitBreakerCooldown),
+		circuitBreaker: newTestCircuitBreakerManager(opts),
 	}
 
 	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
@@ -1831,9 +1767,8 @@ func TestRabbitMQAdapter_CalculateBackoff_ZeroAttempt(t *testing.T) {
 
 	backoff := calculateBackoff(0, opts.BaseRetryDelay, opts.MaxRetryDelay)
 
-	// With attempt 0 or negative, shiftAmount should be 0
-	assert.GreaterOrEqual(t, backoff, opts.BaseRetryDelay)
-	assert.LessOrEqual(t, backoff, opts.BaseRetryDelay+opts.BaseRetryDelay/4)
+	assert.GreaterOrEqual(t, backoff, time.Duration(0))
+	assert.Less(t, backoff, opts.BaseRetryDelay)
 }
 
 func TestRabbitMQAdapter_CalculateBackoff_NegativeAttempt(t *testing.T) {
@@ -1843,9 +1778,8 @@ func TestRabbitMQAdapter_CalculateBackoff_NegativeAttempt(t *testing.T) {
 
 	backoff := calculateBackoff(-1, opts.BaseRetryDelay, opts.MaxRetryDelay)
 
-	// With negative attempt, shiftAmount should be clamped to 0
-	assert.GreaterOrEqual(t, backoff, opts.BaseRetryDelay)
-	assert.LessOrEqual(t, backoff, opts.BaseRetryDelay+opts.BaseRetryDelay/4)
+	assert.GreaterOrEqual(t, backoff, time.Duration(0))
+	assert.Less(t, backoff, opts.BaseRetryDelay)
 }
 
 // -----------------------------------------------------------------------------
@@ -1925,7 +1859,7 @@ func TestRabbitMQAdapter_ProducerDefault_SignsMessage(t *testing.T) {
 	adapter := &RabbitMQAdapter{
 		conn:           conn,
 		options:        opts,
-		circuitBreaker: newCircuitBreaker(opts.CircuitBreakerThreshold, opts.CircuitBreakerCooldown),
+		circuitBreaker: newTestCircuitBreakerManager(opts),
 	}
 
 	t.Cleanup(func() {
@@ -1968,7 +1902,7 @@ func TestRabbitMQAdapter_ProducerDefault_SkipsSigningWhenDisabled(t *testing.T) 
 	adapter := &RabbitMQAdapter{
 		conn:           conn,
 		options:        opts,
-		circuitBreaker: newCircuitBreaker(opts.CircuitBreakerThreshold, opts.CircuitBreakerCooldown),
+		circuitBreaker: newTestCircuitBreakerManager(opts),
 	}
 
 	t.Cleanup(func() {
@@ -2000,7 +1934,7 @@ func TestRabbitMQAdapter_ProducerDefault_SkipsSigningWhenNoSigner(t *testing.T) 
 	adapter := &RabbitMQAdapter{
 		conn:           conn,
 		options:        opts,
-		circuitBreaker: newCircuitBreaker(opts.CircuitBreakerThreshold, opts.CircuitBreakerCooldown),
+		circuitBreaker: newTestCircuitBreakerManager(opts),
 	}
 
 	t.Cleanup(func() {
@@ -2051,7 +1985,7 @@ func TestRabbitMQAdapter_ConsumerLoop_VerifiesSignatureSuccessfully(t *testing.T
 	adapter := &RabbitMQAdapter{
 		conn:           conn,
 		options:        opts,
-		circuitBreaker: newCircuitBreaker(opts.CircuitBreakerThreshold, opts.CircuitBreakerCooldown),
+		circuitBreaker: newTestCircuitBreakerManager(opts),
 	}
 
 	t.Cleanup(func() {
@@ -2111,7 +2045,7 @@ func TestRabbitMQAdapter_ConsumerLoop_NacksOnMissingSignature(t *testing.T) {
 	adapter := &RabbitMQAdapter{
 		conn:           conn,
 		options:        opts,
-		circuitBreaker: newCircuitBreaker(opts.CircuitBreakerThreshold, opts.CircuitBreakerCooldown),
+		circuitBreaker: newTestCircuitBreakerManager(opts),
 	}
 
 	t.Cleanup(func() {
@@ -2170,7 +2104,7 @@ func TestRabbitMQAdapter_ConsumerLoop_NacksOnInvalidSignature(t *testing.T) {
 	adapter := &RabbitMQAdapter{
 		conn:           conn,
 		options:        opts,
-		circuitBreaker: newCircuitBreaker(opts.CircuitBreakerThreshold, opts.CircuitBreakerCooldown),
+		circuitBreaker: newTestCircuitBreakerManager(opts),
 	}
 
 	t.Cleanup(func() {
@@ -2228,7 +2162,7 @@ func TestRabbitMQAdapter_ConsumerLoop_NacksOnVersionMismatch(t *testing.T) {
 	adapter := &RabbitMQAdapter{
 		conn:           conn,
 		options:        opts,
-		circuitBreaker: newCircuitBreaker(opts.CircuitBreakerThreshold, opts.CircuitBreakerCooldown),
+		circuitBreaker: newTestCircuitBreakerManager(opts),
 	}
 
 	t.Cleanup(func() {
@@ -2284,7 +2218,7 @@ func TestRabbitMQAdapter_ConsumerLoop_SkipsVerificationWhenDisabled(t *testing.T
 	adapter := &RabbitMQAdapter{
 		conn:           conn,
 		options:        opts,
-		circuitBreaker: newCircuitBreaker(opts.CircuitBreakerThreshold, opts.CircuitBreakerCooldown),
+		circuitBreaker: newTestCircuitBreakerManager(opts),
 	}
 
 	t.Cleanup(func() {
