@@ -16,10 +16,13 @@ import (
 )
 
 type forbiddenDependencyClass struct {
-	concern  string
-	name     string
-	patterns []string
+	concern         string
+	name            string
+	patterns        []string
+	allowedPatterns []string
 }
+
+const readonlyGoFlags = "-mod=readonly"
 
 func TestEngineDependencyBoundary_BlocksForbiddenImports(t *testing.T) {
 	t.Parallel()
@@ -31,7 +34,7 @@ func TestEngineDependencyBoundary_BlocksForbiddenImports(t *testing.T) {
 
 	assertForbiddenConfigComplete(t, requiredClassNames, configuredClasses)
 
-	dependencies := collectEngineDependencyGraph(t, repoRoot, modulePath)
+	dependencies := collectEngineDependencyGraph(t, repoRoot)
 	for _, dependencyClass := range configuredClasses {
 		dependencyClass := dependencyClass
 		t.Run(dependencyClass.name, func(t *testing.T) {
@@ -85,6 +88,98 @@ func TestEngineDependencyBoundary_TenantRuntimeShells_RequiredPatternsConfigured
 				t.Fatalf("tenant_runtime_shells missing required forbidden import pattern %q", requiredPattern)
 			}
 		})
+	}
+}
+
+func TestEngineDependencyBoundary_TenantRuntimeShells_PolicyIsFutureSafe(t *testing.T) {
+	t.Parallel()
+
+	modulePath := mustModulePathFromGoMod(t, mustRepositoryRoot(t))
+	tenantRuntimeShells := mustForbiddenDependencyClass(t, configuredForbiddenDependencyClasses(modulePath), "tenant_runtime_shells")
+
+	tests := []struct {
+		name       string
+		importPath string
+		wantBlock  bool
+	}{
+		{
+			name:       "safe tenant manager core primitive is explicitly allowed",
+			importPath: "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core",
+			wantBlock:  false,
+		},
+		{
+			name:       "safe dispatch layer core primitive is explicitly allowed",
+			importPath: "github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/core",
+			wantBlock:  false,
+		},
+		{
+			name:       "known concrete tenant manager shell is blocked",
+			importPath: "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/rabbitmq",
+			wantBlock:  true,
+		},
+		{
+			name:       "known concrete dispatch layer shell is blocked",
+			importPath: "github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/middleware",
+			wantBlock:  true,
+		},
+		{
+			name:       "future tenant manager concrete shell is blocked by prefix",
+			importPath: "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/runtime/new-shell",
+			wantBlock:  true,
+		},
+		{
+			name:       "future dispatch layer concrete shell is blocked by prefix",
+			importPath: "github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/runtime/new-shell",
+			wantBlock:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := tenantRuntimeShells.matches(tt.importPath); got != tt.wantBlock {
+				t.Fatalf("tenant runtime policy match for %q = %v, want %v", tt.importPath, got, tt.wantBlock)
+			}
+		})
+	}
+}
+
+func TestEngineDependencyBoundary_GoListRunsReadonly(t *testing.T) {
+	t.Parallel()
+
+	cmd := newEngineDependencyGraphCommand(context.Background(), mustRepositoryRoot(t))
+	if !slices.Contains(cmd.Args, "./pkg/engine/...") {
+		t.Fatalf("go list command must enumerate every pkg/engine subpackage, got args: %#v", cmd.Args)
+	}
+
+	for _, envVar := range cmd.Env {
+		if envVar == "GOFLAGS="+readonlyGoFlags {
+			return
+		}
+	}
+
+	t.Fatalf("go list command must run in readonly module mode with GOFLAGS=%s, got env: %#v", readonlyGoFlags, cmd.Env)
+}
+
+func TestClaudeGoVersionGuidance_UsesGoModAsSourceOfTruth(t *testing.T) {
+	t.Parallel()
+
+	claudePath := filepath.Join(mustRepositoryRoot(t), "CLAUDE.md")
+	claude, err := os.ReadFile(claudePath)
+	if err != nil {
+		t.Fatalf("read CLAUDE.md: %v", err)
+	}
+
+	content := string(claude)
+	if !strings.Contains(content, "Go version:** Source of truth is `go.mod`") {
+		t.Fatalf("CLAUDE.md must direct agents to use go.mod as the Go version source of truth")
+	}
+
+	staleGoVersionPattern := regexp.MustCompile(`(?im)go\s+(version|toolchain|minimum|required|recommended)[^\n]*\b1\.[0-9]+(?:\.[0-9]+)?\b|\bgo\s*1\.[0-9]+(?:\.[0-9]+)?\b`)
+	if match := staleGoVersionPattern.FindString(content); match != "" {
+		t.Fatalf("CLAUDE.md must not reintroduce stale literal Go/toolchain guidance; found %q", match)
 	}
 }
 
@@ -154,6 +249,40 @@ func configuredForbiddenDependencyClasses(modulePath string) []forbiddenDependen
 				"github.com/redis/go-redis",
 			},
 		},
+		{
+			concern: "state_stores",
+			name:    "external_sql_drivers",
+			patterns: []string{
+				"github.com/jackc/pgx",
+				"github.com/go-sql-driver/mysql",
+				"github.com/microsoft/go-mssqldb",
+				"github.com/sijms/go-ora",
+				"github.com/lib/pq",
+			},
+		},
+		{
+			concern: "stdlib_shells",
+			name:    "stdlib_persistence_shells",
+			patterns: []string{
+				"database/sql",
+			},
+		},
+		{
+			concern: "stdlib_shells",
+			name:    "stdlib_process_shells",
+			patterns: []string{
+				"os/exec",
+				"plugin",
+			},
+		},
+		{
+			concern: "stdlib_shells",
+			name:    "stdlib_network_shells",
+			patterns: []string{
+				"net/http",
+				"net/rpc",
+			},
+		},
 
 		// Storage shell: result sinks are optional adapters, not Engine core.
 		{
@@ -192,37 +321,19 @@ func configuredForbiddenDependencyClasses(modulePath string) []forbiddenDependen
 			},
 		},
 
-		// Tenant runtime shells: tenant primitives may become ports, but concrete runtime/middleware/managers stay outside Engine core.
+		// Tenant runtime shells: only safe tenant core primitives may cross the Engine boundary.
+		// Concrete tenant-manager/dispatch-layer runtime, middleware, storage, queue, cache,
+		// client, and any future shell packages stay outside Engine core by prefix policy.
 		{
 			concern: "tenant_runtime",
 			name:    "tenant_runtime_shells",
 			patterns: []string{
-				"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/cache",
-				"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/cache/tenantcache",
-				"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/client",
-				"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/consumer",
-				"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/event",
-				"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/log",
-				"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/middleware",
-				"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/mongo",
-				"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/postgres",
-				"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/rabbitmq",
-				"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/redis",
-				"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/s3",
-				"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/valkey",
-				"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/cache",
-				"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/client",
-				"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/consumer",
-				"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/event",
-				"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/log",
-				"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/middleware",
-				"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/mongo",
-				"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/postgres",
-				"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/rabbitmq",
-				"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/redis",
-				"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/s3",
-				"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/tenantcache",
-				"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/valkey",
+				"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer",
+				"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager",
+			},
+			allowedPatterns: []string{
+				"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/core",
+				"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core",
 			},
 		},
 
@@ -267,6 +378,10 @@ func requiredForbiddenClassNames() []string {
 		"lib_streaming",
 		"mongodb",
 		"redis",
+		"external_sql_drivers",
+		"stdlib_persistence_shells",
+		"stdlib_process_shells",
+		"stdlib_network_shells",
 		"aws_s3",
 		"seaweedfs",
 		"local_infrastructure_shells",
@@ -279,32 +394,8 @@ func requiredForbiddenClassNames() []string {
 
 func requiredTenantRuntimeShellPatterns() []string {
 	return []string{
-		"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/cache",
-		"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/cache/tenantcache",
-		"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/client",
-		"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/consumer",
-		"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/event",
-		"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/log",
-		"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/middleware",
-		"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/mongo",
-		"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/postgres",
-		"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/rabbitmq",
-		"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/redis",
-		"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/s3",
-		"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/valkey",
-		"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/cache",
-		"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/client",
-		"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/consumer",
-		"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/event",
-		"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/log",
-		"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/middleware",
-		"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/mongo",
-		"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/postgres",
-		"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/rabbitmq",
-		"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/redis",
-		"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/s3",
-		"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/tenantcache",
-		"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/valkey",
+		"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer",
+		"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager",
 	}
 }
 
@@ -348,14 +439,13 @@ func assertForbiddenConfigComplete(t *testing.T, requiredClassNames []string, co
 	}
 }
 
-func collectEngineDependencyGraph(t *testing.T, repoRoot string, modulePath string) []string {
+func collectEngineDependencyGraph(t *testing.T, repoRoot string) []string {
 	t.Helper()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "go", "list", "-deps", "-f", "{{.ImportPath}}", modulePath+"/pkg/engine")
-	cmd.Dir = repoRoot
+	cmd := newEngineDependencyGraphCommand(ctx, repoRoot)
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -372,6 +462,14 @@ func collectEngineDependencyGraph(t *testing.T, repoRoot string, modulePath stri
 	}
 
 	return dependencies
+}
+
+func newEngineDependencyGraphCommand(ctx context.Context, repoRoot string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "go", "list", "-deps", "-f", "{{.ImportPath}}", "./pkg/engine/...")
+	cmd.Dir = repoRoot
+	cmd.Env = append(os.Environ(), "GOFLAGS="+readonlyGoFlags)
+
+	return cmd
 }
 
 func mustRepositoryRoot(t *testing.T) string {
@@ -412,6 +510,12 @@ func mustModulePathFromGoMod(t *testing.T, repoRoot string) string {
 func (dependencyClass forbiddenDependencyClass) matches(importPath string) bool {
 	for _, pattern := range dependencyClass.patterns {
 		if importPath == pattern || strings.HasPrefix(importPath, pattern+"/") {
+			for _, allowedPattern := range dependencyClass.allowedPatterns {
+				if importPath == allowedPattern || strings.HasPrefix(importPath, allowedPattern+"/") {
+					return false
+				}
+			}
+
 			return true
 		}
 	}
