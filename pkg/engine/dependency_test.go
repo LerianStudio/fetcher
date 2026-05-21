@@ -110,6 +110,25 @@ func TestEngineDependencyBoundary_ExternalDeploymentRuntime_RequiredPatternsConf
 	}
 }
 
+func TestEngineDependencyBoundary_DockerRuntime_RequiredPatternsConfigured(t *testing.T) {
+	t.Parallel()
+
+	modulePath := mustModulePathFromGoMod(t, mustRepositoryRoot(t))
+	configuredClasses := configuredForbiddenDependencyClasses(modulePath)
+	dockerRuntime := mustForbiddenDependencyClass(t, configuredClasses, "docker_runtime")
+
+	for _, requiredPattern := range requiredDockerRuntimePatterns() {
+		requiredPattern := requiredPattern
+		t.Run(requiredPattern, func(t *testing.T) {
+			t.Parallel()
+
+			if !slices.Contains(dockerRuntime.patterns, requiredPattern) {
+				t.Fatalf("docker_runtime missing required forbidden import pattern %q", requiredPattern)
+			}
+		})
+	}
+}
+
 func TestEngineDependencyBoundary_TenantRuntimeShells_PolicyIsFutureSafe(t *testing.T) {
 	t.Parallel()
 
@@ -231,6 +250,35 @@ func TestClaudeGoVersionGuidance_UsesGoModAsSourceOfTruth(t *testing.T) {
 	staleGoVersionPattern := regexp.MustCompile(`(?im)go\s+(version|toolchain|minimum|required|recommended)[^\n]*\b1\.[0-9]+(?:\.[0-9]+)?\b|\bgo\s*1\.[0-9]+(?:\.[0-9]+)?\b`)
 	if match := staleGoVersionPattern.FindString(content); match != "" {
 		t.Fatalf("CLAUDE.md must not reintroduce stale literal Go/toolchain guidance; found %q", match)
+	}
+}
+
+func TestActiveGoVersionGuidance_UsesGoModAsSourceOfTruth(t *testing.T) {
+	t.Parallel()
+
+	repoRoot := mustRepositoryRoot(t)
+	activeDocs := []string{"CLAUDE.md", "README.md", filepath.Join("docs", "PROJECT_RULES.md")}
+	staleGoVersionPattern := regexp.MustCompile(`(?im)go\s+(version|toolchain|minimum|required|recommended)[^\n]*\b1\.[0-9]+(?:\.[0-9]+)?\b|\bgo\s*1\.[0-9]+(?:\.[0-9]+)?\b`)
+
+	for _, activeDoc := range activeDocs {
+		activeDoc := activeDoc
+		t.Run(activeDoc, func(t *testing.T) {
+			t.Parallel()
+
+			contentBytes, err := os.ReadFile(filepath.Join(repoRoot, activeDoc))
+			if err != nil {
+				t.Fatalf("read active Go guidance %s: %v", activeDoc, err)
+			}
+
+			content := string(contentBytes)
+			if !strings.Contains(content, "go.mod") {
+				t.Fatalf("%s must defer Go toolchain guidance to go.mod", activeDoc)
+			}
+
+			if match := staleGoVersionPattern.FindString(content); match != "" {
+				t.Fatalf("%s must not contain stale literal Go/toolchain guidance; found %q", activeDoc, match)
+			}
+		})
 	}
 }
 
@@ -361,6 +409,15 @@ func configuredForbiddenDependencyClasses(modulePath string) []forbiddenDependen
 				"sigs.k8s.io/keda",
 			},
 		},
+		{
+			concern: "deployment",
+			name:    "docker_runtime",
+			patterns: []string{
+				"github.com/moby/moby",
+				"github.com/moby/moby/api",
+				"github.com/moby/moby/client",
+			},
+		},
 
 		// Local shell packages: Engine core may depend on ports/primitives only, not concrete adapters/factories.
 		{
@@ -447,11 +504,20 @@ func requiredForbiddenClassNames() []string {
 		"aws_s3",
 		"seaweedfs",
 		"external_deployment_runtime",
+		"docker_runtime",
 		"local_infrastructure_shells",
 		"tenant_runtime_shells",
 		"deployment",
 		"lib_auth",
 		"lib_license",
+	}
+}
+
+func requiredDockerRuntimePatterns() []string {
+	return []string{
+		"github.com/moby/moby",
+		"github.com/moby/moby/api",
+		"github.com/moby/moby/client",
 	}
 }
 

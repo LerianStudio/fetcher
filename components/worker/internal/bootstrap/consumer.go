@@ -15,6 +15,8 @@ import (
 	"github.com/LerianStudio/fetcher/components/worker/internal/adapters/rabbitmq"
 	"github.com/LerianStudio/fetcher/components/worker/internal/services"
 	"github.com/LerianStudio/fetcher/pkg/bootstrap/readyz"
+	"github.com/LerianStudio/fetcher/pkg/crypto"
+	pkgRabbitmq "github.com/LerianStudio/fetcher/pkg/rabbitmq"
 	tmconsumer "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/consumer"
 	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
 	tmmongo "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/mongo"
@@ -46,13 +48,14 @@ type MultiTenantConsumerInterface interface {
 //   - Single-tenant: Uses consumerRoutes with static RabbitMQ connection
 //   - Multi-tenant: Uses mtConsumer (tmconsumer.MultiTenantConsumer) with per-tenant vhost isolation
 type MultiQueueConsumer struct {
-	consumerRoutes *rabbitmq.ConsumerRoutes
-	mtConsumer     MultiTenantConsumerInterface // Multi-tenant consumer (nil in single-tenant mode)
-	UseCase        *services.UseCase
-	logger         libLog.Logger
-	queueName      string           // Stored for multi-tenant handler registration
-	mongoManager   *tmmongo.Manager // For per-tenant MongoDB resolution (nil in single-tenant mode)
-	initErr        error            // Deferred initialization error for multi-tenant handler registration
+	consumerRoutes  *rabbitmq.ConsumerRoutes
+	mtConsumer      MultiTenantConsumerInterface // Multi-tenant consumer (nil in single-tenant mode)
+	UseCase         *services.UseCase
+	logger          libLog.Logger
+	queueName       string           // Stored for multi-tenant handler registration
+	mongoManager    *tmmongo.Manager // For per-tenant MongoDB resolution (nil in single-tenant mode)
+	messageVerifier crypto.Signer
+	initErr         error // Deferred initialization error for multi-tenant handler registration
 	// drainDelay is how long the consumer waits after SIGTERM before
 	// cancelling the base context. The window lets Kubernetes observe
 	// /readyz=503 and remove the pod from the Service endpoints before
@@ -94,6 +97,7 @@ func NewMultiQueueConsumerMultiTenant(
 	queueName string,
 	logger libLog.Logger,
 	mongoManager *tmmongo.Manager,
+	messageVerifier crypto.Signer,
 	drainDelay time.Duration,
 ) *MultiQueueConsumer {
 	if drainDelay < 0 {
@@ -101,13 +105,14 @@ func NewMultiQueueConsumerMultiTenant(
 	}
 
 	consumer := &MultiQueueConsumer{
-		consumerRoutes: nil, // Multi-tenant mode uses mtConsumer
-		mtConsumer:     mtConsumer,
-		UseCase:        useCase,
-		logger:         logger,
-		queueName:      queueName,
-		mongoManager:   mongoManager,
-		drainDelay:     drainDelay,
+		consumerRoutes:  nil, // Multi-tenant mode uses mtConsumer
+		mtConsumer:      mtConsumer,
+		UseCase:         useCase,
+		logger:          logger,
+		queueName:       queueName,
+		mongoManager:    mongoManager,
+		messageVerifier: messageVerifier,
+		drainDelay:      drainDelay,
 	}
 
 	// Register handler with MultiTenantConsumer
@@ -254,6 +259,16 @@ func (mq *MultiQueueConsumer) logShutdownSignal(ctx context.Context, message str
 // handlerGenerateReportDelivery is the tmconsumer.HandlerFunc adapter for multi-tenant mode.
 // It resolves per-tenant MongoDB if mongoManager is available, then delegates to handlerGenerateReport.
 func (mq *MultiQueueConsumer) handlerGenerateReportDelivery(ctx context.Context, delivery amqp.Delivery) error {
+	if mq.messageVerifier != nil {
+		if err := pkgRabbitmq.VerifyMessageSignature(delivery.Body, headersFromDelivery(delivery), delivery.Exchange, delivery.RoutingKey, mq.messageVerifier, pkgRabbitmq.DefaultSignatureTimestampTolerance, mq.logger, nil); err != nil {
+			if mq.logger != nil {
+				mq.logger.Log(ctx, libLog.LevelError, "multi-tenant RabbitMQ signature verification failed", libLog.Err(err))
+			}
+
+			return nil
+		}
+	}
+
 	// Resolve per-tenant MongoDB connection if mongoManager is available.
 	// The tenant ID is already in context from tmconsumer.MultiTenantConsumer.
 	if mq.mongoManager != nil {
@@ -373,7 +388,7 @@ func extractTenantIDFromHeaders(ctx context.Context, headers map[string]any) con
 		return ctx
 	}
 
-	tenantID, ok := headers["X-Tenant-ID"].(string)
+	tenantID, ok := headers[pkgRabbitmq.HeaderTenantID].(string)
 	if !ok || tenantID == "" {
 		return ctx
 	}
@@ -422,10 +437,6 @@ func isPermanentTenantError(err error) bool {
 	}
 
 	if errors.Is(err, tmcore.ErrServiceNotConfigured) {
-		return true
-	}
-
-	if errors.Is(err, tmcore.ErrManagerClosed) {
 		return true
 	}
 

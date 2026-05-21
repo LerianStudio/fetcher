@@ -2144,7 +2144,7 @@ func TestRabbitMQAdapter_ConsumerLoop_NacksOnInvalidSignature(t *testing.T) {
 
 	mockSigner := crypto.NewMockSigner(ctrl)
 	mockSigner.EXPECT().SignatureVersion().Return("v1")
-	mockSigner.EXPECT().Verify(gomock.Any(), "invalid-signature").Return(crypto.ErrInvalidSignature)
+	mockSigner.EXPECT().Verify(gomock.Any(), "invalid-signature").Return(crypto.ErrInvalidSignature).Times(2)
 
 	ctx, cancel := context.WithCancel(testContextWithHeader("req-invalid-sig"))
 	defer cancel()

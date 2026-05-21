@@ -66,6 +66,15 @@ func TestBuildSecurePublishing_Edges(t *testing.T) {
 			enableSigning: true,
 		},
 		{
+			name:          "signing enabled typed nil signer skips signature",
+			ctx:           context.Background(),
+			enableSigning: true,
+			signer: func(*gomock.Controller) crypto.Signer {
+				var signer *crypto.HMACSigner
+				return signer
+			},
+		},
+		{
 			name:          "tenant context binds tenant header",
 			ctx:           tmcore.ContextWithTenantID(context.Background(), "tenant-123"),
 			enableSigning: true,
@@ -113,6 +122,52 @@ func TestBuildSecurePublishing_Edges(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestVerifyMessageSignature_TamperAndLegacyCompatibility(t *testing.T) {
+	t.Parallel()
+
+	signer, err := crypto.NewHMACSigner([]byte("0123456789abcdef0123456789abcdef"), crypto.SignatureVersion)
+	require.NoError(t, err)
+
+	timestamp := time.Now().Add(-time.Second).Unix()
+	body := []byte(`{"jobId":"job-123"}`)
+	signature := signer.Sign(BuildMessageSignaturePayload(timestamp, signer.SignatureVersion(), "tenant-123", "job-123", "exchange", "route", body))
+	headers := map[string]any{
+		HeaderTenantID:           "tenant-123",
+		HeaderMessageSignature:   signature,
+		HeaderSignatureTimestamp: strconv.FormatInt(timestamp, 10),
+		HeaderSignatureVersion:   signer.SignatureVersion(),
+	}
+
+	require.NoError(t, VerifyMessageSignature(body, headers, "exchange", "route", signer, time.Minute, libLogNop(), nil))
+
+	tamperedHeaders := map[string]any{
+		HeaderTenantID:           "tenant-other",
+		HeaderMessageSignature:   signature,
+		HeaderSignatureTimestamp: strconv.FormatInt(timestamp, 10),
+		HeaderSignatureVersion:   signer.SignatureVersion(),
+	}
+	err = VerifyMessageSignature(body, tamperedHeaders, "exchange", "route", signer, time.Minute, libLogNop(), nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrSignatureVerificationFailed)
+
+	legacySignature := signer.Sign(crypto.BuildSignaturePayload(timestamp, body))
+	legacyHeaders := map[string]any{
+		HeaderMessageSignature:   legacySignature,
+		HeaderSignatureTimestamp: strconv.FormatInt(timestamp, 10),
+		HeaderSignatureVersion:   signer.SignatureVersion(),
+	}
+	require.NoError(t, VerifyMessageSignature(body, legacyHeaders, "exchange", "route", signer, time.Minute, libLogNop(), nil))
+}
+
+func TestVerifyMessageSignature_TypedNilSigner(t *testing.T) {
+	t.Parallel()
+
+	var signer *crypto.HMACSigner
+	err := VerifyMessageSignature([]byte(`{}`), map[string]any{}, "exchange", "route", signer, time.Minute, libLogNop(), nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrSignatureVerifierNotConfigured)
 }
 
 func TestVerifyMessageSignature_RejectsFutureTimestamp(t *testing.T) {

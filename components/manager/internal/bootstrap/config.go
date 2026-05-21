@@ -2,9 +2,6 @@ package bootstrap
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
-	"encoding/base64"
 	"fmt"
 	"net"
 	"net/url"
@@ -42,8 +39,10 @@ import (
 	tmmiddleware "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/middleware"
 	tmmongo "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/mongo"
 	tmrabbitmq "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/rabbitmq"
+	tmredis "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/redis"
 	"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/tenantcache"
 	libLicense "github.com/LerianStudio/lib-license-go/v2/middleware"
+	observability "github.com/LerianStudio/lib-observability"
 	libLog "github.com/LerianStudio/lib-observability/log"
 	libOtel "github.com/LerianStudio/lib-observability/tracing"
 	"github.com/LerianStudio/lib-observability/zap"
@@ -219,6 +218,10 @@ func InitServers() (*Service, error) {
 
 		if cfg.MultiTenantServiceAPIKey == "" {
 			return nil, fmt.Errorf("MULTI_TENANT_SERVICE_API_KEY is required when MULTI_TENANT_ENABLED=true")
+		}
+
+		if cfg.MultiTenantRedisHost == "" {
+			return nil, fmt.Errorf("MULTI_TENANT_REDIS_HOST is required when MULTI_TENANT_ENABLED=true")
 		}
 	} else {
 		logger.Log(ctx, libLog.LevelInfo, "Running in SINGLE-TENANT MODE")
@@ -831,7 +834,6 @@ func initManagerEventDiscovery(
 	mongoManager *tmmongo.Manager,
 ) (func(), error) {
 	if cfg.MultiTenantRedisHost == "" {
-		// No Redis configured for event discovery; return a no-op cleanup.
 		logger.Log(context.Background(), libLog.LevelInfo, "Multi-tenant event discovery: MULTI_TENANT_REDIS_HOST not set, skipping event listener")
 
 		return func() {}, nil
@@ -842,32 +844,19 @@ func initManagerEventDiscovery(
 		redisPort = "6379"
 	}
 
-	redisOpts := &redis.Options{
-		Addr:     net.JoinHostPort(cfg.MultiTenantRedisHost, redisPort),
+	if cfg.MultiTenantRedisCACert != "" {
+		return nil, fmt.Errorf("create manager tenant event listener: canonical tenant Pub/Sub Redis client does not support custom CA certificates; unset MULTI_TENANT_REDIS_CA_CERT or extend lib-commons")
+	}
+
+	redisClient, err := tmredis.NewTenantPubSubRedisClient(context.Background(), tmredis.TenantPubSubRedisConfig{
+		Host:     cfg.MultiTenantRedisHost,
+		Port:     redisPort,
 		Password: cfg.MultiTenantRedisPassword,
+		TLS:      cfg.MultiTenantRedisTLS,
+	})
+	if err != nil {
+		return nil, wrapBootstrapError("create manager tenant Pub/Sub Redis client", err)
 	}
-
-	if cfg.MultiTenantRedisTLS {
-		tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
-
-		if cfg.MultiTenantRedisCACert != "" {
-			caCert, err := base64.StdEncoding.DecodeString(cfg.MultiTenantRedisCACert)
-			if err != nil {
-				return nil, fmt.Errorf("failed to decode multi-tenant Redis CA certificate: %w", err)
-			}
-
-			pool := x509.NewCertPool()
-			if !pool.AppendCertsFromPEM(caCert) {
-				return nil, fmt.Errorf("failed to parse multi-tenant Redis CA certificate")
-			}
-
-			tlsCfg.RootCAs = pool
-		}
-
-		redisOpts.TLSConfig = tlsCfg
-	}
-
-	redisClient := redis.NewClient(redisOpts)
 
 	var cacheTTL time.Duration
 	if cfg.MultiTenantCacheTTLSec > 0 {
@@ -1145,22 +1134,12 @@ func (p *multiTenantPublisher) ProducerDefault(ctx context.Context, exchange, ke
 		}
 	}
 
-	// Sign message if signer is configured (preserves message signing from single-tenant mode)
-	if p.signer != nil {
-		timestamp := time.Now().UTC().Unix()
-		payload := crypto.BuildSignaturePayload(timestamp, queueMessage)
-		signature := p.signer.Sign(payload)
+	ctxLogger, _, requestID, _ := observability.NewTrackingFromContext(ctx)
+	_ = ctxLogger
 
-		amqpHeaders[rabbitmq.HeaderMessageSignature] = signature
-		amqpHeaders[rabbitmq.HeaderSignatureTimestamp] = strconv.FormatInt(timestamp, 10)
-		amqpHeaders[rabbitmq.HeaderSignatureVersion] = p.signer.SignatureVersion()
-	}
+	msg := rabbitmq.BuildSecurePublishing(ctx, requestID, exchange, key, queueMessage, amqpHeaders, p.signer, true)
 
-	return ch.PublishWithContext(ctx, exchange, key, false, false, amqp.Publishing{
-		ContentType: "application/json",
-		Body:        queueMessage,
-		Headers:     amqpHeaders,
-	})
+	return ch.PublishWithContext(ctx, exchange, key, false, false, msg)
 }
 
 func wrapBootstrapError(action string, err error) error {

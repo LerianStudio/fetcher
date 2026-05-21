@@ -41,6 +41,8 @@ type Service struct {
 	// readyzCloser releases resources owned exclusively by the readyz
 	// wiring (e.g. a dedicated MT-Redis probe client). Nil-safe.
 	readyzCloser func()
+	// streamingCloser closes the lib-streaming producer after consumers stop.
+	streamingCloser func() error
 }
 
 // Run starts the application.
@@ -63,6 +65,12 @@ func (app *Service) Run() {
 	// Close readyz-owned resources (e.g. dedicated MT-Redis probe client).
 	if app.readyzCloser != nil {
 		app.readyzCloser()
+	}
+
+	if app.streamingCloser != nil {
+		if err := app.streamingCloser(); err != nil {
+			app.Log(context.Background(), libLog.LevelError, "failed to close lib-streaming producer", libLog.Err(err))
+		}
 	}
 
 	// After all consumers are done, shutdown license

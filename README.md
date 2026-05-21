@@ -128,7 +128,7 @@ For hands-on API exploration and testing scenarios, the following resources are 
 ### Prerequisites
 
 - Docker and Docker Compose
-- Go 1.25.6+ (for development)
+- Go toolchain declared in `go.mod` (for development)
 - Make
 
 ### Quick Start

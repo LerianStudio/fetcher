@@ -258,7 +258,7 @@ func InitWorker() (*Service, error) {
 	// Branch: multi-tenant mode uses tmconsumer.MultiTenantConsumer with per-tenant vhosts
 	// Single-tenant mode uses existing ConsumerRoutes with static RabbitMQ connection
 	if cfg.MultiTenantEnabled && cfg.MultiTenantURL != "" {
-		return initMultiTenantWorkerService(ctx, cfg, logger, telemetry, service, mongoConnection, storageRepository, mongoManager, rabbitMQManager, cryptoWithExternalHMAC, licenseClient)
+		return initMultiTenantWorkerService(ctx, cfg, logger, telemetry, service, mongoConnection, storageRepository, mongoManager, rabbitMQManager, cryptoWithExternalHMAC, keyDeriver, licenseClient)
 	}
 
 	multiQueueConsumer, consumerRoutes, err := initSingleTenantRabbitMQ(cfg, logger, telemetry, keyDeriver, cryptoWithExternalHMAC, service, mongoManager)
@@ -276,6 +276,7 @@ func InitWorker() (*Service, error) {
 		licenseShutdown:    licenseClient.GetLicenseManagerShutdown(),
 		healthServer:       NewHealthServer(cfg, logger, telemetry, readyzDeps),
 		readyzCloser:       readyzDeps.close,
+		streamingCloser:    service.JobEventEmitter.Close,
 	}, nil
 }
 
@@ -290,8 +291,14 @@ func initMultiTenantWorkerService(
 	mongoManager *tmmongo.Manager,
 	rabbitMQManager *tmrabbitmq.Manager,
 	cryptoWithExternalHMAC *crypto.HMACSigner,
+	keyDeriver *crypto.HKDFKeyDeriver,
 	licenseClient *libLicense.LicenseClient,
 ) (*Service, error) {
+	messageVerifier, err := crypto.NewHMACSigner(keyDeriver.GetInternalHMACKey(), crypto.SignatureVersion)
+	if err != nil {
+		return nil, wrapBootstrapError("initialize multi-tenant message verifier", err)
+	}
+
 	mtConsumer, tmClient, mtCleanup, mtErr := initMultiTenantStack(ctx, cfg, logger, mongoManager, rabbitMQManager)
 	if mtErr != nil {
 		return nil, mtErr
@@ -310,7 +317,7 @@ func initMultiTenantWorkerService(
 		return nil, err
 	}
 
-	multiQueueConsumer := NewMultiQueueConsumerMultiTenant(mtConsumer, service, cfg.RabbitMQGenerateReportQueue, logger, mongoManager, defaultDrain(cfg.ReadyzDrainDelaySec))
+	multiQueueConsumer := NewMultiQueueConsumerMultiTenant(mtConsumer, service, cfg.RabbitMQGenerateReportQueue, logger, mongoManager, messageVerifier, defaultDrain(cfg.ReadyzDrainDelaySec))
 	performInitialTenantSync(ctx, logger, tmClient, mtConsumer)
 
 	readyzDeps := newWorkerReadyzDepsMT(cfg, mongoConnection, storageRepository, tmClient, mongoManager, rabbitMQManager)
@@ -323,6 +330,7 @@ func initMultiTenantWorkerService(
 		mtCleanup:          mtCleanup,
 		healthServer:       NewHealthServer(cfg, logger, telemetry, readyzDeps),
 		readyzCloser:       readyzDeps.close,
+		streamingCloser:    service.JobEventEmitter.Close,
 	}, nil
 }
 
@@ -448,6 +456,10 @@ func initJobEventEmitter(ctx context.Context, cfg *Config, logger libLog.Logger,
 		return streaming.NewNoopEmitter(), false, nil
 	}
 
+	if !cfg.MultiTenantEnabled {
+		return nil, false, fmt.Errorf("STREAMING_ENABLED=true requires MULTI_TENANT_ENABLED=true so job events carry a tenant ID")
+	}
+
 	catalog, err := streaming.NewCatalog(
 		streaming.EventDefinition{Key: "job.completed", ResourceType: "job", EventType: "completed"},
 		streaming.EventDefinition{Key: "job.failed", ResourceType: "job", EventType: "failed"},
@@ -462,15 +474,15 @@ func initJobEventEmitter(ctx context.Context, cfg *Config, logger libLog.Logger,
 			Key:           "job.completed.rabbitmq.primary",
 			DefinitionKey: "job.completed",
 			Target:        targetName,
-			Destination:   streaming.RabbitMQRoute(cfg.RabbitMQJobEventsExchange, "job.completed"),
-			Requirement:   streaming.RouteRequired,
+			Destination:   streaming.RabbitMQRoute(cfg.RabbitMQJobEventsExchange, "job.completed.*"),
+			Requirement:   streaming.RouteOptional,
 		},
 		{
 			Key:           "job.failed.rabbitmq.primary",
 			DefinitionKey: "job.failed",
 			Target:        targetName,
-			Destination:   streaming.RabbitMQRoute(cfg.RabbitMQJobEventsExchange, "job.failed"),
-			Requirement:   streaming.RouteRequired,
+			Destination:   streaming.RabbitMQRoute(cfg.RabbitMQJobEventsExchange, "job.failed.*"),
+			Requirement:   streaming.RouteOptional,
 		},
 	}
 

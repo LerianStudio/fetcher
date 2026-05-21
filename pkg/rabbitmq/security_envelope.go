@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"reflect"
 	"strconv"
 	"time"
 
@@ -35,7 +36,7 @@ func BuildSecurePublishing(ctx context.Context, reqID, exchange, routingKey stri
 
 	libOpentelemetry.InjectTraceHeadersIntoQueue(ctx, (*map[string]any)(&publishHeaders))
 
-	if signer != nil && enableSigning {
+	if !isNilSigner(signer) && enableSigning {
 		timestamp := time.Now().UTC().Unix()
 		version := signer.SignatureVersion()
 		jobID := extractJobID(body)
@@ -52,6 +53,20 @@ func BuildSecurePublishing(ctx context.Context, reqID, exchange, routingKey stri
 		DeliveryMode: amqp.Persistent,
 		Headers:      publishHeaders,
 		Body:         body,
+	}
+}
+
+func isNilSigner(signer crypto.Signer) bool {
+	if signer == nil {
+		return true
+	}
+
+	value := reflect.ValueOf(signer)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return value.IsNil()
+	default:
+		return false
 	}
 }
 

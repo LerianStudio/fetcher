@@ -1038,7 +1038,7 @@ func (prmq *RabbitMQAdapter) processDelivery(
 	}
 
 	if prmq.options.EnableSignatureVerification {
-		if prmq.options.Signer == nil {
+		if isNilSigner(prmq.options.Signer) {
 			if nackErr := d.Nack(false, false); nackErr != nil {
 				logWithFields.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("Failed to Nack message when signer is not configured: %v", nackErr))
 			}
@@ -1053,7 +1053,7 @@ func (prmq *RabbitMQAdapter) processDelivery(
 			return
 		}
 
-		if err := prmq.verifyMessageSignature(d.Body, headers, d.Exchange, d.RoutingKey, logWithFields, hspan); err != nil {
+		if err := VerifyMessageSignature(d.Body, headers, d.Exchange, d.RoutingKey, prmq.options.Signer, prmq.options.SignatureTimestampTolerance, logWithFields, hspan); err != nil {
 			if nackErr := d.Nack(false, false); nackErr != nil {
 				logWithFields.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("Failed to Nack message after signature verification failure: %v", nackErr))
 			}
@@ -1168,6 +1168,8 @@ func (prmq *RabbitMQAdapter) Shutdown(ctx context.Context) error {
 // verifyMessageSignature verifies the HMAC signature of a message.
 // It checks for required signature headers, validates the signature version,
 // and verifies the signature against the message body.
+//
+//nolint:unused // retained as a white-box test seam for signature verifier edge cases.
 func (prmq *RabbitMQAdapter) verifyMessageSignature(
 	body []byte,
 	headers map[string]any,
@@ -1176,6 +1178,28 @@ func (prmq *RabbitMQAdapter) verifyMessageSignature(
 	logger libLog.Logger,
 	span trace.Span,
 ) error {
+	return VerifyMessageSignature(body, headers, exchange, routingKey, prmq.options.Signer, prmq.options.SignatureTimestampTolerance, logger, span)
+}
+
+// VerifyMessageSignature verifies the canonical Fetcher RabbitMQ security envelope.
+// It accepts the current route/tenant-bound payload and a rolling body-only legacy
+// payload so already-queued messages can drain without being dropped.
+//
+//nolint:gocyclo // header parsing plus rolling legacy compatibility are deliberately kept in one verifier.
+func VerifyMessageSignature(
+	body []byte,
+	headers map[string]any,
+	exchange string,
+	routingKey string,
+	signer crypto.Signer,
+	tolerance time.Duration,
+	logger libLog.Logger,
+	span trace.Span,
+) error {
+	if isNilSigner(signer) {
+		return ErrSignatureVerifierNotConfigured
+	}
+
 	// Extract signature from headers
 	signatureRaw, ok := headers[HeaderMessageSignature]
 	if !ok {
@@ -1211,19 +1235,20 @@ func (prmq *RabbitMQAdapter) verifyMessageSignature(
 		return fmt.Errorf("%w: %s must be a string or int64", ErrMissingSignatureHeaders, HeaderSignatureTimestamp)
 	}
 
-	// Check timestamp freshness to prevent replay attacks
-	if prmq.options.SignatureTimestampTolerance > 0 {
-		messageTime := time.Unix(timestamp, 0)
+	// Check timestamp freshness to prevent replay attacks. Future timestamps are
+	// rejected strictly; tolerance applies only to stale messages.
+	messageTime := time.Unix(timestamp, 0)
 
-		age := time.Since(messageTime)
-		if age < -prmq.options.SignatureTimestampTolerance {
-			return fmt.Errorf("%w: message timestamp is %v in the future, tolerance is %v",
-				ErrSignatureFromFuture, (-age).Round(time.Second), prmq.options.SignatureTimestampTolerance)
-		}
+	age := time.Since(messageTime)
+	if age < 0 {
+		return fmt.Errorf("%w: message timestamp is %v in the future",
+			ErrSignatureFromFuture, (-age).Round(time.Second))
+	}
 
-		if age > prmq.options.SignatureTimestampTolerance {
+	if tolerance > 0 {
+		if age > tolerance {
 			return fmt.Errorf("%w: message is %v old, tolerance is %v",
-				ErrSignatureExpired, age.Round(time.Second), prmq.options.SignatureTimestampTolerance)
+				ErrSignatureExpired, age.Round(time.Second), tolerance)
 		}
 	}
 
@@ -1239,10 +1264,10 @@ func (prmq *RabbitMQAdapter) verifyMessageSignature(
 	}
 
 	// Check if the signature version matches the signer's version
-	if version != prmq.options.Signer.SignatureVersion() {
+	if version != signer.SignatureVersion() {
 		return fmt.Errorf("%w: expected %s, got %s",
 			crypto.ErrUnsupportedSignatureVersion,
-			prmq.options.Signer.SignatureVersion(),
+			signer.SignatureVersion(),
 			version,
 		)
 	}
@@ -1260,11 +1285,20 @@ func (prmq *RabbitMQAdapter) verifyMessageSignature(
 
 	// Build the signature payload and verify.
 	payload := BuildMessageSignaturePayload(timestamp, version, tenantID, jobID, exchange, routingKey, body)
-	if err := prmq.options.Signer.Verify(payload, signature); err != nil {
+	if err := signer.Verify(payload, signature); err != nil {
+		if tenantID == "" {
+			legacyPayload := crypto.BuildSignaturePayload(timestamp, body)
+			if legacyErr := signer.Verify(legacyPayload, signature); legacyErr == nil {
+				return nil
+			}
+		}
+
 		return fmt.Errorf("%w: %v", ErrSignatureVerificationFailed, err)
 	}
 
-	logger.Log(context.Background(), libLog.LevelDebug, "Message signature verified successfully")
+	if logger != nil {
+		logger.Log(context.Background(), libLog.LevelDebug, "Message signature verified successfully")
+	}
 
 	return nil
 }

@@ -94,24 +94,20 @@ func TestResolveDatabase(t *testing.T) {
 			wantErrIs: tmcore.ErrTenantContextRequired,
 		},
 		{
-			name: "multi-tenant provider falls back to static when no tenant context at all",
+			name: "multi-tenant provider fails closed when no tenant context at all",
 			setupCtx: func() context.Context {
 				return context.Background()
 			},
 			setupProvider: func(ctrl *gomock.Controller) MongoClientProvider {
 				mock := NewMockMongoClientProvider(ctrl)
-				// With no tenant ID in context, should fall back to static connection
-				mock.EXPECT().
-					Client(gomock.Any()).
-					Return(nil, errors.New("static fallback in multi-tenant"))
 				return &multiTenantProvider{
 					MockMongoClientProvider: mock,
 					multiTenant:             true,
 				}
 			},
-			dbName:     "test_db",
-			wantErr:    true,
-			wantErrMsg: "static fallback in multi-tenant",
+			dbName:    "test_db",
+			wantErr:   true,
+			wantErrIs: tmcore.ErrTenantContextRequired,
 		},
 		{
 			name: "single-tenant mode falls back to static provider when no tenant context",
