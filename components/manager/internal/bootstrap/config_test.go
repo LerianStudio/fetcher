@@ -11,6 +11,7 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/bootstrap/readyz"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/model"
+	portCache "github.com/LerianStudio/fetcher/pkg/ports/cache"
 	redisCache "github.com/LerianStudio/fetcher/pkg/redis"
 	libMongo "github.com/LerianStudio/lib-commons/v5/commons/mongo"
 	tmclient "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/client"
@@ -47,6 +48,40 @@ func (stubSchemaCacheStore) Clear(context.Context) error {
 
 func (stubSchemaCacheStore) IsHealthy(context.Context) bool {
 	return true
+}
+
+type closableSchemaCache struct {
+	closed bool
+}
+
+var _ portCache.SchemaCacheRepository = (*closableSchemaCache)(nil)
+
+func (*closableSchemaCache) Get(context.Context, string) (*model.DataSourceSchema, error) {
+	return nil, nil
+}
+
+func (*closableSchemaCache) Set(context.Context, string, *model.DataSourceSchema, time.Duration) error {
+	return nil
+}
+func (*closableSchemaCache) Delete(context.Context, string) error { return nil }
+func (*closableSchemaCache) Clear(context.Context) error          { return nil }
+func (*closableSchemaCache) IsHealthy(context.Context) bool       { return true }
+func (c *closableSchemaCache) Close() error {
+	c.closed = true
+	return nil
+}
+
+func TestRegisterSchemaCacheCloseHook_ClosesCache(t *testing.T) {
+	t.Parallel()
+
+	cache := &closableSchemaCache{}
+	hooks := []func(context.Context) error{}
+
+	registerSchemaCacheCloseHook(&hooks, cache)
+
+	require.Len(t, hooks, 1)
+	require.NoError(t, hooks[0](context.Background()))
+	assert.True(t, cache.closed)
 }
 
 func TestConfigStruct(t *testing.T) {

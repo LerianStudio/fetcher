@@ -675,6 +675,8 @@ func assembleService(
 		})
 	}
 
+	registerSchemaCacheCloseHook(&shutdownHooks, platformDependencies.schemaCache)
+
 	// Release the readyz-dedicated Redis client and tmMongo manager.
 	if platformDependencies.readyzRedisClient != nil {
 		rdb := platformDependencies.readyzRedisClient
@@ -698,6 +700,18 @@ func assembleService(
 		Server: NewServer(cfg, httpApp, logger, telemetry, platformDependencies.licenseClient, shutdownHooks...),
 		Logger: logger,
 	}, nil
+}
+
+func registerSchemaCacheCloseHook(shutdownHooks *[]func(context.Context) error, schemaCache cacheRepo.SchemaCacheRepository) {
+	if shutdownHooks == nil || schemaCache == nil {
+		return
+	}
+
+	cache := schemaCache
+
+	*shutdownHooks = append(*shutdownHooks, func(context.Context) error {
+		return cache.Close()
+	})
 }
 
 // initMultiTenantMiddleware creates a TenantMiddleware Fiber handler if multi-tenant

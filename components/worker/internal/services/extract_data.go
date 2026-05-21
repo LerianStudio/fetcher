@@ -14,14 +14,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/LerianStudio/lib-observability"
-
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	modelJob "github.com/LerianStudio/fetcher/pkg/model/job"
 	portDS "github.com/LerianStudio/fetcher/pkg/ports/datasource"
 	tms3 "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/s3"
+	observability "github.com/LerianStudio/lib-observability"
 	libLog "github.com/LerianStudio/lib-observability/log"
 	libOtel "github.com/LerianStudio/lib-observability/tracing"
 
@@ -152,10 +151,6 @@ func (uc *UseCase) completeJob(
 			"Cannot complete job: result data is nil", nil, logger)
 	}
 
-	if err := uc.JobRepository.UpdateStatus(ctx, message.JobID, model.JobStatusCompleted, resultData.Path, resultData.HMAC, nil); err != nil {
-		return uc.handleErrorWithUpdate(ctx, message.JobID, message, span, "Error updating job status to completed", err, logger)
-	}
-
 	completedAt := time.Now()
 	executionTimeMs := completedAt.Sub(startTime).Milliseconds()
 
@@ -167,10 +162,16 @@ func (uc *UseCase) completeJob(
 
 	if err := uc.publishJobNotification(ctx, tracer, message, "completed", nil, notificationOpts, logger); err != nil {
 		libOtel.HandleSpanError(span, "Error publishing job completion notification", err)
-		logger.Log(ctx, libLog.LevelWarn, "failed to publish job completion notification",
+		logger.Log(ctx, libLog.LevelError, "failed to publish required job completion notification",
 			libLog.String("job_id", message.JobID.String()),
 			libLog.Err(err),
 		)
+
+		return fmt.Errorf("publish required job completion notification: %w", err)
+	}
+
+	if err := uc.JobRepository.UpdateStatus(ctx, message.JobID, model.JobStatusCompleted, resultData.Path, resultData.HMAC, nil); err != nil {
+		return uc.handleErrorWithUpdate(ctx, message.JobID, message, span, "Error updating job status to completed", err, logger)
 	}
 
 	return nil
@@ -611,9 +612,13 @@ func (uc *UseCase) encryptData(data []byte, _ libLog.Logger) ([]byte, error) {
 func (uc *UseCase) shouldSkipProcessing(ctx context.Context, jobID uuid.UUID, logger libLog.Logger) bool {
 	jobStatus, err := uc.checkReportStatus(ctx, jobID, logger)
 	if err == nil {
-		if jobStatus == model.JobStatusCompleted || jobStatus == model.JobStatusProcessing {
+		if jobStatus == model.JobStatusCompleted {
 			logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Job %s is already %s, skipping reprocessing", jobID, jobStatus))
 			return true
+		}
+
+		if jobStatus == model.JobStatusProcessing {
+			logger.Log(ctx, libLog.LevelWarn, fmt.Sprintf("Job %s is processing; reprocessing is allowed so required terminal events can be retried", jobID))
 		}
 	}
 

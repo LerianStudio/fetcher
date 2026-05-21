@@ -17,6 +17,7 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/bootstrap/readyz"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	pkgRabbitMQ "github.com/LerianStudio/fetcher/pkg/rabbitmq"
+	libOutbox "github.com/LerianStudio/lib-commons/v5/commons/outbox"
 	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
 	observability "github.com/LerianStudio/lib-observability"
 	libLog "github.com/LerianStudio/lib-observability/log"
@@ -359,7 +360,7 @@ func TestServiceRun(t *testing.T) {
 		logger := testBootstrapLogger()
 
 		called := false
-		runLauncher = func(gotLogger libLog.Logger, gotConsumer *MultiQueueConsumer, _ *HealthServer) {
+		runLauncher = func(gotLogger libLog.Logger, gotConsumer *MultiQueueConsumer, _ *HealthServer, _ *libOutbox.Dispatcher) {
 			called = true
 			if gotLogger != logger {
 				t.Fatal("unexpected logger passed to launcher")
@@ -390,7 +391,7 @@ func TestServiceRun(t *testing.T) {
 
 	t.Run("nil license terminator is allowed", func(t *testing.T) {
 		called := false
-		runLauncher = func(libLog.Logger, *MultiQueueConsumer, *HealthServer) {
+		runLauncher = func(libLog.Logger, *MultiQueueConsumer, *HealthServer, *libOutbox.Dispatcher) {
 			called = true
 		}
 

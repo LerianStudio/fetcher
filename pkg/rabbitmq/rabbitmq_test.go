@@ -740,6 +740,28 @@ func TestDefaultOptions_ReturnsExpectedValues(t *testing.T) {
 	assert.Nil(t, opts.MeterProvider)
 }
 
+func TestNewRabbitMQCircuitBreakerManager_ThresholdOverflowFallsBackToDefault(t *testing.T) {
+	t.Parallel()
+
+	opts := DefaultOptions()
+	opts.CircuitBreakerThreshold = int(^uint32(0)) + 1
+
+	manager := newRabbitMQCircuitBreakerManager(libLog.NewNop(), opts)
+	require.NotNil(t, manager)
+
+	adapter := &RabbitMQAdapter{options: opts, circuitBreaker: manager}
+
+	for i := 0; i < DefaultCircuitBreakerThreshold-1; i++ {
+		err := adapter.executeWithCircuitBreaker(func() error { return errors.New("boom") })
+		require.Error(t, err)
+		assert.NotEqual(t, CircuitOpen, adapter.CircuitBreakerState())
+	}
+
+	err := adapter.executeWithCircuitBreaker(func() error { return errors.New("boom") })
+	require.Error(t, err)
+	assert.Equal(t, CircuitOpen, adapter.CircuitBreakerState())
+}
+
 // -----------------------------------------------------------------------------
 // Helpers/Mocks
 // -----------------------------------------------------------------------------

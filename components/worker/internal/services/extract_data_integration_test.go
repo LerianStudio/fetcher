@@ -94,8 +94,10 @@ func TestExtractExternalData_SkipsCompletedJob(t *testing.T) {
 	}
 }
 
-// TestExtractExternalData_SkipsProcessingJob tests that in-flight jobs are skipped on redelivery.
-func TestExtractExternalData_SkipsProcessingJob(t *testing.T) {
+// TestExtractExternalData_ProcessingJobDoesNotReprocessTerminalWork tests that
+// processing jobs are not treated as terminal skip state; the handler still
+// reloads the job and exits via the existing non-pending CAS guard.
+func TestExtractExternalData_ProcessingJobDoesNotReprocessTerminalWork(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
@@ -122,11 +124,11 @@ func TestExtractExternalData_SkipsProcessingJob(t *testing.T) {
 		Return(&model.Job{
 			ID:     jobID,
 			Status: model.JobStatusProcessing,
-		}, nil)
+		}, nil).Times(2)
 
 	err = uc.ExtractExternalData(ctx, body, nil)
 	if err != nil {
-		t.Fatalf("expected no error for in-flight job redelivery (should skip), got: %v", err)
+		t.Fatalf("expected no error for non-pending in-flight job redelivery, got: %v", err)
 	}
 }
 

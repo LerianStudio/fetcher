@@ -88,14 +88,14 @@ func TestInitJobEventEmitter_DisabledFailsStartup(t *testing.T) {
 	t.Setenv("STREAMING_BROKERS", "")
 	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "")
 
-	emitter, enabled, err := initJobEventEmitter(context.Background(), &Config{}, testBootstrapLogger(), &libOtel.Telemetry{}, nil)
+	emitter, enabled, err := initJobEventEmitter(context.Background(), &Config{}, testBootstrapLogger(), &libOtel.Telemetry{}, nil, nil)
 	require.Error(t, err)
 	assert.Nil(t, emitter)
 	assert.False(t, enabled)
 	assert.Contains(t, err.Error(), "STREAMING_ENABLED=true is required")
 }
 
-func TestInitJobEventEmitter_EnabledSupportsSingleTenant(t *testing.T) {
+func TestInitJobEventEmitter_EnabledRequiresOutboxRepository(t *testing.T) {
 	t.Setenv("STREAMING_ENABLED", "true")
 	t.Setenv("STREAMING_BROKERS", "broker:9092")
 	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.fetcher/worker")
@@ -109,11 +109,11 @@ func TestInitJobEventEmitter_EnabledSupportsSingleTenant(t *testing.T) {
 	adapter := pkgRabbitMQ.NewMockAdapter(ctrl)
 	publisher := workerRabbitMQ.NewPublisherRoutesWithAdapter(adapter, testBootstrapLogger(), telemetry)
 
-	emitter, enabled, err := initJobEventEmitter(context.Background(), &Config{RabbitMQJobEventsExchange: "job.events", OtelLibraryName: "test"}, testBootstrapLogger(), telemetry, publisher)
-	require.NoError(t, err)
-	assert.True(t, enabled)
-	assert.NotNil(t, emitter)
-	require.NoError(t, emitter.Close())
+	emitter, enabled, err := initJobEventEmitter(context.Background(), &Config{RabbitMQJobEventsExchange: "job.events", OtelLibraryName: "test"}, testBootstrapLogger(), telemetry, publisher, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "streaming outbox repository is required")
+	assert.False(t, enabled)
+	assert.Nil(t, emitter)
 }
 
 func TestInitWorker_ReturnsErrorWhenConfigLoadFails(t *testing.T) {

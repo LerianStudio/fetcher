@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -426,6 +427,11 @@ func newRabbitMQCircuitBreakerManager(logger libLog.Logger, opts AdapterOptions)
 		threshold = DefaultCircuitBreakerThreshold
 	}
 
+	if threshold > math.MaxUint32 {
+		logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("RabbitMQ circuit breaker threshold %d exceeds uint32 max; using default %d", threshold, DefaultCircuitBreakerThreshold))
+		threshold = DefaultCircuitBreakerThreshold
+	}
+
 	cooldown := opts.CircuitBreakerCooldown
 	if cooldown <= 0 {
 		cooldown = DefaultCircuitBreakerCooldown
@@ -434,7 +440,7 @@ func newRabbitMQCircuitBreakerManager(logger libLog.Logger, opts AdapterOptions)
 	_, err = manager.GetOrCreate(rabbitMQCircuitBreakerName, libCircuitBreaker.Config{
 		MaxRequests:         1,
 		Timeout:             cooldown,
-		ConsecutiveFailures: uint32(threshold),
+		ConsecutiveFailures: uint32(threshold), // #nosec G115 -- threshold is validated above.
 	})
 	if err != nil {
 		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("failed to initialize RabbitMQ circuit breaker: %v", err))

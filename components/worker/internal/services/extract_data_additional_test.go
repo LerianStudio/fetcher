@@ -124,6 +124,9 @@ func TestExtractExternalData_CompletedStatusUpdateFailureMarksJobFailed(t *testi
 	signer := uc.DocumentSigner.(*workerCrypto.MockSigner)
 	signer.EXPECT().SignReader(gomock.Any()).Return("test-hmac", nil)
 	mocks.seaweedFS.EXPECT().Put(gomock.Any(), constant.ExternalDataKeyPrefix+"/"+jobID.String()+".json", gomock.Any()).Return(nil)
+	mocks.rabbitPublisher.EXPECT().
+		Publish(gomock.Any(), "test-exchange", "job.completed", gomock.Any()).
+		Return(nil)
 	mocks.jobRepo.EXPECT().
 		UpdateStatus(gomock.Any(), jobID, model.JobStatusCompleted, constant.ExternalDataKeyPrefix+"/"+jobID.String()+".json", "test-hmac", nil).
 		Return(errors.New("status update failed"))

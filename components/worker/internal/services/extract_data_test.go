@@ -53,7 +53,6 @@ func TestParseMessage_ValidMessage(t *testing.T) {
 	if result.JobID != jobID {
 		t.Fatalf("expected jobID %s, got %s", jobID, result.JobID)
 	}
-
 }
 
 // TestParseMessage_InvalidJSON tests error handling for invalid JSON.
@@ -336,7 +335,7 @@ func TestShouldSkipProcessing(t *testing.T) {
 			wantSkip: false,
 		},
 		{
-			name: "job currently processing - should skip",
+			name: "job currently processing - should not skip so durable terminal event can retry",
 			setupMocks: func(mocks *testMocks, jobID uuid.UUID) {
 				mocks.jobRepo.EXPECT().
 					FindByID(gomock.Any(), jobID).
@@ -345,7 +344,7 @@ func TestShouldSkipProcessing(t *testing.T) {
 						Status: model.JobStatusProcessing,
 					}, nil)
 			},
-			wantSkip: true,
+			wantSkip: false,
 		},
 	}
 
@@ -570,7 +569,6 @@ func TestExtractJobIDFromPartialJSON(t *testing.T) {
 			if !tt.wantJobID && jobID != uuid.Nil {
 				t.Errorf("expected nil jobID, got %s - %s", jobID, tt.description)
 			}
-
 		})
 	}
 }
@@ -663,7 +661,6 @@ func TestExtractJobIDFromMultipleSources_EdgeCases(t *testing.T) {
 			if !tt.wantJobID && jobID != uuid.Nil {
 				t.Errorf("expected nil jobID, got %s", jobID)
 			}
-
 		})
 	}
 }
@@ -1242,7 +1239,6 @@ func TestExtractJobIDFromPartialJSON_ValidJobIDInvalidOrgID(t *testing.T) {
 	if jobID == uuid.Nil {
 		t.Error("expected valid jobID")
 	}
-
 }
 
 // TestParseMessage_EmptyBody tests parseMessage with empty body.
@@ -1949,6 +1945,9 @@ func TestCompleteJob_CompletedStatusUpdateError(t *testing.T) {
 	mocks.jobRepo.EXPECT().
 		UpdateStatus(gomock.Any(), jobID, model.JobStatusCompleted, resultData.Path, resultData.HMAC, nil).
 		Return(errors.New("completed update failed"))
+	mocks.rabbitPublisher.EXPECT().
+		Publish(gomock.Any(), "test-exchange", "job.completed", gomock.Any()).
+		Return(nil)
 
 	mocks.jobRepo.EXPECT().
 		UpdateStatus(gomock.Any(), jobID, model.JobStatusFailed, gomock.Any(), gomock.Any(), gomock.Any()).
@@ -2228,10 +2227,9 @@ func TestQueryExternalData_NilConnections(t *testing.T) {
 	}
 }
 
-// TestCompleteJob_NotificationFailure_StillReturnsNil verifies the persist-before-notify
-// contract: when the DB update succeeds but notification publish fails, completeJob
-// returns nil (success) because the DB is the source of truth.
-func TestCompleteJob_NotificationFailure_StillReturnsNil(t *testing.T) {
+// TestCompleteJob_NotificationFailure_ReturnsError verifies required terminal
+// event emission fails closed instead of ACKing a message that lost job.completed.
+func TestCompleteJob_NotificationFailure_ReturnsError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
@@ -2259,19 +2257,14 @@ func TestCompleteJob_NotificationFailure_StillReturnsNil(t *testing.T) {
 		HMAC:      "test-hmac",
 	}
 
-	// DB update succeeds
-	mocks.jobRepo.EXPECT().
-		UpdateStatus(gomock.Any(), jobID, model.JobStatusCompleted, resultData.Path, resultData.HMAC, nil).
-		Return(nil)
-
-	// Notification publish fails
+	// Notification publish fails before terminal status is persisted.
 	mocks.rabbitPublisher.EXPECT().
 		Publish(gomock.Any(), "test-exchange", "job.completed", gomock.Any()).
 		Return(errors.New("connection refused"))
 
 	err := uc.completeJob(ctx, tracer, message, resultData, time.Now().Add(-time.Second), span, logger)
-	if err != nil {
-		t.Fatalf("expected nil error (DB is source of truth), got: %v", err)
+	if err == nil {
+		t.Fatal("expected error when required job.completed event publish fails")
 	}
 }
 

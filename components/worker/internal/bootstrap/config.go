@@ -22,7 +22,10 @@ import (
 	pkgStorage "github.com/LerianStudio/fetcher/pkg/storage"
 
 	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
+	libCircuitBreaker "github.com/LerianStudio/lib-commons/v5/commons/circuitbreaker"
 	mongoDB "github.com/LerianStudio/lib-commons/v5/commons/mongo"
+	libOutbox "github.com/LerianStudio/lib-commons/v5/commons/outbox"
+	libOutboxMongo "github.com/LerianStudio/lib-commons/v5/commons/outbox/mongo"
 	libRabbitMQ "github.com/LerianStudio/lib-commons/v5/commons/rabbitmq"
 	tmclient "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/client"
 	tmconsumer "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/consumer"
@@ -37,12 +40,19 @@ import (
 	libOtel "github.com/LerianStudio/lib-observability/tracing"
 	libZap "github.com/LerianStudio/lib-observability/zap"
 	streaming "github.com/LerianStudio/lib-streaming"
+	mongoDriver "go.mongodb.org/mongo-driver/mongo"
 )
 
 // defaultMaxTenantPools is the fallback soft limit for tenant connection pools
 // when MULTI_TENANT_MAX_TENANT_POOLS is unset or zero. This prevents unbounded
 // pool growth. The value can be overridden via the environment variable.
 const defaultMaxTenantPools = 100
+
+type workerRepositories struct {
+	job                 *job.JobMongoDBRepository
+	connection          *connection.ConnectionMongoDBRepository
+	streamingOutboxRepo libOutbox.OutboxRepository
+}
 
 // Config holds the application's configurable parameters read from environment variables.
 type Config struct {
@@ -195,22 +205,16 @@ func InitWorker() (*Service, error) {
 	// when no tenant context is present.
 	mongoProvider := mongodb.NewMultiTenantMongoProvider(mongoConnection, cfg.MultiTenantEnabled)
 
-	// Initialize MongoDB repositories
-	jobRepository, errJobRepo := job.NewJobMongoDBRepository(ctx, mongoProvider, cfg.MongoDBName)
-	if errJobRepo != nil {
-		return nil, fmt.Errorf("initialize job repository: %w", errJobRepo)
-	}
-
-	connectionRepository, errConnectRepo := connection.NewConnectionMongoDBRepository(ctx, mongoProvider, cfg.MongoDBName)
-	if errConnectRepo != nil {
-		return nil, fmt.Errorf("initialize connection repository: %w", errConnectRepo)
+	repositories, err := initWorkerRepositories(ctx, cfg, logger, mongoProvider, mongoConnection, mongoManager)
+	if err != nil {
+		return nil, err
 	}
 
 	// Create service use case (publisher set below per mode)
 	service := &services.UseCase{
 		ExternalDataStorage:  storageRepository,
-		JobRepository:        jobRepository,
-		ConnectionRepository: connectionRepository,
+		JobRepository:        repositories.job,
+		ConnectionRepository: repositories.connection,
 		Cryptor:              cryptoService,
 		DocumentSigner:       cryptoWithExternalHMAC,
 		JobEventEmitter:      streaming.NewNoopEmitter(),
@@ -230,11 +234,11 @@ func InitWorker() (*Service, error) {
 		}
 
 		tenantAdapter := resolver.NewTenantManagerAdapter(resolverTMClient)
-		service.ConnectionResolver = resolver.NewMultiTenantResolver(connectionRepository, dsRegistry, tenantAdapter)
+		service.ConnectionResolver = resolver.NewMultiTenantResolver(repositories.connection, dsRegistry, tenantAdapter)
 	} else {
 		// Single-tenant: load internal datasource connections from DATASOURCE_* env vars.
 		envConnections := resolver.LoadInternalConnectionsFromEnv(dsRegistry, logger)
-		service.ConnectionResolver = resolver.NewSingleTenantResolver(connectionRepository, dsRegistry, envConnections)
+		service.ConnectionResolver = resolver.NewSingleTenantResolver(repositories.connection, dsRegistry, envConnections)
 	}
 
 	logFileTTL(logger, cfg)
@@ -260,10 +264,10 @@ func InitWorker() (*Service, error) {
 	// Branch: multi-tenant mode uses tmconsumer.MultiTenantConsumer with per-tenant vhosts
 	// Single-tenant mode uses existing ConsumerRoutes with static RabbitMQ connection
 	if cfg.MultiTenantEnabled && cfg.MultiTenantURL != "" {
-		return initMultiTenantWorkerService(ctx, cfg, logger, telemetry, service, mongoConnection, storageRepository, mongoManager, rabbitMQManager, cryptoWithExternalHMAC, keyDeriver, licenseClient)
+		return initMultiTenantWorkerService(ctx, cfg, logger, telemetry, service, mongoConnection, storageRepository, mongoManager, rabbitMQManager, repositories.streamingOutboxRepo, cryptoWithExternalHMAC, keyDeriver, licenseClient)
 	}
 
-	multiQueueConsumer, consumerRoutes, err := initSingleTenantRabbitMQ(cfg, logger, telemetry, keyDeriver, cryptoWithExternalHMAC, service, mongoManager)
+	multiQueueConsumer, consumerRoutes, err := initSingleTenantRabbitMQ(cfg, logger, telemetry, keyDeriver, cryptoWithExternalHMAC, service, mongoManager, repositories.streamingOutboxRepo)
 	if err != nil {
 		return nil, err
 	}
@@ -272,6 +276,11 @@ func InitWorker() (*Service, error) {
 
 	runWorkerSelfProbe(ctx, logger, buildWorkerReadyzCheckers(readyzDeps))
 
+	outboxDispatcher, err := buildStreamingOutboxDispatcher(ctx, logger, telemetry, service.JobEventEmitter, repositories.streamingOutboxRepo)
+	if err != nil {
+		return nil, err
+	}
+
 	return &Service{
 		MultiQueueConsumer: multiQueueConsumer,
 		Logger:             logger,
@@ -279,6 +288,7 @@ func InitWorker() (*Service, error) {
 		healthServer:       NewHealthServer(cfg, logger, telemetry, readyzDeps),
 		readyzCloser:       readyzDeps.close,
 		streamingCloser:    service.JobEventEmitter.Close,
+		outboxDispatcher:   outboxDispatcher,
 	}, nil
 }
 
@@ -292,6 +302,7 @@ func initMultiTenantWorkerService(
 	storageRepository portStorage.Repository,
 	mongoManager *tmmongo.Manager,
 	rabbitMQManager *tmrabbitmq.Manager,
+	streamingOutboxRepo libOutbox.OutboxRepository,
 	cryptoWithExternalHMAC *crypto.HMACSigner,
 	keyDeriver *crypto.HKDFKeyDeriver,
 	licenseClient *libLicense.LicenseClient,
@@ -313,7 +324,7 @@ func initMultiTenantWorkerService(
 		cryptoWithExternalHMAC,
 	)
 
-	if err := configureJobEventEmitter(ctx, cfg, logger, telemetry, publisherRoutes, service); err != nil {
+	if err := configureJobEventEmitter(ctx, cfg, logger, telemetry, publisherRoutes, service, streamingOutboxRepo); err != nil {
 		return nil, err
 	}
 
@@ -323,6 +334,11 @@ func initMultiTenantWorkerService(
 	readyzDeps := newWorkerReadyzDepsMT(cfg, mongoConnection, storageRepository, tmClient, mongoManager, rabbitMQManager)
 	runWorkerSelfProbe(ctx, logger, buildWorkerReadyzCheckers(readyzDeps))
 
+	outboxDispatcher, err := buildStreamingOutboxDispatcher(ctx, logger, telemetry, service.JobEventEmitter, streamingOutboxRepo)
+	if err != nil {
+		return nil, err
+	}
+
 	return &Service{
 		MultiQueueConsumer: multiQueueConsumer,
 		Logger:             logger,
@@ -331,7 +347,27 @@ func initMultiTenantWorkerService(
 		healthServer:       NewHealthServer(cfg, logger, telemetry, readyzDeps),
 		readyzCloser:       readyzDeps.close,
 		streamingCloser:    service.JobEventEmitter.Close,
+		outboxDispatcher:   outboxDispatcher,
 	}, nil
+}
+
+func initWorkerRepositories(ctx context.Context, cfg *Config, logger libLog.Logger, mongoProvider *mongodb.MultiTenantMongoProvider, mongoConnection *mongoDB.Client, mongoManager *tmmongo.Manager) (*workerRepositories, error) {
+	jobRepository, errJobRepo := job.NewJobMongoDBRepository(ctx, mongoProvider, cfg.MongoDBName)
+	if errJobRepo != nil {
+		return nil, fmt.Errorf("initialize job repository: %w", errJobRepo)
+	}
+
+	connectionRepository, errConnectRepo := connection.NewConnectionMongoDBRepository(ctx, mongoProvider, cfg.MongoDBName)
+	if errConnectRepo != nil {
+		return nil, fmt.Errorf("initialize connection repository: %w", errConnectRepo)
+	}
+
+	streamingOutboxRepo, errOutboxRepo := initStreamingOutboxRepository(ctx, cfg, logger, mongoConnection, mongoManager)
+	if errOutboxRepo != nil {
+		return nil, errOutboxRepo
+	}
+
+	return &workerRepositories{job: jobRepository, connection: connectionRepository, streamingOutboxRepo: streamingOutboxRepo}, nil
 }
 
 // initSingleTenantRabbitMQ creates RabbitMQ consumer and publisher with
@@ -346,6 +382,7 @@ func initSingleTenantRabbitMQ(
 	cryptoWithExternalHMAC *crypto.HMACSigner,
 	service *services.UseCase,
 	mongoManager *tmmongo.Manager,
+	streamingOutboxRepo libOutbox.OutboxRepository,
 ) (*MultiQueueConsumer, *rabbitmq.ConsumerRoutes, error) {
 	// URL-encode credentials to handle special characters (@ : / etc.)
 	escapedUserRMQ := url.PathEscape(cfg.RabbitMQUser)
@@ -389,15 +426,15 @@ func initSingleTenantRabbitMQ(
 
 	publisherRoutes := rabbitmq.NewPublisherRoutes(publisherConnection, logger, telemetry, cryptoWithExternalHMAC)
 
-	if err := configureJobEventEmitter(context.Background(), cfg, logger, telemetry, publisherRoutes, service); err != nil {
+	if err := configureJobEventEmitter(context.Background(), cfg, logger, telemetry, publisherRoutes, service, streamingOutboxRepo); err != nil {
 		return nil, nil, err
 	}
 
 	return NewMultiQueueConsumer(consumerRoutes, service, cfg.RabbitMQGenerateReportQueue, logger, mongoManager, defaultDrain(cfg.ReadyzDrainDelaySec)), consumerRoutes, nil
 }
 
-func configureJobEventEmitter(ctx context.Context, cfg *Config, logger libLog.Logger, telemetry *libOtel.Telemetry, publisher *rabbitmq.PublisherRoutes, service *services.UseCase) error {
-	jobEmitter, streamingEnabled, err := initJobEventEmitter(ctx, cfg, logger, telemetry, publisher)
+func configureJobEventEmitter(ctx context.Context, cfg *Config, logger libLog.Logger, telemetry *libOtel.Telemetry, publisher *rabbitmq.PublisherRoutes, service *services.UseCase, outboxRepo libOutbox.OutboxRepository) error {
+	jobEmitter, streamingEnabled, err := initJobEventEmitter(ctx, cfg, logger, telemetry, publisher, outboxRepo)
 	if err != nil {
 		return err
 	}
@@ -421,7 +458,7 @@ func (p streamingRabbitMQPublisher) Publish(ctx context.Context, exchange, routi
 	return p.publisher.PublishWithHeaders(ctx, exchange, routingKey, contentType, body, headers)
 }
 
-func initJobEventEmitter(ctx context.Context, cfg *Config, logger libLog.Logger, telemetry *libOtel.Telemetry, publisher *rabbitmq.PublisherRoutes) (streaming.Emitter, bool, error) {
+func initJobEventEmitter(ctx context.Context, cfg *Config, logger libLog.Logger, telemetry *libOtel.Telemetry, publisher *rabbitmq.PublisherRoutes, outboxRepo libOutbox.OutboxRepository) (streaming.Emitter, bool, error) {
 	streamingCfg, warnings, err := streaming.LoadConfig()
 	if err != nil {
 		return nil, false, fmt.Errorf("load streaming configuration: %w", err)
@@ -439,9 +476,16 @@ func initJobEventEmitter(ctx context.Context, cfg *Config, logger libLog.Logger,
 		return nil, false, fmt.Errorf("RABBITMQ_JOB_EVENTS_EXCHANGE is required for mandatory job event notifications")
 	}
 
+	terminalPolicy := streaming.DeliveryPolicy{
+		Enabled: true,
+		Direct:  streaming.DirectModeSkip,
+		Outbox:  streaming.OutboxModeAlways,
+		DLQ:     streaming.DLQModeOnRoutableFailure,
+	}
+
 	catalog, err := streaming.NewCatalog(
-		streaming.EventDefinition{Key: "job.completed", ResourceType: "job", EventType: "completed"},
-		streaming.EventDefinition{Key: "job.failed", ResourceType: "job", EventType: "failed"},
+		streaming.EventDefinition{Key: "job.completed", ResourceType: "job", EventType: "completed", DefaultPolicy: terminalPolicy},
+		streaming.EventDefinition{Key: "job.failed", ResourceType: "job", EventType: "failed", DefaultPolicy: terminalPolicy},
 	)
 	if err != nil {
 		return nil, false, fmt.Errorf("create job event streaming catalog: %w", err)
@@ -467,10 +511,21 @@ func initJobEventEmitter(ctx context.Context, cfg *Config, logger libLog.Logger,
 		},
 	}
 
+	if outboxRepo == nil {
+		return nil, false, fmt.Errorf("streaming outbox repository is required for mandatory job event notifications")
+	}
+
+	cbManager, err := libCircuitBreaker.NewManager(logger)
+	if err != nil {
+		return nil, false, fmt.Errorf("create streaming circuit breaker manager: %w", err)
+	}
+
 	emitter, err := streaming.NewBuilder().
 		Source(streamingCfg.CloudEventsSource).
 		Catalog(catalog).
 		Routes(routes...).
+		OutboxRepository(outboxRepo).
+		CircuitBreakerManager(cbManager).
 		RabbitMQTarget(targetName, streamingRabbitMQPublisher{publisher: publisher}).
 		Logger(logger).
 		MetricsFactory(telemetry.MetricsFactory).
@@ -481,6 +536,111 @@ func initJobEventEmitter(ctx context.Context, cfg *Config, logger libLog.Logger,
 	}
 
 	return emitter, true, nil
+}
+
+func initStreamingOutboxRepository(ctx context.Context, cfg *Config, logger libLog.Logger, mongoConnection *mongoDB.Client, mongoManager *tmmongo.Manager) (libOutbox.OutboxRepository, error) {
+	if mongoConnection == nil {
+		return nil, fmt.Errorf("initialize streaming outbox repository: mongo client is required")
+	}
+
+	opts := []libOutboxMongo.Option{
+		libOutboxMongo.WithLogger(logger),
+		libOutboxMongo.WithCollectionName("streaming_outbox_events"),
+	}
+
+	if cfg.MultiTenantEnabled {
+		tmClient, err := initTenantManagerClient(cfg, logger)
+		if err != nil {
+			return nil, fmt.Errorf("create tenant manager client for streaming outbox: %w", err)
+		}
+
+		opts = append(opts,
+			libOutboxMongo.WithRequireTenant(),
+			libOutboxMongo.WithModule(constant.ModuleWorker),
+			libOutboxMongo.WithTenantDatabaseResolver(streamingOutboxMongoResolver{manager: mongoManager, client: tmClient, service: constant.ApplicationName}),
+		)
+	} else {
+		opts = append(opts, libOutboxMongo.WithAllowEmptyTenant())
+	}
+
+	repo, err := libOutboxMongo.NewRepositoryWithContext(ctx, mongoConnection, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("initialize streaming outbox repository: %w", err)
+	}
+
+	return repo, nil
+}
+
+type streamingOutboxMongoResolver struct {
+	manager *tmmongo.Manager
+	client  *tmclient.Client
+	service string
+}
+
+func (r streamingOutboxMongoResolver) ListTenants(ctx context.Context, _ string) ([]string, error) {
+	if r.client == nil {
+		return nil, fmt.Errorf("tenant manager client is required for streaming outbox tenant discovery")
+	}
+
+	tenants, err := r.client.GetActiveTenantsByService(ctx, r.service)
+	if err != nil {
+		return nil, err
+	}
+
+	ids := make([]string, 0, len(tenants))
+	for _, tenant := range tenants {
+		if tenant == nil {
+			continue
+		}
+
+		id := strings.TrimSpace(tenant.ID)
+		if id != "" {
+			ids = append(ids, id)
+		}
+	}
+
+	return ids, nil
+}
+
+func (r streamingOutboxMongoResolver) DatabaseForTenant(ctx context.Context, tenantID string, _ string) (*mongoDriver.Database, error) {
+	if r.manager == nil {
+		return nil, fmt.Errorf("tenant MongoDB manager is required for streaming outbox")
+	}
+
+	return r.manager.GetDatabaseForTenant(ctx, tenantID)
+}
+
+type streamingOutboxRelayRegistrar interface {
+	RegisterOutboxRelay(*libOutbox.HandlerRegistry) error
+}
+
+func buildStreamingOutboxDispatcher(ctx context.Context, logger libLog.Logger, telemetry *libOtel.Telemetry, emitter streaming.Emitter, repo libOutbox.OutboxRepository) (*libOutbox.Dispatcher, error) {
+	registrar, ok := emitter.(streamingOutboxRelayRegistrar)
+	if !ok {
+		return nil, fmt.Errorf("streaming outbox relay registrar is required for mandatory job event replay")
+	}
+
+	if repo == nil {
+		return nil, fmt.Errorf("streaming outbox repository is required for mandatory job event replay")
+	}
+
+	if telemetry == nil {
+		return nil, fmt.Errorf("telemetry is required for streaming outbox dispatcher")
+	}
+
+	registry := libOutbox.NewHandlerRegistry()
+	if err := registrar.RegisterOutboxRelay(registry); err != nil {
+		logger.Log(ctx, libLog.LevelError, "failed to register streaming outbox relay", libLog.Err(err))
+		return nil, fmt.Errorf("register streaming outbox relay: %w", err)
+	}
+
+	dispatcher, err := libOutbox.NewDispatcher(repo, registry, logger, telemetry.TracerProvider.Tracer("fetcher.streaming.outbox"))
+	if err != nil {
+		logger.Log(ctx, libLog.LevelError, "failed to create streaming outbox dispatcher", libLog.Err(err))
+		return nil, fmt.Errorf("create streaming outbox dispatcher: %w", err)
+	}
+
+	return dispatcher, nil
 }
 
 // initObservability initializes the logger and telemetry pipeline.
