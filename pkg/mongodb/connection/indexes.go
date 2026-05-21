@@ -2,6 +2,7 @@ package connection
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -45,7 +46,10 @@ func (cr *ConnectionMongoDBRepository) EnsureIndexes(ctx context.Context) error 
 
 	coll := db.Collection(strings.ToLower(constant.MongoCollectionConnection))
 
-	if err := dropOrphanProductIndexes(ctx, coll, logger); err != nil {
+	dropCtx, dropCancel := context.WithTimeout(ctx, indexDropTimeout)
+	defer dropCancel()
+
+	if err := dropOrphanProductIndexes(dropCtx, coll, logger); err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to drop orphan product_id indexes", err)
 		return err
 	}
@@ -162,11 +166,12 @@ var orphanProductIndexes = []string{
 
 // dropOrphanProductIndexes removes legacy product_id-based indexes from
 // environments where they were previously created. Safe to run on every
-// bootstrap: IndexNotFound is tolerated and treated as already-cleaned.
+// bootstrap: both missing-collection (fresh DB) and missing-index are
+// tolerated and treated as already-cleaned.
 func dropOrphanProductIndexes(ctx context.Context, coll *mongo.Collection, logger libLog.Logger) error {
 	for _, name := range orphanProductIndexes {
 		if _, err := coll.Indexes().DropOne(ctx, name); err != nil {
-			if isIndexNotFoundError(err) {
+			if isIgnorableDropIndexError(err) {
 				continue
 			}
 
@@ -179,16 +184,32 @@ func dropOrphanProductIndexes(ctx context.Context, coll *mongo.Collection, logge
 	return nil
 }
 
-// isIndexNotFoundError reports whether err signals that the index simply does
-// not exist on the collection. The Mongo driver does not expose a typed sentinel
-// for IndexNotFound, so we match on the documented error text. Both MongoDB
-// and DocumentDB return the same message for this case.
-func isIndexNotFoundError(err error) bool {
+// isIgnorableDropIndexError reports whether err can be safely ignored during
+// the orphan-index cleanup. Two server errors are treated as "already gone":
+//
+//   - NamespaceNotFound (code 26): the collection does not exist yet
+//     (fresh DB on first boot — EnsureIndexes will create it).
+//   - IndexNotFound (code 27): the index has already been dropped or was
+//     never present.
+//
+// Prefer the typed mongo.CommandError discriminator (matching the pattern
+// of IsIndexConflictError in pkg/mongodb/errors.go); the string fallback
+// covers driver wrappers or wire-protocol formats that do not surface the
+// command error structure.
+func isIgnorableDropIndexError(err error) bool {
 	if err == nil {
 		return false
 	}
 
+	var cmdErr mongo.CommandError
+	if errors.As(err, &cmdErr) {
+		return cmdErr.Code == 26 || cmdErr.Code == 27
+	}
+
 	msg := err.Error()
 
-	return strings.Contains(msg, "IndexNotFound") || strings.Contains(msg, "index not found")
+	return strings.Contains(msg, "IndexNotFound") ||
+		strings.Contains(msg, "index not found") ||
+		strings.Contains(msg, "NamespaceNotFound") ||
+		strings.Contains(msg, "ns not found")
 }
