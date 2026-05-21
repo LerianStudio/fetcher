@@ -4,10 +4,11 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/bootstrap/readyz"
 	"github.com/LerianStudio/fetcher/pkg/net/http"
 	middlewareAuth "github.com/LerianStudio/lib-auth/v2/auth/middleware"
-	"github.com/LerianStudio/lib-commons/v5/commons/log"
 	commonsHttp "github.com/LerianStudio/lib-commons/v5/commons/net/http"
-	"github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
 	libLicense "github.com/LerianStudio/lib-license-go/v2/middleware"
+	"github.com/LerianStudio/lib-observability/log"
+	obsMiddleware "github.com/LerianStudio/lib-observability/middleware"
+	opentelemetry "github.com/LerianStudio/lib-observability/tracing"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
@@ -43,12 +44,12 @@ func NewRoutes(
 			return commonsHttp.FiberErrorHandler(ctx, err)
 		},
 	})
-	tlMid := commonsHttp.NewTelemetryMiddleware(tl)
+	tlMid := obsMiddleware.NewTelemetryMiddleware(tl)
 
 	f.Use(http.WithRecover(http.WithRecoverLogger(lg)))
 	f.Use(tlMid.WithTelemetry(tl))
 	f.Use(cors.New())
-	f.Use(commonsHttp.WithHTTPLogging(commonsHttp.WithCustomLogger(lg)))
+	f.Use(obsMiddleware.WithHTTPLogging(obsMiddleware.WithCustomLogger(lg)))
 
 	// Doc Swagger
 	f.Get("/swagger/*", WithSwaggerEnvConfig(), fiberSwagger.WrapHandler)

@@ -6,13 +6,14 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/LerianStudio/lib-observability"
+
 	"github.com/LerianStudio/fetcher/pkg"
 	modelJob "github.com/LerianStudio/fetcher/pkg/model/job"
 	portDS "github.com/LerianStudio/fetcher/pkg/ports/datasource"
-	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
 	libCrypto "github.com/LerianStudio/lib-commons/v5/commons/crypto"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
-	libOtel "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
+	libLog "github.com/LerianStudio/lib-observability/log"
+	libOtel "github.com/LerianStudio/lib-observability/tracing"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -58,7 +59,7 @@ func (uc *UseCase) QueryPluginCRM(
 	result map[string]map[string][]map[string]any,
 	logger libLog.Logger,
 ) error {
-	_, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
+	_, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "service.extract_external_data.query_plugin_crm")
 	defer span.End()

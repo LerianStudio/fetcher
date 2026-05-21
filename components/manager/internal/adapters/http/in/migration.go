@@ -3,6 +3,8 @@ package in
 import (
 	"fmt"
 
+	"github.com/LerianStudio/lib-observability"
+
 	"github.com/LerianStudio/fetcher/components/manager/internal/services/command"
 	"github.com/LerianStudio/fetcher/components/manager/internal/services/query"
 
@@ -11,9 +13,8 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/model"
 	httpUtils "github.com/LerianStudio/fetcher/pkg/net/http"
 
-	"github.com/LerianStudio/lib-commons/v5/commons"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
+	libLog "github.com/LerianStudio/lib-observability/log"
+	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -51,7 +52,7 @@ func NewMigrationHandler(
 //	@Router			/v1/management/connections/unassigned [get]
 func (h *MigrationHandler) ListUnassignedConnections(c *fiber.Ctx) error {
 	ctx := c.UserContext()
-	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "handler.list_unassigned_connections")
 	defer span.End()
@@ -100,7 +101,7 @@ func (h *MigrationHandler) ListUnassignedConnections(c *fiber.Ctx) error {
 //	@Router			/v1/management/connections/{id}/assign [post]
 func (h *MigrationHandler) AssignConnectionToProduct(c *fiber.Ctx) error {
 	ctx := c.UserContext()
-	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "handler.assign_connection_to_product")
 	defer span.End()

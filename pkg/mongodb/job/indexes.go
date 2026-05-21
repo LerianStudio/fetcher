@@ -6,12 +6,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/LerianStudio/lib-observability"
+
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	sharedMongo "github.com/LerianStudio/fetcher/pkg/mongodb"
-	"github.com/LerianStudio/lib-commons/v5/commons"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
+	libLog "github.com/LerianStudio/lib-observability/log"
+	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -25,7 +26,7 @@ const (
 
 // EnsureIndexes creates MongoDB indexes tailored for the jobs collection workload.
 func (jr *JobMongoDBRepository) EnsureIndexes(ctx context.Context) error {
-	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "mongodb.ensure_job_indexes")
 	defer span.End()
@@ -323,7 +324,7 @@ func backfillDedupActive(ctx context.Context, coll *mongo.Collection, logger lib
 
 // DropIndexes removes custom indexes from the jobs collection.
 func (jr *JobMongoDBRepository) DropIndexes(ctx context.Context) error {
-	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "mongodb.drop_job_indexes")
 	defer span.End()

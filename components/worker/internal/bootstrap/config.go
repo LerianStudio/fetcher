@@ -25,9 +25,7 @@ import (
 	pkgStorage "github.com/LerianStudio/fetcher/pkg/storage"
 
 	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
 	mongoDB "github.com/LerianStudio/lib-commons/v5/commons/mongo"
-	libOtel "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
 	libRabbitMQ "github.com/LerianStudio/lib-commons/v5/commons/rabbitmq"
 	tmclient "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/client"
 	tmconsumer "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/consumer"
@@ -35,8 +33,11 @@ import (
 	tmmongo "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/mongo"
 	tmrabbitmq "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/rabbitmq"
 	"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/tenantcache"
-	libZap "github.com/LerianStudio/lib-commons/v5/commons/zap"
 	libLicense "github.com/LerianStudio/lib-license-go/v2/middleware"
+	libLog "github.com/LerianStudio/lib-observability/log"
+	libOtel "github.com/LerianStudio/lib-observability/tracing"
+	libZap "github.com/LerianStudio/lib-observability/zap"
+	streaming "github.com/LerianStudio/lib-streaming"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -211,6 +212,7 @@ func InitWorker() (*Service, error) {
 		ConnectionRepository: connectionRepository,
 		Cryptor:              cryptoService,
 		DocumentSigner:       cryptoWithExternalHMAC,
+		JobEventEmitter:      streaming.NewNoopEmitter(),
 		FileTTL:              cfg.ObjectStorageTTL,
 		JobEventsExchange:    cfg.RabbitMQJobEventsExchange,
 	}
@@ -268,6 +270,7 @@ func InitWorker() (*Service, error) {
 			newRabbitMQManagerAdapter(rabbitMQManager),
 			logger,
 			telemetry,
+			cryptoWithExternalHMAC,
 		)
 
 		service.RabbitMQPublisher = publisherRoutes

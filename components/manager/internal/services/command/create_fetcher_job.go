@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/LerianStudio/lib-observability"
+
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
@@ -18,10 +20,9 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/ports/messaging"
 	"github.com/LerianStudio/fetcher/pkg/resolver"
 
-	"github.com/LerianStudio/lib-commons/v5/commons"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
 	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
+	libLog "github.com/LerianStudio/lib-observability/log"
+	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
 
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.opentelemetry.io/otel/attribute"
@@ -122,7 +123,7 @@ func NewCreateFetcherJobWithTester(
 
 // Execute creates a new fetcher job or returns an existing duplicate.
 func (s *CreateFetcherJob) Execute(ctx context.Context, request model.FetcherRequest) (*CreateFetcherJobResult, error) {
-	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "service.create_fetcher_job")
 	defer span.End()
@@ -613,7 +614,7 @@ func (s *CreateFetcherJob) TestConnection(ctx context.Context, conn *model.Conne
 		return nil
 	}
 
-	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "service.test_connection")
 	defer span.End()

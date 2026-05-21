@@ -14,15 +14,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/LerianStudio/lib-observability"
+
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	modelJob "github.com/LerianStudio/fetcher/pkg/model/job"
 	portDS "github.com/LerianStudio/fetcher/pkg/ports/datasource"
-	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
-	libOtel "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
 	tms3 "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/s3"
+	libLog "github.com/LerianStudio/lib-observability/log"
+	libOtel "github.com/LerianStudio/lib-observability/tracing"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
@@ -52,7 +53,7 @@ type ExtractExternalDataMessage struct {
 func (uc *UseCase) ExtractExternalData(ctx context.Context, body []byte, headers map[string]any) error {
 	startTime := time.Now() // Track execution start time
 
-	logger, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "service.extract_external_data")
 	defer span.End()
@@ -382,7 +383,7 @@ func (uc *UseCase) updateJobWithErrors(ctx context.Context, jobID uuid.UUID, err
 
 // queryExternalData retrieves data from external data sources specified in the message and populates the result map.
 func (uc *UseCase) queryExternalData(ctx context.Context, message ExtractExternalDataMessage, connections []*model.Connection, result map[string]map[string][]map[string]any) error {
-	logger, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "service.extract_external_data.query_external_data")
 	defer span.End()

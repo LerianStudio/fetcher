@@ -3,13 +3,15 @@ package redis
 import (
 	"context"
 	"fmt"
-	"path"
+	"strings"
 	"sync"
 	"time"
 
-	"github.com/LerianStudio/lib-commons/v5/commons"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
+	observability "github.com/LerianStudio/lib-observability"
+
 	"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/valkey"
+	libLog "github.com/LerianStudio/lib-observability/log"
+	obsRuntime "github.com/LerianStudio/lib-observability/runtime"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -47,7 +49,7 @@ func NewInMemoryCache[T any](ttl time.Duration, logger libLog.Logger) *InMemoryC
 		stopCh:  make(chan struct{}),
 	}
 
-	go c.cleanupExpired()
+	obsRuntime.SafeGo(logger, "redis-in-memory-cache-cleanup", obsRuntime.KeepRunning, c.cleanupExpired)
 
 	return c
 }
@@ -62,7 +64,7 @@ func (c *InMemoryCache[T]) scopedPattern(ctx context.Context) (string, error) {
 
 // Get retrieves a cached value by key.
 func (c *InMemoryCache[T]) Get(ctx context.Context, key string) (T, bool, error) {
-	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	_, span := tracer.Start(ctx, "cache.in_memory.get")
 	defer span.End()
@@ -105,7 +107,7 @@ func (c *InMemoryCache[T]) Get(ctx context.Context, key string) (T, bool, error)
 
 // Set stores a value in the cache.
 func (c *InMemoryCache[T]) Set(ctx context.Context, key string, value T, ttl time.Duration) error {
-	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	_, span := tracer.Start(ctx, "cache.in_memory.set")
 	defer span.End()
@@ -140,7 +142,7 @@ func (c *InMemoryCache[T]) Set(ctx context.Context, key string, value T, ttl tim
 
 // Delete removes a value from the cache.
 func (c *InMemoryCache[T]) Delete(ctx context.Context, key string) error {
-	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	_, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	_, span := tracer.Start(ctx, "cache.in_memory.delete")
 	defer span.End()
@@ -174,13 +176,9 @@ func (c *InMemoryCache[T]) Clear(ctx context.Context) error {
 	defer c.mu.Unlock()
 
 	if pattern != "*" {
+		prefix := strings.TrimSuffix(pattern, "*")
 		for key := range c.entries {
-			matched, err := path.Match(pattern, key)
-			if err != nil {
-				return fmt.Errorf("failed to match cache key pattern: %w", err)
-			}
-
-			if matched {
+			if key == pattern || strings.HasPrefix(key, prefix) {
 				delete(c.entries, key)
 			}
 		}

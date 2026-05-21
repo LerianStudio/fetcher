@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/go-connections/nat"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -228,7 +227,7 @@ func (b *Builder) Run() (*RunningApp, error) {
 			return nil, err
 		}
 
-		mp, err := c.MappedPort(ctx, nat.Port(b.ports[0]))
+		mp, err := c.MappedPort(ctx, b.ports[0])
 		if err != nil {
 			_ = c.Terminate(ctx)
 			return nil, err
@@ -297,11 +296,9 @@ func (w waitHTTP) Configure(req *testcontainers.ContainerRequest) {
 	p := fmt.Sprintf("%d/tcp", w.port)
 	req.ExposedPorts = uniqueAppend(req.ExposedPorts, p)
 
-	port := nat.Port(p)
-
 	req.WaitingFor = wait.ForAll(
-		wait.ForListeningPort(port).WithStartupTimeout(w.timeout),
-		wait.ForHTTP(w.path).WithPort(port).WithStartupTimeout(w.timeout),
+		wait.ForListeningPort(p).WithStartupTimeout(w.timeout),
+		wait.ForHTTP(w.path).WithPort(p).WithStartupTimeout(w.timeout),
 	).WithDeadline(w.timeout)
 }
 
@@ -338,7 +335,7 @@ func WaitPort(port int, timeout time.Duration) WaitStrategy {
 func (w waitPort) Configure(req *testcontainers.ContainerRequest) {
 	p := fmt.Sprintf("%d/tcp", w.port)
 	req.ExposedPorts = uniqueAppend(req.ExposedPorts, p)
-	req.WaitingFor = wait.ForListeningPort(nat.Port(p)).WithStartupTimeout(w.timeout)
+	req.WaitingFor = wait.ForListeningPort(p).WithStartupTimeout(w.timeout)
 }
 
 type waitRunning struct {

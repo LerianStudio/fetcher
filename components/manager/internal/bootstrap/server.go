@@ -9,10 +9,10 @@ import (
 
 	"github.com/LerianStudio/fetcher/pkg/bootstrap/readyz"
 	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
-	libCommonsLog "github.com/LerianStudio/lib-commons/v5/commons/log"
-	libCommonsOtel "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
 	libCommonsServer "github.com/LerianStudio/lib-commons/v5/commons/server"
 	libLicense "github.com/LerianStudio/lib-license-go/v2/middleware"
+	libCommonsLog "github.com/LerianStudio/lib-observability/log"
+	libCommonsOtel "github.com/LerianStudio/lib-observability/tracing"
 	"github.com/gofiber/fiber/v2"
 )
 

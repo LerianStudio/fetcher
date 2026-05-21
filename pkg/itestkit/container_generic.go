@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/docker/go-connections/nat"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -48,7 +47,7 @@ func (w WaitListeningPort) Apply(req *testcontainers.ContainerRequest) {
 		w.Timeout = 30 * time.Second
 	}
 
-	req.WaitingFor = wait.ForListeningPort(nat.Port(w.Port)).WithStartupTimeout(w.Timeout)
+	req.WaitingFor = wait.ForListeningPort(w.Port).WithStartupTimeout(w.Timeout)
 }
 
 func (b *Builder) WithContainerCustomize(spec ContainerSpec) *Builder {
@@ -124,7 +123,7 @@ func (g *genericContainerInfra) Start(ctx context.Context, env *Env) error {
 	}
 
 	for _, p := range g.spec.ExposedPorts {
-		mp, err := cn.MappedPort(ctx, nat.Port(p))
+		mp, err := cn.MappedPort(ctx, p)
 		if err != nil {
 			return err
 		}

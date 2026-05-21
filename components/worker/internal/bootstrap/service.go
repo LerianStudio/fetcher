@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/LerianStudio/lib-commons/v5/commons"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
+	libLog "github.com/LerianStudio/lib-observability/log"
 )
 
 // runLauncher launches the consumer and (when present) the health-port

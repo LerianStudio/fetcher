@@ -1,8 +1,10 @@
 package mongodb
 
 import (
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/go-connections/nat"
+	"net/netip"
+
+	"github.com/moby/moby/api/types/container"
+	mobyNetwork "github.com/moby/moby/api/types/network"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -39,11 +41,11 @@ func WithMongoDBFixedPort(hostPort string) MongoDBOption {
 		o.runOpts = append(o.runOpts, testcontainers.WithHostConfigModifier(
 			func(hc *container.HostConfig) {
 				if hc.PortBindings == nil {
-					hc.PortBindings = nat.PortMap{}
+					hc.PortBindings = mobyNetwork.PortMap{}
 				}
 
-				hc.PortBindings[nat.Port("27017/tcp")] = []nat.PortBinding{
-					{HostIP: "0.0.0.0", HostPort: hostPort},
+				hc.PortBindings[mobyNetwork.MustParsePort("27017/tcp")] = []mobyNetwork.PortBinding{
+					{HostIP: netip.MustParseAddr("0.0.0.0"), HostPort: hostPort},
 				}
 			},
 		))

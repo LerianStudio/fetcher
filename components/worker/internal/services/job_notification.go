@@ -8,9 +8,12 @@ import (
 	"strings"
 	"time"
 
-	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
-	libOtel "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
+	observability "github.com/LerianStudio/lib-observability"
+	streaming "github.com/LerianStudio/lib-streaming"
+
+	libLog "github.com/LerianStudio/lib-observability/log"
+	libOtel "github.com/LerianStudio/lib-observability/tracing"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/trace"
@@ -98,7 +101,7 @@ func (uc *UseCase) publishJobNotification(
 	if tracer != nil {
 		notificationTracer = tracer
 	} else {
-		_, notificationTracer, _, _ = libCommons.NewTrackingFromContext(ctx)
+		_, notificationTracer, _, _ = observability.NewTrackingFromContext(ctx)
 	}
 
 	ctx, notifySpan := notificationTracer.Start(ctx, "service.publish_job_notification")
@@ -159,6 +162,13 @@ func (uc *UseCase) publishJobNotification(
 		return fmt.Errorf("publishing job notification: %w", err)
 	}
 
+	if err := uc.emitJobNotificationEvent(ctx, status, message.JobID.String(), notificationJSON, logger); err != nil {
+		libOtel.HandleSpanError(notifySpan, "Error emitting job notification with lib-streaming", err)
+		logger.Log(ctx, libLog.LevelError, "error emitting job notification with lib-streaming", libLog.Err(err))
+
+		return fmt.Errorf("emitting job notification event: %w", err)
+	}
+
 	logger.Log(ctx, libLog.LevelInfo, "published job notification successfully",
 		libLog.String("job_id", message.JobID.String()),
 		libLog.String("status", status),
@@ -168,12 +178,31 @@ func (uc *UseCase) publishJobNotification(
 	return nil
 }
 
+func (uc *UseCase) emitJobNotificationEvent(ctx context.Context, status, subject string, payload []byte, logger libLog.Logger) error {
+	if uc.JobEventEmitter == nil {
+		return nil
+	}
+
+	tenantID := core.GetTenantIDContext(ctx)
+	if tenantID == "" {
+		logger.Log(ctx, libLog.LevelDebug, "tenant ID missing, skipping lib-streaming job notification event")
+		return nil
+	}
+
+	return uc.JobEventEmitter.Emit(ctx, streaming.EmitRequest{
+		DefinitionKey: fmt.Sprintf("job.%s", status),
+		TenantID:      tenantID,
+		Subject:       subject,
+		Payload:       payload,
+	})
+}
+
 func normalizeJobNotificationLogger(ctx context.Context, logger libLog.Logger) libLog.Logger {
 	if logger != nil {
 		return logger
 	}
 
-	ctxLogger := libCommons.NewLoggerFromContext(ctx)
+	ctxLogger := observability.NewLoggerFromContext(ctx)
 	if ctxLogger != nil {
 		return ctxLogger
 	}

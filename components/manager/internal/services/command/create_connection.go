@@ -4,14 +4,15 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/LerianStudio/lib-observability"
+
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/model"
 
 	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
-	"github.com/LerianStudio/lib-commons/v5/commons"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
+	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
 
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -29,7 +30,7 @@ func NewCreateConnection(connectionRepo connRepo.Repository, cryptor crypto.Cryp
 }
 
 func (s *CreateConnection) Execute(ctx context.Context, connInput model.ConnectionInput, productName string) (*model.Connection, error) {
-	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	_, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "service.create_connection")
 	defer span.End()

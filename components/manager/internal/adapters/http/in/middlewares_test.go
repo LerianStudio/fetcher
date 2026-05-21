@@ -1,12 +1,12 @@
 package in
 
 import (
-	"context"
 	"net/http/httptest"
 	"testing"
 
-	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
+	observability "github.com/LerianStudio/lib-observability"
+
+	libLog "github.com/LerianStudio/lib-observability/log"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -23,14 +23,9 @@ func setupMiddlewareTestApp() *fiber.App {
 	// Middleware to inject test context with logger and tracer
 	app.Use(func(c *fiber.Ctx) error {
 		logger := &libLog.GoLogger{Level: libLog.LevelDebug}
-		values := &libCommons.CustomContextKeyValue{
-			HeaderID: "test-request-id",
-			Logger:   logger,
-			Tracer:   otel.Tracer("test"),
-		}
-
-		ctx := c.UserContext()
-		ctx = context.WithValue(ctx, libCommons.CustomContextKey, values)
+		ctx := observability.ContextWithHeaderID(c.UserContext(), "test-request-id")
+		ctx = observability.ContextWithLogger(ctx, logger)
+		ctx = observability.ContextWithTracer(ctx, otel.Tracer("test"))
 		c.SetUserContext(ctx)
 
 		return c.Next()

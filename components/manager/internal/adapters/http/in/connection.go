@@ -3,6 +3,8 @@ package in
 import (
 	"fmt"
 
+	"github.com/LerianStudio/lib-observability"
+
 	"github.com/LerianStudio/fetcher/components/manager/internal/services/command"
 	"github.com/LerianStudio/fetcher/components/manager/internal/services/query"
 
@@ -11,9 +13,8 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/model"
 	httpUtils "github.com/LerianStudio/fetcher/pkg/net/http"
 
-	"github.com/LerianStudio/lib-commons/v5/commons"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
+	libLog "github.com/LerianStudio/lib-observability/log"
+	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -70,7 +71,7 @@ func NewConnectionHandler(
 //	@Router			/v1/management/connections [post]
 func (h *ConnectionHandler) CreateConnection(c *fiber.Ctx) error {
 	ctx := c.UserContext()
-	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "handler.create_connection")
 	defer span.End()
@@ -151,7 +152,7 @@ func (h *ConnectionHandler) CreateConnection(c *fiber.Ctx) error {
 //	@Router			/v1/management/connections [get]
 func (h *ConnectionHandler) ListConnections(c *fiber.Ctx) error {
 	ctx := c.UserContext()
-	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "handler.list_connection")
 	defer span.End()
@@ -208,7 +209,7 @@ func (h *ConnectionHandler) ListConnections(c *fiber.Ctx) error {
 //	@Router			/v1/management/connections/{id} [get]
 func (h *ConnectionHandler) GetConnection(c *fiber.Ctx) error {
 	ctx := c.UserContext()
-	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "handler.get_connection")
 	defer span.End()
@@ -263,7 +264,7 @@ func (h *ConnectionHandler) GetConnection(c *fiber.Ctx) error {
 //	@Router			/v1/management/connections/{id}/test [post]
 func (h *ConnectionHandler) TestConnection(c *fiber.Ctx) error {
 	ctx := c.UserContext()
-	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "handler.test_connection")
 	defer span.End()
@@ -320,7 +321,7 @@ func (h *ConnectionHandler) TestConnection(c *fiber.Ctx) error {
 //	@Router			/v1/management/connections/{id} [patch]
 func (h *ConnectionHandler) UpdateConnection(c *fiber.Ctx) error {
 	ctx := c.UserContext()
-	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "handler.update_connection")
 	defer span.End()
@@ -399,7 +400,7 @@ func (h *ConnectionHandler) UpdateConnection(c *fiber.Ctx) error {
 //	@Router			/v1/management/connections/{id} [delete]
 func (h *ConnectionHandler) DeleteConnection(c *fiber.Ctx) error {
 	ctx := c.UserContext()
-	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "handler.delete_connection")
 	defer span.End()
@@ -455,7 +456,7 @@ func (h *ConnectionHandler) DeleteConnection(c *fiber.Ctx) error {
 //	@Router			/v1/management/connections/validate-schema [post]
 func (h *ConnectionHandler) ValidateSchema(c *fiber.Ctx) error {
 	ctx := c.UserContext()
-	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "handler.validate_schema")
 	defer span.End()
@@ -516,7 +517,7 @@ func (h *ConnectionHandler) ValidateSchema(c *fiber.Ctx) error {
 //	@Router			/v1/management/connections/{id}/schema [get]
 func (h *ConnectionHandler) GetConnectionSchema(c *fiber.Ctx) error {
 	ctx := c.UserContext()
-	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "handler.get_connection_schema")
 	defer span.End()

@@ -13,11 +13,13 @@ import (
 	"sync/atomic"
 	"time"
 
+	observability "github.com/LerianStudio/lib-observability"
+
 	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
 	libConstants "github.com/LerianStudio/lib-commons/v5/commons/constants"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
 	libRabbitmq "github.com/LerianStudio/lib-commons/v5/commons/rabbitmq"
+	libLog "github.com/LerianStudio/lib-observability/log"
+	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
 
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 
@@ -706,7 +708,7 @@ func (prmq *RabbitMQAdapter) ensureChannel(span trace.Span, logger libLog.Logger
 
 // ProducerDefault sends a message to the specified exchange and routing key in RabbitMQ.
 func (prmq *RabbitMQAdapter) ProducerDefault(ctx context.Context, exchange, key string, queueMessage []byte, header *map[string]any) error {
-	logger, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	logger.Log(context.Background(), libLog.LevelInfo, "Init sent message")
 
@@ -745,13 +747,10 @@ func (prmq *RabbitMQAdapter) ProducerDefault(ctx context.Context, exchange, key 
 		libOpentelemetry.HandleSpanError(spanProducer, "Failed to convert queue message to JSON string", err)
 	}
 
-	headers := amqp.Table{
-		libConstants.HeaderID: reqID,
-		"x-retry-count":       0,
-	}
+	headers := map[string]any(nil)
 
 	if header != nil {
-		maps.Copy(headers, *header)
+		headers = *header
 
 		err := libOpentelemetry.SetSpanAttributesFromValue(spanProducer, "app.request.rabbitmq.headers", *header, nil)
 		if err != nil {
@@ -759,17 +758,8 @@ func (prmq *RabbitMQAdapter) ProducerDefault(ctx context.Context, exchange, key 
 		}
 	}
 
-	libOpentelemetry.InjectTraceHeadersIntoQueue(ctx, (*map[string]any)(&headers))
-
-	// Sign message if signer is configured and signing is enabled
 	if prmq.options.Signer != nil && prmq.options.EnableMessageSigning {
 		timestamp := time.Now().UTC().Unix()
-		payload := crypto.BuildSignaturePayload(timestamp, queueMessage)
-		signature := prmq.options.Signer.Sign(payload)
-
-		headers[HeaderMessageSignature] = signature
-		headers[HeaderSignatureTimestamp] = strconv.FormatInt(timestamp, 10)
-		headers[HeaderSignatureVersion] = prmq.options.Signer.SignatureVersion()
 
 		spanProducer.SetAttributes(
 			attribute.String("messaging.signature.version", prmq.options.Signer.SignatureVersion()),
@@ -778,17 +768,7 @@ func (prmq *RabbitMQAdapter) ProducerDefault(ctx context.Context, exchange, key 
 	}
 
 	publish := func(ch amqpChannel) error {
-		return ch.Publish(
-			exchange,
-			key,
-			false,
-			false,
-			amqp.Publishing{
-				ContentType:  "application/json",
-				DeliveryMode: amqp.Persistent,
-				Headers:      headers,
-				Body:         queueMessage,
-			})
+		return ch.Publish(exchange, key, false, false, BuildSecurePublishing(ctx, reqID, queueMessage, headers, prmq.options.Signer, prmq.options.EnableMessageSigning))
 	}
 
 	var lastErr error
@@ -854,7 +834,7 @@ func (prmq *RabbitMQAdapter) ProducerDefault(ctx context.Context, exchange, key 
 // ConsumerLoop fetches messages from the queue, delegates processing to handler, and applies ACK/NACK.
 // The handler always receives headers (may be empty map if message has no headers).
 func (prmq *RabbitMQAdapter) ConsumerLoop(ctx context.Context, queue string, concurrency int, handler func(ctx context.Context, body []byte, headers map[string]any) error) error {
-	logger, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Starting consumer loop for queue=%s", queue))
 
 	if concurrency < 1 {
@@ -1088,8 +1068,8 @@ func (prmq *RabbitMQAdapter) processDelivery(
 	// Create context with request ID and logger
 	logWithFields := logger.With(libLog.Field{Key: libConstants.HeaderID, Value: requestIDStr})
 
-	msgCtx := libCommons.ContextWithLogger(
-		libCommons.ContextWithHeaderID(context.Background(), requestIDStr),
+	msgCtx := observability.ContextWithLogger(
+		observability.ContextWithHeaderID(context.Background(), requestIDStr),
 		logWithFields,
 	)
 
@@ -1097,7 +1077,7 @@ func (prmq *RabbitMQAdapter) processDelivery(
 	msgCtx = libOpentelemetry.ExtractTraceContextFromQueueHeaders(msgCtx, d.Headers)
 
 	// Create tracer from context and start span
-	_, msgTracer, _, _ := libCommons.NewTrackingFromContext(msgCtx) //nolint:dogsled // NewTrackingFromContext returns 4 values, only tracer needed here
+	_, msgTracer, _, _ := observability.NewTrackingFromContext(msgCtx) //nolint:dogsled // NewTrackingFromContext returns 4 values, only tracer needed here
 
 	hctx, hspan := msgTracer.Start(msgCtx, "rabbitmq.consumer.handle_message")
 	defer hspan.End()
@@ -1194,7 +1174,7 @@ func (prmq *RabbitMQAdapter) processDelivery(
 // Shutdown gracefully closes open channels and the underlying connection.
 // It respects the context deadline or uses the configured shutdown timeout.
 func (prmq *RabbitMQAdapter) Shutdown(ctx context.Context) error {
-	logger := libCommons.NewLoggerFromContext(ctx)
+	logger := observability.NewLoggerFromContext(ctx)
 
 	// Indicate shutdown in progress
 	prmq.shutdown.Store(true)

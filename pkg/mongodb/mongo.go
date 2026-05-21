@@ -7,11 +7,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/LerianStudio/lib-observability"
+
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
-	"github.com/LerianStudio/lib-commons/v5/commons"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
 	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
+	libLog "github.com/LerianStudio/lib-observability/log"
 	"go.mongodb.org/mongo-driver/bson/bsoncodec"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/readpref"
@@ -43,7 +44,7 @@ func ValidateFieldsInSchemaMongo(expectedFields []string, schema CollectionSchem
 
 //nolint:gocyclo // High complexity is inherent to comprehensive MongoDB error handling across multiple error types
 func MapMongoErrorToResponse(err error, ctx context.Context) error {
-	logger := commons.NewLoggerFromContext(ctx)
+	logger := observability.NewLoggerFromContext(ctx)
 
 	// Client-side cancellation / deadlines (HTTP layer)
 	// If the client closed the connection, you often can't write a response anyway.

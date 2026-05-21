@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/LerianStudio/fetcher/pkg/crypto"
-	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
 	libConstants "github.com/LerianStudio/lib-commons/v5/commons/constants"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
+	observability "github.com/LerianStudio/lib-observability"
+	libLog "github.com/LerianStudio/lib-observability/log"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -990,13 +990,10 @@ func (t *testAcknowledger) Reject(uint64, bool) error {
 
 func testContextWithHeader(header string) context.Context {
 	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
-	values := &libCommons.CustomContextKeyValue{
-		HeaderID: header,
-		Logger:   logger,
-		Tracer:   otel.Tracer("test"),
-	}
+	ctx := observability.ContextWithHeaderID(context.Background(), header)
+	ctx = observability.ContextWithLogger(ctx, logger)
 
-	return context.WithValue(context.Background(), libCommons.CustomContextKey, values)
+	return observability.ContextWithTracer(ctx, otel.Tracer("test"))
 }
 
 // -----------------------------------------------------------------------------
@@ -1321,7 +1318,6 @@ func TestRabbitMQAdapter_ConsumerLoop_ReturnsNilOnContextDeadlineExceeded(t *tes
 	}
 
 	err := adapter.ConsumerLoop(ctx, "queue", 1, handler)
-
 	// ConsumerLoop may return either context.DeadlineExceeded (if caught at loop start)
 	// or nil (if caught during runConsumerCycle). Both are valid graceful exits.
 	if err != nil {

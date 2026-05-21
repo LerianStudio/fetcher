@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/LerianStudio/fetcher/pkg/itestkit"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/go-connections/nat"
+	"github.com/moby/moby/api/types/container"
+	mobyNetwork "github.com/moby/moby/api/types/network"
 )
 
 func TestSeaweedFSHelpersWithoutDocker(t *testing.T) {
@@ -125,7 +125,7 @@ func TestSeaweedFSHelpersWithoutDocker(t *testing.T) {
 				hc := &container.HostConfig{}
 				opts.hostConfigModifiers[0](hc)
 
-				binding := hc.PortBindings[nat.Port("8888/tcp")]
+				binding := hc.PortBindings[mobyNetwork.MustParsePort("8888/tcp")]
 				if len(binding) != 1 || binding[0].HostPort != "18888" {
 					t.Fatalf("unexpected port binding: %#v", binding)
 				}

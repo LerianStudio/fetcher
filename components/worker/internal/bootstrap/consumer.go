@@ -10,14 +10,16 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/LerianStudio/lib-observability"
+
 	"github.com/LerianStudio/fetcher/components/worker/internal/adapters/rabbitmq"
 	"github.com/LerianStudio/fetcher/components/worker/internal/services"
 	"github.com/LerianStudio/fetcher/pkg/bootstrap/readyz"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
-	"github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
 	tmconsumer "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/consumer"
 	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
 	tmmongo "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/mongo"
+	libLog "github.com/LerianStudio/lib-observability/log"
+	opentelemetry "github.com/LerianStudio/lib-observability/tracing"
 
 	"github.com/LerianStudio/lib-commons/v5/commons"
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -141,8 +143,8 @@ func (mq *MultiQueueConsumer) Run(l *commons.Launcher) error {
 		baseLogger = mq.logger
 	}
 
-	baseCtx := commons.ContextWithLogger(
-		commons.ContextWithHeaderID(context.Background(), requestID),
+	baseCtx := observability.ContextWithLogger(
+		observability.ContextWithHeaderID(context.Background(), requestID),
 		baseLogger,
 	)
 
@@ -299,7 +301,7 @@ func (mq *MultiQueueConsumer) handlerGenerateReport(ctx context.Context, body []
 		return nil
 	}
 
-	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	spanCtx, span := tracer.Start(ctx, "consumer.handler_generate_report")
 	defer span.End()

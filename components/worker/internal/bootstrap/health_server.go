@@ -7,9 +7,9 @@ import (
 
 	"github.com/LerianStudio/fetcher/pkg/bootstrap/readyz"
 	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
-	libOtel "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
 	libCommonsServer "github.com/LerianStudio/lib-commons/v5/commons/server"
+	libLog "github.com/LerianStudio/lib-observability/log"
+	libOtel "github.com/LerianStudio/lib-observability/tracing"
 	"github.com/gofiber/fiber/v2"
 )
 

@@ -14,9 +14,9 @@ import (
 	"github.com/LerianStudio/fetcher/components/worker/internal/services"
 	"github.com/LerianStudio/fetcher/pkg/bootstrap/readyz"
 	pkgRabbitMQ "github.com/LerianStudio/fetcher/pkg/rabbitmq"
-	"github.com/LerianStudio/lib-commons/v5/commons"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
-	libOtel "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
+	observability "github.com/LerianStudio/lib-observability"
+	libLog "github.com/LerianStudio/lib-observability/log"
+	libOtel "github.com/LerianStudio/lib-observability/tracing"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
 	"go.uber.org/mock/gomock"
@@ -268,16 +268,9 @@ func TestServiceRun(t *testing.T) {
 func contextWithBootstrapTracking(t *testing.T) context.Context {
 	t.Helper()
 
-	requestID, err := commons.GenerateUUIDv7()
-	if err != nil {
-		requestID = uuid.New()
-	}
+	requestID := uuid.New()
+	ctx := observability.ContextWithHeaderID(context.Background(), requestID.String())
+	ctx = observability.ContextWithLogger(ctx, testBootstrapLogger())
 
-	values := &commons.CustomContextKeyValue{
-		HeaderID: requestID.String(),
-		Logger:   testBootstrapLogger(),
-		Tracer:   otel.Tracer("bootstrap-test"),
-	}
-
-	return context.WithValue(context.Background(), commons.CustomContextKey, values)
+	return observability.ContextWithTracer(ctx, otel.Tracer("bootstrap-test"))
 }

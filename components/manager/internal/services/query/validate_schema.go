@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/LerianStudio/lib-observability"
+
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
@@ -18,9 +20,8 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/resolver"
 	"github.com/LerianStudio/fetcher/pkg/schemautil"
 
-	"github.com/LerianStudio/lib-commons/v5/commons"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
+	libLog "github.com/LerianStudio/lib-observability/log"
+	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
 
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -63,7 +64,7 @@ func (s *ValidateSchema) Execute(
 	ctx context.Context,
 	request model.SchemaValidationRequest,
 ) (*model.SchemaValidationResponse, error) {
-	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "service.validate_schema")
 	defer span.End()
@@ -240,7 +241,7 @@ func (s *ValidateSchema) getOrFetchSchema(
 	conn *model.Connection,
 	schemas []string,
 ) (*model.DataSourceSchema, error) {
-	logger, tracer, _, _ := commons.NewTrackingFromContext(ctx)
+	logger, tracer, _, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "service.validate_schema.get_or_fetch_schema")
 	defer span.End()

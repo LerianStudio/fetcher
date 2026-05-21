@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/LerianStudio/lib-observability"
+
 	"github.com/LerianStudio/fetcher/components/manager/internal/services/command"
 	"github.com/LerianStudio/fetcher/components/manager/internal/services/query"
 	"github.com/LerianStudio/fetcher/pkg/model"
@@ -18,8 +20,7 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/ports/messaging"
 
-	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
+	libLog "github.com/LerianStudio/lib-observability/log"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -37,14 +38,9 @@ func setupTestApp() *fiber.App {
 	// Middleware to inject test context with logger and tracer
 	app.Use(func(c *fiber.Ctx) error {
 		logger := &libLog.GoLogger{Level: libLog.LevelDebug}
-		values := &libCommons.CustomContextKeyValue{
-			HeaderID: "test-request-id",
-			Logger:   logger,
-			Tracer:   otel.Tracer("test"),
-		}
-
-		ctx := c.UserContext()
-		ctx = context.WithValue(ctx, libCommons.CustomContextKey, values)
+		ctx := observability.ContextWithHeaderID(c.UserContext(), "test-request-id")
+		ctx = observability.ContextWithLogger(ctx, logger)
+		ctx = observability.ContextWithTracer(ctx, otel.Tracer("test"))
 		c.SetUserContext(ctx)
 
 		return c.Next()

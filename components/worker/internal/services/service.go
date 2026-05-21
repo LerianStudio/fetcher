@@ -11,6 +11,7 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/ports/publisher"
 	"github.com/LerianStudio/fetcher/pkg/ports/storage"
 	"github.com/LerianStudio/fetcher/pkg/resolver"
+	streaming "github.com/LerianStudio/lib-streaming"
 )
 
 // UseCase is a struct that coordinates the handling of template files, report storage, external data sources, and report data.
@@ -36,6 +37,10 @@ type UseCase struct {
 
 	// RabbitMQPublisher is used to publish job event notifications to RabbitMQ topic exchange.
 	RabbitMQPublisher publisher.Repository
+
+	// JobEventEmitter publishes past-tense job business events through lib-streaming.
+	// RabbitMQPublisher remains wired for backward-compatible public event contracts.
+	JobEventEmitter streaming.Emitter
 
 	// JobEventsExchange is the name of the RabbitMQ topic exchange for job events.
 	JobEventsExchange string

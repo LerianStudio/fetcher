@@ -318,9 +318,10 @@ func TestFallbackCache_Delete_RedisError(t *testing.T) {
 	// Close Redis
 	mr.Close()
 
-	// Delete should still succeed (deletes from memory, logs Redis error)
+	// Delete returns the Redis error after deleting from memory so stale Redis
+	// entries are visible to callers instead of being silently ignored.
 	err = cache.Delete(ctx, key)
-	assert.NoError(t, err)
+	assert.Error(t, err)
 
 	// Verify deleted from memory
 	_, found, err := cache.Get(ctx, key)
@@ -343,9 +344,10 @@ func TestFallbackCache_Clear_RedisError(t *testing.T) {
 	// Close Redis
 	mr.Close()
 
-	// Clear should still succeed (clears memory, logs Redis error)
+	// Clear returns the Redis error after clearing memory so stale Redis entries
+	// are visible to callers instead of being silently ignored.
 	err := cache.Clear(ctx)
-	assert.NoError(t, err)
+	assert.Error(t, err)
 
 	// Verify cleared from memory
 	for i := 0; i < 3; i++ {
@@ -396,6 +398,31 @@ func TestFallbackCache_MemoryFallback_TenantScopedRawKeys(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, foundB)
 	assert.Equal(t, valueB, gotB)
+}
+
+func TestFallbackCache_ClearMemoryFallbackTenantIsolation(t *testing.T) {
+	t.Parallel()
+
+	_, cache := setupFallbackCache(t)
+	ctxA := tmcore.ContextWithTenantID(context.Background(), "tenant-fallback-clear-a")
+	ctxB := tmcore.ContextWithTenantID(context.Background(), "tenant-fallback-clear-b")
+
+	cache.mu.Lock()
+	cache.useRedis = false
+	cache.mu.Unlock()
+
+	require.NoError(t, cache.Set(ctxA, "same-config-name", testStruct{ID: "a"}, 0))
+	require.NoError(t, cache.Set(ctxB, "same-config-name", testStruct{ID: "b"}, 0))
+	require.NoError(t, cache.Clear(ctxA))
+
+	_, foundA, err := cache.Get(ctxA, "same-config-name")
+	require.NoError(t, err)
+	assert.False(t, foundA)
+
+	gotB, foundB, err := cache.Get(ctxB, "same-config-name")
+	require.NoError(t, err)
+	require.True(t, foundB)
+	assert.Equal(t, "b", gotB.ID)
 }
 
 func TestFallbackCache_UseRedisFlag_Switch(t *testing.T) {

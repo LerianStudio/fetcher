@@ -5,14 +5,15 @@ import (
 	"context"
 	"fmt"
 
+	observability "github.com/LerianStudio/lib-observability"
+
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	portPublisher "github.com/LerianStudio/fetcher/pkg/ports/publisher"
 	"github.com/LerianStudio/fetcher/pkg/rabbitmq"
-	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
-	"github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
 	libRabbitmq "github.com/LerianStudio/lib-commons/v5/commons/rabbitmq"
 	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
+	libLog "github.com/LerianStudio/lib-observability/log"
+	opentelemetry "github.com/LerianStudio/lib-observability/tracing"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -39,6 +40,7 @@ type PublisherRoutes struct {
 	adapter         rabbitmq.Adapter         // Used in single-tenant mode
 	rabbitMQManager RabbitMQManagerInterface // Used in multi-tenant mode (nil in single-tenant)
 	multiTenantMode bool
+	signer          crypto.Signer
 	libLog.
 		Logger
 	opentelemetry.Telemetry
@@ -63,6 +65,7 @@ func NewPublisherRoutesWithAdapter(adapter rabbitmq.Adapter, logger libLog.Logge
 
 	pr := &PublisherRoutes{
 		adapter:   adapter,
+		signer:    nil,
 		Logger:    logger,
 		Telemetry: telemetryValue,
 	}
@@ -72,7 +75,7 @@ func NewPublisherRoutesWithAdapter(adapter rabbitmq.Adapter, logger libLog.Logge
 
 // NewPublisherRoutesMultiTenant creates a new instance of PublisherRoutes configured for
 // multi-tenant mode using tmrabbitmq.Manager for per-tenant vhost isolation.
-func NewPublisherRoutesMultiTenant(manager RabbitMQManagerInterface, logger libLog.Logger, telemetry *opentelemetry.Telemetry) *PublisherRoutes {
+func NewPublisherRoutesMultiTenant(manager RabbitMQManagerInterface, logger libLog.Logger, telemetry *opentelemetry.Telemetry, signer crypto.Signer) *PublisherRoutes {
 	telemetryValue := opentelemetry.Telemetry{}
 	if telemetry != nil {
 		telemetryValue = *telemetry
@@ -81,6 +84,7 @@ func NewPublisherRoutesMultiTenant(manager RabbitMQManagerInterface, logger libL
 	return &PublisherRoutes{
 		rabbitMQManager: manager,
 		multiTenantMode: true,
+		signer:          signer,
 		Logger:          logger,
 		Telemetry:       telemetryValue,
 	}
@@ -90,7 +94,7 @@ func NewPublisherRoutesMultiTenant(manager RabbitMQManagerInterface, logger libL
 // In multi-tenant mode, publishes to the tenant-specific vhost via tmrabbitmq.Manager.
 // In single-tenant mode, uses the static RabbitMQ adapter.
 func (pr *PublisherRoutes) Publish(ctx context.Context, exchange, routingKey string, body []byte) error {
-	_, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
+	_, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "adapter.rabbitmq.publish")
 	defer span.End()
@@ -139,13 +143,7 @@ func (pr *PublisherRoutes) Publish(ctx context.Context, exchange, routingKey str
 			return fmt.Errorf("failed to declare exchange %s on tenant %s vhost: %w", exchange, tenantID, err)
 		}
 
-		msg := amqp.Publishing{
-			ContentType: "application/json",
-			Headers: amqp.Table{
-				"X-Tenant-ID": tenantID,
-			},
-			Body: body,
-		}
+		msg := rabbitmq.BuildSecurePublishing(ctx, reqID, body, map[string]any{"X-Tenant-ID": tenantID}, pr.signer, true)
 
 		if err := ch.PublishWithContext(ctx, exchange, routingKey, false, false, msg); err != nil {
 			opentelemetry.HandleSpanError(span, "Failed to publish message to tenant vhost", err)

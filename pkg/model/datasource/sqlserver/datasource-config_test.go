@@ -10,7 +10,7 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/sqlserver"
 	"github.com/LerianStudio/fetcher/pkg/testutil"
 	libConstant "github.com/LerianStudio/lib-commons/v5/commons/constants"
-	"github.com/LerianStudio/lib-commons/v5/commons/log"
+	"github.com/LerianStudio/lib-observability/log"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/mock/gomock"
 )

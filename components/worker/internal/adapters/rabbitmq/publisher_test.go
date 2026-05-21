@@ -5,13 +5,20 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/rabbitmq"
-	"github.com/LerianStudio/lib-commons/v5/commons/log"
-	"github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
+	libConstants "github.com/LerianStudio/lib-commons/v5/commons/constants"
 	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
+	observability "github.com/LerianStudio/lib-observability"
+	obsConstants "github.com/LerianStudio/lib-observability/constants"
+	"github.com/LerianStudio/lib-observability/log"
+	opentelemetry "github.com/LerianStudio/lib-observability/tracing"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.uber.org/mock/gomock"
 )
 
@@ -187,7 +194,7 @@ func TestPublish_MultiTenant_RequiresTenantID(t *testing.T) {
 
 	mockMgr := &mockRabbitMQManager{channel: &mockChannel{}}
 	logger := log.NewNop()
-	publisher := NewPublisherRoutesMultiTenant(mockMgr, logger, nil)
+	publisher := NewPublisherRoutesMultiTenant(mockMgr, logger, nil, nil)
 
 	err := publisher.Publish(context.Background(), "test-exchange", "test.key", []byte(`{}`))
 
@@ -201,7 +208,7 @@ func TestPublish_MultiTenant_Success(t *testing.T) {
 	mockCh := &mockChannel{}
 	mockMgr := &mockRabbitMQManager{channel: mockCh}
 	logger := log.NewNop()
-	publisher := NewPublisherRoutesMultiTenant(mockMgr, logger, nil)
+	publisher := NewPublisherRoutesMultiTenant(mockMgr, logger, nil, nil)
 
 	ctx := tmcore.ContextWithTenantID(context.Background(), "tenant-123")
 	err := publisher.Publish(ctx, "test-exchange", "test.key", []byte(`{"status":"completed"}`))
@@ -217,7 +224,7 @@ func TestPublish_MultiTenant_AddsTenantIDHeader(t *testing.T) {
 	mockCh := &mockChannel{}
 	mockMgr := &mockRabbitMQManager{channel: mockCh}
 	logger := log.NewNop()
-	publisher := NewPublisherRoutesMultiTenant(mockMgr, logger, nil)
+	publisher := NewPublisherRoutesMultiTenant(mockMgr, logger, nil, nil)
 
 	ctx := tmcore.ContextWithTenantID(context.Background(), tenantID)
 	err := publisher.Publish(ctx, "test-exchange", "test.key", []byte(`{"status":"completed"}`))
@@ -227,12 +234,47 @@ func TestPublish_MultiTenant_AddsTenantIDHeader(t *testing.T) {
 	assert.Equal(t, tenantID, mockCh.published.Headers["X-Tenant-ID"])
 }
 
+func TestPublish_MultiTenant_UsesCanonicalSecureEnvelope(t *testing.T) {
+	t.Parallel()
+
+	signer, err := crypto.NewHMACSigner([]byte("12345678901234567890123456789012"), crypto.SignatureVersion)
+	require.NoError(t, err)
+
+	tenantID := "tenant-envelope-123"
+	body := []byte(`{"status":"completed"}`)
+	mockCh := &mockChannel{}
+	mockMgr := &mockRabbitMQManager{channel: mockCh}
+	publisher := NewPublisherRoutesMultiTenant(mockMgr, log.NewNop(), nil, signer)
+
+	tp := sdktrace.NewTracerProvider()
+	defer func() { require.NoError(t, tp.Shutdown(context.Background())) }()
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+
+	ctx := observability.ContextWithTracer(context.Background(), tp.Tracer("publisher-test"))
+	ctx, span := tp.Tracer("publisher-test").Start(ctx, "test.publish")
+	defer span.End()
+	ctx = tmcore.ContextWithTenantID(ctx, tenantID)
+	err = publisher.Publish(ctx, "test-exchange", "test.key", body)
+
+	require.NoError(t, err)
+	require.NotNil(t, mockCh.published.Headers)
+	assert.Equal(t, amqp.Persistent, mockCh.published.DeliveryMode)
+	assert.Equal(t, "application/json", mockCh.published.ContentType)
+	assert.Equal(t, tenantID, mockCh.published.Headers["X-Tenant-ID"])
+	assert.NotEmpty(t, mockCh.published.Headers[libConstants.HeaderID])
+	assert.Equal(t, 0, mockCh.published.Headers["x-retry-count"])
+	assert.NotEmpty(t, mockCh.published.Headers[rabbitmq.HeaderMessageSignature])
+	assert.NotEmpty(t, mockCh.published.Headers[rabbitmq.HeaderSignatureTimestamp])
+	assert.Equal(t, crypto.SignatureVersion, mockCh.published.Headers[rabbitmq.HeaderSignatureVersion])
+	assert.NotEmpty(t, mockCh.published.Headers[obsConstants.HeaderTraceparentPascal])
+}
+
 func TestPublish_MultiTenant_GetChannelError(t *testing.T) {
 	t.Parallel()
 
 	mockMgr := &mockRabbitMQManager{getChannelErr: errors.New("vhost connection failed")}
 	logger := log.NewNop()
-	publisher := NewPublisherRoutesMultiTenant(mockMgr, logger, nil)
+	publisher := NewPublisherRoutesMultiTenant(mockMgr, logger, nil, nil)
 
 	ctx := tmcore.ContextWithTenantID(context.Background(), "tenant-123")
 	err := publisher.Publish(ctx, "test-exchange", "test.key", []byte(`{}`))
@@ -247,7 +289,7 @@ func TestPublish_MultiTenant_ExchangeDeclareError(t *testing.T) {
 	mockCh := &mockChannel{exchangeDeclareErr: errors.New("exchange declare failed")}
 	mockMgr := &mockRabbitMQManager{channel: mockCh}
 	logger := log.NewNop()
-	publisher := NewPublisherRoutesMultiTenant(mockMgr, logger, nil)
+	publisher := NewPublisherRoutesMultiTenant(mockMgr, logger, nil, nil)
 
 	ctx := tmcore.ContextWithTenantID(context.Background(), "tenant-123")
 	err := publisher.Publish(ctx, "test-exchange", "test.key", []byte(`{}`))
@@ -262,7 +304,7 @@ func TestShutdown_MultiTenant_NilAdapter(t *testing.T) {
 	// In multi-tenant mode, adapter is nil — Shutdown must not panic
 	mockMgr := &mockRabbitMQManager{channel: &mockChannel{}}
 	logger := log.NewNop()
-	publisher := NewPublisherRoutesMultiTenant(mockMgr, logger, nil)
+	publisher := NewPublisherRoutesMultiTenant(mockMgr, logger, nil, nil)
 
 	err := publisher.Shutdown(context.Background())
 	require.NoError(t, err)
@@ -273,7 +315,7 @@ func TestNewPublisherRoutesMultiTenant_SetsFields(t *testing.T) {
 
 	mockMgr := &mockRabbitMQManager{channel: &mockChannel{}}
 	logger := log.NewNop()
-	publisher := NewPublisherRoutesMultiTenant(mockMgr, logger, nil)
+	publisher := NewPublisherRoutesMultiTenant(mockMgr, logger, nil, nil)
 
 	assert.NotNil(t, publisher)
 	assert.NotNil(t, publisher.rabbitMQManager)
@@ -286,7 +328,7 @@ func TestPublish_MultiTenant_PublishError(t *testing.T) {
 	mockCh := &mockChannel{publishErr: errors.New("publish failed")}
 	mockMgr := &mockRabbitMQManager{channel: mockCh}
 	logger := log.NewNop()
-	publisher := NewPublisherRoutesMultiTenant(mockMgr, logger, nil)
+	publisher := NewPublisherRoutesMultiTenant(mockMgr, logger, nil, nil)
 
 	ctx := tmcore.ContextWithTenantID(context.Background(), "tenant-123")
 	err := publisher.Publish(ctx, "test-exchange", "test.key", []byte(`{}`))

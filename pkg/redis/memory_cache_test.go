@@ -395,6 +395,45 @@ func TestInMemoryCache_GetSet_WithTenantContext(t *testing.T) {
 	})
 }
 
+func TestInMemoryCache_TenantScopedPhysicalKeys(t *testing.T) {
+	t.Parallel()
+
+	cache := NewInMemoryCache[testStruct](time.Minute, &mockLogger{})
+	defer cache.Close()
+
+	ctx := tmcore.ContextWithTenantID(context.Background(), "tenant-physical")
+	require.NoError(t, cache.Set(ctx, "schema", testStruct{ID: "1"}, 0))
+
+	cache.mu.RLock()
+	defer cache.mu.RUnlock()
+
+	assert.Contains(t, cache.entries, "tenant:tenant-physical:schema")
+	assert.NotContains(t, cache.entries, "schema")
+}
+
+func TestInMemoryCache_ClearUsesTenantPrefixSemantics(t *testing.T) {
+	t.Parallel()
+
+	cache := NewInMemoryCache[testStruct](time.Minute, &mockLogger{})
+	defer cache.Close()
+
+	ctxA := tmcore.ContextWithTenantID(context.Background(), "tenant-prefix-a")
+	ctxB := tmcore.ContextWithTenantID(context.Background(), "tenant-prefix-b")
+
+	require.NoError(t, cache.Set(ctxA, "same", testStruct{ID: "a"}, 0))
+	require.NoError(t, cache.Set(ctxB, "same", testStruct{ID: "b"}, 0))
+	require.NoError(t, cache.Clear(ctxA))
+
+	_, foundA, err := cache.Get(ctxA, "same")
+	require.NoError(t, err)
+	assert.False(t, foundA)
+
+	valueB, foundB, err := cache.Get(ctxB, "same")
+	require.NoError(t, err)
+	require.True(t, foundB)
+	assert.Equal(t, "b", valueB.ID)
+}
+
 func TestInMemoryCache_ClearEmpty(t *testing.T) {
 	cache := NewInMemoryCache[testStruct](time.Minute, &mockLogger{})
 	defer cache.Close()

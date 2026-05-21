@@ -5,11 +5,12 @@ import (
 	"net/http"
 	"runtime/debug"
 
+	"github.com/LerianStudio/lib-observability"
+
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 
-	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
+	libLog "github.com/LerianStudio/lib-observability/log"
 
 	"github.com/gofiber/fiber/v2"
 	"go.opentelemetry.io/otel/codes"
@@ -51,7 +52,7 @@ func WithRecover(opts ...RecoverMiddlewareOption) fiber.Handler {
 				// but fall back to the middleware logger (configured at startup) to ensure
 				// panic logs are never silently swallowed by a nop logger.
 				logger := mid.Logger
-				if ctxLogger := libCommons.NewLoggerFromContext(reqCtx); ctxLogger != nil && mid.Logger == nil {
+				if ctxLogger := observability.NewLoggerFromContext(reqCtx); ctxLogger != nil && mid.Logger == nil {
 					logger = ctxLogger
 				}
 

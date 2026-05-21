@@ -8,7 +8,10 @@ import (
 	"testing"
 	"time"
 
+	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
+	"github.com/LerianStudio/lib-streaming/streamingtest"
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
@@ -98,6 +101,41 @@ func TestPublishJobNotification_WithErrorMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
+}
+
+func TestPublishJobNotification_EmitsLibStreamingEventWhenTenantPresent(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+	emitter := streamingtest.NewMockEmitter()
+	uc.JobEventEmitter = emitter
+
+	ctx := tmcore.ContextWithTenantID(testContext(), "tenant-job-events")
+	jobID := newTestJobID()
+	message := ExtractExternalDataMessage{
+		JobID:    jobID,
+		Metadata: map[string]any{"source": "test-service"},
+	}
+
+	mocks.rabbitPublisher.EXPECT().
+		Publish(gomock.Any(), "test-exchange", "job.completed.test-service", gomock.Any()).
+		Return(nil)
+
+	err := uc.publishJobNotification(ctx, nil, message, "completed", nil, nil, testLogger())
+	require.NoError(t, err)
+
+	streamingtest.AssertEventEmitted(t, emitter, "job.completed")
+	streamingtest.AssertTenantID(t, emitter, "tenant-job-events")
+	requests := emitter.Requests()
+	require.Len(t, requests, 1)
+	assert.Equal(t, jobID.String(), requests[0].Subject)
+	var notification JobNotificationMessage
+	require.NoError(t, json.Unmarshal(requests[0].Payload, &notification))
+	assert.Equal(t, "completed", notification.Status)
 }
 
 // TestPublishJobNotification_PublisherNotConfigured tests that no error is returned when publisher is nil.
