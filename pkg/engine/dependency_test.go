@@ -91,6 +91,25 @@ func TestEngineDependencyBoundary_TenantRuntimeShells_RequiredPatternsConfigured
 	}
 }
 
+func TestEngineDependencyBoundary_ExternalDeploymentRuntime_RequiredPatternsConfigured(t *testing.T) {
+	t.Parallel()
+
+	modulePath := mustModulePathFromGoMod(t, mustRepositoryRoot(t))
+	configuredClasses := configuredForbiddenDependencyClasses(modulePath)
+	deploymentRuntime := mustForbiddenDependencyClass(t, configuredClasses, "external_deployment_runtime")
+
+	for _, requiredPattern := range requiredExternalDeploymentRuntimePatterns() {
+		requiredPattern := requiredPattern
+		t.Run(requiredPattern, func(t *testing.T) {
+			t.Parallel()
+
+			if !slices.Contains(deploymentRuntime.patterns, requiredPattern) {
+				t.Fatalf("external_deployment_runtime missing required forbidden import pattern %q", requiredPattern)
+			}
+		})
+	}
+}
+
 func TestEngineDependencyBoundary_TenantRuntimeShells_PolicyIsFutureSafe(t *testing.T) {
 	t.Parallel()
 
@@ -108,9 +127,19 @@ func TestEngineDependencyBoundary_TenantRuntimeShells_PolicyIsFutureSafe(t *test
 			wantBlock:  false,
 		},
 		{
+			name:       "future tenant manager core subpackage is blocked",
+			importPath: "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core/runtime/new-shell",
+			wantBlock:  true,
+		},
+		{
 			name:       "safe dispatch layer core primitive is explicitly allowed",
 			importPath: "github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/core",
 			wantBlock:  false,
+		},
+		{
+			name:       "future dispatch layer core subpackage is blocked",
+			importPath: "github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/core/runtime/new-shell",
+			wantBlock:  true,
 		},
 		{
 			name:       "known concrete tenant manager shell is blocked",
@@ -154,13 +183,35 @@ func TestEngineDependencyBoundary_GoListRunsReadonly(t *testing.T) {
 		t.Fatalf("go list command must enumerate every pkg/engine subpackage, got args: %#v", cmd.Args)
 	}
 
-	for _, envVar := range cmd.Env {
-		if envVar == "GOFLAGS="+readonlyGoFlags {
-			return
-		}
+	goFlagsCount, goFlagsValue := goFlagsEnvStatus(cmd.Env)
+	if goFlagsCount != 1 || goFlagsValue != readonlyGoFlags {
+		t.Fatalf(
+			"go list command must run in readonly module mode with exactly one GOFLAGS=%s, got GOFLAGS count=%d value=%q",
+			readonlyGoFlags,
+			goFlagsCount,
+			goFlagsValue,
+		)
 	}
+}
 
-	t.Fatalf("go list command must run in readonly module mode with GOFLAGS=%s, got env: %#v", readonlyGoFlags, cmd.Env)
+func TestEngineDependencyBoundary_GoListEnvReplacesInheritedGoFlags(t *testing.T) {
+	t.Parallel()
+
+	env := goListReadonlyEnv([]string{
+		"GOFLAGS=-mod=mod",
+		"PATH=/bin",
+		"GOFLAGS=-tags=stale",
+		"HOME=/tmp/fetcher-test",
+	})
+
+	goFlagsCount, goFlagsValue := goFlagsEnvStatus(env)
+	if goFlagsCount != 1 || goFlagsValue != readonlyGoFlags {
+		t.Fatalf(
+			"go list readonly environment must replace inherited GOFLAGS with exactly one value, got GOFLAGS count=%d value=%q",
+			goFlagsCount,
+			goFlagsValue,
+		)
+	}
 }
 
 func TestClaudeGoVersionGuidance_UsesGoModAsSourceOfTruth(t *testing.T) {
@@ -299,6 +350,17 @@ func configuredForbiddenDependencyClasses(modulePath string) []forbiddenDependen
 				modulePath + "/pkg/seaweedfs",
 			},
 		},
+		{
+			concern: "deployment",
+			name:    "external_deployment_runtime",
+			patterns: []string{
+				"github.com/docker/docker",
+				"github.com/docker/compose",
+				"github.com/kedacore/keda",
+				"github.com/kedacore/keda/v2",
+				"sigs.k8s.io/keda",
+			},
+		},
 
 		// Local shell packages: Engine core may depend on ports/primitives only, not concrete adapters/factories.
 		{
@@ -384,6 +446,7 @@ func requiredForbiddenClassNames() []string {
 		"stdlib_network_shells",
 		"aws_s3",
 		"seaweedfs",
+		"external_deployment_runtime",
 		"local_infrastructure_shells",
 		"tenant_runtime_shells",
 		"deployment",
@@ -396,6 +459,15 @@ func requiredTenantRuntimeShellPatterns() []string {
 	return []string{
 		"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer",
 		"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager",
+	}
+}
+
+func requiredExternalDeploymentRuntimePatterns() []string {
+	return []string{
+		"github.com/docker/docker",
+		"github.com/docker/compose",
+		"github.com/kedacore/keda",
+		"github.com/kedacore/keda/v2",
 	}
 }
 
@@ -467,9 +539,36 @@ func collectEngineDependencyGraph(t *testing.T, repoRoot string) []string {
 func newEngineDependencyGraphCommand(ctx context.Context, repoRoot string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, "go", "list", "-deps", "-f", "{{.ImportPath}}", "./pkg/engine/...")
 	cmd.Dir = repoRoot
-	cmd.Env = append(os.Environ(), "GOFLAGS="+readonlyGoFlags)
+	cmd.Env = goListReadonlyEnv(os.Environ())
 
 	return cmd
+}
+
+func goListReadonlyEnv(environ []string) []string {
+	env := make([]string, 0, len(environ)+1)
+	for _, envVar := range environ {
+		if strings.HasPrefix(envVar, "GOFLAGS=") {
+			continue
+		}
+		env = append(env, envVar)
+	}
+
+	return append(env, "GOFLAGS="+readonlyGoFlags)
+}
+
+func goFlagsEnvStatus(environ []string) (int, string) {
+	count := 0
+	value := ""
+	for _, envVar := range environ {
+		goFlags, ok := strings.CutPrefix(envVar, "GOFLAGS=")
+		if !ok {
+			continue
+		}
+		count++
+		value = goFlags
+	}
+
+	return count, value
 }
 
 func mustRepositoryRoot(t *testing.T) string {
@@ -511,7 +610,7 @@ func (dependencyClass forbiddenDependencyClass) matches(importPath string) bool 
 	for _, pattern := range dependencyClass.patterns {
 		if importPath == pattern || strings.HasPrefix(importPath, pattern+"/") {
 			for _, allowedPattern := range dependencyClass.allowedPatterns {
-				if importPath == allowedPattern || strings.HasPrefix(importPath, allowedPattern+"/") {
+				if importPath == allowedPattern {
 					return false
 				}
 			}

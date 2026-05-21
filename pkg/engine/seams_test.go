@@ -67,9 +67,14 @@ func requiredSeams() []seam {
 			Reason:     "tenant identifiers are propagated from Manager publish path through X-Tenant-ID AMQP headers, worker queue consume paths, and notification publishing shells and must remain outside Engine core transport contracts",
 		},
 		{
-			Name:       "storage_cache_tenant_scoping",
-			SourcePath: "pkg/storage/s3.go; pkg/seaweedfs/external/external_data.go; pkg/redis/redis_cache.go; pkg/redis/fallback_cache.go; pkg/redis/memory_cache.go",
-			Reason:     "tenant scoping for object storage keys and cache access is implemented in storage and cache adapters, including fallback and in-memory cache paths where keys must already be tenant-scoped before use, not in generic Engine core persistence logic",
+			Name:       "storage_tenant_scoping",
+			SourcePath: "pkg/storage/s3.go; pkg/seaweedfs/external/external_data.go",
+			Reason:     "tenant scoping for object storage keys is implemented in storage adapters where object keys must already be tenant-scoped before use, not in generic Engine core persistence logic",
+		},
+		{
+			Name:       "schema_cache_tenant_scoping",
+			SourcePath: "components/manager/internal/services/query/validate_schema.go; components/manager/internal/adapters/cache/schema_cache.go; components/manager/internal/adapters/cache/schema_cache_interface.go; pkg/redis/factory.go; pkg/redis/redis_cache.go; pkg/redis/fallback_cache.go; pkg/redis/memory_cache.go",
+			Reason:     "schema cache access remains a Manager adapter seam: validate_schema orchestration, schema cache adapters, Redis factory selection, Redis cache, fallback cache, and memory cache paths must use raw keys only after tenant-scoped-before-use handling so fallback and in-memory cache behavior cannot leak tenant schema data into Engine core",
 		},
 		{
 			Name:       "storage_result_handling",
@@ -119,9 +124,13 @@ func TestRequiredSeams_Characterization_IsComplete(t *testing.T) {
 			sourcePath: "components/manager/internal/services/command/create_fetcher_job.go; components/worker/internal/bootstrap/consumer.go; components/worker/internal/adapters/rabbitmq/publisher.rabbitmq.go",
 			keywords:   []string{"tenant", "X-Tenant-ID", "AMQP headers", "publish", "consume", "notification"},
 		},
-		"storage_cache_tenant_scoping": {
-			sourcePath: "pkg/storage/s3.go; pkg/seaweedfs/external/external_data.go; pkg/redis/redis_cache.go; pkg/redis/fallback_cache.go; pkg/redis/memory_cache.go",
-			keywords:   []string{"tenant", "storage", "cache", "fallback", "in-memory", "tenant-scoped before use"},
+		"storage_tenant_scoping": {
+			sourcePath: "pkg/storage/s3.go; pkg/seaweedfs/external/external_data.go",
+			keywords:   []string{"tenant", "storage", "tenant-scoped before use"},
+		},
+		"schema_cache_tenant_scoping": {
+			sourcePath: "components/manager/internal/services/query/validate_schema.go; components/manager/internal/adapters/cache/schema_cache.go; components/manager/internal/adapters/cache/schema_cache_interface.go; pkg/redis/factory.go; pkg/redis/redis_cache.go; pkg/redis/fallback_cache.go; pkg/redis/memory_cache.go",
+			keywords:   []string{"schema cache", "raw keys", "tenant-scoped-before-use", "fallback", "memory cache", "Redis"},
 		},
 		"storage_result_handling": {
 			sourcePath: "components/worker/internal/services/extract_data.go",
