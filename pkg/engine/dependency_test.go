@@ -5,14 +5,15 @@
 package engine
 
 import (
-	"go/parser"
-	"go/token"
+	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 type forbiddenDependencyClass struct {
@@ -26,22 +27,20 @@ func TestEngineDependencyBoundary_BlocksForbiddenImports(t *testing.T) {
 
 	repoRoot := mustRepositoryRoot(t)
 	modulePath := mustModulePathFromGoMod(t, repoRoot)
-	requiredClassNames := requiredForbiddenClassNames(t, repoRoot)
+	requiredClassNames := requiredForbiddenClassNames()
 	configuredClasses := configuredForbiddenDependencyClasses(modulePath)
 
 	assertForbiddenConfigComplete(t, requiredClassNames, configuredClasses)
 
-	imports := collectEngineImports(t, repoRoot)
+	dependencies := collectEngineDependencyGraph(t, repoRoot, modulePath)
 	for _, dependencyClass := range configuredClasses {
 		dependencyClass := dependencyClass
 		t.Run(dependencyClass.name, func(t *testing.T) {
 			t.Parallel()
 
-			for sourcePath, importPaths := range imports {
-				for _, importPath := range importPaths {
-					if dependencyClass.matches(importPath) {
-						t.Fatalf("pkg/engine dependency boundary violation: %s imports forbidden %s dependency %q", sourcePath, dependencyClass.name, importPath)
-					}
+			for _, dependency := range dependencies {
+				if dependencyClass.matches(dependency) {
+					t.Fatalf("pkg/engine dependency boundary violation: go list -deps found forbidden %s dependency %q", dependencyClass.name, dependency)
 				}
 			}
 		})
@@ -59,27 +58,16 @@ func TestEngineDependencyBoundary_ReadsModulePathFromGoMod(t *testing.T) {
 
 	configuredClasses := configuredForbiddenDependencyClasses(modulePath)
 	for _, dependencyClass := range configuredClasses {
-		if dependencyClass.name != "manager_internals" {
+		if dependencyClass.name != "local_infrastructure_shells" {
 			continue
 		}
-		if !slices.Contains(dependencyClass.patterns, modulePath+"/components/manager/internal") {
-			t.Fatalf("manager internal boundary pattern does not use module path read from go.mod: %#v", dependencyClass.patterns)
+		if !slices.Contains(dependencyClass.patterns, modulePath+"/pkg/rabbitmq") {
+			t.Fatalf("local infrastructure boundary patterns do not use module path read from go.mod: %#v", dependencyClass.patterns)
 		}
 		return
 	}
 
-	t.Fatalf("manager internal dependency boundary class is not configured")
-}
-
-func TestEngineDependencyBoundary_Scope_AllowsEngineCompatibilityAdaptersOutsideEngine(t *testing.T) {
-	t.Parallel()
-
-	repoRoot := mustRepositoryRoot(t)
-	engineRoot := filepath.Join(repoRoot, "pkg", "engine")
-	optionalAdapterPath := filepath.Join(repoRoot, "pkg", "enginecompat", "rabbitmq", "adapter.go")
-	if isUnderDirectory(optionalAdapterPath, engineRoot) {
-		t.Fatalf("engine compatibility adapter path %q should be outside pkg/engine boundary", optionalAdapterPath)
-	}
+	t.Fatalf("local infrastructure dependency boundary class is not configured")
 }
 
 func configuredForbiddenDependencyClasses(modulePath string) []forbiddenDependencyClass {
@@ -108,6 +96,14 @@ func configuredForbiddenDependencyClasses(modulePath string) []forbiddenDependen
 				"github.com/gofiber/fiber",
 			},
 		},
+		{
+			concern: "http",
+			name:    "swagger",
+			patterns: []string{
+				"github.com/swaggo/swag",
+				"github.com/swaggo/fiber-swagger",
+			},
+		},
 
 		// Queue shell: brokers are optional adapters, not Engine core dependencies.
 		{
@@ -115,6 +111,13 @@ func configuredForbiddenDependencyClasses(modulePath string) []forbiddenDependen
 			name:    "rabbitmq",
 			patterns: []string{
 				"github.com/rabbitmq/amqp091-go",
+			},
+		},
+		{
+			concern: "queue",
+			name:    "lib_streaming",
+			patterns: []string{
+				"github.com/LerianStudio/lib-streaming",
 			},
 		},
 
@@ -150,6 +153,44 @@ func configuredForbiddenDependencyClasses(modulePath string) []forbiddenDependen
 			},
 		},
 
+		// Local shell packages: Engine core may depend on ports/primitives only, not concrete adapters/factories.
+		{
+			concern: "local_shells",
+			name:    "local_infrastructure_shells",
+			patterns: []string{
+				modulePath + "/pkg/rabbitmq",
+				modulePath + "/pkg/storage",
+				modulePath + "/pkg/mongodb",
+				modulePath + "/pkg/redis",
+				modulePath + "/pkg/net/http",
+				modulePath + "/pkg/seaweedfs",
+				modulePath + "/pkg/postgres",
+				modulePath + "/pkg/mysql",
+				modulePath + "/pkg/oracle",
+				modulePath + "/pkg/sqlserver",
+				modulePath + "/pkg/datasource",
+				modulePath + "/pkg/ratelimit",
+				modulePath + "/pkg/bootstrap/readyz",
+			},
+		},
+
+		// Tenant runtime shells: tenant primitives may become ports, but concrete runtime/middleware/managers stay outside Engine core.
+		{
+			concern: "tenant_runtime",
+			name:    "tenant_runtime_shells",
+			patterns: []string{
+				"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/client",
+				"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/consumer",
+				"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/event",
+				"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/middleware",
+				"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/mongo",
+				"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/rabbitmq",
+				"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/s3",
+				"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/tenantcache",
+				"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/valkey",
+			},
+		},
+
 		// Deployment shell: infrastructure artifacts must not become runtime core.
 		{
 			concern: "deployment",
@@ -181,61 +222,20 @@ func configuredForbiddenDependencyClasses(modulePath string) []forbiddenDependen
 	}
 }
 
-func requiredForbiddenClassNames(t *testing.T, repoRoot string) []string {
-	t.Helper()
-
-	dependencyDocPath := filepath.Join(repoRoot, "docs", "pre-dev", "fetcher-embedded-runtime", "dependencies.md")
-	dependencyDoc, err := os.ReadFile(dependencyDocPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return fallbackForbiddenClassNames()
-		}
-		t.Fatalf("read dependency map %s: %v", dependencyDocPath, err)
-	}
-
-	doc := string(dependencyDoc)
-	if !strings.Contains(doc, "Engine core must not depend on:") {
-		t.Fatalf("dependency map %s does not define Engine core forbidden dependencies", dependencyDocPath)
-	}
-
-	requirements := []struct {
-		name     string
-		evidence []string
-	}{
-		{name: "manager_internals", evidence: []string{"Manager or Worker `internal` packages", "components/*/internal"}},
-		{name: "worker_internals", evidence: []string{"Manager or Worker `internal` packages", "components/*/internal"}},
-		{name: "fiber", evidence: []string{"Fiber or Swagger", "github.com/gofiber/fiber/v2"}},
-		{name: "rabbitmq", evidence: []string{"RabbitMQ/amqp091-go", "github.com/rabbitmq/amqp091-go"}},
-		{name: "mongodb", evidence: []string{"MongoDB drivers", "go.mongodb.org/mongo-driver"}},
-		{name: "redis", evidence: []string{"Redis as mandatory", "github.com/redis/go-redis/v9"}},
-		{name: "aws_s3", evidence: []string{"S3/SeaweedFS", "github.com/aws/aws-sdk-go-v2/service/s3"}},
-		{name: "seaweedfs", evidence: []string{"S3/SeaweedFS", "SeaweedFS local client"}},
-		{name: "deployment", evidence: []string{"Docker Compose, KEDA, or deployment artifacts"}},
-		{name: "lib_auth", evidence: []string{"lib-auth", "github.com/LerianStudio/lib-auth/v2"}},
-		{name: "lib_license", evidence: []string{"lib-license", "github.com/LerianStudio/lib-license-go/v2"}},
-	}
-
-	names := make([]string, 0, len(requirements))
-	for _, requirement := range requirements {
-		if !containsAny(doc, requirement.evidence) {
-			t.Fatalf("dependency map %s is missing evidence for forbidden dependency class %q", dependencyDocPath, requirement.name)
-		}
-		names = append(names, requirement.name)
-	}
-
-	return names
-}
-
-func fallbackForbiddenClassNames() []string {
+func requiredForbiddenClassNames() []string {
 	return []string{
 		"manager_internals",
 		"worker_internals",
 		"fiber",
+		"swagger",
 		"rabbitmq",
+		"lib_streaming",
 		"mongodb",
 		"redis",
 		"aws_s3",
 		"seaweedfs",
+		"local_infrastructure_shells",
+		"tenant_runtime_shells",
 		"deployment",
 		"lib_auth",
 		"lib_license",
@@ -269,42 +269,30 @@ func assertForbiddenConfigComplete(t *testing.T, requiredClassNames []string, co
 	}
 }
 
-func collectEngineImports(t *testing.T, repoRoot string) map[string][]string {
+func collectEngineDependencyGraph(t *testing.T, repoRoot string, modulePath string) []string {
 	t.Helper()
 
-	engineRoot := filepath.Join(repoRoot, "pkg", "engine")
-	importsBySource := make(map[string][]string)
-	fset := token.NewFileSet()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
-	err := filepath.WalkDir(engineRoot, func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if entry.IsDir() || !strings.HasSuffix(path, ".go") {
-			return nil
-		}
+	cmd := exec.CommandContext(ctx, "go", "list", "-deps", "-f", "{{.ImportPath}}", modulePath+"/pkg/engine")
+	cmd.Dir = repoRoot
 
-		parsedFile, err := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
-		if err != nil {
-			return err
-		}
-
-		relativePath, err := filepath.Rel(repoRoot, path)
-		if err != nil {
-			return err
-		}
-
-		for _, importedPackage := range parsedFile.Imports {
-			importsBySource[relativePath] = append(importsBySource[relativePath], strings.Trim(importedPackage.Path.Value, "\""))
-		}
-
-		return nil
-	})
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("collect pkg/engine imports: %v", err)
+		t.Fatalf("collect pkg/engine dependency graph with go list -deps: %v\n%s", err, output)
 	}
 
-	return importsBySource
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	dependencies := make([]string, 0, len(lines))
+	for _, line := range lines {
+		dependency := strings.TrimSpace(line)
+		if dependency != "" {
+			dependencies = append(dependencies, dependency)
+		}
+	}
+
+	return dependencies
 }
 
 func mustRepositoryRoot(t *testing.T) string {
@@ -350,23 +338,4 @@ func (dependencyClass forbiddenDependencyClass) matches(importPath string) bool 
 	}
 
 	return false
-}
-
-func containsAny(value string, candidates []string) bool {
-	for _, candidate := range candidates {
-		if strings.Contains(value, candidate) {
-			return true
-		}
-	}
-
-	return false
-}
-
-func isUnderDirectory(path string, directory string) bool {
-	relativePath, err := filepath.Rel(directory, path)
-	if err != nil {
-		return false
-	}
-
-	return relativePath == "." || (!strings.HasPrefix(relativePath, "..") && !filepath.IsAbs(relativePath))
 }

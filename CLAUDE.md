@@ -3,7 +3,7 @@
 Lerian Fetcher is an enterprise data extraction microservice that unifies access to PostgreSQL, MySQL, Oracle, SQL Server, and MongoDB.
 
 - **Module:** `github.com/LerianStudio/fetcher`
-- **Go version:** Source of truth is `go.mod` (`go 1.25.9`); do not rely on stale toolchain guidance elsewhere.
+- **Go version:** Source of truth is `go.mod`; do not rely on stale toolchain guidance elsewhere.
 - **Architecture:** Hexagonal Architecture + CQRS
 - **Services:** Manager (HTTP API, Fiber, port 4006) and Worker (RabbitMQ consumer)
 

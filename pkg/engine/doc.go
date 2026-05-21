@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Lerian Studio. All rights reserved.
+// Use of this source code is governed by the Elastic License 2.0
+// that can be found in the LICENSE file.
+
 // Package engine contains the embedded runtime seam contracts that will
 // strangle the existing Fetcher manager and worker orchestration paths.
 package engine
@@ -26,7 +30,7 @@ func RequiredSeams() []Seam {
 		{
 			Name:       "manager_validate_schema_orchestration",
 			SourcePath: "components/manager/internal/services/query/validate_schema.go",
-			Reason:     "schema validation resolves configured datasources, fetches schema metadata, applies datasource-specific defaults, and preserves plugin_crm table compatibility",
+			Reason:     "schema validation resolves configured datasources, fetches schema metadata, applies datasource-specific defaults, and preserves legacy table compatibility",
 		},
 		{
 			Name:       "worker_extract_external_data_orchestration",
@@ -36,17 +40,32 @@ func RequiredSeams() []Seam {
 		{
 			Name:       "worker_plugin_crm_compatibility",
 			SourcePath: "components/worker/internal/services/extract_crm_data.go",
-			Reason:     "plugin_crm extraction depends on physical collection prefix matching, filter transformation, field decryption, and merged logical collection output",
+			Reason:     "plugin_crm compatibility extraction remains Worker adapter-scoped behavior for physical collection prefix matching, filter transformation, field decryption, and merged logical collection output",
 		},
 		{
 			Name:       "plugin_crm_adapter_compatibility",
 			SourcePath: "components/manager/internal/services/query/validate_schema.go; components/worker/internal/services/extract_crm_data.go",
-			Reason:     "plugin_crm remains Manager/Worker compatibility behavior for the first Engine release and must not become a generic Engine datasource extension",
+			Reason:     "plugin_crm remains Manager/Worker compatibility behavior for the first Engine release and must remain adapter-specific, never core",
 		},
 		{
 			Name:       "connection_resolver_behavior",
 			SourcePath: "pkg/resolver/resolver.go",
 			Reason:     "connection resolution abstracts internal tenant-managed datasources and external configured connections behind a stable ResolveConnections seam",
+		},
+		{
+			Name:       "tenant_context_product_boundary",
+			SourcePath: "components/manager/internal/services/command/create_fetcher_job.go; components/manager/internal/services/query/get_connection.go; components/manager/internal/services/query/get_connection_schema.go",
+			Reason:     "tenant context and product ownership boundaries are enforced before Engine orchestration may resolve connections, read schema, or create jobs",
+		},
+		{
+			Name:       "queue_tenant_propagation",
+			SourcePath: "components/worker/internal/bootstrap/consumer.go; components/worker/internal/adapters/rabbitmq/publisher.rabbitmq.go",
+			Reason:     "tenant identifiers are propagated through queue consumption and notification publishing shells and must remain outside Engine core transport contracts",
+		},
+		{
+			Name:       "storage_cache_tenant_scoping",
+			SourcePath: "pkg/storage/s3.go; pkg/seaweedfs/external/external_data.go; pkg/redis/redis_cache.go",
+			Reason:     "tenant scoping for object storage keys and cache access is implemented in storage and cache adapters, not in generic Engine core persistence logic",
 		},
 		{
 			Name:       "storage_result_handling",
