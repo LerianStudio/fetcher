@@ -94,6 +94,10 @@ func NewPublisherRoutesMultiTenant(manager RabbitMQManagerInterface, logger libL
 // In multi-tenant mode, publishes to the tenant-specific vhost via tmrabbitmq.Manager.
 // In single-tenant mode, uses the static RabbitMQ adapter.
 func (pr *PublisherRoutes) Publish(ctx context.Context, exchange, routingKey string, body []byte) error {
+	return pr.PublishWithHeaders(ctx, exchange, routingKey, "application/json", body, nil)
+}
+
+func (pr *PublisherRoutes) PublishWithHeaders(ctx context.Context, exchange, routingKey, contentType string, body []byte, callerHeaders map[string]any) error {
 	_, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "adapter.rabbitmq.publish")
@@ -143,7 +147,15 @@ func (pr *PublisherRoutes) Publish(ctx context.Context, exchange, routingKey str
 			return fmt.Errorf("failed to declare exchange %s on tenant %s vhost: %w", exchange, tenantID, err)
 		}
 
-		msg := rabbitmq.BuildSecurePublishing(ctx, reqID, body, map[string]any{"X-Tenant-ID": tenantID}, pr.signer, true)
+		headers := map[string]any{rabbitmq.HeaderTenantID: tenantID}
+		for key, value := range callerHeaders {
+			headers[key] = value
+		}
+
+		msg := rabbitmq.BuildSecurePublishing(ctx, reqID, exchange, routingKey, body, headers, pr.signer, true)
+		if contentType != "" {
+			msg.ContentType = contentType
+		}
 
 		if err := ch.PublishWithContext(ctx, exchange, routingKey, false, false, msg); err != nil {
 			opentelemetry.HandleSpanError(span, "Failed to publish message to tenant vhost", err)
@@ -171,11 +183,20 @@ func (pr *PublisherRoutes) Publish(ctx context.Context, exchange, routingKey str
 
 	// Forward tenant ID from context to AMQP headers for multi-tenant isolation.
 	// When no tenant context is present (single-tenant mode), headers remain nil.
+	headersValue := callerHeaders
+
 	var headers *map[string]any
 
 	if tenantID := tmcore.GetTenantIDContext(ctx); tenantID != "" {
-		h := map[string]any{"X-Tenant-ID": tenantID}
-		headers = &h
+		if headersValue == nil {
+			headersValue = map[string]any{}
+		}
+
+		headersValue[rabbitmq.HeaderTenantID] = tenantID
+	}
+
+	if headersValue != nil {
+		headers = &headersValue
 	}
 
 	if err := pr.adapter.ProducerDefault(ctx, exchange, routingKey, body, headers); err != nil {

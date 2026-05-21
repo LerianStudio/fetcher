@@ -2,9 +2,7 @@ package bootstrap
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
-	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/url"
@@ -32,13 +30,13 @@ import (
 	tmevent "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/event"
 	tmmongo "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/mongo"
 	tmrabbitmq "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/rabbitmq"
+	tmredis "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/redis"
 	"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/tenantcache"
 	libLicense "github.com/LerianStudio/lib-license-go/v2/middleware"
 	libLog "github.com/LerianStudio/lib-observability/log"
 	libOtel "github.com/LerianStudio/lib-observability/tracing"
 	libZap "github.com/LerianStudio/lib-observability/zap"
 	streaming "github.com/LerianStudio/lib-streaming"
-	"github.com/redis/go-redis/v9"
 )
 
 // defaultMaxTenantPools is the fallback soft limit for tenant connection pools
@@ -260,43 +258,7 @@ func InitWorker() (*Service, error) {
 	// Branch: multi-tenant mode uses tmconsumer.MultiTenantConsumer with per-tenant vhosts
 	// Single-tenant mode uses existing ConsumerRoutes with static RabbitMQ connection
 	if cfg.MultiTenantEnabled && cfg.MultiTenantURL != "" {
-		mtConsumer, tmClient, mtCleanup, mtErr := initMultiTenantStack(ctx, cfg, logger, mongoManager, rabbitMQManager)
-		if mtErr != nil {
-			return nil, mtErr
-		}
-
-		// Use shared RabbitMQ manager for publisher (same pool as consumer)
-		publisherRoutes := rabbitmq.NewPublisherRoutesMultiTenant(
-			newRabbitMQManagerAdapter(rabbitMQManager),
-			logger,
-			telemetry,
-			cryptoWithExternalHMAC,
-		)
-
-		service.RabbitMQPublisher = publisherRoutes
-
-		multiQueueConsumer := NewMultiQueueConsumerMultiTenant(mtConsumer, service, cfg.RabbitMQGenerateReportQueue, logger, mongoManager, defaultDrain(cfg.ReadyzDrainDelaySec))
-
-		// Discover existing tenants on startup so consumers start immediately.
-		// Called AFTER handler registration so EnsureConsumerStarted can spawn
-		// consumer goroutines for all registered queues.
-		performInitialTenantSync(ctx, logger, tmClient, mtConsumer)
-
-		readyzDeps := newWorkerReadyzDepsMT(cfg, mongoConnection, storageRepository, tmClient, mongoManager, rabbitMQManager)
-
-		// Self-probe runs after every dep is constructed and before the
-		// consumer + health server start; failure does not abort boot,
-		// /health serves 503 until the probe succeeds.
-		runWorkerSelfProbe(ctx, logger, buildWorkerReadyzCheckers(readyzDeps))
-
-		return &Service{
-			MultiQueueConsumer: multiQueueConsumer,
-			Logger:             logger,
-			licenseShutdown:    licenseClient.GetLicenseManagerShutdown(),
-			mtCleanup:          mtCleanup,
-			healthServer:       NewHealthServer(cfg, logger, telemetry, readyzDeps),
-			readyzCloser:       readyzDeps.close,
-		}, nil
+		return initMultiTenantWorkerService(ctx, cfg, logger, telemetry, service, mongoConnection, storageRepository, mongoManager, rabbitMQManager, cryptoWithExternalHMAC, licenseClient)
 	}
 
 	multiQueueConsumer, consumerRoutes, err := initSingleTenantRabbitMQ(cfg, logger, telemetry, keyDeriver, cryptoWithExternalHMAC, service, mongoManager)
@@ -312,6 +274,53 @@ func InitWorker() (*Service, error) {
 		MultiQueueConsumer: multiQueueConsumer,
 		Logger:             logger,
 		licenseShutdown:    licenseClient.GetLicenseManagerShutdown(),
+		healthServer:       NewHealthServer(cfg, logger, telemetry, readyzDeps),
+		readyzCloser:       readyzDeps.close,
+	}, nil
+}
+
+func initMultiTenantWorkerService(
+	ctx context.Context,
+	cfg *Config,
+	logger libLog.Logger,
+	telemetry *libOtel.Telemetry,
+	service *services.UseCase,
+	mongoConnection *mongoDB.Client,
+	storageRepository portStorage.Repository,
+	mongoManager *tmmongo.Manager,
+	rabbitMQManager *tmrabbitmq.Manager,
+	cryptoWithExternalHMAC *crypto.HMACSigner,
+	licenseClient *libLicense.LicenseClient,
+) (*Service, error) {
+	mtConsumer, tmClient, mtCleanup, mtErr := initMultiTenantStack(ctx, cfg, logger, mongoManager, rabbitMQManager)
+	if mtErr != nil {
+		return nil, mtErr
+	}
+
+	publisherRoutes := rabbitmq.NewPublisherRoutesMultiTenant(
+		newRabbitMQManagerAdapter(rabbitMQManager),
+		logger,
+		telemetry,
+		cryptoWithExternalHMAC,
+	)
+
+	service.RabbitMQPublisher = publisherRoutes
+
+	if err := configureJobEventEmitter(ctx, cfg, logger, telemetry, publisherRoutes, service); err != nil {
+		return nil, err
+	}
+
+	multiQueueConsumer := NewMultiQueueConsumerMultiTenant(mtConsumer, service, cfg.RabbitMQGenerateReportQueue, logger, mongoManager, defaultDrain(cfg.ReadyzDrainDelaySec))
+	performInitialTenantSync(ctx, logger, tmClient, mtConsumer)
+
+	readyzDeps := newWorkerReadyzDepsMT(cfg, mongoConnection, storageRepository, tmClient, mongoManager, rabbitMQManager)
+	runWorkerSelfProbe(ctx, logger, buildWorkerReadyzCheckers(readyzDeps))
+
+	return &Service{
+		MultiQueueConsumer: multiQueueConsumer,
+		Logger:             logger,
+		licenseShutdown:    licenseClient.GetLicenseManagerShutdown(),
+		mtCleanup:          mtCleanup,
 		healthServer:       NewHealthServer(cfg, logger, telemetry, readyzDeps),
 		readyzCloser:       readyzDeps.close,
 	}, nil
@@ -374,7 +383,111 @@ func initSingleTenantRabbitMQ(
 
 	service.RabbitMQPublisher = publisherRoutes
 
+	if err := configureJobEventEmitter(context.Background(), cfg, logger, telemetry, publisherRoutes, service); err != nil {
+		return nil, nil, err
+	}
+
 	return NewMultiQueueConsumer(consumerRoutes, service, cfg.RabbitMQGenerateReportQueue, logger, mongoManager, defaultDrain(cfg.ReadyzDrainDelaySec)), consumerRoutes, nil
+}
+
+func configureJobEventEmitter(ctx context.Context, cfg *Config, logger libLog.Logger, telemetry *libOtel.Telemetry, publisher *rabbitmq.PublisherRoutes, service *services.UseCase) error {
+	jobEmitter, streamingEnabled, err := initJobEventEmitter(ctx, cfg, logger, telemetry, publisher)
+	if err != nil {
+		return err
+	}
+
+	service.JobEventEmitter = jobEmitter
+	service.JobEventStreamingEnabled = streamingEnabled
+	service.JobEventStreamingRequireTenant = cfg.MultiTenantEnabled
+
+	return nil
+}
+
+type streamingRabbitMQPublisher struct {
+	publisher *rabbitmq.PublisherRoutes
+}
+
+func (p streamingRabbitMQPublisher) Publish(ctx context.Context, exchange, routingKey, contentType string, body []byte, headers map[string]any) error {
+	if p.publisher == nil {
+		return fmt.Errorf("streaming RabbitMQ publisher is not configured")
+	}
+
+	return p.publisher.PublishWithHeaders(ctx, exchange, deriveJobNotificationRoutingKey(body, routingKey), contentType, body, headers)
+}
+
+func deriveJobNotificationRoutingKey(body []byte, fallback string) string {
+	var payload struct {
+		Status   string         `json:"status"`
+		Metadata map[string]any `json:"metadata"`
+	}
+
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return fallback
+	}
+
+	if payload.Status == "" {
+		return fallback
+	}
+
+	source, _ := payload.Metadata["source"].(string)
+
+	return fmt.Sprintf("job.%s.%s", payload.Status, services.SanitizeRoutingSourceSegmentForBootstrap(source))
+}
+
+func initJobEventEmitter(ctx context.Context, cfg *Config, logger libLog.Logger, telemetry *libOtel.Telemetry, publisher *rabbitmq.PublisherRoutes) (streaming.Emitter, bool, error) {
+	streamingCfg, warnings, err := streaming.LoadConfig()
+	if err != nil {
+		return nil, false, fmt.Errorf("load streaming configuration: %w", err)
+	}
+
+	for _, warning := range warnings {
+		logger.Log(ctx, libLog.LevelWarn, warning)
+	}
+
+	if !streamingCfg.Enabled {
+		return streaming.NewNoopEmitter(), false, nil
+	}
+
+	catalog, err := streaming.NewCatalog(
+		streaming.EventDefinition{Key: "job.completed", ResourceType: "job", EventType: "completed"},
+		streaming.EventDefinition{Key: "job.failed", ResourceType: "job", EventType: "failed"},
+	)
+	if err != nil {
+		return nil, false, fmt.Errorf("create job event streaming catalog: %w", err)
+	}
+
+	targetName := "fetcher-job-events-rabbitmq"
+	routes := []streaming.RouteDefinition{
+		{
+			Key:           "job.completed.rabbitmq.primary",
+			DefinitionKey: "job.completed",
+			Target:        targetName,
+			Destination:   streaming.RabbitMQRoute(cfg.RabbitMQJobEventsExchange, "job.completed"),
+			Requirement:   streaming.RouteRequired,
+		},
+		{
+			Key:           "job.failed.rabbitmq.primary",
+			DefinitionKey: "job.failed",
+			Target:        targetName,
+			Destination:   streaming.RabbitMQRoute(cfg.RabbitMQJobEventsExchange, "job.failed"),
+			Requirement:   streaming.RouteRequired,
+		},
+	}
+
+	emitter, err := streaming.NewBuilder().
+		Source(streamingCfg.CloudEventsSource).
+		Catalog(catalog).
+		Routes(routes...).
+		RabbitMQTarget(targetName, streamingRabbitMQPublisher{publisher: publisher}).
+		Logger(logger).
+		MetricsFactory(telemetry.MetricsFactory).
+		Tracer(telemetry.TracerProvider.Tracer(cfg.OtelLibraryName)).
+		Build(ctx)
+	if err != nil {
+		return nil, false, fmt.Errorf("build job event streaming producer: %w", err)
+	}
+
+	return emitter, true, nil
 }
 
 // initObservability initializes the logger and telemetry pipeline.
@@ -740,32 +853,19 @@ func initMultiTenantStack(
 		redisPort = "6379"
 	}
 
-	redisOpts := &redis.Options{
-		Addr:     net.JoinHostPort(cfg.MultiTenantRedisHost, redisPort),
+	if cfg.MultiTenantRedisCACert != "" {
+		return nil, nil, nil, fmt.Errorf("create worker tenant event listener: canonical tenant Pub/Sub Redis client does not support custom CA certificates; unset MULTI_TENANT_REDIS_CA_CERT or extend lib-commons")
+	}
+
+	redisClient, err := tmredis.NewTenantPubSubRedisClient(ctx, tmredis.TenantPubSubRedisConfig{
+		Host:     cfg.MultiTenantRedisHost,
+		Port:     redisPort,
 		Password: cfg.MultiTenantRedisPassword,
+		TLS:      cfg.MultiTenantRedisTLS,
+	})
+	if err != nil {
+		return nil, nil, nil, wrapBootstrapError("create worker tenant Pub/Sub Redis client", err)
 	}
-
-	if cfg.MultiTenantRedisTLS {
-		tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
-
-		if cfg.MultiTenantRedisCACert != "" {
-			caCert, err := base64.StdEncoding.DecodeString(cfg.MultiTenantRedisCACert)
-			if err != nil {
-				return nil, nil, nil, fmt.Errorf("failed to decode multi-tenant Redis CA certificate: %w", err)
-			}
-
-			pool := x509.NewCertPool()
-			if !pool.AppendCertsFromPEM(caCert) {
-				return nil, nil, nil, fmt.Errorf("failed to parse multi-tenant Redis CA certificate")
-			}
-
-			tlsCfg.RootCAs = pool
-		}
-
-		redisOpts.TLSConfig = tlsCfg
-	}
-
-	redisClient := redis.NewClient(redisOpts)
 
 	listener, listenerErr := tmevent.NewTenantEventListener(
 		redisClient,

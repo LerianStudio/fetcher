@@ -11,6 +11,7 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/rabbitmq"
 	libRabbitmq "github.com/LerianStudio/lib-commons/v5/commons/rabbitmq"
 	libLog "github.com/LerianStudio/lib-observability/log"
+	obsRuntime "github.com/LerianStudio/lib-observability/runtime"
 	opentelemetry "github.com/LerianStudio/lib-observability/tracing"
 )
 
@@ -126,7 +127,7 @@ func (cr *ConsumerRoutes) RunConsumers(ctx context.Context, wg *sync.WaitGroup) 
 		wg.Add(1)
 		cr.shutdownWg.Add(1)
 
-		go func() {
+		obsRuntime.SafeGoWithContext(ctx, cr.Logger, "worker-rabbitmq-consumer-"+queueName, obsRuntime.KeepRunning, func(context.Context) {
 			defer wg.Done()
 			defer cr.shutdownWg.Done()
 
@@ -137,7 +138,7 @@ func (cr *ConsumerRoutes) RunConsumers(ctx context.Context, wg *sync.WaitGroup) 
 					libLog.Err(err),
 				)
 			}
-		}()
+		})
 	}
 
 	return nil

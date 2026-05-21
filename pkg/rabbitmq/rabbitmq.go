@@ -19,6 +19,7 @@ import (
 	libConstants "github.com/LerianStudio/lib-commons/v5/commons/constants"
 	libRabbitmq "github.com/LerianStudio/lib-commons/v5/commons/rabbitmq"
 	libLog "github.com/LerianStudio/lib-observability/log"
+	obsRuntime "github.com/LerianStudio/lib-observability/runtime"
 	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
 
 	"github.com/LerianStudio/fetcher/pkg/crypto"
@@ -357,6 +358,9 @@ var ErrSignatureVerifierNotConfigured = errors.New("signature verification enabl
 // ErrSignatureExpired is returned when the message signature timestamp is too old.
 var ErrSignatureExpired = errors.New("message signature has expired")
 
+// ErrSignatureFromFuture is returned when the message signature timestamp is in the future.
+var ErrSignatureFromFuture = errors.New("message signature timestamp is in the future")
+
 // isPermanentAMQPError returns true if the error is a non-recoverable AMQP error
 // such as queue not found (404) or access refused (403). These errors indicate
 // configuration or permission issues that will not resolve by retrying.
@@ -594,7 +598,7 @@ func (prmq *RabbitMQAdapter) startChannelWatcher(logger libLog.Logger, channel a
 
 	notifications := channel.NotifyClose(make(chan *amqp.Error, 1))
 
-	go func() {
+	obsRuntime.SafeGo(logger, "rabbitmq-channel-watcher", obsRuntime.KeepRunning, func() {
 		if err, ok := <-notifications; ok && err != nil {
 			logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("RabbitMQ channel closed: %v", err))
 		} else {
@@ -605,7 +609,7 @@ func (prmq *RabbitMQAdapter) startChannelWatcher(logger libLog.Logger, channel a
 		defer prmq.mu.Unlock()
 
 		prmq.channel = nil
-	}()
+	})
 }
 
 // calculateBackoff calculates exponential backoff with jitter.
@@ -768,7 +772,7 @@ func (prmq *RabbitMQAdapter) ProducerDefault(ctx context.Context, exchange, key 
 	}
 
 	publish := func(ch amqpChannel) error {
-		return ch.Publish(exchange, key, false, false, BuildSecurePublishing(ctx, reqID, queueMessage, headers, prmq.options.Signer, prmq.options.EnableMessageSigning))
+		return ch.Publish(exchange, key, false, false, BuildSecurePublishing(ctx, reqID, exchange, key, queueMessage, headers, prmq.options.Signer, prmq.options.EnableMessageSigning))
 	}
 
 	var lastErr error
@@ -1112,7 +1116,7 @@ func (prmq *RabbitMQAdapter) processDelivery(
 			return
 		}
 
-		if err := prmq.verifyMessageSignature(d.Body, headers, logWithFields, hspan); err != nil {
+		if err := prmq.verifyMessageSignature(d.Body, headers, d.Exchange, d.RoutingKey, logWithFields, hspan); err != nil {
 			if nackErr := d.Nack(false, false); nackErr != nil {
 				logWithFields.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("Failed to Nack message after signature verification failure: %v", nackErr))
 			}
@@ -1128,8 +1132,9 @@ func (prmq *RabbitMQAdapter) processDelivery(
 		}
 	}
 
-	// Use the logger with fields created above (logWithFields) for all logging
-	// Recover from panics during message processing
+	// Use the logger with fields created above (logWithFields) for all logging.
+	// Nack on panic, then re-panic for lib-observability/runtime to recover and report.
+	defer obsRuntime.RecoverWithPolicy(logWithFields, "rabbitmq-consumer-handle-message", obsRuntime.KeepRunning)
 	defer func() {
 		if r := recover(); r != nil {
 			if nackErr := d.Nack(false, false); nackErr != nil {
@@ -1143,6 +1148,8 @@ func (prmq *RabbitMQAdapter) processDelivery(
 				attribute.String("queue", queue),
 				attribute.String("reason", "panic"),
 			)
+
+			panic(r)
 		}
 	}()
 
@@ -1188,10 +1195,10 @@ func (prmq *RabbitMQAdapter) Shutdown(ctx context.Context) error {
 	// Use a done channel to implement timeout on WaitGroup
 	done := make(chan struct{})
 
-	go func() {
+	obsRuntime.SafeGoWithContext(ctx, logger, "rabbitmq-shutdown-wait", obsRuntime.KeepRunning, func(context.Context) {
 		prmq.consumerWg.Wait()
 		close(done)
-	}()
+	})
 
 	// Create a timeout context for the wait operation
 	timeoutCtx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -1227,6 +1234,8 @@ func (prmq *RabbitMQAdapter) Shutdown(ctx context.Context) error {
 func (prmq *RabbitMQAdapter) verifyMessageSignature(
 	body []byte,
 	headers map[string]any,
+	exchange string,
+	routingKey string,
 	logger libLog.Logger,
 	span trace.Span,
 ) error {
@@ -1270,6 +1279,11 @@ func (prmq *RabbitMQAdapter) verifyMessageSignature(
 		messageTime := time.Unix(timestamp, 0)
 
 		age := time.Since(messageTime)
+		if age < -prmq.options.SignatureTimestampTolerance {
+			return fmt.Errorf("%w: message timestamp is %v in the future, tolerance is %v",
+				ErrSignatureFromFuture, (-age).Round(time.Second), prmq.options.SignatureTimestampTolerance)
+		}
+
 		if age > prmq.options.SignatureTimestampTolerance {
 			return fmt.Errorf("%w: message is %v old, tolerance is %v",
 				ErrSignatureExpired, age.Round(time.Second), prmq.options.SignatureTimestampTolerance)
@@ -1304,8 +1318,11 @@ func (prmq *RabbitMQAdapter) verifyMessageSignature(
 		)
 	}
 
-	// Build the signature payload and verify
-	payload := crypto.BuildSignaturePayload(timestamp, body)
+	tenantID, _ := headers[HeaderTenantID].(string)
+	jobID := extractJobID(body)
+
+	// Build the signature payload and verify.
+	payload := BuildMessageSignaturePayload(timestamp, version, tenantID, jobID, exchange, routingKey, body)
 	if err := prmq.options.Signer.Verify(payload, signature); err != nil {
 		return fmt.Errorf("%w: %v", ErrSignatureVerificationFailed, err)
 	}

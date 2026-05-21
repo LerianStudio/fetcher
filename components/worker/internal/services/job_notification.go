@@ -155,6 +155,14 @@ func (uc *UseCase) publishJobNotification(
 		libLog.String("exchange", uc.JobEventsExchange),
 	)
 
+	if uc.shouldPublishJobNotificationViaStreaming(ctx) {
+		if err := uc.publishJobNotificationViaStreaming(ctx, notifySpan, status, message.JobID.String(), notificationJSON, routingKey, logger); err != nil {
+			return err
+		}
+
+		return nil
+	}
+
 	if err := uc.RabbitMQPublisher.Publish(ctx, uc.JobEventsExchange, routingKey, notificationJSON); err != nil {
 		libOtel.HandleSpanError(notifySpan, "Error publishing job notification to RabbitMQ", err)
 		logger.Log(ctx, libLog.LevelError, "error publishing job notification to RabbitMQ", libLog.Err(err))
@@ -178,6 +186,31 @@ func (uc *UseCase) publishJobNotification(
 	return nil
 }
 
+func (uc *UseCase) shouldPublishJobNotificationViaStreaming(ctx context.Context) bool {
+	return uc.JobEventStreamingEnabled && (core.GetTenantIDContext(ctx) != "" || uc.JobEventStreamingRequireTenant)
+}
+
+func (uc *UseCase) publishJobNotificationViaStreaming(ctx context.Context, span trace.Span, status, jobID string, payload []byte, routingKey string, logger libLog.Logger) error {
+	if err := uc.emitJobNotificationEvent(ctx, status, jobID, payload, logger); err != nil {
+		libOtel.HandleSpanError(span, "Error emitting job notification with lib-streaming", err)
+		logger.Log(ctx, libLog.LevelError, "error emitting job notification with lib-streaming", libLog.Err(err))
+
+		if streaming.IsCallerError(err) {
+			return fmt.Errorf("emitting job notification event caller error: %w", err)
+		}
+
+		return fmt.Errorf("emitting job notification event: %w", err)
+	}
+
+	logger.Log(ctx, libLog.LevelInfo, "published job notification successfully",
+		libLog.String("job_id", jobID),
+		libLog.String("status", status),
+		libLog.String("routing_key", routingKey),
+	)
+
+	return nil
+}
+
 func (uc *UseCase) emitJobNotificationEvent(ctx context.Context, status, subject string, payload []byte, logger libLog.Logger) error {
 	if uc.JobEventEmitter == nil {
 		return nil
@@ -185,7 +218,12 @@ func (uc *UseCase) emitJobNotificationEvent(ctx context.Context, status, subject
 
 	tenantID := core.GetTenantIDContext(ctx)
 	if tenantID == "" {
-		logger.Log(ctx, libLog.LevelDebug, "tenant ID missing, skipping lib-streaming job notification event")
+		if uc.JobEventStreamingRequireTenant {
+			return streaming.ErrMissingTenantID
+		}
+
+		logger.Log(ctx, libLog.LevelDebug, "tenant ID missing, skipping lib-streaming job notification event in single-tenant compatibility mode")
+
 		return nil
 	}
 
@@ -225,4 +263,10 @@ func sanitizeRoutingSourceSegment(source string) string {
 	}
 
 	return normalized
+}
+
+// SanitizeRoutingSourceSegmentForBootstrap exposes the notification routing
+// normalization for bootstrap-owned lib-streaming RabbitMQ publisher adapter.
+func SanitizeRoutingSourceSegmentForBootstrap(source string) string {
+	return sanitizeRoutingSourceSegment(source)
 }

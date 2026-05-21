@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/LerianStudio/lib-observability"
+	observability "github.com/LerianStudio/lib-observability"
 
 	"github.com/LerianStudio/fetcher/components/worker/internal/adapters/rabbitmq"
 	"github.com/LerianStudio/fetcher/components/worker/internal/services"
@@ -19,6 +19,7 @@ import (
 	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
 	tmmongo "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/mongo"
 	libLog "github.com/LerianStudio/lib-observability/log"
+	obsRuntime "github.com/LerianStudio/lib-observability/runtime"
 	opentelemetry "github.com/LerianStudio/lib-observability/tracing"
 
 	"github.com/LerianStudio/lib-commons/v5/commons"
@@ -160,33 +161,7 @@ func (mq *MultiQueueConsumer) Run(l *commons.Launcher) error {
 		return mq.initErr
 	}
 
-	go func() {
-		<-sigs
-
-		// SetDraining(true) → sleep grace period → cancel consumer ctx.
-		// Reversing the order drops in-flight messages because consumers
-		// stop ack/nack traffic before kube-proxy sees /readyz=503.
-		readyz.SetDraining(true)
-
-		if mq.logger != nil {
-			mq.logger.Log(baseCtx, libLog.LevelInfo,
-				"received shutdown signal; readyz draining flag set, sleeping drain grace period")
-		}
-
-		if mq.drainDelay > 0 {
-			select {
-			case <-time.After(mq.drainDelay):
-			case <-baseCtx.Done():
-			}
-		}
-
-		if mq.logger != nil {
-			mq.logger.Log(baseCtx, libLog.LevelInfo,
-				"drain grace period elapsed; cancelling consumer context")
-		}
-
-		cancel()
-	}()
+	mq.startShutdownSignalWatcher(ctx, baseCtx, baseLogger, sigs, cancel)
 
 	// Multi-tenant mode: use tmconsumer.MultiTenantConsumer
 	if mq.mtConsumer != nil {
@@ -236,6 +211,44 @@ func (mq *MultiQueueConsumer) Run(l *commons.Launcher) error {
 	}
 
 	return nil
+}
+
+func (mq *MultiQueueConsumer) startShutdownSignalWatcher(ctx, logCtx context.Context, logger libLog.Logger, sigs <-chan os.Signal, cancel context.CancelFunc) {
+	obsRuntime.SafeGoWithContext(ctx, logger, "worker-shutdown-signal-watcher", obsRuntime.KeepRunning, func(signalCtx context.Context) {
+		select {
+		case <-sigs:
+		case <-signalCtx.Done():
+			return
+		}
+
+		readyz.SetDraining(true)
+		mq.logShutdownSignal(logCtx, "received shutdown signal; readyz draining flag set, sleeping drain grace period")
+		mq.waitDrainDelay(signalCtx)
+		mq.logShutdownSignal(logCtx, "drain grace period elapsed; cancelling consumer context")
+		cancel()
+	})
+}
+
+func (mq *MultiQueueConsumer) waitDrainDelay(ctx context.Context) {
+	if mq.drainDelay <= 0 {
+		return
+	}
+
+	timer := time.NewTimer(mq.drainDelay)
+	defer timer.Stop()
+
+	select {
+	case <-timer.C:
+	case <-ctx.Done():
+	}
+}
+
+func (mq *MultiQueueConsumer) logShutdownSignal(ctx context.Context, message string) {
+	if mq.logger == nil {
+		return
+	}
+
+	mq.logger.Log(ctx, libLog.LevelInfo, message)
 }
 
 // handlerGenerateReportDelivery is the tmconsumer.HandlerFunc adapter for multi-tenant mode.

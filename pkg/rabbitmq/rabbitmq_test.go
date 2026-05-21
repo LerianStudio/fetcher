@@ -2336,7 +2336,7 @@ func TestVerifyMessageSignature_MissingSignatureHeader(t *testing.T) {
 		HeaderSignatureVersion:   "v1",
 	}
 
-	err := adapter.verifyMessageSignature([]byte(`{}`), headers, logger, nil)
+	err := adapter.verifyMessageSignature([]byte(`{}`), headers, "", "", logger, nil)
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrMissingSignatureHeaders)
@@ -2362,7 +2362,7 @@ func TestVerifyMessageSignature_MissingTimestampHeader(t *testing.T) {
 		HeaderSignatureVersion: "v1",
 	}
 
-	err := adapter.verifyMessageSignature([]byte(`{}`), headers, logger, nil)
+	err := adapter.verifyMessageSignature([]byte(`{}`), headers, "", "", logger, nil)
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrMissingSignatureHeaders)
@@ -2388,7 +2388,7 @@ func TestVerifyMessageSignature_MissingVersionHeader(t *testing.T) {
 		HeaderSignatureTimestamp: strconv.FormatInt(time.Now().Unix(), 10),
 	}
 
-	err := adapter.verifyMessageSignature([]byte(`{}`), headers, logger, nil)
+	err := adapter.verifyMessageSignature([]byte(`{}`), headers, "", "", logger, nil)
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrMissingSignatureHeaders)
@@ -2415,7 +2415,7 @@ func TestVerifyMessageSignature_InvalidTimestampFormat(t *testing.T) {
 		HeaderSignatureVersion:   "v1",
 	}
 
-	err := adapter.verifyMessageSignature([]byte(`{}`), headers, logger, nil)
+	err := adapter.verifyMessageSignature([]byte(`{}`), headers, "", "", logger, nil)
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrSignatureVerificationFailed)
@@ -2444,7 +2444,7 @@ func TestVerifyMessageSignature_TimestampAsInt64(t *testing.T) {
 		HeaderSignatureVersion:   "v1",
 	}
 
-	err := adapter.verifyMessageSignature([]byte(`{}`), headers, logger, nil)
+	err := adapter.verifyMessageSignature([]byte(`{}`), headers, "", "", logger, nil)
 
 	require.NoError(t, err)
 }
@@ -2471,7 +2471,7 @@ func TestVerifyMessageSignature_TimestampAsInt(t *testing.T) {
 		HeaderSignatureVersion:   "v1",
 	}
 
-	err := adapter.verifyMessageSignature([]byte(`{}`), headers, logger, nil)
+	err := adapter.verifyMessageSignature([]byte(`{}`), headers, "", "", logger, nil)
 
 	require.NoError(t, err)
 }
@@ -2496,7 +2496,7 @@ func TestVerifyMessageSignature_NonStringSignature(t *testing.T) {
 		HeaderSignatureVersion:   "v1",
 	}
 
-	err := adapter.verifyMessageSignature([]byte(`{}`), headers, logger, nil)
+	err := adapter.verifyMessageSignature([]byte(`{}`), headers, "", "", logger, nil)
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrMissingSignatureHeaders)
@@ -2523,7 +2523,7 @@ func TestVerifyMessageSignature_NonStringVersion(t *testing.T) {
 		HeaderSignatureVersion:   123, // Non-string
 	}
 
-	err := adapter.verifyMessageSignature([]byte(`{}`), headers, logger, nil)
+	err := adapter.verifyMessageSignature([]byte(`{}`), headers, "", "", logger, nil)
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrMissingSignatureHeaders)
@@ -2550,7 +2550,7 @@ func TestVerifyMessageSignature_UnsupportedTimestampType(t *testing.T) {
 		HeaderSignatureVersion:   "v1",
 	}
 
-	err := adapter.verifyMessageSignature([]byte(`{}`), headers, logger, nil)
+	err := adapter.verifyMessageSignature([]byte(`{}`), headers, "", "", logger, nil)
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrMissingSignatureHeaders)

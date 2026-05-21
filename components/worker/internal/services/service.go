@@ -42,6 +42,12 @@ type UseCase struct {
 	// RabbitMQPublisher remains wired for backward-compatible public event contracts.
 	JobEventEmitter streaming.Emitter
 
+	// JobEventStreamingEnabled indicates STREAMING_ENABLED=true produced a real emitter.
+	JobEventStreamingEnabled bool
+
+	// JobEventStreamingRequireTenant makes missing tenant IDs fail loudly in multi-tenant mode.
+	JobEventStreamingRequireTenant bool
+
 	// JobEventsExchange is the name of the RabbitMQ topic exchange for job events.
 	JobEventsExchange string
 
