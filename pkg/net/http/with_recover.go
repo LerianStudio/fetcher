@@ -2,7 +2,6 @@ package http
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 
 	observability "github.com/LerianStudio/lib-observability"
@@ -14,8 +13,6 @@ import (
 	obsRuntime "github.com/LerianStudio/lib-observability/runtime"
 
 	"github.com/gofiber/fiber/v2"
-	"go.opentelemetry.io/otel/codes"
-	"go.opentelemetry.io/otel/trace"
 )
 
 type recoverMiddleware struct {
@@ -57,15 +54,7 @@ func WithRecover(opts ...RecoverMiddlewareOption) fiber.Handler {
 					logger = ctxLogger
 				}
 
-				panicErr := fmt.Errorf("panic recovered: %v", r)
-
 				recordHTTPPanic(reqCtx, logger, r)
-
-				span := trace.SpanFromContext(reqCtx)
-				if span.IsRecording() {
-					span.RecordError(panicErr)
-					span.SetStatus(codes.Error, fmt.Sprintf("Panic: %v", r))
-				}
 
 				internalErr := pkg.InternalServerError{
 					Code:    constant.ErrInternalServer.Error(),

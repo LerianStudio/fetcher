@@ -194,6 +194,17 @@ func TestHandlerGenerateReportDelivery_VerifiesTenantBoundSignatures(t *testing.
 			ctxTenant: "tenant-a",
 		},
 		{
+			name: "legacy body-only signature enabled accepts authoritative context without tenant header",
+			headers: amqp.Table{
+				pkgRabbitMQ.HeaderMessageSignature:   legacySignature,
+				pkgRabbitMQ.HeaderSignatureTimestamp: strconv.FormatInt(now, 10),
+				pkgRabbitMQ.HeaderSignatureVersion:   signer.SignatureVersion(),
+			},
+			ctxTenant:   "tenant-a",
+			allowLegacy: true,
+			wantHandled: true,
+		},
+		{
 			name: "missing authoritative context rejected before verification",
 			headers: amqp.Table{
 				pkgRabbitMQ.HeaderTenantID:           "tenant-a",

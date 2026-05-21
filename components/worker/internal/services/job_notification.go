@@ -72,6 +72,12 @@ type JobNotificationMessage struct {
 	CompletedAt *time.Time `json:"completedAt,omitempty"`
 }
 
+const (
+	terminalEventPendingMetadataKey = "terminalEventPending"
+	terminalEventStatusMetadataKey  = "terminalEventStatus"
+	terminalEventPayloadMetadataKey = "terminalEventPayload"
+)
+
 // publishJobNotification publishes a job event notification through lib-streaming.
 // Legacy direct RabbitMQ business-event routing is intentionally disabled: the
 // event contract is the lib-streaming definition key (job.completed/job.failed),
@@ -104,30 +110,7 @@ func (uc *UseCase) publishJobNotification(
 	ctx, notifySpan := notificationTracer.Start(ctx, "service.publish_job_notification")
 	defer notifySpan.End()
 
-	notification := JobNotificationMessage{
-		JobID:    message.JobID,
-		Status:   status,
-		Metadata: make(map[string]any),
-	}
-
-	// Add optional result and execution data
-	if opts != nil {
-		notification.Result = opts.Result
-		notification.ExecutionTimeMs = opts.ExecutionTimeMs
-		notification.CompletedAt = opts.CompletedAt
-	}
-
-	if message.Metadata != nil {
-		for k, v := range message.Metadata {
-			notification.Metadata[k] = v
-		}
-	}
-
-	if status == "failed" && errorMetadata != nil {
-		notification.Metadata["error"] = errorMetadata
-	}
-
-	notificationJSON, err := json.Marshal(notification)
+	notificationJSON, err := buildJobNotificationPayload(message, status, errorMetadata, opts)
 	if err != nil {
 		libOtel.HandleSpanError(notifySpan, "Error marshalling job notification", err)
 		logger.Log(ctx, libLog.LevelError, "error marshalling job notification", libLog.Err(err))
@@ -146,6 +129,37 @@ func (uc *UseCase) publishJobNotification(
 	}
 
 	return nil
+}
+
+func buildJobNotificationPayload(message ExtractExternalDataMessage, status string, errorMetadata map[string]any, opts *JobNotificationOptions) ([]byte, error) {
+	notification := JobNotificationMessage{
+		JobID:    message.JobID,
+		Status:   status,
+		Metadata: make(map[string]any),
+	}
+
+	if opts != nil {
+		notification.Result = opts.Result
+		notification.ExecutionTimeMs = opts.ExecutionTimeMs
+		notification.CompletedAt = opts.CompletedAt
+	}
+
+	if message.Metadata != nil {
+		for k, v := range message.Metadata {
+			notification.Metadata[k] = v
+		}
+	}
+
+	if status == "failed" && errorMetadata != nil {
+		notification.Metadata["error"] = errorMetadata
+	}
+
+	notificationJSON, err := json.Marshal(notification)
+	if err != nil {
+		return nil, fmt.Errorf("marshalling job notification: %w", err)
+	}
+
+	return notificationJSON, nil
 }
 
 func (uc *UseCase) publishJobNotificationViaStreaming(ctx context.Context, span trace.Span, status, jobID string, payload []byte, logger libLog.Logger) error {

@@ -95,8 +95,8 @@ func TestExtractExternalData_SkipsCompletedJob(t *testing.T) {
 }
 
 // TestExtractExternalData_ProcessingJobDoesNotReprocessTerminalWork tests that
-// processing jobs are not treated as terminal skip state; the handler still
-// reloads the job and exits via the existing non-pending CAS guard.
+// processing jobs are skipped explicitly; redelivery must not re-run extraction
+// unless a durable terminal-event marker is present.
 func TestExtractExternalData_ProcessingJobDoesNotReprocessTerminalWork(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
@@ -124,7 +124,7 @@ func TestExtractExternalData_ProcessingJobDoesNotReprocessTerminalWork(t *testin
 		Return(&model.Job{
 			ID:     jobID,
 			Status: model.JobStatusProcessing,
-		}, nil).Times(2)
+		}, nil)
 
 	err = uc.ExtractExternalData(ctx, body, nil)
 	if err != nil {

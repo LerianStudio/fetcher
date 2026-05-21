@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"context"
+	"crypto/tls"
 	"testing"
 
 	"github.com/LerianStudio/fetcher/pkg/bootstrap/readyz"
@@ -144,4 +145,60 @@ func TestNewWorkerReadyzConfig_NilCfg_FallsBackToLoadConfig(t *testing.T) {
 		require.NotNil(t, got)
 		assert.NotEmpty(t, got.Version)
 	})
+}
+
+func TestBuildWorkerReadyzCheckers_MultiTenantRedisRegistration(t *testing.T) {
+	client := newWorkerReadyzMultiTenantRedisClient(&Config{
+		MultiTenantEnabled:   true,
+		MultiTenantRedisHost: "localhost",
+		MultiTenantRedisPort: "6380",
+		MultiTenantRedisTLS:  true,
+	})
+	require.NotNil(t, client)
+	t.Cleanup(func() { _ = client.Close() })
+
+	checkers := buildWorkerReadyzCheckers(&workerReadyzDeps{
+		cfg: &Config{
+			MultiTenantEnabled:   true,
+			MultiTenantRedisHost: "localhost",
+			MultiTenantRedisPort: "6380",
+			MultiTenantRedisTLS:  true,
+		},
+		mtRedisClient: client,
+	})
+
+	checker := findCheckerByName(t, checkers, "multi_tenant_redis")
+	require.NotNil(t, checker, "multi-tenant Redis checker must be registered when MT is enabled and host is configured")
+	result := checker.Check(context.Background())
+	require.NotNil(t, result.TLS)
+	assert.True(t, *result.TLS)
+}
+
+func TestBuildWorkerReadyzCheckers_MultiTenantRedisOmittedWhenNotConfigured(t *testing.T) {
+	checkers := buildWorkerReadyzCheckers(&workerReadyzDeps{cfg: &Config{MultiTenantEnabled: true}})
+
+	assert.Nil(t, findCheckerByName(t, checkers, "multi_tenant_redis"))
+}
+
+func TestNewWorkerReadyzMultiTenantRedisClient_TLSPosture(t *testing.T) {
+	client := newWorkerReadyzMultiTenantRedisClient(&Config{
+		MultiTenantEnabled:   true,
+		MultiTenantRedisHost: "localhost",
+		MultiTenantRedisTLS:  true,
+	})
+	require.NotNil(t, client)
+	t.Cleanup(func() { _ = client.Close() })
+
+	config := client.Options().TLSConfig
+	require.NotNil(t, config)
+	assert.Equal(t, uint16(tls.VersionTLS12), config.MinVersion)
+
+	plainClient := newWorkerReadyzMultiTenantRedisClient(&Config{
+		MultiTenantEnabled:   true,
+		MultiTenantRedisHost: "localhost",
+		MultiTenantRedisTLS:  false,
+	})
+	require.NotNil(t, plainClient)
+	t.Cleanup(func() { _ = plainClient.Close() })
+	assert.Nil(t, plainClient.Options().TLSConfig)
 }

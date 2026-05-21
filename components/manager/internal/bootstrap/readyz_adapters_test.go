@@ -157,3 +157,45 @@ func TestNewReadyzRedisClient_NoTLS_NilTLSConfig(t *testing.T) {
 	opts := client.Options()
 	assert.Nil(t, opts.TLSConfig, "TLSConfig must be nil when RedisTLS=false")
 }
+
+func TestBuildManagerReadyzCheckers_MultiTenantRedisRegistration(t *testing.T) {
+	client := newReadyzMultiTenantRedisClient(&Config{
+		MultiTenantEnabled:   true,
+		MultiTenantRedisHost: "localhost",
+		MultiTenantRedisPort: "6380",
+		MultiTenantRedisTLS:  true,
+	})
+	require.NotNil(t, client)
+	t.Cleanup(func() { _ = client.Close() })
+
+	checkers := buildManagerReadyzCheckers(&Config{
+		MultiTenantEnabled:   true,
+		MultiTenantRedisHost: "localhost",
+		MultiTenantRedisPort: "6380",
+		MultiTenantRedisTLS:  true,
+	}, nil, &managerPlatformDependencies{readyzMultiTenantRedisClient: client})
+
+	checker := findCheckerByName(t, checkers, "multi_tenant_redis")
+	require.NotNil(t, checker, "multi-tenant Redis checker must be registered when MT is enabled and host is configured")
+	result := checker.Check(context.Background())
+	require.NotNil(t, result.TLS)
+	assert.True(t, *result.TLS)
+}
+
+func TestBuildManagerReadyzCheckers_MultiTenantRedisOmittedWhenNotConfigured(t *testing.T) {
+	checkers := buildManagerReadyzCheckers(&Config{MultiTenantEnabled: true}, nil, &managerPlatformDependencies{})
+
+	assert.Nil(t, findCheckerByName(t, checkers, "multi_tenant_redis"))
+}
+
+func TestNewReadyzMultiTenantRedisClient_NoTLS_NilTLSConfig(t *testing.T) {
+	client := newReadyzMultiTenantRedisClient(&Config{
+		MultiTenantEnabled:   true,
+		MultiTenantRedisHost: "localhost",
+		MultiTenantRedisTLS:  false,
+	})
+	require.NotNil(t, client)
+	t.Cleanup(func() { _ = client.Close() })
+
+	assert.Nil(t, client.Options().TLSConfig)
+}

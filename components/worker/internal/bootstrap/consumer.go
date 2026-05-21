@@ -263,7 +263,7 @@ func (mq *MultiQueueConsumer) logShutdownSignal(ctx context.Context, message str
 // It resolves per-tenant MongoDB if mongoManager is available, then delegates to handlerGenerateReport.
 func (mq *MultiQueueConsumer) handlerGenerateReportDelivery(ctx context.Context, delivery amqp.Delivery) error {
 	headers := headersFromDelivery(delivery)
-	if err := validateAuthoritativeTenantHeader(ctx, headers); err != nil {
+	if err := validateAuthoritativeTenantHeader(ctx, headers, mq.allowLegacyBodySignatureFallback); err != nil {
 		if mq.logger != nil {
 			mq.logger.Log(ctx, libLog.LevelError, "multi-tenant RabbitMQ tenant header mismatch", libLog.Err(err))
 		}
@@ -310,7 +310,7 @@ func (mq *MultiQueueConsumer) handlerGenerateReportDelivery(ctx context.Context,
 	return mq.handlerGenerateReport(ctx, delivery.Body, headers)
 }
 
-func validateAuthoritativeTenantHeader(ctx context.Context, headers map[string]any) error {
+func validateAuthoritativeTenantHeader(ctx context.Context, headers map[string]any, allowLegacyBodySignatureFallback bool) error {
 	authoritativeTenantID := tmcore.GetTenantIDContext(ctx)
 	if authoritativeTenantID == "" {
 		return fmt.Errorf("authoritative tenant context is required before verifying RabbitMQ message signature")
@@ -318,6 +318,10 @@ func validateAuthoritativeTenantHeader(ctx context.Context, headers map[string]a
 
 	headerTenantID, ok := headers[pkgRabbitmq.HeaderTenantID].(string)
 	if !ok || headerTenantID == "" {
+		if allowLegacyBodySignatureFallback {
+			return nil
+		}
+
 		return fmt.Errorf("tenant header %s is required for authoritative tenant %s", pkgRabbitmq.HeaderTenantID, authoritativeTenantID)
 	}
 

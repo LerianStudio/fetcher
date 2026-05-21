@@ -129,6 +129,28 @@ func newReadyzRedisClient(cfg *Config) *redis.Client {
 	return redis.NewClient(opts)
 }
 
+func newReadyzMultiTenantRedisClient(cfg *Config) *redis.Client {
+	if cfg == nil || !cfg.MultiTenantEnabled || cfg.MultiTenantRedisHost == "" {
+		return nil
+	}
+
+	port := cfg.MultiTenantRedisPort
+	if port == "" {
+		port = "6379"
+	}
+
+	opts := &redis.Options{
+		Addr:     net.JoinHostPort(cfg.MultiTenantRedisHost, port),
+		Password: cfg.MultiTenantRedisPassword,
+	}
+
+	if cfg.MultiTenantRedisTLS {
+		opts.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	}
+
+	return redis.NewClient(opts)
+}
+
 // redisURLFromCfg composes a URL used only for TLS posture detection.
 // Password and DB are intentionally omitted — only scheme and host:port
 // matter to detectRedisTLS.
@@ -202,6 +224,16 @@ func buildManagerReadyzCheckers(
 	}
 
 	if cfg.MultiTenantEnabled && plat != nil {
+		if plat.readyzMultiTenantRedisClient != nil {
+			client := plat.readyzMultiTenantRedisClient
+
+			checkers = append(checkers, readyz.NewRedisClientCheckerFromFn(
+				"multi_tenant_redis",
+				func(ctx context.Context) error { return client.Ping(ctx).Err() },
+				redisURLFromCfg(cfg.MultiTenantRedisHost, cfg.MultiTenantRedisPort, cfg.MultiTenantRedisTLS),
+			))
+		}
+
 		checkers = append(checkers, readyz.NewTenantManagerClientChecker(
 			plat.tmClient,
 			applicationServiceName(),

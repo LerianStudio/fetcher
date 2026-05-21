@@ -165,6 +165,9 @@ type managerPlatformDependencies struct {
 	// short-circuited by the schema cache's in-memory fallback. Nil when
 	// REDIS_HOST is unset.
 	readyzRedisClient *redis.Client
+	// readyzMultiTenantRedisClient probes the dispatch-layer Redis Pub/Sub dependency.
+	// Nil unless MULTI_TENANT_ENABLED=true and MULTI_TENANT_REDIS_HOST is configured.
+	readyzMultiTenantRedisClient *redis.Client
 }
 
 var (
@@ -542,13 +545,14 @@ func initPlatformDependencies(cfg *Config, logger libLog.Logger, messageSigner c
 			cfg.OrganizationIDs,
 			&licenseLogger,
 		),
-		connectionTestStore: ratelimit.New(10, time.Minute),
-		schemaCache:         cacheAdapter.NewSchemaCache(genericCache, schemaCacheTTL),
-		rabbitMQAdapter:     rabbitAdapter,
-		tmClient:            tmClientForReadyz,
-		tmMongoManager:      tmMongoMgrForReadyz,
-		tmRabbitMQManager:   tmRabbitMgrForReadyz,
-		readyzRedisClient:   newReadyzRedisClient(cfg),
+		connectionTestStore:          ratelimit.New(10, time.Minute),
+		schemaCache:                  cacheAdapter.NewSchemaCache(genericCache, schemaCacheTTL),
+		rabbitMQAdapter:              rabbitAdapter,
+		tmClient:                     tmClientForReadyz,
+		tmMongoManager:               tmMongoMgrForReadyz,
+		tmRabbitMQManager:            tmRabbitMgrForReadyz,
+		readyzRedisClient:            newReadyzRedisClient(cfg),
+		readyzMultiTenantRedisClient: newReadyzMultiTenantRedisClient(cfg),
 	}, nil
 }
 

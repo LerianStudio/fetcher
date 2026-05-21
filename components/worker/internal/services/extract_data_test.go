@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -52,6 +53,117 @@ func TestParseMessage_ValidMessage(t *testing.T) {
 
 	if result.JobID != jobID {
 		t.Fatalf("expected jobID %s, got %s", jobID, result.JobID)
+	}
+}
+
+func TestCompleteJob_WithStatusPersistenceFailure_DoesNotOutboxCompletedEvent(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+
+	ctx := testContext()
+	jobID := newTestJobID()
+	message := ExtractExternalDataMessage{
+		JobID:    jobID,
+		Metadata: map[string]any{"source": "test"},
+	}
+	result := &JobResultData{Path: "tenant/results/job.json", HMAC: "hmac", RowCount: 3, SizeBytes: 128, Format: "json"}
+	persistErr := errors.New("mongo write failed")
+
+	mocks.jobRepo.EXPECT().
+		UpdateStatus(gomock.Any(), jobID, model.JobStatusCompleted, result.Path, result.HMAC, gomock.Any()).
+		Return(persistErr)
+	mocks.jobRepo.EXPECT().
+		UpdateStatus(gomock.Any(), jobID, model.JobStatusFailed, "", "", gomock.Any()).
+		Return(nil)
+	mocks.rabbitPublisher.EXPECT().
+		Publish(gomock.Any(), "test-exchange", "job.failed", gomock.Any()).
+		Return(nil)
+
+	err := uc.completeJob(ctx, message, result, time.Now(), nil, testLogger())
+	if err == nil {
+		t.Fatal("expected completion to fail when terminal status persistence fails")
+	}
+
+	if !strings.Contains(err.Error(), "mongo write failed") {
+		t.Fatalf("expected persistence failure in error, got %q", err.Error())
+	}
+}
+
+func TestHandleErrorWithUpdate_WithFailedEventOutboxFailure_ReturnsErrorForRetry(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+
+	ctx := testContext()
+	jobID := newTestJobID()
+	operationErr := errors.New("datasource unavailable")
+	outboxErr := errors.New("outbox unavailable")
+	message := ExtractExternalDataMessage{
+		JobID:    jobID,
+		Metadata: map[string]any{"source": "test"},
+	}
+
+	mocks.jobRepo.EXPECT().
+		UpdateStatus(gomock.Any(), jobID, model.JobStatusFailed, "", "", gomock.Any()).
+		Return(nil)
+	mocks.rabbitPublisher.EXPECT().
+		Publish(gomock.Any(), "test-exchange", "job.failed", gomock.Any()).
+		Return(outboxErr)
+
+	err := uc.handleErrorWithUpdate(ctx, jobID, message, nil, "Error querying external data", operationErr, testLogger())
+	if err == nil {
+		t.Fatal("expected failed terminal event outbox error to be returned for RabbitMQ retry")
+	}
+
+	if !strings.Contains(err.Error(), "publish required job failure notification") {
+		t.Fatalf("expected required failed notification error, got %q", err.Error())
+	}
+}
+
+func TestExtractExternalData_WithCompletedTerminalEventPending_RetriesOutboxWithoutReprocessing(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+
+	ctx := testContext()
+	jobID := newTestJobID()
+	message := ExtractExternalDataMessage{
+		JobID: jobID,
+		MappedFields: map[string]map[string][]string{
+			"datasource1": {"table1": {"field1"}},
+		},
+		Metadata: map[string]any{"source": "test"},
+	}
+	body, err := json.Marshal(message)
+	if err != nil {
+		t.Fatalf("failed to marshal message: %v", err)
+	}
+	payload := fmt.Sprintf(`{"jobId":"%s","status":"completed","metadata":{"source":"test"}}`, jobID)
+
+	mocks.jobRepo.EXPECT().
+		FindByID(gomock.Any(), jobID).
+		Return(&model.Job{
+			ID:     jobID,
+			Status: model.JobStatusCompleted,
+			Metadata: map[string]any{
+				terminalEventPendingMetadataKey: true,
+				terminalEventStatusMetadataKey:  "completed",
+				terminalEventPayloadMetadataKey: payload,
+			},
+		}, nil)
+	mocks.rabbitPublisher.EXPECT().
+		Publish(gomock.Any(), "test-exchange", "job.completed", []byte(payload)).
+		Return(nil)
+
+	if err := uc.ExtractExternalData(ctx, body, nil); err != nil {
+		t.Fatalf("expected pending terminal event retry to succeed, got %v", err)
 	}
 }
 
@@ -335,7 +447,7 @@ func TestShouldSkipProcessing(t *testing.T) {
 			wantSkip: false,
 		},
 		{
-			name: "job currently processing - should not skip so durable terminal event can retry",
+			name: "job currently processing - should skip extraction replay without terminal event marker",
 			setupMocks: func(mocks *testMocks, jobID uuid.UUID) {
 				mocks.jobRepo.EXPECT().
 					FindByID(gomock.Any(), jobID).
@@ -344,7 +456,7 @@ func TestShouldSkipProcessing(t *testing.T) {
 						Status: model.JobStatusProcessing,
 					}, nil)
 			},
-			wantSkip: false,
+			wantSkip: true,
 		},
 	}
 
@@ -362,7 +474,10 @@ func TestShouldSkipProcessing(t *testing.T) {
 			tt.setupMocks(mocks, jobID)
 
 			logger := testLogger()
-			got := uc.shouldSkipProcessing(ctx, jobID, logger)
+			got, err := uc.shouldSkipProcessing(ctx, jobID, logger)
+			if err != nil {
+				t.Fatalf("expected no retry error, got %v", err)
+			}
 			if got != tt.wantSkip {
 				t.Fatalf("expected skip=%v, got skip=%v", tt.wantSkip, got)
 			}
@@ -1943,11 +2058,8 @@ func TestCompleteJob_CompletedStatusUpdateError(t *testing.T) {
 	}
 
 	mocks.jobRepo.EXPECT().
-		UpdateStatus(gomock.Any(), jobID, model.JobStatusCompleted, resultData.Path, resultData.HMAC, nil).
+		UpdateStatus(gomock.Any(), jobID, model.JobStatusCompleted, resultData.Path, resultData.HMAC, gomock.Any()).
 		Return(errors.New("completed update failed"))
-	mocks.rabbitPublisher.EXPECT().
-		Publish(gomock.Any(), "test-exchange", "job.completed", gomock.Any()).
-		Return(nil)
 
 	mocks.jobRepo.EXPECT().
 		UpdateStatus(gomock.Any(), jobID, model.JobStatusFailed, gomock.Any(), gomock.Any(), gomock.Any()).
@@ -1957,7 +2069,7 @@ func TestCompleteJob_CompletedStatusUpdateError(t *testing.T) {
 		Publish(gomock.Any(), "test-exchange", "job.failed", gomock.Any()).
 		Return(nil)
 
-	err := uc.completeJob(ctx, tracer, message, resultData, time.Now().Add(-time.Second), span, logger)
+	err := uc.completeJob(ctx, message, resultData, time.Now().Add(-time.Second), span, logger)
 	if err == nil {
 		t.Fatal("expected error when completed status update fails, got nil")
 	}
@@ -2257,12 +2369,16 @@ func TestCompleteJob_NotificationFailure_ReturnsError(t *testing.T) {
 		HMAC:      "test-hmac",
 	}
 
-	// Notification publish fails before terminal status is persisted.
+	mocks.jobRepo.EXPECT().
+		UpdateStatus(gomock.Any(), jobID, model.JobStatusCompleted, resultData.Path, resultData.HMAC, gomock.Any()).
+		Return(nil)
+
+	// Notification publish fails after terminal status is persisted with a pending marker.
 	mocks.rabbitPublisher.EXPECT().
 		Publish(gomock.Any(), "test-exchange", "job.completed", gomock.Any()).
 		Return(errors.New("connection refused"))
 
-	err := uc.completeJob(ctx, tracer, message, resultData, time.Now().Add(-time.Second), span, logger)
+	err := uc.completeJob(ctx, message, resultData, time.Now().Add(-time.Second), span, logger)
 	if err == nil {
 		t.Fatal("expected error when required job.completed event publish fails")
 	}
@@ -2310,7 +2426,7 @@ func TestCompleteJob_NilResultData(t *testing.T) {
 		Publish(gomock.Any(), "test-exchange", "job.failed", gomock.Any()).
 		Return(nil)
 
-	err := uc.completeJob(ctx, tracer, message, nil, time.Now().Add(-time.Second), span, logger)
+	err := uc.completeJob(ctx, message, nil, time.Now().Add(-time.Second), span, logger)
 	if err == nil {
 		t.Fatal("expected error for nil resultData, got nil")
 	}

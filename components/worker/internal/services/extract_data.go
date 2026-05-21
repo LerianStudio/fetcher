@@ -79,7 +79,11 @@ func (uc *UseCase) ExtractExternalData(ctx context.Context, body []byte, headers
 		return err
 	}
 
-	if skip := uc.shouldSkipProcessing(ctx, message.JobID, logger); skip {
+	if skip, retryErr := uc.shouldSkipProcessing(ctx, message.JobID, logger); skip {
+		if retryErr != nil {
+			return retryErr
+		}
+
 		return nil
 	}
 
@@ -133,13 +137,12 @@ func (uc *UseCase) ExtractExternalData(ctx context.Context, body []byte, headers
 		return uc.handleErrorWithUpdate(ctx, message.JobID, *message, span, "Error saving external data to storage", err, logger)
 	}
 
-	return uc.completeJob(ctx, tracer, *message, resultData, startTime, span, logger)
+	return uc.completeJob(ctx, *message, resultData, startTime, span, logger)
 }
 
 // completeJob persists the completed status and publishes a completion notification.
 func (uc *UseCase) completeJob(
 	ctx context.Context,
-	tracer trace.Tracer,
 	message ExtractExternalDataMessage,
 	resultData *JobResultData,
 	startTime time.Time,
@@ -160,7 +163,18 @@ func (uc *UseCase) completeJob(
 		CompletedAt:     &completedAt,
 	}
 
-	if err := uc.publishJobNotification(ctx, tracer, message, "completed", nil, notificationOpts, logger); err != nil {
+	notificationPayload, err := buildJobNotificationPayload(message, "completed", nil, notificationOpts)
+	if err != nil {
+		libOtel.HandleSpanError(span, "Error marshalling job completion notification", err)
+		return fmt.Errorf("build required job completion notification: %w", err)
+	}
+
+	metadata := terminalEventPendingMetadata("completed", notificationPayload)
+	if err := uc.JobRepository.UpdateStatus(ctx, message.JobID, model.JobStatusCompleted, resultData.Path, resultData.HMAC, metadata); err != nil {
+		return uc.handleErrorWithUpdate(ctx, message.JobID, message, span, "Error updating job status to completed", err, logger)
+	}
+
+	if err := uc.publishJobNotificationPayload(ctx, "completed", message.JobID.String(), notificationPayload, logger); err != nil {
 		libOtel.HandleSpanError(span, "Error publishing job completion notification", err)
 		logger.Log(ctx, libLog.LevelError, "failed to publish required job completion notification",
 			libLog.String("job_id", message.JobID.String()),
@@ -168,10 +182,6 @@ func (uc *UseCase) completeJob(
 		)
 
 		return fmt.Errorf("publish required job completion notification: %w", err)
-	}
-
-	if err := uc.JobRepository.UpdateStatus(ctx, message.JobID, model.JobStatusCompleted, resultData.Path, resultData.HMAC, nil); err != nil {
-		return uc.handleErrorWithUpdate(ctx, message.JobID, message, span, "Error updating job status to completed", err, logger)
 	}
 
 	return nil
@@ -333,7 +343,23 @@ func (uc *UseCase) handleErrorWithUpdate(
 		err = fmt.Errorf("operation failed: %s", errorMsg)
 	}
 
-	if errUpdate := uc.updateJobWithErrors(ctx, jobID, err.Error()); errUpdate != nil {
+	errorMetadata := map[string]any{
+		"message": sanitizeErrorForNotification(err.Error()),
+	}
+
+	// Ensure message has correct IDs (in case it was partially parsed)
+	message.JobID = jobID
+
+	notificationPayload, payloadErr := buildJobNotificationPayload(message, "failed", errorMetadata, nil)
+	if payloadErr != nil {
+		libOtel.HandleSpanError(span, "Error marshalling job failure notification", payloadErr)
+		return fmt.Errorf("build required job failure notification: %w", payloadErr)
+	}
+
+	metadata := terminalEventPendingMetadata("failed", notificationPayload)
+	metadata["error"] = err.Error()
+
+	if errUpdate := uc.JobRepository.UpdateStatus(ctx, jobID, model.JobStatusFailed, "", "", metadata); errUpdate != nil {
 		libOtel.HandleSpanError(span, "Error to update report status with error.", errUpdate)
 		logger.Log(ctx, libLog.LevelError, "error updating report status with error",
 			libLog.String("job_id", jobID.String()),
@@ -349,20 +375,13 @@ func (uc *UseCase) handleErrorWithUpdate(
 		libLog.Err(err),
 	)
 
-	// Publish job failure notification to RabbitMQ topic exchange.
-	// Sanitize the error message to avoid leaking internal details.
-	errorMetadata := map[string]any{
-		"message": sanitizeErrorForNotification(err.Error()),
-	}
-
-	// Ensure message has correct IDs (in case it was partially parsed)
-	message.JobID = jobID
-
-	if errNotify := uc.publishJobNotification(ctx, nil, message, "failed", errorMetadata, nil, logger); errNotify != nil {
-		logger.Log(ctx, libLog.LevelWarn, "failed to publish job failure notification",
+	if errNotify := uc.publishJobNotificationPayload(ctx, "failed", jobID.String(), notificationPayload, logger); errNotify != nil {
+		logger.Log(ctx, libLog.LevelError, "failed to publish required job failure notification",
 			libLog.String("job_id", jobID.String()),
 			libLog.Err(errNotify),
 		)
+
+		return fmt.Errorf("publish required job failure notification: %w", errNotify)
 	}
 
 	return err
@@ -377,6 +396,107 @@ func (uc *UseCase) updateJobWithErrors(ctx context.Context, jobID uuid.UUID, err
 	errUpdate := uc.JobRepository.UpdateStatus(ctx, jobID, model.JobStatusFailed, "", "", metadata)
 	if errUpdate != nil {
 		return fmt.Errorf("failed to update job status to failed: %w", errUpdate)
+	}
+
+	return nil
+}
+
+func terminalEventPendingMetadata(status string, payload []byte) map[string]any {
+	return map[string]any{
+		terminalEventPendingMetadataKey: true,
+		terminalEventStatusMetadataKey:  status,
+		terminalEventPayloadMetadataKey: string(payload),
+	}
+}
+
+func (uc *UseCase) retryPendingTerminalEventForJob(ctx context.Context, job *model.Job, logger libLog.Logger) (bool, error) {
+	status, payload, err := pendingTerminalEvent(job)
+	if err != nil {
+		return true, err
+	}
+
+	if !isTerminalStatus(job.Status) {
+		err := fmt.Errorf("job %s has pending terminal event %q but non-terminal status %q", job.ID, status, job.Status)
+		logger.Log(ctx, libLog.LevelError, "refusing to outbox terminal event without committed terminal state",
+			libLog.String("job_id", job.ID.String()),
+			libLog.Err(err),
+		)
+
+		return true, err
+	}
+
+	if terminalStatusForEvent(status) != job.Status {
+		err := fmt.Errorf("job %s terminal event %q does not match committed status %q", job.ID, status, job.Status)
+		logger.Log(ctx, libLog.LevelError, "refusing to outbox contradictory terminal event",
+			libLog.String("job_id", job.ID.String()),
+			libLog.Err(err),
+		)
+
+		return true, err
+	}
+
+	if err := uc.publishJobNotificationPayload(ctx, status, job.ID.String(), []byte(payload), logger); err != nil {
+		return true, fmt.Errorf("publish required job %s notification: %w", status, err)
+	}
+
+	logger.Log(ctx, libLog.LevelInfo, "retried pending terminal job event",
+		libLog.String("job_id", job.ID.String()),
+		libLog.String("status", status),
+	)
+
+	return true, nil
+}
+
+func hasPendingTerminalEvent(metadata map[string]any) bool {
+	pending, _ := metadata[terminalEventPendingMetadataKey].(bool)
+	return pending
+}
+
+func pendingTerminalEvent(job *model.Job) (string, string, error) {
+	status, ok := job.Metadata[terminalEventStatusMetadataKey].(string)
+	if !ok || status == "" {
+		return "", "", fmt.Errorf("job %s missing terminal event status metadata", job.ID)
+	}
+
+	payload, ok := job.Metadata[terminalEventPayloadMetadataKey].(string)
+	if !ok || payload == "" {
+		return "", "", fmt.Errorf("job %s missing terminal event payload metadata", job.ID)
+	}
+
+	return status, payload, nil
+}
+
+func isTerminalStatus(status model.JobStatus) bool {
+	return status == model.JobStatusCompleted || status == model.JobStatusFailed
+}
+
+func terminalStatusForEvent(status string) model.JobStatus {
+	switch status {
+	case "completed":
+		return model.JobStatusCompleted
+	case "failed":
+		return model.JobStatusFailed
+	default:
+		return ""
+	}
+}
+
+func (uc *UseCase) publishJobNotificationPayload(ctx context.Context, status, jobID string, payload []byte, logger libLog.Logger) error {
+	logger = normalizeJobNotificationLogger(ctx, logger)
+
+	if !uc.JobEventStreamingEnabled {
+		return fmt.Errorf("mandatory lib-streaming job event emission is disabled")
+	}
+
+	logger.Log(ctx, libLog.LevelInfo, "publishing job notification",
+		libLog.String("job_id", jobID),
+		libLog.String("status", status),
+		libLog.String("event_key", fmt.Sprintf("job.%s", status)),
+	)
+
+	if err := uc.emitJobNotificationEvent(ctx, status, jobID, payload); err != nil {
+		logger.Log(ctx, libLog.LevelError, "error emitting job notification with lib-streaming", libLog.Err(err))
+		return fmt.Errorf("emitting job notification event: %w", err)
 	}
 
 	return nil
@@ -609,24 +729,43 @@ func (uc *UseCase) encryptData(data []byte, _ libLog.Logger) ([]byte, error) {
 }
 
 // shouldSkipProcessing checks if job should be skipped due to idempotency.
-func (uc *UseCase) shouldSkipProcessing(ctx context.Context, jobID uuid.UUID, logger libLog.Logger) bool {
-	jobStatus, err := uc.checkReportStatus(ctx, jobID, logger)
-	if err == nil {
-		if jobStatus == model.JobStatusCompleted {
-			logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Job %s is already %s, skipping reprocessing", jobID, jobStatus))
-			return true
-		}
-
-		if jobStatus == model.JobStatusProcessing {
-			logger.Log(ctx, libLog.LevelWarn, fmt.Sprintf("Job %s is processing; reprocessing is allowed so required terminal events can be retried", jobID))
-		}
+func (uc *UseCase) shouldSkipProcessing(ctx context.Context, jobID uuid.UUID, logger libLog.Logger) (bool, error) {
+	jobData, err := uc.getJobForStatusCheck(ctx, jobID, logger)
+	if err != nil || jobData == nil {
+		//nolint:nilerr // status preflight failure falls through to the main repository load, which marks the job failed with full context.
+		return false, nil
 	}
 
-	return false
+	if hasPendingTerminalEvent(jobData.Metadata) {
+		return uc.retryPendingTerminalEventForJob(ctx, jobData, logger)
+	}
+
+	if jobData.Status == model.JobStatusCompleted {
+		logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Job %s is already %s, skipping reprocessing", jobID, jobData.Status))
+		return true, nil
+	}
+
+	if jobData.Status == model.JobStatusProcessing {
+		logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Job %s is already processing; skipping extraction replay until terminal event marker is present", jobID))
+		return true, nil
+	}
+
+	return false, nil
 }
 
 // checkReportStatus checks the current status of a report to implement idempotency.
+//
+//nolint:unused // retained as a direct unit-test seam for status preflight behavior.
 func (uc *UseCase) checkReportStatus(ctx context.Context, jobID uuid.UUID, logger libLog.Logger) (model.JobStatus, error) {
+	jobData, err := uc.getJobForStatusCheck(ctx, jobID, logger)
+	if err != nil {
+		return "", err
+	}
+
+	return jobData.Status, nil
+}
+
+func (uc *UseCase) getJobForStatusCheck(ctx context.Context, jobID uuid.UUID, logger libLog.Logger) (*model.Job, error) {
 	jobData, err := uc.JobRepository.FindByID(ctx, jobID)
 	if err != nil {
 		logger.Log(ctx, libLog.LevelDebug, "could not check job status; may be first attempt",
@@ -634,12 +773,12 @@ func (uc *UseCase) checkReportStatus(ctx context.Context, jobID uuid.UUID, logge
 			libLog.Err(err),
 		)
 
-		return "", fmt.Errorf("failed to check job status: %w", err)
+		return nil, fmt.Errorf("failed to check job status: %w", err)
 	}
 
 	if jobData == nil {
 		logger.Log(ctx, libLog.LevelDebug, "no job data found", libLog.String("job_id", jobID.String()))
-		return "", pkg.ValidationError{Code: "FET-0067", Title: "Job Not Found", Message: fmt.Sprintf("no job data found for %s", jobID)}
+		return nil, pkg.ValidationError{Code: "FET-0067", Title: "Job Not Found", Message: fmt.Sprintf("no job data found for %s", jobID)}
 	}
 
 	logger.Log(ctx, libLog.LevelDebug, "current job status",
@@ -647,7 +786,7 @@ func (uc *UseCase) checkReportStatus(ctx context.Context, jobID uuid.UUID, logge
 		libLog.String("status", string(jobData.Status)),
 	)
 
-	return jobData.Status, nil
+	return jobData, nil
 }
 
 // extractConfigNamesFromMappedFields extracts the first-level keys from mappedFields.

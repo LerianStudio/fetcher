@@ -2,6 +2,8 @@ package bootstrap
 
 import (
 	"context"
+	"crypto/tls"
+	"net"
 
 	workerRabbitAdapters "github.com/LerianStudio/fetcher/components/worker/internal/adapters/rabbitmq"
 	"github.com/LerianStudio/fetcher/pkg/bootstrap/readyz"
@@ -15,6 +17,7 @@ import (
 	tmrabbitmq "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/rabbitmq"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gofiber/fiber/v2"
+	"github.com/redis/go-redis/v9"
 )
 
 // workerReadyzDeps bundles the handles the worker bootstrap forwards to
@@ -29,6 +32,7 @@ type workerReadyzDeps struct {
 	tmClient       readyz.TMClient
 	tmMongoManager *tmmongo.Manager
 	tmRabbitMgr    *tmrabbitmq.Manager
+	mtRedisClient  *redis.Client
 
 	closers []func() error
 }
@@ -52,7 +56,34 @@ func newWorkerReadyzDepsST(
 		deps.s3Client = s3Repo.Client()
 	}
 
+	if redisClient := newWorkerReadyzMultiTenantRedisClient(cfg); redisClient != nil {
+		deps.mtRedisClient = redisClient
+		deps.closers = append(deps.closers, redisClient.Close)
+	}
+
 	return deps
+}
+
+func newWorkerReadyzMultiTenantRedisClient(cfg *Config) *redis.Client {
+	if cfg == nil || !cfg.MultiTenantEnabled || cfg.MultiTenantRedisHost == "" {
+		return nil
+	}
+
+	port := cfg.MultiTenantRedisPort
+	if port == "" {
+		port = "6379"
+	}
+
+	opts := &redis.Options{
+		Addr:     net.JoinHostPort(cfg.MultiTenantRedisHost, port),
+		Password: cfg.MultiTenantRedisPassword,
+	}
+
+	if cfg.MultiTenantRedisTLS {
+		opts.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	}
+
+	return redis.NewClient(opts)
 }
 
 // newWorkerReadyzDepsMT builds deps for the multi-tenant path. The
@@ -220,6 +251,16 @@ func buildWorkerReadyzCheckers(deps *workerReadyzDeps) []readyz.DependencyChecke
 	}
 
 	if deps.cfg.MultiTenantEnabled {
+		if deps.mtRedisClient != nil {
+			client := deps.mtRedisClient
+
+			checkers = append(checkers, readyz.NewRedisClientCheckerFromFn(
+				"multi_tenant_redis",
+				func(ctx context.Context) error { return client.Ping(ctx).Err() },
+				readyz.ComposeRedisURL(deps.cfg.MultiTenantRedisHost, deps.cfg.MultiTenantRedisPort, deps.cfg.MultiTenantRedisTLS),
+			))
+		}
+
 		checkers = append(checkers, readyz.NewTenantManagerClientChecker(
 			deps.tmClient,
 			workerApplicationServiceName(),
