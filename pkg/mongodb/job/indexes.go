@@ -242,8 +242,9 @@ func inspectUniqJobHashActive(ctx context.Context, coll *mongo.Collection) (uniq
 // the canonical shape of the new uniq_job_hash_active index. Every structural
 // trait is validated rather than relying on the presence of a single field:
 //
-//   - partialFilterExpression must be a bson.M with dedup_active = true
-//     (not just present — false would defeat the dedup invariant).
+//   - partialFilterExpression must be EXACTLY {dedup_active: true} — extra
+//     predicates would narrow the indexed set and could let duplicate active
+//     request_hash values escape the uniqueness invariant.
 //   - unique flag must be set.
 //   - key must be a single ascending entry on request_hash.
 //
@@ -251,7 +252,7 @@ func inspectUniqJobHashActive(ctx context.Context, coll *mongo.Collection) (uniq
 // classified as legacy so the migration path repairs it.
 func isCurrentUniqJobHashActive(spec bson.M) bool {
 	pfe, ok := spec["partialFilterExpression"].(bson.M)
-	if !ok {
+	if !ok || len(pfe) != 1 {
 		return false
 	}
 
