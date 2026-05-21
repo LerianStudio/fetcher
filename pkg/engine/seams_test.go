@@ -1,6 +1,9 @@
 package engine
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestRequiredSeams_Characterization_IsComplete(t *testing.T) {
 	t.Parallel()
@@ -42,6 +45,11 @@ func TestRequiredSeams_Characterization_IsComplete(t *testing.T) {
 			Reason:     "plugin_crm extraction depends on physical collection prefix matching, filter transformation, field decryption, and merged logical collection output",
 		},
 		{
+			Name:       "plugin_crm_adapter_compatibility",
+			SourcePath: "components/manager/internal/services/query/validate_schema.go; components/worker/internal/services/extract_crm_data.go",
+			Reason:     "plugin_crm remains Manager/Worker compatibility behavior for the first Engine release and must not become a generic Engine datasource extension",
+		},
+		{
 			Name:       "notification_publishing",
 			SourcePath: "components/worker/internal/services/job_notification.go",
 			Reason:     "job status notifications are serialized with source metadata, routed by status and product, and published to the RabbitMQ job events exchange",
@@ -81,6 +89,63 @@ func TestRequiredSeams_Characterization_IsComplete(t *testing.T) {
 			}
 			if got.Reason != tt.Reason {
 				t.Fatalf("runtime seam characterization %q reason = %q, want %q", tt.Name, got.Reason, tt.Reason)
+			}
+		})
+	}
+}
+
+func TestRequiredSeams_PluginCRMAdapterCompatibility_IsAdapterScoped(t *testing.T) {
+	t.Parallel()
+
+	const seamName = "plugin_crm_adapter_compatibility"
+
+	actual := RequiredSeams()
+	seamsByName := make(map[string]Seam, len(actual))
+	for _, seam := range actual {
+		seamsByName[seam.Name] = seam
+	}
+
+	seam, ok := seamsByName[seamName]
+	if !ok {
+		t.Fatalf("missing runtime seam characterization %q", seamName)
+	}
+
+	anchors := []struct {
+		name string
+		path string
+	}{
+		{
+			name: "manager validation anchor",
+			path: "components/manager/internal/services/query/validate_schema.go",
+		},
+		{
+			name: "worker extraction anchor",
+			path: "components/worker/internal/services/extract_crm_data.go",
+		},
+	}
+
+	for _, tt := range anchors {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if !strings.Contains(seam.SourcePath, tt.path) {
+				t.Fatalf("runtime seam characterization %q source path = %q, want anchor %q", seamName, seam.SourcePath, tt.path)
+			}
+		})
+	}
+
+	if !strings.Contains(seam.Reason, "Manager/Worker compatibility behavior") {
+		t.Fatalf("runtime seam characterization %q reason = %q, want Manager/Worker compatibility behavior", seamName, seam.Reason)
+	}
+
+	for _, genericName := range []string{"plugin_crm_extension", "crm_extension", "datasource_crm_extension"} {
+		genericName := genericName
+		t.Run("no generic core seam "+genericName, func(t *testing.T) {
+			t.Parallel()
+
+			if _, exists := seamsByName[genericName]; exists {
+				t.Fatalf("generic Engine core CRM seam %q must not exist; plugin_crm remains adapter compatibility behavior", genericName)
 			}
 		})
 	}

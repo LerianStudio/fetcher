@@ -39,6 +39,11 @@ func RequiredSeams() []Seam {
 			Reason:     "plugin_crm extraction depends on physical collection prefix matching, filter transformation, field decryption, and merged logical collection output",
 		},
 		{
+			Name:       "plugin_crm_adapter_compatibility",
+			SourcePath: "components/manager/internal/services/query/validate_schema.go; components/worker/internal/services/extract_crm_data.go",
+			Reason:     "plugin_crm remains Manager/Worker compatibility behavior for the first Engine release and must not become a generic Engine datasource extension",
+		},
+		{
 			Name:       "connection_resolver_behavior",
 			SourcePath: "pkg/resolver/resolver.go",
 			Reason:     "connection resolution abstracts internal tenant-managed datasources and external configured connections behind a stable ResolveConnections seam",
