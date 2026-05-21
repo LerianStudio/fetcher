@@ -209,6 +209,7 @@ func (jr *JobMongoDBRepository) Update(ctx context.Context, job *model.Job) (*mo
 			"mapped_fields": job.MappedFields,
 			"filters":       job.Filters,
 			"status":        job.Status,
+			"dedup_active":  isDedupActive(job.Status),
 			"result_path":   job.ResultPath,
 			"result_hmac":   job.ResultHMAC,
 			"completed_at":  job.CompletedAt,
@@ -276,7 +277,8 @@ func (jr *JobMongoDBRepository) UpdateStatus(ctx context.Context, id uuid.UUID, 
 
 	update := bson.M{
 		"$set": bson.M{
-			"status": status,
+			"status":       status,
+			"dedup_active": isDedupActive(status),
 		},
 	}
 

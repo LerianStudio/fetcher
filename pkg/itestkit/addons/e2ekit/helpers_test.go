@@ -116,7 +116,16 @@ func TestBuilderHelpersAndProjectRoot(t *testing.T) {
 					t.Fatalf("expected file root %q, got %q", root, got)
 				}
 
-				if got := ProjectRootFrom(t.TempDir()); got != "" {
+				// Walking up from t.TempDir() must return "" when no go.mod
+				// exists on the way to the filesystem root. This can be defeated
+				// by a stray go.mod sitting in /tmp (or any other ancestor of
+				// $TMPDIR), e.g. one accidentally left behind by gosec. Skip
+				// the assertion in that case rather than fail on environment
+				// contamination unrelated to the helper under test.
+				missingRoot := t.TempDir()
+				if stray := findAncestorGoMod(missingRoot); stray != "" {
+					t.Logf("skipping missing-go.mod assertion: stray go.mod at %q would shadow result", stray)
+				} else if got := ProjectRootFrom(missingRoot); got != "" {
 					t.Fatalf("expected missing go.mod to return empty string, got %q", got)
 				}
 
@@ -227,5 +236,25 @@ func TestBuilderHelpersAndProjectRoot(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.run(t)
 		})
+	}
+}
+
+// findAncestorGoMod returns the path of the first directory at or above
+// startPath that contains a go.mod file, or "" if none is found before
+// reaching the filesystem root. Used by tests that need to detect ambient
+// go.mod files on the host that would shadow a missing-go.mod scenario.
+func findAncestorGoMod(startPath string) string {
+	dir := startPath
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return filepath.Join(dir, "go.mod")
+		}
+
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+
+		dir = parent
 	}
 }

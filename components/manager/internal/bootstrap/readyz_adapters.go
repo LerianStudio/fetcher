@@ -11,7 +11,6 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	pkgRabbitmq "github.com/LerianStudio/fetcher/pkg/rabbitmq"
 	"github.com/gofiber/fiber/v2"
-	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -198,22 +197,6 @@ func newReadyzMultiTenantRedisClient(cfg *Config) *redis.Client {
 }
 
 func applicationServiceName() string { return constant.ApplicationName }
-
-type amqpChannelCloser interface {
-	Close() error
-}
-
-// ensureCloseAMQP is a nil-safe close used by the per-tenant RabbitMQ probe.
-func ensureCloseAMQP(ch amqpChannelCloser) error {
-	if ch == nil {
-		return nil
-	}
-
-	return ch.Close()
-}
-
-// amqpChannelFactory isolates the amqp import to this adapter file.
-type amqpChannelFactory = func(ctx context.Context, tenantID string) (*amqp.Channel, error)
 
 // buildManagerReadyzCheckers assembles the DependencyCheckers registered on
 // GET /readyz. Membership:
