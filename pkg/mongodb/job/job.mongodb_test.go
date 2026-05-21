@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tryvium-travels/memongo"
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/mock/gomock"
@@ -1176,4 +1177,164 @@ func TestJobMongoDBRepository_getDatabase(t *testing.T) {
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "db down")
 	})
+}
+
+// -----------------------------------------------------------------------------
+// dedup_active tests
+//
+// These tests cover the invariant maintained by isDedupActive and the
+// uniq_job_hash_active partial index: a job is "dedup active" while pending or
+// processing, and the unique index rejects a second job with the same
+// request_hash inside that window.
+// -----------------------------------------------------------------------------
+
+// readDedupActive reads the persisted dedup_active boolean for a given job id.
+// It bypasses the repository to assert the actual value stored in Mongo.
+func readDedupActive(t *testing.T, repo *JobMongoDBRepository, jobID interface{}) bool {
+	t.Helper()
+
+	db, err := repo.getDatabase(context.Background())
+	require.NoError(t, err)
+
+	coll := db.Collection(strings.ToLower(constant.MongoCollectionJob))
+
+	var raw bson.M
+	err = coll.FindOne(context.Background(), bson.M{"_id": jobID}).Decode(&raw)
+	require.NoError(t, err)
+
+	v, ok := raw["dedup_active"].(bool)
+	require.True(t, ok, "dedup_active field missing or wrong type: %#v", raw["dedup_active"])
+
+	return v
+}
+
+func TestIsDedupActive(t *testing.T) {
+	cases := []struct {
+		status model.JobStatus
+		want   bool
+	}{
+		{model.JobStatusPending, true},
+		{model.JobStatusProcessing, true},
+		{model.JobStatusCompleted, false},
+		{model.JobStatusFailed, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(string(tc.status), func(t *testing.T) {
+			require.Equal(t, tc.want, isDedupActive(tc.status))
+		})
+	}
+}
+
+func TestDedupActive_PersistedOnCreate(t *testing.T) {
+	if jobTestMongoConn == nil {
+		t.Skip("memongo not available")
+	}
+
+	t.Run("pending job persists dedup_active=true", func(t *testing.T) {
+		repo := newJobRepository(t)
+		job := jobFixture()
+		job.Status = model.JobStatusPending
+		created := createJob(t, repo, job)
+		require.True(t, readDedupActive(t, repo, created.ID))
+	})
+
+	t.Run("processing job persists dedup_active=true", func(t *testing.T) {
+		repo := newJobRepository(t)
+		job := jobFixture()
+		job.Status = model.JobStatusProcessing
+		created := createJob(t, repo, job)
+		require.True(t, readDedupActive(t, repo, created.ID))
+	})
+
+	t.Run("completed job persists dedup_active=false", func(t *testing.T) {
+		repo := newJobRepository(t)
+		job := jobFixture()
+		job.Status = model.JobStatusCompleted
+		created := createJob(t, repo, job)
+		require.False(t, readDedupActive(t, repo, created.ID))
+	})
+
+	t.Run("failed job persists dedup_active=false", func(t *testing.T) {
+		repo := newJobRepository(t)
+		job := jobFixture()
+		job.Status = model.JobStatusFailed
+		created := createJob(t, repo, job)
+		require.False(t, readDedupActive(t, repo, created.ID))
+	})
+}
+
+func TestDedupActive_FollowsUpdateStatus(t *testing.T) {
+	if jobTestMongoConn == nil {
+		t.Skip("memongo not available")
+	}
+
+	repo := newJobRepository(t)
+	job := jobFixture()
+	job.Status = model.JobStatusPending
+	created := createJob(t, repo, job)
+	require.True(t, readDedupActive(t, repo, created.ID), "starts active")
+
+	require.NoError(t, repo.UpdateStatus(context.Background(), created.ID, model.JobStatusProcessing, "", "", nil))
+	require.True(t, readDedupActive(t, repo, created.ID), "stays active while processing")
+
+	require.NoError(t, repo.UpdateStatus(context.Background(), created.ID, model.JobStatusCompleted, "", "", nil))
+	require.False(t, readDedupActive(t, repo, created.ID), "leaves active window on completed")
+
+	require.NoError(t, repo.UpdateStatus(context.Background(), created.ID, model.JobStatusProcessing, "", "", nil))
+	require.True(t, readDedupActive(t, repo, created.ID), "re-enters active window on retry")
+
+	require.NoError(t, repo.UpdateStatus(context.Background(), created.ID, model.JobStatusFailed, "", "", nil))
+	require.False(t, readDedupActive(t, repo, created.ID), "leaves active window on failed")
+}
+
+func TestDedupActive_FollowsUpdate(t *testing.T) {
+	if jobTestMongoConn == nil {
+		t.Skip("memongo not available")
+	}
+
+	repo := newJobRepository(t)
+	job := jobFixture()
+	job.Status = model.JobStatusPending
+	created := createJob(t, repo, job)
+	require.True(t, readDedupActive(t, repo, created.ID))
+
+	created.Status = model.JobStatusCompleted
+	_, err := repo.Update(context.Background(), created)
+	require.NoError(t, err)
+	require.False(t, readDedupActive(t, repo, created.ID), "Update must also keep dedup_active in sync")
+}
+
+// TestUniqueActiveHashIndex_AllowsRerunAfterTerminal verifies the dedup
+// invariant end-to-end: while a job with the same request_hash is active, a
+// second insert is rejected; once it reaches a terminal state, a new job with
+// the same hash is allowed.
+func TestUniqueActiveHashIndex_AllowsRerunAfterTerminal(t *testing.T) {
+	if jobTestMongoConn == nil {
+		t.Skip("memongo not available")
+	}
+
+	repo := newJobRepository(t)
+	require.NoError(t, repo.EnsureIndexes(context.Background()))
+
+	hash := "rerun-hash-9876543210"
+
+	first := jobFixture()
+	first.RequestHash = hash
+	first.Status = model.JobStatusPending
+	createJob(t, repo, first)
+
+	dup := jobFixture()
+	dup.RequestHash = hash
+	dup.Status = model.JobStatusPending
+	_, err := repo.Create(context.Background(), dup)
+	require.Error(t, err, "duplicate active hash must be rejected")
+
+	require.NoError(t, repo.UpdateStatus(context.Background(), first.ID, model.JobStatusCompleted, "", "", nil))
+
+	rerun := jobFixture()
+	rerun.RequestHash = hash
+	rerun.Status = model.JobStatusPending
+	_, err = repo.Create(context.Background(), rerun)
+	require.NoError(t, err, "after terminal status, rerun with same hash must be allowed")
 }
