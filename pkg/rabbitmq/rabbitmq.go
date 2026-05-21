@@ -19,6 +19,7 @@ import (
 	libConstants "github.com/LerianStudio/lib-commons/v5/commons/constants"
 	libRabbitmq "github.com/LerianStudio/lib-commons/v5/commons/rabbitmq"
 	libLog "github.com/LerianStudio/lib-observability/log"
+	obsMetrics "github.com/LerianStudio/lib-observability/metrics"
 	obsRuntime "github.com/LerianStudio/lib-observability/runtime"
 	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
 
@@ -323,13 +324,7 @@ func (cb *circuitBreaker) recordFailure() {
 //
 //go:generate mockgen --destination=rabbitmq.mock.go --package=rabbitmq . Adapter
 type metrics struct {
-	publishAttempts     metric.Int64Counter
-	publishSuccesses    metric.Int64Counter
-	publishFailures     metric.Int64Counter
-	publishLatency      metric.Float64Histogram
-	consumeProcessed    metric.Int64Counter
-	consumeFailed       metric.Int64Counter
-	circuitBreakerGauge metric.Int64ObservableGauge
+	factory *obsMetrics.MetricsFactory
 }
 
 // Adapter defines the interface for RabbitMQ operations.
@@ -443,123 +438,65 @@ func NewRabbitMQAdapterWithOptions(c *libRabbitmq.RabbitMQConnection, opts Adapt
 func (prmq *RabbitMQAdapter) initMetrics(provider metric.MeterProvider, Logger libLog.Logger) {
 	meter := provider.Meter("github.com/LerianStudio/fetcher/pkg/rabbitmq")
 
-	m := &metrics{}
-
-	var err error
-
-	m.publishAttempts, err = meter.Int64Counter(
-		"rabbitmq.publish.attempts",
-		metric.WithDescription("Number of publish attempts"),
-		metric.WithUnit("{attempt}"),
-	)
+	factory, err := obsMetrics.NewMetricsFactory(meter, Logger)
 	if err != nil {
-		Logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to initialize RabbitMQ publish attempts metric: %v", err))
+		Logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to initialize RabbitMQ metrics factory: %v", err))
 		return
 	}
 
-	m.publishSuccesses, err = meter.Int64Counter(
-		"rabbitmq.publish.successes",
-		metric.WithDescription("Number of successful publishes"),
-		metric.WithUnit("{message}"),
-	)
-	if err != nil {
-		Logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to initialize RabbitMQ publish successes metric: %v", err))
-		return
-	}
-
-	m.publishFailures, err = meter.Int64Counter(
-		"rabbitmq.publish.failures",
-		metric.WithDescription("Number of failed publishes"),
-		metric.WithUnit("{message}"),
-	)
-	if err != nil {
-		Logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to initialize RabbitMQ publish failures metric: %v", err))
-		return
-	}
-
-	m.publishLatency, err = meter.Float64Histogram(
-		"rabbitmq.publish.latency",
-		metric.WithDescription("Publish latency in milliseconds"),
-		metric.WithUnit("ms"),
-	)
-	if err != nil {
-		Logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to initialize RabbitMQ publish latency metric: %v", err))
-		return
-	}
-
-	m.consumeProcessed, err = meter.Int64Counter(
-		"rabbitmq.consume.processed",
-		metric.WithDescription("Number of successfully processed messages"),
-		metric.WithUnit("{message}"),
-	)
-	if err != nil {
-		Logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to initialize RabbitMQ consume processed metric: %v", err))
-		return
-	}
-
-	m.consumeFailed, err = meter.Int64Counter(
-		"rabbitmq.consume.failed",
-		metric.WithDescription("Number of failed message processings"),
-		metric.WithUnit("{message}"),
-	)
-	if err != nil {
-		Logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to initialize RabbitMQ consume failed metric: %v", err))
-		return
-	}
-
-	// Register circuit breaker state as an observable gauge
-	m.circuitBreakerGauge, _ = meter.Int64ObservableGauge(
-		"rabbitmq.circuit_breaker.state",
-		metric.WithDescription("Circuit breaker state (0=closed, 1=open, 2=half-open)"),
-		metric.WithInt64Callback(func(ctx context.Context, o metric.Int64Observer) error {
-			o.Observe(int64(prmq.circuitBreaker.State()))
-			return nil
-		}),
-	)
-
-	prmq.metrics = m
+	prmq.metrics = &metrics{factory: factory}
 }
 
 // recordPublishAttempt safely records a publish attempt metric if metrics are initialized.
 func (prmq *RabbitMQAdapter) recordPublishAttempt(ctx context.Context, attrs ...attribute.KeyValue) {
-	if prmq.metrics != nil && prmq.metrics.publishAttempts != nil {
-		prmq.metrics.publishAttempts.Add(ctx, 1, metric.WithAttributes(attrs...))
-	}
+	prmq.recordCounter(ctx, "rabbitmq.publish.attempts", "Number of publish attempts", "{attempt}", attrs...)
 }
 
 // recordPublishSuccess safely records a publish success metric if metrics are initialized.
 func (prmq *RabbitMQAdapter) recordPublishSuccess(ctx context.Context, attrs ...attribute.KeyValue) {
-	if prmq.metrics != nil && prmq.metrics.publishSuccesses != nil {
-		prmq.metrics.publishSuccesses.Add(ctx, 1, metric.WithAttributes(attrs...))
-	}
+	prmq.recordCounter(ctx, "rabbitmq.publish.successes", "Number of successful publishes", "{message}", attrs...)
 }
 
 // recordPublishFailure safely records a publish failure metric if metrics are initialized.
 func (prmq *RabbitMQAdapter) recordPublishFailure(ctx context.Context, attrs ...attribute.KeyValue) {
-	if prmq.metrics != nil && prmq.metrics.publishFailures != nil {
-		prmq.metrics.publishFailures.Add(ctx, 1, metric.WithAttributes(attrs...))
-	}
+	prmq.recordCounter(ctx, "rabbitmq.publish.failures", "Number of failed publishes", "{message}", attrs...)
 }
 
 // recordConsumeProcessed safely records a consume processed metric if metrics are initialized.
 func (prmq *RabbitMQAdapter) recordConsumeProcessed(ctx context.Context, attrs ...attribute.KeyValue) {
-	if prmq.metrics != nil && prmq.metrics.consumeProcessed != nil {
-		prmq.metrics.consumeProcessed.Add(ctx, 1, metric.WithAttributes(attrs...))
-	}
+	prmq.recordCounter(ctx, "rabbitmq.consume.processed", "Number of successfully processed messages", "{message}", attrs...)
 }
 
 // recordConsumeFailed safely records a consume failed metric if metrics are initialized.
 func (prmq *RabbitMQAdapter) recordConsumeFailed(ctx context.Context, attrs ...attribute.KeyValue) {
-	if prmq.metrics != nil && prmq.metrics.consumeFailed != nil {
-		prmq.metrics.consumeFailed.Add(ctx, 1, metric.WithAttributes(attrs...))
-	}
+	prmq.recordCounter(ctx, "rabbitmq.consume.failed", "Number of failed message processings", "{message}", attrs...)
 }
 
 // recordPublishLatency safely records a publish latency metric if metrics are initialized.
 func (prmq *RabbitMQAdapter) recordPublishLatency(ctx context.Context, latencyMs float64, attrs ...attribute.KeyValue) {
-	if prmq.metrics != nil && prmq.metrics.publishLatency != nil {
-		prmq.metrics.publishLatency.Record(ctx, latencyMs, metric.WithAttributes(attrs...))
+	if prmq.metrics == nil || prmq.metrics.factory == nil {
+		return
 	}
+
+	histogram, err := prmq.metrics.factory.Histogram(obsMetrics.Metric{Name: "rabbitmq.publish.latency", Description: "Publish latency in milliseconds", Unit: "ms"})
+	if err != nil {
+		return
+	}
+
+	_ = histogram.WithAttributes(attrs...).Record(ctx, int64(latencyMs))
+}
+
+func (prmq *RabbitMQAdapter) recordCounter(ctx context.Context, name, description, unit string, attrs ...attribute.KeyValue) {
+	if prmq.metrics == nil || prmq.metrics.factory == nil {
+		return
+	}
+
+	counter, err := prmq.metrics.factory.Counter(obsMetrics.Metric{Name: name, Description: description, Unit: unit})
+	if err != nil {
+		return
+	}
+
+	_ = counter.WithAttributes(attrs...).AddOne(ctx)
 }
 
 // IsHealthy returns true if the RabbitMQ connection is healthy.
