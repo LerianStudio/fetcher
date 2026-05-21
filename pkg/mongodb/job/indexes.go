@@ -224,8 +224,7 @@ func inspectUniqJobHashActive(ctx context.Context, coll *mongo.Collection) (uniq
 			continue
 		}
 
-		pfe, _ := spec["partialFilterExpression"].(bson.M)
-		if _, hasDedup := pfe["dedup_active"]; hasDedup {
+		if isCurrentUniqJobHashActive(spec) {
 			return uniqIndexCurrent, nil
 		}
 
@@ -237,6 +236,52 @@ func inspectUniqJobHashActive(ctx context.Context, coll *mongo.Collection) (uniq
 	}
 
 	return uniqIndexAbsent, nil
+}
+
+// isCurrentUniqJobHashActive reports whether a decoded index spec matches
+// the canonical shape of the new uniq_job_hash_active index. Every structural
+// trait is validated rather than relying on the presence of a single field:
+//
+//   - partialFilterExpression must be a bson.M with dedup_active = true
+//     (not just present — false would defeat the dedup invariant).
+//   - unique flag must be set.
+//   - key must be a single ascending entry on request_hash.
+//
+// A drifted or hand-crafted index that matches only by name is intentionally
+// classified as legacy so the migration path repairs it.
+func isCurrentUniqJobHashActive(spec bson.M) bool {
+	pfe, ok := spec["partialFilterExpression"].(bson.M)
+	if !ok {
+		return false
+	}
+
+	dedupActive, _ := pfe["dedup_active"].(bool)
+	if !dedupActive {
+		return false
+	}
+
+	unique, _ := spec["unique"].(bool)
+	if !unique {
+		return false
+	}
+
+	key, ok := spec["key"].(bson.M)
+	if !ok || len(key) != 1 {
+		return false
+	}
+
+	// BSON decodes numeric index direction as int32. Accept int as well to
+	// tolerate driver versions or test fixtures that hand-roll the spec.
+	switch v := key["request_hash"].(type) {
+	case int32:
+		return v == 1
+	case int64:
+		return v == 1
+	case int:
+		return v == 1
+	}
+
+	return false
 }
 
 // backfillDedupActive ensures every existing job document carries a
