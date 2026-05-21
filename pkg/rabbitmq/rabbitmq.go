@@ -76,6 +76,11 @@ const (
 	// Messages older than this will be rejected to prevent replay attacks.
 	DefaultSignatureTimestampTolerance = 5 * time.Minute
 
+	// DefaultSignatureFutureSkew is the maximum producer/consumer clock skew
+	// accepted for signed RabbitMQ messages. Larger future timestamps are rejected
+	// because they can extend the replay window.
+	DefaultSignatureFutureSkew = 30 * time.Second
+
 	// HeaderMessageSignature contains the HMAC-SHA256 signature of the message payload
 	HeaderMessageSignature = "x-message-signature"
 
@@ -1197,22 +1202,6 @@ func (prmq *RabbitMQAdapter) Shutdown(ctx context.Context) error {
 	return nil
 }
 
-// verifyMessageSignature verifies the HMAC signature of a message.
-// It checks for required signature headers, validates the signature version,
-// and verifies the signature against the message body.
-//
-//nolint:unused // retained as a white-box test seam for signature verifier edge cases.
-func (prmq *RabbitMQAdapter) verifyMessageSignature(
-	body []byte,
-	headers map[string]any,
-	exchange string,
-	routingKey string,
-	logger libLog.Logger,
-	span trace.Span,
-) error {
-	return VerifyMessageSignature(body, headers, exchange, routingKey, prmq.options.Signer, prmq.options.SignatureTimestampTolerance, logger, span)
-}
-
 // VerifyMessageSignature verifies the canonical Fetcher RabbitMQ security envelope.
 // It accepts the current route/tenant-bound payload and a rolling body-only legacy
 // payload so already-queued messages can drain without being dropped.
@@ -1267,12 +1256,13 @@ func VerifyMessageSignature(
 		return fmt.Errorf("%w: %s must be a string or int64", ErrMissingSignatureHeaders, HeaderSignatureTimestamp)
 	}
 
-	// Check timestamp freshness to prevent replay attacks. Future timestamps are
-	// rejected strictly; tolerance applies only to stale messages.
+	// Check timestamp freshness to prevent replay attacks. Stale messages use the
+	// configured replay tolerance; future messages get only a small explicit clock
+	// skew window so minor producer/consumer drift does not break rolling deploys.
 	messageTime := time.Unix(timestamp, 0)
 
 	age := time.Since(messageTime)
-	if age < 0 {
+	if age < -DefaultSignatureFutureSkew {
 		return fmt.Errorf("%w: message timestamp is %v in the future",
 			ErrSignatureFromFuture, (-age).Round(time.Second))
 	}
@@ -1318,11 +1308,9 @@ func VerifyMessageSignature(
 	// Build the signature payload and verify.
 	payload := BuildMessageSignaturePayload(timestamp, version, tenantID, jobID, exchange, routingKey, body)
 	if err := signer.Verify(payload, signature); err != nil {
-		if tenantID == "" {
-			legacyPayload := crypto.BuildSignaturePayload(timestamp, body)
-			if legacyErr := signer.Verify(legacyPayload, signature); legacyErr == nil {
-				return nil
-			}
+		legacyPayload := crypto.BuildSignaturePayload(timestamp, body)
+		if legacyErr := signer.Verify(legacyPayload, signature); legacyErr == nil {
+			return nil
 		}
 
 		return fmt.Errorf("%w: %v", ErrSignatureVerificationFailed, err)

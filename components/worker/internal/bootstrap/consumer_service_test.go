@@ -4,20 +4,25 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
+	"time"
 
 	workerRabbitMQ "github.com/LerianStudio/fetcher/components/worker/internal/adapters/rabbitmq"
 	"github.com/LerianStudio/fetcher/components/worker/internal/services"
 	"github.com/LerianStudio/fetcher/pkg/bootstrap/readyz"
+	"github.com/LerianStudio/fetcher/pkg/crypto"
 	pkgRabbitMQ "github.com/LerianStudio/fetcher/pkg/rabbitmq"
+	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
 	observability "github.com/LerianStudio/lib-observability"
 	libLog "github.com/LerianStudio/lib-observability/log"
 	libOtel "github.com/LerianStudio/lib-observability/tracing"
 	"github.com/google/uuid"
+	amqp "github.com/rabbitmq/amqp091-go"
 	"go.opentelemetry.io/otel"
 	"go.uber.org/mock/gomock"
 )
@@ -108,6 +113,101 @@ func TestHandlerGenerateReport_DelegatesToUseCase(t *testing.T) {
 			t.Fatalf("expected %v, got %v", wantErr, err)
 		}
 	})
+}
+
+func TestHandlerGenerateReportDelivery_VerifiesTenantBoundSignatures(t *testing.T) {
+	originalExtractExternalData := extractExternalData
+	t.Cleanup(func() { extractExternalData = originalExtractExternalData })
+
+	signer, err := crypto.NewHMACSigner([]byte("0123456789abcdef0123456789abcdef"), crypto.SignatureVersion)
+	if err != nil {
+		t.Fatalf("signer: %v", err)
+	}
+
+	body := []byte(`{"jobId":"123e4567-e89b-12d3-a456-426614174000"}`)
+	now := time.Now().Unix()
+	signatureFor := func(tenantID string) string {
+		return signer.Sign(pkgRabbitMQ.BuildMessageSignaturePayload(now, signer.SignatureVersion(), tenantID, "123e4567-e89b-12d3-a456-426614174000", "worker.exchange", "worker.key", body))
+	}
+	legacySignature := signer.Sign(crypto.BuildSignaturePayload(now, body))
+
+	tests := []struct {
+		name        string
+		headers     amqp.Table
+		wantHandled bool
+	}{
+		{
+			name: "valid tenant-bound signature",
+			headers: amqp.Table{
+				pkgRabbitMQ.HeaderTenantID:           "tenant-a",
+				pkgRabbitMQ.HeaderMessageSignature:   signatureFor("tenant-a"),
+				pkgRabbitMQ.HeaderSignatureTimestamp: strconv.FormatInt(now, 10),
+				pkgRabbitMQ.HeaderSignatureVersion:   signer.SignatureVersion(),
+			},
+			wantHandled: true,
+		},
+		{
+			name: "legacy body-only signature with matching tenant header",
+			headers: amqp.Table{
+				pkgRabbitMQ.HeaderTenantID:           "tenant-a",
+				pkgRabbitMQ.HeaderMessageSignature:   legacySignature,
+				pkgRabbitMQ.HeaderSignatureTimestamp: strconv.FormatInt(now, 10),
+				pkgRabbitMQ.HeaderSignatureVersion:   signer.SignatureVersion(),
+			},
+			wantHandled: true,
+		},
+		{
+			name: "tenant mismatch rejected before verification",
+			headers: amqp.Table{
+				pkgRabbitMQ.HeaderTenantID:           "tenant-b",
+				pkgRabbitMQ.HeaderMessageSignature:   signatureFor("tenant-b"),
+				pkgRabbitMQ.HeaderSignatureTimestamp: strconv.FormatInt(now, 10),
+				pkgRabbitMQ.HeaderSignatureVersion:   signer.SignatureVersion(),
+			},
+		},
+		{
+			name: "missing tenant header rejected",
+			headers: amqp.Table{
+				pkgRabbitMQ.HeaderMessageSignature:   legacySignature,
+				pkgRabbitMQ.HeaderSignatureTimestamp: strconv.FormatInt(now, 10),
+				pkgRabbitMQ.HeaderSignatureVersion:   signer.SignatureVersion(),
+			},
+		},
+		{
+			name: "tampered signature rejected",
+			headers: amqp.Table{
+				pkgRabbitMQ.HeaderTenantID:           "tenant-a",
+				pkgRabbitMQ.HeaderMessageSignature:   "tampered",
+				pkgRabbitMQ.HeaderSignatureTimestamp: strconv.FormatInt(now, 10),
+				pkgRabbitMQ.HeaderSignatureVersion:   signer.SignatureVersion(),
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var handled atomic.Bool
+			extractExternalData = func(*services.UseCase, context.Context, []byte, map[string]any) error {
+				handled.Store(true)
+				return nil
+			}
+
+			consumer := &MultiQueueConsumer{UseCase: &services.UseCase{}, logger: testBootstrapLogger(), messageVerifier: signer}
+			ctx := tmcore.ContextWithTenantID(contextWithBootstrapTracking(t), "tenant-a")
+			err := consumer.handlerGenerateReportDelivery(ctx, amqp.Delivery{
+				Exchange:   "worker.exchange",
+				RoutingKey: "worker.key",
+				Body:       body,
+				Headers:    tt.headers,
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got := handled.Load(); got != tt.wantHandled {
+				t.Fatalf("handled = %v, want %v", got, tt.wantHandled)
+			}
+		})
+	}
 }
 
 func TestMultiQueueConsumerRun(t *testing.T) {

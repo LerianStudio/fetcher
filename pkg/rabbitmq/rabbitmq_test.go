@@ -2259,10 +2259,6 @@ func TestVerifyMessageSignature_MissingSignatureHeader(t *testing.T) {
 
 	mockSigner := crypto.NewMockSigner(ctrl)
 
-	opts := DefaultOptions()
-	opts.Signer = mockSigner
-
-	adapter := &RabbitMQAdapter{options: opts}
 	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 
 	headers := map[string]any{
@@ -2270,7 +2266,7 @@ func TestVerifyMessageSignature_MissingSignatureHeader(t *testing.T) {
 		HeaderSignatureVersion:   "v1",
 	}
 
-	err := adapter.verifyMessageSignature([]byte(`{}`), headers, "", "", logger, nil)
+	err := VerifyMessageSignature([]byte(`{}`), headers, "", "", mockSigner, DefaultSignatureTimestampTolerance, logger, nil)
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrMissingSignatureHeaders)
@@ -2285,10 +2281,6 @@ func TestVerifyMessageSignature_MissingTimestampHeader(t *testing.T) {
 
 	mockSigner := crypto.NewMockSigner(ctrl)
 
-	opts := DefaultOptions()
-	opts.Signer = mockSigner
-
-	adapter := &RabbitMQAdapter{options: opts}
 	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 
 	headers := map[string]any{
@@ -2296,7 +2288,7 @@ func TestVerifyMessageSignature_MissingTimestampHeader(t *testing.T) {
 		HeaderSignatureVersion: "v1",
 	}
 
-	err := adapter.verifyMessageSignature([]byte(`{}`), headers, "", "", logger, nil)
+	err := VerifyMessageSignature([]byte(`{}`), headers, "", "", mockSigner, DefaultSignatureTimestampTolerance, logger, nil)
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrMissingSignatureHeaders)
@@ -2311,10 +2303,6 @@ func TestVerifyMessageSignature_MissingVersionHeader(t *testing.T) {
 
 	mockSigner := crypto.NewMockSigner(ctrl)
 
-	opts := DefaultOptions()
-	opts.Signer = mockSigner
-
-	adapter := &RabbitMQAdapter{options: opts}
 	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 
 	headers := map[string]any{
@@ -2322,7 +2310,7 @@ func TestVerifyMessageSignature_MissingVersionHeader(t *testing.T) {
 		HeaderSignatureTimestamp: strconv.FormatInt(time.Now().Unix(), 10),
 	}
 
-	err := adapter.verifyMessageSignature([]byte(`{}`), headers, "", "", logger, nil)
+	err := VerifyMessageSignature([]byte(`{}`), headers, "", "", mockSigner, DefaultSignatureTimestampTolerance, logger, nil)
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrMissingSignatureHeaders)
@@ -2337,10 +2325,6 @@ func TestVerifyMessageSignature_InvalidTimestampFormat(t *testing.T) {
 
 	mockSigner := crypto.NewMockSigner(ctrl)
 
-	opts := DefaultOptions()
-	opts.Signer = mockSigner
-
-	adapter := &RabbitMQAdapter{options: opts}
 	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 
 	headers := map[string]any{
@@ -2349,7 +2333,7 @@ func TestVerifyMessageSignature_InvalidTimestampFormat(t *testing.T) {
 		HeaderSignatureVersion:   "v1",
 	}
 
-	err := adapter.verifyMessageSignature([]byte(`{}`), headers, "", "", logger, nil)
+	err := VerifyMessageSignature([]byte(`{}`), headers, "", "", mockSigner, DefaultSignatureTimestampTolerance, logger, nil)
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrSignatureVerificationFailed)
@@ -2366,10 +2350,6 @@ func TestVerifyMessageSignature_TimestampAsInt64(t *testing.T) {
 	mockSigner.EXPECT().SignatureVersion().Return("v1")
 	mockSigner.EXPECT().Verify(gomock.Any(), "valid-signature").Return(nil)
 
-	opts := DefaultOptions()
-	opts.Signer = mockSigner
-
-	adapter := &RabbitMQAdapter{options: opts}
 	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 
 	headers := map[string]any{
@@ -2378,7 +2358,7 @@ func TestVerifyMessageSignature_TimestampAsInt64(t *testing.T) {
 		HeaderSignatureVersion:   "v1",
 	}
 
-	err := adapter.verifyMessageSignature([]byte(`{}`), headers, "", "", logger, nil)
+	err := VerifyMessageSignature([]byte(`{}`), headers, "", "", mockSigner, DefaultSignatureTimestampTolerance, logger, nil)
 
 	require.NoError(t, err)
 }
@@ -2393,10 +2373,6 @@ func TestVerifyMessageSignature_TimestampAsInt(t *testing.T) {
 	mockSigner.EXPECT().SignatureVersion().Return("v1")
 	mockSigner.EXPECT().Verify(gomock.Any(), "valid-signature").Return(nil)
 
-	opts := DefaultOptions()
-	opts.Signer = mockSigner
-
-	adapter := &RabbitMQAdapter{options: opts}
 	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 
 	headers := map[string]any{
@@ -2405,7 +2381,7 @@ func TestVerifyMessageSignature_TimestampAsInt(t *testing.T) {
 		HeaderSignatureVersion:   "v1",
 	}
 
-	err := adapter.verifyMessageSignature([]byte(`{}`), headers, "", "", logger, nil)
+	err := VerifyMessageSignature([]byte(`{}`), headers, "", "", mockSigner, DefaultSignatureTimestampTolerance, logger, nil)
 
 	require.NoError(t, err)
 }
@@ -2418,10 +2394,6 @@ func TestVerifyMessageSignature_NonStringSignature(t *testing.T) {
 
 	mockSigner := crypto.NewMockSigner(ctrl)
 
-	opts := DefaultOptions()
-	opts.Signer = mockSigner
-
-	adapter := &RabbitMQAdapter{options: opts}
 	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 
 	headers := map[string]any{
@@ -2430,7 +2402,7 @@ func TestVerifyMessageSignature_NonStringSignature(t *testing.T) {
 		HeaderSignatureVersion:   "v1",
 	}
 
-	err := adapter.verifyMessageSignature([]byte(`{}`), headers, "", "", logger, nil)
+	err := VerifyMessageSignature([]byte(`{}`), headers, "", "", mockSigner, DefaultSignatureTimestampTolerance, logger, nil)
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrMissingSignatureHeaders)
@@ -2445,10 +2417,6 @@ func TestVerifyMessageSignature_NonStringVersion(t *testing.T) {
 
 	mockSigner := crypto.NewMockSigner(ctrl)
 
-	opts := DefaultOptions()
-	opts.Signer = mockSigner
-
-	adapter := &RabbitMQAdapter{options: opts}
 	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 
 	headers := map[string]any{
@@ -2457,7 +2425,7 @@ func TestVerifyMessageSignature_NonStringVersion(t *testing.T) {
 		HeaderSignatureVersion:   123, // Non-string
 	}
 
-	err := adapter.verifyMessageSignature([]byte(`{}`), headers, "", "", logger, nil)
+	err := VerifyMessageSignature([]byte(`{}`), headers, "", "", mockSigner, DefaultSignatureTimestampTolerance, logger, nil)
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrMissingSignatureHeaders)
@@ -2472,10 +2440,6 @@ func TestVerifyMessageSignature_UnsupportedTimestampType(t *testing.T) {
 
 	mockSigner := crypto.NewMockSigner(ctrl)
 
-	opts := DefaultOptions()
-	opts.Signer = mockSigner
-
-	adapter := &RabbitMQAdapter{options: opts}
 	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 
 	headers := map[string]any{
@@ -2484,7 +2448,7 @@ func TestVerifyMessageSignature_UnsupportedTimestampType(t *testing.T) {
 		HeaderSignatureVersion:   "v1",
 	}
 
-	err := adapter.verifyMessageSignature([]byte(`{}`), headers, "", "", logger, nil)
+	err := VerifyMessageSignature([]byte(`{}`), headers, "", "", mockSigner, DefaultSignatureTimestampTolerance, logger, nil)
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrMissingSignatureHeaders)

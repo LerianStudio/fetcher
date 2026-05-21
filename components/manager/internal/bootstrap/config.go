@@ -2,6 +2,9 @@ package bootstrap
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/base64"
 	"fmt"
 	"net"
 	"net/url"
@@ -844,16 +847,12 @@ func initManagerEventDiscovery(
 		redisPort = "6379"
 	}
 
-	if cfg.MultiTenantRedisCACert != "" {
-		return nil, fmt.Errorf("create manager tenant event listener: canonical tenant Pub/Sub Redis client does not support custom CA certificates; unset MULTI_TENANT_REDIS_CA_CERT or extend lib-commons")
-	}
-
-	redisClient, err := tmredis.NewTenantPubSubRedisClient(context.Background(), tmredis.TenantPubSubRedisConfig{
+	redisClient, err := newTenantPubSubRedisClient(context.Background(), tmredis.TenantPubSubRedisConfig{
 		Host:     cfg.MultiTenantRedisHost,
 		Port:     redisPort,
 		Password: cfg.MultiTenantRedisPassword,
 		TLS:      cfg.MultiTenantRedisTLS,
-	})
+	}, cfg.MultiTenantRedisCACert)
 	if err != nil {
 		return nil, wrapBootstrapError("create manager tenant Pub/Sub Redis client", err)
 	}
@@ -901,6 +900,41 @@ func initManagerEventDiscovery(
 	}
 
 	return cleanup, nil
+}
+
+func newTenantPubSubRedisClient(ctx context.Context, cfg tmredis.TenantPubSubRedisConfig, caCertBase64 string) (redis.UniversalClient, error) {
+	if caCertBase64 == "" {
+		return tmredis.NewTenantPubSubRedisClient(ctx, cfg)
+	}
+
+	opts, err := tmredis.BuildOptions(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	caCert, err := base64.StdEncoding.DecodeString(caCertBase64)
+	if err != nil {
+		return nil, fmt.Errorf("decode MULTI_TENANT_REDIS_CA_CERT: %w", err)
+	}
+
+	rootCAs := x509.NewCertPool()
+	if !rootCAs.AppendCertsFromPEM(caCert) {
+		return nil, fmt.Errorf("parse MULTI_TENANT_REDIS_CA_CERT: no PEM certificates found")
+	}
+
+	if opts.TLSConfig == nil {
+		opts.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	}
+
+	opts.TLSConfig.RootCAs = rootCAs
+
+	client := redis.NewClient(opts)
+	if err := client.Ping(ctx).Err(); err != nil {
+		_ = client.Close()
+		return nil, fmt.Errorf("tenant pubsub redis: ping failed: %w", err)
+	}
+
+	return client, nil
 }
 
 func buildMongoSource(cfg *Config) string {
@@ -1118,6 +1152,10 @@ func (p *multiTenantPublisher) ProducerDefault(ctx context.Context, exchange, ke
 	ch, err := p.manager.GetChannel(ctx, tenantID)
 	if err != nil {
 		return fmt.Errorf("get RabbitMQ channel for tenant %s: %w", tenantID, err)
+	}
+
+	if ch == nil {
+		return fmt.Errorf("get RabbitMQ channel for tenant %s: manager returned nil channel", tenantID)
 	}
 
 	defer func() {

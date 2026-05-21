@@ -2,7 +2,9 @@ package bootstrap
 
 import (
 	"context"
-	"encoding/json"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/base64"
 	"fmt"
 	"net"
 	"net/url"
@@ -21,6 +23,7 @@ import (
 	portStorage "github.com/LerianStudio/fetcher/pkg/ports/storage"
 	"github.com/LerianStudio/fetcher/pkg/resolver"
 	pkgStorage "github.com/LerianStudio/fetcher/pkg/storage"
+	redisv9 "github.com/redis/go-redis/v9"
 
 	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
 	mongoDB "github.com/LerianStudio/lib-commons/v5/commons/mongo"
@@ -420,26 +423,7 @@ func (p streamingRabbitMQPublisher) Publish(ctx context.Context, exchange, routi
 		return fmt.Errorf("streaming RabbitMQ publisher is not configured")
 	}
 
-	return p.publisher.PublishWithHeaders(ctx, exchange, deriveJobNotificationRoutingKey(body, routingKey), contentType, body, headers)
-}
-
-func deriveJobNotificationRoutingKey(body []byte, fallback string) string {
-	var payload struct {
-		Status   string         `json:"status"`
-		Metadata map[string]any `json:"metadata"`
-	}
-
-	if err := json.Unmarshal(body, &payload); err != nil {
-		return fallback
-	}
-
-	if payload.Status == "" {
-		return fallback
-	}
-
-	source, _ := payload.Metadata["source"].(string)
-
-	return fmt.Sprintf("job.%s.%s", payload.Status, services.SanitizeRoutingSourceSegmentForBootstrap(source))
+	return p.publisher.PublishWithHeaders(ctx, exchange, routingKey, contentType, body, headers)
 }
 
 func initJobEventEmitter(ctx context.Context, cfg *Config, logger libLog.Logger, telemetry *libOtel.Telemetry, publisher *rabbitmq.PublisherRoutes) (streaming.Emitter, bool, error) {
@@ -477,14 +461,14 @@ func initJobEventEmitter(ctx context.Context, cfg *Config, logger libLog.Logger,
 			Key:           "job.completed.rabbitmq.observational",
 			DefinitionKey: "job.completed",
 			Target:        targetName,
-			Destination:   streaming.RabbitMQRoute(cfg.RabbitMQJobEventsExchange, "job.completed.*"),
+			Destination:   streaming.RabbitMQRoute(cfg.RabbitMQJobEventsExchange, "job.completed"),
 			Requirement:   streaming.RouteOptional,
 		},
 		{
 			Key:           "job.failed.rabbitmq.observational",
 			DefinitionKey: "job.failed",
 			Target:        targetName,
-			Destination:   streaming.RabbitMQRoute(cfg.RabbitMQJobEventsExchange, "job.failed.*"),
+			Destination:   streaming.RabbitMQRoute(cfg.RabbitMQJobEventsExchange, "job.failed"),
 			Requirement:   streaming.RouteOptional,
 		},
 	}
@@ -868,16 +852,12 @@ func initMultiTenantStack(
 		redisPort = "6379"
 	}
 
-	if cfg.MultiTenantRedisCACert != "" {
-		return nil, nil, nil, fmt.Errorf("create worker tenant event listener: canonical tenant Pub/Sub Redis client does not support custom CA certificates; unset MULTI_TENANT_REDIS_CA_CERT or extend lib-commons")
-	}
-
-	redisClient, err := tmredis.NewTenantPubSubRedisClient(ctx, tmredis.TenantPubSubRedisConfig{
+	redisClient, err := newTenantPubSubRedisClient(ctx, tmredis.TenantPubSubRedisConfig{
 		Host:     cfg.MultiTenantRedisHost,
 		Port:     redisPort,
 		Password: cfg.MultiTenantRedisPassword,
 		TLS:      cfg.MultiTenantRedisTLS,
-	})
+	}, cfg.MultiTenantRedisCACert)
 	if err != nil {
 		return nil, nil, nil, wrapBootstrapError("create worker tenant Pub/Sub Redis client", err)
 	}
@@ -915,6 +895,41 @@ func initMultiTenantStack(
 	cleanup := listenerCleanup
 
 	return mtConsumer, tmClient, cleanup, nil
+}
+
+func newTenantPubSubRedisClient(ctx context.Context, cfg tmredis.TenantPubSubRedisConfig, caCertBase64 string) (redisv9.UniversalClient, error) {
+	if caCertBase64 == "" {
+		return tmredis.NewTenantPubSubRedisClient(ctx, cfg)
+	}
+
+	opts, err := tmredis.BuildOptions(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	caCert, err := base64.StdEncoding.DecodeString(caCertBase64)
+	if err != nil {
+		return nil, fmt.Errorf("decode MULTI_TENANT_REDIS_CA_CERT: %w", err)
+	}
+
+	rootCAs := x509.NewCertPool()
+	if !rootCAs.AppendCertsFromPEM(caCert) {
+		return nil, fmt.Errorf("parse MULTI_TENANT_REDIS_CA_CERT: no PEM certificates found")
+	}
+
+	if opts.TLSConfig == nil {
+		opts.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	}
+
+	opts.TLSConfig.RootCAs = rootCAs
+
+	client := redisv9.NewClient(opts)
+	if err := client.Ping(ctx).Err(); err != nil {
+		_ = client.Close()
+		return nil, fmt.Errorf("tenant pubsub redis: ping failed: %w", err)
+	}
+
+	return client, nil
 }
 
 // performInitialTenantSync fetches all active tenants from the Tenant Manager API

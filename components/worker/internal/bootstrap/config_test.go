@@ -5,7 +5,9 @@ import (
 	"errors"
 	"testing"
 
+	workerRabbitMQ "github.com/LerianStudio/fetcher/components/worker/internal/adapters/rabbitmq"
 	"github.com/LerianStudio/fetcher/pkg/bootstrap/readyz"
+	pkgRabbitMQ "github.com/LerianStudio/fetcher/pkg/rabbitmq"
 	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
 	mongoDB "github.com/LerianStudio/lib-commons/v5/commons/mongo"
 	libLog "github.com/LerianStudio/lib-observability/log"
@@ -13,6 +15,7 @@ import (
 	libZap "github.com/LerianStudio/lib-observability/zap"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 )
 
 func testBootstrapLogger() *libLog.GoLogger {
@@ -60,6 +63,24 @@ func TestWrapBootstrapError(t *testing.T) {
 	if got := err.Error(); got != "decode key: boom" {
 		t.Fatalf("unexpected wrapped error: %s", got)
 	}
+}
+
+func TestStreamingRabbitMQPublisher_UsesConfiguredRouteDestination(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	adapter := pkgRabbitMQ.NewMockAdapter(ctrl)
+	adapter.EXPECT().
+		ProducerDefault(gomock.Any(), "job.events", "job.completed", []byte(`{"status":"completed","metadata":{"source":"api"}}`), gomock.Any()).
+		Return(nil)
+
+	publisher := workerRabbitMQ.NewPublisherRoutesWithAdapter(adapter, testBootstrapLogger(), &libOtel.Telemetry{})
+	target := streamingRabbitMQPublisher{publisher: publisher}
+
+	err := target.Publish(context.Background(), "job.events", "job.completed", "application/json", []byte(`{"status":"completed","metadata":{"source":"api"}}`), nil)
+	require.NoError(t, err)
 }
 
 func TestInitWorker_ReturnsErrorWhenConfigLoadFails(t *testing.T) {

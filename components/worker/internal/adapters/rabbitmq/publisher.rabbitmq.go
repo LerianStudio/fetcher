@@ -144,6 +144,13 @@ func (pr *PublisherRoutes) PublishWithHeaders(ctx context.Context, exchange, rou
 			return fmt.Errorf("failed to get channel for tenant %s: %w", tenantID, err)
 		}
 
+		if ch == nil {
+			err := fmt.Errorf("tenant RabbitMQ manager returned nil channel for tenant %s", tenantID)
+			opentelemetry.HandleSpanError(span, "Tenant channel is nil", err)
+
+			return err
+		}
+
 		defer func() {
 			if closeErr := ch.Close(); closeErr != nil {
 				pr.Log(ctx, libLog.LevelError, fmt.Sprintf("Error closing channel for tenant %s", tenantID), libLog.Err(closeErr))

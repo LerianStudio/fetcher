@@ -259,8 +259,17 @@ func (mq *MultiQueueConsumer) logShutdownSignal(ctx context.Context, message str
 // handlerGenerateReportDelivery is the tmconsumer.HandlerFunc adapter for multi-tenant mode.
 // It resolves per-tenant MongoDB if mongoManager is available, then delegates to handlerGenerateReport.
 func (mq *MultiQueueConsumer) handlerGenerateReportDelivery(ctx context.Context, delivery amqp.Delivery) error {
+	headers := headersFromDelivery(delivery)
+	if err := validateAuthoritativeTenantHeader(ctx, headers); err != nil {
+		if mq.logger != nil {
+			mq.logger.Log(ctx, libLog.LevelError, "multi-tenant RabbitMQ tenant header mismatch", libLog.Err(err))
+		}
+
+		return nil
+	}
+
 	if mq.messageVerifier != nil {
-		if err := pkgRabbitmq.VerifyMessageSignature(delivery.Body, headersFromDelivery(delivery), delivery.Exchange, delivery.RoutingKey, mq.messageVerifier, pkgRabbitmq.DefaultSignatureTimestampTolerance, mq.logger, nil); err != nil {
+		if err := pkgRabbitmq.VerifyMessageSignature(delivery.Body, headers, delivery.Exchange, delivery.RoutingKey, mq.messageVerifier, pkgRabbitmq.DefaultSignatureTimestampTolerance, mq.logger, nil); err != nil {
 			if mq.logger != nil {
 				mq.logger.Log(ctx, libLog.LevelError, "multi-tenant RabbitMQ signature verification failed", libLog.Err(err))
 			}
@@ -295,7 +304,25 @@ func (mq *MultiQueueConsumer) handlerGenerateReportDelivery(ctx context.Context,
 		}
 	}
 
-	return mq.handlerGenerateReport(ctx, delivery.Body, headersFromDelivery(delivery))
+	return mq.handlerGenerateReport(ctx, delivery.Body, headers)
+}
+
+func validateAuthoritativeTenantHeader(ctx context.Context, headers map[string]any) error {
+	authoritativeTenantID := tmcore.GetTenantIDContext(ctx)
+	if authoritativeTenantID == "" {
+		return nil
+	}
+
+	headerTenantID, ok := headers[pkgRabbitmq.HeaderTenantID].(string)
+	if !ok || headerTenantID == "" {
+		return fmt.Errorf("tenant header %s is required for authoritative tenant %s", pkgRabbitmq.HeaderTenantID, authoritativeTenantID)
+	}
+
+	if headerTenantID != authoritativeTenantID {
+		return fmt.Errorf("tenant header %s=%q does not match authoritative tenant %q", pkgRabbitmq.HeaderTenantID, headerTenantID, authoritativeTenantID)
+	}
+
+	return nil
 }
 
 // headersFromDelivery converts amqp.Delivery.Headers (amqp.Table) to map[string]any.

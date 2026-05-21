@@ -159,6 +159,14 @@ func TestVerifyMessageSignature_TamperAndLegacyCompatibility(t *testing.T) {
 		HeaderSignatureVersion:   signer.SignatureVersion(),
 	}
 	require.NoError(t, VerifyMessageSignature(body, legacyHeaders, "exchange", "route", signer, time.Minute, libLogNop(), nil))
+
+	legacyTenantHeaders := map[string]any{
+		HeaderTenantID:           "tenant-123",
+		HeaderMessageSignature:   legacySignature,
+		HeaderSignatureTimestamp: strconv.FormatInt(timestamp, 10),
+		HeaderSignatureVersion:   signer.SignatureVersion(),
+	}
+	require.NoError(t, VerifyMessageSignature(body, legacyTenantHeaders, "exchange", "route", signer, time.Minute, libLogNop(), nil))
 }
 
 func TestVerifyMessageSignature_TypedNilSigner(t *testing.T) {
@@ -170,7 +178,26 @@ func TestVerifyMessageSignature_TypedNilSigner(t *testing.T) {
 	assert.ErrorIs(t, err, ErrSignatureVerifierNotConfigured)
 }
 
-func TestVerifyMessageSignature_RejectsFutureTimestamp(t *testing.T) {
+func TestVerifyMessageSignature_AllowsBoundedFutureSkew(t *testing.T) {
+	t.Parallel()
+
+	signer, err := crypto.NewHMACSigner([]byte("0123456789abcdef0123456789abcdef"), crypto.SignatureVersion)
+	require.NoError(t, err)
+
+	future := time.Now().Add(10 * time.Second).Unix()
+	body := []byte(`{"jobId":"job-123"}`)
+	payload := BuildMessageSignaturePayload(future, signer.SignatureVersion(), "tenant-123", "job-123", "exchange", "route", body)
+	headers := map[string]any{
+		HeaderTenantID:           "tenant-123",
+		HeaderMessageSignature:   signer.Sign(payload),
+		HeaderSignatureTimestamp: strconv.FormatInt(future, 10),
+		HeaderSignatureVersion:   signer.SignatureVersion(),
+	}
+
+	require.NoError(t, VerifyMessageSignature(body, headers, "exchange", "route", signer, time.Minute, libLogNop(), nil))
+}
+
+func TestVerifyMessageSignature_RejectsFutureTimestampBeyondSkew(t *testing.T) {
 	t.Parallel()
 
 	signer, err := crypto.NewHMACSigner([]byte("0123456789abcdef0123456789abcdef"), crypto.SignatureVersion)
@@ -186,8 +213,7 @@ func TestVerifyMessageSignature_RejectsFutureTimestamp(t *testing.T) {
 		HeaderSignatureVersion:   signer.SignatureVersion(),
 	}
 
-	adapter := &RabbitMQAdapter{options: AdapterOptions{Signer: signer, SignatureTimestampTolerance: time.Minute}}
-	err = adapter.verifyMessageSignature(body, headers, "exchange", "route", libLogNop(), nil)
+	err = VerifyMessageSignature(body, headers, "exchange", "route", signer, time.Minute, libLogNop(), nil)
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrSignatureFromFuture)
