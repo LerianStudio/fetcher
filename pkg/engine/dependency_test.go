@@ -1,6 +1,5 @@
 // Copyright (c) 2026 Lerian Studio. All rights reserved.
-// Use of this source code is governed by the Elastic License 2.0
-// that can be found in the LICENSE file.
+// SPDX-License-Identifier: Elastic-2.0
 
 package engine
 
@@ -68,6 +67,25 @@ func TestEngineDependencyBoundary_ReadsModulePathFromGoMod(t *testing.T) {
 	}
 
 	t.Fatalf("local infrastructure dependency boundary class is not configured")
+}
+
+func TestEngineDependencyBoundary_TenantRuntimeShells_RequiredPatternsConfigured(t *testing.T) {
+	t.Parallel()
+
+	modulePath := mustModulePathFromGoMod(t, mustRepositoryRoot(t))
+	configuredClasses := configuredForbiddenDependencyClasses(modulePath)
+	tenantRuntimeShells := mustForbiddenDependencyClass(t, configuredClasses, "tenant_runtime_shells")
+
+	for _, requiredPattern := range requiredTenantRuntimeShellPatterns() {
+		requiredPattern := requiredPattern
+		t.Run(requiredPattern, func(t *testing.T) {
+			t.Parallel()
+
+			if !slices.Contains(tenantRuntimeShells.patterns, requiredPattern) {
+				t.Fatalf("tenant_runtime_shells missing required forbidden import pattern %q", requiredPattern)
+			}
+		})
+	}
 }
 
 func configuredForbiddenDependencyClasses(modulePath string) []forbiddenDependencyClass {
@@ -179,12 +197,29 @@ func configuredForbiddenDependencyClasses(modulePath string) []forbiddenDependen
 			concern: "tenant_runtime",
 			name:    "tenant_runtime_shells",
 			patterns: []string{
+				"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/cache",
+				"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/cache/tenantcache",
+				"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/client",
+				"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/consumer",
+				"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/event",
+				"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/log",
+				"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/middleware",
+				"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/mongo",
+				"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/postgres",
+				"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/rabbitmq",
+				"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/redis",
+				"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/s3",
+				"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/valkey",
+				"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/cache",
 				"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/client",
 				"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/consumer",
 				"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/event",
+				"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/log",
 				"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/middleware",
 				"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/mongo",
+				"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/postgres",
 				"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/rabbitmq",
+				"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/redis",
 				"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/s3",
 				"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/tenantcache",
 				"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/valkey",
@@ -240,6 +275,50 @@ func requiredForbiddenClassNames() []string {
 		"lib_auth",
 		"lib_license",
 	}
+}
+
+func requiredTenantRuntimeShellPatterns() []string {
+	return []string{
+		"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/cache",
+		"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/cache/tenantcache",
+		"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/client",
+		"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/consumer",
+		"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/event",
+		"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/log",
+		"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/middleware",
+		"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/mongo",
+		"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/postgres",
+		"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/rabbitmq",
+		"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/redis",
+		"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/s3",
+		"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/valkey",
+		"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/cache",
+		"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/client",
+		"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/consumer",
+		"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/event",
+		"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/log",
+		"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/middleware",
+		"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/mongo",
+		"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/postgres",
+		"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/rabbitmq",
+		"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/redis",
+		"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/s3",
+		"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/tenantcache",
+		"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/valkey",
+	}
+}
+
+func mustForbiddenDependencyClass(t *testing.T, configuredClasses []forbiddenDependencyClass, name string) forbiddenDependencyClass {
+	t.Helper()
+
+	for _, configuredClass := range configuredClasses {
+		if configuredClass.name == name {
+			return configuredClass
+		}
+	}
+
+	t.Fatalf("forbidden dependency class %q is not configured", name)
+	return forbiddenDependencyClass{}
 }
 
 func assertForbiddenConfigComplete(t *testing.T, requiredClassNames []string, configuredClasses []forbiddenDependencyClass) {
