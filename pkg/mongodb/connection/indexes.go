@@ -45,6 +45,11 @@ func (cr *ConnectionMongoDBRepository) EnsureIndexes(ctx context.Context) error 
 
 	coll := db.Collection(strings.ToLower(constant.MongoCollectionConnection))
 
+	if err := dropOrphanProductIndexes(ctx, coll, logger); err != nil {
+		libOpentelemetry.HandleSpanError(span, "Failed to drop orphan product_id indexes", err)
+		return err
+	}
+
 	indexes := []mongo.IndexModel{
 		{
 			Keys: bson.D{
@@ -70,40 +75,6 @@ func (cr *ConnectionMongoDBRepository) EnsureIndexes(ctx context.Context) error 
 			Options: options.Index().
 				SetName("idx_connection_database_name").
 				SetPartialFilterExpression(bson.D{{Key: "deleted_at", Value: nil}}),
-		},
-		// Product isolation indexes
-		{
-			Keys: bson.D{
-				{Key: "product_id", Value: 1},
-				{Key: "config_name", Value: 1},
-			},
-			Options: options.Index().
-				SetName("idx_connection_product_config").
-				SetUnique(true).
-				SetPartialFilterExpression(bson.D{
-					{Key: "deleted_at", Value: nil},
-					{Key: "product_id", Value: bson.D{{Key: "$type", Value: "binData"}}},
-				}),
-		},
-		{
-			Keys: bson.D{
-				{Key: "product_id", Value: 1},
-				{Key: "created_at", Value: -1},
-			},
-			Options: options.Index().
-				SetName("idx_connection_product_created").
-				SetPartialFilterExpression(bson.D{{Key: "deleted_at", Value: nil}}),
-		},
-		{
-			Keys: bson.D{
-				{Key: "product_id", Value: 1},
-			},
-			Options: options.Index().
-				SetName("idx_connection_unassigned").
-				SetPartialFilterExpression(bson.D{
-					{Key: "deleted_at", Value: nil},
-					{Key: "product_id", Value: nil},
-				}),
 		},
 	}
 
@@ -171,4 +142,53 @@ func (cr *ConnectionMongoDBRepository) DropIndexes(ctx context.Context) error {
 	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Successfully dropped all custom indexes for %s collection", constant.MongoCollectionConnection))
 
 	return nil
+}
+
+// orphanProductIndexes lists indexes that referenced the legacy product_id
+// field on the connections collection. The product entity was removed from
+// the domain model (see commit a6b8339, "remove product entity and make
+// connections standalone") but the indexes survived as dead code, indexing
+// a field that no write path ever populates.
+//
+// One of them, idx_connection_product_config, additionally used a
+// partialFilterExpression with $type: "binData", which DocumentDB rejects.
+// Removing all three eliminates both the dead-code overhead and the
+// DocumentDB incompatibility in one step.
+var orphanProductIndexes = []string{
+	"idx_connection_product_config",
+	"idx_connection_product_created",
+	"idx_connection_unassigned",
+}
+
+// dropOrphanProductIndexes removes legacy product_id-based indexes from
+// environments where they were previously created. Safe to run on every
+// bootstrap: IndexNotFound is tolerated and treated as already-cleaned.
+func dropOrphanProductIndexes(ctx context.Context, coll *mongo.Collection, logger libLog.Logger) error {
+	for _, name := range orphanProductIndexes {
+		if _, err := coll.Indexes().DropOne(ctx, name); err != nil {
+			if isIndexNotFoundError(err) {
+				continue
+			}
+
+			return fmt.Errorf("drop orphan index %q: %w", name, err)
+		}
+
+		logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Dropped orphan product_id index %q", name))
+	}
+
+	return nil
+}
+
+// isIndexNotFoundError reports whether err signals that the index simply does
+// not exist on the collection. The Mongo driver does not expose a typed sentinel
+// for IndexNotFound, so we match on the documented error text. Both MongoDB
+// and DocumentDB return the same message for this case.
+func isIndexNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	msg := err.Error()
+
+	return strings.Contains(msg, "IndexNotFound") || strings.Contains(msg, "index not found")
 }
