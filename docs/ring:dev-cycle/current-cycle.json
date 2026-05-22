@@ -1,0 +1,141 @@
+{
+  "version": "1.1.0",
+  "cycle_id": "4de9ba09-1807-4062-87e2-f588e8275f19",
+  "started_at": "2026-05-21T19:07:44Z",
+  "updated_at": "2026-05-22T02:47:18Z",
+  "source_file": "docs/pre-dev/fetcher-embedded-runtime/tasks.md",
+  "state_path": "docs/ring:dev-cycle/current-cycle.json",
+  "cycle_type": "feature",
+  "execution_mode": "automatic",
+  "commit_timing": "per_subtask",
+  "cached_standards": {
+    "https://raw.githubusercontent.com/LerianStudio/ring/main/dev-team/docs/standards/golang/index.md": {
+      "fetched_at": "2026-05-21T19:07:44Z",
+      "content": "Go Standards Index. New feature modules: core.md, bootstrap.md, domain.md, quality.md. Relevant task modules: architecture.md, domain-modeling.md, testing-unit.md, security.md, multi-tenant.md, compliance.md. Full module URLs are listed in the standards index and should be passed from this cached entry rather than re-fetched per gate."
+    }
+  },
+  "visual_report_granularity": "task",
+  "custom_prompt": "",
+  "status": "in_progress",
+  "feedback_loop_completed": false,
+  "current_task_index": 0,
+  "current_gate": 8,
+  "current_subtask_index": 3,
+  "gate_progress": {
+    "migration_safety_verification": {
+      "status": "pending",
+      "files_checked": [],
+      "findings": {
+        "BLOCKING": 0,
+        "WARN": 0,
+        "ACKNOWLEDGE": 0
+      },
+      "user_acknowledgment": null,
+      "started_at": null,
+      "completed_at": null
+    }
+  },
+  "tasks": [
+    {
+      "id": "T-001",
+      "title": "Characterize runtime seams and enforce Engine dependency boundary",
+      "status": "in_progress",
+      "feedback_loop_completed": false,
+      "accumulated_metrics": {
+        "gate_durations_ms": {},
+        "review_iterations": 25,
+        "testing_iterations": 0,
+        "issues_by_severity": {
+          "CRITICAL": 0,
+          "HIGH": 5,
+          "MEDIUM": 7,
+          "LOW": 5
+        }
+      },
+      "subtasks": [
+        {
+          "id": "ST-T001-01",
+          "file": "docs/pre-dev/fetcher-embedded-runtime/subtasks/T-001/ST-T001-01-characterize-runtime-seams.md",
+          "status": "completed",
+          "gate_progress": {
+            "implementation": {"status": "completed", "started_at": "2026-05-21T19:09:58Z", "completed_at": "2026-05-21T19:16:32Z", "tdd_red": {"status": "completed", "test_file": "pkg/engine/seams_test.go", "failure_output": "--- FAIL: TestRequiredSeams_Characterization_IsComplete (0.00s)\n    --- FAIL: TestRequiredSeams_Characterization_IsComplete/datasource_factory_side_effects (0.00s)\n        seams_test.go:64: missing runtime seam characterization \"datasource_factory_side_effects\"\nFAIL\nFAIL\tgithub.com/LerianStudio/fetcher/pkg/engine\t0.516s\nFAIL", "completed_at": "2026-05-21T19:12:13Z"}, "tdd_green": {"status": "completed", "implementation_file": "pkg/engine/seams_test.go", "test_pass_output": "ok github.com/LerianStudio/fetcher/pkg/engine", "completed_at": "2026-05-21T19:16:32Z"}, "delivery_verified": true, "coverage_actual": 100, "coverage_threshold": 85, "local_runtime_verified": true, "standards_compliance": {"total_sections": 6, "compliant": 6, "not_applicable": 0, "non_compliant": 0, "gaps": []}, "git_commit": "25a9fd3"},
+            "validation": {"status": "pending", "result": "pending", "completed_at": null}
+          }
+        },
+        {
+          "id": "ST-T001-02",
+          "file": "docs/pre-dev/fetcher-embedded-runtime/subtasks/T-001/ST-T001-02-add-engine-dependency-boundary-test.md",
+          "status": "completed",
+          "gate_progress": {
+            "implementation": {"status": "completed", "started_at": "2026-05-21T19:17:04Z", "completed_at": "2026-05-21T19:22:45Z", "tdd_red": {"status": "completed", "test_file": "pkg/engine/dependency_test.go", "failure_output": "--- FAIL: TestEngineDependencyBoundary_BlocksForbiddenImports (0.00s)\n    dependency_test.go:27: dependency boundary test is incomplete: missing forbidden dependency classes: aws_s3, lib_license, seaweedfs\nFAIL\nFAIL\tgithub.com/LerianStudio/fetcher/pkg/engine\t0.543s\nFAIL", "completed_at": "2026-05-21T19:19:25Z"}, "tdd_green": {"status": "completed", "implementation_file": "pkg/engine/dependency_test.go", "test_pass_output": "ok github.com/LerianStudio/fetcher/pkg/engine", "completed_at": "2026-05-21T19:22:45Z"}, "delivery_verified": true, "coverage_actual": 100, "coverage_threshold": 85, "local_runtime_verified": true, "standards_compliance": {"total_sections": 6, "compliant": 6, "not_applicable": 0, "non_compliant": 0, "gaps": []}, "git_commit": "79326c2"},
+            "validation": {"status": "pending", "result": "pending", "completed_at": null}
+          }
+        },
+        {
+          "id": "ST-T001-03",
+          "file": "docs/pre-dev/fetcher-embedded-runtime/subtasks/T-001/ST-T001-03-pin-plugin-crm-compatibility-seam.md",
+          "status": "completed",
+          "gate_progress": {
+            "implementation": {"status": "completed", "started_at": "2026-05-21T19:23:03Z", "completed_at": "2026-05-21T19:26:17Z", "tdd_red": {"status": "completed", "test_file": "pkg/engine/seams_test.go", "failure_output": "--- FAIL: TestRequiredSeams_PluginCRMAdapterCompatibility_IsAdapterScoped (0.00s)\n    seams_test.go:105: missing runtime seam characterization \"plugin_crm_adapter_compatibility\"\nFAIL\nFAIL\tgithub.com/LerianStudio/fetcher/pkg/engine\t0.523s\nFAIL", "completed_at": "2026-05-21T19:24:27Z"}, "tdd_green": {"status": "completed", "implementation_file": "pkg/engine/seams_test.go", "test_pass_output": "go test ./pkg/engine/... PASS; manager query and worker services PASS; go test ./... PASS", "completed_at": "2026-05-21T19:26:17Z"}, "delivery_verified": true, "coverage_actual": 100, "coverage_threshold": 85, "local_runtime_verified": true, "standards_compliance": {"total_sections": 6, "compliant": 6, "not_applicable": 0, "non_compliant": 0, "gaps": []}, "git_commit": "db1d54f878b1e17b9958b8704bf56038beec5e59"},
+            "validation": {"status": "pending", "result": "pending", "completed_at": null}
+          }
+        },
+        {
+          "id": "ST-T001-04",
+          "file": "docs/pre-dev/fetcher-embedded-runtime/subtasks/T-001/ST-T001-04-reconcile-go-version-source-of-truth.md",
+          "status": "completed",
+          "gate_progress": {
+            "implementation": {"status": "completed", "started_at": "2026-05-21T19:26:46Z", "completed_at": "2026-05-21T19:29:17Z", "tdd_red": {"status": "completed", "test_file": "shell-check", "failure_output": "FAIL: go.mod declares Go 1.25.9, but active developer guidance still references stale Go 1.25.6: CLAUDE.md:6", "completed_at": "2026-05-21T19:27:51Z"}, "tdd_green": {"status": "completed", "implementation_file": "CLAUDE.md", "test_pass_output": "PASS: active developer guidance matches go.mod Go 1.25.9; go test ./pkg/engine/... PASS; go test ./... PASS", "completed_at": "2026-05-21T19:29:17Z"}, "delivery_verified": true, "coverage_actual": 100, "coverage_threshold": 85, "local_runtime_verified": true, "standards_compliance": {"total_sections": 6, "compliant": 6, "not_applicable": 0, "non_compliant": 0, "gaps": []}, "git_commit": "cf69cd5"},
+            "validation": {"status": "pending", "result": "pending", "completed_at": null}
+          }
+        }
+      ],
+      "gate_progress": {"review": {"status": "in_progress", "iterations": 25, "last_result": "MT_CONSUMER_LIFECYCLE_REMEDIATED", "started_at": "2026-05-21T19:29:17Z", "last_checked_at": "2026-05-22T02:47:18Z", "remediation_commit": "1409695c31800a40118542811f4d18468b0226d7", "blocker": "MT consumer lifecycle, retry/backoff, concurrency, tests, and readyz wiring remediated; rerunning full Gate 8"}},
+      "artifacts": {},
+      "agent_outputs": {}
+    },
+    {
+      "id": "T-002",
+      "title": "Create importable Engine contracts, facade, and in-memory harness",
+      "status": "pending",
+      "feedback_loop_completed": false,
+      "accumulated_metrics": {"gate_durations_ms": {}, "review_iterations": 0, "testing_iterations": 0, "issues_by_severity": {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0}},
+      "subtasks": [
+        {"id": "ST-T002-01", "file": "docs/pre-dev/fetcher-embedded-runtime/subtasks/T-002/ST-T002-01-create-engine-contract-types.md", "status": "pending", "gate_progress": {"implementation": {"status": "pending", "started_at": null, "completed_at": null, "delivery_verified": false, "coverage_actual": 0, "coverage_threshold": 85, "local_runtime_verified": false}, "validation": {"status": "pending", "result": "pending", "completed_at": null}}},
+        {"id": "ST-T002-02", "file": "docs/pre-dev/fetcher-embedded-runtime/subtasks/T-002/ST-T002-02-create-engine-facade-and-options.md", "status": "pending", "gate_progress": {"implementation": {"status": "pending", "started_at": null, "completed_at": null, "delivery_verified": false, "coverage_actual": 0, "coverage_threshold": 85, "local_runtime_verified": false}, "validation": {"status": "pending", "result": "pending", "completed_at": null}}},
+        {"id": "ST-T002-03", "file": "docs/pre-dev/fetcher-embedded-runtime/subtasks/T-002/ST-T002-03-create-in-memory-harness.md", "status": "pending", "gate_progress": {"implementation": {"status": "pending", "started_at": null, "completed_at": null, "delivery_verified": false, "coverage_actual": 0, "coverage_threshold": 85, "local_runtime_verified": false}, "validation": {"status": "pending", "result": "pending", "completed_at": null}}}
+      ],
+      "gate_progress": {"review": {"status": "pending"}},
+      "artifacts": {},
+      "agent_outputs": {}
+    },
+    {
+      "id": "T-003",
+      "title": "Extract embedded connection lifecycle and credential protection",
+      "status": "pending",
+      "feedback_loop_completed": false,
+      "accumulated_metrics": {"gate_durations_ms": {}, "review_iterations": 0, "testing_iterations": 0, "issues_by_severity": {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0}},
+      "subtasks": [
+        {"id": "ST-T003-01", "file": "docs/pre-dev/fetcher-embedded-runtime/subtasks/T-003/ST-T003-01-implement-connection-store-operations.md", "status": "pending", "gate_progress": {"implementation": {"status": "pending", "started_at": null, "completed_at": null, "delivery_verified": false, "coverage_actual": 0, "coverage_threshold": 85, "local_runtime_verified": false}, "validation": {"status": "pending", "result": "pending", "completed_at": null}}},
+        {"id": "ST-T003-02", "file": "docs/pre-dev/fetcher-embedded-runtime/subtasks/T-003/ST-T003-02-add-credential-protector-flow.md", "status": "pending", "gate_progress": {"implementation": {"status": "pending", "started_at": null, "completed_at": null, "delivery_verified": false, "coverage_actual": 0, "coverage_threshold": 85, "local_runtime_verified": false}, "validation": {"status": "pending", "result": "pending", "completed_at": null}}},
+        {"id": "ST-T003-03", "file": "docs/pre-dev/fetcher-embedded-runtime/subtasks/T-003/ST-T003-03-preserve-active-job-conflict-hook.md", "status": "pending", "gate_progress": {"implementation": {"status": "pending", "started_at": null, "completed_at": null, "delivery_verified": false, "coverage_actual": 0, "coverage_threshold": 85, "local_runtime_verified": false}, "validation": {"status": "pending", "result": "pending", "completed_at": null}}}
+      ],
+      "gate_progress": {"review": {"status": "pending"}},
+      "artifacts": {},
+      "agent_outputs": {}
+    },
+    {"id": "T-004", "title": "Introduce connector registry/factory with explicit connect/test semantics", "status": "pending", "feedback_loop_completed": false, "accumulated_metrics": {"gate_durations_ms": {}, "review_iterations": 0, "testing_iterations": 0, "issues_by_severity": {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0}}, "subtasks": [{"id": "ST-T004-01", "file": "docs/pre-dev/fetcher-embedded-runtime/subtasks/T-004/ST-T004-01-define-connector-registry-contract.md", "status": "pending", "gate_progress": {"implementation": {"status": "pending", "started_at": null, "completed_at": null, "delivery_verified": false, "coverage_actual": 0, "coverage_threshold": 85, "local_runtime_verified": false}, "validation": {"status": "pending", "result": "pending", "completed_at": null}}}, {"id": "ST-T004-02", "file": "docs/pre-dev/fetcher-embedded-runtime/subtasks/T-004/ST-T004-02-add-datasource-compat-wrapper.md", "status": "pending", "gate_progress": {"implementation": {"status": "pending", "started_at": null, "completed_at": null, "delivery_verified": false, "coverage_actual": 0, "coverage_threshold": 85, "local_runtime_verified": false}, "validation": {"status": "pending", "result": "pending", "completed_at": null}}}, {"id": "ST-T004-03", "file": "docs/pre-dev/fetcher-embedded-runtime/subtasks/T-004/ST-T004-03-add-explicit-test-connection-operation.md", "status": "pending", "gate_progress": {"implementation": {"status": "pending", "started_at": null, "completed_at": null, "delivery_verified": false, "coverage_actual": 0, "coverage_threshold": 85, "local_runtime_verified": false}, "validation": {"status": "pending", "result": "pending", "completed_at": null}}}], "gate_progress": {"review": {"status": "pending"}}, "artifacts": {}, "agent_outputs": {}},
+    {"id": "T-005", "title": "Extract schema discovery and validation into Engine operations", "status": "pending", "feedback_loop_completed": false, "accumulated_metrics": {"gate_durations_ms": {}, "review_iterations": 0, "testing_iterations": 0, "issues_by_severity": {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0}}, "subtasks": [{"id": "ST-T005-01", "file": "docs/pre-dev/fetcher-embedded-runtime/subtasks/T-005/ST-T005-01-implement-discover-schema-operation.md", "status": "pending", "gate_progress": {"implementation": {"status": "pending", "started_at": null, "completed_at": null, "delivery_verified": false, "coverage_actual": 0, "coverage_threshold": 85, "local_runtime_verified": false}, "validation": {"status": "pending", "result": "pending", "completed_at": null}}}, {"id": "ST-T005-02", "file": "docs/pre-dev/fetcher-embedded-runtime/subtasks/T-005/ST-T005-02-implement-validate-schema-operation.md", "status": "pending", "gate_progress": {"implementation": {"status": "pending", "started_at": null, "completed_at": null, "delivery_verified": false, "coverage_actual": 0, "coverage_threshold": 85, "local_runtime_verified": false}, "validation": {"status": "pending", "result": "pending", "completed_at": null}}}, {"id": "ST-T005-03", "file": "docs/pre-dev/fetcher-embedded-runtime/subtasks/T-005/ST-T005-03-preserve-crm-schema-adapter-compatibility.md", "status": "pending", "gate_progress": {"implementation": {"status": "pending", "started_at": null, "completed_at": null, "delivery_verified": false, "coverage_actual": 0, "coverage_threshold": 85, "local_runtime_verified": false}, "validation": {"status": "pending", "result": "pending", "completed_at": null}}}], "gate_progress": {"review": {"status": "pending"}}, "artifacts": {}, "agent_outputs": {}},
+    {"id": "T-006", "title": "Add extraction planner with limits and tenant/product scope checks", "status": "pending", "feedback_loop_completed": false, "accumulated_metrics": {"gate_durations_ms": {}, "review_iterations": 0, "testing_iterations": 0, "issues_by_severity": {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0}}, "subtasks": [{"id": "ST-T006-01", "file": "docs/pre-dev/fetcher-embedded-runtime/subtasks/T-006/ST-T006-01-create-extraction-plan-model.md", "status": "pending", "gate_progress": {"implementation": {"status": "pending", "started_at": null, "completed_at": null, "delivery_verified": false, "coverage_actual": 0, "coverage_threshold": 85, "local_runtime_verified": false}, "validation": {"status": "pending", "result": "pending", "completed_at": null}}}, {"id": "ST-T006-02", "file": "docs/pre-dev/fetcher-embedded-runtime/subtasks/T-006/ST-T006-02-enforce-limits-in-planner.md", "status": "pending", "gate_progress": {"implementation": {"status": "pending", "started_at": null, "completed_at": null, "delivery_verified": false, "coverage_actual": 0, "coverage_threshold": 85, "local_runtime_verified": false}, "validation": {"status": "pending", "result": "pending", "completed_at": null}}}, {"id": "ST-T006-03", "file": "docs/pre-dev/fetcher-embedded-runtime/subtasks/T-006/ST-T006-03-enforce-tenant-product-scope.md", "status": "pending", "gate_progress": {"implementation": {"status": "pending", "started_at": null, "completed_at": null, "delivery_verified": false, "coverage_actual": 0, "coverage_threshold": 85, "local_runtime_verified": false}, "validation": {"status": "pending", "result": "pending", "completed_at": null}}}], "gate_progress": {"review": {"status": "pending"}}, "artifacts": {}, "agent_outputs": {}},
+    {"id": "T-007", "title": "Add synchronous execution runner, canonical result model, and result sink port", "status": "pending", "feedback_loop_completed": false, "accumulated_metrics": {"gate_durations_ms": {}, "review_iterations": 0, "testing_iterations": 0, "issues_by_severity": {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0}}, "subtasks": [{"id": "ST-T007-01", "file": "docs/pre-dev/fetcher-embedded-runtime/subtasks/T-007/ST-T007-01-add-result-model-and-memory-sink.md", "status": "pending", "gate_progress": {"implementation": {"status": "pending", "started_at": null, "completed_at": null, "delivery_verified": false, "coverage_actual": 0, "coverage_threshold": 85, "local_runtime_verified": false}, "validation": {"status": "pending", "result": "pending", "completed_at": null}}}, {"id": "ST-T007-02", "file": "docs/pre-dev/fetcher-embedded-runtime/subtasks/T-007/ST-T007-02-implement-sync-runner.md", "status": "pending", "gate_progress": {"implementation": {"status": "pending", "started_at": null, "completed_at": null, "delivery_verified": false, "coverage_actual": 0, "coverage_threshold": 85, "local_runtime_verified": false}, "validation": {"status": "pending", "result": "pending", "completed_at": null}}}, {"id": "ST-T007-03", "file": "docs/pre-dev/fetcher-embedded-runtime/subtasks/T-007/ST-T007-03-add-store-mode-and-execution-state.md", "status": "pending", "gate_progress": {"implementation": {"status": "pending", "started_at": null, "completed_at": null, "delivery_verified": false, "coverage_actual": 0, "coverage_threshold": 85, "local_runtime_verified": false}, "validation": {"status": "pending", "result": "pending", "completed_at": null}}}, {"id": "ST-T007-04", "file": "docs/pre-dev/fetcher-embedded-runtime/subtasks/T-007/ST-T007-04-add-cancellation-timeout-and-size-limits.md", "status": "pending", "gate_progress": {"implementation": {"status": "pending", "started_at": null, "completed_at": null, "delivery_verified": false, "coverage_actual": 0, "coverage_threshold": 85, "local_runtime_verified": false}, "validation": {"status": "pending", "result": "pending", "completed_at": null}}}], "gate_progress": {"review": {"status": "pending"}}, "artifacts": {}, "agent_outputs": {}},
+    {"id": "T-008", "title": "Migrate Manager connection/schema compatibility paths over Engine", "status": "pending", "feedback_loop_completed": false, "accumulated_metrics": {"gate_durations_ms": {}, "review_iterations": 0, "testing_iterations": 0, "issues_by_severity": {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0}}, "subtasks": [{"id": "ST-T008-01", "file": "docs/pre-dev/fetcher-embedded-runtime/subtasks/T-008/ST-T008-01-wire-manager-connection-services-to-engine.md", "status": "pending", "gate_progress": {"implementation": {"status": "pending", "started_at": null, "completed_at": null, "delivery_verified": false, "coverage_actual": 0, "coverage_threshold": 85, "local_runtime_verified": false}, "validation": {"status": "pending", "result": "pending", "completed_at": null}}}, {"id": "ST-T008-02", "file": "docs/pre-dev/fetcher-embedded-runtime/subtasks/T-008/ST-T008-02-wire-manager-schema-services-to-engine.md", "status": "pending", "gate_progress": {"implementation": {"status": "pending", "started_at": null, "completed_at": null, "delivery_verified": false, "coverage_actual": 0, "coverage_threshold": 85, "local_runtime_verified": false}, "validation": {"status": "pending", "result": "pending", "completed_at": null}}}, {"id": "ST-T008-03", "file": "docs/pre-dev/fetcher-embedded-runtime/subtasks/T-008/ST-T008-03-preserve-manager-error-and-rate-limit-boundaries.md", "status": "pending", "gate_progress": {"implementation": {"status": "pending", "started_at": null, "completed_at": null, "delivery_verified": false, "coverage_actual": 0, "coverage_threshold": 85, "local_runtime_verified": false}, "validation": {"status": "pending", "result": "pending", "completed_at": null}}}], "gate_progress": {"review": {"status": "pending"}}, "artifacts": {}, "agent_outputs": {}},
+    {"id": "T-009", "title": "Migrate Manager job creation/planning path over Engine while preserving RabbitMQ dispatch", "status": "pending", "feedback_loop_completed": false, "accumulated_metrics": {"gate_durations_ms": {}, "review_iterations": 0, "testing_iterations": 0, "issues_by_severity": {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0}}, "subtasks": [{"id": "ST-T009-01", "file": "docs/pre-dev/fetcher-embedded-runtime/subtasks/T-009/ST-T009-01-map-fetcher-request-to-engine-plan.md", "status": "pending", "gate_progress": {"implementation": {"status": "pending", "started_at": null, "completed_at": null, "delivery_verified": false, "coverage_actual": 0, "coverage_threshold": 85, "local_runtime_verified": false}, "validation": {"status": "pending", "result": "pending", "completed_at": null}}}, {"id": "ST-T009-02", "file": "docs/pre-dev/fetcher-embedded-runtime/subtasks/T-009/ST-T009-02-preserve-idempotency-and-job-persistence.md", "status": "pending", "gate_progress": {"implementation": {"status": "pending", "started_at": null, "completed_at": null, "delivery_verified": false, "coverage_actual": 0, "coverage_threshold": 85, "local_runtime_verified": false}, "validation": {"status": "pending", "result": "pending", "completed_at": null}}}, {"id": "ST-T009-03", "file": "docs/pre-dev/fetcher-embedded-runtime/subtasks/T-009/ST-T009-03-preserve-rabbitmq-dispatch-boundary.md", "status": "pending", "gate_progress": {"implementation": {"status": "pending", "started_at": null, "completed_at": null, "delivery_verified": false, "coverage_actual": 0, "coverage_threshold": 85, "local_runtime_verified": false}, "validation": {"status": "pending", "result": "pending", "completed_at": null}}}], "gate_progress": {"review": {"status": "pending"}}, "artifacts": {}, "agent_outputs": {}},
+    {"id": "T-010", "title": "Migrate Worker extraction path over Engine while preserving job status/results/events", "status": "pending", "feedback_loop_completed": false, "accumulated_metrics": {"gate_durations_ms": {}, "review_iterations": 0, "testing_iterations": 0, "issues_by_severity": {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0}}, "subtasks": [{"id": "ST-T010-01", "file": "docs/pre-dev/fetcher-embedded-runtime/subtasks/T-010/ST-T010-01-map-worker-message-to-engine-execution.md", "status": "pending", "gate_progress": {"implementation": {"status": "pending", "started_at": null, "completed_at": null, "delivery_verified": false, "coverage_actual": 0, "coverage_threshold": 85, "local_runtime_verified": false}, "validation": {"status": "pending", "result": "pending", "completed_at": null}}}, {"id": "ST-T010-02", "file": "docs/pre-dev/fetcher-embedded-runtime/subtasks/T-010/ST-T010-02-preserve-storage-encryption-result-hmac.md", "status": "pending", "gate_progress": {"implementation": {"status": "pending", "started_at": null, "completed_at": null, "delivery_verified": false, "coverage_actual": 0, "coverage_threshold": 85, "local_runtime_verified": false}, "validation": {"status": "pending", "result": "pending", "completed_at": null}}}, {"id": "ST-T010-03", "file": "docs/pre-dev/fetcher-embedded-runtime/subtasks/T-010/ST-T010-03-preserve-job-status-and-events.md", "status": "pending", "gate_progress": {"implementation": {"status": "pending", "started_at": null, "completed_at": null, "delivery_verified": false, "coverage_actual": 0, "coverage_threshold": 85, "local_runtime_verified": false}, "validation": {"status": "pending", "result": "pending", "completed_at": null}}}, {"id": "ST-T010-04", "file": "docs/pre-dev/fetcher-embedded-runtime/subtasks/T-010/ST-T010-04-preserve-crm-extraction-compatibility.md", "status": "pending", "gate_progress": {"implementation": {"status": "pending", "started_at": null, "completed_at": null, "delivery_verified": false, "coverage_actual": 0, "coverage_threshold": 85, "local_runtime_verified": false}, "validation": {"status": "pending", "result": "pending", "completed_at": null}}}], "gate_progress": {"review": {"status": "pending"}}, "artifacts": {}, "agent_outputs": {}}
+  ],
+  "metrics": {
+    "total_duration_ms": 0,
+    "gate_durations": {},
+    "review_iterations": 0,
+    "testing_iterations": 0
+  }
+}
