@@ -115,6 +115,45 @@ func TestTerminalEventRepairer_RepairOnce_WithTenantScope_ContinuesAfterTenantFa
 	require.True(t, repo.seenTenantDB[0])
 }
 
+func TestTerminalEventRepairer_RepairOnce_ContinuesAfterPendingJobFailure(t *testing.T) {
+	t.Parallel()
+
+	failedJobID := uuid.New()
+	successJobID := uuid.New()
+	repo := &pendingTerminalRepo{
+		jobs: []*model.Job{
+			{
+				ID:     failedJobID,
+				Status: model.JobStatusCompleted,
+				Metadata: map[string]any{
+					terminalEventPendingMetadataKey: true,
+					terminalEventStatusMetadataKey:  "completed",
+					terminalEventPayloadMetadataKey: `{"status":"completed"}`,
+				},
+			},
+			{
+				ID:     successJobID,
+				Status: model.JobStatusCompleted,
+				Metadata: map[string]any{
+					terminalEventPendingMetadataKey: true,
+					terminalEventStatusMetadataKey:  "completed",
+					terminalEventPayloadMetadataKey: `{"status":"completed"}`,
+				},
+			},
+		},
+	}
+	emitter := &countingEmitter{errBySubject: map[string]error{failedJobID.String(): errors.New("first publish failed")}}
+	uc := &UseCase{JobRepository: repo, JobEventEmitter: emitter, JobEventStreamingEnabled: true}
+	repairer := NewTerminalEventRepairer(uc, testLogger())
+
+	err := repairer.RepairOnce(testContext())
+	require.Error(t, err)
+	require.Contains(t, err.Error(), failedJobID.String())
+	require.Contains(t, err.Error(), "first publish failed")
+	require.Equal(t, 2, emitter.count)
+	require.Equal(t, []uuid.UUID{successJobID}, repo.clearedIDs)
+}
+
 func TestTerminalEventRepairer_RepairOnce_ErrorPaths(t *testing.T) {
 	t.Parallel()
 
@@ -202,14 +241,19 @@ func TestTerminalEventRepairer_RepairOnce_ErrorPaths(t *testing.T) {
 }
 
 type countingEmitter struct {
-	count     int
-	err       error
-	tenantIDs []string
+	count        int
+	err          error
+	errBySubject map[string]error
+	tenantIDs    []string
 }
 
-func (e *countingEmitter) Emit(ctx context.Context, _ streaming.EmitRequest) error {
+func (e *countingEmitter) Emit(ctx context.Context, request streaming.EmitRequest) error {
 	e.count++
 	e.tenantIDs = append(e.tenantIDs, tmcore.GetTenantIDContext(ctx))
+	if err := e.errBySubject[request.Subject]; err != nil {
+		return err
+	}
+
 	return e.err
 }
 
@@ -221,6 +265,7 @@ type pendingTerminalRepo struct {
 	jobs                 []*model.Job
 	listErr              error
 	clearedID            uuid.UUID
+	clearedIDs           []uuid.UUID
 	requireTenantContext bool
 	seenTenantIDs        []string
 	seenTenantDB         []bool
@@ -245,6 +290,7 @@ func (r *pendingTerminalRepo) ListPendingTerminalEvents(ctx context.Context, _ i
 
 func (r *pendingTerminalRepo) ClearTerminalEventMetadata(_ context.Context, id uuid.UUID) error {
 	r.clearedID = id
+	r.clearedIDs = append(r.clearedIDs, id)
 	return nil
 }
 

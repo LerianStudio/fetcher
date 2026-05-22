@@ -25,12 +25,20 @@ import (
 // mockRabbitMQManager is a mock implementation of RabbitMQManagerInterface.
 type mockRabbitMQManager struct {
 	channel       RabbitMQChannel
+	channels      []RabbitMQChannel
 	getChannelErr error
+	getCalls      int
 }
 
 func (m *mockRabbitMQManager) GetChannel(_ context.Context, _ string) (RabbitMQChannel, error) {
+	m.getCalls++
 	if m.getChannelErr != nil {
 		return nil, m.getChannelErr
+	}
+	if len(m.channels) > 0 {
+		ch := m.channels[0]
+		m.channels = m.channels[1:]
+		return ch, nil
 	}
 
 	return m.channel, nil
@@ -258,8 +266,8 @@ func TestPublish_MultiTenant_Success(t *testing.T) {
 	err := publisher.Publish(ctx, "test-exchange", "test.key", []byte(`{"status":"completed"}`))
 
 	require.NoError(t, err)
-	assert.False(t, mockCh.closed, "tenant channel is owned by the manager and must stay open after publish")
-	assert.Equal(t, 0, mockCh.closeCalls)
+	assert.True(t, mockCh.closed, "tenant channel returned by tenant manager must be closed by the publisher after confirmed publish")
+	assert.Equal(t, 1, mockCh.closeCalls)
 }
 
 func TestPublish_MultiTenant_AddsTenantIDHeader(t *testing.T) {
@@ -390,21 +398,29 @@ func TestPublish_MultiTenant_ReturnsErrorWhenConfirmFails(t *testing.T) {
 	}
 }
 
-func TestPublish_MultiTenant_ReusesConfirmablePublisherWithoutClosingTenantChannel(t *testing.T) {
+func TestPublish_MultiTenant_ClosesTenantChannelAfterEachPublish(t *testing.T) {
 	t.Parallel()
 
-	channel := &mockChannel{}
-	publisher := NewPublisherRoutesMultiTenant(&mockRabbitMQManager{channel: channel}, log.NewNop(), nil, nil)
+	firstChannel := &mockChannel{}
+	secondChannel := &mockChannel{}
+	manager := &mockRabbitMQManager{channels: []RabbitMQChannel{firstChannel, secondChannel}}
+	publisher := NewPublisherRoutesMultiTenant(manager, log.NewNop(), nil, nil)
 	ctx := tmcore.ContextWithTenantID(context.Background(), "tenant-123")
 
 	require.NoError(t, publisher.Publish(ctx, "exchange", "job.completed", []byte(`{"n":1}`)))
 	require.NoError(t, publisher.Publish(ctx, "exchange", "job.completed", []byte(`{"n":2}`)))
 
-	assert.Equal(t, 2, channel.publishCount)
-	assert.Equal(t, 1, channel.confirmCalls)
-	assert.Equal(t, 1, channel.notifyPublishCalls)
-	assert.Equal(t, 0, channel.closeCalls)
-	assert.False(t, channel.closed)
+	assert.Equal(t, 2, manager.getCalls)
+	assert.Equal(t, 1, firstChannel.publishCount)
+	assert.Equal(t, 1, secondChannel.publishCount)
+	assert.Equal(t, 1, firstChannel.confirmCalls)
+	assert.Equal(t, 1, secondChannel.confirmCalls)
+	assert.Equal(t, 1, firstChannel.notifyPublishCalls)
+	assert.Equal(t, 1, secondChannel.notifyPublishCalls)
+	assert.Equal(t, 1, firstChannel.closeCalls)
+	assert.Equal(t, 1, secondChannel.closeCalls)
+	assert.True(t, firstChannel.closed)
+	assert.True(t, secondChannel.closed)
 }
 
 func TestNewPublisherRoutesMultiTenant_SetsFields(t *testing.T) {

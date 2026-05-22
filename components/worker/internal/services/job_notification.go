@@ -130,6 +130,7 @@ func (uc *UseCase) emitJobNotificationEvent(ctx context.Context, status, subject
 
 	if err := uc.JobEventEmitter.Emit(outboxCtx, streaming.EmitRequest{
 		DefinitionKey: fmt.Sprintf("job.%s", status),
+		EventID:       deterministicJobEventID(status, subject),
 		TenantID:      tenantID,
 		Subject:       subject,
 		Payload:       payload,
@@ -147,6 +148,10 @@ func (uc *UseCase) emitJobNotificationEvent(ctx context.Context, status, subject
 	}
 
 	return nil
+}
+
+func deterministicJobEventID(status, jobID string) string {
+	return fmt.Sprintf("fetcher.job.%s.%s", status, jobID)
 }
 
 func normalizeJobNotificationLogger(ctx context.Context, logger libLog.Logger) libLog.Logger {

@@ -223,6 +223,10 @@ func (pr *PublisherRoutes) PublishWithHeaders(ctx context.Context, exchange, rou
 
 		// Declare exchange on tenant vhost (idempotent)
 		if err := ch.ExchangeDeclare(exchange, "topic", true, false, false, false, nil); err != nil {
+			if closeErr := ch.Close(); closeErr != nil {
+				err = fmt.Errorf("%w; close tenant channel: %v", err, closeErr)
+			}
+
 			opentelemetry.HandleSpanError(span, "Failed to declare exchange on tenant vhost", err)
 			pr.Log(ctx, libLog.LevelError, fmt.Sprintf("Error declaring exchange %s on tenant %s vhost", exchange, tenantID), libLog.Err(err))
 
@@ -244,7 +248,7 @@ func (pr *PublisherRoutes) PublishWithHeaders(ctx context.Context, exchange, rou
 		// succeed after broker acceptance.
 		span.SetAttributes(attribute.String(attrPublishRationale, multiTenantPublishRationale))
 
-		if err := pr.publishWithConfirm(ctx, ch, exchange, routingKey, msg); err != nil {
+		if err := pr.publishWithTenantConfirmAndClose(ctx, ch, exchange, routingKey, msg); err != nil {
 			opentelemetry.HandleSpanError(span, "Failed to publish message to tenant vhost", err)
 			pr.Log(ctx, libLog.LevelError, fmt.Sprintf("Error publishing to exchange %s on tenant %s", exchange, tenantID), libLog.Err(err))
 
@@ -310,6 +314,27 @@ func (pr *PublisherRoutes) publishWithConfirm(ctx context.Context, ch RabbitMQCh
 	if err != nil {
 		return err
 	}
+
+	if err := publisher.Publish(ctx, exchange, routingKey, true, false, msg); err != nil {
+		return fmt.Errorf("rabbitmq publish confirmed message: %w", err)
+	}
+
+	return nil
+}
+
+func (pr *PublisherRoutes) publishWithTenantConfirmAndClose(ctx context.Context, ch RabbitMQChannel, exchange, routingKey string, msg amqp.Publishing) error {
+	publisher, err := libRabbitmq.NewConfirmablePublisherFromChannel(ch,
+		libRabbitmq.WithLogger(pr.Logger),
+		libRabbitmq.WithConfirmTimeout(libRabbitmq.DefaultConfirmTimeout),
+	)
+	if err != nil {
+		if closeErr := ch.Close(); closeErr != nil {
+			return fmt.Errorf("create rabbitmq confirmable publisher: %w; close tenant channel: %v", err, closeErr)
+		}
+
+		return fmt.Errorf("create rabbitmq confirmable publisher: %w", err)
+	}
+	defer func() { _ = publisher.Close() }()
 
 	if err := publisher.Publish(ctx, exchange, routingKey, true, false, msg); err != nil {
 		return fmt.Errorf("rabbitmq publish confirmed message: %w", err)

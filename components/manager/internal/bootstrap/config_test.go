@@ -756,8 +756,8 @@ func TestMultiTenantPublisher_ProducerDefault_PublishesMessage(t *testing.T) {
 	err := publisher.ProducerDefault(ctx, "exchange", "routing-key", []byte(`{"job":"1"}`), &headers)
 	require.NoError(t, err)
 	assert.True(t, ch.published, "expected message to be published")
-	assert.False(t, ch.closed, "tenant channel is owned by the manager and must stay open after publish")
-	assert.Equal(t, 0, ch.closeCalls)
+	assert.True(t, ch.closed, "tenant channel returned by tenant manager must be closed by the publisher after confirmed publish")
+	assert.Equal(t, 1, ch.closeCalls)
 	assert.Equal(t, "exchange", ch.lastExchange)
 	assert.Equal(t, "routing-key", ch.lastKey)
 }
@@ -845,11 +845,20 @@ func TestInitPlatformDependencies_MultiTenant_TMClientError(t *testing.T) {
 // --- test stubs for multiTenantPublisher ---
 
 type stubRabbitMQManager struct {
-	channel managerRabbitMQChannel
-	err     error
+	channel  managerRabbitMQChannel
+	channels []managerRabbitMQChannel
+	err      error
+	getCalls int
 }
 
 func (s *stubRabbitMQManager) GetChannel(_ context.Context, _ string) (managerRabbitMQChannel, error) {
+	s.getCalls++
+	if len(s.channels) > 0 {
+		ch := s.channels[0]
+		s.channels = s.channels[1:]
+		return ch, s.err
+	}
+
 	return s.channel, s.err
 }
 
@@ -910,12 +919,14 @@ func (s *stubRabbitMQChannel) Close() error {
 	return nil
 }
 
-func TestMultiTenantPublisher_ProducerDefault_ReusesConfirmablePublisherWithoutClosingTenantChannel(t *testing.T) {
+func TestMultiTenantPublisher_ProducerDefault_ClosesTenantChannelAfterEachPublish(t *testing.T) {
 	t.Parallel()
 
-	channel := &stubRabbitMQChannel{}
+	firstChannel := &stubRabbitMQChannel{}
+	secondChannel := &stubRabbitMQChannel{}
+	manager := &stubRabbitMQManager{channels: []managerRabbitMQChannel{firstChannel, secondChannel}}
 	publisher := &multiTenantPublisher{
-		manager: &stubRabbitMQManager{channel: channel},
+		manager: manager,
 		logger:  testManagerBootstrapLogger(),
 	}
 	ctx := stubTenantContext("tenant-123")
@@ -923,11 +934,17 @@ func TestMultiTenantPublisher_ProducerDefault_ReusesConfirmablePublisherWithoutC
 	require.NoError(t, publisher.ProducerDefault(ctx, "exchange", "job.created", []byte(`{"n":1}`), nil))
 	require.NoError(t, publisher.ProducerDefault(ctx, "exchange", "job.created", []byte(`{"n":2}`), nil))
 
-	assert.Equal(t, 2, channel.publishCount)
-	assert.Equal(t, 1, channel.confirmCalls)
-	assert.Equal(t, 1, channel.notifyPublishCalls)
-	assert.Equal(t, 0, channel.closeCalls)
-	assert.False(t, channel.closed)
+	assert.Equal(t, 2, manager.getCalls)
+	assert.Equal(t, 1, firstChannel.publishCount)
+	assert.Equal(t, 1, secondChannel.publishCount)
+	assert.Equal(t, 1, firstChannel.confirmCalls)
+	assert.Equal(t, 1, secondChannel.confirmCalls)
+	assert.Equal(t, 1, firstChannel.notifyPublishCalls)
+	assert.Equal(t, 1, secondChannel.notifyPublishCalls)
+	assert.Equal(t, 1, firstChannel.closeCalls)
+	assert.Equal(t, 1, secondChannel.closeCalls)
+	assert.True(t, firstChannel.closed)
+	assert.True(t, secondChannel.closed)
 }
 
 // stubTenantContext creates a context with tenant ID set via tmcore.

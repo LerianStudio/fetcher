@@ -181,15 +181,23 @@ func (r *TerminalEventRepairer) repairOnceInContext(ctx context.Context, lister 
 		return fmt.Errorf("list pending terminal events: %w", err)
 	}
 
+	var errs []error
+
 	for _, job := range jobs {
 		if job == nil {
 			continue
 		}
 
 		if _, err := r.useCase.retryPendingTerminalEventForJob(ctx, job, logger); err != nil {
-			return err
+			repairErr := fmt.Errorf("repair pending terminal event for job %s: %w", job.ID, err)
+			logger.Log(ctx, libLog.LevelError, "failed to repair pending terminal job event",
+				libLog.String("job_id", job.ID.String()),
+				libLog.Err(err),
+			)
+
+			errs = append(errs, repairErr)
 		}
 	}
 
-	return nil
+	return errors.Join(errs...)
 }

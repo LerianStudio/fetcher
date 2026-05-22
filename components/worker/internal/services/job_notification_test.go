@@ -87,17 +87,20 @@ func TestEmitJobNotificationEvent_WithTenantContext_SetsOutboxTenantContext(t *t
 	require.NoError(t, err)
 	require.Equal(t, tenantID, emitter.outboxTenantID)
 	require.Equal(t, tenantID, emitter.requestTenantID)
+	require.NotEmpty(t, emitter.requestEventID)
 }
 
 type capturingEmitter struct {
 	outboxTenantID  string
 	requestTenantID string
+	requestEventID  string
 }
 
 func (e *capturingEmitter) Emit(ctx context.Context, request streaming.EmitRequest) error {
 	tenantID, _ := libOutbox.TenantIDFromContext(ctx)
 	e.outboxTenantID = tenantID
 	e.requestTenantID = request.TenantID
+	e.requestEventID = request.EventID
 
 	return nil
 }
@@ -177,10 +180,52 @@ func TestPublishJobNotification_EmitsLibStreamingEventWhenTenantPresent(t *testi
 	streamingtest.AssertTenantID(t, emitter, "tenant-job-events")
 	requests := emitter.Requests()
 	require.Len(t, requests, 1)
+	assert.Equal(t, "fetcher.job.completed."+jobID.String(), requests[0].EventID)
 	assert.Equal(t, jobID.String(), requests[0].Subject)
 	var notification JobNotificationMessage
 	require.NoError(t, json.Unmarshal(requests[0].Payload, &notification))
 	assert.Equal(t, "completed", notification.Status)
+}
+
+func TestPublishJobNotification_EmitsDeterministicEventIDForTerminalStatus(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		status string
+	}{
+		{name: "completed terminal event", status: "completed"},
+		{name: "failed terminal event", status: "failed"},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			mocks := newTestMocks(ctrl)
+			uc := newTestUseCase(mocks)
+			emitter := streamingtest.NewMockEmitter()
+			uc.JobEventEmitter = emitter
+
+			ctx := tmcore.ContextWithTenantID(testContext(), "tenant-job-events")
+			jobID := newTestJobID()
+			message := ExtractExternalDataMessage{
+				JobID:    jobID,
+				Metadata: map[string]any{"source": "test-service"},
+			}
+
+			err := publishJobNotificationForTest(t, uc, ctx, message, tt.status, nil, nil, testLogger())
+			require.NoError(t, err)
+
+			requests := emitter.Requests()
+			require.Len(t, requests, 1)
+			assert.Equal(t, "fetcher.job."+tt.status+"."+jobID.String(), requests[0].EventID)
+		})
+	}
 }
 
 func TestPublishJobNotification_StreamingFailureFailsWithoutLegacyPublish(t *testing.T) {
