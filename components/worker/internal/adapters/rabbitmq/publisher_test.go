@@ -42,8 +42,13 @@ type mockChannel struct {
 	confirmErr         error
 	publishErr         error
 	published          amqp.Publishing
+	publishCount       int
+	confirmCalls       int
+	notifyPublishCalls int
+	closeCalls         int
 	confirmation       amqp.Confirmation
 	returned           *amqp.Return
+	publishConfirmCh   chan amqp.Confirmation
 	closed             bool
 }
 
@@ -52,20 +57,31 @@ func (m *mockChannel) ExchangeDeclare(_, _ string, _, _, _, _ bool, _ amqp.Table
 }
 
 func (m *mockChannel) PublishWithContext(_ context.Context, _, _ string, _, _ bool, msg amqp.Publishing) error {
+	m.publishCount++
 	m.published = msg
-	return m.publishErr
+	if m.publishErr != nil {
+		return m.publishErr
+	}
+
+	if m.publishConfirmCh != nil {
+		confirmation := m.confirmation
+		if confirmation.DeliveryTag == 0 {
+			confirmation = amqp.Confirmation{DeliveryTag: uint64(m.publishCount), Ack: true}
+		}
+		m.publishConfirmCh <- confirmation
+	}
+
+	return nil
 }
 
 func (m *mockChannel) Confirm(bool) error {
+	m.confirmCalls++
 	return m.confirmErr
 }
 
 func (m *mockChannel) NotifyPublish(receiver chan amqp.Confirmation) chan amqp.Confirmation {
-	confirmation := m.confirmation
-	if confirmation.DeliveryTag == 0 {
-		confirmation = amqp.Confirmation{DeliveryTag: 1, Ack: true}
-	}
-	receiver <- confirmation
+	m.notifyPublishCalls++
+	m.publishConfirmCh = receiver
 	return receiver
 }
 
@@ -81,6 +97,7 @@ func (m *mockChannel) NotifyReturn(receiver chan amqp.Return) chan amqp.Return {
 }
 
 func (m *mockChannel) Close() error {
+	m.closeCalls++
 	m.closed = true
 	return nil
 }
@@ -241,7 +258,8 @@ func TestPublish_MultiTenant_Success(t *testing.T) {
 	err := publisher.Publish(ctx, "test-exchange", "test.key", []byte(`{"status":"completed"}`))
 
 	require.NoError(t, err)
-	assert.True(t, mockCh.closed, "channel should be closed after publish")
+	assert.False(t, mockCh.closed, "tenant channel is owned by the manager and must stay open after publish")
+	assert.Equal(t, 0, mockCh.closeCalls)
 }
 
 func TestPublish_MultiTenant_AddsTenantIDHeader(t *testing.T) {
@@ -370,6 +388,23 @@ func TestPublish_MultiTenant_ReturnsErrorWhenConfirmFails(t *testing.T) {
 			assert.Contains(t, err.Error(), tt.wantErr)
 		})
 	}
+}
+
+func TestPublish_MultiTenant_ReusesConfirmablePublisherWithoutClosingTenantChannel(t *testing.T) {
+	t.Parallel()
+
+	channel := &mockChannel{}
+	publisher := NewPublisherRoutesMultiTenant(&mockRabbitMQManager{channel: channel}, log.NewNop(), nil, nil)
+	ctx := tmcore.ContextWithTenantID(context.Background(), "tenant-123")
+
+	require.NoError(t, publisher.Publish(ctx, "exchange", "job.completed", []byte(`{"n":1}`)))
+	require.NoError(t, publisher.Publish(ctx, "exchange", "job.completed", []byte(`{"n":2}`)))
+
+	assert.Equal(t, 2, channel.publishCount)
+	assert.Equal(t, 1, channel.confirmCalls)
+	assert.Equal(t, 1, channel.notifyPublishCalls)
+	assert.Equal(t, 0, channel.closeCalls)
+	assert.False(t, channel.closed)
 }
 
 func TestNewPublisherRoutesMultiTenant_SetsFields(t *testing.T) {

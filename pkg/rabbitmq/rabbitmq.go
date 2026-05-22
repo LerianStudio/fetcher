@@ -266,6 +266,11 @@ type amqpChannel interface {
 	Qos(prefetchCount, prefetchSize int, global bool) error
 }
 
+type confirmablePublisher interface {
+	Publish(ctx context.Context, exchange, key string, mandatory, immediate bool, msg amqp.Publishing) error
+	Close() error
+}
+
 // rabbitmqConnectionAdapter adapts the RabbitMQConnection to the rabbitConnection interface.
 type rabbitmqConnectionAdapter struct {
 	conn *libRabbitmq.RabbitMQConnection
@@ -363,6 +368,9 @@ func isPermanentAMQPError(err error) bool {
 type RabbitMQAdapter struct {
 	conn    rabbitConnection
 	channel amqpChannel
+
+	confirmPublisher        confirmablePublisher
+	confirmPublisherChannel amqpChannel
 
 	// options contains the adapter configuration.
 	options AdapterOptions
@@ -577,7 +585,16 @@ func (prmq *RabbitMQAdapter) invalidateChannel(logger libLog.Logger) {
 	prmq.mu.Lock()
 	channel := prmq.channel
 	prmq.channel = nil
+	confirmPublisher := prmq.confirmPublisher
+	prmq.confirmPublisher = nil
+	prmq.confirmPublisherChannel = nil
 	prmq.mu.Unlock()
+
+	if confirmPublisher != nil {
+		if err := confirmPublisher.Close(); err != nil && logger != nil {
+			logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("Failed to close RabbitMQ confirmable publisher: %v", err))
+		}
+	}
 
 	if channel != nil && !channel.IsClosed() {
 		if err := channel.Close(); err != nil && logger != nil {
@@ -604,7 +621,18 @@ func (prmq *RabbitMQAdapter) startChannelWatcher(logger libLog.Logger, channel a
 		prmq.mu.Lock()
 		defer prmq.mu.Unlock()
 
-		prmq.channel = nil
+		if prmq.channel == channel {
+			prmq.channel = nil
+			confirmPublisher := prmq.confirmPublisher
+			prmq.confirmPublisher = nil
+			prmq.confirmPublisherChannel = nil
+
+			if confirmPublisher != nil {
+				if closeErr := confirmPublisher.Close(); closeErr != nil {
+					logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("Failed to close RabbitMQ confirmable publisher after channel close: %v", closeErr))
+				}
+			}
+		}
 	})
 }
 
@@ -700,9 +728,35 @@ func (prmq *RabbitMQAdapter) ensureChannel(span trace.Span, logger libLog.Logger
 }
 
 func (prmq *RabbitMQAdapter) publishConfirmed(ctx context.Context, ch amqpChannel, exchange, key string, msg amqp.Publishing) error {
+	publisher, err := prmq.confirmablePublisherForChannel(ch)
+	if err != nil {
+		return err
+	}
+
+	if err := publisher.Publish(ctx, exchange, key, true, false, msg); err != nil {
+		return fmt.Errorf("rabbitmq publish confirmed message: %w", err)
+	}
+
+	return nil
+}
+
+func (prmq *RabbitMQAdapter) confirmablePublisherForChannel(ch amqpChannel) (confirmablePublisher, error) {
 	confirmTimeout := prmq.options.PublishConfirmTimeout
 	if confirmTimeout <= 0 {
 		confirmTimeout = DefaultPublishConfirmTimeout
+	}
+
+	prmq.mu.Lock()
+	defer prmq.mu.Unlock()
+
+	if prmq.confirmPublisher != nil && prmq.confirmPublisherChannel == ch {
+		return prmq.confirmPublisher, nil
+	}
+
+	if prmq.confirmPublisher != nil {
+		_ = prmq.confirmPublisher.Close()
+		prmq.confirmPublisher = nil
+		prmq.confirmPublisherChannel = nil
 	}
 
 	publisher, err := libRabbitmq.NewConfirmablePublisherFromChannel(ch,
@@ -710,16 +764,13 @@ func (prmq *RabbitMQAdapter) publishConfirmed(ctx context.Context, ch amqpChanne
 		libRabbitmq.WithConfirmTimeout(confirmTimeout),
 	)
 	if err != nil {
-		return fmt.Errorf("create rabbitmq confirmable publisher: %w", err)
+		return nil, fmt.Errorf("create rabbitmq confirmable publisher: %w", err)
 	}
 
-	defer func() { _ = publisher.Close() }()
+	prmq.confirmPublisher = publisher
+	prmq.confirmPublisherChannel = ch
 
-	if err := publisher.Publish(ctx, exchange, key, true, false, msg); err != nil {
-		return fmt.Errorf("rabbitmq publish confirmed message: %w", err)
-	}
-
-	return nil
+	return publisher, nil
 }
 
 func (prmq *RabbitMQAdapter) optionsLogger() libLog.Logger {

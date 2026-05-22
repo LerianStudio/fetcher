@@ -4,6 +4,7 @@ package rabbitmq
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	observability "github.com/LerianStudio/lib-observability"
 
@@ -48,6 +49,11 @@ type RabbitMQChannel interface {
 	Close() error
 }
 
+type confirmablePublisher interface {
+	Publish(ctx context.Context, exchange, key string, mandatory, immediate bool, msg amqp.Publishing) error
+	Close() error
+}
+
 // PublisherRoutes wraps RabbitMQAdapter to support publishing messages to topic exchanges.
 // In multi-tenant mode, it uses tmrabbitmq.Manager for per-tenant vhost isolation.
 type PublisherRoutes struct {
@@ -56,6 +62,8 @@ type PublisherRoutes struct {
 	rabbitMQManager RabbitMQManagerInterface // Used in multi-tenant mode (nil in single-tenant)
 	multiTenantMode bool
 	signer          crypto.Signer
+	publishMu       sync.Mutex
+	publishers      map[RabbitMQChannel]confirmablePublisher
 	libLog.
 		Logger
 	opentelemetry.Telemetry
@@ -132,7 +140,7 @@ func (pr *PublisherRoutes) PublishStreamingTarget(ctx context.Context, exchange,
 		msg.ContentType = contentType
 	}
 
-	if err := publishWithConfirm(ctx, pr.conn.Channel, exchange, routingKey, msg, pr.Logger); err != nil {
+	if err := pr.publishWithConfirm(ctx, pr.conn.Channel, exchange, routingKey, msg); err != nil {
 		return fmt.Errorf("rabbitmq streaming publish: %w", err)
 	}
 
@@ -213,12 +221,6 @@ func (pr *PublisherRoutes) PublishWithHeaders(ctx context.Context, exchange, rou
 			return err
 		}
 
-		defer func() {
-			if closeErr := ch.Close(); closeErr != nil {
-				pr.Log(ctx, libLog.LevelError, fmt.Sprintf("Error closing channel for tenant %s", tenantID), libLog.Err(closeErr))
-			}
-		}()
-
 		// Declare exchange on tenant vhost (idempotent)
 		if err := ch.ExchangeDeclare(exchange, "topic", true, false, false, false, nil); err != nil {
 			opentelemetry.HandleSpanError(span, "Failed to declare exchange on tenant vhost", err)
@@ -242,7 +244,7 @@ func (pr *PublisherRoutes) PublishWithHeaders(ctx context.Context, exchange, rou
 		// succeed after broker acceptance.
 		span.SetAttributes(attribute.String(attrPublishRationale, multiTenantPublishRationale))
 
-		if err := publishWithConfirm(ctx, ch, exchange, routingKey, msg, pr.Logger); err != nil {
+		if err := pr.publishWithConfirm(ctx, ch, exchange, routingKey, msg); err != nil {
 			opentelemetry.HandleSpanError(span, "Failed to publish message to tenant vhost", err)
 			pr.Log(ctx, libLog.LevelError, fmt.Sprintf("Error publishing to exchange %s on tenant %s", exchange, tenantID), libLog.Err(err))
 
@@ -303,16 +305,11 @@ func (pr *PublisherRoutes) PublishWithHeaders(ctx context.Context, exchange, rou
 	return nil
 }
 
-func publishWithConfirm(ctx context.Context, ch RabbitMQChannel, exchange, routingKey string, msg amqp.Publishing, logger libLog.Logger) error {
-	publisher, err := libRabbitmq.NewConfirmablePublisherFromChannel(ch,
-		libRabbitmq.WithLogger(logger),
-		libRabbitmq.WithConfirmTimeout(libRabbitmq.DefaultConfirmTimeout),
-	)
+func (pr *PublisherRoutes) publishWithConfirm(ctx context.Context, ch RabbitMQChannel, exchange, routingKey string, msg amqp.Publishing) error {
+	publisher, err := pr.confirmablePublisherForChannel(ch)
 	if err != nil {
-		return fmt.Errorf("create rabbitmq confirmable publisher: %w", err)
+		return err
 	}
-
-	defer func() { _ = publisher.Close() }()
 
 	if err := publisher.Publish(ctx, exchange, routingKey, true, false, msg); err != nil {
 		return fmt.Errorf("rabbitmq publish confirmed message: %w", err)
@@ -321,9 +318,46 @@ func publishWithConfirm(ctx context.Context, ch RabbitMQChannel, exchange, routi
 	return nil
 }
 
+func (pr *PublisherRoutes) confirmablePublisherForChannel(ch RabbitMQChannel) (confirmablePublisher, error) {
+	pr.publishMu.Lock()
+	defer pr.publishMu.Unlock()
+
+	if pr.publishers == nil {
+		pr.publishers = make(map[RabbitMQChannel]confirmablePublisher)
+	}
+
+	if publisher := pr.publishers[ch]; publisher != nil {
+		return publisher, nil
+	}
+
+	publisher, err := libRabbitmq.NewConfirmablePublisherFromChannel(ch,
+		libRabbitmq.WithLogger(pr.Logger),
+		libRabbitmq.WithConfirmTimeout(libRabbitmq.DefaultConfirmTimeout),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create rabbitmq confirmable publisher: %w", err)
+	}
+
+	pr.publishers[ch] = publisher
+
+	return publisher, nil
+}
+
+func (pr *PublisherRoutes) closeConfirmablePublishers() {
+	pr.publishMu.Lock()
+	defer pr.publishMu.Unlock()
+
+	for _, publisher := range pr.publishers {
+		_ = publisher.Close()
+	}
+
+	pr.publishers = nil
+}
+
 // Shutdown gracefully shuts down the RabbitMQ adapter.
 func (pr *PublisherRoutes) Shutdown(ctx context.Context) error {
 	pr.Log(ctx, libLog.LevelInfo, "shutting down publisher routes")
+	pr.closeConfirmablePublishers()
 
 	// Only shutdown the adapter in single-tenant mode
 	if pr.adapter != nil {

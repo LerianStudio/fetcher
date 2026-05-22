@@ -756,7 +756,8 @@ func TestMultiTenantPublisher_ProducerDefault_PublishesMessage(t *testing.T) {
 	err := publisher.ProducerDefault(ctx, "exchange", "routing-key", []byte(`{"job":"1"}`), &headers)
 	require.NoError(t, err)
 	assert.True(t, ch.published, "expected message to be published")
-	assert.True(t, ch.closed, "expected channel to be closed")
+	assert.False(t, ch.closed, "tenant channel is owned by the manager and must stay open after publish")
+	assert.Equal(t, 0, ch.closeCalls)
 	assert.Equal(t, "exchange", ch.lastExchange)
 	assert.Equal(t, "routing-key", ch.lastKey)
 }
@@ -853,24 +854,80 @@ func (s *stubRabbitMQManager) GetChannel(_ context.Context, _ string) (managerRa
 }
 
 type stubRabbitMQChannel struct {
-	published    bool
-	closed       bool
-	lastExchange string
-	lastKey      string
-	publishErr   error
+	published          bool
+	closed             bool
+	lastExchange       string
+	lastKey            string
+	publishErr         error
+	confirmErr         error
+	confirmation       amqp.Confirmation
+	publishConfirmCh   chan amqp.Confirmation
+	publishCount       int
+	confirmCalls       int
+	notifyPublishCalls int
+	closeCalls         int
 }
 
 func (s *stubRabbitMQChannel) PublishWithContext(_ context.Context, exchange, key string, _, _ bool, _ amqp.Publishing) error {
+	s.publishCount++
 	s.published = true
 	s.lastExchange = exchange
 	s.lastKey = key
 
-	return s.publishErr
+	if s.publishErr != nil {
+		return s.publishErr
+	}
+
+	if s.publishConfirmCh != nil {
+		confirmation := s.confirmation
+		if confirmation.DeliveryTag == 0 {
+			confirmation = amqp.Confirmation{DeliveryTag: uint64(s.publishCount), Ack: true}
+		}
+		s.publishConfirmCh <- confirmation
+	}
+
+	return nil
+}
+
+func (s *stubRabbitMQChannel) Confirm(bool) error {
+	s.confirmCalls++
+	return s.confirmErr
+}
+
+func (s *stubRabbitMQChannel) NotifyPublish(receiver chan amqp.Confirmation) chan amqp.Confirmation {
+	s.notifyPublishCalls++
+	s.publishConfirmCh = receiver
+	return receiver
+}
+
+func (s *stubRabbitMQChannel) NotifyClose(receiver chan *amqp.Error) chan *amqp.Error {
+	return receiver
 }
 
 func (s *stubRabbitMQChannel) Close() error {
+	s.closeCalls++
 	s.closed = true
 	return nil
+}
+
+func TestMultiTenantPublisher_ProducerDefault_ReusesConfirmablePublisherWithoutClosingTenantChannel(t *testing.T) {
+	t.Parallel()
+
+	channel := &stubRabbitMQChannel{}
+	publisher := &multiTenantPublisher{
+		manager: &stubRabbitMQManager{channel: channel},
+		logger:  testManagerBootstrapLogger(),
+	}
+	ctx := stubTenantContext("tenant-123")
+
+	require.NoError(t, publisher.ProducerDefault(ctx, "exchange", "job.created", []byte(`{"n":1}`), nil))
+	require.NoError(t, publisher.ProducerDefault(ctx, "exchange", "job.created", []byte(`{"n":2}`), nil))
+
+	assert.Equal(t, 2, channel.publishCount)
+	assert.Equal(t, 1, channel.confirmCalls)
+	assert.Equal(t, 1, channel.notifyPublishCalls)
+	assert.Equal(t, 0, channel.closeCalls)
+	assert.False(t, channel.closed)
 }
 
 // stubTenantContext creates a context with tenant ID set via tmcore.

@@ -408,7 +408,7 @@ func TestRabbitMQAdapter_ProducerDefault_Success(t *testing.T) {
 	}
 }
 
-func TestRabbitMQAdapter_ProducerDefault_UsesConfirmablePublisherPerPublish(t *testing.T) {
+func TestRabbitMQAdapter_ProducerDefault_ReusesConfirmablePublisherWithoutClosingSharedChannel(t *testing.T) {
 	t.Parallel()
 
 	channel := newTestAMQPChannel()
@@ -420,9 +420,11 @@ func TestRabbitMQAdapter_ProducerDefault_UsesConfirmablePublisherPerPublish(t *t
 	require.NoError(t, adapter.ProducerDefault(ctx, "test-exchange", "job.completed", []byte(`{"n":2}`), nil))
 
 	require.Len(t, channel.published, 2)
-	assert.Equal(t, 2, channel.confirmCalls)
-	assert.Equal(t, 2, channel.notifyPublishCalls)
+	assert.Equal(t, 1, channel.confirmCalls)
+	assert.Equal(t, 1, channel.notifyPublishCalls)
 	assert.Equal(t, 0, channel.notifyReturnCalls)
+	assert.Equal(t, 0, channel.closeCalls)
+	assert.False(t, channel.closed)
 }
 
 func TestRabbitMQAdapter_ProducerDefault_RetriesOnFailure(t *testing.T) {

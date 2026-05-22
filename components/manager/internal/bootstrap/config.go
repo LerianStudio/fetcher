@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	in2 "github.com/LerianStudio/fetcher/components/manager/internal/adapters/http/in"
@@ -437,14 +438,16 @@ func initPlatformDependencies(cfg *Config, logger libLog.Logger, messageSigner c
 
 		rabbitMQManager := tmrabbitmq.NewManager(tmClient, constant.ApplicationName, rabbitOpts...)
 
-		rabbitPublisher = &multiTenantPublisher{
+		mtPublisher := &multiTenantPublisher{
 			manager: newManagerRabbitMQAdapter(rabbitMQManager),
 			signer:  messageSigner,
 			logger:  logger,
 		}
+		rabbitPublisher = mtPublisher
 
 		rabbitMQCleanup = func() {
 			logger.Log(context.Background(), libLog.LevelInfo, "Cleanup: closing multi-tenant RabbitMQ manager")
+			mtPublisher.closeConfirmablePublishers()
 
 			if closeErr := rabbitMQManager.Close(context.Background()); closeErr != nil {
 				logger.Log(context.Background(), libLog.LevelError, "Cleanup: failed to close RabbitMQ manager", libLog.Err(closeErr))
@@ -1080,7 +1083,15 @@ func newReadyzConfig(cfg *Config) *readyz.Config {
 
 // managerRabbitMQChannel abstracts an AMQP channel for multi-tenant publishing.
 type managerRabbitMQChannel interface {
+	Confirm(noWait bool) error
+	NotifyPublish(receiver chan amqp.Confirmation) chan amqp.Confirmation
+	NotifyClose(receiver chan *amqp.Error) chan *amqp.Error
 	PublishWithContext(ctx context.Context, exchange, key string, mandatory, immediate bool, msg amqp.Publishing) error
+	Close() error
+}
+
+type managerConfirmablePublisher interface {
+	Publish(ctx context.Context, exchange, key string, mandatory, immediate bool, msg amqp.Publishing) error
 	Close() error
 }
 
@@ -1105,11 +1116,14 @@ func (a *managerRabbitMQAdapter) GetChannel(ctx context.Context, tenantID string
 
 // multiTenantPublisher implements messaging.MessagePublisher using per-tenant RabbitMQ channels.
 // In multi-tenant mode, each ProducerDefault call resolves the tenant from context, obtains
-// a channel on the tenant-specific vhost via tmrabbitmq.Manager, publishes, and closes the channel.
+// a channel on the tenant-specific vhost via tmrabbitmq.Manager, and publishes with broker confirms.
+// The tenant manager owns the channel lifecycle; this publisher only closes its confirm wrapper on cleanup.
 type multiTenantPublisher struct {
-	manager managerRabbitMQManagerInterface
-	signer  crypto.Signer
-	logger  libLog.Logger
+	manager    managerRabbitMQManagerInterface
+	signer     crypto.Signer
+	logger     libLog.Logger
+	publishMu  sync.Mutex
+	publishers map[managerRabbitMQChannel]managerConfirmablePublisher
 }
 
 // ProducerDefault publishes a message to a tenant-specific RabbitMQ vhost.
@@ -1133,12 +1147,6 @@ func (p *multiTenantPublisher) ProducerDefault(ctx context.Context, exchange, ke
 		return fmt.Errorf("get RabbitMQ channel for tenant %s: manager returned nil channel", tenantID)
 	}
 
-	defer func() {
-		if closeErr := ch.Close(); closeErr != nil {
-			p.logger.Log(ctx, libLog.LevelError, fmt.Sprintf("error closing RabbitMQ channel for tenant %s: %v", tenantID, closeErr))
-		}
-	}()
-
 	amqpHeaders := amqp.Table{}
 
 	if header != nil {
@@ -1152,7 +1160,52 @@ func (p *multiTenantPublisher) ProducerDefault(ctx context.Context, exchange, ke
 
 	msg := rabbitmq.BuildSecurePublishing(ctx, requestID, exchange, key, queueMessage, amqpHeaders, p.signer, true)
 
-	return ch.PublishWithContext(ctx, exchange, key, false, false, msg)
+	publisher, err := p.confirmablePublisherForChannel(ch)
+	if err != nil {
+		return err
+	}
+
+	if err := publisher.Publish(ctx, exchange, key, true, false, msg); err != nil {
+		return fmt.Errorf("publish confirmed RabbitMQ message for tenant %s: %w", tenantID, err)
+	}
+
+	return nil
+}
+
+func (p *multiTenantPublisher) confirmablePublisherForChannel(ch managerRabbitMQChannel) (managerConfirmablePublisher, error) {
+	p.publishMu.Lock()
+	defer p.publishMu.Unlock()
+
+	if p.publishers == nil {
+		p.publishers = make(map[managerRabbitMQChannel]managerConfirmablePublisher)
+	}
+
+	if publisher := p.publishers[ch]; publisher != nil {
+		return publisher, nil
+	}
+
+	publisher, err := libRabbitmq.NewConfirmablePublisherFromChannel(ch,
+		libRabbitmq.WithLogger(p.logger),
+		libRabbitmq.WithConfirmTimeout(libRabbitmq.DefaultConfirmTimeout),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create RabbitMQ confirmable publisher: %w", err)
+	}
+
+	p.publishers[ch] = publisher
+
+	return publisher, nil
+}
+
+func (p *multiTenantPublisher) closeConfirmablePublishers() {
+	p.publishMu.Lock()
+	defer p.publishMu.Unlock()
+
+	for _, publisher := range p.publishers {
+		_ = publisher.Close()
+	}
+
+	p.publishers = nil
 }
 
 func wrapBootstrapError(action string, err error) error {
