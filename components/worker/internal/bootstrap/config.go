@@ -289,6 +289,7 @@ func InitWorker() (*Service, error) {
 		readyzCloser:       readyzDeps.close,
 		streamingCloser:    service.JobEventEmitter.Close,
 		outboxDispatcher:   outboxDispatcher,
+		terminalRepairer:   services.NewTerminalEventRepairer(service, logger),
 	}, nil
 }
 
@@ -348,6 +349,7 @@ func initMultiTenantWorkerService(
 		readyzCloser:       readyzDeps.close,
 		streamingCloser:    service.JobEventEmitter.Close,
 		outboxDispatcher:   outboxDispatcher,
+		terminalRepairer:   services.NewTerminalEventRepairer(service, logger),
 	}, nil
 }
 
@@ -418,8 +420,10 @@ func initSingleTenantRabbitMQ(
 		return nil, nil, fmt.Errorf("initialize internal message signer: %w", errSigner)
 	}
 
-	// Initialize RabbitMQ consumer and publisher with separate connections
-	consumerRoutes, errRoutes := rabbitmq.NewConsumerRoutes(consumerConnection, cfg.RabbitMQNumWorkers, logger, telemetry, cryptoWithInternalHMAC, cfg.EnvName, cfg.RabbitMQAllowLegacyBodySignatureFallback)
+	// Single-tenant consumers accept the legacy body-only signature for one
+	// rolling-drain window. Multi-tenant consumers still validate the authoritative
+	// X-Tenant-ID header before signature verification.
+	consumerRoutes, errRoutes := rabbitmq.NewConsumerRoutes(consumerConnection, cfg.RabbitMQNumWorkers, logger, telemetry, cryptoWithInternalHMAC, cfg.EnvName, true)
 	if errRoutes != nil {
 		return nil, nil, fmt.Errorf("initialize consumer routes: %w", errRoutes)
 	}
@@ -455,7 +459,7 @@ func (p streamingRabbitMQPublisher) Publish(ctx context.Context, exchange, routi
 		return fmt.Errorf("streaming RabbitMQ publisher is not configured")
 	}
 
-	return p.publisher.PublishWithHeaders(ctx, exchange, routingKey, contentType, body, headers)
+	return p.publisher.PublishStreamingTarget(ctx, exchange, routingKey, contentType, body, headers)
 }
 
 func initJobEventEmitter(ctx context.Context, cfg *Config, logger libLog.Logger, telemetry *libOtel.Telemetry, publisher *rabbitmq.PublisherRoutes, outboxRepo libOutbox.OutboxRepository) (streaming.Emitter, bool, error) {

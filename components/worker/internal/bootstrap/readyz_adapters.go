@@ -2,8 +2,6 @@ package bootstrap
 
 import (
 	"context"
-	"crypto/tls"
-	"net"
 
 	workerRabbitAdapters "github.com/LerianStudio/fetcher/components/worker/internal/adapters/rabbitmq"
 	"github.com/LerianStudio/fetcher/pkg/bootstrap/readyz"
@@ -15,6 +13,7 @@ import (
 	tmclient "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/client"
 	tmmongo "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/mongo"
 	tmrabbitmq "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/rabbitmq"
+	tmredis "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/redis"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gofiber/fiber/v2"
 	"github.com/redis/go-redis/v9"
@@ -69,18 +68,17 @@ func newWorkerReadyzMultiTenantRedisClient(cfg *Config) *redis.Client {
 		return nil
 	}
 
-	port := cfg.MultiTenantRedisPort
-	if port == "" {
-		port = "6379"
-	}
-
-	opts := &redis.Options{
-		Addr:     net.JoinHostPort(cfg.MultiTenantRedisHost, port),
+	// Use the tenant-manager Redis option builder instead of hand-rolled Redis
+	// options. The full NewTenantPubSubRedisClient helper pings immediately;
+	// /readyz must construct even when Redis is down so the checker can report it.
+	opts, err := tmredis.BuildOptions(tmredis.TenantPubSubRedisConfig{
+		Host:     cfg.MultiTenantRedisHost,
+		Port:     cfg.MultiTenantRedisPort,
 		Password: cfg.MultiTenantRedisPassword,
-	}
-
-	if cfg.MultiTenantRedisTLS {
-		opts.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+		TLS:      cfg.MultiTenantRedisTLS,
+	})
+	if err != nil {
+		return nil
 	}
 
 	return redis.NewClient(opts)

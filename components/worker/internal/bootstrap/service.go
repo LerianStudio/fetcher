@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"context"
 
+	"github.com/LerianStudio/fetcher/components/worker/internal/services"
 	"github.com/LerianStudio/lib-commons/v5/commons"
 	libOutbox "github.com/LerianStudio/lib-commons/v5/commons/outbox"
 	libLog "github.com/LerianStudio/lib-observability/log"
@@ -11,7 +12,7 @@ import (
 // runLauncher launches the consumer and (when present) the health-port
 // micro-server under a single Launcher so one SIGTERM tears both down.
 // healthServer is nil under narrow unit tests that opt out of the server.
-var runLauncher = func(logger libLog.Logger, consumer *MultiQueueConsumer, healthServer *HealthServer, outboxDispatcher *libOutbox.Dispatcher) {
+var runLauncher = func(logger libLog.Logger, consumer *MultiQueueConsumer, healthServer *HealthServer, outboxDispatcher *libOutbox.Dispatcher, terminalRepairer *services.TerminalEventRepairer) {
 	opts := []commons.LauncherOption{
 		commons.WithLogger(logger),
 		commons.RunApp("RabbitMQ Consumer", consumer),
@@ -23,6 +24,10 @@ var runLauncher = func(logger libLog.Logger, consumer *MultiQueueConsumer, healt
 
 	if outboxDispatcher != nil {
 		opts = append(opts, commons.RunApp("Streaming Outbox Dispatcher", outboxDispatcher))
+	}
+
+	if terminalRepairer != nil {
+		opts = append(opts, commons.RunApp("Terminal Event Repairer", terminalRepairer))
 	}
 
 	commons.NewLauncher(opts...).Run()
@@ -50,12 +55,14 @@ type Service struct {
 	streamingCloser func() error
 	// outboxDispatcher replays durable lib-streaming terminal job events.
 	outboxDispatcher *libOutbox.Dispatcher
+	// terminalRepairer retries terminal metadata left pending before outbox persistence.
+	terminalRepairer *services.TerminalEventRepairer
 }
 
 // Run starts the application.
 // This is the only necessary code to run an app in main.go
 func (app *Service) Run() {
-	runLauncher(app.Logger, app.MultiQueueConsumer, app.healthServer, app.outboxDispatcher)
+	runLauncher(app.Logger, app.MultiQueueConsumer, app.healthServer, app.outboxDispatcher, app.terminalRepairer)
 
 	// Graceful shutdown
 	app.Log(context.Background(), libLog.LevelInfo, "Starting graceful shutdown...")

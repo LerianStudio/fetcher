@@ -389,6 +389,43 @@ func (jr *JobMongoDBRepository) ClearTerminalEventMetadata(ctx context.Context, 
 	return nil
 }
 
+// ListPendingTerminalEvents returns terminal jobs whose mandatory job event
+// was committed in metadata but not yet durably accepted by lib-streaming.
+func (jr *JobMongoDBRepository) ListPendingTerminalEvents(ctx context.Context, limit int) ([]*model.Job, error) {
+	_, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
+
+	ctx, span := tracer.Start(ctx, "mongodb.list_pending_terminal_events")
+	defer span.End()
+
+	span.SetAttributes(attribute.String("app.request.request_id", reqID))
+
+	if limit <= 0 || limit > maxJobPageLimit {
+		limit = defaultJobPageLimit
+	}
+
+	db, err := jr.getDatabase(ctx)
+	if err != nil {
+		libOpentelemetry.HandleSpanError(span, "Failed to get database", err)
+		return nil, fmt.Errorf("failed to get database connection: %w", err)
+	}
+
+	filter := bson.M{
+		"status":                        bson.M{"$in": bson.A{model.JobStatusCompleted, model.JobStatusFailed}},
+		"metadata.terminalEventPending": true,
+	}
+	limit64 := int64(limit)
+	opts := options.Find().SetSort(bson.D{{Key: "completed_at", Value: 1}, {Key: "created_at", Value: 1}}).SetLimit(limit64)
+
+	cur, err := db.Collection(strings.ToLower(constant.MongoCollectionJob)).Find(ctx, filter, opts)
+	if err != nil {
+		libOpentelemetry.HandleSpanError(span, "Failed to list pending terminal events", err)
+		return nil, fmt.Errorf("failed to list pending terminal events: %w", err)
+	}
+	defer cur.Close(ctx)
+
+	return jr.scanJobs(ctx, cur, span, limit)
+}
+
 // FindByID fetches a job by its ID scoped to an organization.
 func (jr *JobMongoDBRepository) FindByID(ctx context.Context, id uuid.UUID) (*model.Job, error) {
 	_, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)

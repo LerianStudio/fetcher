@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	libOutbox "github.com/LerianStudio/lib-commons/v5/commons/outbox"
 	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
 	streaming "github.com/LerianStudio/lib-streaming"
 	"github.com/LerianStudio/lib-streaming/streamingtest"
@@ -56,6 +57,41 @@ func TestPublishJobNotification_Success(t *testing.T) {
 		t.Fatalf("expected no error, got: %v", err)
 	}
 }
+
+func TestEmitJobNotificationEvent_WithTenantContext_SetsOutboxTenantContext(t *testing.T) {
+	t.Parallel()
+
+	tenantID := "tenant-123"
+	emitter := &capturingEmitter{}
+	uc := &UseCase{
+		JobEventEmitter:                emitter,
+		JobEventStreamingEnabled:       true,
+		JobEventStreamingRequireTenant: true,
+	}
+
+	ctx := tmcore.ContextWithTenantID(testContext(), tenantID)
+	err := uc.emitJobNotificationEvent(ctx, "completed", uuid.NewString(), []byte(`{"ok":true}`))
+	require.NoError(t, err)
+	require.Equal(t, tenantID, emitter.outboxTenantID)
+	require.Equal(t, tenantID, emitter.requestTenantID)
+}
+
+type capturingEmitter struct {
+	outboxTenantID  string
+	requestTenantID string
+}
+
+func (e *capturingEmitter) Emit(ctx context.Context, request streaming.EmitRequest) error {
+	tenantID, _ := libOutbox.TenantIDFromContext(ctx)
+	e.outboxTenantID = tenantID
+	e.requestTenantID = request.TenantID
+
+	return nil
+}
+
+func (e *capturingEmitter) Close() error { return nil }
+
+func (e *capturingEmitter) Healthy(context.Context) error { return nil }
 
 // TestPublishJobNotification_WithErrorMetadata tests publishing failed job notifications.
 func TestPublishJobNotification_WithErrorMetadata(t *testing.T) {

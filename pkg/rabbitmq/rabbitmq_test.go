@@ -408,6 +408,23 @@ func TestRabbitMQAdapter_ProducerDefault_Success(t *testing.T) {
 	}
 }
 
+func TestRabbitMQAdapter_ProducerDefault_ReusesPublisherConfirmListeners(t *testing.T) {
+	t.Parallel()
+
+	channel := newTestAMQPChannel()
+	conn := &testRabbitConnection{channel: channel}
+	adapter := newTestAdapter(conn)
+
+	ctx := testContextWithHeader("req-confirm-reuse")
+	require.NoError(t, adapter.ProducerDefault(ctx, "test-exchange", "job.completed", []byte(`{"n":1}`), nil))
+	require.NoError(t, adapter.ProducerDefault(ctx, "test-exchange", "job.completed", []byte(`{"n":2}`), nil))
+
+	require.Len(t, channel.published, 2)
+	assert.Equal(t, 1, channel.confirmCalls)
+	assert.Equal(t, 1, channel.notifyPublishCalls)
+	assert.Equal(t, 1, channel.notifyReturnCalls)
+}
+
 func TestRabbitMQAdapter_ProducerDefault_RetriesOnFailure(t *testing.T) {
 	t.Parallel()
 
@@ -865,14 +882,19 @@ type publishedRecord struct {
 }
 
 type testAMQPChannel struct {
-	publishErr      error
-	publishErrs     []error
-	publishAttempts int
-	confirmErr      error
-	confirmation    amqp.Confirmation
-	returned        *amqp.Return
-	consumeErr      error
-	qosErr          error
+	publishErr         error
+	publishErrs        []error
+	publishAttempts    int
+	confirmErr         error
+	confirmation       amqp.Confirmation
+	returned           *amqp.Return
+	confirmCalls       int
+	notifyPublishCalls int
+	notifyReturnCalls  int
+	publishConfirmCh   chan amqp.Confirmation
+	returnCh           chan amqp.Return
+	consumeErr         error
+	qosErr             error
 
 	deliveries chan amqp.Delivery
 	published  []publishedRecord
@@ -919,26 +941,34 @@ func (t *testAMQPChannel) Publish(exchange, key string, mandatory, immediate boo
 		message:   msg,
 	})
 
+	if t.returned != nil && t.returnCh != nil {
+		t.returnCh <- *t.returned
+	}
+	if t.publishConfirmCh != nil {
+		confirmation := t.confirmation
+		if confirmation.DeliveryTag == 0 {
+			confirmation = amqp.Confirmation{DeliveryTag: uint64(t.publishAttempts), Ack: true}
+		}
+		t.publishConfirmCh <- confirmation
+	}
+
 	return nil
 }
 
 func (t *testAMQPChannel) Confirm(bool) error {
+	t.confirmCalls++
 	return t.confirmErr
 }
 
 func (t *testAMQPChannel) NotifyPublish(receiver chan amqp.Confirmation) chan amqp.Confirmation {
-	confirmation := t.confirmation
-	if confirmation.DeliveryTag == 0 {
-		confirmation = amqp.Confirmation{DeliveryTag: 1, Ack: true}
-	}
-	receiver <- confirmation
+	t.notifyPublishCalls++
+	t.publishConfirmCh = receiver
 	return receiver
 }
 
 func (t *testAMQPChannel) NotifyReturn(receiver chan amqp.Return) chan amqp.Return {
-	if t.returned != nil {
-		receiver <- *t.returned
-	}
+	t.notifyReturnCalls++
+	t.returnCh = receiver
 	return receiver
 }
 

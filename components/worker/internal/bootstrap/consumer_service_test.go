@@ -370,7 +370,7 @@ func TestServiceRun(t *testing.T) {
 		logger := testBootstrapLogger()
 
 		called := false
-		runLauncher = func(gotLogger libLog.Logger, gotConsumer *MultiQueueConsumer, _ *HealthServer, _ *libOutbox.Dispatcher) {
+		runLauncher = func(gotLogger libLog.Logger, gotConsumer *MultiQueueConsumer, _ *HealthServer, _ *libOutbox.Dispatcher, _ *services.TerminalEventRepairer) {
 			called = true
 			if gotLogger != logger {
 				t.Fatal("unexpected logger passed to launcher")
@@ -401,7 +401,7 @@ func TestServiceRun(t *testing.T) {
 
 	t.Run("nil license terminator is allowed", func(t *testing.T) {
 		called := false
-		runLauncher = func(libLog.Logger, *MultiQueueConsumer, *HealthServer, *libOutbox.Dispatcher) {
+		runLauncher = func(libLog.Logger, *MultiQueueConsumer, *HealthServer, *libOutbox.Dispatcher, *services.TerminalEventRepairer) {
 			called = true
 		}
 

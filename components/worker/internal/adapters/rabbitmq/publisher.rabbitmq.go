@@ -4,6 +4,7 @@ package rabbitmq
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	observability "github.com/LerianStudio/lib-observability"
 
@@ -51,10 +52,12 @@ type RabbitMQChannel interface {
 // PublisherRoutes wraps RabbitMQAdapter to support publishing messages to topic exchanges.
 // In multi-tenant mode, it uses tmrabbitmq.Manager for per-tenant vhost isolation.
 type PublisherRoutes struct {
-	adapter         rabbitmq.Adapter         // Used in single-tenant mode
+	adapter         rabbitmq.Adapter // Used in single-tenant mode
+	conn            *libRabbitmq.RabbitMQConnection
 	rabbitMQManager RabbitMQManagerInterface // Used in multi-tenant mode (nil in single-tenant)
 	multiTenantMode bool
 	signer          crypto.Signer
+	publishMu       sync.Mutex
 	libLog.
 		Logger
 	opentelemetry.Telemetry
@@ -67,7 +70,11 @@ func NewPublisherRoutes(conn *libRabbitmq.RabbitMQConnection, logger libLog.Logg
 	opts.Signer = signer
 	adapter := rabbitmq.NewRabbitMQAdapterWithOptions(conn, opts)
 
-	return NewPublisherRoutesWithAdapter(adapter, logger, telemetry)
+	pr := NewPublisherRoutesWithAdapter(adapter, logger, telemetry)
+	pr.conn = conn
+	pr.signer = signer
+
+	return pr
 }
 
 // NewPublisherRoutesWithAdapter creates a new instance of PublisherRoutes using a specific RabbitMQ adapter.
@@ -85,6 +92,56 @@ func NewPublisherRoutesWithAdapter(adapter rabbitmq.Adapter, logger libLog.Logge
 	}
 
 	return pr
+}
+
+// PublishStreamingTarget publishes for lib-streaming without routing through
+// Fetcher's RabbitMQAdapter circuit breaker. Lib-streaming owns target circuit
+// breaker semantics; this method only builds the secure envelope and waits for
+// broker confirmation.
+func (pr *PublisherRoutes) PublishStreamingTarget(ctx context.Context, exchange, routingKey, contentType string, body []byte, callerHeaders map[string]any) error {
+	if pr.multiTenantMode {
+		return pr.PublishWithHeaders(ctx, exchange, routingKey, contentType, body, callerHeaders)
+	}
+
+	if pr.conn == nil {
+		return pr.PublishWithHeaders(ctx, exchange, routingKey, contentType, body, callerHeaders)
+	}
+
+	ctxLogger, ctxTracer, reqID, metricFactory := observability.NewTrackingFromContext(ctx)
+	_ = ctxLogger
+	_ = ctxTracer
+	_ = metricFactory
+
+	if err := pr.conn.EnsureChannel(); err != nil {
+		return fmt.Errorf("rabbitmq ensure streaming publish channel: %w", err)
+	}
+
+	if pr.conn.Channel == nil {
+		return fmt.Errorf("rabbitmq streaming publish channel is nil")
+	}
+
+	headers := callerHeaders
+	if tenantID := tmcore.GetTenantIDContext(ctx); tenantID != "" {
+		if headers == nil {
+			headers = map[string]any{}
+		}
+
+		headers[rabbitmq.HeaderTenantID] = tenantID
+	}
+
+	msg := rabbitmq.BuildSecurePublishing(ctx, reqID, exchange, routingKey, body, headers, pr.signer, true)
+	if contentType != "" {
+		msg.ContentType = contentType
+	}
+
+	pr.publishMu.Lock()
+	defer pr.publishMu.Unlock()
+
+	if err := publishWithConfirm(ctx, pr.conn.Channel, exchange, routingKey, msg); err != nil {
+		return fmt.Errorf("rabbitmq streaming publish: %w", err)
+	}
+
+	return nil
 }
 
 // NewPublisherRoutesMultiTenant creates a new instance of PublisherRoutes configured for

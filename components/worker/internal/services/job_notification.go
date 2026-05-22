@@ -6,15 +6,15 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/LerianStudio/fetcher/pkg"
+	libOutbox "github.com/LerianStudio/lib-commons/v5/commons/outbox"
 	"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
 	observability "github.com/LerianStudio/lib-observability"
 	streaming "github.com/LerianStudio/lib-streaming"
 
 	libLog "github.com/LerianStudio/lib-observability/log"
-	libOtel "github.com/LerianStudio/lib-observability/tracing"
 
 	"github.com/google/uuid"
-	"go.opentelemetry.io/otel/trace"
 )
 
 // JobResultData contains information about the extraction result.
@@ -78,61 +78,6 @@ const (
 	terminalEventPayloadMetadataKey = "terminalEventPayload"
 )
 
-// publishJobNotification publishes a job event notification through lib-streaming.
-// Legacy direct RabbitMQ business-event routing is intentionally disabled: the
-// event contract is the lib-streaming definition key (job.completed/job.failed),
-// while source remains payload metadata instead of a routing-key segment.
-//
-//nolint:unused // retained as a direct unit-test seam for notification payload construction and streaming emission.
-func (uc *UseCase) publishJobNotification(
-	ctx context.Context,
-	tracer trace.Tracer,
-	message ExtractExternalDataMessage,
-	status string,
-	errorMetadata map[string]any,
-	opts *JobNotificationOptions,
-	logger libLog.Logger,
-) error {
-	logger = normalizeJobNotificationLogger(ctx, logger)
-
-	if !uc.JobEventStreamingEnabled {
-		err := fmt.Errorf("mandatory lib-streaming job event emission is disabled")
-		logger.Log(ctx, libLog.LevelError, "mandatory lib-streaming job event emission is disabled", libLog.Err(err))
-
-		return err
-	}
-
-	var notificationTracer trace.Tracer
-	if tracer != nil {
-		notificationTracer = tracer
-	} else {
-		_, notificationTracer, _, _ = observability.NewTrackingFromContext(ctx)
-	}
-
-	ctx, notifySpan := notificationTracer.Start(ctx, "service.publish_job_notification")
-	defer notifySpan.End()
-
-	notificationJSON, err := buildJobNotificationPayload(message, status, errorMetadata, opts)
-	if err != nil {
-		libOtel.HandleSpanError(notifySpan, "Error marshalling job notification", err)
-		logger.Log(ctx, libLog.LevelError, "error marshalling job notification", libLog.Err(err))
-
-		return fmt.Errorf("marshalling job notification: %w", err)
-	}
-
-	logger.Log(ctx, libLog.LevelInfo, "publishing job notification",
-		libLog.String("job_id", message.JobID.String()),
-		libLog.String("status", status),
-		libLog.String("event_key", fmt.Sprintf("job.%s", status)),
-	)
-
-	if err := uc.publishJobNotificationViaStreaming(ctx, notifySpan, status, message.JobID.String(), notificationJSON, logger); err != nil {
-		return err
-	}
-
-	return nil
-}
-
 func buildJobNotificationPayload(message ExtractExternalDataMessage, status string, errorMetadata map[string]any, opts *JobNotificationOptions) ([]byte, error) {
 	notification := JobNotificationMessage{
 		JobID:    message.JobID,
@@ -164,24 +109,6 @@ func buildJobNotificationPayload(message ExtractExternalDataMessage, status stri
 	return notificationJSON, nil
 }
 
-//nolint:unused // used by publishJobNotification, which is retained as a direct unit-test seam.
-func (uc *UseCase) publishJobNotificationViaStreaming(ctx context.Context, span trace.Span, status, jobID string, payload []byte, logger libLog.Logger) error {
-	if err := uc.emitJobNotificationEvent(ctx, status, jobID, payload); err != nil {
-		libOtel.HandleSpanError(span, "Error emitting job notification with lib-streaming", err)
-		logger.Log(ctx, libLog.LevelError, "error emitting job notification with lib-streaming", libLog.Err(err))
-
-		return fmt.Errorf("emitting job notification event: %w", err)
-	}
-
-	logger.Log(ctx, libLog.LevelInfo, "published job notification successfully",
-		libLog.String("job_id", jobID),
-		libLog.String("status", status),
-		libLog.String("event_key", fmt.Sprintf("job.%s", status)),
-	)
-
-	return nil
-}
-
 func (uc *UseCase) emitJobNotificationEvent(ctx context.Context, status, subject string, payload []byte) error {
 	if uc.JobEventEmitter == nil {
 		return fmt.Errorf("mandatory lib-streaming job event emitter is not configured")
@@ -196,12 +123,30 @@ func (uc *UseCase) emitJobNotificationEvent(ctx context.Context, status, subject
 		tenantID = "single-tenant"
 	}
 
-	return uc.JobEventEmitter.Emit(ctx, streaming.EmitRequest{
+	outboxCtx, err := libOutbox.ContextWithTenantIDStrict(ctx, tenantID)
+	if err != nil {
+		return err
+	}
+
+	if err := uc.JobEventEmitter.Emit(outboxCtx, streaming.EmitRequest{
 		DefinitionKey: fmt.Sprintf("job.%s", status),
 		TenantID:      tenantID,
 		Subject:       subject,
 		Payload:       payload,
-	})
+	}); err != nil {
+		if streaming.IsCallerError(err) {
+			return pkg.FailedPreconditionError{
+				Code:    "FET-0060",
+				Title:   "Job Event Configuration Error",
+				Message: fmt.Sprintf("non-retryable lib-streaming job event configuration error: %s", err.Error()),
+				Err:     err,
+			}
+		}
+
+		return err
+	}
+
+	return nil
 }
 
 func normalizeJobNotificationLogger(ctx context.Context, logger libLog.Logger) libLog.Logger {
