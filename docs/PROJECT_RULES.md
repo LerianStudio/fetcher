@@ -948,6 +948,28 @@ sequenceDiagram
 4. **Update RabbitMQ topology** in `components/infra/rabbitmq/etc/definitions.json`:
    - Add queue, exchange, and binding definitions
 
+### Internal datasource SSL/TLS env vars
+
+Internal datasources (`midaz_onboarding`, `midaz_transaction`, `plugin_crm`) are loaded by `pkg/resolver/env_loader.go` from `DATASOURCE_{NAME}_*` env vars. SSL/TLS is opt-in via the following suffix:
+
+| Suffix      | Required when SSL is desired | Notes |
+|-------------|------------------------------|-------|
+| `_SSLMODE`  | yes — gate                   | Allowed values are per-driver; see `pkg/datasource/sslmode/`. Per-type strings (`postgresql`, `mysql`, `oracle`, `sql_server`, `mongodb`) gate the allowlist. |
+
+These variables are read once at process start (Manager and Worker). Changes require a pod restart — there is no hot reload.
+
+Behavior:
+
+- `_SSLMODE` absent → `conn.SSL` stays `nil`; the datasource factory falls back to its driver default (PostgreSQL = `disable`, MongoDB = `disable`, MySQL = `disable`, etc.).
+- `_SSLMODE` set but **invalid** for the connection's `_TYPE` → the connection is **skipped** at load time with a `WARN` log; misconfiguration surfaces loudly instead of silently downgrading.
+- `_SSLMODE` set and valid → `conn.SSL = &SSLConfig{Mode}` is populated and the datasource factory interpolates it into the driver's DSN/URI (`?sslmode=<value>` for PostgreSQL, `&tls=true[&tlsInsecure=true]` for MongoDB).
+
+Required for managed databases that reject plaintext: AWS RDS PostgreSQL, GCP Cloud SQL, Azure Database for PostgreSQL all require `sslmode=require` or stronger. Without trust pinning, fetcher relies on the driver's default certificate validation (PostgreSQL `verify-full` consults the system CA store).
+
+**Not implemented yet — follow-up:** Custom CA / client certificate plumbing (`_SSL_CA`, `_SSL_CERT`, `_SSL_KEY`) for the internal-datasource path is not wired into any driver today. Operators who require CA pinning or mTLS should track the follow-up task in `tasks/fetcher.md`. The multi-tenant resolver also propagates only `SSLMode` (not the cert bundle) and inherits the same limitation.
+
+Operator guidance for the MongoDB allowlist: `_SSLMODE=insecure` (and `skip-verify`) explicitly disables hostname / chain validation by emitting `tlsInsecure=true`. Use these values only for local/test environments. For production MongoDB use `_SSLMODE=true` (TLS with full driver-side validation against the system trust store).
+
 ### Layer Responsibilities
 
 | Layer | Location | Responsibility | Dependencies |

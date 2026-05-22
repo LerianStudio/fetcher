@@ -24,6 +24,11 @@ go.work.sum
 .secrets
 .mcp.json
 
+# ----------------------------------------
+# Orchestrator State (ring:dev-cycle skill artifacts)
+# ----------------------------------------
+docs/ring:dev-cycle/
+
 # Component-specific env files
 components/manager/.env
 components/manager/.env.local
