@@ -7,12 +7,12 @@ import (
 	"time"
 
 	cacheRepo "github.com/LerianStudio/fetcher/components/manager/internal/adapters/cache"
-	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/bootstrap/readyz"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	portCache "github.com/LerianStudio/fetcher/pkg/ports/cache"
 	redisCache "github.com/LerianStudio/fetcher/pkg/redis"
+	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
 	libMongo "github.com/LerianStudio/lib-commons/v5/commons/mongo"
 	tmclient "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/client"
 	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
@@ -118,6 +118,15 @@ func TestLoadConfig_ReturnsError(t *testing.T) {
 	assert.Nil(t, cfg)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "config load failed")
+}
+
+func TestManagerConfigLoader_UsesLibCommonsLoaderAndLicenseDefault(t *testing.T) {
+	cfg := &Config{}
+	require.NoError(t, setConfigFromEnvVars(cfg))
+	assert.False(t, cfg.LicenseEnforcementEnabled)
+
+	err := setConfigFromEnvVars(nil)
+	require.ErrorIs(t, err, libCommons.ErrNilConfig)
 }
 
 func TestInitLoggerAndTelemetry_ReturnsApplyGlobalsError(t *testing.T) {
@@ -604,7 +613,7 @@ func TestConfig_LoadFromEnvVars(t *testing.T) {
 			}
 
 			cfg := &Config{}
-			if err := pkg.SetConfigFromEnvVars(cfg); err != nil {
+			if err := setConfigFromEnvVars(cfg); err != nil {
 				t.Fatalf("SetConfigFromEnvVars() error: %v", err)
 			}
 

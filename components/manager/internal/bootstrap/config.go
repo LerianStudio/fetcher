@@ -15,7 +15,6 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/bootstrap/readyz"
 
 	cacheAdapter "github.com/LerianStudio/fetcher/components/manager/internal/adapters/cache"
-	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	datasourceFactory "github.com/LerianStudio/fetcher/pkg/datasource"
@@ -31,6 +30,7 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/resolver"
 
 	"github.com/LerianStudio/lib-auth/v2/auth/middleware"
+	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
 	libMongo "github.com/LerianStudio/lib-commons/v5/commons/mongo"
 	libRabbitmq "github.com/LerianStudio/lib-commons/v5/commons/rabbitmq"
 	tmclient "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/client"
@@ -172,7 +172,7 @@ type managerPlatformDependencies struct {
 }
 
 var (
-	setConfigFromEnvVars  = pkg.SetConfigFromEnvVars
+	setConfigFromEnvVars  = libCommons.SetConfigFromEnvVars
 	newManagerLogger      = func(cfg zap.Config) (libLog.Logger, error) { return zap.New(cfg) }
 	newManagerTelemetry   = libOtel.NewTelemetry
 	applyTelemetryGlobals = func(telemetry *libOtel.Telemetry) error {
