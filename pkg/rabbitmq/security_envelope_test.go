@@ -39,7 +39,7 @@ func TestBuildSecurePublishing_Edges(t *testing.T) {
 		{
 			name:       "canonical header collision overwritten",
 			ctx:        context.Background(),
-			headers:    map[string]any{libConstants.HeaderID: "evil", HeaderSignatureVersion: "evil"},
+			headers:    map[string]any{libConstants.HeaderID: "evil", "x-retry-count": 99, HeaderTenantID: "evil", HeaderMessageSignature: "evil", HeaderSignatureTimestamp: "123", HeaderSignatureVersion: "evil"},
 			wantSigned: false,
 		},
 		{
@@ -107,6 +107,10 @@ func TestBuildSecurePublishing_Edges(t *testing.T) {
 
 			assert.Equal(t, "req-1", msg.Headers[libConstants.HeaderID])
 			assert.Equal(t, int64(0), int64(msg.Headers["x-retry-count"].(int)))
+			assert.NotEqual(t, "evil", msg.Headers[HeaderTenantID])
+			assert.NotEqual(t, "evil", msg.Headers[HeaderMessageSignature])
+			assert.NotEqual(t, "123", msg.Headers[HeaderSignatureTimestamp])
+			assert.NotEqual(t, "evil", msg.Headers[HeaderSignatureVersion])
 			if tt.headers != nil && tt.headers["caller"] != nil {
 				assert.Equal(t, "value", msg.Headers["caller"])
 			}

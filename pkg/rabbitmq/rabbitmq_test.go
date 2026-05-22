@@ -408,7 +408,7 @@ func TestRabbitMQAdapter_ProducerDefault_Success(t *testing.T) {
 	}
 }
 
-func TestRabbitMQAdapter_ProducerDefault_ReusesPublisherConfirmListeners(t *testing.T) {
+func TestRabbitMQAdapter_ProducerDefault_UsesConfirmablePublisherPerPublish(t *testing.T) {
 	t.Parallel()
 
 	channel := newTestAMQPChannel()
@@ -420,9 +420,9 @@ func TestRabbitMQAdapter_ProducerDefault_ReusesPublisherConfirmListeners(t *test
 	require.NoError(t, adapter.ProducerDefault(ctx, "test-exchange", "job.completed", []byte(`{"n":2}`), nil))
 
 	require.Len(t, channel.published, 2)
-	assert.Equal(t, 1, channel.confirmCalls)
-	assert.Equal(t, 1, channel.notifyPublishCalls)
-	assert.Equal(t, 1, channel.notifyReturnCalls)
+	assert.Equal(t, 2, channel.confirmCalls)
+	assert.Equal(t, 2, channel.notifyPublishCalls)
+	assert.Equal(t, 0, channel.notifyReturnCalls)
 }
 
 func TestRabbitMQAdapter_ProducerDefault_RetriesOnFailure(t *testing.T) {
@@ -560,22 +560,12 @@ func TestRabbitMQAdapter_ProducerDefault_ReturnsError_WhenPublisherConfirmFails(
 		{
 			name:    "confirm select fails",
 			channel: &testAMQPChannel{confirmErr: errors.New("confirm unavailable")},
-			wantErr: "publisher confirms",
+			wantErr: "confirm mode",
 		},
 		{
 			name:    "broker nacks publish",
 			channel: &testAMQPChannel{confirmation: amqp.Confirmation{DeliveryTag: 7, Ack: false}},
-			wantErr: "confirmation nack",
-		},
-		{
-			name: "mandatory publish is unroutable",
-			channel: &testAMQPChannel{returned: &amqp.Return{
-				ReplyCode:  312,
-				ReplyText:  "NO_ROUTE",
-				Exchange:   "ex",
-				RoutingKey: "missing",
-			}},
-			wantErr: "unroutable",
+			wantErr: "nacked by broker",
 		},
 	}
 
@@ -953,6 +943,10 @@ func (t *testAMQPChannel) Publish(exchange, key string, mandatory, immediate boo
 	}
 
 	return nil
+}
+
+func (t *testAMQPChannel) PublishWithContext(_ context.Context, exchange, key string, mandatory, immediate bool, msg amqp.Publishing) error {
+	return t.Publish(exchange, key, mandatory, immediate, msg)
 }
 
 func (t *testAMQPChannel) Confirm(bool) error {

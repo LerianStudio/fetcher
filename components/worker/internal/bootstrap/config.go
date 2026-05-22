@@ -349,7 +349,7 @@ func initMultiTenantWorkerService(
 		readyzCloser:       readyzDeps.close,
 		streamingCloser:    service.JobEventEmitter.Close,
 		outboxDispatcher:   outboxDispatcher,
-		terminalRepairer:   services.NewTerminalEventRepairer(service, logger),
+		terminalRepairer:   services.NewTerminalEventRepairerWithTenantScope(service, logger, constant.ApplicationName, tmClient, mongoManager),
 	}, nil
 }
 
@@ -420,10 +420,7 @@ func initSingleTenantRabbitMQ(
 		return nil, nil, fmt.Errorf("initialize internal message signer: %w", errSigner)
 	}
 
-	// Single-tenant consumers accept the legacy body-only signature for one
-	// rolling-drain window. Multi-tenant consumers still validate the authoritative
-	// X-Tenant-ID header before signature verification.
-	consumerRoutes, errRoutes := rabbitmq.NewConsumerRoutes(consumerConnection, cfg.RabbitMQNumWorkers, logger, telemetry, cryptoWithInternalHMAC, cfg.EnvName, true)
+	consumerRoutes, errRoutes := rabbitmq.NewConsumerRoutes(consumerConnection, cfg.RabbitMQNumWorkers, logger, telemetry, cryptoWithInternalHMAC, cfg.EnvName, cfg.RabbitMQAllowLegacyBodySignatureFallback)
 	if errRoutes != nil {
 		return nil, nil, fmt.Errorf("initialize consumer routes: %w", errRoutes)
 	}

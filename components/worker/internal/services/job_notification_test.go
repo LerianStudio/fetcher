@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
 	libOutbox "github.com/LerianStudio/lib-commons/v5/commons/outbox"
 	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
+	libLog "github.com/LerianStudio/lib-observability/log"
 	streaming "github.com/LerianStudio/lib-streaming"
 	"github.com/LerianStudio/lib-streaming/streamingtest"
 	"github.com/google/uuid"
@@ -16,6 +18,17 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
+
+func publishJobNotificationForTest(t *testing.T, uc *UseCase, ctx context.Context, message ExtractExternalDataMessage, status string, errorMetadata map[string]any, opts *JobNotificationOptions, logger libLog.Logger) error {
+	t.Helper()
+
+	payload, err := buildJobNotificationPayload(message, status, errorMetadata, opts)
+	if err != nil {
+		return fmt.Errorf("marshalling job notification: %w", err)
+	}
+
+	return uc.publishJobNotificationPayload(ctx, status, message.JobID.String(), payload, logger)
+}
 
 // TestPublishJobNotification_Success tests successful job notification publishing.
 func TestPublishJobNotification_Success(t *testing.T) {
@@ -52,7 +65,7 @@ func TestPublishJobNotification_Success(t *testing.T) {
 			return nil
 		})
 
-	err := uc.publishJobNotification(ctx, nil, message, "completed", nil, nil, logger)
+	err := publishJobNotificationForTest(t, uc, ctx, message, "completed", nil, nil, logger)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -133,7 +146,7 @@ func TestPublishJobNotification_WithErrorMetadata(t *testing.T) {
 			return nil
 		})
 
-	err := uc.publishJobNotification(ctx, nil, message, "failed", errorMetadata, nil, logger)
+	err := publishJobNotificationForTest(t, uc, ctx, message, "failed", errorMetadata, nil, logger)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -157,7 +170,7 @@ func TestPublishJobNotification_EmitsLibStreamingEventWhenTenantPresent(t *testi
 		Metadata: map[string]any{"source": "test-service"},
 	}
 
-	err := uc.publishJobNotification(ctx, nil, message, "completed", nil, nil, testLogger())
+	err := publishJobNotificationForTest(t, uc, ctx, message, "completed", nil, nil, testLogger())
 	require.NoError(t, err)
 
 	streamingtest.AssertEventEmitted(t, emitter, "job.completed")
@@ -188,7 +201,7 @@ func TestPublishJobNotification_StreamingFailureFailsWithoutLegacyPublish(t *tes
 		Metadata: map[string]any{"source": "test-service"},
 	}
 
-	err := uc.publishJobNotification(ctx, nil, message, "completed", nil, nil, testLogger())
+	err := publishJobNotificationForTest(t, uc, ctx, message, "completed", nil, nil, testLogger())
 	require.Error(t, err)
 	assert.Empty(t, emitter.Requests())
 }
@@ -212,7 +225,7 @@ func TestPublishJobNotification_StreamingOnlyInfraFailureFails(t *testing.T) {
 		Metadata: map[string]any{"source": "test-service"},
 	}
 
-	err := uc.publishJobNotification(ctx, nil, message, "completed", nil, nil, testLogger())
+	err := publishJobNotificationForTest(t, uc, ctx, message, "completed", nil, nil, testLogger())
 	require.Error(t, err)
 }
 
@@ -235,7 +248,7 @@ func TestPublishJobNotification_StreamingCallerErrorStillFails(t *testing.T) {
 		Metadata: map[string]any{"source": "test-service"},
 	}
 
-	err := uc.publishJobNotification(ctx, nil, message, "completed", nil, nil, testLogger())
+	err := publishJobNotificationForTest(t, uc, ctx, message, "completed", nil, nil, testLogger())
 	require.Error(t, err)
 	assert.ErrorIs(t, err, streaming.ErrMissingTenantID)
 }
@@ -257,7 +270,7 @@ func TestPublishJobNotification_StreamingRequireTenantRejectsMissingContext(t *t
 		Metadata: map[string]any{"source": "test-service"},
 	}
 
-	err := uc.publishJobNotification(testContext(), nil, message, "completed", nil, nil, testLogger())
+	err := publishJobNotificationForTest(t, uc, testContext(), message, "completed", nil, nil, testLogger())
 	require.Error(t, err)
 	assert.ErrorIs(t, err, streaming.ErrMissingTenantID)
 	assert.Empty(t, emitter.Requests())
@@ -279,7 +292,7 @@ func TestPublishJobNotification_SingleTenantUsesStableFallbackTenant(t *testing.
 		Metadata: map[string]any{"source": "test-service"},
 	}
 
-	require.NoError(t, uc.publishJobNotification(testContext(), nil, message, "completed", nil, nil, testLogger()))
+	require.NoError(t, publishJobNotificationForTest(t, uc, testContext(), message, "completed", nil, nil, testLogger()))
 	streamingtest.AssertTenantID(t, emitter, "single-tenant")
 }
 
@@ -309,7 +322,7 @@ func TestPublishJobNotification_PublisherNotConfigured(t *testing.T) {
 	}
 
 	// Mandatory streaming must fail closed when no emitter is configured.
-	err := uc.publishJobNotification(ctx, nil, message, "completed", nil, nil, logger)
+	err := publishJobNotificationForTest(t, uc, ctx, message, "completed", nil, nil, logger)
 	if err == nil {
 		t.Fatal("expected error when mandatory job event emitter is not configured")
 	}
@@ -333,7 +346,7 @@ func TestPublishJobNotification_NilLoggerFallsBackSafely(t *testing.T) {
 		Return(nil)
 
 	require.NotPanics(t, func() {
-		err := uc.publishJobNotification(ctx, nil, message, "completed", nil, nil, nil)
+		err := publishJobNotificationForTest(t, uc, ctx, message, "completed", nil, nil, nil)
 		require.NoError(t, err)
 	})
 }
@@ -359,7 +372,7 @@ func TestPublishJobNotification_PublishError(t *testing.T) {
 	mocks.rabbitPublisher.EXPECT().
 		Publish(gomock.Any(), "test-exchange", "job.completed", gomock.Any()).Return(expectedErr)
 
-	err := uc.publishJobNotification(ctx, nil, message, "completed", nil, nil, logger)
+	err := publishJobNotificationForTest(t, uc, ctx, message, "completed", nil, nil, logger)
 	if err == nil {
 		t.Fatal("expected error when publish fails, got nil")
 	}
@@ -391,7 +404,7 @@ func TestPublishJobNotification_UnknownSource(t *testing.T) {
 		Publish(gomock.Any(), "test-exchange", "job.completed", gomock.Any()).
 		Return(nil)
 
-	err := uc.publishJobNotification(ctx, nil, message, "completed", nil, nil, logger)
+	err := publishJobNotificationForTest(t, uc, ctx, message, "completed", nil, nil, logger)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -474,7 +487,7 @@ func TestPublishJobNotification_WithResultData(t *testing.T) {
 			return nil
 		})
 
-	err := uc.publishJobNotification(ctx, nil, message, "completed", nil, opts, logger)
+	err := publishJobNotificationForTest(t, uc, ctx, message, "completed", nil, opts, logger)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -506,7 +519,7 @@ func TestPublishJobNotification_EmptyExchange(t *testing.T) {
 	}
 
 	// Mandatory streaming must fail closed when no emitter is configured.
-	err := uc.publishJobNotification(ctx, nil, message, "completed", nil, nil, logger)
+	err := publishJobNotificationForTest(t, uc, ctx, message, "completed", nil, nil, logger)
 	if err == nil {
 		t.Fatal("expected error when mandatory job event emitter is not configured")
 	}
@@ -551,7 +564,7 @@ func TestPublishJobNotification_MetadataPreservation(t *testing.T) {
 			return nil
 		})
 
-	err := uc.publishJobNotification(ctx, nil, message, "completed", nil, nil, logger)
+	err := publishJobNotificationForTest(t, uc, ctx, message, "completed", nil, nil, logger)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -599,7 +612,7 @@ func TestPublishJobNotification_EventKeyGeneration(t *testing.T) {
 				Publish(gomock.Any(), "test-exchange", tt.expectedEventKey, gomock.Any()).
 				Return(nil)
 
-			err := uc.publishJobNotification(ctx, nil, message, tt.status, nil, nil, logger)
+			err := publishJobNotificationForTest(t, uc, ctx, message, tt.status, nil, nil, logger)
 			if err != nil {
 				t.Fatalf("expected no error, got: %v", err)
 			}
@@ -641,7 +654,7 @@ func TestPublishJobNotification_WithCompletedAt(t *testing.T) {
 			return nil
 		})
 
-	err := uc.publishJobNotification(ctx, nil, message, "completed", nil, opts, logger)
+	err := publishJobNotificationForTest(t, uc, ctx, message, "completed", nil, opts, logger)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -697,7 +710,7 @@ func TestPublishJobNotification_WithAllOptions(t *testing.T) {
 			return nil
 		})
 
-	err := uc.publishJobNotification(ctx, nil, message, "completed", nil, opts, logger)
+	err := publishJobNotificationForTest(t, uc, ctx, message, "completed", nil, opts, logger)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}

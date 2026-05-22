@@ -10,8 +10,12 @@ import (
 
 	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/lib-commons/v5/commons"
+	tmclient "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/client"
+	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
 	observability "github.com/LerianStudio/lib-observability"
 	libLog "github.com/LerianStudio/lib-observability/log"
+	obsRuntime "github.com/LerianStudio/lib-observability/runtime"
+	"go.mongodb.org/mongo-driver/mongo"
 )
 
 const (
@@ -23,6 +27,14 @@ type pendingTerminalEventLister interface {
 	ListPendingTerminalEvents(ctx context.Context, limit int) ([]*model.Job, error)
 }
 
+type activeTenantLister interface {
+	GetActiveTenantsByService(ctx context.Context, service string) ([]*tmclient.TenantSummary, error)
+}
+
+type tenantMongoDatabaseResolver interface {
+	GetDatabaseForTenant(ctx context.Context, tenantID string) (*mongo.Database, error)
+}
+
 // TerminalEventRepairer periodically retries terminal job notifications that
 // were persisted as pending after the original extraction message was DLQed.
 type TerminalEventRepairer struct {
@@ -30,6 +42,11 @@ type TerminalEventRepairer struct {
 	logger   libLog.Logger
 	interval time.Duration
 	batch    int
+
+	tenantService string
+	tenantLister  activeTenantLister
+	mongoResolver tenantMongoDatabaseResolver
+	requireTenant bool
 }
 
 func NewTerminalEventRepairer(useCase *UseCase, logger libLog.Logger) *TerminalEventRepairer {
@@ -43,6 +60,16 @@ func NewTerminalEventRepairer(useCase *UseCase, logger libLog.Logger) *TerminalE
 		interval: defaultTerminalEventRepairInterval,
 		batch:    defaultTerminalEventRepairBatch,
 	}
+}
+
+func NewTerminalEventRepairerWithTenantScope(useCase *UseCase, logger libLog.Logger, service string, tenantLister activeTenantLister, mongoResolver tenantMongoDatabaseResolver) *TerminalEventRepairer {
+	repairer := NewTerminalEventRepairer(useCase, logger)
+	repairer.tenantService = service
+	repairer.tenantLister = tenantLister
+	repairer.mongoResolver = mongoResolver
+	repairer.requireTenant = true
+
+	return repairer
 }
 
 func (r *TerminalEventRepairer) Run(launcher *commons.Launcher) error {
@@ -65,13 +92,13 @@ func (r *TerminalEventRepairer) Run(launcher *commons.Launcher) error {
 	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(sigs)
 
-	go func() {
+	obsRuntime.SafeGoWithContext(ctx, logger, "terminal-event-repairer-signal-handler", obsRuntime.KeepRunning, func(ctx context.Context) {
 		select {
 		case <-sigs:
 			cancel()
 		case <-ctx.Done():
 		}
-	}()
+	})
 
 	ticker := time.NewTicker(r.interval)
 	defer ticker.Stop()
@@ -103,6 +130,41 @@ func (r *TerminalEventRepairer) RepairOnce(ctx context.Context) error {
 		return nil
 	}
 
+	if r.requireTenant {
+		if r.tenantLister == nil || r.mongoResolver == nil || r.tenantService == "" {
+			return fmt.Errorf("multi-tenant terminal event repairer requires tenant lister, mongo resolver, and service name")
+		}
+
+		tenants, err := r.tenantLister.GetActiveTenantsByService(ctx, r.tenantService)
+		if err != nil {
+			return fmt.Errorf("list active tenants for terminal event repair: %w", err)
+		}
+
+		for _, tenant := range tenants {
+			if tenant == nil || tenant.ID == "" {
+				continue
+			}
+
+			tenantCtx := tmcore.ContextWithTenantID(ctx, tenant.ID)
+
+			tenantDB, err := r.mongoResolver.GetDatabaseForTenant(tenantCtx, tenant.ID)
+			if err != nil {
+				return fmt.Errorf("resolve tenant mongo for terminal event repair tenant %s: %w", tenant.ID, err)
+			}
+
+			tenantCtx = tmcore.ContextWithMB(tenantCtx, tenantDB)
+			if err := r.repairOnceInContext(tenantCtx, lister, logger); err != nil {
+				return fmt.Errorf("repair pending terminal events for tenant %s: %w", tenant.ID, err)
+			}
+		}
+
+		return nil
+	}
+
+	return r.repairOnceInContext(ctx, lister, logger)
+}
+
+func (r *TerminalEventRepairer) repairOnceInContext(ctx context.Context, lister pendingTerminalEventLister, logger libLog.Logger) error {
 	jobs, err := lister.ListPendingTerminalEvents(ctx, r.batch)
 	if err != nil {
 		return fmt.Errorf("list pending terminal events: %w", err)

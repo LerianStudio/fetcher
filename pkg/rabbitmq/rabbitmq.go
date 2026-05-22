@@ -73,6 +73,9 @@ const (
 	// DefaultShutdownTimeout is the default timeout for graceful shutdown.
 	DefaultShutdownTimeout = 30 * time.Second
 
+	// DefaultPublishConfirmTimeout is the default timeout for broker publisher confirmations.
+	DefaultPublishConfirmTimeout = libRabbitmq.DefaultConfirmTimeout
+
 	// DefaultSignatureTimestampTolerance is the maximum age of a message signature.
 	// Messages older than this will be rejected to prevent replay attacks.
 	DefaultSignatureTimestampTolerance = 5 * time.Minute
@@ -195,6 +198,9 @@ type AdapterOptions struct {
 	// ShutdownTimeout is the timeout for graceful shutdown.
 	ShutdownTimeout time.Duration
 
+	// PublishConfirmTimeout is the upper bound for waiting on broker publish confirms.
+	PublishConfirmTimeout time.Duration
+
 	// MeterProvider is the OpenTelemetry meter provider for metrics.
 	MeterProvider metric.MeterProvider
 
@@ -234,6 +240,7 @@ func DefaultOptions() AdapterOptions {
 		CircuitBreakerThreshold:     DefaultCircuitBreakerThreshold,
 		CircuitBreakerCooldown:      DefaultCircuitBreakerCooldown,
 		ShutdownTimeout:             DefaultShutdownTimeout,
+		PublishConfirmTimeout:       DefaultPublishConfirmTimeout,
 		EnableMessageSigning:        true,
 		EnableSignatureVerification: true,
 		SignatureTimestampTolerance: DefaultSignatureTimestampTolerance,
@@ -248,9 +255,9 @@ type rabbitConnection interface {
 // amqpChannel defines the methods required from a RabbitMQ channel.
 type amqpChannel interface {
 	Publish(exchange, key string, mandatory, immediate bool, msg amqp.Publishing) error
+	PublishWithContext(ctx context.Context, exchange, key string, mandatory, immediate bool, msg amqp.Publishing) error
 	Confirm(noWait bool) error
 	NotifyPublish(receiver chan amqp.Confirmation) chan amqp.Confirmation
-	NotifyReturn(receiver chan amqp.Return) chan amqp.Return
 	Consume(queue, consumer string, autoAck, exclusive, noLocal, noWait bool, args amqp.Table) (<-chan amqp.Delivery, error)
 	Cancel(consumer string, noWait bool) error
 	Close() error
@@ -356,7 +363,6 @@ func isPermanentAMQPError(err error) bool {
 type RabbitMQAdapter struct {
 	conn    rabbitConnection
 	channel amqpChannel
-	confirm *publisherConfirmState
 
 	// options contains the adapter configuration.
 	options AdapterOptions
@@ -379,12 +385,6 @@ type RabbitMQAdapter struct {
 
 	// metrics holds operational metrics.
 	metrics *metrics
-}
-
-type publisherConfirmState struct {
-	channel       amqpChannel
-	confirmations <-chan amqp.Confirmation
-	returns       <-chan amqp.Return
 }
 
 // NewRabbitMQAdapter initializes a new RabbitMQAdapter with the provided RabbitMQ connection.
@@ -577,7 +577,6 @@ func (prmq *RabbitMQAdapter) invalidateChannel(logger libLog.Logger) {
 	prmq.mu.Lock()
 	channel := prmq.channel
 	prmq.channel = nil
-	prmq.confirm = nil
 	prmq.mu.Unlock()
 
 	if channel != nil && !channel.IsClosed() {
@@ -672,7 +671,6 @@ func (prmq *RabbitMQAdapter) ensureChannel(span trace.Span, logger libLog.Logger
 		ch, err := prmq.conn.EnsureChannel()
 		if err == nil {
 			prmq.channel = ch
-			prmq.confirm = nil
 			prmq.startChannelWatcher(logger, ch)
 
 			lastErr = nil
@@ -701,52 +699,35 @@ func (prmq *RabbitMQAdapter) ensureChannel(span trace.Span, logger libLog.Logger
 	return prmq.channel, nil
 }
 
-func (prmq *RabbitMQAdapter) ensurePublisherConfirmState(ch amqpChannel) (*publisherConfirmState, error) {
-	if prmq.confirm != nil && prmq.confirm.channel == ch {
-		return prmq.confirm, nil
+func (prmq *RabbitMQAdapter) publishConfirmed(ctx context.Context, ch amqpChannel, exchange, key string, msg amqp.Publishing) error {
+	confirmTimeout := prmq.options.PublishConfirmTimeout
+	if confirmTimeout <= 0 {
+		confirmTimeout = DefaultPublishConfirmTimeout
 	}
 
-	if err := ch.Confirm(false); err != nil {
-		return nil, fmt.Errorf("enable rabbitmq publisher confirms: %w", err)
+	publisher, err := libRabbitmq.NewConfirmablePublisherFromChannel(ch,
+		libRabbitmq.WithLogger(prmq.optionsLogger()),
+		libRabbitmq.WithConfirmTimeout(confirmTimeout),
+	)
+	if err != nil {
+		return fmt.Errorf("create rabbitmq confirmable publisher: %w", err)
 	}
 
-	state := &publisherConfirmState{
-		channel:       ch,
-		confirmations: ch.NotifyPublish(make(chan amqp.Confirmation, 1)),
-		returns:       ch.NotifyReturn(make(chan amqp.Return, 1)),
-	}
-	prmq.confirm = state
+	defer func() { _ = publisher.Close() }()
 
-	return state, nil
+	if err := publisher.Publish(ctx, exchange, key, true, false, msg); err != nil {
+		return fmt.Errorf("rabbitmq publish confirmed message: %w", err)
+	}
+
+	return nil
 }
 
-func publishConfirmed(ctx context.Context, state *publisherConfirmState, exchange, key string, msg amqp.Publishing) error {
-	if state == nil || state.channel == nil {
-		return fmt.Errorf("rabbitmq publisher confirmation state is not initialized")
+func (prmq *RabbitMQAdapter) optionsLogger() libLog.Logger {
+	if adapter, ok := prmq.conn.(*rabbitmqConnectionAdapter); ok && adapter.conn != nil && adapter.conn.Logger != nil {
+		return adapter.conn.Logger
 	}
 
-	if err := state.channel.Publish(exchange, key, true, false, msg); err != nil {
-		return fmt.Errorf("rabbitmq publish mandatory message: %w", err)
-	}
-
-	select {
-	case returned := <-state.returns:
-		return fmt.Errorf("rabbitmq message unroutable: reply_code=%d reply_text=%s exchange=%s routing_key=%s", returned.ReplyCode, returned.ReplyText, returned.Exchange, returned.RoutingKey)
-	case confirmation := <-state.confirmations:
-		if !confirmation.Ack {
-			return fmt.Errorf("rabbitmq publisher confirmation nack: delivery_tag=%d", confirmation.DeliveryTag)
-		}
-
-		select {
-		case returned := <-state.returns:
-			return fmt.Errorf("rabbitmq message unroutable after ack: reply_code=%d reply_text=%s exchange=%s routing_key=%s", returned.ReplyCode, returned.ReplyText, returned.Exchange, returned.RoutingKey)
-		default:
-		}
-
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	return libLog.NewNop()
 }
 
 // ProducerDefault sends a message to the specified exchange and routing key in RabbitMQ.
@@ -802,12 +783,7 @@ func (prmq *RabbitMQAdapter) ProducerDefault(ctx context.Context, exchange, key 
 	publish := func(ch amqpChannel) error {
 		msg := BuildSecurePublishing(ctx, reqID, exchange, key, queueMessage, headers, prmq.options.Signer, prmq.options.EnableMessageSigning)
 
-		state, err := prmq.ensurePublisherConfirmState(ch)
-		if err != nil {
-			return err
-		}
-
-		return publishConfirmed(ctx, state, exchange, key, msg)
+		return prmq.publishConfirmed(ctx, ch, exchange, key, msg)
 	}
 
 	var lastErr error

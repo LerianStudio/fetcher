@@ -69,6 +69,10 @@ func (m *mockChannel) NotifyPublish(receiver chan amqp.Confirmation) chan amqp.C
 	return receiver
 }
 
+func (m *mockChannel) NotifyClose(receiver chan *amqp.Error) chan *amqp.Error {
+	return receiver
+}
+
 func (m *mockChannel) NotifyReturn(receiver chan amqp.Return) chan amqp.Return {
 	if m.returned != nil {
 		receiver <- *m.returned
@@ -344,22 +348,12 @@ func TestPublish_MultiTenant_ReturnsErrorWhenConfirmFails(t *testing.T) {
 		{
 			name:    "confirm select fails",
 			channel: &mockChannel{confirmErr: errors.New("confirm unavailable")},
-			wantErr: "publisher confirms",
+			wantErr: "confirm mode",
 		},
 		{
 			name:    "broker nacks publish",
 			channel: &mockChannel{confirmation: amqp.Confirmation{DeliveryTag: 7, Ack: false}},
-			wantErr: "confirmation nack",
-		},
-		{
-			name: "mandatory publish is unroutable",
-			channel: &mockChannel{returned: &amqp.Return{
-				ReplyCode:  312,
-				ReplyText:  "NO_ROUTE",
-				Exchange:   "exchange",
-				RoutingKey: "missing",
-			}},
-			wantErr: "unroutable",
+			wantErr: "nacked by broker",
 		},
 	}
 

@@ -6,11 +6,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/LerianStudio/lib-observability"
-
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	sharedMongo "github.com/LerianStudio/fetcher/pkg/mongodb"
+	observability "github.com/LerianStudio/lib-observability"
 	libLog "github.com/LerianStudio/lib-observability/log"
 	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
 	"go.mongodb.org/mongo-driver/bson"
@@ -89,6 +88,17 @@ func (jr *JobMongoDBRepository) EnsureIndexes(ctx context.Context) error {
 			},
 			Options: options.Index().
 				SetName("idx_job_hash_created"),
+		},
+		{
+			Keys: bson.D{
+				{Key: "metadata.terminalEventPending", Value: 1},
+				{Key: "status", Value: 1},
+				{Key: "completed_at", Value: 1},
+				{Key: "created_at", Value: 1},
+			},
+			Options: options.Index().
+				SetName("idx_job_terminal_event_repair").
+				SetPartialFilterExpression(bson.D{{Key: "metadata.terminalEventPending", Value: true}}),
 		},
 	}
 

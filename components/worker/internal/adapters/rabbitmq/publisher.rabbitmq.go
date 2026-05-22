@@ -4,7 +4,6 @@ package rabbitmq
 import (
 	"context"
 	"fmt"
-	"sync"
 
 	observability "github.com/LerianStudio/lib-observability"
 
@@ -44,7 +43,7 @@ type RabbitMQChannel interface {
 	ExchangeDeclare(name, kind string, durable, autoDelete, internal, noWait bool, args amqp.Table) error
 	Confirm(noWait bool) error
 	NotifyPublish(receiver chan amqp.Confirmation) chan amqp.Confirmation
-	NotifyReturn(receiver chan amqp.Return) chan amqp.Return
+	NotifyClose(receiver chan *amqp.Error) chan *amqp.Error
 	PublishWithContext(ctx context.Context, exchange, key string, mandatory, immediate bool, msg amqp.Publishing) error
 	Close() error
 }
@@ -57,17 +56,9 @@ type PublisherRoutes struct {
 	rabbitMQManager RabbitMQManagerInterface // Used in multi-tenant mode (nil in single-tenant)
 	multiTenantMode bool
 	signer          crypto.Signer
-	publishMu       sync.Mutex
-	confirmState    *publisherConfirmState
 	libLog.
 		Logger
 	opentelemetry.Telemetry
-}
-
-type publisherConfirmState struct {
-	channel       RabbitMQChannel
-	confirmations <-chan amqp.Confirmation
-	returns       <-chan amqp.Return
 }
 
 // NewPublisherRoutes creates a new instance of PublisherRoutes using a RabbitMQ connection.
@@ -141,39 +132,11 @@ func (pr *PublisherRoutes) PublishStreamingTarget(ctx context.Context, exchange,
 		msg.ContentType = contentType
 	}
 
-	pr.publishMu.Lock()
-	defer pr.publishMu.Unlock()
-
-	state, err := pr.ensurePublisherConfirmState(pr.conn.Channel)
-	if err != nil {
-		return err
-	}
-
-	if err := publishWithConfirmState(ctx, state, exchange, routingKey, msg); err != nil {
-		pr.confirmState = nil
+	if err := publishWithConfirm(ctx, pr.conn.Channel, exchange, routingKey, msg, pr.Logger); err != nil {
 		return fmt.Errorf("rabbitmq streaming publish: %w", err)
 	}
 
 	return nil
-}
-
-func (pr *PublisherRoutes) ensurePublisherConfirmState(ch RabbitMQChannel) (*publisherConfirmState, error) {
-	if pr.confirmState != nil && pr.confirmState.channel == ch {
-		return pr.confirmState, nil
-	}
-
-	if err := ch.Confirm(false); err != nil {
-		return nil, fmt.Errorf("enable rabbitmq publisher confirms: %w", err)
-	}
-
-	state := &publisherConfirmState{
-		channel:       ch,
-		confirmations: ch.NotifyPublish(make(chan amqp.Confirmation, 1)),
-		returns:       ch.NotifyReturn(make(chan amqp.Return, 1)),
-	}
-	pr.confirmState = state
-
-	return state, nil
 }
 
 // NewPublisherRoutesMultiTenant creates a new instance of PublisherRoutes configured for
@@ -279,7 +242,7 @@ func (pr *PublisherRoutes) PublishWithHeaders(ctx context.Context, exchange, rou
 		// succeed after broker acceptance.
 		span.SetAttributes(attribute.String(attrPublishRationale, multiTenantPublishRationale))
 
-		if err := publishWithConfirm(ctx, ch, exchange, routingKey, msg); err != nil {
+		if err := publishWithConfirm(ctx, ch, exchange, routingKey, msg, pr.Logger); err != nil {
 			opentelemetry.HandleSpanError(span, "Failed to publish message to tenant vhost", err)
 			pr.Log(ctx, libLog.LevelError, fmt.Sprintf("Error publishing to exchange %s on tenant %s", exchange, tenantID), libLog.Err(err))
 
@@ -340,44 +303,22 @@ func (pr *PublisherRoutes) PublishWithHeaders(ctx context.Context, exchange, rou
 	return nil
 }
 
-func publishWithConfirm(ctx context.Context, ch RabbitMQChannel, exchange, routingKey string, msg amqp.Publishing) error {
-	if err := ch.Confirm(false); err != nil {
-		return fmt.Errorf("enable rabbitmq publisher confirms: %w", err)
+func publishWithConfirm(ctx context.Context, ch RabbitMQChannel, exchange, routingKey string, msg amqp.Publishing, logger libLog.Logger) error {
+	publisher, err := libRabbitmq.NewConfirmablePublisherFromChannel(ch,
+		libRabbitmq.WithLogger(logger),
+		libRabbitmq.WithConfirmTimeout(libRabbitmq.DefaultConfirmTimeout),
+	)
+	if err != nil {
+		return fmt.Errorf("create rabbitmq confirmable publisher: %w", err)
 	}
 
-	confirmations := ch.NotifyPublish(make(chan amqp.Confirmation, 1))
-	returns := ch.NotifyReturn(make(chan amqp.Return, 1))
+	defer func() { _ = publisher.Close() }()
 
-	return publishWithConfirmState(ctx, &publisherConfirmState{channel: ch, confirmations: confirmations, returns: returns}, exchange, routingKey, msg)
-}
-
-func publishWithConfirmState(ctx context.Context, state *publisherConfirmState, exchange, routingKey string, msg amqp.Publishing) error {
-	if state == nil || state.channel == nil {
-		return fmt.Errorf("rabbitmq publisher confirmation state is not initialized")
+	if err := publisher.Publish(ctx, exchange, routingKey, true, false, msg); err != nil {
+		return fmt.Errorf("rabbitmq publish confirmed message: %w", err)
 	}
 
-	if err := state.channel.PublishWithContext(ctx, exchange, routingKey, true, false, msg); err != nil {
-		return fmt.Errorf("rabbitmq publish mandatory message: %w", err)
-	}
-
-	select {
-	case returned := <-state.returns:
-		return fmt.Errorf("rabbitmq message unroutable: reply_code=%d reply_text=%s exchange=%s routing_key=%s", returned.ReplyCode, returned.ReplyText, returned.Exchange, returned.RoutingKey)
-	case confirmation := <-state.confirmations:
-		if !confirmation.Ack {
-			return fmt.Errorf("rabbitmq publisher confirmation nack: delivery_tag=%d", confirmation.DeliveryTag)
-		}
-
-		select {
-		case returned := <-state.returns:
-			return fmt.Errorf("rabbitmq message unroutable after ack: reply_code=%d reply_text=%s exchange=%s routing_key=%s", returned.ReplyCode, returned.ReplyText, returned.Exchange, returned.RoutingKey)
-		default:
-		}
-
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	return nil
 }
 
 // Shutdown gracefully shuts down the RabbitMQ adapter.

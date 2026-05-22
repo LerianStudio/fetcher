@@ -2,13 +2,18 @@ package services
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/LerianStudio/fetcher/pkg/model"
 	jobPort "github.com/LerianStudio/fetcher/pkg/ports/job"
+	tmclient "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/client"
+	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
 	streaming "github.com/LerianStudio/lib-streaming"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 func TestTerminalEventRepairer_RepairOnce_WithPendingTerminalEvent_RetriesWithoutMessageRedelivery(t *testing.T) {
@@ -40,11 +45,136 @@ func TestTerminalEventRepairer_RepairOnce_WithPendingTerminalEvent_RetriesWithou
 	require.Equal(t, jobID, repo.clearedID)
 }
 
-type countingEmitter struct{ count int }
+func TestTerminalEventRepairer_RepairOnce_WithTenantScope_InjectsTenantContext(t *testing.T) {
+	t.Parallel()
 
-func (e *countingEmitter) Emit(context.Context, streaming.EmitRequest) error {
+	jobID := uuid.New()
+	repo := &pendingTerminalRepo{
+		requireTenantContext: true,
+		jobs: []*model.Job{{
+			ID:     jobID,
+			Status: model.JobStatusCompleted,
+			Metadata: map[string]any{
+				terminalEventPendingMetadataKey: true,
+				terminalEventStatusMetadataKey:  "completed",
+				terminalEventPayloadMetadataKey: `{"status":"completed"}`,
+			},
+		}},
+	}
+	emitter := &countingEmitter{}
+	uc := &UseCase{JobRepository: repo, JobEventEmitter: emitter, JobEventStreamingEnabled: true, JobEventStreamingRequireTenant: true}
+	repairer := NewTerminalEventRepairerWithTenantScope(
+		uc,
+		testLogger(),
+		"fetcher",
+		&activeTenantRepo{tenants: []*tmclient.TenantSummary{{ID: "tenant-a"}}},
+		&tenantMongoResolver{},
+	)
+
+	err := repairer.RepairOnce(testContext())
+	require.NoError(t, err)
+	require.Equal(t, 1, emitter.count)
+	require.Equal(t, "tenant-a", emitter.tenantIDs[0])
+	require.Equal(t, "tenant-a", repo.seenTenantIDs[0])
+	require.True(t, repo.seenTenantDB[0])
+}
+
+func TestTerminalEventRepairer_RepairOnce_ErrorPaths(t *testing.T) {
+	t.Parallel()
+
+	listErr := errors.New("list failed")
+	publishErr := errors.New("publish failed")
+	jobID := uuid.New()
+
+	tests := []struct {
+		name          string
+		repo          *pendingTerminalRepo
+		emitter       *countingEmitter
+		wantErr       string
+		wantCleared   bool
+		wantPublished int
+	}{
+		{
+			name:    "list failure returns error",
+			repo:    &pendingTerminalRepo{listErr: listErr},
+			emitter: &countingEmitter{},
+			wantErr: "list pending terminal events",
+		},
+		{
+			name: "malformed metadata returns error",
+			repo: &pendingTerminalRepo{jobs: []*model.Job{{ID: jobID, Status: model.JobStatusCompleted, Metadata: map[string]any{
+				terminalEventPendingMetadataKey: true,
+				terminalEventStatusMetadataKey:  "completed",
+			}}}},
+			emitter: &countingEmitter{},
+			wantErr: "missing terminal event payload metadata",
+		},
+		{
+			name: "non terminal status returns error",
+			repo: &pendingTerminalRepo{jobs: []*model.Job{{ID: jobID, Status: model.JobStatusProcessing, Metadata: map[string]any{
+				terminalEventPendingMetadataKey: true,
+				terminalEventStatusMetadataKey:  "completed",
+				terminalEventPayloadMetadataKey: `{"status":"completed"}`,
+			}}}},
+			emitter: &countingEmitter{},
+			wantErr: "non-terminal status",
+		},
+		{
+			name: "publish failure does not clear metadata",
+			repo: &pendingTerminalRepo{jobs: []*model.Job{{ID: jobID, Status: model.JobStatusCompleted, Metadata: map[string]any{
+				terminalEventPendingMetadataKey: true,
+				terminalEventStatusMetadataKey:  "completed",
+				terminalEventPayloadMetadataKey: `{"status":"completed"}`,
+			}}}},
+			emitter:       &countingEmitter{err: publishErr},
+			wantErr:       "publish required job completed notification",
+			wantPublished: 1,
+		},
+		{
+			name: "success clears metadata after publish",
+			repo: &pendingTerminalRepo{jobs: []*model.Job{{ID: jobID, Status: model.JobStatusCompleted, Metadata: map[string]any{
+				terminalEventPendingMetadataKey: true,
+				terminalEventStatusMetadataKey:  "completed",
+				terminalEventPayloadMetadataKey: `{"status":"completed"}`,
+			}}}},
+			emitter:       &countingEmitter{},
+			wantCleared:   true,
+			wantPublished: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			uc := &UseCase{JobRepository: tt.repo, JobEventEmitter: tt.emitter, JobEventStreamingEnabled: true}
+			repairer := NewTerminalEventRepairer(uc, testLogger())
+
+			err := repairer.RepairOnce(testContext())
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tt.wantErr)
+			} else {
+				require.NoError(t, err)
+			}
+
+			require.Equal(t, tt.wantPublished, tt.emitter.count)
+			require.Equal(t, tt.wantCleared, tt.repo.clearedID != uuid.Nil)
+		})
+	}
+}
+
+type countingEmitter struct {
+	count     int
+	err       error
+	tenantIDs []string
+}
+
+func (e *countingEmitter) Emit(ctx context.Context, _ streaming.EmitRequest) error {
 	e.count++
-	return nil
+	e.tenantIDs = append(e.tenantIDs, tmcore.GetTenantIDContext(ctx))
+	return e.err
 }
 
 func (e *countingEmitter) Close() error { return nil }
@@ -52,11 +182,28 @@ func (e *countingEmitter) Close() error { return nil }
 func (e *countingEmitter) Healthy(context.Context) error { return nil }
 
 type pendingTerminalRepo struct {
-	jobs      []*model.Job
-	clearedID uuid.UUID
+	jobs                 []*model.Job
+	listErr              error
+	clearedID            uuid.UUID
+	requireTenantContext bool
+	seenTenantIDs        []string
+	seenTenantDB         []bool
 }
 
-func (r *pendingTerminalRepo) ListPendingTerminalEvents(context.Context, int) ([]*model.Job, error) {
+func (r *pendingTerminalRepo) ListPendingTerminalEvents(ctx context.Context, _ int) ([]*model.Job, error) {
+	if r.listErr != nil {
+		return nil, r.listErr
+	}
+
+	if r.requireTenantContext {
+		if tmcore.GetTenantIDContext(ctx) == "" || tmcore.GetMBContext(ctx) == nil {
+			return nil, tmcore.ErrTenantContextRequired
+		}
+	}
+
+	r.seenTenantIDs = append(r.seenTenantIDs, tmcore.GetTenantIDContext(ctx))
+	r.seenTenantDB = append(r.seenTenantDB, tmcore.GetMBContext(ctx) != nil)
+
 	return r.jobs, nil
 }
 
@@ -98,3 +245,23 @@ func (r *pendingTerminalRepo) ExistsRunningByMappedFieldKey(context.Context, str
 }
 
 var _ jobPort.Repository = (*pendingTerminalRepo)(nil)
+
+type activeTenantRepo struct {
+	tenants []*tmclient.TenantSummary
+	err     error
+}
+
+func (r *activeTenantRepo) GetActiveTenantsByService(context.Context, string) ([]*tmclient.TenantSummary, error) {
+	return r.tenants, r.err
+}
+
+type tenantMongoResolver struct{}
+
+func (r *tenantMongoResolver) GetDatabaseForTenant(_ context.Context, tenantID string) (*mongo.Database, error) {
+	client, err := mongo.NewClient(options.Client().ApplyURI("mongodb://localhost:27017"))
+	if err != nil {
+		return nil, err
+	}
+
+	return client.Database(tenantID), nil
+}

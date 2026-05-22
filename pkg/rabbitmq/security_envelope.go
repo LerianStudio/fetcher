@@ -31,6 +31,7 @@ const HeaderTenantID = "X-Tenant-ID"
 func BuildSecurePublishing(ctx context.Context, reqID, exchange, routingKey string, body []byte, headers map[string]any, signer crypto.Signer, enableSigning bool) amqp.Publishing {
 	publishHeaders := amqp.Table{}
 	maps.Copy(publishHeaders, headers)
+	deleteSecurityOwnedHeaders(publishHeaders)
 
 	// Canonical/security-critical headers are owned by the envelope builder.
 	// Caller-provided collisions are deliberately overwritten before signing.
@@ -61,6 +62,15 @@ func BuildSecurePublishing(ctx context.Context, reqID, exchange, routingKey stri
 		Headers:      publishHeaders,
 		Body:         body,
 	}
+}
+
+func deleteSecurityOwnedHeaders(headers amqp.Table) {
+	delete(headers, libConstants.HeaderID)
+	delete(headers, "x-retry-count")
+	delete(headers, HeaderTenantID)
+	delete(headers, HeaderMessageSignature)
+	delete(headers, HeaderSignatureTimestamp)
+	delete(headers, HeaderSignatureVersion)
 }
 
 func isNilSigner(signer crypto.Signer) bool {
