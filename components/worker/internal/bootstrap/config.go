@@ -947,7 +947,7 @@ func initMultiTenantStack(
 		TenantClient:  tmClient,
 		TenantCache:   tenantCache,
 		TenantLoader:  tenantLoader,
-		RabbitMQ:      rabbitMQManager,
+		RabbitMQ:      newRealWorkerTenantRabbitMQManager(rabbitMQManager),
 		Service:       constant.ApplicationName,
 		PrefetchCount: constant.DefaultPrefetchCount,
 		Logger:        logger,

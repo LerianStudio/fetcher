@@ -2,13 +2,12 @@ package bootstrap
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/binary"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
 
+	libBackoff "github.com/LerianStudio/lib-commons/v5/commons/backoff"
 	tmclient "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/client"
 	tmconsumer "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/consumer"
 	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
@@ -27,35 +26,67 @@ const (
 	workerMTInitialBackoff         = 5 * time.Second
 	workerMTMaxBackoff             = 40 * time.Second
 	workerMTMaxRetryBeforeDegraded = 3
-	workerMTBackoffMultiplier      = 2
-	workerMTJitterMin              = 0.75
-	workerMTJitterRange            = 0.5
 )
+
+type workerTenantLoader interface {
+	LoadTenant(ctx context.Context, tenantID string) (*tmcore.TenantConfig, error)
+}
+
+type workerTenantRabbitMQ interface {
+	GetChannel(ctx context.Context, tenantID string) (workerTenantRabbitMQChannel, error)
+}
+
+type workerTenantRabbitMQChannel interface {
+	Qos(prefetchCount, prefetchSize int, global bool) error
+	Consume(queue, consumer string, autoAck, exclusive, noLocal, noWait bool, args amqp.Table) (<-chan amqp.Delivery, error)
+	NotifyClose(receiver chan *amqp.Error) chan *amqp.Error
+	Close() error
+}
+
+type realWorkerTenantRabbitMQManager struct {
+	manager *tmrabbitmq.Manager
+}
+
+func newRealWorkerTenantRabbitMQManager(manager *tmrabbitmq.Manager) *realWorkerTenantRabbitMQManager {
+	if manager == nil {
+		return nil
+	}
+
+	return &realWorkerTenantRabbitMQManager{manager: manager}
+}
+
+func (m *realWorkerTenantRabbitMQManager) GetChannel(ctx context.Context, tenantID string) (workerTenantRabbitMQChannel, error) {
+	return m.manager.GetChannel(ctx, tenantID)
+}
 
 type workerMultiTenantConsumerConfig struct {
 	TenantClient  *tmclient.Client
 	TenantCache   *tenantcache.TenantCache
-	TenantLoader  *tenantcache.TenantLoader
+	TenantLoader  workerTenantLoader
 	Dispatcher    *tmevent.EventDispatcher
-	RabbitMQ      *tmrabbitmq.Manager
+	RabbitMQ      workerTenantRabbitMQ
 	Service       string
 	PrefetchCount int
 	Logger        libLog.Logger
+	RetryWait     func(context.Context, time.Duration) error
 }
 
 type workerMultiTenantConsumer struct {
 	tenantClient *tmclient.Client
 	cache        *tenantcache.TenantCache
-	loader       *tenantcache.TenantLoader
+	loader       workerTenantLoader
 	dispatcher   *tmevent.EventDispatcher
-	rabbitmq     *tmrabbitmq.Manager
+	rabbitmq     workerTenantRabbitMQ
 	service      string
 	prefetch     int
 	logger       libLog.Logger
+	retryWait    func(context.Context, time.Duration) error
 
 	mu           sync.RWMutex
 	handlers     map[string]tmconsumer.HandlerFunc
 	tenants      map[string]context.CancelFunc
+	tenantCtxs   map[string]context.Context
+	tenantQueues map[string]map[string]bool
 	knownTenants map[string]bool
 	parentCtx    context.Context
 	closed       bool
@@ -79,6 +110,11 @@ func newWorkerMultiTenantConsumer(cfg workerMultiTenantConsumerConfig) *workerMu
 		prefetch = workerMTDefaultPrefetchCount
 	}
 
+	retryWait := cfg.RetryWait
+	if retryWait == nil {
+		retryWait = libBackoff.WaitContext
+	}
+
 	return &workerMultiTenantConsumer{
 		tenantClient: cfg.TenantClient,
 		cache:        cache,
@@ -88,8 +124,11 @@ func newWorkerMultiTenantConsumer(cfg workerMultiTenantConsumerConfig) *workerMu
 		service:      cfg.Service,
 		prefetch:     prefetch,
 		logger:       logger,
+		retryWait:    retryWait,
 		handlers:     make(map[string]tmconsumer.HandlerFunc),
 		tenants:      make(map[string]context.CancelFunc),
+		tenantCtxs:   make(map[string]context.Context),
+		tenantQueues: make(map[string]map[string]bool),
 		knownTenants: make(map[string]bool),
 		retryCounts:  make(map[string]int),
 	}
@@ -105,11 +144,33 @@ func (c *workerMultiTenantConsumer) Register(queueName string, handler tmconsume
 		return fmt.Errorf("worker multi-tenant consumer: handler for queue %q is required", queueName)
 	}
 
+	startTenants := make([]string, 0)
+
 	c.mu.Lock()
-	defer c.mu.Unlock()
 
 	c.handlers[queueName] = handler
+
+	for tenantID := range c.knownTenants {
+		if _, active := c.tenants[tenantID]; active || !c.closed {
+			startTenants = append(startTenants, tenantID)
+		}
+	}
+
+	for _, tenantID := range c.cache.TenantIDs() {
+		if !c.knownTenants[tenantID] {
+			c.knownTenants[tenantID] = true
+			startTenants = append(startTenants, tenantID)
+		}
+	}
+	c.mu.Unlock()
+
 	c.logger.Log(context.Background(), libLog.LevelInfo, "registered multi-tenant worker handler", libLog.String("queue", queueName))
+
+	startCtx := c.startContext(context.Background())
+
+	for _, tenantID := range startTenants {
+		c.startTenantConsumer(startCtx, tenantID)
+	}
 
 	return nil
 }
@@ -139,6 +200,8 @@ func (c *workerMultiTenantConsumer) Close() error {
 	}
 
 	c.tenants = make(map[string]context.CancelFunc)
+	c.tenantCtxs = make(map[string]context.Context)
+	c.tenantQueues = make(map[string]map[string]bool)
 	c.knownTenants = make(map[string]bool)
 	c.retryCounts = make(map[string]int)
 	c.mu.Unlock()
@@ -171,13 +234,16 @@ func (c *workerMultiTenantConsumer) EnsureConsumerStarted(ctx context.Context, t
 	}
 
 	tenantLock.Lock()
-	defer tenantLock.Unlock()
-
 	if c.consumerActiveOrClosed(tenantID) {
+		tenantLock.Unlock()
 		return
 	}
 
-	if !c.tenantKnown(tenantID) {
+	known := c.tenantKnown(tenantID)
+	hasHandlers := c.hasHandlers()
+	tenantLock.Unlock()
+
+	if !known {
 		if c.loader == nil {
 			libOtel.HandleSpanError(span, "tenant loader is required", fmt.Errorf("tenant loader is required"))
 			return
@@ -193,7 +259,19 @@ func (c *workerMultiTenantConsumer) EnsureConsumerStarted(ctx context.Context, t
 		c.markTenantKnown(tenantID)
 	}
 
+	if !hasHandlers {
+		c.logger.Log(ctx, libLog.LevelWarn, "multi-tenant worker consumer start deferred until handlers are registered", libLog.String("tenant_id", tenantID))
+		return
+	}
+
 	if c.rabbitmq == nil {
+		return
+	}
+
+	tenantLock.Lock()
+	defer tenantLock.Unlock()
+
+	if c.consumerActiveOrClosed(tenantID) {
 		return
 	}
 
@@ -223,11 +301,20 @@ func (c *workerMultiTenantConsumer) StopConsumer(tenantID string) {
 		delete(c.tenants, tenantID)
 	}
 
+	delete(c.tenantCtxs, tenantID)
+	delete(c.tenantQueues, tenantID)
 	delete(c.knownTenants, tenantID)
 	delete(c.retryCounts, tenantID)
 	c.mu.Unlock()
 
 	c.locks.Delete(tenantID)
+}
+
+func (c *workerMultiTenantConsumer) hasHandlers() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	return len(c.handlers) > 0
 }
 
 func (c *workerMultiTenantConsumer) OwnsTenant(tenantID string) bool {
@@ -278,42 +365,50 @@ func (c *workerMultiTenantConsumer) startContext(ctx context.Context) context.Co
 }
 
 func (c *workerMultiTenantConsumer) startTenantConsumer(ctx context.Context, tenantID string) {
+	type queueStart struct {
+		name    string
+		handler tmconsumer.HandlerFunc
+	}
+
 	c.mu.Lock()
-	if _, exists := c.tenants[tenantID]; exists || c.closed {
+	if c.closed || len(c.handlers) == 0 {
 		c.mu.Unlock()
 		return
 	}
 
-	tenantCtx, cancel := context.WithCancel(tmcore.ContextWithTenantID(ctx, tenantID))
-	c.tenants[tenantID] = cancel
+	if _, exists := c.tenantCtxs[tenantID]; !exists {
+		var cancel context.CancelFunc
+
+		tenantCtx, cancel := context.WithCancel(tmcore.ContextWithTenantID(ctx, tenantID))
+		c.tenants[tenantID] = cancel
+		c.tenantCtxs[tenantID] = tenantCtx
+	}
+
+	if c.tenantQueues[tenantID] == nil {
+		c.tenantQueues[tenantID] = make(map[string]bool)
+	}
+
+	queues := make([]queueStart, 0, len(c.handlers))
+	for queueName, handler := range c.handlers {
+		if c.tenantQueues[tenantID][queueName] {
+			continue
+		}
+
+		c.tenantQueues[tenantID][queueName] = true
+		queues = append(queues, queueStart{name: queueName, handler: handler})
+	}
+
 	c.knownTenants[tenantID] = true
 	c.mu.Unlock()
 
-	obsRuntime.SafeGoWithContext(tenantCtx, c.logger, "worker-multi-tenant-consumer-"+tenantID, obsRuntime.KeepRunning, func(runCtx context.Context) {
-		c.consumeTenant(runCtx, tenantID)
-	})
-}
-
-func (c *workerMultiTenantConsumer) consumeTenant(ctx context.Context, tenantID string) {
-	c.mu.RLock()
-
-	handlers := make(map[string]tmconsumer.HandlerFunc, len(c.handlers))
-	for queueName, handler := range c.handlers {
-		handlers[queueName] = handler
-	}
-
-	c.mu.RUnlock()
-
-	for queueName, handler := range handlers {
-		queueName := queueName
-		handler := handler
+	for _, queue := range queues {
+		queueName := queue.name
+		handler := queue.handler
 
 		obsRuntime.SafeGoWithContext(ctx, c.logger, "worker-multi-tenant-queue-"+tenantID+"-"+queueName, obsRuntime.KeepRunning, func(queueCtx context.Context) {
 			c.consumeQueue(queueCtx, tenantID, queueName, handler)
 		})
 	}
-
-	<-ctx.Done()
 }
 
 func (c *workerMultiTenantConsumer) consumeQueue(ctx context.Context, tenantID, queueName string, handler tmconsumer.HandlerFunc) {
@@ -373,9 +468,26 @@ func (c *workerMultiTenantConsumer) consumeQueueOnce(ctx context.Context, tenant
 	return true
 }
 
-func (c *workerMultiTenantConsumer) processMessages(ctx context.Context, tenantID, queueName string, handler tmconsumer.HandlerFunc, messages <-chan amqp.Delivery, channel *amqp.Channel) {
+func (c *workerMultiTenantConsumer) processMessages(ctx context.Context, tenantID, queueName string, handler tmconsumer.HandlerFunc, messages <-chan amqp.Delivery, channel workerTenantRabbitMQChannel) {
+	defer func() {
+		if err := channel.Close(); err != nil {
+			c.logger.Log(ctx, libLog.LevelWarn, "failed to close tenant RabbitMQ channel", libLog.String("tenant_id", tenantID), libLog.String("queue", queueName), libLog.Err(err))
+		}
+	}()
+
 	notifyClose := make(chan *amqp.Error, 1)
 	channel.NotifyClose(notifyClose)
+
+	limit := c.prefetch
+	if limit <= 0 {
+		limit = 1
+	}
+
+	semaphore := make(chan struct{}, limit)
+
+	var wg sync.WaitGroup
+
+	defer wg.Wait()
 
 	for {
 		select {
@@ -388,7 +500,23 @@ func (c *workerMultiTenantConsumer) processMessages(ctx context.Context, tenantI
 				return
 			}
 
-			c.handleDelivery(ctx, tenantID, queueName, handler, delivery)
+			select {
+			case semaphore <- struct{}{}:
+			case <-ctx.Done():
+				return
+			case <-notifyClose:
+				return
+			}
+
+			wg.Add(1)
+			obsRuntime.SafeGoWithContext(ctx, c.logger, "worker-multi-tenant-message-"+tenantID+"-"+queueName, obsRuntime.KeepRunning, func(msgCtx context.Context) {
+				defer func() {
+					<-semaphore
+					wg.Done()
+				}()
+
+				c.handleDelivery(msgCtx, tenantID, queueName, handler, delivery)
+			})
 		}
 	}
 }
@@ -406,7 +534,7 @@ func (c *workerMultiTenantConsumer) handleDelivery(ctx context.Context, tenantID
 		libOtel.HandleSpanBusinessErrorEvent(span, "worker multi-tenant handler failed", err)
 		c.logger.Log(msgCtx, libLog.LevelError, "multi-tenant worker handler failed", libLog.String("queue", queueName), libLog.Err(err))
 
-		if nackErr := delivery.Nack(false, true); nackErr != nil {
+		if nackErr := delivery.Nack(false, false); nackErr != nil {
 			c.logger.Log(msgCtx, libLog.LevelError, "failed to nack multi-tenant worker message", libLog.Err(nackErr))
 		}
 
@@ -422,9 +550,8 @@ func (c *workerMultiTenantConsumer) waitRetry(ctx context.Context, tenantID, ope
 	delay := c.nextRetryDelay(tenantID)
 	c.logger.Log(ctx, libLog.LevelWarn, "multi-tenant worker consumer retry scheduled", libLog.String("tenant_id", tenantID), libLog.String("operation", operation), libLog.String("delay", delay.String()), libLog.Err(err))
 
-	select {
-	case <-ctx.Done():
-	case <-time.After(delay):
+	if waitErr := c.retryWait(ctx, delay); waitErr != nil {
+		c.logger.Log(ctx, libLog.LevelDebug, "multi-tenant worker consumer retry wait interrupted", libLog.String("tenant_id", tenantID), libLog.Err(waitErr))
 	}
 }
 
@@ -434,31 +561,16 @@ func (c *workerMultiTenantConsumer) nextRetryDelay(tenantID string) time.Duratio
 	c.retryCounts[tenantID] = retryCount + 1
 	c.mu.Unlock()
 
-	delay := workerMTInitialBackoff
-	for range retryCount {
-		delay *= workerMTBackoffMultiplier
-		if delay > workerMTMaxBackoff {
-			delay = workerMTMaxBackoff
-			break
-		}
+	delay := libBackoff.ExponentialWithJitter(workerMTInitialBackoff, retryCount)
+	if delay > workerMTMaxBackoff {
+		delay = libBackoff.FullJitter(workerMTMaxBackoff)
 	}
 
 	if retryCount+1 >= workerMTMaxRetryBeforeDegraded {
 		c.logger.Log(context.Background(), libLog.LevelWarn, "multi-tenant worker consumer tenant degraded", libLog.String("tenant_id", tenantID))
 	}
 
-	return applyWorkerMTJitter(delay)
-}
-
-func applyWorkerMTJitter(delay time.Duration) time.Duration {
-	var randomBytes [8]byte
-	if _, err := rand.Read(randomBytes[:]); err != nil {
-		return delay
-	}
-
-	jitter := workerMTJitterMin + float64(binary.LittleEndian.Uint64(randomBytes[:]))/(1<<64)*workerMTJitterRange
-
-	return time.Duration(float64(delay) * jitter)
+	return delay
 }
 
 func (c *workerMultiTenantConsumer) resetRetry(tenantID string) {

@@ -174,6 +174,33 @@ func TestBuildWorkerReadyzCheckers_MultiTenantRedisRegistration(t *testing.T) {
 	assert.True(t, *result.TLS)
 }
 
+func TestNewWorkerReadyzDepsMT_IncludesMultiTenantRedisClient(t *testing.T) {
+	cfg := &Config{
+		MultiTenantEnabled:   true,
+		MultiTenantRedisHost: "localhost",
+		MultiTenantRedisPort: "6380",
+		MultiTenantRedisTLS:  true,
+	}
+	deps := newWorkerReadyzDepsMT(cfg, nil, nil, nil, nil, nil)
+	t.Cleanup(deps.close)
+
+	require.NotNil(t, deps.mtRedisClient, "MT production deps must own a multi-tenant Redis checker client")
+	checkers := buildWorkerReadyzCheckers(deps)
+	require.NotNil(t, findCheckerByName(t, checkers, "multi_tenant_redis"))
+}
+
+func TestNewWorkerReadyzDepsST_DoesNotIncludeMultiTenantRedisClient(t *testing.T) {
+	cfg := &Config{
+		MultiTenantEnabled:   true,
+		MultiTenantRedisHost: "localhost",
+		MultiTenantRedisPort: "6380",
+	}
+	deps := newWorkerReadyzDepsST(cfg, nil, nil, nil)
+	t.Cleanup(deps.close)
+
+	assert.Nil(t, deps.mtRedisClient, "single-tenant deps builder must not own multi-tenant Redis readyz wiring")
+}
+
 func TestBuildWorkerReadyzCheckers_MultiTenantRedisOmittedWhenNotConfigured(t *testing.T) {
 	checkers := buildWorkerReadyzCheckers(&workerReadyzDeps{cfg: &Config{MultiTenantEnabled: true}})
 

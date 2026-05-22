@@ -55,11 +55,6 @@ func newWorkerReadyzDepsST(
 		deps.s3Client = s3Repo.Client()
 	}
 
-	if redisClient := newWorkerReadyzMultiTenantRedisClient(cfg); redisClient != nil {
-		deps.mtRedisClient = redisClient
-		deps.closers = append(deps.closers, redisClient.Close)
-	}
-
 	return deps
 }
 
@@ -107,6 +102,11 @@ func newWorkerReadyzDepsMT(
 
 	if s3Repo, ok := storage.(*pkgStorage.S3Repository); ok {
 		deps.s3Client = s3Repo.Client()
+	}
+
+	if redisClient := newWorkerReadyzMultiTenantRedisClient(cfg); redisClient != nil {
+		deps.mtRedisClient = redisClient
+		deps.closers = append(deps.closers, redisClient.Close)
 	}
 
 	return deps
