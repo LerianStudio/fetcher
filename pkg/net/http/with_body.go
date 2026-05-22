@@ -250,9 +250,12 @@ func ValidateStruct(s any) error {
 			}
 		}
 
-		errPtr := malformedRequestErr(err.(validator.ValidationErrors), trans)
-
-		return &errPtr
+		// Return the value (not a pointer): WithError downstream uses
+		// errors.As with a value-type target (pkg.ValidationKnownFieldsError),
+		// which requires type identity — a *pkg.ValidationKnownFieldsError
+		// would fall through to the InternalServerError default branch and
+		// render as HTTP 500 instead of 400.
+		return malformedRequestErr(err.(validator.ValidationErrors), trans)
 	}
 
 	return nil
