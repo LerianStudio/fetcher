@@ -30,6 +30,7 @@ func NewRoutes(
 	tl *opentelemetry.Telemetry,
 	auth *middlewareAuth.AuthClient,
 	licenseClient *libLicense.LicenseClient,
+	licenseEnforcementEnabled bool,
 	connectionHandler *ConnectionHandler,
 	migrationHandler *MigrationHandler,
 	fetcherHandler *FetcherHandler,
@@ -74,7 +75,7 @@ func NewRoutes(
 	// Version
 	f.Get("/version", commonsHttp.Version)
 
-	licenseMiddleware := LicenseWhenEnabled(licenseClient)
+	licenseMiddleware := LicenseWhenEnabled(licenseClient, licenseEnforcementEnabled)
 
 	// Connections
 	f.Post("/v1/management/connections", auth.Authorize(applicationName, connectionsResource, "post"), licenseMiddleware, WhenEnabled(ttMiddleware), connectionHandler.CreateConnection)
@@ -99,9 +100,11 @@ func NewRoutes(
 	return f
 }
 
-// LicenseWhenEnabled applies lib-license-go middleware when a license client is configured.
-func LicenseWhenEnabled(client *libLicense.LicenseClient) fiber.Handler {
-	if client == nil {
+// LicenseWhenEnabled applies lib-license-go middleware only when route-level
+// enforcement is explicitly enabled. Constructing a license client alone must
+// not change the Manager API contract.
+func LicenseWhenEnabled(client *libLicense.LicenseClient, enforcementEnabled bool) fiber.Handler {
+	if client == nil || !enforcementEnabled {
 		return func(c *fiber.Ctx) error { return c.Next() }
 	}
 

@@ -94,8 +94,9 @@ type Config struct {
 	AuthAddress string `env:"PLUGIN_AUTH_ADDRESS"`
 	AuthEnabled bool   `env:"PLUGIN_AUTH_ENABLED"`
 	// License configuration envs
-	LicenseKey      string `env:"LICENSE_KEY"`
-	OrganizationIDs string `env:"ORGANIZATION_IDS"`
+	LicenseKey                string `env:"LICENSE_KEY"`
+	OrganizationIDs           string `env:"ORGANIZATION_IDS"`
+	LicenseEnforcementEnabled bool   `env:"LICENSE_ENFORCEMENT_ENABLED" default:"false"`
 	// Encryption
 	AppEncryptionKey        string `env:"APP_ENC_KEY"`
 	AppEncryptionKeyVersion string `env:"APP_ENC_KEY_VERSION"`
@@ -652,6 +653,7 @@ func assembleService(
 		telemetry,
 		platformDependencies.authClient,
 		platformDependencies.licenseClient,
+		cfg.LicenseEnforcementEnabled,
 		connectionHandler,
 		migrationHandler,
 		fetcherHandler,

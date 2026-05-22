@@ -400,8 +400,9 @@ func TestConfig_LoadFromEnvVars(t *testing.T) {
 		{
 			name: "loads boolean fields",
 			envVars: map[string]string{
-				"ENABLE_TELEMETRY":    "true",
-				"PLUGIN_AUTH_ENABLED": "true",
+				"ENABLE_TELEMETRY":            "true",
+				"PLUGIN_AUTH_ENABLED":         "true",
+				"LICENSE_ENFORCEMENT_ENABLED": "true",
 			},
 			validate: func(t *testing.T, cfg *Config) {
 				t.Helper()
@@ -410,6 +411,9 @@ func TestConfig_LoadFromEnvVars(t *testing.T) {
 				}
 				if !cfg.AuthEnabled {
 					t.Error("AuthEnabled should be true")
+				}
+				if !cfg.LicenseEnforcementEnabled {
+					t.Error("LicenseEnforcementEnabled should be true")
 				}
 			},
 		},
@@ -506,6 +510,9 @@ func TestConfig_LoadFromEnvVars(t *testing.T) {
 				}
 				if cfg.AuthEnabled {
 					t.Error("AuthEnabled should default to false")
+				}
+				if cfg.LicenseEnforcementEnabled {
+					t.Error("LicenseEnforcementEnabled should default to false")
 				}
 			},
 		},
