@@ -8,6 +8,7 @@ import (
 
 	cacheRepo "github.com/LerianStudio/fetcher/components/manager/internal/adapters/cache"
 	"github.com/LerianStudio/fetcher/pkg/bootstrap/readyz"
+	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	portCache "github.com/LerianStudio/fetcher/pkg/ports/cache"
@@ -732,6 +733,13 @@ func TestResolvedMaxTenantPools(t *testing.T) {
 			assert.Equal(t, tt.want, got)
 		})
 	}
+}
+
+func TestFetcherOperationalMongoModule_UsesSharedFetcherModule(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, constant.ModuleFetcherOperationalState, fetcherOperationalMongoModule())
+	assert.NotEqual(t, constant.ModuleManager, fetcherOperationalMongoModule())
 }
 
 func TestMultiTenantPublisher_ProducerDefault_RequiresTenantID(t *testing.T) {

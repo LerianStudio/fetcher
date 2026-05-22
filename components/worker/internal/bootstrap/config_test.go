@@ -7,6 +7,7 @@ import (
 
 	workerRabbitMQ "github.com/LerianStudio/fetcher/components/worker/internal/adapters/rabbitmq"
 	"github.com/LerianStudio/fetcher/pkg/bootstrap/readyz"
+	"github.com/LerianStudio/fetcher/pkg/constant"
 	pkgRabbitMQ "github.com/LerianStudio/fetcher/pkg/rabbitmq"
 	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
 	mongoDB "github.com/LerianStudio/lib-commons/v5/commons/mongo"
@@ -63,6 +64,22 @@ func TestWrapBootstrapError(t *testing.T) {
 	if got := err.Error(); got != "decode key: boom" {
 		t.Fatalf("unexpected wrapped error: %s", got)
 	}
+}
+
+func TestFetcherOperationalMongoModule_UsesSharedFetcherModule(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, constant.ModuleFetcherOperationalState, fetcherOperationalMongoModule())
+	assert.NotEqual(t, constant.ModuleWorker, fetcherOperationalMongoModule())
+}
+
+func TestValidateMultiTenantConsumerCircuitBreakerCompliance_BlocksUnsupportedTMConsumer(t *testing.T) {
+	t.Parallel()
+
+	err := validateMultiTenantConsumerCircuitBreakerCompliance()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "multi-tenant worker startup blocked")
+	assert.Contains(t, err.Error(), "without a circuit-breaker injection seam")
 }
 
 func TestStreamingRabbitMQPublisher_UsesConfiguredRouteDestination(t *testing.T) {

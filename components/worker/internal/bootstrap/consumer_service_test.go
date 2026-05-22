@@ -25,6 +25,9 @@ import (
 	"github.com/google/uuid"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+	tracesdk "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/mock/gomock"
 )
 
@@ -260,6 +263,58 @@ func TestHandlerGenerateReportDelivery_VerifiesTenantBoundSignatures(t *testing.
 				t.Fatalf("handled = %v, want %v", got, tt.wantHandled)
 			}
 		})
+	}
+}
+
+func TestHandlerGenerateReportDelivery_ExtractsQueueTraceBeforeProcessing(t *testing.T) {
+	originalExtractExternalData := extractExternalData
+	originalTracerProvider := otel.GetTracerProvider()
+	originalPropagator := otel.GetTextMapPropagator()
+	tp := tracesdk.NewTracerProvider()
+
+	otel.SetTracerProvider(tp)
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+	t.Cleanup(func() {
+		extractExternalData = originalExtractExternalData
+		otel.SetTracerProvider(originalTracerProvider)
+		otel.SetTextMapPropagator(originalPropagator)
+		if err := tp.Shutdown(context.Background()); err != nil {
+			t.Fatalf("shutdown tracer provider: %v", err)
+		}
+	})
+
+	parentTraceID := "00112233445566778899aabbccddeeff"
+	var gotTraceID string
+
+	extractExternalData = func(_ *services.UseCase, gotCtx context.Context, _ []byte, _ map[string]any) error {
+		spanCtx := trace.SpanContextFromContext(gotCtx)
+		if spanCtx.IsValid() {
+			gotTraceID = spanCtx.TraceID().String()
+		}
+
+		return nil
+	}
+
+	consumer := &MultiQueueConsumer{
+		UseCase: &services.UseCase{},
+		logger:  testBootstrapLogger(),
+	}
+	ctx := tmcore.ContextWithTenantID(contextWithBootstrapTracking(t), "tenant-a")
+
+	err := consumer.handlerGenerateReportDelivery(ctx, amqp.Delivery{
+		Exchange:   "worker.exchange",
+		RoutingKey: "worker.key",
+		Body:       []byte(`{"jobId":"123e4567-e89b-12d3-a456-426614174000"}`),
+		Headers: amqp.Table{
+			pkgRabbitMQ.HeaderTenantID: "tenant-a",
+			"traceparent":              "00-" + parentTraceID + "-0123456789abcdef-01",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotTraceID != parentTraceID {
+		t.Fatalf("trace ID = %q, want %q", gotTraceID, parentTraceID)
 	}
 }
 

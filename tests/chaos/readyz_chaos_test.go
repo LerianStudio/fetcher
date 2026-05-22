@@ -41,10 +41,10 @@ import (
 // package consumes the Manager's wire contract — if the shape drifts, this
 // test should catch it.
 type readyzResponse struct {
-	Status         string                   `json:"status"`
-	Checks         map[string]readyzCheck   `json:"checks"`
-	Version        string                   `json:"version"`
-	DeploymentMode string                   `json:"deployment_mode"`
+	Status         string                 `json:"status"`
+	Checks         map[string]readyzCheck `json:"checks"`
+	Version        string                 `json:"version"`
+	DeploymentMode string                 `json:"deployment_mode"`
 }
 
 type readyzCheck struct {

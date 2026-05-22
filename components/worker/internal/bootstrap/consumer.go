@@ -263,6 +263,8 @@ func (mq *MultiQueueConsumer) logShutdownSignal(ctx context.Context, message str
 // It resolves per-tenant MongoDB if mongoManager is available, then delegates to handlerGenerateReport.
 func (mq *MultiQueueConsumer) handlerGenerateReportDelivery(ctx context.Context, delivery amqp.Delivery) error {
 	headers := headersFromDelivery(delivery)
+	ctx = opentelemetry.ExtractTraceContextFromQueueHeaders(ctx, headers)
+
 	if err := validateAuthoritativeTenantHeader(ctx, headers); err != nil {
 		if mq.logger != nil {
 			mq.logger.Log(ctx, libLog.LevelError, "multi-tenant RabbitMQ tenant header mismatch", libLog.Err(err))

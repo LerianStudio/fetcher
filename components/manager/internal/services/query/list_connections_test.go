@@ -167,7 +167,6 @@ func TestNewListConnections(t *testing.T) {
 	if svc.connRepo == nil {
 		t.Fatal("expected connRepo to be set")
 	}
-
 }
 
 // TestListConnections_Execute_TableDriven uses table-driven tests for various scenarios.

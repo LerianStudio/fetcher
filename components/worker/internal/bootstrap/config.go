@@ -873,7 +873,7 @@ func initMultiTenantManagers(cfg *Config, logger libLog.Logger) (*tmmongo.Manage
 	var mongoOpts []tmmongo.Option
 
 	mongoOpts = append(mongoOpts,
-		tmmongo.WithModule(constant.ModuleWorker),
+		tmmongo.WithModule(fetcherOperationalMongoModule()),
 		tmmongo.WithLogger(logger),
 		tmmongo.WithMaxTenantPools(maxPools),
 	)
@@ -908,9 +908,13 @@ func initMultiTenantManagers(cfg *Config, logger libLog.Logger) (*tmmongo.Manage
 
 	rabbitManager := tmrabbitmq.NewManager(tmClient, constant.ApplicationName, rabbitOpts...)
 
-	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Multi-tenant managers initialized: url=%s, module=%s", cfg.MultiTenantURL, constant.ModuleWorker))
+	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Multi-tenant managers initialized: url=%s, mongo_module=%s, rabbitmq_module=%s", cfg.MultiTenantURL, fetcherOperationalMongoModule(), constant.ModuleWorker))
 
 	return mongoManager, rabbitManager, nil
+}
+
+func fetcherOperationalMongoModule() string {
+	return constant.ModuleFetcherOperationalState
 }
 
 // initMultiTenantStack creates the unified multi-tenant consumer stack:
@@ -929,6 +933,14 @@ func initMultiTenantStack(
 	tmClient, err := initTenantManagerClient(cfg, logger)
 	if err != nil {
 		return nil, nil, nil, wrapBootstrapError("create tenant manager client for multi-tenant stack", err)
+	}
+
+	if err := validateMultiTenantConsumerCircuitBreakerCompliance(); err != nil {
+		if closeErr := tmClient.Close(); closeErr != nil {
+			return nil, nil, nil, fmt.Errorf("%w; close tenant manager client: %w", err, closeErr)
+		}
+
+		return nil, nil, nil, err
 	}
 
 	// 2. Create shared TenantCache and TenantLoader
@@ -1005,12 +1017,6 @@ func initMultiTenantStack(
 
 	logger.Log(ctx, libLog.LevelInfo, "MultiTenantConsumer initialized with shared EventDispatcher and per-tenant vhost isolation")
 
-	const mtConsumerCircuitBreakerWaiverWarning = "MultiTenantConsumer uses lib-commons v5.2.0 internal " +
-		"Tenant Manager client without circuit breaker injection seam; see docs/compatibility-waivers.md"
-
-	logger.Log(ctx, libLog.LevelWarn,
-		mtConsumerCircuitBreakerWaiverWarning)
-
 	// 6. Create TenantEventListener (Redis Pub/Sub -> dispatcher.HandleEvent)
 	var listenerCleanup func()
 
@@ -1062,6 +1068,10 @@ func initMultiTenantStack(
 	cleanup := listenerCleanup
 
 	return mtConsumer, tmClient, cleanup, nil
+}
+
+func validateMultiTenantConsumerCircuitBreakerCompliance() error {
+	return fmt.Errorf("multi-tenant worker startup blocked: lib-commons tmconsumer creates an internal Tenant Manager client without a circuit-breaker injection seam; upgrade lib-commons when tmconsumer exposes a preconfigured client or circuit breaker options")
 }
 
 // performInitialTenantSync fetches all active tenants from the Tenant Manager API

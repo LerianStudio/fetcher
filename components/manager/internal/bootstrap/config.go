@@ -460,7 +460,7 @@ func initPlatformDependencies(cfg *Config, logger libLog.Logger, messageSigner c
 		var readyzMongoOpts []tmmongo.Option
 
 		readyzMongoOpts = append(readyzMongoOpts,
-			tmmongo.WithModule(constant.ModuleManager),
+			tmmongo.WithModule(fetcherOperationalMongoModule()),
 			tmmongo.WithLogger(logger),
 			tmmongo.WithMaxTenantPools(maxPools),
 		)
@@ -728,7 +728,7 @@ func registerSchemaCacheCloseHook(shutdownHooks *[]func(context.Context) error, 
 //
 // Per multi-tenant.md standards:
 //   - Circuit breaker is MANDATORY for the Tenant Manager client
-//   - Uses constant.ApplicationName and constant.ModuleManager for service/module identity
+//   - Uses constant.ApplicationName and constant.ModuleFetcherOperationalState for shared MongoDB operational state
 //   - WithMongoManager configures MongoDB connection pool management
 //   - WithTenantCache + WithTenantLoader for cache-first strategy
 //   - EventListener + EventDispatcher for event-driven tenant discovery via Redis Pub/Sub
@@ -787,7 +787,7 @@ func initMultiTenantMiddleware(cfg *Config, logger libLog.Logger) (fiber.Handler
 	var mongoOpts []tmmongo.Option
 
 	mongoOpts = append(mongoOpts,
-		tmmongo.WithModule(constant.ModuleManager),
+		tmmongo.WithModule(fetcherOperationalMongoModule()),
 		tmmongo.WithLogger(logger),
 	)
 
@@ -831,9 +831,13 @@ func initMultiTenantMiddleware(cfg *Config, logger libLog.Logger) (fiber.Handler
 		return nil, nil, eventErr
 	}
 
-	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Multi-tenant middleware initialized: url=%s, module=%s", cfg.MultiTenantURL, constant.ModuleManager))
+	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Multi-tenant middleware initialized: url=%s, mongo_module=%s", cfg.MultiTenantURL, fetcherOperationalMongoModule()))
 
 	return tenantMid.WithTenantDB, cleanup, nil
+}
+
+func fetcherOperationalMongoModule() string {
+	return constant.ModuleFetcherOperationalState
 }
 
 // initManagerEventDiscovery creates and starts the EventDispatcher and EventListener
