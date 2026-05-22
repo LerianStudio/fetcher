@@ -12,18 +12,18 @@
 | Expiry / removal condition | Remove this waiver and upgrade once Fetcher compiles and passes worker/manager bootstrap, multi-tenant MongoDB manager, and readyz tests against `lib-commons/v5 >= v5.3.0`. Review no later than 2026-06-30. |
 | Validation evidence | Current remediation keeps `go.mod` pinned to `v5.2.0`; verification must include `go test ./...`, changed-package tests, and changed-package `golangci-lint run`. |
 
-## Worker `tmconsumer.MultiTenantConsumer` hidden Tenant Manager client lacks circuit breaker injection seam
+## Resolved: Worker no longer depends on `tmconsumer.MultiTenantConsumer` hidden Tenant Manager client
 
 | Field | Value |
 |-------|-------|
 | Owner | Platform Engineering / Fetcher maintainers |
 | Dependency | `github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/consumer` |
 | Current version | `v5.2.0` |
-| Target version / API | First lib-commons version that exposes either `tmconsumer.WithTenantManagerClient(*client.Client)`, `tmconsumer.WithTenantManagerClientOptions(...client.ClientOption)`, or equivalent support for `client.WithCircuitBreaker(...)` on the consumer-owned Tenant Manager HTTP client. |
-| Reason | Fetcher creates its shared Tenant Manager client through `initTenantManagerClient`, with circuit breaker and service API key, and reuses it for MongoDB/RabbitMQ managers. `tmconsumer.NewMultiTenantConsumerWithError` in `v5.2.0`, `v5.2.1`, and `v5.3.0` still constructs a private `pmClient` internally using only service API key / insecure HTTP / cache TTL options; there is no option to inject the preconfigured client or circuit breaker settings. Duplicating the consumer stack locally would fork lib-commons lifecycle, cache, and callback behavior. |
-| Runtime signal | Worker bootstrap fails startup in multi-tenant mode with an explicit error: `multi-tenant worker startup blocked: lib-commons tmconsumer creates an internal Tenant Manager client without a circuit-breaker injection seam`. |
-| Expiry / removal condition | Remove this waiver once Fetcher can pass its circuit-breaker configured `tmclient.Client` or circuit-breaker options into `tmconsumer.MultiTenantConsumer`; add a regression test proving the configured path is used. Review no later than 2026-06-30. |
-| Upstream TODO | Add a lib-commons `tmconsumer` option for preconfigured Tenant Manager client injection or client options propagation, including `client.WithCircuitBreaker` and `client.WithTimeout`. |
+| Inspected APIs | `tmconsumer.NewMultiTenantConsumerWithError` and options in `lib-commons/v5` `v5.2.0`, `v5.2.1`, and `v5.3.0` expose only `WithPostgresManager`, `WithMongoManager`, `WithRabbitMQ`, and `WithEventDispatcher`; none exposes a preconfigured `*tmclient.Client` or `tmclient.ClientOption` propagation. `v5.3.0` is the latest available tag at remediation time. |
+| Resolution | Fetcher no longer constructs `tmconsumer.MultiTenantConsumer` in Worker startup. Worker now uses a local consumer adapter that keeps lib-commons canonical building blocks: configured `tmclient.Client` with `client.WithCircuitBreaker`, `tenantcache.TenantCache`, `tenantcache.TenantLoader`, `event.EventDispatcher`, `tmrabbitmq.Manager` per-tenant vhost channels, `tmmongo.Manager` tenant DB resolution, and `redis.NewTenantPubSubRedisClient` / `event.NewTenantEventListener`. |
+| Runtime signal | Removed the fail-fast startup guard. Multi-tenant Worker bootstrap can initialize with the circuit-breaker-compliant client and per-tenant RabbitMQ manager path. |
+| Runtime blocking status | No longer blocks runtime. The upstream `tmconsumer` seam gap remains, but Worker does not rely on the hidden raw client path. |
+| Upstream TODO | Still useful upstream: add `tmconsumer.WithTenantManagerClient(*client.Client)` or client option propagation so services can return to the canonical consumer wrapper without losing circuit-breaker compliance. |
 
 ## RabbitMQ AMQP security envelope uses temporary local HMAC adapter
 

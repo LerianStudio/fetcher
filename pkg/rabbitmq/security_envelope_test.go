@@ -235,9 +235,10 @@ func TestCompatibilityWaivers_DocumentMultiTenantConsumerAndAMQPSigningGaps(t *t
 	require.NoError(t, err)
 
 	waivers := string(content)
-	require.Contains(t, waivers, "Worker `tmconsumer.MultiTenantConsumer` hidden Tenant Manager client lacks circuit breaker injection seam")
+	require.Contains(t, waivers, "Resolved: Worker no longer depends on `tmconsumer.MultiTenantConsumer` hidden Tenant Manager client")
 	require.Contains(t, waivers, "RabbitMQ AMQP security envelope uses temporary local HMAC adapter")
 	require.Contains(t, waivers, "client.WithCircuitBreaker")
+	require.Contains(t, waivers, "No longer blocks runtime")
 	require.Contains(t, waivers, "queue-envelope signing/verification APIs")
 }
 

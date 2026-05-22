@@ -36,7 +36,7 @@ var extractExternalData = func(uc *services.UseCase, ctx context.Context, body [
 	return uc.ExtractExternalData(ctx, body, headers)
 }
 
-// MultiTenantConsumerInterface abstracts the tmconsumer.MultiTenantConsumer for testing.
+// MultiTenantConsumerInterface abstracts the multi-tenant consumer for testing.
 type MultiTenantConsumerInterface interface {
 	Register(queueName string, handler tmconsumer.HandlerFunc) error
 	Run(ctx context.Context) error
@@ -46,7 +46,7 @@ type MultiTenantConsumerInterface interface {
 // MultiQueueConsumer represents a multi-queue consumer.
 // It supports two modes:
 //   - Single-tenant: Uses consumerRoutes with static RabbitMQ connection
-//   - Multi-tenant: Uses mtConsumer (tmconsumer.MultiTenantConsumer) with per-tenant vhost isolation
+//   - Multi-tenant: Uses mtConsumer with per-tenant vhost isolation
 type MultiQueueConsumer struct {
 	consumerRoutes                   *rabbitmq.ConsumerRoutes
 	mtConsumer                       MultiTenantConsumerInterface // Multi-tenant consumer (nil in single-tenant mode)
@@ -90,7 +90,7 @@ func NewMultiQueueConsumer(routes *rabbitmq.ConsumerRoutes, useCase *services.Us
 }
 
 // NewMultiQueueConsumerMultiTenant creates a new instance of MultiQueueConsumer for multi-tenant mode.
-// It uses tmconsumer.MultiTenantConsumer for per-tenant vhost isolation with lazy initialization.
+// It uses a multi-tenant consumer for per-tenant vhost isolation with lazy initialization.
 // The handler is registered with the MultiTenantConsumer to process messages from per-tenant queues.
 func NewMultiQueueConsumerMultiTenant(
 	mtConsumer MultiTenantConsumerInterface,
@@ -171,7 +171,7 @@ func (mq *MultiQueueConsumer) Run(l *commons.Launcher) error {
 
 	mq.startShutdownSignalWatcher(ctx, baseCtx, baseLogger, sigs, cancel)
 
-	// Multi-tenant mode: use tmconsumer.MultiTenantConsumer
+	// Multi-tenant mode: use configured multi-tenant consumer
 	if mq.mtConsumer != nil {
 		if mq.logger != nil {
 			mq.logger.Log(ctx, libLog.LevelInfo, "MultiQueueConsumer: starting multi-tenant consumer with per-tenant vhost isolation")
@@ -284,7 +284,7 @@ func (mq *MultiQueueConsumer) handlerGenerateReportDelivery(ctx context.Context,
 	}
 
 	// Resolve per-tenant MongoDB connection if mongoManager is available.
-	// The tenant ID is already in context from tmconsumer.MultiTenantConsumer.
+	// The tenant ID is already in context from the multi-tenant consumer.
 	if mq.mongoManager != nil {
 		tenantID := tmcore.GetTenantIDContext(ctx)
 		if tenantID != "" {

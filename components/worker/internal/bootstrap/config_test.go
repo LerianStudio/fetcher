@@ -3,6 +3,9 @@ package bootstrap
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	workerRabbitMQ "github.com/LerianStudio/fetcher/components/worker/internal/adapters/rabbitmq"
@@ -11,9 +14,11 @@ import (
 	pkgRabbitMQ "github.com/LerianStudio/fetcher/pkg/rabbitmq"
 	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
 	mongoDB "github.com/LerianStudio/lib-commons/v5/commons/mongo"
+	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
 	libLog "github.com/LerianStudio/lib-observability/log"
 	libOtel "github.com/LerianStudio/lib-observability/tracing"
 	libZap "github.com/LerianStudio/lib-observability/zap"
+	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -73,13 +78,54 @@ func TestFetcherOperationalMongoModule_UsesSharedFetcherModule(t *testing.T) {
 	assert.NotEqual(t, constant.ModuleWorker, fetcherOperationalMongoModule())
 }
 
-func TestValidateMultiTenantConsumerCircuitBreakerCompliance_BlocksUnsupportedTMConsumer(t *testing.T) {
+func TestWorkerMultiTenantConsumer_UsesConfiguredTenantManagerClientWithCircuitBreaker(t *testing.T) {
 	t.Parallel()
 
-	err := validateMultiTenantConsumerCircuitBreakerCompliance()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(server.Close)
+
+	cfg := &Config{
+		MultiTenantURL:                      server.URL,
+		MultiTenantServiceAPIKey:            "test-service-key",
+		MultiTenantAllowInsecureHTTP:        true,
+		MultiTenantCircuitBreakerThreshold:  1,
+		MultiTenantCircuitBreakerTimeoutSec: 30,
+		MultiTenantTimeout:                  1,
+		MultiTenantCacheTTLSec:              1,
+	}
+
+	tmClient, err := initTenantManagerClient(cfg, testBootstrapLogger())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, tmClient.Close()) })
+
+	consumer := newWorkerMultiTenantConsumer(workerMultiTenantConsumerConfig{
+		TenantClient: tmClient,
+		Service:      constant.ApplicationName,
+		Logger:       testBootstrapLogger(),
+	})
+	require.NotNil(t, consumer)
+	assert.Same(t, tmClient, consumer.tenantClient)
+
+	_, firstErr := tmClient.GetTenantConfig(context.Background(), "tenant-cb", constant.ApplicationName)
+	require.Error(t, firstErr)
+
+	_, secondErr := tmClient.GetTenantConfig(context.Background(), "tenant-cb", constant.ApplicationName)
+	require.ErrorIs(t, secondErr, tmcore.ErrCircuitBreakerOpen)
+}
+
+func TestWorkerMultiTenantConsumer_RegisterRejectsEmptyQueue(t *testing.T) {
+	t.Parallel()
+
+	consumer := newWorkerMultiTenantConsumer(workerMultiTenantConsumerConfig{
+		Service: constant.ApplicationName,
+		Logger:  testBootstrapLogger(),
+	})
+
+	err := consumer.Register(" ", func(context.Context, amqp.Delivery) error { return nil })
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "multi-tenant worker startup blocked")
-	assert.Contains(t, err.Error(), "without a circuit-breaker injection seam")
+	assert.True(t, strings.Contains(err.Error(), "queue name is required"))
 }
 
 func TestStreamingRabbitMQPublisher_UsesConfiguredRouteDestination(t *testing.T) {

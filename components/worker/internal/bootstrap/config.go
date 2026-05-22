@@ -28,7 +28,6 @@ import (
 	libOutboxMongo "github.com/LerianStudio/lib-commons/v5/commons/outbox/mongo"
 	libRabbitMQ "github.com/LerianStudio/lib-commons/v5/commons/rabbitmq"
 	tmclient "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/client"
-	tmconsumer "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/consumer"
 	tmevent "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/event"
 	tmmongo "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/mongo"
 	tmrabbitmq "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/rabbitmq"
@@ -261,7 +260,7 @@ func InitWorker() (*Service, error) {
 		&licenseLogger,
 	)
 
-	// Branch: multi-tenant mode uses tmconsumer.MultiTenantConsumer with per-tenant vhosts
+	// Branch: multi-tenant mode uses the worker multi-tenant consumer with per-tenant vhosts
 	// Single-tenant mode uses existing ConsumerRoutes with static RabbitMQ connection
 	if cfg.MultiTenantEnabled && cfg.MultiTenantURL != "" {
 		return initMultiTenantWorkerService(ctx, cfg, logger, telemetry, service, mongoConnection, storageRepository, mongoManager, rabbitMQManager, repositories.streamingOutboxRepo, cryptoWithExternalHMAC, keyDeriver, licenseClient)
@@ -928,19 +927,11 @@ func initMultiTenantStack(
 	logger libLog.Logger,
 	tenantMongoManager *tmmongo.Manager,
 	rabbitMQManager *tmrabbitmq.Manager,
-) (*tmconsumer.MultiTenantConsumer, *tmclient.Client, func(), error) {
+) (*workerMultiTenantConsumer, *tmclient.Client, func(), error) {
 	// 1. Create shared Tenant Manager client
 	tmClient, err := initTenantManagerClient(cfg, logger)
 	if err != nil {
 		return nil, nil, nil, wrapBootstrapError("create tenant manager client for multi-tenant stack", err)
-	}
-
-	if err := validateMultiTenantConsumerCircuitBreakerCompliance(); err != nil {
-		if closeErr := tmClient.Close(); closeErr != nil {
-			return nil, nil, nil, fmt.Errorf("%w; close tenant manager client: %w", err, closeErr)
-		}
-
-		return nil, nil, nil, err
 	}
 
 	// 2. Create shared TenantCache and TenantLoader
@@ -952,62 +943,55 @@ func initMultiTenantStack(
 	tenantCache := tenantcache.NewTenantCache()
 	tenantLoader := tenantcache.NewTenantLoader(tmClient, tenantCache, constant.ApplicationName, cacheTTL, logger)
 
-	// 3. Create ONE EventDispatcher with infrastructure managers
-	var dispatcherOpts []tmevent.DispatcherOption
+	mtConsumer := newWorkerMultiTenantConsumer(workerMultiTenantConsumerConfig{
+		TenantClient:  tmClient,
+		TenantCache:   tenantCache,
+		TenantLoader:  tenantLoader,
+		RabbitMQ:      rabbitMQManager,
+		Service:       constant.ApplicationName,
+		PrefetchCount: constant.DefaultPrefetchCount,
+		Logger:        logger,
+	})
 
-	dispatcherOpts = append(dispatcherOpts,
-		tmevent.WithDispatcherLogger(logger),
-		tmevent.WithCacheTTL(cacheTTL),
-	)
-
-	if tenantMongoManager != nil {
-		dispatcherOpts = append(dispatcherOpts, tmevent.WithMongo(tenantMongoManager))
-	}
-
-	if rabbitMQManager != nil {
-		dispatcherOpts = append(dispatcherOpts, tmevent.WithRabbitMQ(rabbitMQManager))
-	}
-
+	// 3. Create ONE EventDispatcher with callbacks that preserve the Ring-required
+	// removal ordering: stop tenant consumer first, close infrastructure pools second,
+	// then invalidate the Tenant Manager client cache.
 	dispatcher := tmevent.NewEventDispatcher(
 		tenantCache,
 		tenantLoader,
 		constant.ApplicationName,
-		dispatcherOpts...,
+		tmevent.WithDispatcherLogger(logger),
+		tmevent.WithCacheTTL(cacheTTL),
+		tmevent.WithTenantOwnershipChecker(mtConsumer.OwnsTenant),
+		tmevent.WithOnTenantAdded(func(eventCtx context.Context, tenantID string) {
+			if invalidateErr := tmClient.InvalidateConfig(eventCtx, tenantID, constant.ApplicationName); invalidateErr != nil {
+				logger.Log(eventCtx, libLog.LevelWarn, "failed to invalidate tenant-manager cache before starting worker consumer", libLog.String("tenant_id", tenantID), libLog.Err(invalidateErr))
+			}
+
+			mtConsumer.markTenantKnown(tenantID)
+			mtConsumer.EnsureConsumerStarted(eventCtx, tenantID)
+		}),
+		tmevent.WithOnTenantRemoved(func(eventCtx context.Context, tenantID string) {
+			mtConsumer.StopConsumer(tenantID)
+
+			if tenantMongoManager != nil {
+				if closeErr := tenantMongoManager.CloseConnection(eventCtx, tenantID); closeErr != nil {
+					logger.Log(eventCtx, libLog.LevelWarn, "failed to close tenant MongoDB connection", libLog.String("tenant_id", tenantID), libLog.Err(closeErr))
+				}
+			}
+
+			if rabbitMQManager != nil {
+				if closeErr := rabbitMQManager.CloseConnection(eventCtx, tenantID); closeErr != nil {
+					logger.Log(eventCtx, libLog.LevelWarn, "failed to close tenant RabbitMQ connection", libLog.String("tenant_id", tenantID), libLog.Err(closeErr))
+				}
+			}
+
+			if invalidateErr := tmClient.InvalidateConfig(eventCtx, tenantID, constant.ApplicationName); invalidateErr != nil {
+				logger.Log(eventCtx, libLog.LevelWarn, "failed to invalidate tenant-manager cache after stopping worker consumer", libLog.String("tenant_id", tenantID), libLog.Err(invalidateErr))
+			}
+		}),
 	)
-
-	// 4. Create MultiTenantConsumer with the shared dispatcher injected.
-	// The consumer's constructor calls wireDispatcherCallbacks() which wires:
-	//   - onTenantAdded  -> knownTenants + EnsureConsumerStarted
-	//   - onTenantRemoved -> cancel goroutine + remove from knownTenants
-	//   - cache sync (consumer uses same cache as dispatcher)
-	mtConfig := tmconsumer.DefaultMultiTenantConfig()
-	mtConfig.Service = constant.ApplicationName
-	mtConfig.Environment = cfg.EnvName
-	mtConfig.MultiTenantURL = cfg.MultiTenantURL
-	mtConfig.ServiceAPIKey = cfg.MultiTenantServiceAPIKey
-	mtConfig.PrefetchCount = constant.DefaultPrefetchCount
-	mtConfig.AllowInsecureHTTP = cfg.MultiTenantAllowInsecureHTTP
-
-	var consumerOpts []tmconsumer.Option
-
-	if rabbitMQManager != nil {
-		consumerOpts = append(consumerOpts, tmconsumer.WithRabbitMQ(rabbitMQManager))
-	}
-
-	consumerOpts = append(consumerOpts, tmconsumer.WithEventDispatcher(dispatcher))
-
-	if tenantMongoManager != nil {
-		consumerOpts = append(consumerOpts, tmconsumer.WithMongoManager(tenantMongoManager))
-	}
-
-	mtConsumer, err := tmconsumer.NewMultiTenantConsumerWithError(
-		mtConfig,
-		logger,
-		consumerOpts...,
-	)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("create multi-tenant consumer: %w", err)
-	}
+	mtConsumer.dispatcher = dispatcher
 
 	// 5. Wire restart recovery: when TenantLoader lazy-loads a tenant from the API
 	// (e.g., on cache miss after restart), also ensure a consumer goroutine is started.
@@ -1015,7 +999,7 @@ func initMultiTenantStack(
 		mtConsumer.EnsureConsumerStarted(loadCtx, tenantID)
 	})
 
-	logger.Log(ctx, libLog.LevelInfo, "MultiTenantConsumer initialized with shared EventDispatcher and per-tenant vhost isolation")
+	logger.Log(ctx, libLog.LevelInfo, "Worker multi-tenant consumer initialized with shared EventDispatcher, per-tenant vhost isolation, and circuit-breaker Tenant Manager client")
 
 	// 6. Create TenantEventListener (Redis Pub/Sub -> dispatcher.HandleEvent)
 	var listenerCleanup func()
@@ -1070,10 +1054,6 @@ func initMultiTenantStack(
 	return mtConsumer, tmClient, cleanup, nil
 }
 
-func validateMultiTenantConsumerCircuitBreakerCompliance() error {
-	return fmt.Errorf("multi-tenant worker startup blocked: lib-commons tmconsumer creates an internal Tenant Manager client without a circuit-breaker injection seam; upgrade lib-commons when tmconsumer exposes a preconfigured client or circuit breaker options")
-}
-
 // performInitialTenantSync fetches all active tenants from the Tenant Manager API
 // and calls EnsureConsumerStarted for each one. This ensures the worker starts
 // consuming messages for all known tenants immediately on startup, rather than
@@ -1082,7 +1062,7 @@ func performInitialTenantSync(
 	ctx context.Context,
 	logger libLog.Logger,
 	tmClient *tmclient.Client,
-	mtConsumer *tmconsumer.MultiTenantConsumer,
+	mtConsumer interface{ EnsureConsumerStarted(context.Context, string) },
 ) {
 	if tmClient == nil {
 		logger.Log(ctx, libLog.LevelWarn,
