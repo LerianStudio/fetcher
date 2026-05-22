@@ -248,6 +248,9 @@ type rabbitConnection interface {
 // amqpChannel defines the methods required from a RabbitMQ channel.
 type amqpChannel interface {
 	Publish(exchange, key string, mandatory, immediate bool, msg amqp.Publishing) error
+	Confirm(noWait bool) error
+	NotifyPublish(receiver chan amqp.Confirmation) chan amqp.Confirmation
+	NotifyReturn(receiver chan amqp.Return) chan amqp.Return
 	Consume(queue, consumer string, autoAck, exclusive, noLocal, noWait bool, args amqp.Table) (<-chan amqp.Delivery, error)
 	Cancel(consumer string, noWait bool) error
 	Close() error
@@ -689,6 +692,38 @@ func (prmq *RabbitMQAdapter) ensureChannel(span trace.Span, logger libLog.Logger
 	return prmq.channel, nil
 }
 
+func publishConfirmed(ctx context.Context, ch amqpChannel, exchange, key string, msg amqp.Publishing) error {
+	if err := ch.Confirm(false); err != nil {
+		return fmt.Errorf("enable rabbitmq publisher confirms: %w", err)
+	}
+
+	confirmations := ch.NotifyPublish(make(chan amqp.Confirmation, 1))
+	returns := ch.NotifyReturn(make(chan amqp.Return, 1))
+
+	if err := ch.Publish(exchange, key, true, false, msg); err != nil {
+		return fmt.Errorf("rabbitmq publish mandatory message: %w", err)
+	}
+
+	select {
+	case returned := <-returns:
+		return fmt.Errorf("rabbitmq message unroutable: reply_code=%d reply_text=%s exchange=%s routing_key=%s", returned.ReplyCode, returned.ReplyText, returned.Exchange, returned.RoutingKey)
+	case confirmation := <-confirmations:
+		if !confirmation.Ack {
+			return fmt.Errorf("rabbitmq publisher confirmation nack: delivery_tag=%d", confirmation.DeliveryTag)
+		}
+
+		select {
+		case returned := <-returns:
+			return fmt.Errorf("rabbitmq message unroutable after ack: reply_code=%d reply_text=%s exchange=%s routing_key=%s", returned.ReplyCode, returned.ReplyText, returned.Exchange, returned.RoutingKey)
+		default:
+		}
+
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 // ProducerDefault sends a message to the specified exchange and routing key in RabbitMQ.
 func (prmq *RabbitMQAdapter) ProducerDefault(ctx context.Context, exchange, key string, queueMessage []byte, header *map[string]any) error {
 	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
@@ -740,7 +775,8 @@ func (prmq *RabbitMQAdapter) ProducerDefault(ctx context.Context, exchange, key 
 	}
 
 	publish := func(ch amqpChannel) error {
-		return ch.Publish(exchange, key, false, false, BuildSecurePublishing(ctx, reqID, exchange, key, queueMessage, headers, prmq.options.Signer, prmq.options.EnableMessageSigning))
+		msg := BuildSecurePublishing(ctx, reqID, exchange, key, queueMessage, headers, prmq.options.Signer, prmq.options.EnableMessageSigning)
+		return publishConfirmed(ctx, ch, exchange, key, msg)
 	}
 
 	var lastErr error
@@ -888,47 +924,44 @@ func (prmq *RabbitMQAdapter) runConsumerCycle(
 		return ErrCircuitOpen
 	}
 
-	var channel amqpChannel
+	var (
+		channel    amqpChannel
+		deliveries <-chan amqp.Delivery
+	)
+
+	consumerTag := fmt.Sprintf("%s-%s", queue, reqID)
 
 	err := prmq.executeWithCircuitBreaker(func() error {
 		var err error
 
 		channel, err = prmq.ensureChannel(span, logger)
+		if err != nil {
+			return err
+		}
+
+		// Set QoS for fair dispatch of messages among consumers based on concurrency.
+		if errCh := channel.Qos(concurrency, 0, false); errCh != nil {
+			return fmt.Errorf("rabbitmq set qos: %w", errCh)
+		}
+
+		deliveries, err = channel.Consume(
+			queue,
+			consumerTag,
+			false,
+			false,
+			false,
+			false,
+			nil,
+		)
 
 		return err
 	})
 	if err != nil {
-		libOpentelemetry.HandleSpanError(span, "Failed to ensure RabbitMQ channel", err)
-
-		return fmt.Errorf("rabbitmq consumer ensure channel: %w", err)
-	}
-
-	// Set QoS for fair dispatch of messages among consumers based on concurrency
-	if errCh := channel.Qos(concurrency, 0, false); errCh != nil {
-		libOpentelemetry.HandleSpanError(span, "Failed to set RabbitMQ QoS", errCh)
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to set RabbitMQ QoS: %v", errCh))
+		libOpentelemetry.HandleSpanError(span, "Failed to establish RabbitMQ consumer", err)
+		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to establish RabbitMQ consumer: %v", err))
 		prmq.invalidateChannel(logger)
 
-		return fmt.Errorf("rabbitmq set qos: %w", errCh)
-	}
-
-	consumerTag := fmt.Sprintf("%s-%s", queue, reqID)
-
-	deliveries, err := channel.Consume(
-		queue,
-		consumerTag,
-		false,
-		false,
-		false,
-		false,
-		nil,
-	)
-	if err != nil {
-		libOpentelemetry.HandleSpanError(span, "Failed to start RabbitMQ consumer", err)
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to start RabbitMQ consumer: %v", err))
-		prmq.invalidateChannel(logger)
-
-		return fmt.Errorf("rabbitmq start consumer: %w", err)
+		return fmt.Errorf("rabbitmq consumer setup: %w", err)
 	}
 
 	sessionErr := prmq.dispatchDeliveries(ctxSpan, logger, consumerTag, queue, channel, deliveries, concurrency, handler)

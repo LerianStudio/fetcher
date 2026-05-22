@@ -334,7 +334,7 @@ func NewJobResponseFrom(j *Job) *JobResponse {
 
 	return &JobResponse{
 		ID:           j.ID,
-		Metadata:     j.Metadata,
+		Metadata:     publicJobMetadata(j.Metadata),
 		MappedFields: j.MappedFields,
 		Filters:      j.Filters,
 		Status:       string(j.Status),
@@ -344,4 +344,26 @@ func NewJobResponseFrom(j *Job) *JobResponse {
 		CreatedAt:    j.CreatedAt,
 		CompletedAt:  j.CompletedAt,
 	}
+}
+
+func publicJobMetadata(metadata map[string]any) map[string]any {
+	if len(metadata) == 0 {
+		return nil
+	}
+
+	public := make(map[string]any, len(metadata))
+	for key, value := range metadata {
+		switch key {
+		case "terminalEventPending", "terminalEventStatus", "terminalEventPayload":
+			continue
+		default:
+			public[key] = value
+		}
+	}
+
+	if len(public) == 0 {
+		return nil
+	}
+
+	return public
 }

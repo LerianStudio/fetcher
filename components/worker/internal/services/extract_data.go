@@ -63,17 +63,16 @@ func (uc *UseCase) ExtractExternalData(ctx context.Context, body []byte, headers
 	if err != nil {
 		jobID := uc.extractJobIDFromMultipleSources(body, headers, logger)
 		if jobID != uuid.Nil {
-			notificationMessage := ExtractExternalDataMessage{
+			failedMessage := ExtractExternalDataMessage{
 				JobID:    jobID,
-				Metadata: make(map[string]any),
+				Metadata: map[string]any{},
 			}
 
-			errorMetadata := map[string]any{
-				"message": err.Error(),
+			if terminalErr := uc.handleErrorWithUpdate(ctx, jobID, failedMessage, span, "Invalid extraction message", err, logger); terminalErr != nil {
+				return terminalErr
 			}
-			if errNotify := uc.publishJobNotification(ctx, tracer, notificationMessage, "failed", errorMetadata, nil, logger); errNotify != nil {
-				logger.Log(ctx, libLog.LevelWarn, "failed to publish job failure notification after parse error", libLog.Err(errNotify))
-			}
+		} else {
+			logger.Log(ctx, libLog.LevelWarn, "dropping invalid extraction message without terminal job event: no usable job id found")
 		}
 
 		return err
@@ -184,6 +183,8 @@ func (uc *UseCase) completeJob(
 		return fmt.Errorf("publish required job completion notification: %w", err)
 	}
 
+	uc.clearPendingTerminalEvent(ctx, message.JobID, logger)
+
 	return nil
 }
 
@@ -199,23 +200,6 @@ func (uc *UseCase) parseMessage(ctx context.Context, body []byte, headers map[st
 	if err != nil {
 		libOtel.HandleSpanError(span, "Error unmarshalling message.", err)
 		logger.Log(ctx, libLog.LevelError, "error unmarshalling message", libLog.Err(err))
-
-		jobID := uc.extractJobIDFromMultipleSources(body, headers, logger)
-		if jobID != uuid.Nil {
-			updateErr := uc.updateJobWithErrors(ctx, jobID, fmt.Sprintf("Failed to parse message: %v", err))
-			if updateErr != nil {
-				logger.Log(ctx, libLog.LevelError, "failed to update job status after parse error",
-					libLog.String("job_id", jobID.String()),
-					libLog.Err(updateErr),
-				)
-			} else {
-				logger.Log(ctx, libLog.LevelInfo, "updated job to failed status due to parse error",
-					libLog.String("job_id", jobID.String()),
-				)
-			}
-		} else {
-			logger.Log(ctx, libLog.LevelWarn, "could not extract job id from headers or partial json; job status will not be updated")
-		}
 
 		return nil, fmt.Errorf("failed to parse message: %w", err)
 	}
@@ -236,12 +220,7 @@ func (uc *UseCase) parseMessage(ctx context.Context, body []byte, headers map[st
 			jobID = extractedJobID
 		}
 
-		if jobID != uuid.Nil {
-			updateErr := uc.updateJobWithErrors(ctx, jobID, wrappedErr.Error())
-			if updateErr != nil {
-				logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to update job status after payload validation error: %v", updateErr))
-			}
-		} else {
+		if jobID == uuid.Nil {
 			logger.Log(ctx, libLog.LevelWarn, "Could not extract job ID from payload, job status will not be updated")
 		}
 
@@ -384,21 +363,9 @@ func (uc *UseCase) handleErrorWithUpdate(
 		return fmt.Errorf("publish required job failure notification: %w", errNotify)
 	}
 
+	uc.clearPendingTerminalEvent(ctx, jobID, logger)
+
 	return err
-}
-
-// updateJobWithErrors updates the status of a job to "Error" with the provided error message.
-func (uc *UseCase) updateJobWithErrors(ctx context.Context, jobID uuid.UUID, errorMessage string) error {
-	metadata := map[string]any{
-		"error": errorMessage,
-	}
-
-	errUpdate := uc.JobRepository.UpdateStatus(ctx, jobID, model.JobStatusFailed, "", "", metadata)
-	if errUpdate != nil {
-		return fmt.Errorf("failed to update job status to failed: %w", errUpdate)
-	}
-
-	return nil
 }
 
 func terminalEventPendingMetadata(status string, payload []byte) map[string]any {
@@ -439,12 +406,32 @@ func (uc *UseCase) retryPendingTerminalEventForJob(ctx context.Context, job *mod
 		return true, fmt.Errorf("publish required job %s notification: %w", status, err)
 	}
 
+	uc.clearPendingTerminalEvent(ctx, job.ID, logger)
+
 	logger.Log(ctx, libLog.LevelInfo, "retried pending terminal job event",
 		libLog.String("job_id", job.ID.String()),
 		libLog.String("status", status),
 	)
 
 	return true, nil
+}
+
+type terminalEventMetadataClearer interface {
+	ClearTerminalEventMetadata(ctx context.Context, id uuid.UUID) error
+}
+
+func (uc *UseCase) clearPendingTerminalEvent(ctx context.Context, jobID uuid.UUID, logger libLog.Logger) {
+	clearer, ok := uc.JobRepository.(terminalEventMetadataClearer)
+	if !ok {
+		return
+	}
+
+	if err := clearer.ClearTerminalEventMetadata(ctx, jobID); err != nil {
+		logger.Log(ctx, libLog.LevelWarn, "failed to clear terminal event retry metadata",
+			libLog.String("job_id", jobID.String()),
+			libLog.Err(err),
+		)
+	}
 }
 
 func hasPendingTerminalEvent(metadata map[string]any) bool {
@@ -751,18 +738,6 @@ func (uc *UseCase) shouldSkipProcessing(ctx context.Context, jobID uuid.UUID, lo
 	}
 
 	return false, nil
-}
-
-// checkReportStatus checks the current status of a report to implement idempotency.
-//
-//nolint:unused // retained as a direct unit-test seam for status preflight behavior.
-func (uc *UseCase) checkReportStatus(ctx context.Context, jobID uuid.UUID, logger libLog.Logger) (model.JobStatus, error) {
-	jobData, err := uc.getJobForStatusCheck(ctx, jobID, logger)
-	if err != nil {
-		return "", err
-	}
-
-	return jobData.Status, nil
 }
 
 func (uc *UseCase) getJobForStatusCheck(ctx context.Context, jobID uuid.UUID, logger libLog.Logger) (*model.Job, error) {

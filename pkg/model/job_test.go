@@ -579,6 +579,34 @@ func TestNewJobResponseFrom(t *testing.T) {
 			t.Fatalf("expected CompletedAt %v, got %v", completedAt, result.CompletedAt)
 		}
 	})
+
+	t.Run("filters internal terminal event metadata", func(t *testing.T) {
+		result := NewJobResponseFrom(&Job{
+			ID: uuid.New(),
+			Metadata: map[string]any{
+				"source":               "api",
+				"terminalEventPending": true,
+				"terminalEventStatus":  "completed",
+				"terminalEventPayload": `{"jobId":"internal"}`,
+			},
+			Status:    JobStatusCompleted,
+			CreatedAt: time.Now().UTC(),
+		})
+
+		if result == nil {
+			t.Fatal("expected non-nil result")
+		}
+
+		if result.Metadata["source"] != "api" {
+			t.Fatalf("expected public metadata to be preserved, got %#v", result.Metadata)
+		}
+
+		for _, key := range []string{"terminalEventPending", "terminalEventStatus", "terminalEventPayload"} {
+			if _, ok := result.Metadata[key]; ok {
+				t.Fatalf("expected internal metadata key %q to be filtered from response: %#v", key, result.Metadata)
+			}
+		}
+	})
 }
 
 func TestNewJob(t *testing.T) {

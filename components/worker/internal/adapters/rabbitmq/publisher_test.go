@@ -39,8 +39,11 @@ func (m *mockRabbitMQManager) GetChannel(_ context.Context, _ string) (RabbitMQC
 // mockChannel is a mock implementation of RabbitMQChannel.
 type mockChannel struct {
 	exchangeDeclareErr error
+	confirmErr         error
 	publishErr         error
 	published          amqp.Publishing
+	confirmation       amqp.Confirmation
+	returned           *amqp.Return
 	closed             bool
 }
 
@@ -51,6 +54,26 @@ func (m *mockChannel) ExchangeDeclare(_, _ string, _, _, _, _ bool, _ amqp.Table
 func (m *mockChannel) PublishWithContext(_ context.Context, _, _ string, _, _ bool, msg amqp.Publishing) error {
 	m.published = msg
 	return m.publishErr
+}
+
+func (m *mockChannel) Confirm(bool) error {
+	return m.confirmErr
+}
+
+func (m *mockChannel) NotifyPublish(receiver chan amqp.Confirmation) chan amqp.Confirmation {
+	confirmation := m.confirmation
+	if confirmation.DeliveryTag == 0 {
+		confirmation = amqp.Confirmation{DeliveryTag: 1, Ack: true}
+	}
+	receiver <- confirmation
+	return receiver
+}
+
+func (m *mockChannel) NotifyReturn(receiver chan amqp.Return) chan amqp.Return {
+	if m.returned != nil {
+		receiver <- *m.returned
+	}
+	return receiver
 }
 
 func (m *mockChannel) Close() error {
@@ -308,6 +331,51 @@ func TestShutdown_MultiTenant_NilAdapter(t *testing.T) {
 
 	err := publisher.Shutdown(context.Background())
 	require.NoError(t, err)
+}
+
+func TestPublish_MultiTenant_ReturnsErrorWhenConfirmFails(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		channel *mockChannel
+		wantErr string
+	}{
+		{
+			name:    "confirm select fails",
+			channel: &mockChannel{confirmErr: errors.New("confirm unavailable")},
+			wantErr: "publisher confirms",
+		},
+		{
+			name:    "broker nacks publish",
+			channel: &mockChannel{confirmation: amqp.Confirmation{DeliveryTag: 7, Ack: false}},
+			wantErr: "confirmation nack",
+		},
+		{
+			name: "mandatory publish is unroutable",
+			channel: &mockChannel{returned: &amqp.Return{
+				ReplyCode:  312,
+				ReplyText:  "NO_ROUTE",
+				Exchange:   "exchange",
+				RoutingKey: "missing",
+			}},
+			wantErr: "unroutable",
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctx := tmcore.ContextWithTenantID(context.Background(), "tenant-123")
+			publisher := NewPublisherRoutesMultiTenant(&mockRabbitMQManager{channel: tt.channel}, log.NewNop(), nil, nil)
+
+			err := publisher.Publish(ctx, "exchange", "missing", []byte(`{"status":"completed"}`))
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
+	}
 }
 
 func TestNewPublisherRoutesMultiTenant_SetsFields(t *testing.T) {

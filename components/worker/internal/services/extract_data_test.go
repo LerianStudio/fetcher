@@ -211,8 +211,9 @@ func TestParseMessage_JSONNull(t *testing.T) {
 	}
 }
 
-// TestParseMessage_InvalidJSONWithJobIDInHeaders tests that jobID can be extracted from headers.
-func TestParseMessage_InvalidJSONWithJobIDInHeaders(t *testing.T) {
+// TestExtractExternalData_InvalidJSONWithJobIDInHeaders_DurablyFailsJob tests
+// parse failures are routed through the durable terminal failed-event path.
+func TestExtractExternalData_InvalidJSONWithJobIDInHeaders_DurablyFailsJob(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
@@ -220,7 +221,6 @@ func TestParseMessage_InvalidJSONWithJobIDInHeaders(t *testing.T) {
 	uc := newTestUseCase(mocks)
 
 	ctx := testContext()
-	logger := testLogger()
 	jobID := newTestJobID()
 
 	invalidBody := []byte(`{"invalid": json`)
@@ -228,7 +228,6 @@ func TestParseMessage_InvalidJSONWithJobIDInHeaders(t *testing.T) {
 		"jobId": jobID.String(),
 	}
 
-	// Expect job status update to failed due to parse error
 	mocks.jobRepo.EXPECT().
 		UpdateStatus(gomock.Any(), jobID, model.JobStatusFailed, "", "", gomock.Any()).
 		DoAndReturn(func(_ context.Context, _ uuid.UUID, _ model.JobStatus, resultPath, resultHMAC string, metadata map[string]any) error {
@@ -243,20 +242,35 @@ func TestParseMessage_InvalidJSONWithJobIDInHeaders(t *testing.T) {
 			if !ok {
 				t.Fatalf("expected metadata.error as string, got %T", metadata["error"])
 			}
-			if !strings.Contains(errValue, "Failed to parse message") {
+			if !strings.Contains(errValue, "failed to parse message") {
 				t.Fatalf("expected metadata.error to contain parse message details, got %q", errValue)
+			}
+			if pending, _ := metadata[terminalEventPendingMetadataKey].(bool); !pending {
+				t.Fatalf("expected terminal event pending marker in metadata: %#v", metadata)
 			}
 
 			return nil
 		})
+	mocks.rabbitPublisher.EXPECT().
+		Publish(gomock.Any(), "test-exchange", "job.failed", gomock.Any()).
+		Return(nil)
 
-	result, err := uc.parseMessage(ctx, invalidBody, headers, nil, logger)
+	err := uc.ExtractExternalData(ctx, invalidBody, headers)
 	if err == nil {
 		t.Fatal("expected error for invalid JSON, got nil")
 	}
+}
 
-	if result != nil {
-		t.Fatalf("expected nil result, got %+v", result)
+func TestExtractExternalData_InvalidJSONWithoutUsableJobID_DropsWithoutTerminalEvent(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+
+	err := uc.ExtractExternalData(testContext(), []byte(`{"jobId":"not-a-uuid",`), nil)
+	if err == nil {
+		t.Fatal("expected invalid message without usable job id to return an error")
 	}
 }
 
@@ -480,61 +494,6 @@ func TestShouldSkipProcessing(t *testing.T) {
 			}
 			if got != tt.wantSkip {
 				t.Fatalf("expected skip=%v, got skip=%v", tt.wantSkip, got)
-			}
-		})
-	}
-}
-
-// TestUpdateJobWithErrors tests job status update on error.
-func TestUpdateJobWithErrors(t *testing.T) {
-	tests := []struct {
-		name         string
-		errorMessage string
-		updateErr    error
-		wantErr      bool
-	}{
-		{
-			name:         "successful update",
-			errorMessage: "Test error message",
-			updateErr:    nil,
-			wantErr:      false,
-		},
-		{
-			name:         "update fails",
-			errorMessage: "Test error message",
-			updateErr:    errors.New("database connection failed"),
-			wantErr:      true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctrl := gomock.NewController(t)
-			defer ctrl.Finish()
-
-			mocks := newTestMocks(ctrl)
-			uc := newTestUseCase(mocks)
-
-			ctx := testContext()
-			jobID := newTestJobID()
-
-			mocks.jobRepo.EXPECT().
-				UpdateStatus(gomock.Any(), jobID, model.JobStatusFailed, gomock.Any(), gomock.Any(), gomock.Any()).
-				DoAndReturn(func(_ context.Context, _ uuid.UUID, _ model.JobStatus, _, _ string, metadata map[string]any) error {
-					if metadata["error"] != tt.errorMessage {
-						t.Errorf("expected error message %q in metadata, got %q", tt.errorMessage, metadata["error"])
-					}
-					return tt.updateErr
-				})
-
-			err := uc.updateJobWithErrors(ctx, jobID, tt.errorMessage)
-
-			if tt.wantErr && err == nil {
-				t.Fatal("expected error, got nil")
-			}
-
-			if !tt.wantErr && err != nil {
-				t.Fatalf("expected no error, got: %v", err)
 			}
 		})
 	}
@@ -780,92 +739,6 @@ func TestExtractJobIDFromMultipleSources_EdgeCases(t *testing.T) {
 	}
 }
 
-// TestCheckReportStatus tests the job status checking function.
-func TestCheckReportStatus(t *testing.T) {
-	tests := []struct {
-		name       string
-		setupMocks func(*testMocks, uuid.UUID)
-		wantStatus model.JobStatus
-		wantErr    bool
-	}{
-		{
-			name: "job found with completed status",
-			setupMocks: func(mocks *testMocks, jobID uuid.UUID) {
-				mocks.jobRepo.EXPECT().
-					FindByID(gomock.Any(), jobID).
-					Return(&model.Job{
-						ID:     jobID,
-						Status: model.JobStatusCompleted,
-					}, nil)
-			},
-			wantStatus: model.JobStatusCompleted,
-			wantErr:    false,
-		},
-		{
-			name: "job found with processing status",
-			setupMocks: func(mocks *testMocks, jobID uuid.UUID) {
-				mocks.jobRepo.EXPECT().
-					FindByID(gomock.Any(), jobID).
-					Return(&model.Job{
-						ID:     jobID,
-						Status: model.JobStatusProcessing,
-					}, nil)
-			},
-			wantStatus: model.JobStatusProcessing,
-			wantErr:    false,
-		},
-		{
-			name: "job not found - returns nil",
-			setupMocks: func(mocks *testMocks, jobID uuid.UUID) {
-				mocks.jobRepo.EXPECT().
-					FindByID(gomock.Any(), jobID).
-					Return(nil, nil)
-			},
-			wantStatus: "",
-			wantErr:    true,
-		},
-		{
-			name: "repository error",
-			setupMocks: func(mocks *testMocks, jobID uuid.UUID) {
-				mocks.jobRepo.EXPECT().
-					FindByID(gomock.Any(), jobID).
-					Return(nil, errors.New("database connection failed"))
-			},
-			wantStatus: "",
-			wantErr:    true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctrl := gomock.NewController(t)
-			defer ctrl.Finish()
-
-			mocks := newTestMocks(ctrl)
-			uc := newTestUseCase(mocks)
-
-			ctx := testContext()
-			jobID := newTestJobID()
-			logger := testLogger()
-
-			tt.setupMocks(mocks, jobID)
-
-			status, err := uc.checkReportStatus(ctx, jobID, logger)
-
-			if tt.wantErr && err == nil {
-				t.Fatal("expected error, got nil")
-			}
-			if !tt.wantErr && err != nil {
-				t.Fatalf("expected no error, got: %v", err)
-			}
-
-			if status != tt.wantStatus {
-				t.Fatalf("expected status %s, got %s", tt.wantStatus, status)
-			}
-		})
-	}
-}
-
 // TestCountTotalRows tests the row counting function.
 func TestCountTotalRows(t *testing.T) {
 	tests := []struct {
@@ -1089,37 +962,6 @@ func TestExtractJobIDFromPartialJSON_RegexFallback(t *testing.T) {
 	}
 }
 
-// TestParseMessage_UpdateStatusError tests when UpdateStatus fails during parse error.
-func TestParseMessage_UpdateStatusError(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mocks := newTestMocks(ctrl)
-	uc := newTestUseCase(mocks)
-
-	ctx := testContext()
-	logger := testLogger()
-	jobID := newTestJobID()
-
-	invalidBody := []byte(`{"invalid": json`)
-	headers := map[string]any{
-		"jobId": jobID.String(),
-	}
-
-	// UpdateStatus fails
-	mocks.jobRepo.EXPECT().
-		UpdateStatus(gomock.Any(), jobID, model.JobStatusFailed, gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(errors.New("update failed"))
-
-	result, err := uc.parseMessage(ctx, invalidBody, headers, nil, logger)
-	if err == nil {
-		t.Fatal("expected error for invalid JSON, got nil")
-	}
-	if result != nil {
-		t.Fatalf("expected nil result, got %+v", result)
-	}
-}
-
 // TestExtractConfigNamesFromMappedFields_WithComplexStructure tests complex mapped fields.
 func TestExtractConfigNamesFromMappedFields_WithComplexStructure(t *testing.T) {
 	mappedFields := map[string]map[string][]string{
@@ -1309,34 +1151,6 @@ func TestExtractExternalData_ParseErrorNoJobID(t *testing.T) {
 	}
 }
 
-// TestCheckReportStatus_JobDataNil tests checkReportStatus when job data is nil.
-func TestCheckReportStatus_JobDataNil(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mocks := newTestMocks(ctrl)
-	uc := newTestUseCase(mocks)
-
-	ctx := testContext()
-	jobID := newTestJobID()
-	logger := testLogger()
-
-	// Repository returns nil job (not found)
-	mocks.jobRepo.EXPECT().
-		FindByID(gomock.Any(), jobID).
-		Return(nil, nil)
-
-	status, err := uc.checkReportStatus(ctx, jobID, logger)
-
-	if err == nil {
-		t.Fatal("expected error when job data is nil")
-	}
-
-	if status != "" {
-		t.Errorf("expected empty status, got %s", status)
-	}
-}
-
 // TestExtractJobIDFromPartialJSON_ValidJobIDInvalidOrgID tests partial JSON extraction.
 func TestExtractJobIDFromPartialJSON_ValidJobIDInvalidOrgID(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -1395,27 +1209,6 @@ func TestParseMessage_NullPayload(t *testing.T) {
 		"jobId": jobID.String(),
 	}
 
-	mocks.jobRepo.EXPECT().
-		UpdateStatus(gomock.Any(), jobID, model.JobStatusFailed, "", "", gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ uuid.UUID, _ model.JobStatus, resultPath, resultHMAC string, metadata map[string]any) error {
-			if resultPath != "" {
-				t.Errorf("expected empty resultPath, got %q", resultPath)
-			}
-			if resultHMAC != "" {
-				t.Errorf("expected empty resultHMAC, got %q", resultHMAC)
-			}
-
-			errValue, ok := metadata["error"].(string)
-			if !ok {
-				t.Fatalf("expected metadata.error as string, got %T", metadata["error"])
-			}
-			if !strings.Contains(errValue, "empty message payload") {
-				t.Fatalf("expected metadata.error to contain empty payload message, got %q", errValue)
-			}
-
-			return nil
-		})
-
 	result, err := uc.parseMessage(ctx, []byte(`null`), headers, nil, logger)
 	if err == nil {
 		t.Fatal("expected error for null payload, got nil")
@@ -1443,27 +1236,6 @@ func TestParseMessage_MissingMappedFields(t *testing.T) {
 	jobID := newTestJobID()
 
 	body := []byte(`{"jobId":"` + jobID.String() + `","organizationId":"` + uuid.New().String() + `"}`)
-
-	mocks.jobRepo.EXPECT().
-		UpdateStatus(gomock.Any(), jobID, model.JobStatusFailed, "", "", gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ uuid.UUID, _ model.JobStatus, resultPath, resultHMAC string, metadata map[string]any) error {
-			if resultPath != "" {
-				t.Errorf("expected empty resultPath, got %q", resultPath)
-			}
-			if resultHMAC != "" {
-				t.Errorf("expected empty resultHMAC, got %q", resultHMAC)
-			}
-
-			errValue, ok := metadata["error"].(string)
-			if !ok {
-				t.Fatalf("expected metadata.error as string, got %T", metadata["error"])
-			}
-			if !strings.Contains(errValue, "mappedFields is required") {
-				t.Fatalf("expected metadata.error to contain mappedFields message, got %q", errValue)
-			}
-
-			return nil
-		})
 
 	result, err := uc.parseMessage(ctx, body, nil, nil, logger)
 	if err == nil {
@@ -1495,27 +1267,6 @@ func TestParseMessage_MissingJobID(t *testing.T) {
 	headers := map[string]any{
 		"jobId": jobID.String(),
 	}
-
-	mocks.jobRepo.EXPECT().
-		UpdateStatus(gomock.Any(), jobID, model.JobStatusFailed, "", "", gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ uuid.UUID, _ model.JobStatus, resultPath, resultHMAC string, metadata map[string]any) error {
-			if resultPath != "" {
-				t.Errorf("expected empty resultPath, got %q", resultPath)
-			}
-			if resultHMAC != "" {
-				t.Errorf("expected empty resultHMAC, got %q", resultHMAC)
-			}
-
-			errValue, ok := metadata["error"].(string)
-			if !ok {
-				t.Fatalf("expected metadata.error as string, got %T", metadata["error"])
-			}
-			if !strings.Contains(errValue, "jobId is required") {
-				t.Fatalf("expected metadata.error to contain jobId message, got %q", errValue)
-			}
-
-			return nil
-		})
 
 	result, err := uc.parseMessage(ctx, body, headers, nil, logger)
 	if err == nil {
@@ -1582,32 +1333,6 @@ func TestCountTotalRows_LargeDataset(t *testing.T) {
 	count := countTotalRows(result)
 	if count != expectedCount {
 		t.Fatalf("expected count %d, got %d", expectedCount, count)
-	}
-}
-
-// TestUpdateJobWithErrors_EmptyErrorMessage tests updating job with empty error message.
-func TestUpdateJobWithErrors_EmptyErrorMessage(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mocks := newTestMocks(ctrl)
-	uc := newTestUseCase(mocks)
-
-	ctx := testContext()
-	jobID := newTestJobID()
-
-	mocks.jobRepo.EXPECT().
-		UpdateStatus(gomock.Any(), jobID, model.JobStatusFailed, gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ uuid.UUID, _ model.JobStatus, _, _ string, metadata map[string]any) error {
-			if metadata["error"] != "" {
-				t.Errorf("expected empty error message in metadata, got %q", metadata["error"])
-			}
-			return nil
-		})
-
-	err := uc.updateJobWithErrors(ctx, jobID, "")
-	if err != nil {
-		t.Fatalf("expected no error, got: %v", err)
 	}
 }
 

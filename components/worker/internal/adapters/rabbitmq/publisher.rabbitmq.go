@@ -26,7 +26,7 @@ const (
 	attrMessagingRoutingKey     = "messaging.routing_key"
 	attrMessagingBodySize       = "messaging.body_size"
 	attrPublishRationale        = obsConstants.AttrPrefixAppRequest + "publish_rationale"
-	multiTenantPublishRationale = "tenant-manager exposes tenant-scoped AMQP channels but not a confirmable publisher factory; single-tenant publishing uses pkg/rabbitmq's lib-commons-backed adapter"
+	multiTenantPublishRationale = "tenant-manager exposes tenant-scoped AMQP channels; this adapter enables publisher confirms before terminal event success"
 )
 
 // PublisherRepository is an alias for the port interface.
@@ -41,6 +41,9 @@ type RabbitMQManagerInterface interface {
 // RabbitMQChannel abstracts an AMQP channel for publishing.
 type RabbitMQChannel interface {
 	ExchangeDeclare(name, kind string, durable, autoDelete, internal, noWait bool, args amqp.Table) error
+	Confirm(noWait bool) error
+	NotifyPublish(receiver chan amqp.Confirmation) chan amqp.Confirmation
+	NotifyReturn(receiver chan amqp.Return) chan amqp.Return
 	PublishWithContext(ctx context.Context, exchange, key string, mandatory, immediate bool, msg amqp.Publishing) error
 	Close() error
 }
@@ -182,15 +185,12 @@ func (pr *PublisherRoutes) PublishWithHeaders(ctx context.Context, exchange, rou
 			msg.ContentType = contentType
 		}
 
-		// This is the only remaining direct AMQP publish path: tenant-manager
-		// owns tenant-vhost channel resolution and does not expose a confirmable
-		// publisher factory yet. The single-tenant path below delegates to
-		// pkg/rabbitmq, where lib-commons backoff/circuit-breaker primitives are
-		// enforced. Do not add retries or circuit breakers here; add that to
-		// tenant-manager/lib-commons first.
+		// This direct AMQP path uses tenant-manager for tenant-vhost channel
+		// resolution and publisher confirms here so mandatory terminal events only
+		// succeed after broker acceptance.
 		span.SetAttributes(attribute.String(attrPublishRationale, multiTenantPublishRationale))
 
-		if err := ch.PublishWithContext(ctx, exchange, routingKey, false, false, msg); err != nil {
+		if err := publishWithConfirm(ctx, ch, exchange, routingKey, msg); err != nil {
 			opentelemetry.HandleSpanError(span, "Failed to publish message to tenant vhost", err)
 			pr.Log(ctx, libLog.LevelError, fmt.Sprintf("Error publishing to exchange %s on tenant %s", exchange, tenantID), libLog.Err(err))
 
@@ -249,6 +249,38 @@ func (pr *PublisherRoutes) PublishWithHeaders(ctx context.Context, exchange, rou
 	)
 
 	return nil
+}
+
+func publishWithConfirm(ctx context.Context, ch RabbitMQChannel, exchange, routingKey string, msg amqp.Publishing) error {
+	if err := ch.Confirm(false); err != nil {
+		return fmt.Errorf("enable rabbitmq publisher confirms: %w", err)
+	}
+
+	confirmations := ch.NotifyPublish(make(chan amqp.Confirmation, 1))
+	returns := ch.NotifyReturn(make(chan amqp.Return, 1))
+
+	if err := ch.PublishWithContext(ctx, exchange, routingKey, true, false, msg); err != nil {
+		return fmt.Errorf("rabbitmq publish mandatory message: %w", err)
+	}
+
+	select {
+	case returned := <-returns:
+		return fmt.Errorf("rabbitmq message unroutable: reply_code=%d reply_text=%s exchange=%s routing_key=%s", returned.ReplyCode, returned.ReplyText, returned.Exchange, returned.RoutingKey)
+	case confirmation := <-confirmations:
+		if !confirmation.Ack {
+			return fmt.Errorf("rabbitmq publisher confirmation nack: delivery_tag=%d", confirmation.DeliveryTag)
+		}
+
+		select {
+		case returned := <-returns:
+			return fmt.Errorf("rabbitmq message unroutable after ack: reply_code=%d reply_text=%s exchange=%s routing_key=%s", returned.ReplyCode, returned.ReplyText, returned.Exchange, returned.RoutingKey)
+		default:
+		}
+
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // Shutdown gracefully shuts down the RabbitMQ adapter.

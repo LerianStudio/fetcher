@@ -398,6 +398,7 @@ func TestRabbitMQAdapter_ProducerDefault_Success(t *testing.T) {
 			record := channel.published[0]
 			assert.Equal(t, tt.exchange, record.exchange)
 			assert.Equal(t, tt.key, record.key)
+			assert.True(t, record.mandatory)
 			assert.Equal(t, string(tt.body), string(record.message.Body))
 			assert.Equal(t, "application/json", record.message.ContentType)
 
@@ -529,6 +530,51 @@ func TestRabbitMQAdapter_ProducerDefault_ReturnsError_WhenCircuitOpen(t *testing
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrCircuitOpen)
+}
+
+func TestRabbitMQAdapter_ProducerDefault_ReturnsError_WhenPublisherConfirmFails(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		channel *testAMQPChannel
+		wantErr string
+	}{
+		{
+			name:    "confirm select fails",
+			channel: &testAMQPChannel{confirmErr: errors.New("confirm unavailable")},
+			wantErr: "publisher confirms",
+		},
+		{
+			name:    "broker nacks publish",
+			channel: &testAMQPChannel{confirmation: amqp.Confirmation{DeliveryTag: 7, Ack: false}},
+			wantErr: "confirmation nack",
+		},
+		{
+			name: "mandatory publish is unroutable",
+			channel: &testAMQPChannel{returned: &amqp.Return{
+				ReplyCode:  312,
+				ReplyText:  "NO_ROUTE",
+				Exchange:   "ex",
+				RoutingKey: "missing",
+			}},
+			wantErr: "unroutable",
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			conn := &testRabbitConnection{channel: tt.channel}
+			adapter := newTestAdapter(conn)
+
+			err := adapter.ProducerDefault(testContextWithHeader("req-confirm"), "ex", "missing", []byte(`{}`), nil)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
+	}
 }
 
 // -----------------------------------------------------------------------------
@@ -822,6 +868,9 @@ type testAMQPChannel struct {
 	publishErr      error
 	publishErrs     []error
 	publishAttempts int
+	confirmErr      error
+	confirmation    amqp.Confirmation
+	returned        *amqp.Return
 	consumeErr      error
 	qosErr          error
 
@@ -871,6 +920,26 @@ func (t *testAMQPChannel) Publish(exchange, key string, mandatory, immediate boo
 	})
 
 	return nil
+}
+
+func (t *testAMQPChannel) Confirm(bool) error {
+	return t.confirmErr
+}
+
+func (t *testAMQPChannel) NotifyPublish(receiver chan amqp.Confirmation) chan amqp.Confirmation {
+	confirmation := t.confirmation
+	if confirmation.DeliveryTag == 0 {
+		confirmation = amqp.Confirmation{DeliveryTag: 1, Ack: true}
+	}
+	receiver <- confirmation
+	return receiver
+}
+
+func (t *testAMQPChannel) NotifyReturn(receiver chan amqp.Return) chan amqp.Return {
+	if t.returned != nil {
+		receiver <- *t.returned
+	}
+	return receiver
 }
 
 func (t *testAMQPChannel) Consume(queue, consumer string, autoAck, exclusive, noLocal, noWait bool, args amqp.Table) (<-chan amqp.Delivery, error) {
@@ -1335,6 +1404,50 @@ func TestRabbitMQAdapter_RunConsumerCycle_FailsOnConsumeError(t *testing.T) {
 	err := adapter.ConsumerLoop(ctx, "queue", 1, handler)
 
 	assert.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
+func TestRabbitMQAdapter_RunConsumerCycle_RecordsSetupFailuresInCircuitBreaker(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		setup func(*testAMQPChannel)
+	}{
+		{
+			name: "qos failure opens circuit",
+			setup: func(ch *testAMQPChannel) {
+				ch.qosErr = errors.New("qos failed")
+			},
+		},
+		{
+			name: "consume failure opens circuit",
+			setup: func(ch *testAMQPChannel) {
+				ch.consumeErr = errors.New("consume failed")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			channel := newTestAMQPChannel()
+			tt.setup(channel)
+
+			conn := &testRabbitConnection{channel: channel}
+			adapter := newTestAdapter(conn)
+			adapter.options.CircuitBreakerThreshold = 1
+			adapter.circuitBreaker = newTestCircuitBreakerManager(adapter.options)
+
+			err := adapter.runConsumerCycle(testContextWithHeader("req-setup"), otel.Tracer("test"), libLog.NewNop(), "queue", "req-setup", 1, func(context.Context, []byte, map[string]any) error {
+				return nil
+			})
+
+			require.Error(t, err)
+			assert.Equal(t, CircuitOpen, adapter.CircuitBreakerState())
+		})
+	}
 }
 
 // -----------------------------------------------------------------------------

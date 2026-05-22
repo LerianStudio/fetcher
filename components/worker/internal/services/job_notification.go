@@ -82,6 +82,8 @@ const (
 // Legacy direct RabbitMQ business-event routing is intentionally disabled: the
 // event contract is the lib-streaming definition key (job.completed/job.failed),
 // while source remains payload metadata instead of a routing-key segment.
+//
+//nolint:unused // retained as a direct unit-test seam for notification payload construction and streaming emission.
 func (uc *UseCase) publishJobNotification(
 	ctx context.Context,
 	tracer trace.Tracer,
@@ -162,6 +164,7 @@ func buildJobNotificationPayload(message ExtractExternalDataMessage, status stri
 	return notificationJSON, nil
 }
 
+//nolint:unused // used by publishJobNotification, which is retained as a direct unit-test seam.
 func (uc *UseCase) publishJobNotificationViaStreaming(ctx context.Context, span trace.Span, status, jobID string, payload []byte, logger libLog.Logger) error {
 	if err := uc.emitJobNotificationEvent(ctx, status, jobID, payload); err != nil {
 		libOtel.HandleSpanError(span, "Error emitting job notification with lib-streaming", err)

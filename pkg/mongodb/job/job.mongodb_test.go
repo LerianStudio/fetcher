@@ -587,6 +587,29 @@ func TestJobMongoDBRepository_UpdateStatus(t *testing.T) {
 	})
 }
 
+func TestJobMongoDBRepository_ClearTerminalEventMetadata(t *testing.T) {
+	repo := newJobRepository(t)
+	created := createJob(t, repo, jobFixture())
+
+	metadata := map[string]any{
+		"source":               "api",
+		"terminalEventPending": true,
+		"terminalEventStatus":  "completed",
+		"terminalEventPayload": `{"jobId":"internal"}`,
+	}
+	require.NoError(t, repo.UpdateStatus(context.Background(), created.ID, model.JobStatusCompleted, "", "", metadata))
+
+	require.NoError(t, repo.ClearTerminalEventMetadata(context.Background(), created.ID))
+
+	found, err := repo.FindByID(context.Background(), created.ID)
+	require.NoError(t, err)
+	require.NotNil(t, found)
+	assert.Equal(t, "api", found.Metadata["source"])
+	assert.NotContains(t, found.Metadata, "terminalEventPending")
+	assert.NotContains(t, found.Metadata, "terminalEventStatus")
+	assert.NotContains(t, found.Metadata, "terminalEventPayload")
+}
+
 func TestJobMongoDBRepository_FindByRequestHashWithinWindow(t *testing.T) {
 	t.Run("finds job within time window", func(t *testing.T) {
 		repo := newJobRepository(t)

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/LerianStudio/lib-observability"
+	observability "github.com/LerianStudio/lib-observability"
 
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
@@ -336,6 +336,52 @@ func (jr *JobMongoDBRepository) UpdateStatus(ctx context.Context, id uuid.UUID, 
 	if result.MatchedCount == 0 {
 		err := errors.New("job not found")
 		libOpentelemetry.HandleSpanBusinessErrorEvent(spanUpdate, "Job not found", err)
+
+		return err
+	}
+
+	return nil
+}
+
+// ClearTerminalEventMetadata removes internal terminal-event retry markers once
+// the mandatory job notification has been accepted for delivery.
+func (jr *JobMongoDBRepository) ClearTerminalEventMetadata(ctx context.Context, id uuid.UUID) error {
+	_, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
+
+	ctx, span := tracer.Start(ctx, "mongodb.clear_job_terminal_event_metadata")
+	defer span.End()
+
+	attributes := []attribute.KeyValue{
+		attribute.String("app.request.request_id", reqID),
+		attribute.String("app.request.job_id", id.String()),
+	}
+	span.SetAttributes(attributes...)
+
+	db, err := jr.getDatabase(ctx)
+	if err != nil {
+		libOpentelemetry.HandleSpanError(span, "Failed to get database", err)
+		return fmt.Errorf("failed to get database connection: %w", err)
+	}
+
+	coll := db.Collection(strings.ToLower(constant.MongoCollectionJob))
+	filter := bson.M{"_id": id}
+	update := bson.M{
+		"$unset": bson.M{
+			"metadata.terminalEventPending": "",
+			"metadata.terminalEventStatus":  "",
+			"metadata.terminalEventPayload": "",
+		},
+	}
+
+	result, err := coll.UpdateOne(ctx, filter, update)
+	if err != nil {
+		libOpentelemetry.HandleSpanError(span, "Failed to clear terminal event metadata", err)
+		return fmt.Errorf("failed to clear terminal event metadata: %w", err)
+	}
+
+	if result.MatchedCount == 0 {
+		err := errors.New("job not found")
+		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Job not found", err)
 
 		return err
 	}
