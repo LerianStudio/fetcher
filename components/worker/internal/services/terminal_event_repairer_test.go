@@ -79,6 +79,42 @@ func TestTerminalEventRepairer_RepairOnce_WithTenantScope_InjectsTenantContext(t
 	require.True(t, repo.seenTenantDB[0])
 }
 
+func TestTerminalEventRepairer_RepairOnce_WithTenantScope_ContinuesAfterTenantFailure(t *testing.T) {
+	t.Parallel()
+
+	jobID := uuid.New()
+	repo := &pendingTerminalRepo{
+		requireTenantContext: true,
+		jobs: []*model.Job{{
+			ID:     jobID,
+			Status: model.JobStatusCompleted,
+			Metadata: map[string]any{
+				terminalEventPendingMetadataKey: true,
+				terminalEventStatusMetadataKey:  "completed",
+				terminalEventPayloadMetadataKey: `{"status":"completed"}`,
+			},
+		}},
+	}
+	emitter := &countingEmitter{}
+	uc := &UseCase{JobRepository: repo, JobEventEmitter: emitter, JobEventStreamingEnabled: true, JobEventStreamingRequireTenant: true}
+	repairer := NewTerminalEventRepairerWithTenantScope(
+		uc,
+		testLogger(),
+		"fetcher",
+		&activeTenantRepo{tenants: []*tmclient.TenantSummary{{ID: "tenant-a"}, {ID: "tenant-b"}}},
+		&tenantMongoResolver{failTenants: map[string]error{"tenant-a": errors.New("tenant database unavailable")}},
+	)
+
+	err := repairer.RepairOnce(testContext())
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "tenant-a")
+	require.Contains(t, err.Error(), "tenant database unavailable")
+	require.Equal(t, 1, emitter.count)
+	require.Equal(t, "tenant-b", emitter.tenantIDs[0])
+	require.Equal(t, "tenant-b", repo.seenTenantIDs[0])
+	require.True(t, repo.seenTenantDB[0])
+}
+
 func TestTerminalEventRepairer_RepairOnce_ErrorPaths(t *testing.T) {
 	t.Parallel()
 
@@ -255,9 +291,15 @@ func (r *activeTenantRepo) GetActiveTenantsByService(context.Context, string) ([
 	return r.tenants, r.err
 }
 
-type tenantMongoResolver struct{}
+type tenantMongoResolver struct {
+	failTenants map[string]error
+}
 
 func (r *tenantMongoResolver) GetDatabaseForTenant(_ context.Context, tenantID string) (*mongo.Database, error) {
+	if err := r.failTenants[tenantID]; err != nil {
+		return nil, err
+	}
+
 	client, err := mongo.NewClient(options.Client().ApplyURI("mongodb://localhost:27017"))
 	if err != nil {
 		return nil, err

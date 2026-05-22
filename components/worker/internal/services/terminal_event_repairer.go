@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -140,6 +141,8 @@ func (r *TerminalEventRepairer) RepairOnce(ctx context.Context) error {
 			return fmt.Errorf("list active tenants for terminal event repair: %w", err)
 		}
 
+		var tenantErrs []error
+
 		for _, tenant := range tenants {
 			if tenant == nil || tenant.ID == "" {
 				continue
@@ -149,16 +152,24 @@ func (r *TerminalEventRepairer) RepairOnce(ctx context.Context) error {
 
 			tenantDB, err := r.mongoResolver.GetDatabaseForTenant(tenantCtx, tenant.ID)
 			if err != nil {
-				return fmt.Errorf("resolve tenant mongo for terminal event repair tenant %s: %w", tenant.ID, err)
+				tenantErr := fmt.Errorf("resolve tenant mongo for terminal event repair tenant %s: %w", tenant.ID, err)
+				tenantErrs = append(tenantErrs, tenantErr)
+
+				logger.Log(ctx, libLog.LevelError, "failed to resolve tenant mongo for terminal event repair", libLog.String("tenant_id", tenant.ID), libLog.Err(err))
+
+				continue
 			}
 
 			tenantCtx = tmcore.ContextWithMB(tenantCtx, tenantDB)
 			if err := r.repairOnceInContext(tenantCtx, lister, logger); err != nil {
-				return fmt.Errorf("repair pending terminal events for tenant %s: %w", tenant.ID, err)
+				tenantErr := fmt.Errorf("repair pending terminal events for tenant %s: %w", tenant.ID, err)
+				tenantErrs = append(tenantErrs, tenantErr)
+
+				logger.Log(ctx, libLog.LevelError, "failed to repair pending terminal events for tenant", libLog.String("tenant_id", tenant.ID), libLog.Err(err))
 			}
 		}
 
-		return nil
+		return errors.Join(tenantErrs...)
 	}
 
 	return r.repairOnceInContext(ctx, lister, logger)

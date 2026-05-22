@@ -1005,6 +1005,12 @@ func initMultiTenantStack(
 
 	logger.Log(ctx, libLog.LevelInfo, "MultiTenantConsumer initialized with shared EventDispatcher and per-tenant vhost isolation")
 
+	const mtConsumerCircuitBreakerWaiverWarning = "MultiTenantConsumer uses lib-commons v5.2.0 internal " +
+		"Tenant Manager client without circuit breaker injection seam; see docs/compatibility-waivers.md"
+
+	logger.Log(ctx, libLog.LevelWarn,
+		mtConsumerCircuitBreakerWaiverWarning)
+
 	// 6. Create TenantEventListener (Redis Pub/Sub -> dispatcher.HandleEvent)
 	var listenerCleanup func()
 

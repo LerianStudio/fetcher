@@ -2,6 +2,9 @@ package rabbitmq
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"testing"
 	"time"
@@ -219,6 +222,23 @@ func TestVerifyMessageSignature_TypedNilSigner(t *testing.T) {
 	err := VerifyMessageSignature([]byte(`{}`), map[string]any{}, "exchange", "route", signer, time.Minute, libLogNop(), nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrSignatureVerifierNotConfigured)
+}
+
+func TestCompatibilityWaivers_DocumentMultiTenantConsumerAndAMQPSigningGaps(t *testing.T) {
+	t.Parallel()
+
+	_, currentFile, _, ok := runtime.Caller(0)
+	require.True(t, ok)
+
+	waiverPath := filepath.Join(filepath.Dir(currentFile), "..", "..", "docs", "compatibility-waivers.md")
+	content, err := os.ReadFile(waiverPath)
+	require.NoError(t, err)
+
+	waivers := string(content)
+	require.Contains(t, waivers, "Worker `tmconsumer.MultiTenantConsumer` hidden Tenant Manager client lacks circuit breaker injection seam")
+	require.Contains(t, waivers, "RabbitMQ AMQP security envelope uses temporary local HMAC adapter")
+	require.Contains(t, waivers, "client.WithCircuitBreaker")
+	require.Contains(t, waivers, "queue-envelope signing/verification APIs")
 }
 
 func TestVerifyMessageSignature_AllowsBoundedFutureSkew(t *testing.T) {
