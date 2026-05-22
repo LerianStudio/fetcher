@@ -949,3 +949,52 @@ func TestTestConnection_Execute_RateLimitKeySingleTenant(t *testing.T) {
 	assert.Equal(t, connID.String(), capturedKey,
 		"single-tenant mode must use plain connection ID as rate limiter key")
 }
+
+// TestTestConnection_Execute_FactoryValidationErrorPropagates verifies Fix 4:
+// when the datasource factory returns a pkg.ValidationError (FET-0414 host
+// safety rejection), Execute must propagate it verbatim instead of masking
+// behind a generic 500 "Database Connection Error". Doing otherwise breaks
+// the documented FET-0414 → HTTP 400 contract and silently drops the audit
+// signal that a tenant tried to reach a denylisted host.
+func TestTestConnection_Execute_FactoryValidationErrorPropagates(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockCrypto := crypto.NewMockCryptor(ctrl)
+	mockStore := NewMockRateLimiterStore(ctrl)
+
+	connID := uuid.New()
+	existingConn := newTestConnectionFixture(connID, model.TypePostgreSQL)
+
+	mockStore.EXPECT().
+		Take(gomock.Any(), gomock.Any()).
+		Return(uint64(1), uint64(10), uint64(time.Now().UTC().Add(time.Minute).UnixNano()), true, nil)
+	mockConnRepo.EXPECT().
+		FindByID(gomock.Any(), connID).
+		Return(existingConn, nil)
+
+	// Factory mimics what hostsafety.ValidateHostForConnection emits when a
+	// tenant points at a denylisted host. The factory call site uses
+	// libOpentelemetry.HandleSpanError + return — see datasource_factory.go
+	// at the hostsafety.ValidateHostForConnection call site.
+	factoryErr := pkg.ValidationError{
+		EntityType: "connection",
+		Code:       "FET-0414",
+		Title:      "Forbidden Host",
+		Message:    "Host is not a valid external database endpoint",
+	}
+	stubFactory := func(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor) (datasourceModel.DataSource, error) {
+		return nil, factoryErr
+	}
+
+	svc := NewTestConnection(mockConnRepo, mockCrypto, mockStore, stubFactory, nil, nil)
+
+	_, err := svc.Execute(testContext(), connID)
+	require.Error(t, err)
+
+	var ve pkg.ValidationError
+	require.True(t, errors.As(err, &ve),
+		"TestConnection must propagate factory's pkg.ValidationError unchanged, got: %T %v", err, err)
+	assert.Equal(t, "FET-0414", ve.Code, "FET-0414 must survive the service layer")
+}

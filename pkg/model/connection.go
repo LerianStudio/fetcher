@@ -466,7 +466,7 @@ func (conn *Connection) ToMapWithMask() map[string]any {
 type ConnectionInput struct {
 	ConfigName   string          `json:"configName" validate:"required" example:"production-db" minLength:"3" maxLength:"100"`
 	Type         string          `json:"type" validate:"required,oneof=ORACLE SQL_SERVER POSTGRESQL MONGODB MYSQL" example:"POSTGRESQL"`
-	Host         string          `json:"host" validate:"required,hostname|ip" example:"db.example.com"`
+	Host         string          `json:"host" validate:"required,hostname|ip,safe_host" example:"db.example.com"`
 	Port         int             `json:"port" validate:"required,min=1,max=65535" example:"5432"`
 	DatabaseName string          `json:"databaseName" validate:"required" example:"mydatabase"`
 	Schema       string          `json:"schema,omitempty" example:"my_schema"`
@@ -542,7 +542,7 @@ func (s *SSLInput) IsEmpty() bool {
 type ConnectionUpdateInput struct {
 	ConfigName   *string         `json:"configName,omitempty" validate:"omitempty,min=3,max=100" example:"production-db" minLength:"3" maxLength:"100"`
 	Type         *string         `json:"type,omitempty" validate:"omitempty,oneof=ORACLE SQL_SERVER POSTGRESQL MONGODB MYSQL" example:"POSTGRESQL"`
-	Host         *string         `json:"host,omitempty" validate:"omitempty" example:"db.example.com"`
+	Host         *string         `json:"host,omitempty" validate:"omitempty,hostname|ip,safe_host" example:"db.example.com"`
 	Port         *int            `json:"port,omitempty" validate:"omitempty,min=1,max=65535" example:"5432"`
 	DatabaseName *string         `json:"databaseName,omitempty" validate:"omitempty" example:"mydatabase"`
 	Schema       *string         `json:"schema,omitempty" example:"my_schema"`

@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/LerianStudio/fetcher/pkg"
+	"github.com/LerianStudio/fetcher/pkg/datasource/hostsafety"
 	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
 	"github.com/go-playground/locales/en"
 	ut "github.com/go-playground/universal-translator"
@@ -247,6 +248,11 @@ func ValidateStruct(s any) error {
 				return pkg.ValidateBusinessError(cn.ErrMetadataValueLengthExceeded, "", fieldError.Translate(trans), fieldError.Param())
 			case "nonested":
 				return pkg.ValidateBusinessError(cn.ErrInvalidMetadataNesting, "", fieldError.Translate(trans))
+			case "safe_host":
+				// SSRF host safety guard rejected an IP literal at DTO layer.
+				// Generic-message contract: do NOT echo the host or reveal
+				// which range matched (see docs/PROJECT_RULES.md § "Error Surface").
+				return pkg.ValidateBusinessError(cn.ErrForbiddenHost, "connection")
 			}
 		}
 
@@ -330,6 +336,7 @@ func newValidator() (*validator.Validate, ut.Translator, error) {
 	_ = v.RegisterValidation("keymax", validateMetadataKeyMaxLength)
 	_ = v.RegisterValidation("nonested", validateMetadataNestedValues)
 	_ = v.RegisterValidation("valuemax", validateMetadataValueMaxLength)
+	_ = v.RegisterValidation("safe_host", validateSafeHost)
 
 	_ = v.RegisterTranslation("required", trans, func(ut ut.Translator) error {
 		return ut.Add("required", "{0} is a required field", true)
@@ -385,6 +392,15 @@ func newValidator() (*validator.Validate, ut.Translator, error) {
 // validateMetadataNestedValues checks if there are nested metadata structures
 func validateMetadataNestedValues(fl validator.FieldLevel) bool {
 	return fl.Field().Kind() != reflect.Map
+}
+
+// validateSafeHost rejects connection hosts whose literal IP falls in a
+// denylisted CIDR range when the SSRF host safety guard is enabled. Hostnames
+// always pass at this layer — DNS resolution and CIDR matching for hostnames
+// is the responsibility of the factory-level guard (hostsafety.ValidateHostForConnection),
+// which runs just before the database dial.
+func validateSafeHost(fl validator.FieldLevel) bool {
+	return hostsafety.ValidateSafeHostString(fl.Field().String())
 }
 
 // validateMetadataKeyMaxLength checks if metadata key (always a string) length is allowed

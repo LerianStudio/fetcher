@@ -1469,3 +1469,61 @@ func TestNormalizeFieldNameForValidation(t *testing.T) {
 		})
 	}
 }
+
+// TestValidateSchema_Execute_FactoryValidationErrorPropagates verifies Fix 4
+// for the validate_schema path: when the datasource factory returns a
+// pkg.ValidationError (FET-0414 host safety rejection) on cache miss, the
+// service must propagate it as a top-level error (HTTP 400 via the renderer)
+// instead of burying it as a per-datasource warning that yields a 200 with
+// model.NewDataSourceDownError. Otherwise the FET-0414 audit signal is lost
+// and the response shape masks an SSRF attempt as a transient connectivity
+// blip.
+func TestValidateSchema_Execute_FactoryValidationErrorPropagates(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockCrypto := crypto.NewMockCryptor(ctrl)
+	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
+
+	connID := uuid.New()
+
+	mockConnRepo.EXPECT().
+		FindByConfigNames(gomock.Any(), []string{"midaz_onboarding"}).
+		Return([]*model.Connection{
+			{ID: connID, ConfigName: "midaz_onboarding", Type: model.TypePostgreSQL},
+		}, nil)
+
+	// Cache miss → control reaches the factory call site.
+	mockSchemaCache.EXPECT().
+		Get(gomock.Any(), "midaz_onboarding").
+		Return(nil, nil)
+
+	factoryErr := pkg.ValidationError{
+		EntityType: "connection",
+		Code:       "FET-0414",
+		Title:      "Forbidden Host",
+		Message:    "Host is not a valid external database endpoint",
+	}
+	stubFactory := func(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor) (datasource.DataSource, error) {
+		return nil, factoryErr
+	}
+
+	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, stubFactory, nil)
+
+	ctx := testContext()
+	request := model.SchemaValidationRequest{
+		MappedFields: map[string]map[string][]string{
+			"midaz_onboarding": {"account": {"id"}},
+		},
+	}
+
+	resp, err := service.Execute(ctx, request)
+	require.Error(t, err, "factory ValidationError must surface as top-level error")
+	assert.Nil(t, resp, "validation response must be nil when guard rejects the host")
+
+	var ve pkg.ValidationError
+	require.True(t, errors.As(err, &ve),
+		"ValidateSchema must propagate pkg.ValidationError unchanged, got: %T %v", err, err)
+	assert.Equal(t, "FET-0414", ve.Code, "FET-0414 must survive validate-schema service layer")
+}

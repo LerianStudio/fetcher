@@ -80,6 +80,7 @@ E2E_REUSE_INFRA=true E2E_MANAGER_URL=http://localhost:4006 go test -v -tags e2e 
 | `E2E_SKIP_WORKER` | `false` | Skip Worker container (for debugging Worker locally) |
 | `E2E_MANAGER_URL` | `""` | URL of external Manager (default: `http://localhost:4006` when `E2E_SKIP_MANAGER=true`) |
 | `E2E_DEBUG_LOG` | `false` | Enable debug logging for HTTP requests/responses |
+| `E2E_SSRF_MT_ENABLED` | `false` | Activate the SSRF host safety E2E tests in `connection_ssrf_test.go`. Requires the Manager under test to be running with `MULTI_TENANT_ENABLED=true` plus the multi-tenant fixture dependencies (see `connection_ssrf_test.go` preamble). Default-off because the shared E2E Manager hardcodes `MULTI_TENANT_ENABLED=false`. Activation will land with `fetcher-017`. |
 
 ## Prerequisites
 
@@ -640,6 +641,18 @@ docker ps -a | grep -E "(mongo|rabbit|redis|seaweed|postgres)" | awk '{print $1}
 | `connection_test_test.go` | `TestConnectionTest_UnreachableHost_Error` | Unreachable host returns error |
 | `connection_test_test.go` | `TestConnectionTest_WrongCredentials_Error` | Wrong credentials returns error |
 | `connection_test_test.go` | `TestConnectionTest_NotFound_404` | Test non-existent connection returns 404 |
+
+### Connection SSRF Host Safety (requires `E2E_SSRF_MT_ENABLED=true`)
+
+These tests verify the SSRF host denylist guard introduced in `fetcher-013`. All tests in this section are **skipped** unless `E2E_SSRF_MT_ENABLED=true` AND the Manager under test runs with `MULTI_TENANT_ENABLED=true`. Activation will land with `fetcher-017`. See the file preamble for the full activation contract.
+
+| File | Test | Description |
+|------|------|-------------|
+| `connection_ssrf_test.go` | `TestConnectionSSRF_LoopbackBlocked` | POST connection with `Host: "127.0.0.1"` returns 400 + `FET-0414` (DTO `safe_host` validator rejects IPv4 loopback literal) |
+| `connection_ssrf_test.go` | `TestConnectionSSRF_CloudMetadataBlocked` | POST connection with `Host: "169.254.169.254"` (AWS/GCP/Azure IMDS) returns 400 + `FET-0414` |
+| `connection_ssrf_test.go` | `TestConnectionSSRF_RFC1918Blocked` | POST connection with `Host: "10.0.0.1"` returns 400 + `FET-0414` (private RFC1918 range) |
+| `connection_ssrf_test.go` | `TestConnectionSSRF_PublicHostnameAccepted` | POST with non-resolvable public hostname (`*.example.test`) returns 201 — proves DNS-failure bypass branch (no oracle for non-existent hosts) |
+| `connection_ssrf_test.go` | `TestConnectionSSRF_HappyPathTestConnection` | Regression smoke: legitimate PostgreSQL fixture connection succeeds in both POST and `POST /test` with the guard active |
 
 ### Connection Validation
 
