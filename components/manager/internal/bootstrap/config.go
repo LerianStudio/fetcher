@@ -583,7 +583,7 @@ func assembleService(
 	listConnectionsQuery := connectionQuery.NewListConnections(repositories.connection, connResolver)
 	testConnectionQuery := connectionQuery.NewTestConnection(repositories.connection, cryptoService, platformDependencies.connectionTestStore, dsFactory, connResolver, registry)
 	validateSchemaQuery := connectionQuery.NewValidateSchema(repositories.connection, cryptoService, platformDependencies.schemaCache, dsFactory, connResolver)
-	getConnectionSchemaQuery := connectionQuery.NewGetConnectionSchema(repositories.connection, cryptoService, dsFactory, connResolver, registry)
+	getConnectionSchemaQuery := connectionQuery.NewGetConnectionSchema(repositories.connection, cryptoService, dsFactory, connResolver, registry, cfg.MultiTenantEnabled)
 
 	connectionHandler := in2.NewConnectionHandler(
 		createConnectionCmd,
