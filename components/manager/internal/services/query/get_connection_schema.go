@@ -2,6 +2,7 @@ package query
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -79,6 +80,13 @@ func (s *GetConnectionSchema) Execute(ctx context.Context, connectionID uuid.UUI
 			libLog.String("connection_id", connectionID.String()),
 			libLog.Err(err),
 		)
+
+		// Preserve typed validation errors (e.g. FET-0414) so they reach the
+		// renderer as HTTP 400 instead of being masked by the generic 500.
+		var ve pkg.ValidationError
+		if errors.As(err, &ve) {
+			return nil, err
+		}
 
 		return nil, pkg.ResponseError{
 			Code:    http.StatusInternalServerError,

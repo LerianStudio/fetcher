@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -392,6 +393,17 @@ func (s *CreateFetcherJob) testConnections(ctx context.Context, span trace.Span,
 
 		if err := s.connectionTester.TestConnection(ctx, conn); err != nil {
 			libOpentelemetry.HandleSpanBusinessErrorEvent(span, fmt.Sprintf("Connection test failed for %s", conn.ConfigName), err)
+
+			// Preserve typed validation errors (e.g. FET-0414 host safety
+			// rejection from the factory). Remapping to ErrConnectionDown
+			// (FET-1040) would break the documented FET-0414 → HTTP 400
+			// contract and drop the audit signal that a tenant tried to
+			// reach a denylisted host. Same pattern as the three query
+			// services (test_connection, get_connection_schema, validate_schema).
+			var ve pkg.ValidationError
+			if errors.As(err, &ve) {
+				return err
+			}
 
 			return pkg.ValidationError{
 				EntityType: "fetcher",

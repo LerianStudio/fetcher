@@ -10,6 +10,7 @@ import (
 
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
+	"github.com/LerianStudio/fetcher/pkg/datasource/hostsafety"
 	"github.com/LerianStudio/fetcher/pkg/datasource/sslmode"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/model/datasource"
@@ -70,6 +71,11 @@ func NewDataSourceFromConnection(ctx context.Context, conn *model.Connection, cr
 		err := fmt.Errorf("cryptor cannot be nil for encrypted connections")
 		libOpentelemetry.HandleSpanError(span, "nil cryptor", err)
 
+		return nil, err
+	}
+
+	if err := hostsafety.ValidateHostForConnection(ctx, conn); err != nil {
+		libOpentelemetry.HandleSpanError(span, "host blocked by safety policy", err)
 		return nil, err
 	}
 

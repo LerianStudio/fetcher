@@ -1151,6 +1151,107 @@ make generate-docs
 
 ---
 
+## Security: Host Safety / SSRF Guard
+
+The Fetcher Manager exposes endpoints that, given any authenticated tenant, must accept a database `Host` value and establish a real network connection to it (CREATE/UPDATE connection, POST /test, POST /validate-schema, POST /v1/fetcher). Without a guard, these endpoints become a reconnaissance and SSRF vector against the platform's own internal network (loopback, RFC1918, cloud metadata IMDS at `169.254.169.254`, internal Kubernetes hostnames). The SSRF host safety guard closes this vector for multi-tenant deployments while preserving full backward compatibility for single-tenant operators who legitimately point at internal hosts.
+
+### Behavior by Deployment Mode
+
+| Mode | `MULTI_TENANT_ENABLED` | Guard active? | Behavior |
+|------|-----------------------|---------------|----------|
+| **Single-tenant** (default) | `false` | ❌ No | All hosts accepted, including loopback / RFC1918. The operator owns the deployment and may legitimately point at internal hosts. Zero regression vs. pre-fetcher-013 behavior. |
+| **Multi-tenant** | `true` | ✅ Yes | Tenant-supplied hosts are filtered against a denylist; internal datasources loaded from the operator's environment variables remain exempt by construction. |
+
+Activation is automatic: `InitServers` calls `hostsafety.SetHostSafetyEnabled(cfg.MultiTenantEnabled)` once at bootstrap, before any service or route is built. Single-tenant deployments require no opt-out.
+
+### Defense-in-Depth: Two Layers
+
+```
+POST /v1/management/connections                   ┐
+POST /v1/management/connections (PATCH)           │
+POST /v1/management/connections/:id/test          ├─► Validator layer (DTO)
+POST /v1/management/connections/validate-schema   │   `safe_host` tag in pkg/net/http/with_body.go
+                                                  │   Rejects IP literals at request parse time.
+                                                  │
+                                                  └─► Factory layer (pre-dial)
+                                                      hostsafety.ValidateHostForConnection
+                                                      in pkg/datasource/datasource_factory.go.
+                                                      Resolves hostnames via DNS and checks
+                                                      every returned IP against the denylist.
+```
+
+| Layer | Where | What it catches | What it does NOT catch |
+|-------|-------|-----------------|------------------------|
+| **DTO `safe_host` validator** | `pkg/net/http/with_body.go` (`validateSafeHost`) | IP literals in the request body (`"host":"127.0.0.1"`) | Hostnames — passes them through to factory layer |
+| **Factory guard** | `pkg/datasource/datasource_factory.go` (call to `hostsafety.ValidateHostForConnection`) | Hostnames that resolve to denylisted IPs; hostname literals matched by `libSSRF.IsBlockedHostname` (case-insensitive, root-label normalized) | DNS rebinding (resolve-time TOCTOU); covered by future `fetcher-014` |
+
+Both layers read the same package-level flag (`hostsafety.SetHostSafetyEnabled`) and call into the same `libSSRF` predicates, so they cannot fall out of sync.
+
+### Denylist — Source of Truth
+
+The denylist of blocked IP networks and hostname literals lives in [`github.com/LerianStudio/lib-commons/v5/commons/security/ssrf`](https://github.com/LerianStudio/lib-commons/tree/main/commons/security/ssrf). Fetcher inherits updates on `go mod tidy`; the local adapter at [`pkg/datasource/hostsafety/hostsafety.go`](../pkg/datasource/hostsafety/hostsafety.go) only owns:
+
+1. The bootstrap-time gate (`SetHostSafetyEnabled` / `IsEnabled`).
+2. The internal-datasource bypass (`EncryptionKeyVersion == ""` short-circuit).
+
+All blocklist semantics — CIDR matching, hostname literal matching, IPv4-mapped IPv6 unmap, fail-closed on unparseable IPs — are owned by libSSRF and exercised by `libSSRF.IsBlockedIP(net.IP)` and `libSSRF.IsBlockedHostname(string)`. Updating the denylist means bumping `lib-commons/v5` in `go.mod`, NOT editing the adapter.
+
+Coverage categories enforced by libSSRF (non-exhaustive, see the upstream source for the canonical list):
+
+| Category | Notes |
+|----------|-------|
+| IPv4 loopback | `127.0.0.0/8` |
+| IPv4 link-local | `169.254.0.0/16` — covers AWS/GCP/Azure IMDS at `169.254.169.254` |
+| IPv4 private (RFC1918) | `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` |
+| IPv4 reserved / non-routable | CGNAT (`100.64.0.0/10`), multicast, `0.0.0.0/8`, TEST-NETs (`192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`), benchmarking (`198.18.0.0/15`), IETF protocol assignments (`192.0.0.0/24`), reserved (`240.0.0.0/4`) |
+| IPv6 equivalents | `::1/128` (loopback), `fe80::/10` (link-local), `fc00::/7` (ULA), `::/128` (unspecified), `2001:db8::/32` (documentation), `100::/64` (discard-only) |
+| IPv4-mapped IPv6 | Handled via `addr.Unmap()` normalization — `::ffff:127.0.0.1` is treated identically to `127.0.0.1` |
+| Hostname literals | `localhost`, `metadata.google.internal`, `metadata.gcp.internal`, `metadata.azure.internal`, `169.254.169.254`, plus suffixes `.local` (mDNS), `.internal` (cloud metadata + internal DNS), `.cluster.local` (Kubernetes) |
+
+Matching is case-insensitive and strips the optional trailing root label (`localhost.` is treated as `localhost`). Hostnames that fail to resolve (NXDOMAIN, timeout) are deliberately NOT blocked at the factory layer — forcing a 400 there would leak a different error than for "doesn't exist", recreating the same reconnaissance oracle the guard is meant to close. The driver dial that follows surfaces its own connect error.
+
+### Internal Datasource Bypass
+
+The Fetcher bootstrap loads "internal" datasources (e.g., for self-hosted reporting) from environment variables via `pkg/resolver/env_loader.go`. These connections are created in-memory with `EncryptionKeyVersion == ""` (the in-memory plaintext-password contract — see `pkg/datasource/datasource_factory.go` resolvePassword).
+
+`ValidateHostForConnection` short-circuits to `nil` when `EncryptionKeyVersion == ""`, exempting these connections from the guard. Rationale: they are defined by the platform operator (not by a tenant), so they fall outside the threat model — and they routinely legitimately point at internal addresses.
+
+### Trust Chain Invariant — Manager-Only Enforcement
+
+**The guard is enforced ONLY in the Manager HTTP API.** The Worker has no guard of its own. This is correct given the following invariant the design assumes:
+
+> The only path for a `Connection` to enter MongoDB is via the Manager HTTP API. The Worker reads `Connection` documents from MongoDB by ID at job-processing time and trusts them to have been validated upstream.
+
+**Any future writer of `Connection` documents** (e.g., a migration script, an import job, a separate service consuming a Kafka topic, an admin CLI) **MUST** either:
+
+1. Invoke `hostsafety.ValidateHostForConnection(ctx, conn)` before persisting, OR
+2. Be explicitly exempted by setting `EncryptionKeyVersion == ""` (only valid for trusted operator-loaded datasources).
+
+Breaking this invariant silently re-opens the SSRF vector. If you change the persistence boundary, update both this section and `hostsafety.ValidateHostForConnection`.
+
+### Error Surface
+
+The guard adds one new error code to the existing schema:
+
+| Code | Constant | HTTP | Title | Message |
+|------|----------|------|-------|---------|
+| `FET-0414` | `constant.ErrForbiddenHost` | 400 | Forbidden Host | `Host is not a valid external database endpoint` |
+
+The message is intentionally generic. It does NOT echo the host, identify which CIDR matched, or distinguish DTO-layer rejection from factory-layer rejection. Surfacing those details would recreate the reconnaissance oracle the guard is built to close.
+
+### Out of Scope (Explicit Non-Goals)
+
+The guard is scoped to **reconnaissance by authenticated tenants** against internal infrastructure. The following adjacent threats are documented as follow-ups:
+
+| Concern | Follow-up task | Notes |
+|---------|---------------|-------|
+| DNS rebinding (TOCTOU between resolve and dial) | `fetcher-014` | Requires a `SafeDialer` that pins the resolved IP for the lifetime of the connection. Activate if the threat model evolves to include hostile domain owners. |
+| Worker-side guard (in case the Mongo write invariant changes) | `fetcher-015` | Only required if a second writer of `Connection` documents is introduced. |
+| Per-tenant allowlist (explicit "this tenant may reach host X") | `fetcher-016` | Today the denylist is global. An allowlist interface lets specific tenants opt into reaching a curated internal host (e.g., a regulator-mandated regulator IMDS proxy). |
+| E2E activation (SSRF tests in `tests/e2e/connection_ssrf_test.go` run as `t.Skip` until MT-enabled E2E lands) | `fetcher-017` | Requires `EnvOverride` in `e2eshared.AppStartConfig` + a tenant-manager fixture (Opção A from fetcher-013 M4 gap report). |
+
+---
+
 ## Key Files Reference
 
 | Component | File | Purpose |
