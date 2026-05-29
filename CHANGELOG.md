@@ -1,5 +1,19 @@
 # Fetcher Changelog
 
+## [1.4.0](https://github.com/LerianStudio/fetcher/releases/tag/v1.4.0)
+
+- **Features:**
+  - Added SSRF host denylist to enhance security measures.
+
+- **Fixes:**
+  - Added environment loader SSL/TLS support to improve secure connections.
+
+Contributors: @arthurkz, @bedatty, @brunobls, @lerian-studio
+
+[Compare changes](https://github.com/LerianStudio/fetcher/compare/v1.3.0...v1.4.0)
+
+---
+
 ## [1.3.0](https://github.com/LerianStudio/fetcher/releases/tag/v1.3.0)
 
 Features:
