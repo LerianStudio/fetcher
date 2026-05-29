@@ -5,11 +5,12 @@ import (
 	"errors"
 	"testing"
 
-	libCommons "github.com/LerianStudio/lib-commons/v4/commons"
-	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
-	mongoDB "github.com/LerianStudio/lib-commons/v4/commons/mongo"
-	libOtel "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
-	libZap "github.com/LerianStudio/lib-commons/v4/commons/zap"
+	"github.com/LerianStudio/fetcher/pkg/bootstrap/readyz"
+	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
+	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
+	mongoDB "github.com/LerianStudio/lib-commons/v5/commons/mongo"
+	libOtel "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
+	libZap "github.com/LerianStudio/lib-commons/v5/commons/zap"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -390,3 +391,148 @@ func TestConfig_MultiTenantRedisTLS(t *testing.T) {
 
 // Dummy usage of context to avoid import issues
 var _ = context.Background
+
+// --- Gate 4 of ring:dev-readyz --------------------------------------------
+//
+// Worker-side integration tests: ValidateSaaSTLS MUST fire before
+// initStorageRepository opens the S3 client, and its failure must stop
+// InitWorker with a readyz.ErrSaaSTLSRequired-wrapped error.
+//
+// Because InitWorker composes many dependencies inline, we stub only the
+// minimum needed to drive execution up to the Gate 4 call — logger,
+// telemetry, crypto — then assert that bootstrap refuses to proceed.
+
+func TestInitWorker_SaaSMode_RefusesNonTLSS3(t *testing.T) {
+	originalSetConfigFromEnvVars := setConfigFromEnvVars
+	originalNewZapLogger := newZapLogger
+	originalNewTelemetry := newTelemetry
+	originalApplyTelemetryGlobals := applyTelemetryGlobals
+	originalDecodeMasterKey := decodeMasterKey
+	originalNewKeyDeriver := newKeyDeriver
+
+	t.Cleanup(func() {
+		setConfigFromEnvVars = originalSetConfigFromEnvVars
+		newZapLogger = originalNewZapLogger
+		newTelemetry = originalNewTelemetry
+		applyTelemetryGlobals = originalApplyTelemetryGlobals
+		decodeMasterKey = originalDecodeMasterKey
+		newKeyDeriver = originalNewKeyDeriver
+	})
+
+	setConfigFromEnvVars = func(target any) error {
+		cfg := target.(*Config)
+		cfg.EnvName = "local"
+		cfg.LogLevel = "error"
+		cfg.DeploymentMode = "saas"
+		// Non-TLS S3 endpoint triggers the Gate 4 failure.
+		cfg.ObjectStorageEndpoint = "http://minio:9000"
+
+		return nil
+	}
+	newZapLogger = func(libZap.Config) (libLog.Logger, error) { return testBootstrapLogger(), nil }
+	newTelemetry = func(libOtel.TelemetryConfig) (*libOtel.Telemetry, error) { return &libOtel.Telemetry{}, nil }
+	applyTelemetryGlobals = func(*libOtel.Telemetry) error { return nil }
+	// Provide a master key long enough to satisfy decodeMasterKey + keyDeriver.
+	decodeMasterKey = func(string) ([]byte, error) { return make([]byte, 32), nil }
+
+	service, err := InitWorker()
+	assert.Nil(t, service)
+	require.Error(t, err)
+	require.ErrorIs(t, err, readyz.ErrSaaSTLSRequired,
+		"worker must refuse to start when DEPLOYMENT_MODE=saas and S3 is non-TLS")
+	assert.Contains(t, err.Error(), "s3")
+}
+
+func TestInitWorker_SaaSMode_RefusesNonTLSMongo(t *testing.T) {
+	originalSetConfigFromEnvVars := setConfigFromEnvVars
+	originalNewZapLogger := newZapLogger
+	originalNewTelemetry := newTelemetry
+	originalApplyTelemetryGlobals := applyTelemetryGlobals
+	originalDecodeMasterKey := decodeMasterKey
+	originalNewKeyDeriver := newKeyDeriver
+
+	t.Cleanup(func() {
+		setConfigFromEnvVars = originalSetConfigFromEnvVars
+		newZapLogger = originalNewZapLogger
+		newTelemetry = originalNewTelemetry
+		applyTelemetryGlobals = originalApplyTelemetryGlobals
+		decodeMasterKey = originalDecodeMasterKey
+		newKeyDeriver = originalNewKeyDeriver
+	})
+
+	setConfigFromEnvVars = func(target any) error {
+		cfg := target.(*Config)
+		cfg.EnvName = "local"
+		cfg.LogLevel = "error"
+		cfg.DeploymentMode = "saas"
+		// MongoURI "mongodb" (plaintext) triggers the Gate 4 failure before
+		// Mongo is ever dialed.
+		cfg.MongoURI = "mongodb"
+		cfg.MongoDBHost = "host"
+		cfg.MongoDBPort = "27017"
+		// Keep S3 empty so the Mongo check fires first per stable order.
+		cfg.ObjectStorageEndpoint = ""
+
+		return nil
+	}
+	newZapLogger = func(libZap.Config) (libLog.Logger, error) { return testBootstrapLogger(), nil }
+	newTelemetry = func(libOtel.TelemetryConfig) (*libOtel.Telemetry, error) { return &libOtel.Telemetry{}, nil }
+	applyTelemetryGlobals = func(*libOtel.Telemetry) error { return nil }
+	decodeMasterKey = func(string) ([]byte, error) { return make([]byte, 32), nil }
+
+	service, err := InitWorker()
+	assert.Nil(t, service)
+	require.Error(t, err)
+	require.ErrorIs(t, err, readyz.ErrSaaSTLSRequired)
+	assert.Contains(t, err.Error(), "mongodb")
+}
+
+func TestBuildSaaSTLSConfig_WorkerClaimsS3(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{
+		DeploymentMode:               "saas",
+		MongoURI:                     "mongodb+srv",
+		MongoDBHost:                  "host",
+		MongoDBPort:                  "27017",
+		MongoDBUser:                  "user",
+		MongoDBPassword:              "pass",
+		MultiTenantRedisHost:         "mt-redis",
+		MultiTenantRedisPort:         "6379",
+		MultiTenantRedisTLS:          true,
+		RabbitURI:                    "amqps",
+		RabbitMQHost:                 "rabbit",
+		RabbitMQPortAMQP:             "5671",
+		RabbitMQUser:                 "user",
+		RabbitMQPass:                 "pass",
+		ObjectStorageEndpoint:        "https://s3.amazonaws.com",
+		MultiTenantURL:               "https://tm",
+		MultiTenantEnabled:           true,
+		MultiTenantAllowInsecureHTTP: false,
+	}
+
+	got := buildSaaSTLSConfig(cfg, true)
+	assert.Equal(t, "saas", got.DeploymentMode)
+	assert.True(t, got.HasS3, "worker must claim S3 ownership")
+	assert.Equal(t, "https://s3.amazonaws.com", got.S3Endpoint)
+	assert.Equal(t, "rediss://mt-redis:6379", got.MultiTenantRedisURL)
+	assert.Equal(t, "", got.RedisURL, "worker has no direct Redis dep")
+	assert.Equal(t, "https://tm", got.TenantManagerURL)
+	assert.False(t, got.AllowInsecureHTTPTM)
+}
+
+func TestBuildWorkerMongoURI_EmptyWhenURISchemeMissing(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{MongoURI: ""}
+	assert.Equal(t, "", buildWorkerMongoURI(cfg),
+		"empty scheme must yield empty URI so Gate 4 skips the dep")
+}
+
+func TestBuildWorkerRabbitMQURL_EmptyWhenURISchemeMissing(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{RabbitURI: ""}
+	assert.Equal(t, "", buildWorkerRabbitMQURL(cfg),
+		"empty scheme must yield empty URL so Gate 4 skips the dep")
+}

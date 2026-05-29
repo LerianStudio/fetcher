@@ -14,8 +14,8 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/mongodb"
 	portsJob "github.com/LerianStudio/fetcher/pkg/ports/job"
 
-	"github.com/LerianStudio/lib-commons/v4/commons"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v5/commons"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
 
 	"github.com/google/uuid"
 	"go.mongodb.org/mongo-driver/bson"
@@ -209,6 +209,7 @@ func (jr *JobMongoDBRepository) Update(ctx context.Context, job *model.Job) (*mo
 			"mapped_fields": job.MappedFields,
 			"filters":       job.Filters,
 			"status":        job.Status,
+			"dedup_active":  isDedupActive(job.Status),
 			"result_path":   job.ResultPath,
 			"result_hmac":   job.ResultHMAC,
 			"completed_at":  job.CompletedAt,
@@ -276,7 +277,8 @@ func (jr *JobMongoDBRepository) UpdateStatus(ctx context.Context, id uuid.UUID, 
 
 	update := bson.M{
 		"$set": bson.M{
-			"status": status,
+			"status":       status,
+			"dedup_active": isDedupActive(status),
 		},
 	}
 

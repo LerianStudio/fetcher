@@ -12,10 +12,11 @@ import (
 
 	workerRabbitMQ "github.com/LerianStudio/fetcher/components/worker/internal/adapters/rabbitmq"
 	"github.com/LerianStudio/fetcher/components/worker/internal/services"
+	"github.com/LerianStudio/fetcher/pkg/bootstrap/readyz"
 	pkgRabbitMQ "github.com/LerianStudio/fetcher/pkg/rabbitmq"
-	"github.com/LerianStudio/lib-commons/v4/commons"
-	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
-	libOtel "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v5/commons"
+	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
+	libOtel "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
 	"go.uber.org/mock/gomock"
@@ -46,7 +47,7 @@ func TestNewMultiQueueConsumerRegistersQueue(t *testing.T) {
 	routes := workerRabbitMQ.NewConsumerRoutesWithAdapter(adapter, 2, testBootstrapLogger(), &libOtel.Telemetry{})
 	useCase := &services.UseCase{}
 
-	consumer := NewMultiQueueConsumer(routes, useCase, "worker.jobs", testBootstrapLogger(), nil)
+	consumer := NewMultiQueueConsumer(routes, useCase, "worker.jobs", testBootstrapLogger(), nil, 0)
 
 	if consumer.UseCase != useCase {
 		t.Fatal("expected use case to be assigned")
@@ -137,7 +138,7 @@ func TestMultiQueueConsumerRun(t *testing.T) {
 		adapter.EXPECT().Shutdown(gomock.Any()).Return(nil)
 
 		routes := workerRabbitMQ.NewConsumerRoutesWithAdapter(adapter, 2, testBootstrapLogger(), &libOtel.Telemetry{})
-		consumer := NewMultiQueueConsumer(routes, &services.UseCase{}, "worker.jobs", testBootstrapLogger(), nil)
+		consumer := NewMultiQueueConsumer(routes, &services.UseCase{}, "worker.jobs", testBootstrapLogger(), nil, 0)
 
 		if err := consumer.Run(nil); err != nil {
 			t.Fatalf("expected no error, got %v", err)
@@ -158,11 +159,48 @@ func TestMultiQueueConsumerRun(t *testing.T) {
 		adapter.EXPECT().Shutdown(gomock.Any()).Return(errors.New("shutdown failed"))
 
 		routes := workerRabbitMQ.NewConsumerRoutesWithAdapter(adapter, 2, testBootstrapLogger(), &libOtel.Telemetry{})
-		consumer := NewMultiQueueConsumer(routes, &services.UseCase{}, "worker.jobs", testBootstrapLogger(), nil)
+		consumer := NewMultiQueueConsumer(routes, &services.UseCase{}, "worker.jobs", testBootstrapLogger(), nil, 0)
 
 		err := consumer.Run(nil)
 		if err == nil || !strings.Contains(err.Error(), "shutdown failed") {
 			t.Fatalf("expected shutdown failed error, got %v", err)
+		}
+	})
+
+	// On SIGTERM the consumer must flip the draining flag BEFORE cancelling
+	// the consumer context — otherwise in-flight deliveries get nacked
+	// while kube-proxy still sees /readyz=200.
+	t.Run("sets readyz draining before cancelling context", func(t *testing.T) {
+		readyz.SetDraining(false)
+		t.Cleanup(func() { readyz.SetDraining(false) })
+
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		// drainObservedAt records the value of IsDraining() at the moment
+		// ctx is cancelled — if the flag is still false, the ordering is
+		// wrong and the test fails.
+		var drainObservedAt bool
+
+		adapter := pkgRabbitMQ.NewMockAdapter(ctrl)
+		adapter.EXPECT().
+			ConsumerLoop(gomock.Any(), "worker.jobs", 2, gomock.Any()).
+			DoAndReturn(func(ctx context.Context, _ string, _ int, _ func(context.Context, []byte, map[string]any) error) error {
+				<-ctx.Done()
+				drainObservedAt = readyz.IsDraining()
+				return nil
+			})
+		adapter.EXPECT().Shutdown(gomock.Any()).Return(nil)
+
+		routes := workerRabbitMQ.NewConsumerRoutesWithAdapter(adapter, 2, testBootstrapLogger(), &libOtel.Telemetry{})
+		consumer := NewMultiQueueConsumer(routes, &services.UseCase{}, "worker.jobs", testBootstrapLogger(), nil, 0)
+
+		if err := consumer.Run(nil); err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+
+		if !drainObservedAt {
+			t.Fatal("draining flag MUST be true before consumer context is cancelled")
 		}
 	})
 }
@@ -179,7 +217,7 @@ func TestServiceRun(t *testing.T) {
 		logger := testBootstrapLogger()
 
 		called := false
-		runLauncher = func(gotLogger libLog.Logger, gotConsumer *MultiQueueConsumer) {
+		runLauncher = func(gotLogger libLog.Logger, gotConsumer *MultiQueueConsumer, _ *HealthServer) {
 			called = true
 			if gotLogger != logger {
 				t.Fatal("unexpected logger passed to launcher")
@@ -210,7 +248,7 @@ func TestServiceRun(t *testing.T) {
 
 	t.Run("nil license terminator is allowed", func(t *testing.T) {
 		called := false
-		runLauncher = func(libLog.Logger, *MultiQueueConsumer) {
+		runLauncher = func(libLog.Logger, *MultiQueueConsumer, *HealthServer) {
 			called = true
 		}
 

@@ -6,9 +6,9 @@ import (
 	"testing"
 
 	"github.com/LerianStudio/fetcher/pkg/rabbitmq"
-	"github.com/LerianStudio/lib-commons/v4/commons/log"
-	"github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
-	tmcore "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/core"
+	"github.com/LerianStudio/lib-commons/v5/commons/log"
+	"github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
+	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

@@ -9,11 +9,11 @@ import (
 
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/model/job"
-	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
-	libMongo "github.com/LerianStudio/lib-commons/v4/commons/mongo"
+	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
+	libMongo "github.com/LerianStudio/lib-commons/v5/commons/mongo"
 
-	libCommons "github.com/LerianStudio/lib-commons/v4/commons"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
+	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
 	"github.com/google/uuid"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"

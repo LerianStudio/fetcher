@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/LerianStudio/fetcher/pkg/constant"
-	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
 	_ "github.com/go-sql-driver/mysql" // MySQL driver
 )
 

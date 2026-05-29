@@ -11,8 +11,8 @@ import (
 	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
 	"github.com/LerianStudio/fetcher/pkg/ports/job"
 
-	"github.com/LerianStudio/lib-commons/v4/commons"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v5/commons"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"

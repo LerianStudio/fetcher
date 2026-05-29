@@ -203,7 +203,7 @@ func TestConnectionHandler_GetConnectionSchema_RealHandlerSuccess(t *testing.T) 
 	handler := &ConnectionHandler{
 		GetSchemaQuery: querySvc.NewGetConnectionSchema(mockConnRepo, nil, func(_ context.Context, _ *model.Connection, _ crypto.Cryptor) (datasourceModel.DataSource, error) {
 			return mockDataSource, nil
-		}, nil, nil),
+		}, nil, nil, false),
 	}
 	app.Get("/v1/management/connections/:id/schema", handler.GetConnectionSchema)
 

@@ -6,10 +6,10 @@ import (
 
 	portStorage "github.com/LerianStudio/fetcher/pkg/ports/storage"
 	"github.com/LerianStudio/fetcher/pkg/seaweedfs"
-	libCommons "github.com/LerianStudio/lib-commons/v4/commons"
-	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
-	tms3 "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/s3"
+	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
+	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
+	tms3 "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/s3"
 	"go.opentelemetry.io/otel/attribute"
 )
 

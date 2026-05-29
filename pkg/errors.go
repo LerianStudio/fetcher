@@ -425,6 +425,15 @@ func validateCommonErrors(err error, entityType string, args ...any) error {
 			Title:      "Invalid SSL Mode",
 			Message:    fmt.Sprintf("Invalid SSL mode. The provided SSL mode '%s' is not supported. Please use a valid SSL mode for this database type.", args...),
 		}
+	case constant.ErrForbiddenHost:
+		// Generic message — must NOT echo the host or reveal which CIDR / suffix matched,
+		// otherwise the response itself becomes a reconnaissance oracle.
+		return ValidationError{
+			EntityType: entityType,
+			Code:       constant.ErrForbiddenHost.Error(),
+			Title:      "Forbidden Host",
+			Message:    "Host is not a valid external database endpoint",
+		}
 	default:
 		return nil
 	}

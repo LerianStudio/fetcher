@@ -33,6 +33,7 @@ var (
 	ErrMetadataValueLengthExceeded  = errors.New("FET-0411")
 	ErrMetadataKeyLengthExceeded    = errors.New("FET-0412")
 	ErrInvalidSSLMode               = errors.New("FET-0413")
+	ErrForbiddenHost                = errors.New("FET-0414")
 
 	// #################################################### BUSINESS LOGIC ERRORS ####################################################
 

@@ -11,9 +11,9 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/model"
 	httpUtils "github.com/LerianStudio/fetcher/pkg/net/http"
 
-	"github.com/LerianStudio/lib-commons/v4/commons"
-	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v5/commons"
+	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -110,6 +110,15 @@ func (h *ConnectionHandler) CreateConnection(c *fiber.Ctx) error {
 		}
 
 		libOpentelemetry.HandleSpanError(span, "empty request body", err)
+
+		return httpUtils.WithError(c, err)
+	}
+
+	// Struct-tag validation (required, hostname|ip, safe_host, ...). Without
+	// this call the `safe_host` tag is dead code — BodyParser does not invoke
+	// the validator. See docs/PROJECT_RULES.md § "Defense-in-Depth: Two Layers".
+	if err := httpUtils.ValidateStruct(&request); err != nil {
+		libOpentelemetry.HandleSpanError(span, "request validation failed", err)
 
 		return httpUtils.WithError(c, err)
 	}
@@ -370,6 +379,14 @@ func (h *ConnectionHandler) UpdateConnection(c *fiber.Ctx) error {
 		return httpUtils.WithError(c, err)
 	}
 
+	// Struct-tag validation (omitempty, hostname|ip, safe_host, ...). Required
+	// so the `safe_host` tag in ConnectionUpdateInput is actually enforced.
+	if err := httpUtils.ValidateStruct(&request); err != nil {
+		libOpentelemetry.HandleSpanError(span, "request validation failed", err)
+
+		return httpUtils.WithError(c, err)
+	}
+
 	conn, err := h.UpdateCmd.Execute(ctx, id, request)
 	if err != nil {
 		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to execute update connection command, Error: %s", err.Error()))
@@ -477,6 +494,14 @@ func (h *ConnectionHandler) ValidateSchema(c *fiber.Ctx) error {
 			Message:    "unable to parse request body",
 			Err:        errParser,
 		})
+	}
+
+	// Struct-tag validation — enforces `required` on MappedFields consistently
+	// with the sibling connection handlers.
+	if err := httpUtils.ValidateStruct(&request); err != nil {
+		libOpentelemetry.HandleSpanError(span, "request validation failed", err)
+
+		return httpUtils.WithError(c, err)
 	}
 
 	resp, err := h.ValidateSchemaQuery.Execute(ctx, request)

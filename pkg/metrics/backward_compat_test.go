@@ -5,10 +5,10 @@ import (
 	"testing"
 
 	"github.com/LerianStudio/fetcher/pkg/testutil"
-	tms3 "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/s3"
-	"github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/valkey"
+	tms3 "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/s3"
+	"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/valkey"
 
-	tmcore "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/core"
+	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

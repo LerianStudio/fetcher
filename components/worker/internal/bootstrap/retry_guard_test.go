@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/LerianStudio/fetcher/pkg"
-	tmcore "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/core"
+	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -71,19 +71,19 @@ func TestIsNonRetryableHandlerError(t *testing.T) {
 		},
 		// JSON parse errors
 		{
-			name:         "json.SyntaxError is non-retryable",
-			err:          &json.SyntaxError{Offset: 1},
-			expected:     true,
+			name:     "json.SyntaxError is non-retryable",
+			err:      &json.SyntaxError{Offset: 1},
+			expected: true,
 		},
 		{
-			name:         "json.UnmarshalTypeError is non-retryable",
-			err:          &json.UnmarshalTypeError{Value: "string", Type: nil},
-			expected:     true,
+			name:     "json.UnmarshalTypeError is non-retryable",
+			err:      &json.UnmarshalTypeError{Value: "string", Type: nil},
+			expected: true,
 		},
 		{
-			name:         "wrapped json.SyntaxError is non-retryable",
-			err:          fmt.Errorf("parse message: %w", &json.SyntaxError{Offset: 5}),
-			expected:     true,
+			name:     "wrapped json.SyntaxError is non-retryable",
+			err:      fmt.Errorf("parse message: %w", &json.SyntaxError{Offset: 5}),
+			expected: true,
 		},
 		// Domain error types
 		{

@@ -1,11 +1,12 @@
 package in
 
 import (
+	"github.com/LerianStudio/fetcher/pkg/bootstrap/readyz"
 	"github.com/LerianStudio/fetcher/pkg/net/http"
 	middlewareAuth "github.com/LerianStudio/lib-auth/v2/auth/middleware"
-	"github.com/LerianStudio/lib-commons/v4/commons/log"
-	commonsHttp "github.com/LerianStudio/lib-commons/v4/commons/net/http"
-	"github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v5/commons/log"
+	commonsHttp "github.com/LerianStudio/lib-commons/v5/commons/net/http"
+	"github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
 	libLicense "github.com/LerianStudio/lib-license-go/v2/middleware"
 
 	"github.com/gofiber/fiber/v2"
@@ -19,9 +20,10 @@ const (
 	fetcherResource     = "fetcher"
 )
 
-// NewRoutes creates a new fiber router with the specified handlers and middleware.
-// The tenantMiddleware parameter accepts a fiber.Handler for multi-tenant DB resolution.
-// Pass nil to disable tenant middleware (single-tenant mode).
+// NewRoutes wires the fiber router. ttMiddleware is the multi-tenant DB
+// resolver; pass nil for single-tenant mode. readyzHandler /
+// readyzTenantHandler / metricsHandler are mounted before auth so probes
+// from Kubernetes and load-balancers stay unauthenticated.
 func NewRoutes(
 	lg log.Logger,
 	tl *opentelemetry.Telemetry,
@@ -31,6 +33,9 @@ func NewRoutes(
 	migrationHandler *MigrationHandler,
 	fetcherHandler *FetcherHandler,
 	ttMiddleware fiber.Handler,
+	readyzHandler fiber.Handler,
+	readyzTenantHandler fiber.Handler,
+	metricsHandler fiber.Handler,
 ) *fiber.App {
 	f := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
@@ -48,8 +53,22 @@ func NewRoutes(
 	// Doc Swagger
 	f.Get("/swagger/*", WithSwaggerEnvConfig(), fiberSwagger.WrapHandler)
 
-	// Health
-	f.Get("/health", commonsHttp.Ping)
+	// /health is gated on the startup self-probe — returns 503 until
+	// RunSelfProbe flips the flag, so the kubelet restarts the pod when a
+	// dep was unreachable at boot.
+	f.Get("/health", readyz.HealthHandler())
+
+	if readyzHandler != nil {
+		f.Get("/readyz", readyzHandler)
+	}
+
+	if readyzTenantHandler != nil {
+		f.Get("/readyz/tenant/:id", readyzTenantHandler)
+	}
+
+	if metricsHandler != nil {
+		f.Get("/metrics", metricsHandler)
+	}
 
 	// Version
 	f.Get("/version", commonsHttp.Version)

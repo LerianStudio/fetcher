@@ -9,9 +9,9 @@ import (
 
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/rabbitmq"
-	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
-	"github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
-	libRabbitmq "github.com/LerianStudio/lib-commons/v4/commons/rabbitmq"
+	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
+	"github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
+	libRabbitmq "github.com/LerianStudio/lib-commons/v5/commons/rabbitmq"
 )
 
 // ConsumerRepository provides an interface for Consumer related to rabbitmq.
@@ -82,6 +82,17 @@ func NewConsumerRoutesWithAdapter(adapter rabbitmq.Adapter, numWorkers int, logg
 	}
 
 	return cr
+}
+
+// Adapter exposes the underlying adapter so /readyz can inspect the
+// circuit-breaker state and liveness without reaching into unexported
+// fields.
+func (c *ConsumerRoutes) Adapter() rabbitmq.Adapter {
+	if c == nil {
+		return nil
+	}
+
+	return c.adapter
 }
 
 // isNonDevelopmentEnvironment returns true unless envName is an explicitly

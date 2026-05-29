@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
 )
 
 // NewCacheWithFallback creates a cache with Redis primary and in-memory fallback.
