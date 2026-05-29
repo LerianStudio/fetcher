@@ -10,10 +10,10 @@ import (
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	portStorage "github.com/LerianStudio/fetcher/pkg/ports/storage"
-	libCommons "github.com/LerianStudio/lib-commons/v4/commons"
-	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
-	tms3 "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/s3"
+	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
+	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
+	tms3 "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/s3"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsConfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -104,6 +104,34 @@ func NewS3Repository(ctx context.Context, cfg S3Config) (*S3Repository, error) {
 		s3Client: s3Client,
 		cfg:      cfg,
 	}, nil
+}
+
+// Client exposes the underlying *s3.Client so /readyz can probe with
+// HeadBucket without constructing a second AWS SDK client.
+func (r *S3Repository) Client() *s3.Client {
+	if r == nil {
+		return nil
+	}
+
+	return r.s3Client
+}
+
+func (r *S3Repository) Bucket() string {
+	if r == nil {
+		return ""
+	}
+
+	return r.cfg.Bucket
+}
+
+// Endpoint returns the configured endpoint URL; empty means the AWS
+// default endpoint (HTTPS).
+func (r *S3Repository) Endpoint() string {
+	if r == nil {
+		return ""
+	}
+
+	return r.cfg.Endpoint
 }
 
 // Get downloads the object identified by objectName from the S3 bucket.

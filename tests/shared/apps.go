@@ -29,6 +29,10 @@ type AppStartConfig struct {
 	Image string
 	// SkipBuild determines whether to use a pre-built image (true) or build from Dockerfile (false).
 	SkipBuild bool
+	// ExtraEnv is merged on top of ManagerEnv()/WorkerEnv() — last-write-wins.
+	// Use for per-test overrides like DATASOURCE_* env vars in SSL tests.
+	// nil is safe: WithEnv treats nil maps as no-op.
+	ExtraEnv map[string]string
 }
 
 // AppEnv holds the environment configuration needed to start Manager and Worker containers.
@@ -181,6 +185,12 @@ func (e *AppEnv) ManagerEnv() map[string]string {
 		"OTEL_EXPORTER_OTLP_ENDPOINT_PORT":     "4317",
 		"OTEL_EXPORTER_OTLP_ENDPOINT":          "host.docker.internal:4317",
 		"MULTI_TENANT_ENABLED":                 "false",
+		// /readyz configuration (ring:dev-readyz). Manager mounts /readyz on
+		// SERVER_PORT (4006). DEPLOYMENT_MODE=local skips the bootstrap SaaS
+		// TLS validation; READYZ_DRAIN_DELAY_SEC is shortened to keep the
+		// drain e2e tests under suite-level timeouts.
+		"DEPLOYMENT_MODE":          "local",
+		"READYZ_DRAIN_DELAY_SEC":   "2",
 	}
 }
 
@@ -220,6 +230,13 @@ func (e *AppEnv) WorkerEnv() map[string]string {
 		"OTEL_EXPORTER_OTLP_ENDPOINT_PORT":     "4317",
 		"OTEL_EXPORTER_OTLP_ENDPOINT":          "host.docker.internal:4317",
 		"MULTI_TENANT_ENABLED":                 "false",
+		// /readyz configuration (ring:dev-readyz). The Worker has no primary
+		// HTTP server, so a dedicated micro-server binds HEALTH_PORT for
+		// /health, /readyz and /metrics. DEPLOYMENT_MODE=local skips SaaS TLS
+		// enforcement; READYZ_DRAIN_DELAY_SEC=2 keeps drain windows short.
+		"HEALTH_PORT":            strconv.Itoa(WorkerHealthPort),
+		"DEPLOYMENT_MODE":        "local",
+		"READYZ_DRAIN_DELAY_SEC": "2",
 	}
 
 	// S3-compatible storage — always uses S3 provider.
@@ -270,6 +287,7 @@ func StartManager(t *testing.T, ctx context.Context, env *AppEnv, cfg AppStartCo
 		WithContext(ctx).
 		ExposePort(ManagerAPIPort).
 		WithEnv(env.ManagerEnv()).
+		WithEnv(cfg.ExtraEnv).
 		WithWait(e2ekit.WaitHTTP(ManagerAPIPort, "/health", 60*time.Second))
 
 	// Add to shared network for container-to-container communication
@@ -316,10 +334,17 @@ func StartWorker(t *testing.T, ctx context.Context, env *AppEnv, cfg AppStartCon
 		t.Helper()
 	}
 
+	// Expose HEALTH_PORT (4007) so e2e tests can hit /readyz, /health, /metrics
+	// via workerApp.BaseURL. WaitHTTP on /health doubles as the readiness gate:
+	// /health is gated on the startup self-probe, so a 200 here implies every
+	// dep was reachable at boot — strictly stronger than the previous WaitLog
+	// "starting consumer for queue" check.
 	builder := e2ekit.New(t).
 		WithContext(ctx).
+		ExposePort(WorkerHealthPort).
 		WithEnv(env.WorkerEnv()).
-		WithWait(e2ekit.WaitLog("starting consumer for queue", 60*time.Second))
+		WithEnv(cfg.ExtraEnv).
+		WithWait(e2ekit.WaitHTTP(WorkerHealthPort, "/health", 60*time.Second))
 
 	// Add to shared network for container-to-container communication
 	if env.Network != "" {

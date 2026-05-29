@@ -48,7 +48,7 @@ graph TB
     end
 
     subgraph "lib-commons"
-        MongoClient[lib-commons/v4 mongo.Client]
+        MongoClient[lib-commons/v5 mongo.Client]
     end
 
     Factory -->|creates| DSConfig
@@ -116,7 +116,7 @@ sequenceDiagram
 
 ```go
 type ExternalDataSource struct {
-    connection *libMongo.Client  // lib-commons/v4 mongo client
+    connection *libMongo.Client  // lib-commons/v5 mongo client
     Database   string            // Database name
     logger     libLog.Logger     // Structured logger
 }
@@ -337,7 +337,7 @@ graph TB
     end
 
     subgraph "Shared Libraries"
-        LibCommons[lib-commons/v4]
+        LibCommons[lib-commons/v5]
         Crypto[pkg/crypto]
     end
 

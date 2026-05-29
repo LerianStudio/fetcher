@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -18,10 +19,10 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/ports/messaging"
 	"github.com/LerianStudio/fetcher/pkg/resolver"
 
-	"github.com/LerianStudio/lib-commons/v4/commons"
-	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
-	tmcore "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/core"
+	"github.com/LerianStudio/lib-commons/v5/commons"
+	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
+	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
 
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.opentelemetry.io/otel/attribute"
@@ -392,6 +393,17 @@ func (s *CreateFetcherJob) testConnections(ctx context.Context, span trace.Span,
 
 		if err := s.connectionTester.TestConnection(ctx, conn); err != nil {
 			libOpentelemetry.HandleSpanBusinessErrorEvent(span, fmt.Sprintf("Connection test failed for %s", conn.ConfigName), err)
+
+			// Preserve typed validation errors (e.g. FET-0414 host safety
+			// rejection from the factory). Remapping to ErrConnectionDown
+			// (FET-1040) would break the documented FET-0414 → HTTP 400
+			// contract and drop the audit signal that a tenant tried to
+			// reach a denylisted host. Same pattern as the three query
+			// services (test_connection, get_connection_schema, validate_schema).
+			var ve pkg.ValidationError
+			if errors.As(err, &ve) {
+				return err
+			}
 
 			return pkg.ValidationError{
 				EntityType: "fetcher",

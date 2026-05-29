@@ -71,6 +71,13 @@ const (
 const (
 	// ManagerAPIPort is the HTTP port for the Manager API service.
 	ManagerAPIPort = 4006
+
+	// WorkerHealthPort is the dedicated port the Worker binds for /health,
+	// /readyz, /readyz/tenant/:id and /metrics. The Worker has no primary
+	// HTTP server, so a separate Fiber app is started on this port — see
+	// components/worker/internal/bootstrap/health_server.go and the
+	// HEALTH_PORT env var.
+	WorkerHealthPort = 4007
 )
 
 // Test account IDs are UUIDs used consistently across all database fixtures.

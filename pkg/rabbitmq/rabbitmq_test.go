@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/LerianStudio/fetcher/pkg/crypto"
-	libCommons "github.com/LerianStudio/lib-commons/v4/commons"
-	libConstants "github.com/LerianStudio/lib-commons/v4/commons/constants"
-	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
+	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
+	libConstants "github.com/LerianStudio/lib-commons/v5/commons/constants"
+	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

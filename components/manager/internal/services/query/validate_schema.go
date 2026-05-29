@@ -18,9 +18,9 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/resolver"
 	"github.com/LerianStudio/fetcher/pkg/schemautil"
 
-	"github.com/LerianStudio/lib-commons/v4/commons"
-	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v5/commons"
+	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
 
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -186,6 +186,22 @@ func (s *ValidateSchema) Execute(
 				)
 
 				return nil, pkg.ValidateInternalError(err, "schema")
+			}
+
+			// Preserve typed validation errors (e.g. FET-0414 host safety) as
+			// top-level errors. Burying them as per-datasource warnings would
+			// yield 200 + DataSourceDownError, dropping the audit signal and
+			// breaking the FET-0414 → HTTP 400 contract documented in
+			// PROJECT_RULES.md § "Error Surface".
+			var ve pkg.ValidationError
+			if errors.As(err, &ve) {
+				libOpentelemetry.HandleSpanError(span, "schema validation rejected by host safety guard", err)
+				logger.Log(ctx, libLog.LevelWarn, "schema validation rejected by host safety guard",
+					libLog.String("config_name", configName),
+					libLog.Err(err),
+				)
+
+				return nil, err
 			}
 
 			validationErrors = append(validationErrors, model.NewDataSourceDownError(configName))

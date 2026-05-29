@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
 
@@ -49,7 +50,7 @@ func TestGetConnectionSchema_Execute_Success(t *testing.T) {
 		return mockDataSource, nil
 	}
 
-	svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory, nil, nil)
+	svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory, nil, nil, false)
 
 	ctx := testContext()
 	connID := uuid.New()
@@ -108,7 +109,7 @@ func TestGetConnectionSchema_Execute_NotFound(t *testing.T) {
 		return nil, nil
 	}
 
-	svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory, nil, nil)
+	svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory, nil, nil, false)
 
 	ctx := testContext()
 	connID := uuid.New()
@@ -142,7 +143,7 @@ func TestGetConnectionSchema_Execute_RepositoryError(t *testing.T) {
 		return nil, nil
 	}
 
-	svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory, nil, nil)
+	svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory, nil, nil, false)
 
 	ctx := testContext()
 	connID := uuid.New()
@@ -174,7 +175,7 @@ func TestGetConnectionSchema_Execute_DataSourceFactoryError(t *testing.T) {
 		return nil, factoryError
 	}
 
-	svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory, nil, nil)
+	svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory, nil, nil, false)
 
 	ctx := testContext()
 	connID := uuid.New()
@@ -209,7 +210,7 @@ func TestGetConnectionSchema_Execute_GetSchemaInfoError(t *testing.T) {
 		return mockDataSource, nil
 	}
 
-	svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory, nil, nil)
+	svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory, nil, nil, false)
 
 	ctx := testContext()
 	connID := uuid.New()
@@ -327,7 +328,7 @@ func TestGetConnectionSchema_Execute_FiltersSystemTables(t *testing.T) {
 				return mockDataSource, nil
 			}
 
-			svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory, nil, nil)
+			svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory, nil, nil, false)
 
 			ctx := testContext()
 			connID := uuid.New()
@@ -387,7 +388,7 @@ func TestGetConnectionSchema_Execute_NilSchema(t *testing.T) {
 		return mockDataSource, nil
 	}
 
-	svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory, nil, nil)
+	svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory, nil, nil, false)
 
 	ctx := testContext()
 	connID := uuid.New()
@@ -428,7 +429,7 @@ func TestGetConnectionSchema_Execute_EmptySchema(t *testing.T) {
 		return mockDataSource, nil
 	}
 
-	svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory, nil, nil)
+	svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory, nil, nil, false)
 
 	ctx := testContext()
 	connID := uuid.New()
@@ -469,7 +470,7 @@ func TestGetConnectionSchema_Execute_OrganizationIsolation(t *testing.T) {
 		return nil, nil
 	}
 
-	svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory, nil, nil)
+	svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory, nil, nil, false)
 
 	ctx := testContext()
 	connID := uuid.New()
@@ -490,6 +491,98 @@ func TestGetConnectionSchema_Execute_OrganizationIsolation(t *testing.T) {
 	}
 }
 
+// TestGetConnectionSchema_Execute_SchemaResolution_MultiTenantGating verifies that the
+// username-as-schema heuristic only triggers for internal PostgreSQL connections when
+// MULTI_TENANT_ENABLED is true. In single-tenant deployments, the adapter must receive
+// nil so its "public" default applies.
+func TestGetConnectionSchema_Execute_SchemaResolution_MultiTenantGating(t *testing.T) {
+	tests := []struct {
+		name               string
+		multiTenantEnabled bool
+		mutate             func(*model.Connection)
+		expectedSchemas    []string
+	}{
+		{
+			name:               "MT off + internal PG → nil (adapter applies public default)",
+			multiTenantEnabled: false,
+			mutate: func(c *model.Connection) {
+				c.EncryptionKeyVersion = "" // internal connection marker
+				c.Username = "midaz_onboarding"
+			},
+			expectedSchemas: nil,
+		},
+		{
+			name:               "MT on + internal PG → username as schema",
+			multiTenantEnabled: true,
+			mutate: func(c *model.Connection) {
+				c.EncryptionKeyVersion = ""
+				c.Username = "midaz_onboarding"
+			},
+			expectedSchemas: []string{"midaz_onboarding"},
+		},
+		{
+			name:               "MT on + external PG (EncryptionKeyVersion set) → nil",
+			multiTenantEnabled: true,
+			mutate: func(c *model.Connection) {
+				c.EncryptionKeyVersion = "v1"
+				c.Username = "any_user"
+			},
+			expectedSchemas: nil,
+		},
+		{
+			name:               "explicit Schema field always wins regardless of MT",
+			multiTenantEnabled: false,
+			mutate: func(c *model.Connection) {
+				c.EncryptionKeyVersion = ""
+				c.Username = "midaz_onboarding"
+				explicit := "accounting"
+				c.Schema = &explicit
+			},
+			expectedSchemas: []string{"accounting"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			mockConnRepo := connRepo.NewMockRepository(ctrl)
+			mockCrypto := crypto.NewMockCryptor(ctrl)
+			mockDataSource := datasource.NewMockDataSource(ctrl)
+
+			mockFactory := func(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor) (datasource.DataSource, error) {
+				return mockDataSource, nil
+			}
+
+			svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory, nil, nil, tt.multiTenantEnabled)
+
+			ctx := testContext()
+			connID := uuid.New()
+			existingConn := newSchemaConnectionFixture(connID, model.TypePostgreSQL)
+			tt.mutate(existingConn)
+
+			mockConnRepo.EXPECT().
+				FindByID(gomock.Any(), connID).
+				Return(existingConn, nil)
+
+			schema := model.NewDataSourceSchema("test-connection")
+			mockDataSource.EXPECT().
+				GetSchemaInfo(gomock.Any(), gomock.Eq(tt.expectedSchemas)).
+				Return(schema, nil)
+
+			mockDataSource.EXPECT().
+				Close(gomock.Any()).
+				Return(nil)
+
+			result, err := svc.Execute(ctx, connID)
+
+			assert.NoError(t, err)
+			assert.NotNil(t, result)
+		})
+	}
+}
+
 // TestNewGetConnectionSchema verifies the constructor.
 func TestNewGetConnectionSchema(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -501,7 +594,7 @@ func TestNewGetConnectionSchema(t *testing.T) {
 		return nil, nil
 	}
 
-	svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory, nil, nil)
+	svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory, nil, nil, false)
 
 	assert.NotNil(t, svc)
 }
@@ -572,4 +665,43 @@ func TestIsSystemTable(t *testing.T) {
 			assert.Equal(t, tt.expected, result, "isSystemTable(%s, %s)", tt.dbType, tt.tableName)
 		})
 	}
+}
+
+// TestGetConnectionSchema_Execute_FactoryValidationErrorPropagates verifies
+// Fix 4: when the datasource factory returns a pkg.ValidationError
+// (FET-0414 host safety rejection), Execute must propagate it verbatim rather
+// than mask it behind a generic 500. Same rationale as TestConnection.
+func TestGetConnectionSchema_Execute_FactoryValidationErrorPropagates(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockCrypto := crypto.NewMockCryptor(ctrl)
+
+	connID := uuid.New()
+	existingConn := newSchemaConnectionFixture(connID, model.TypePostgreSQL)
+
+	mockConnRepo.EXPECT().
+		FindByID(gomock.Any(), connID).
+		Return(existingConn, nil)
+
+	factoryErr := pkg.ValidationError{
+		EntityType: "connection",
+		Code:       "FET-0414",
+		Title:      "Forbidden Host",
+		Message:    "Host is not a valid external database endpoint",
+	}
+	stubFactory := func(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor) (datasource.DataSource, error) {
+		return nil, factoryErr
+	}
+
+	svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, stubFactory, nil, nil)
+
+	_, err := svc.Execute(testContext(), connID)
+	require.Error(t, err)
+
+	var ve pkg.ValidationError
+	require.True(t, errors.As(err, &ve),
+		"GetConnectionSchema must propagate factory's pkg.ValidationError unchanged, got: %T %v", err, err)
+	assert.Equal(t, "FET-0414", ve.Code)
 }

@@ -15,12 +15,14 @@ import (
 	in2 "github.com/LerianStudio/fetcher/components/manager/internal/adapters/http/in"
 	connectionCommand "github.com/LerianStudio/fetcher/components/manager/internal/services/command"
 	connectionQuery "github.com/LerianStudio/fetcher/components/manager/internal/services/query"
+	"github.com/LerianStudio/fetcher/pkg/bootstrap/readyz"
 
 	cacheAdapter "github.com/LerianStudio/fetcher/components/manager/internal/adapters/cache"
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	datasourceFactory "github.com/LerianStudio/fetcher/pkg/datasource"
+	"github.com/LerianStudio/fetcher/pkg/datasource/hostsafety"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/mongodb"
 	"github.com/LerianStudio/fetcher/pkg/mongodb/connection"
@@ -33,18 +35,18 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/resolver"
 
 	"github.com/LerianStudio/lib-auth/v2/auth/middleware"
-	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
-	libMongo "github.com/LerianStudio/lib-commons/v4/commons/mongo"
-	libOtel "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
-	libRabbitmq "github.com/LerianStudio/lib-commons/v4/commons/rabbitmq"
-	tmclient "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/client"
-	tmcore "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/core"
-	tmevent "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/event"
-	tmmiddleware "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/middleware"
-	tmmongo "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/mongo"
-	tmrabbitmq "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/rabbitmq"
-	"github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/tenantcache"
-	"github.com/LerianStudio/lib-commons/v4/commons/zap"
+	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
+	libMongo "github.com/LerianStudio/lib-commons/v5/commons/mongo"
+	libOtel "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
+	libRabbitmq "github.com/LerianStudio/lib-commons/v5/commons/rabbitmq"
+	tmclient "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/client"
+	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
+	tmevent "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/event"
+	tmmiddleware "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/middleware"
+	tmmongo "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/mongo"
+	tmrabbitmq "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/rabbitmq"
+	"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/tenantcache"
+	"github.com/LerianStudio/lib-commons/v5/commons/zap"
 	libLicense "github.com/LerianStudio/lib-license-go/v2/middleware"
 	"github.com/gofiber/fiber/v2"
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -71,11 +73,11 @@ type Config struct {
 	EnableTelemetry         bool   `env:"ENABLE_TELEMETRY"`
 	OtelInsecureExporter    bool   `env:"OTEL_INSECURE_EXPORTER"`
 	// Mongo configuration envs
-	MongoURI        string `env:"MONGO_URI"`
-	MongoDBHost     string `env:"MONGO_HOST"`
-	MongoDBName     string `env:"MONGO_NAME"`
-	MongoDBUser     string `env:"MONGO_USER"`
-	MongoDBPassword string `env:"MONGO_PASSWORD"`
+	MongoURI          string `env:"MONGO_URI"`
+	MongoDBHost       string `env:"MONGO_HOST"`
+	MongoDBName       string `env:"MONGO_NAME"`
+	MongoDBUser       string `env:"MONGO_USER"`
+	MongoDBPassword   string `env:"MONGO_PASSWORD"`
 	MongoDBPort       string `env:"MONGO_PORT"`
 	MongoDBParameters string `env:"MONGO_PARAMETERS"`
 	MongoTLSCACert    string `env:"MONGO_TLS_CA_CERT"`
@@ -88,7 +90,7 @@ type Config struct {
 	RabbitMQUser                string `env:"RABBITMQ_DEFAULT_USER"`
 	RabbitMQPass                string `env:"RABBITMQ_DEFAULT_PASS"`
 	RabbitMQGenerateReportQueue string `env:"RABBITMQ_FETCHER_WORK_QUEUE"`
-	RabbitMQTLS                bool   `env:"RABBITMQ_TLS" default:"false"`
+	RabbitMQTLS                 bool   `env:"RABBITMQ_TLS" default:"false"`
 	// Auth envs
 	AuthAddress string `env:"PLUGIN_AUTH_ADDRESS"`
 	AuthEnabled bool   `env:"PLUGIN_AUTH_ENABLED"`
@@ -123,11 +125,18 @@ type Config struct {
 	MultiTenantCacheTTLSec              int    `env:"MULTI_TENANT_CACHE_TTL_SEC" default:"120"`
 	MultiTenantTimeout                  int    `env:"MULTI_TENANT_TIMEOUT" default:"30"`
 	MultiTenantAllowInsecureHTTP        bool   `env:"MULTI_TENANT_ALLOW_INSECURE_HTTP" default:"false"`
+	// /readyz, /metrics and /health are mounted on the main HTTP server
+	// (the manager reuses SERVER_PORT).
+	DeploymentMode      string `env:"DEPLOYMENT_MODE" default:"local"`
+	ReadyzDrainDelaySec int    `env:"READYZ_DRAIN_DELAY_SEC" default:"12"`
 }
 
 type managerRepositories struct {
 	connection *connection.ConnectionMongoDBRepository
 	job        *job.JobMongoDBRepository
+	// mongoClient is reused by /readyz to Ping the platform-level connection
+	// without opening a second one. Tenant-scoped probes use tmmongo.Manager.
+	mongoClient *libMongo.Client
 }
 
 type managerCrypto struct {
@@ -142,6 +151,25 @@ type managerPlatformDependencies struct {
 	licenseClient       *libLicense.LicenseClient
 	connectionTestStore *ratelimit.RateLimiter
 	schemaCache         cacheRepo.SchemaCacheRepository
+	// rabbitMQAdapter exposes the concrete adapter to /readyz so it can
+	// surface the circuit-breaker state. Nil in multi-tenant mode — the
+	// global response emits "n/a" and per-tenant probes use tmrabbitmq.
+	rabbitMQAdapter rabbitmq.Adapter
+	tmClient        *tmclient.Client
+	// tmMongoManager / tmRabbitMQManager back the /readyz/tenant/:id
+	// handler. Both are nil when MULTI_TENANT_ENABLED=false.
+	tmMongoManager    *tmmongo.Manager
+	tmRabbitMQManager *tmrabbitmq.Manager
+	// readyzRedisClient is dedicated to /readyz so the probe is not
+	// short-circuited by the schema cache's in-memory fallback. Nil when
+	// REDIS_HOST is unset.
+	readyzRedisClient *redis.Client
+	// multiTenantReadyzRedisClient is dedicated to /readyz on the
+	// multi-tenant event-discovery Redis. It is independent of the
+	// initManagerEventDiscovery client so its lifecycle does not race the
+	// event listener's Start/Stop. Nil when MT is disabled or
+	// MULTI_TENANT_REDIS_HOST is unset.
+	multiTenantReadyzRedisClient *redis.Client
 }
 
 var (
@@ -164,6 +192,9 @@ var (
 	initCryptoFn               = initCrypto
 	initPlatformDependenciesFn = initPlatformDependencies
 	assembleServiceFn          = assembleService
+	// validateSaaSTLSFn is overridable for tests. In production it points
+	// to readyz.ValidateSaaSTLS and runs before any connection opens.
+	validateSaaSTLSFn = readyz.ValidateSaaSTLS
 )
 
 // InitServers initiate http and grpc servers.
@@ -192,6 +223,19 @@ func InitServers() (*Service, error) {
 		}
 	} else {
 		logger.Log(ctx, libLog.LevelInfo, "Running in SINGLE-TENANT MODE")
+	}
+
+	// Activate the SSRF host safety guard for tenant-supplied connections when
+	// running in multi-tenant mode. Single-tenant deployments leave it off so
+	// operators can still legitimately point at localhost / RFC1918 hosts.
+	// This must happen before any service / route is built (the factory and the
+	// HTTP DTO validator read the flag fresh on each request).
+	hostsafety.SetHostSafetyEnabled(cfg.MultiTenantEnabled)
+
+	// SaaS TLS enforcement must run before any platform connection opens.
+	// Manager has no S3 dependency (worker-only).
+	if err := validateSaaSTLSFn(buildSaaSTLSConfig(cfg, false)); err != nil {
+		return nil, fmt.Errorf("tls enforcement failed: %w", err)
 	}
 
 	repositories, err := initMongoRepositoriesFn(ctx, cfg, logger)
@@ -311,8 +355,9 @@ func initMongoRepositories(ctx context.Context, cfg *Config, logger libLog.Logge
 	}
 
 	return &managerRepositories{
-		connection: connectionRepository,
-		job:        jobRepository,
+		connection:  connectionRepository,
+		job:         jobRepository,
+		mongoClient: mongoConnection,
 	}, nil
 }
 
@@ -349,6 +394,16 @@ func initPlatformDependencies(cfg *Config, logger libLog.Logger, messageSigner c
 	var rabbitPublisher messaging.MessagePublisher
 
 	var rabbitMQCleanup func()
+
+	// Concrete handles forwarded to assembleService for /readyz wiring.
+	// All remain nil when their mode/feature is not active.
+	var rabbitAdapter rabbitmq.Adapter
+
+	var tmClientForReadyz *tmclient.Client
+
+	var tmMongoMgrForReadyz *tmmongo.Manager
+
+	var tmRabbitMgrForReadyz *tmrabbitmq.Manager
 
 	if cfg.MultiTenantEnabled && cfg.MultiTenantURL != "" {
 		// Multi-tenant mode: use tmrabbitmq.Manager for per-tenant vhost isolation.
@@ -395,6 +450,27 @@ func initPlatformDependencies(cfg *Config, logger libLog.Logger, messageSigner c
 			}
 		}
 
+		// readyz uses a dedicated tmMongo manager so /readyz does not
+		// depend on initMultiTenantMiddleware's startup ordering. Pool
+		// caps and idle timeouts mirror the main manager.
+		var readyzMongoOpts []tmmongo.Option
+
+		readyzMongoOpts = append(readyzMongoOpts,
+			tmmongo.WithModule(constant.ModuleManager),
+			tmmongo.WithLogger(logger),
+			tmmongo.WithMaxTenantPools(maxPools),
+		)
+
+		if cfg.MultiTenantIdleTimeoutSec > 0 {
+			readyzMongoOpts = append(readyzMongoOpts, tmmongo.WithIdleTimeout(
+				time.Duration(cfg.MultiTenantIdleTimeoutSec)*time.Second,
+			))
+		}
+
+		tmClientForReadyz = tmClient
+		tmMongoMgrForReadyz = tmmongo.NewManager(tmClient, constant.ApplicationName, readyzMongoOpts...)
+		tmRabbitMgrForReadyz = rabbitMQManager
+
 		logger.Log(context.Background(), libLog.LevelInfo, "RabbitMQ: multi-tenant publisher initialized with tmrabbitmq.Manager")
 	} else {
 		// Single-tenant mode: use static connection (existing behavior)
@@ -412,7 +488,9 @@ func initPlatformDependencies(cfg *Config, logger libLog.Logger, messageSigner c
 		rabbitMQOptions := rabbitmq.DefaultOptions()
 		rabbitMQOptions.Signer = messageSigner
 
-		rabbitPublisher = rabbitmq.NewRabbitMQAdapterWithOptions(rabbitMQConnection, rabbitMQOptions)
+		adapter := rabbitmq.NewRabbitMQAdapterWithOptions(rabbitMQConnection, rabbitMQOptions)
+		rabbitPublisher = adapter
+		rabbitAdapter = adapter
 	}
 
 	authLoggerV4, authLogErr := zap.New(zap.Config{
@@ -466,8 +544,14 @@ func initPlatformDependencies(cfg *Config, logger libLog.Logger, messageSigner c
 			cfg.OrganizationIDs,
 			&licenseLogger,
 		),
-		connectionTestStore: ratelimit.New(10, time.Minute),
-		schemaCache:         cacheAdapter.NewSchemaCache(genericCache, schemaCacheTTL),
+		connectionTestStore:          ratelimit.New(10, time.Minute),
+		schemaCache:                  cacheAdapter.NewSchemaCache(genericCache, schemaCacheTTL),
+		rabbitMQAdapter:              rabbitAdapter,
+		tmClient:                     tmClientForReadyz,
+		tmMongoManager:               tmMongoMgrForReadyz,
+		tmRabbitMQManager:            tmRabbitMgrForReadyz,
+		readyzRedisClient:            newReadyzRedisClient(cfg),
+		multiTenantReadyzRedisClient: newReadyzMultiTenantRedisClient(cfg),
 	}, nil
 }
 
@@ -507,7 +591,7 @@ func assembleService(
 	listConnectionsQuery := connectionQuery.NewListConnections(repositories.connection, connResolver)
 	testConnectionQuery := connectionQuery.NewTestConnection(repositories.connection, cryptoService, platformDependencies.connectionTestStore, dsFactory, connResolver, registry)
 	validateSchemaQuery := connectionQuery.NewValidateSchema(repositories.connection, cryptoService, platformDependencies.schemaCache, dsFactory, connResolver)
-	getConnectionSchemaQuery := connectionQuery.NewGetConnectionSchema(repositories.connection, cryptoService, dsFactory, connResolver, registry)
+	getConnectionSchemaQuery := connectionQuery.NewGetConnectionSchema(repositories.connection, cryptoService, dsFactory, connResolver, registry, cfg.MultiTenantEnabled)
 
 	connectionHandler := in2.NewConnectionHandler(
 		createConnectionCmd,
@@ -546,6 +630,20 @@ func assembleService(
 		return nil, err
 	}
 
+	// In multi-tenant mode tenant-scoped deps carve out to NAChecker; the
+	// tenant-manager checker is only registered when MT is enabled.
+	readyzCfg := newReadyzConfig(cfg)
+	globalCheckers := buildManagerReadyzCheckers(cfg, repositories, platformDependencies)
+
+	// Startup self-probe — failure flips selfProbeOK to false but does not
+	// crash the pod, so /health serves 503 until a successful probe and
+	// the kubelet handles restarts.
+	runManagerSelfProbe(context.Background(), logger, globalCheckers)
+
+	readyzHandler := readyz.NewHandler(readyzCfg, globalCheckers...).Fiber()
+
+	tenantFiberHandler := buildManagerTenantHandler(readyzCfg, cfg, platformDependencies)
+
 	httpApp := in2.NewRoutes(
 		logger,
 		telemetry,
@@ -555,6 +653,9 @@ func assembleService(
 		migrationHandler,
 		fetcherHandler,
 		tenantHandler,
+		readyzHandler,
+		tenantFiberHandler,
+		readyz.NewMetricsHandler(),
 	)
 
 	var shutdownHooks []func(context.Context) error
@@ -573,6 +674,36 @@ func assembleService(
 
 		shutdownHooks = append(shutdownHooks, func(context.Context) error {
 			eventCleanup()
+			return nil
+		})
+	}
+
+	// Release the readyz-dedicated Redis client and tmMongo manager.
+	if platformDependencies.readyzRedisClient != nil {
+		rdb := platformDependencies.readyzRedisClient
+
+		shutdownHooks = append(shutdownHooks, func(context.Context) error {
+			_ = rdb.Close()
+			return nil
+		})
+	}
+
+	// Release the readyz-dedicated multi-tenant Redis client. Lifecycle is
+	// independent of the event-listener client owned by initManagerEventDiscovery.
+	if platformDependencies.multiTenantReadyzRedisClient != nil {
+		mtRDB := platformDependencies.multiTenantReadyzRedisClient
+
+		shutdownHooks = append(shutdownHooks, func(context.Context) error {
+			_ = mtRDB.Close()
+			return nil
+		})
+	}
+
+	if platformDependencies.tmMongoManager != nil {
+		mgr := platformDependencies.tmMongoManager
+
+		shutdownHooks = append(shutdownHooks, func(ctx context.Context) error {
+			_ = mgr.Close(ctx)
 			return nil
 		})
 	}
@@ -910,6 +1041,57 @@ func resolvedMaxTenantPools(cfg *Config) int {
 	return defaultMaxTenantPools
 }
 
+// buildSaaSTLSConfig translates the manager's Config into the URLs that
+// readyz.ValidateSaaSTLS inspects, composing Redis / RabbitMQ via the
+// canonical helpers so the validator sees exactly what the real clients
+// will later open. hasS3 stays as an argument (rather than hard-coded
+// false) so the call site reads symmetrically with the worker bootstrap.
+func buildSaaSTLSConfig(cfg *Config, hasS3 bool) readyz.SaaSTLSConfig {
+	return readyz.SaaSTLSConfig{
+		DeploymentMode:      cfg.DeploymentMode,
+		MongoURI:            buildMongoSource(cfg),
+		RedisURL:            readyz.ComposeRedisURL(cfg.RedisHost, cfg.RedisPort, cfg.RedisTLS),
+		MultiTenantRedisURL: readyz.ComposeRedisURL(cfg.MultiTenantRedisHost, cfg.MultiTenantRedisPort, cfg.MultiTenantRedisTLS),
+		RabbitMQURL:         buildRabbitMQSource(cfg),
+		S3Endpoint:          "",
+		TenantManagerURL:    cfg.MultiTenantURL,
+		MultiTenantEnabled:  cfg.MultiTenantEnabled,
+		HasS3:               hasS3,
+		AllowInsecureHTTPTM: cfg.MultiTenantAllowInsecureHTTP,
+	}
+}
+
+// newReadyzConfig forwards the values already on the manager's Config to
+// readyz.Config without re-reading the environment. nil cfg falls through
+// to readyz.LoadConfig so test seams and misconfigured callers do not
+// panic.
+func newReadyzConfig(cfg *Config) *readyz.Config {
+	if cfg == nil {
+		return readyz.LoadConfig()
+	}
+
+	drain := time.Duration(cfg.ReadyzDrainDelaySec) * time.Second
+	if cfg.ReadyzDrainDelaySec <= 0 {
+		drain = 12 * time.Second
+	}
+
+	mode := cfg.DeploymentMode
+	if mode == "" {
+		mode = readyz.DeploymentModeLocal
+	}
+
+	version := cfg.OtelServiceVersion
+	if version == "" {
+		version = "unknown"
+	}
+
+	return &readyz.Config{
+		DeploymentMode: mode,
+		DrainDelay:     drain,
+		Version:        version,
+	}
+}
+
 // managerRabbitMQChannel abstracts an AMQP channel for multi-tenant publishing.
 type managerRabbitMQChannel interface {
 	PublishWithContext(ctx context.Context, exchange, key string, mandatory, immediate bool, msg amqp.Publishing) error
@@ -997,3 +1179,25 @@ func wrapBootstrapError(action string, err error) error {
 	return nil
 }
 
+// selfProbeTimeout caps the whole startup probe; sized larger than the
+// worst-case per-dep timeout (2s) so parallel execution finishes inside
+// the budget even with a small fan-out factor.
+const selfProbeTimeout = 15 * time.Second
+
+// runManagerSelfProbe wraps readyz.RunSelfProbe with the manager's logger
+// and a bounded context. A failing probe is logged but never returned —
+// the pod must stay up so /health serves 503 and the kubelet handles
+// restarts on its own schedule.
+var runManagerSelfProbe = func(ctx context.Context, logger libLog.Logger, checkers []readyz.DependencyChecker) {
+	probeCtx, cancel := context.WithTimeout(ctx, selfProbeTimeout)
+	defer cancel()
+
+	if err := readyz.RunSelfProbe(probeCtx, checkers, logger); err != nil {
+		if logger != nil {
+			logger.Log(ctx, libLog.LevelError,
+				"startup self-probe reported unhealthy deps; /health will return 503 until a successful probe",
+				libLog.Err(err),
+			)
+		}
+	}
+}

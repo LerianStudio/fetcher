@@ -13,6 +13,7 @@ import (
 
 	"github.com/LerianStudio/fetcher/components/worker/internal/adapters/rabbitmq"
 	"github.com/LerianStudio/fetcher/components/worker/internal/services"
+	"github.com/LerianStudio/fetcher/pkg/bootstrap/readyz"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/datasource"
@@ -23,18 +24,18 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/resolver"
 	pkgStorage "github.com/LerianStudio/fetcher/pkg/storage"
 
-	libCommons "github.com/LerianStudio/lib-commons/v4/commons"
-	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
-	mongoDB "github.com/LerianStudio/lib-commons/v4/commons/mongo"
-	libOtel "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
-	libRabbitMQ "github.com/LerianStudio/lib-commons/v4/commons/rabbitmq"
-	tmclient "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/client"
-	tmconsumer "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/consumer"
-	tmevent "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/event"
-	tmmongo "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/mongo"
-	tmrabbitmq "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/rabbitmq"
-	"github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/tenantcache"
-	libZap "github.com/LerianStudio/lib-commons/v4/commons/zap"
+	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
+	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
+	mongoDB "github.com/LerianStudio/lib-commons/v5/commons/mongo"
+	libOtel "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
+	libRabbitMQ "github.com/LerianStudio/lib-commons/v5/commons/rabbitmq"
+	tmclient "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/client"
+	tmconsumer "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/consumer"
+	tmevent "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/event"
+	tmmongo "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/mongo"
+	tmrabbitmq "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/rabbitmq"
+	"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/tenantcache"
+	libZap "github.com/LerianStudio/lib-commons/v5/commons/zap"
 	libLicense "github.com/LerianStudio/lib-license-go/v2/middleware"
 	"github.com/redis/go-redis/v9"
 )
@@ -116,6 +117,11 @@ type Config struct {
 	MultiTenantCacheTTLSec              int    `env:"MULTI_TENANT_CACHE_TTL_SEC" default:"120"`
 	MultiTenantTimeout                  int    `env:"MULTI_TENANT_TIMEOUT" default:"30"`
 	MultiTenantAllowInsecureHTTP        bool   `env:"MULTI_TENANT_ALLOW_INSECURE_HTTP" default:"false"`
+	// The worker has no primary HTTP server; a dedicated micro-server
+	// exposes /health, /readyz and /metrics on HEALTH_PORT.
+	DeploymentMode      string `env:"DEPLOYMENT_MODE" default:"local"`
+	HealthPort          int    `env:"HEALTH_PORT" default:"4007"`
+	ReadyzDrainDelaySec int    `env:"READYZ_DRAIN_DELAY_SEC" default:"12"`
 }
 
 var (
@@ -128,6 +134,10 @@ var (
 	}
 	decodeMasterKey = crypto.DecodeMasterKey
 	newKeyDeriver   = crypto.NewHKDFKeyDeriver
+	// validateSaaSTLSFn is overridable for tests. In production it points
+	// to readyz.ValidateSaaSTLS and runs before any platform connection
+	// (including the S3 storage repository) opens.
+	validateSaaSTLSFn = readyz.ValidateSaaSTLS
 )
 
 // InitWorker initializes and configures the application's dependencies and returns the Service instance.
@@ -150,6 +160,12 @@ func InitWorker() (*Service, error) {
 	}
 
 	logger.Log(ctx, libLog.LevelInfo, "Key derivation initialized successfully")
+
+	// SaaS TLS enforcement must run before any platform connection opens.
+	// Worker owns the S3 object-storage dependency, so hasS3=true.
+	if err := validateSaaSTLSFn(buildSaaSTLSConfig(cfg, true)); err != nil {
+		return nil, fmt.Errorf("tls enforcement failed: %w", err)
+	}
 
 	storageRepository, err := initStorageRepository(ctx, cfg)
 	if err != nil {
@@ -256,35 +272,52 @@ func InitWorker() (*Service, error) {
 
 		service.RabbitMQPublisher = publisherRoutes
 
-		multiQueueConsumer := NewMultiQueueConsumerMultiTenant(mtConsumer, service, cfg.RabbitMQGenerateReportQueue, logger, mongoManager)
+		multiQueueConsumer := NewMultiQueueConsumerMultiTenant(mtConsumer, service, cfg.RabbitMQGenerateReportQueue, logger, mongoManager, defaultDrain(cfg.ReadyzDrainDelaySec))
 
 		// Discover existing tenants on startup so consumers start immediately.
 		// Called AFTER handler registration so EnsureConsumerStarted can spawn
 		// consumer goroutines for all registered queues.
 		performInitialTenantSync(ctx, logger, tmClient, mtConsumer)
 
+		readyzDeps := newWorkerReadyzDepsMT(cfg, mongoConnection, storageRepository, tmClient, mongoManager, rabbitMQManager)
+
+		// Self-probe runs after every dep is constructed and before the
+		// consumer + health server start; failure does not abort boot,
+		// /health serves 503 until the probe succeeds.
+		runWorkerSelfProbe(ctx, logger, buildWorkerReadyzCheckers(readyzDeps))
+
 		return &Service{
 			MultiQueueConsumer: multiQueueConsumer,
 			Logger:             logger,
 			licenseShutdown:    licenseClient.GetLicenseManagerShutdown(),
 			mtCleanup:          mtCleanup,
+			healthServer:       NewHealthServer(cfg, logger, telemetry, readyzDeps),
+			readyzCloser:       readyzDeps.close,
 		}, nil
 	}
 
-	multiQueueConsumer, err := initSingleTenantRabbitMQ(cfg, logger, telemetry, keyDeriver, cryptoWithExternalHMAC, service, mongoManager)
+	multiQueueConsumer, consumerRoutes, err := initSingleTenantRabbitMQ(cfg, logger, telemetry, keyDeriver, cryptoWithExternalHMAC, service, mongoManager)
 	if err != nil {
 		return nil, err
 	}
+
+	readyzDeps := newWorkerReadyzDepsST(cfg, mongoConnection, storageRepository, consumerRoutes)
+
+	runWorkerSelfProbe(ctx, logger, buildWorkerReadyzCheckers(readyzDeps))
 
 	return &Service{
 		MultiQueueConsumer: multiQueueConsumer,
 		Logger:             logger,
 		licenseShutdown:    licenseClient.GetLicenseManagerShutdown(),
+		healthServer:       NewHealthServer(cfg, logger, telemetry, readyzDeps),
+		readyzCloser:       readyzDeps.close,
 	}, nil
 }
 
-// initSingleTenantRabbitMQ initializes RabbitMQ consumer and publisher for single-tenant mode.
-// Consumer and Publisher use SEPARATE connections to avoid channel interference.
+// initSingleTenantRabbitMQ creates RabbitMQ consumer and publisher with
+// SEPARATE connections to avoid channel interference. The returned
+// *rabbitmq.ConsumerRoutes is what /readyz uses to inspect the
+// circuit-breaker state; nil on the error path.
 func initSingleTenantRabbitMQ(
 	cfg *Config,
 	logger libLog.Logger,
@@ -293,7 +326,7 @@ func initSingleTenantRabbitMQ(
 	cryptoWithExternalHMAC *crypto.HMACSigner,
 	service *services.UseCase,
 	mongoManager *tmmongo.Manager,
-) (*MultiQueueConsumer, error) {
+) (*MultiQueueConsumer, *rabbitmq.ConsumerRoutes, error) {
 	// URL-encode credentials to handle special characters (@ : / etc.)
 	escapedUserRMQ := url.PathEscape(cfg.RabbitMQUser)
 	escapedPassRMQ := url.QueryEscape(cfg.RabbitMQPass)
@@ -325,20 +358,20 @@ func initSingleTenantRabbitMQ(
 	// Init message signer for RabbitMQ with derived internal HMAC key
 	cryptoWithInternalHMAC, errSigner := crypto.NewHMACSigner(keyDeriver.GetInternalHMACKey(), crypto.SignatureVersion)
 	if errSigner != nil {
-		return nil, fmt.Errorf("initialize internal message signer: %w", errSigner)
+		return nil, nil, fmt.Errorf("initialize internal message signer: %w", errSigner)
 	}
 
 	// Initialize RabbitMQ consumer and publisher with separate connections
 	consumerRoutes, errRoutes := rabbitmq.NewConsumerRoutes(consumerConnection, cfg.RabbitMQNumWorkers, logger, telemetry, cryptoWithInternalHMAC, cfg.EnvName)
 	if errRoutes != nil {
-		return nil, fmt.Errorf("initialize consumer routes: %w", errRoutes)
+		return nil, nil, fmt.Errorf("initialize consumer routes: %w", errRoutes)
 	}
 
 	publisherRoutes := rabbitmq.NewPublisherRoutes(publisherConnection, logger, telemetry, cryptoWithExternalHMAC)
 
 	service.RabbitMQPublisher = publisherRoutes
 
-	return NewMultiQueueConsumer(consumerRoutes, service, cfg.RabbitMQGenerateReportQueue, logger, mongoManager), nil
+	return NewMultiQueueConsumer(consumerRoutes, service, cfg.RabbitMQGenerateReportQueue, logger, mongoManager, defaultDrain(cfg.ReadyzDrainDelaySec)), consumerRoutes, nil
 }
 
 // initObservability initializes the logger and telemetry pipeline.
@@ -826,4 +859,79 @@ func wrapBootstrapError(action string, err error) error {
 	}
 
 	return nil
+}
+
+// buildSaaSTLSConfig mirrors the URL composition done by initMongoConnection,
+// initSingleTenantRabbitMQ and initStorageRepository so ValidateSaaSTLS
+// inspects exactly the strings that will later be dialed.
+func buildSaaSTLSConfig(cfg *Config, hasS3 bool) readyz.SaaSTLSConfig {
+	return readyz.SaaSTLSConfig{
+		DeploymentMode:      cfg.DeploymentMode,
+		MongoURI:            buildWorkerMongoURI(cfg),
+		RedisURL:            "",
+		MultiTenantRedisURL: readyz.ComposeRedisURL(cfg.MultiTenantRedisHost, cfg.MultiTenantRedisPort, cfg.MultiTenantRedisTLS),
+		RabbitMQURL:         buildWorkerRabbitMQURL(cfg),
+		S3Endpoint:          cfg.ObjectStorageEndpoint,
+		TenantManagerURL:    cfg.MultiTenantURL,
+		MultiTenantEnabled:  cfg.MultiTenantEnabled,
+		HasS3:               hasS3,
+		AllowInsecureHTTPTM: cfg.MultiTenantAllowInsecureHTTP,
+	}
+}
+
+// buildWorkerMongoURI composes the Mongo URI the same way
+// initMongoConnection does, so the validator sees the dialed string. "" when
+// MongoURI is unset (dep not configured).
+func buildWorkerMongoURI(cfg *Config) string {
+	if cfg.MongoURI == "" {
+		return ""
+	}
+
+	escapedPass := url.QueryEscape(cfg.MongoDBPassword)
+
+	source := fmt.Sprintf("%s://%s:%s@%s:%s",
+		cfg.MongoURI, cfg.MongoDBUser, escapedPass, cfg.MongoDBHost, cfg.MongoDBPort)
+
+	if cfg.MongoDBParameters != "" {
+		source += "/?" + cfg.MongoDBParameters
+	}
+
+	return source
+}
+
+// workerSelfProbeTimeout caps the worker's startup probe — large enough
+// to cover the worst-case per-dep timeout with a small fan-out, small
+// enough that an unreachable dep cannot delay boot indefinitely.
+const workerSelfProbeTimeout = 15 * time.Second
+
+// runWorkerSelfProbe wraps readyz.RunSelfProbe with the worker's logger
+// and a bounded context. A failing probe is logged but never returned —
+// the pod must stay up so /health serves 503 and the kubelet handles
+// restarts.
+var runWorkerSelfProbe = func(ctx context.Context, logger libLog.Logger, checkers []readyz.DependencyChecker) {
+	probeCtx, cancel := context.WithTimeout(ctx, workerSelfProbeTimeout)
+	defer cancel()
+
+	if err := readyz.RunSelfProbe(probeCtx, checkers, logger); err != nil {
+		if logger != nil {
+			logger.Log(ctx, libLog.LevelError,
+				"startup self-probe reported unhealthy deps; /health will return 503 until a successful probe",
+				libLog.Err(err),
+			)
+		}
+	}
+}
+
+// buildWorkerRabbitMQURL composes the URL the same way
+// initSingleTenantRabbitMQ does. "" when RabbitURI is unset.
+func buildWorkerRabbitMQURL(cfg *Config) string {
+	if cfg.RabbitURI == "" {
+		return ""
+	}
+
+	escapedUser := url.PathEscape(cfg.RabbitMQUser)
+	escapedPass := url.QueryEscape(cfg.RabbitMQPass)
+
+	return fmt.Sprintf("%s://%s:%s@%s:%s",
+		cfg.RabbitURI, escapedUser, escapedPass, cfg.RabbitMQHost, cfg.RabbitMQPortAMQP)
 }

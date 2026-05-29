@@ -5,9 +5,10 @@ import (
 	"testing"
 
 	"github.com/LerianStudio/fetcher/pkg/crypto"
+	"github.com/LerianStudio/fetcher/pkg/datasource/hostsafety"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/model/datasource"
-	"github.com/LerianStudio/lib-commons/v4/commons/log"
+	"github.com/LerianStudio/lib-commons/v5/commons/log"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -302,6 +303,62 @@ func TestNewDataSourceFromConnection_MongoDBInvalidSSLMode(t *testing.T) {
 	ds, err := NewDataSourceFromConnection(context.Background(), conn, mockCryptor, logger)
 	assert.Nil(t, ds)
 	require.Error(t, err)
+}
+
+// ============================================================================
+// SSRF host safety guard (fetcher-013 Marco 2)
+//
+// The guard runs BEFORE the type switch, so no cryptor / no dial happens when
+// the host is denylisted. These tests verify the wiring:
+//   1. Flag on + encrypted conn pointing at loopback → blocked with FET-0414.
+//   2. Flag on + internal conn (empty EncryptionKeyVersion) pointing at the
+//      same loopback → bypassed (proven by reaching the "unsupported type"
+//      branch below the guard rather than returning FET-0414).
+// ============================================================================
+
+func TestNewDataSourceFromConnection_BlocksDenylistedHost(t *testing.T) {
+	hostsafety.SetHostSafetyEnabled(true)
+	t.Cleanup(func() { hostsafety.SetHostSafetyEnabled(false) })
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockCryptor := crypto.NewMockCryptor(ctrl)
+	// No Decrypt expectation: the guard rejects before the type switch is
+	// reached, so the cryptor must never be touched. gomock will fail the
+	// test if Decrypt is invoked unexpectedly.
+	logger := &log.GoLogger{Level: log.LevelDebug}
+
+	conn := testConnectionV2(model.TypePostgreSQL)
+	conn.Host = "127.0.0.1" // IPv4 loopback — blocked by libSSRF
+
+	ds, err := NewDataSourceFromConnection(context.Background(), conn, mockCryptor, logger)
+	assert.Nil(t, ds)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "FET-0414", "loopback host must be rejected with SSRF error code")
+}
+
+func TestNewDataSourceFromConnection_InternalDatasourceBypassesHostGuard(t *testing.T) {
+	hostsafety.SetHostSafetyEnabled(true)
+	t.Cleanup(func() { hostsafety.SetHostSafetyEnabled(false) })
+
+	logger := &log.GoLogger{Level: log.LevelDebug}
+
+	// EncryptionKeyVersion == "" marks this as an internal (env-loaded)
+	// datasource, which the guard intentionally exempts. Setting an
+	// unsupported DB type lets us prove the guard was bypassed without
+	// touching real network: control reaches the type-switch default
+	// branch and returns "unsupported database type", which is the
+	// canonical "passed the guard" signal in this test.
+	conn := testConnectionV2(model.DBType("UNSUPPORTED-FOR-TEST"))
+	conn.Host = "127.0.0.1"
+	conn.EncryptionKeyVersion = ""
+
+	ds, err := NewDataSourceFromConnection(context.Background(), conn, nil, logger)
+	assert.Nil(t, ds)
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "FET-0414", "internal datasource must bypass the SSRF guard")
+	assert.Contains(t, err.Error(), "unsupported database type", "internal conn must reach the type switch")
 }
 
 // ============================================================================

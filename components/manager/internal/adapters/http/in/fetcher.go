@@ -11,9 +11,9 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/model"
 	httpUtils "github.com/LerianStudio/fetcher/pkg/net/http"
 
-	"github.com/LerianStudio/lib-commons/v4/commons"
-	libLog "github.com/LerianStudio/lib-commons/v4/commons/log"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v4/commons/opentelemetry"
+	"github.com/LerianStudio/lib-commons/v5/commons"
+	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
+	libOpentelemetry "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -74,6 +74,14 @@ func (h *FetcherHandler) CreateJob(c *fiber.Ctx) error {
 			Message:    "unable to parse request body",
 			Err:        errParser,
 		})
+	}
+
+	// Struct-tag validation — enforces FetcherRequest validation tags
+	// consistently with the connection handlers.
+	if err := httpUtils.ValidateStruct(&request); err != nil {
+		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "request validation failed", err)
+
+		return httpUtils.WithError(c, err)
 	}
 
 	result, err := h.CreateJobCmd.Execute(ctx, request)

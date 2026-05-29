@@ -19,7 +19,7 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/ports/messaging"
 	pkgRabbitMQ "github.com/LerianStudio/fetcher/pkg/rabbitmq"
 
-	tmcore "github.com/LerianStudio/lib-commons/v4/commons/tenant-manager/core"
+	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -1591,4 +1591,60 @@ func TestPublishToQueue_TenantIDHeaderPropagation(t *testing.T) {
 			assert.Equal(t, testJob.ID.String(), headers["jobId"])
 		})
 	}
+}
+
+// TestCreateFetcherJob_Execute_PreservesFET0414FromConnectionTester verifies
+// that when the injected ConnectionTester returns a pkg.ValidationError
+// (FET-0414 host safety rejection from the factory), CreateFetcherJob
+// propagates it verbatim instead of masking it behind ErrConnectionDown
+// (FET-1040). Masking would (a) break the documented FET-0414 → HTTP 400
+// contract for POST /v1/fetcher, and (b) lose the audit signal that a tenant
+// tried to reach a denylisted host.
+func TestCreateFetcherJob_Execute_PreservesFET0414FromConnectionTester(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockJobRepo := jobRepo.NewMockRepository(ctrl)
+	mockConnTester := NewMockConnectionTester(ctrl)
+
+	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, nil, nil, mockConnTester, "", nil)
+
+	ctx := testContext()
+	request := newValidFetcherRequest()
+	conn := &model.Connection{ID: uuid.New(), ProductName: "test-product", ConfigName: "datasource1", Type: model.TypePostgreSQL}
+
+	// No duplicate, connection lookup succeeds — fall through to the tester.
+	mockJobRepo.EXPECT().
+		FindByRequestHashWithinWindow(gomock.Any(), gomock.Any(), DeduplicationWindowMinutes).
+		Return(nil, nil)
+	mockConnRepo.EXPECT().
+		FindByConfigNames(gomock.Any(), []string{"datasource1"}).
+		Return([]*model.Connection{conn}, nil)
+
+	// Mimic what the default ConnectionTester emits when the datasource factory
+	// rejects the host via hostsafety.ValidateHostForConnection: a typed
+	// pkg.ValidationError with code FET-0414, wrapped through fmt.Errorf("%w").
+	factoryRejection := pkg.ValidationError{
+		EntityType: "connection",
+		Code:       "FET-0414",
+		Title:      "Forbidden Host",
+		Message:    "Host is not a valid external database endpoint",
+	}
+	mockConnTester.EXPECT().
+		TestConnection(gomock.Any(), conn).
+		Return(fmt.Errorf("failed to create datasource: %w", factoryRejection))
+
+	// Job creation must NOT be attempted — the propagated error stops the flow.
+	// Absence of mockJobRepo.EXPECT().Create(...) here is the guard.
+
+	result, err := svc.Execute(ctx, request)
+	require.Error(t, err)
+	require.Nil(t, result, "no job must be persisted when host safety rejects the connection")
+
+	var ve pkg.ValidationError
+	require.True(t, errors.As(err, &ve),
+		"CreateFetcherJob must propagate factory's pkg.ValidationError unchanged, got: %T %v", err, err)
+	assert.Equal(t, "FET-0414", ve.Code,
+		"FET-0414 must survive the testConnections layer instead of being remapped to ErrConnectionDown (FET-1040)")
 }

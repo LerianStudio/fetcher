@@ -22,6 +22,7 @@ End-to-end tests for the Fetcher application using the `itestkit` framework. The
 - [Test Catalog](#test-catalog)
   - [Connection Management](#connection-management)
   - [Connection Validation](#connection-validation)
+  - [Internal Datasource SSL/TLS](#internal-datasource-ssltls)
   - [Data Extraction - PostgreSQL](#data-extraction---postgresql)
   - [Data Extraction - MySQL](#data-extraction---mysql)
   - [Data Extraction - MongoDB](#data-extraction---mongodb)
@@ -80,6 +81,7 @@ E2E_REUSE_INFRA=true E2E_MANAGER_URL=http://localhost:4006 go test -v -tags e2e 
 | `E2E_SKIP_WORKER` | `false` | Skip Worker container (for debugging Worker locally) |
 | `E2E_MANAGER_URL` | `""` | URL of external Manager (default: `http://localhost:4006` when `E2E_SKIP_MANAGER=true`) |
 | `E2E_DEBUG_LOG` | `false` | Enable debug logging for HTTP requests/responses |
+| `E2E_SSRF_MT_ENABLED` | `false` | Activate the SSRF host safety E2E tests in `connection_ssrf_test.go`. Requires the Manager under test to be running with `MULTI_TENANT_ENABLED=true` plus the multi-tenant fixture dependencies (see `connection_ssrf_test.go` preamble). Default-off because the shared E2E Manager hardcodes `MULTI_TENANT_ENABLED=false`. Activation will land with `fetcher-017`. |
 
 ## Prerequisites
 
@@ -641,6 +643,18 @@ docker ps -a | grep -E "(mongo|rabbit|redis|seaweed|postgres)" | awk '{print $1}
 | `connection_test_test.go` | `TestConnectionTest_WrongCredentials_Error` | Wrong credentials returns error |
 | `connection_test_test.go` | `TestConnectionTest_NotFound_404` | Test non-existent connection returns 404 |
 
+### Connection SSRF Host Safety (requires `E2E_SSRF_MT_ENABLED=true`)
+
+These tests verify the SSRF host denylist guard introduced in `fetcher-013`. All tests in this section are **skipped** unless `E2E_SSRF_MT_ENABLED=true` AND the Manager under test runs with `MULTI_TENANT_ENABLED=true`. Activation will land with `fetcher-017`. See the file preamble for the full activation contract.
+
+| File | Test | Description |
+|------|------|-------------|
+| `connection_ssrf_test.go` | `TestConnectionSSRF_LoopbackBlocked` | POST connection with `Host: "127.0.0.1"` returns 400 + `FET-0414` (DTO `safe_host` validator rejects IPv4 loopback literal) |
+| `connection_ssrf_test.go` | `TestConnectionSSRF_CloudMetadataBlocked` | POST connection with `Host: "169.254.169.254"` (AWS/GCP/Azure IMDS) returns 400 + `FET-0414` |
+| `connection_ssrf_test.go` | `TestConnectionSSRF_RFC1918Blocked` | POST connection with `Host: "10.0.0.1"` returns 400 + `FET-0414` (private RFC1918 range) |
+| `connection_ssrf_test.go` | `TestConnectionSSRF_PublicHostnameAccepted` | POST with non-resolvable public hostname (`*.example.test`) returns 201 — proves DNS-failure bypass branch (no oracle for non-existent hosts) |
+| `connection_ssrf_test.go` | `TestConnectionSSRF_HappyPathTestConnection` | Regression smoke: legitimate PostgreSQL fixture connection succeeds in both POST and `POST /test` with the guard active |
+
 ### Connection Validation
 
 | File | Test | Description |
@@ -659,6 +673,39 @@ docker ps -a | grep -E "(mongo|rabbit|redis|seaweed|postgres)" | awk '{print $1}
 | `connection_validation_test.go` | `TestConnection_MissingUsername` | Missing username rejected |
 | `connection_validation_test.go` | `TestConnection_InvalidDatabaseType` | Unsupported database type rejected |
 | `connection_validation_test.go` | `TestConnection_MetadataPreserved` | Custom metadata preserved on create/retrieve |
+
+### Internal Datasource SSL/TLS
+
+Coverage for `fetcher-012` (env_loader.go SSL/TLS support). Validates the `DATASOURCE_{NAME}_SSLMODE` env-var path consumed by `pkg/resolver/env_loader.go::LoadInternalConnectionsFromEnv` and exercised through `POST /v1/management/connections/{id}/test` + `GET /v1/management/connections/{id}/schema` against the deterministic UUIDs from `pkg/resolver/registry.go::GetDeterministicID`. Custom CA / client cert plumbing (`_SSL_CA`, `_SSL_CERT`, `_SSL_KEY`) is not yet wired into any driver — those suffixes are parsed but ignored; tracked as a follow-up.
+
+Each test spawns a **dedicated Manager** (via `e2eshared.StartManager` + `AppStartConfig.ExtraEnv`) so per-test `DATASOURCE_*` overrides don't mutate the shared `managerApp`. TLS-required datasources are spun up per test using the existing SSL fixtures in `tests/shared/fixtures/ssl/` (`generate.go` cert bundle, `postgres.conf`, `pg_hba_ssl_only.conf`). Backward-compat tests reuse the shared `postgresInfra` / `coreInfra.MongoDB`.
+
+| File | Test | Description |
+|------|------|-------------|
+| `internal_datasource_ssl_postgres_test.go` | `TestInternalDatasourceSSL_Postgres_NoSSLMode_AgainstHostssl_Reproduces28000` | **Reproduces LaFinteca bug**: Manager without `DATASOURCE_*_SSLMODE` against a hostssl-only postgres returns HTTP 500 + `"Database Connection Error"` on both `/test` and `/schema`. Pins the pre-fetcher-012 failure mode. |
+| `internal_datasource_ssl_postgres_test.go` | `TestInternalDatasourceSSL_Postgres_SSLModeRequire_AgainstHostssl_Success` | **Validates fetcher-012 fix**: Manager with `DATASOURCE_*_SSLMODE=require` against the same hostssl postgres succeeds — `/test` returns 200 + non-zero latency, `/schema` returns a non-nil schema response (TLS handshake negotiated by pgx). |
+| `internal_datasource_ssl_postgres_test.go` | `TestInternalDatasourceSSL_Postgres_NoSSL_AgainstPlainPostgres_BackwardCompat` | **Protects existing deployments**: Manager without `_SSLMODE` against a plain postgres (no TLS required) still succeeds. Reuses the shared `postgresInfra` to avoid spinning a fourth postgres container. |
+| `internal_datasource_ssl_mongodb_test.go` | `TestInternalDatasourceSSL_Mongo_SSLModeInsecure_AgainstRequireTLS_Success` | Manager with `DATASOURCE_PLUGIN_CRM_SSLMODE=insecure` against a `--tlsMode requireTLS` mongo with self-signed cert succeeds. `insecure` is the mongo-driver vocabulary that triggers `tls=true&tlsInsecure=true` on the URI (verified in `pkg/datasource/datasource_factory.go::appendMongoDBSSLParams`). |
+| `internal_datasource_ssl_mongodb_test.go` | `TestInternalDatasourceSSL_Mongo_NoSSLMode_AgainstRequireTLS_Failure` | Manager without `_SSLMODE` against the same TLS-required mongo returns HTTP 500 on both `/test` and `/schema` (driver-level TLS handshake error stays in logs; handler maps to the static `"Database Connection Error"` body). |
+| `internal_datasource_ssl_mongodb_test.go` | `TestInternalDatasourceSSL_Mongo_NoSSL_AgainstPlainMongo_BackwardCompat` | Manager without `_SSLMODE` against the shared `coreInfra.MongoDB` (no TLS) still succeeds. Mirrors the postgres backward-compat shape. |
+
+**SSL fixtures used:**
+- `tests/shared/fixtures/ssl/generate.go` — CA + server + client cert bundle generator (`ssl.GenerateCertificates(ssl.DefaultGenerateOptions())`). Used by both postgres and mongo TLS containers.
+- `tests/shared/fixtures/ssl/postgres.conf` — postgres SSL server config (mounted via `pg.WithConfigFile`).
+- `tests/shared/fixtures/ssl/pg_hba_ssl_only.conf` — pg_hba.conf with `hostssl ... scram-sha-256` (rejects plaintext, matches postgres 16 default auth).
+
+**Testcontainer caveats discovered:**
+- Postgres pg_hba.conf MUST be mounted with mode `0o644` (not `0o600`): testcontainers mounts files as root:root inside the container, but postmaster runs as UID 70 and aborts with `could not load /etc/postgresql/pg_hba.conf` if the file is unreadable.
+- Postgres pg_hba auth method MUST match the bootstrap user's password hash. The `postgres:16-alpine` image defaults to `scram-sha-256` for `password_encryption`; using `md5` in pg_hba causes hostssl auth to fail with `password authentication failed`.
+- Mongo 7 enforces [SERVER-72839](https://jira.mongodb.org/browse/SERVER-72839): `--tlsCertificateKeyFile` REQUIRES a paired `--tlsCAFile` for chain-of-trust validation, otherwise mongod aborts at global init.
+- Mongo certificate PEM mounts MUST be mode `0o644`: mongod inside the container runs as UID 999 and cannot read a `0o600 root:root` file.
+- Mongo expects a SINGLE PEM with cert + key concatenated for `--tlsCertificateKeyFile` (unlike postgres which takes separate files).
+
+**Infra prerequisites:**
+- `tests/shared/apps.go::AppStartConfig.ExtraEnv map[string]string` — added in fetcher-012; per-test `DATASOURCE_*` env-var overrides chained AFTER `ManagerEnv()`/`WorkerEnv()` (last-write-wins).
+- `pkg/itestkit/infra/postgres/postgres_options.go::WithPGCustomizers(...)` — escape hatch to forward arbitrary `testcontainers.ContainerCustomizer` (e.g. `pg.WithSSLCert`, `pg.WithConfigFile`, `itestkit.CCopyFile`) into postgres container run options.
+- `pkg/itestkit/infra/postgres/postgres.go::PostgresConfig.SSLMode` — parameterized DSN sslmode field; empty string defaults to `disable` for backward-compat with existing callers.
+- `pkg/itestkit/infra/mongodb/mongodb_options.go::WithMongoDBFile(...)` — mounts a host file into the mongo container; mirrors the postgres `CCopyFile` pattern.
 
 ### Data Extraction - PostgreSQL
 
