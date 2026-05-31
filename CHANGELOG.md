@@ -1,5 +1,16 @@
 # Fetcher Changelog
 
+## [1.4.2](https://github.com/LerianStudio/fetcher/releases/tag/v1.4.2)
+
+- Fixes:
+  - Bumped lib-commons to v5.1.3 to address issues with HTTP/1.1 tmclient transport.
+
+Contributors: @jeffersonrodrigues92, @lerian-studio
+
+[Compare changes](https://github.com/LerianStudio/fetcher/compare/v1.4.1...v1.4.2)
+
+---
+
 ## [1.4.1](https://github.com/LerianStudio/fetcher/releases/tag/v1.4.1)
 
 - Fixes:
