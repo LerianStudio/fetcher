@@ -1,0 +1,549 @@
+// Copyright (c) 2026 Lerian Studio. All rights reserved.
+// SPDX-License-Identifier: Elastic-2.0
+
+package engine_test
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/LerianStudio/fetcher/pkg/engine"
+	"github.com/LerianStudio/fetcher/pkg/engine/memory"
+)
+
+// containsSecret marshals the descriptor and reports whether the raw secret
+// leaks into its serialized form. ConnectionDescriptor is the secret-free output
+// contract, so this must always be false for a correct implementation.
+func containsSecret(t *testing.T, desc engine.ConnectionDescriptor, secret string) bool {
+	t.Helper()
+
+	raw, err := json.Marshal(desc)
+	if err != nil {
+		t.Fatalf("marshal descriptor: %v", err)
+	}
+
+	return strings.Contains(string(raw), secret)
+}
+
+// engineWithStore builds an Engine wired with the in-memory connection store and
+// connector registry. It fails the test on construction error so callers can use
+// the returned Engine directly.
+func engineWithStore(t *testing.T) (*engine.Engine, *memory.ConnectionStore) {
+	t.Helper()
+
+	store := memory.NewConnectionStore()
+
+	eng, err := engine.New(
+		engine.WithConnectorRegistry(memory.NewConnectorRegistry()),
+		engine.WithConnectionStore(store),
+	)
+	if err != nil {
+		t.Fatalf("New() unexpected error: %v", err)
+	}
+
+	return eng, store
+}
+
+func newInput(configName string) engine.ConnectionInput {
+	return engine.NewConnectionInput(engine.ConnectionInputParams{
+		ConfigName:   configName,
+		Type:         "postgres",
+		Host:         "db.internal",
+		Port:         5432,
+		DatabaseName: "ledger",
+		Username:     "svc",
+		Password:     "s3cr3t",
+		SSLMode:      "require",
+	})
+}
+
+func TestEngine_CreateConnection_StoresScopedAndRedacts(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	eng, store := engineWithStore(t)
+	tenant := engine.NewTenantContext("org-1", "product-a")
+
+	desc, err := eng.CreateConnection(ctx, tenant, newInput("pg-main"))
+	if err != nil {
+		t.Fatalf("CreateConnection: unexpected error: %v", err)
+	}
+
+	// Output is the secret-free descriptor.
+	if desc.ConfigName != "pg-main" {
+		t.Fatalf("CreateConnection: ConfigName = %q, want %q", desc.ConfigName, "pg-main")
+	}
+	if desc.ProductName != "product-a" {
+		t.Fatalf("CreateConnection: ProductName = %q, want %q", desc.ProductName, "product-a")
+	}
+	if desc.Host != "db.internal" || desc.Port != 5432 || desc.Username != "svc" {
+		t.Fatalf("CreateConnection: descriptor fields not projected: %+v", desc)
+	}
+
+	// The returned descriptor must carry no secret material. ConnectionDescriptor
+	// has no password field, so a defensive scan over its JSON confirms redaction.
+	if containsSecret(t, desc, "s3cr3t") {
+		t.Fatalf("CreateConnection: descriptor leaked secret material: %+v", desc)
+	}
+
+	// Stored under the tenant scope and retrievable through the port.
+	stored, found, err := store.FindConnection(ctx, tenant, "pg-main")
+	if err != nil {
+		t.Fatalf("FindConnection: unexpected error: %v", err)
+	}
+	if !found {
+		t.Fatalf("FindConnection: expected stored connection to be found")
+	}
+	if stored.ConfigName != "pg-main" {
+		t.Fatalf("FindConnection: ConfigName = %q, want %q", stored.ConfigName, "pg-main")
+	}
+}
+
+func TestEngine_CreateConnection_DuplicateWithinProductConflicts(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	eng, _ := engineWithStore(t)
+	tenant := engine.NewTenantContext("org-1", "product-a")
+
+	if _, err := eng.CreateConnection(ctx, tenant, newInput("pg-main")); err != nil {
+		t.Fatalf("CreateConnection first: unexpected error: %v", err)
+	}
+
+	_, err := eng.CreateConnection(ctx, tenant, newInput("pg-main"))
+	if err == nil {
+		t.Fatalf("CreateConnection duplicate: expected conflict error, got nil")
+	}
+
+	var engErr *engine.EngineError
+	if !errors.As(err, &engErr) {
+		t.Fatalf("CreateConnection duplicate: error type = %T, want *engine.EngineError", err)
+	}
+	if engErr.Category != engine.CategoryValidation {
+		t.Fatalf("CreateConnection duplicate: category = %q, want %q", engErr.Category, engine.CategoryValidation)
+	}
+}
+
+func TestEngine_CreateConnection_SameNameDifferentProductIsolated(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	eng, _ := engineWithStore(t)
+
+	tenantA := engine.NewTenantContext("org-1", "product-a")
+	tenantB := engine.NewTenantContext("org-1", "product-b")
+
+	if _, err := eng.CreateConnection(ctx, tenantA, newInput("pg-main")); err != nil {
+		t.Fatalf("CreateConnection product-a: unexpected error: %v", err)
+	}
+
+	// Same config name under a DIFFERENT product must succeed (isolation).
+	if _, err := eng.CreateConnection(ctx, tenantB, newInput("pg-main")); err != nil {
+		t.Fatalf("CreateConnection product-b: expected isolation success, got error: %v", err)
+	}
+}
+
+func TestEngine_GetConnection_FoundAndNotFound(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	eng, _ := engineWithStore(t)
+	tenant := engine.NewTenantContext("org-1", "product-a")
+
+	if _, err := eng.CreateConnection(ctx, tenant, newInput("pg-main")); err != nil {
+		t.Fatalf("CreateConnection: unexpected error: %v", err)
+	}
+
+	got, err := eng.GetConnection(ctx, tenant, "pg-main")
+	if err != nil {
+		t.Fatalf("GetConnection: unexpected error: %v", err)
+	}
+	if got.ConfigName != "pg-main" {
+		t.Fatalf("GetConnection: ConfigName = %q, want %q", got.ConfigName, "pg-main")
+	}
+
+	_, err = eng.GetConnection(ctx, tenant, "missing")
+	if err == nil {
+		t.Fatalf("GetConnection missing: expected not-found error, got nil")
+	}
+
+	var engErr *engine.EngineError
+	if !errors.As(err, &engErr) {
+		t.Fatalf("GetConnection missing: error type = %T, want *engine.EngineError", err)
+	}
+	if engErr.Category != engine.CategoryNotFound {
+		t.Fatalf("GetConnection missing: category = %q, want %q", engErr.Category, engine.CategoryNotFound)
+	}
+}
+
+func TestEngine_GetConnection_DeletedIsNotFound(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	eng, _ := engineWithStore(t)
+	tenant := engine.NewTenantContext("org-1", "product-a")
+
+	if _, err := eng.CreateConnection(ctx, tenant, newInput("pg-main")); err != nil {
+		t.Fatalf("CreateConnection: unexpected error: %v", err)
+	}
+	if err := eng.DeleteConnection(ctx, tenant, "pg-main"); err != nil {
+		t.Fatalf("DeleteConnection: unexpected error: %v", err)
+	}
+
+	_, err := eng.GetConnection(ctx, tenant, "pg-main")
+	if err == nil {
+		t.Fatalf("GetConnection deleted: expected not-found error, got nil")
+	}
+
+	var engErr *engine.EngineError
+	if !errors.As(err, &engErr) {
+		t.Fatalf("GetConnection deleted: error type = %T, want *engine.EngineError", err)
+	}
+	if engErr.Category != engine.CategoryNotFound {
+		t.Fatalf("GetConnection deleted: category = %q, want %q", engErr.Category, engine.CategoryNotFound)
+	}
+}
+
+func TestEngine_ListConnections_ByProductDeterministicAndScoped(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	eng, _ := engineWithStore(t)
+
+	tenantA := engine.NewTenantContext("org-1", "product-a")
+	tenantB := engine.NewTenantContext("org-1", "product-b")
+
+	for _, name := range []string{"zeta", "alpha", "mike"} {
+		if _, err := eng.CreateConnection(ctx, tenantA, newInput(name)); err != nil {
+			t.Fatalf("CreateConnection %s: unexpected error: %v", name, err)
+		}
+	}
+	if _, err := eng.CreateConnection(ctx, tenantB, newInput("other")); err != nil {
+		t.Fatalf("CreateConnection product-b: unexpected error: %v", err)
+	}
+
+	list, err := eng.ListConnections(ctx, tenantA)
+	if err != nil {
+		t.Fatalf("ListConnections: unexpected error: %v", err)
+	}
+
+	wantOrder := []string{"alpha", "mike", "zeta"}
+	if len(list) != len(wantOrder) {
+		t.Fatalf("ListConnections: len = %d, want %d (product-b leaked?)", len(list), len(wantOrder))
+	}
+	for i, want := range wantOrder {
+		if list[i].ConfigName != want {
+			t.Fatalf("ListConnections[%d].ConfigName = %q, want %q (order must be deterministic)", i, list[i].ConfigName, want)
+		}
+	}
+}
+
+func TestEngine_ListConnections_ExcludesDeleted(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	eng, _ := engineWithStore(t)
+	tenant := engine.NewTenantContext("org-1", "product-a")
+
+	for _, name := range []string{"keep", "drop"} {
+		if _, err := eng.CreateConnection(ctx, tenant, newInput(name)); err != nil {
+			t.Fatalf("CreateConnection %s: unexpected error: %v", name, err)
+		}
+	}
+	if err := eng.DeleteConnection(ctx, tenant, "drop"); err != nil {
+		t.Fatalf("DeleteConnection: unexpected error: %v", err)
+	}
+
+	list, err := eng.ListConnections(ctx, tenant)
+	if err != nil {
+		t.Fatalf("ListConnections: unexpected error: %v", err)
+	}
+	if len(list) != 1 || list[0].ConfigName != "keep" {
+		t.Fatalf("ListConnections: deleted connection not excluded: %+v", list)
+	}
+}
+
+func TestEngine_UpdateConnection_PatchPartialFields(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	eng, _ := engineWithStore(t)
+	tenant := engine.NewTenantContext("org-1", "product-a")
+
+	if _, err := eng.CreateConnection(ctx, tenant, newInput("pg-main")); err != nil {
+		t.Fatalf("CreateConnection: unexpected error: %v", err)
+	}
+
+	// Patch only the host; other fields must be preserved.
+	newHost := "db.replica"
+	patch := engine.ConnectionPatch{Host: &newHost}
+
+	updated, err := eng.UpdateConnection(ctx, tenant, "pg-main", patch)
+	if err != nil {
+		t.Fatalf("UpdateConnection: unexpected error: %v", err)
+	}
+
+	if updated.Host != "db.replica" {
+		t.Fatalf("UpdateConnection: Host = %q, want %q", updated.Host, "db.replica")
+	}
+	// Untouched fields preserved (Manager-compatible patch semantics).
+	if updated.Port != 5432 || updated.DatabaseName != "ledger" || updated.Username != "svc" {
+		t.Fatalf("UpdateConnection: untouched fields changed: %+v", updated)
+	}
+}
+
+func TestEngine_UpdateConnection_PatchAllFields(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	eng, _ := engineWithStore(t)
+	tenant := engine.NewTenantContext("org-1", "product-a")
+
+	if _, err := eng.CreateConnection(ctx, tenant, newInput("pg-main")); err != nil {
+		t.Fatalf("CreateConnection: unexpected error: %v", err)
+	}
+
+	newType := "mysql"
+	newHost := "db.replica"
+	newPort := 3306
+	newDB := "analytics"
+	newSchema := "reporting"
+	newUser := "reader"
+	newSSL := "verify-full"
+
+	patch := engine.ConnectionPatch{
+		Type:         &newType,
+		Host:         &newHost,
+		Port:         &newPort,
+		DatabaseName: &newDB,
+		Schema:       &newSchema,
+		Username:     &newUser,
+		SSLMode:      &newSSL,
+	}.WithPassword("rotated-secret")
+
+	if !patch.HasPassword() {
+		t.Fatalf("ConnectionPatch.HasPassword() = false, want true after WithPassword")
+	}
+
+	updated, err := eng.UpdateConnection(ctx, tenant, "pg-main", patch)
+	if err != nil {
+		t.Fatalf("UpdateConnection: unexpected error: %v", err)
+	}
+
+	if updated.Type != newType || updated.Host != newHost || updated.Port != newPort ||
+		updated.DatabaseName != newDB || updated.Schema != newSchema ||
+		updated.Username != newUser || updated.SSLMode != newSSL {
+		t.Fatalf("UpdateConnection: not all fields patched: %+v", updated)
+	}
+
+	// Config name and product scope are immutable through a patch.
+	if updated.ConfigName != "pg-main" || updated.ProductName != "product-a" {
+		t.Fatalf("UpdateConnection: identity changed: %+v", updated)
+	}
+
+	// The rotated secret must not leak into the descriptor.
+	if containsSecret(t, updated, "rotated-secret") {
+		t.Fatalf("UpdateConnection: descriptor leaked rotated secret: %+v", updated)
+	}
+}
+
+func TestEngine_ConnectionPatch_EmptyHasNoPassword(t *testing.T) {
+	t.Parallel()
+
+	if (engine.ConnectionPatch{}).HasPassword() {
+		t.Fatalf("empty ConnectionPatch.HasPassword() = true, want false")
+	}
+}
+
+func TestEngine_UpdateConnection_MissingIsNotFound(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	eng, _ := engineWithStore(t)
+	tenant := engine.NewTenantContext("org-1", "product-a")
+
+	newHost := "x"
+	_, err := eng.UpdateConnection(ctx, tenant, "ghost", engine.ConnectionPatch{Host: &newHost})
+	if err == nil {
+		t.Fatalf("UpdateConnection missing: expected not-found error, got nil")
+	}
+
+	var engErr *engine.EngineError
+	if !errors.As(err, &engErr) {
+		t.Fatalf("UpdateConnection missing: error type = %T, want *engine.EngineError", err)
+	}
+	if engErr.Category != engine.CategoryNotFound {
+		t.Fatalf("UpdateConnection missing: category = %q, want %q", engErr.Category, engine.CategoryNotFound)
+	}
+}
+
+func TestEngine_DeleteConnection_MissingIsNotFound(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	eng, _ := engineWithStore(t)
+	tenant := engine.NewTenantContext("org-1", "product-a")
+
+	err := eng.DeleteConnection(ctx, tenant, "ghost")
+	if err == nil {
+		t.Fatalf("DeleteConnection missing: expected not-found error, got nil")
+	}
+
+	var engErr *engine.EngineError
+	if !errors.As(err, &engErr) {
+		t.Fatalf("DeleteConnection missing: error type = %T, want *engine.EngineError", err)
+	}
+	if engErr.Category != engine.CategoryNotFound {
+		t.Fatalf("DeleteConnection missing: category = %q, want %q", engErr.Category, engine.CategoryNotFound)
+	}
+}
+
+func TestEngine_ConnectionOps_RequireConnectionStore(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	// An Engine with no connection store cannot perform connection ops; the
+	// operations must report a stable error rather than panic on a nil port.
+	eng, err := engine.New(engine.WithConnectorRegistry(memory.NewConnectorRegistry()))
+	if err != nil {
+		t.Fatalf("New() unexpected error: %v", err)
+	}
+	tenant := engine.NewTenantContext("org-1", "product-a")
+
+	if _, err := eng.CreateConnection(ctx, tenant, newInput("pg-main")); err == nil {
+		t.Fatalf("CreateConnection without store: expected error, got nil")
+	}
+	if _, err := eng.GetConnection(ctx, tenant, "pg-main"); err == nil {
+		t.Fatalf("GetConnection without store: expected error, got nil")
+	}
+	if _, err := eng.ListConnections(ctx, tenant); err == nil {
+		t.Fatalf("ListConnections without store: expected error, got nil")
+	}
+}
+
+// failingStore is a ConnectionStore whose read/list paths return a transport
+// error, exercising the Engine's error-propagation branches without relying on
+// the in-memory harness's happy path.
+type failingStore struct{}
+
+func (failingStore) FindConnection(context.Context, engine.TenantContext, string) (engine.ConnectionDescriptor, bool, error) {
+	return engine.ConnectionDescriptor{}, false, engine.NewEngineError(engine.CategoryUnavailable, "store down")
+}
+
+func (failingStore) Create(context.Context, engine.TenantContext, engine.ConnectionDescriptor) error {
+	return engine.NewEngineError(engine.CategoryUnavailable, "store down")
+}
+
+func (failingStore) Update(context.Context, engine.TenantContext, engine.ConnectionDescriptor) error {
+	return engine.NewEngineError(engine.CategoryUnavailable, "store down")
+}
+
+func (failingStore) Delete(context.Context, engine.TenantContext, string) error {
+	return engine.NewEngineError(engine.CategoryUnavailable, "store down")
+}
+
+func (failingStore) List(context.Context, engine.TenantContext) ([]engine.ConnectionDescriptor, error) {
+	return nil, engine.NewEngineError(engine.CategoryUnavailable, "store down")
+}
+
+func TestEngine_ConnectionOps_PropagateStoreErrors(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	eng, err := engine.New(
+		engine.WithConnectorRegistry(memory.NewConnectorRegistry()),
+		engine.WithConnectionStore(failingStore{}),
+	)
+	if err != nil {
+		t.Fatalf("New() unexpected error: %v", err)
+	}
+	tenant := engine.NewTenantContext("org-1", "product-a")
+
+	if _, err := eng.CreateConnection(ctx, tenant, newInput("c")); err == nil {
+		t.Fatalf("CreateConnection: expected store error, got nil")
+	}
+	if _, err := eng.GetConnection(ctx, tenant, "c"); err == nil {
+		t.Fatalf("GetConnection: expected store error, got nil")
+	}
+	if _, err := eng.ListConnections(ctx, tenant); err == nil {
+		t.Fatalf("ListConnections: expected store error, got nil")
+	}
+	if _, err := eng.UpdateConnection(ctx, tenant, "c", engine.ConnectionPatch{}); err == nil {
+		t.Fatalf("UpdateConnection: expected store error, got nil")
+	}
+	if err := eng.DeleteConnection(ctx, tenant, "c"); err == nil {
+		t.Fatalf("DeleteConnection: expected store error, got nil")
+	}
+}
+
+// recordingObservability records the span operations the Engine starts so the
+// optional Observability seam is exercised end-to-end.
+type recordingObservability struct {
+	mu    sync.Mutex
+	spans []string
+}
+
+func (o *recordingObservability) StartSpan(ctx context.Context, operation string) (context.Context, func()) {
+	o.mu.Lock()
+	o.spans = append(o.spans, operation)
+	o.mu.Unlock()
+
+	return ctx, func() {}
+}
+
+func TestEngine_ConnectionOps_StartSpanWhenObservabilityConfigured(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	obs := &recordingObservability{}
+	store := memory.NewConnectionStore()
+
+	eng, err := engine.New(
+		engine.WithConnectorRegistry(memory.NewConnectorRegistry()),
+		engine.WithConnectionStore(store),
+		engine.WithObservability(obs),
+	)
+	if err != nil {
+		t.Fatalf("New() unexpected error: %v", err)
+	}
+	tenant := engine.NewTenantContext("org-1", "product-a")
+
+	if _, err := eng.CreateConnection(ctx, tenant, newInput("pg-main")); err != nil {
+		t.Fatalf("CreateConnection: unexpected error: %v", err)
+	}
+
+	obs.mu.Lock()
+	defer obs.mu.Unlock()
+	if len(obs.spans) != 1 || obs.spans[0] != "engine.connection.create" {
+		t.Fatalf("Observability spans = %v, want [engine.connection.create]", obs.spans)
+	}
+}
+
+func TestEngine_CreateConnection_RequiresProductScope(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	eng, _ := engineWithStore(t)
+
+	// A tenant with no product scope cannot own a connection; config-name
+	// uniqueness is enforced WITHIN product scope, so an empty scope is invalid.
+	emptyTenant := engine.NewTenantContext("", "")
+
+	_, err := eng.CreateConnection(ctx, emptyTenant, newInput("pg-main"))
+	if err == nil {
+		t.Fatalf("CreateConnection empty scope: expected validation error, got nil")
+	}
+
+	var engErr *engine.EngineError
+	if !errors.As(err, &engErr) {
+		t.Fatalf("CreateConnection empty scope: error type = %T, want *engine.EngineError", err)
+	}
+	if engErr.Category != engine.CategoryValidation {
+		t.Fatalf("CreateConnection empty scope: category = %q, want %q", engErr.Category, engine.CategoryValidation)
+	}
+}

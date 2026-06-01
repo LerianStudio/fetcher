@@ -45,13 +45,36 @@ type CredentialProtector interface {
 	Reveal(ctx context.Context, tenant TenantContext, ciphertext []byte) ([]byte, error)
 }
 
-// ConnectionStore is an OPTIONAL port for resolving persisted connection
+// ConnectionStore is an OPTIONAL port for persisting and resolving connection
 // descriptors owned by a tenant/product. When absent, the host is expected to
-// supply connection inputs directly per request.
+// supply connection inputs directly per request and the Engine's connection
+// lifecycle operations are unavailable.
+//
+// The store is the only persistence seam the Engine connection operations use;
+// the Engine never embeds MongoDB, SQL, or any host repository. Implementations
+// MUST scope every record by the supplied TenantContext so connections owned by
+// one tenant/product are never visible to another. They MUST NOT return secret
+// material — ConnectionDescriptor carries none.
 type ConnectionStore interface {
 	// FindConnection returns the descriptor for the named connection and whether
 	// it exists for the given tenant. It never returns secret material.
 	FindConnection(ctx context.Context, tenant TenantContext, configName string) (ConnectionDescriptor, bool, error)
+	// Create persists a new connection descriptor for the tenant. It MUST return
+	// a CategoryValidation *EngineError when a connection with the same config
+	// name already exists within the tenant scope.
+	Create(ctx context.Context, tenant TenantContext, descriptor ConnectionDescriptor) error
+	// Update replaces an existing connection descriptor for the tenant. It MUST
+	// return a CategoryNotFound *EngineError when no connection with that config
+	// name exists within the tenant scope.
+	Update(ctx context.Context, tenant TenantContext, descriptor ConnectionDescriptor) error
+	// Delete removes a connection descriptor for the tenant. It MUST return a
+	// CategoryNotFound *EngineError when no connection with that config name
+	// exists within the tenant scope. After deletion the connection MUST be
+	// invisible to FindConnection and List.
+	Delete(ctx context.Context, tenant TenantContext, configName string) error
+	// List returns the connection descriptors owned by the tenant in a
+	// deterministic order. Deleted connections MUST NOT appear.
+	List(ctx context.Context, tenant TenantContext) ([]ConnectionDescriptor, error)
 }
 
 // ExecutionStore is an OPTIONAL port for persisting and reading execution

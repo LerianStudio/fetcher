@@ -142,6 +142,12 @@ type ConnectionDescriptor struct {
 	Schema       string `json:"schema,omitempty"`
 	Username     string `json:"userName"`
 	SSLMode      string `json:"sslMode,omitempty"`
+
+	// KeyVersion records which encryption key version protected this
+	// connection's secret material. It is secret-free metadata only — the
+	// ciphertext itself is never carried in this descriptor. ST-T003-02 wires
+	// the CredentialProtector that populates it; until then it stays zero.
+	KeyVersion int `json:"keyVersion,omitempty"`
 }
 
 // DescriptorFromInput projects a ConnectionInput onto a secret-free descriptor.

@@ -36,6 +36,22 @@ func (fakeConnectionStore) FindConnection(context.Context, TenantContext, string
 	return ConnectionDescriptor{}, false, nil
 }
 
+func (fakeConnectionStore) Create(context.Context, TenantContext, ConnectionDescriptor) error {
+	return nil
+}
+
+func (fakeConnectionStore) Update(context.Context, TenantContext, ConnectionDescriptor) error {
+	return nil
+}
+
+func (fakeConnectionStore) Delete(context.Context, TenantContext, string) error {
+	return nil
+}
+
+func (fakeConnectionStore) List(context.Context, TenantContext) ([]ConnectionDescriptor, error) {
+	return nil, nil
+}
+
 type fakeExecutionStore struct{}
 
 func (fakeExecutionStore) SaveExecution(context.Context, TenantContext, ExecutionState) error {
