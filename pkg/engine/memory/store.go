@@ -23,18 +23,16 @@ import (
 )
 
 // tenantScope is the isolation key for stored records. The in-memory harness
-// keys every collection by tenant so records owned by one tenant are never
+// keys every collection by tenantId so records owned by one tenant are never
 // visible to another, mirroring the ownership boundary the real stores enforce.
+// tenantId is the sole isolation dimension; the Engine carries no org/product
+// scope.
 type tenantScope struct {
-	organizationID string
-	productName    string
+	tenantID string
 }
 
 func scopeOf(tenant engine.TenantContext) tenantScope {
-	return tenantScope{
-		organizationID: tenant.OrganizationID,
-		productName:    tenant.ProductName,
-	}
+	return tenantScope{tenantID: tenant.TenantID}
 }
 
 // connectionKey identifies a stored connection within its tenant scope.

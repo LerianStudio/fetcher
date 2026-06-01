@@ -26,15 +26,30 @@ var (
 	_ engine.ConnectorRegistry = (*memory.ConnectorRegistry)(nil)
 )
 
-func testTenant() engine.TenantContext {
-	return engine.NewTenantContext("org-1", "product-a")
+// mustTenant builds a TenantContext for the given tenant ID, failing the test
+// on a validation error. tenantID is the sole isolation boundary.
+func mustTenant(t *testing.T, tenantID string) engine.TenantContext {
+	t.Helper()
+
+	tenant, err := engine.NewTenantContext(tenantID)
+	if err != nil {
+		t.Fatalf("NewTenantContext(%q): unexpected error: %v", tenantID, err)
+	}
+
+	return tenant
+}
+
+func testTenant(t *testing.T) engine.TenantContext {
+	t.Helper()
+
+	return mustTenant(t, "tenant-a")
 }
 
 func TestConnectionStore_CreateGetListUpdateDelete(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	tenant := testTenant()
+	tenant := testTenant(t)
 	store := memory.NewConnectionStore()
 
 	// Create + Get.
@@ -118,8 +133,8 @@ func TestConnectionStore_TenantIsolation(t *testing.T) {
 
 	ctx := context.Background()
 	store := memory.NewConnectionStore()
-	tenantA := engine.NewTenantContext("org-1", "product-a")
-	tenantB := engine.NewTenantContext("org-2", "product-b")
+	tenantA := mustTenant(t, "tenant-a")
+	tenantB := mustTenant(t, "tenant-b")
 
 	if err := store.Create(ctx, tenantA, engine.ConnectionDescriptor{ConfigName: "shared", Type: "postgres"}, nil); err != nil {
 		t.Fatalf("Create tenantA: %v", err)
@@ -143,7 +158,7 @@ func TestSchemaCache_GetSetHitMiss(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	tenant := testTenant()
+	tenant := testTenant(t)
 	cache := memory.NewSchemaCache()
 
 	// Miss.
@@ -176,7 +191,7 @@ func TestResultSink_PutGet(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	tenant := testTenant()
+	tenant := testTenant(t)
 	sink := memory.NewResultSink()
 
 	payload := []byte(`{"rows":3}`)
@@ -215,7 +230,7 @@ func TestEventSink_Emit(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	tenant := testTenant()
+	tenant := testTenant(t)
 	sink := memory.NewEventSink()
 
 	state := engine.ExecutionState{JobID: "job-1", Status: engine.StatusCompleted}
@@ -230,7 +245,7 @@ func TestEventSink_Emit(t *testing.T) {
 	if events[0].State.JobID != "job-1" || events[0].State.Status != engine.StatusCompleted {
 		t.Fatalf("Events: unexpected event payload: %+v", events[0])
 	}
-	if events[0].Tenant.OrganizationID != "org-1" {
+	if events[0].Tenant.TenantID != "tenant-a" {
 		t.Fatalf("Events: tenant not captured: %+v", events[0].Tenant)
 	}
 }
@@ -239,7 +254,7 @@ func TestExecutionStore_StatusTransitions(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	tenant := testTenant()
+	tenant := testTenant(t)
 	store := memory.NewExecutionStore()
 
 	// Miss before any save.
@@ -319,7 +334,7 @@ func TestConcurrentAccess(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	tenant := testTenant()
+	tenant := testTenant(t)
 
 	connStore := memory.NewConnectionStore()
 	execStore := memory.NewExecutionStore()

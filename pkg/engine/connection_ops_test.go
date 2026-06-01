@@ -48,6 +48,19 @@ func engineWithStore(t *testing.T) (*engine.Engine, *memory.ConnectionStore) {
 	return eng, store
 }
 
+// mustTenant builds a TenantContext for the given tenant ID, failing the test
+// on a validation error. tenantID is the sole isolation boundary.
+func mustTenant(t *testing.T, tenantID string) engine.TenantContext {
+	t.Helper()
+
+	tenant, err := engine.NewTenantContext(tenantID)
+	if err != nil {
+		t.Fatalf("NewTenantContext(%q): unexpected error: %v", tenantID, err)
+	}
+
+	return tenant
+}
+
 func newInput(configName string) engine.ConnectionInput {
 	return engine.NewConnectionInput(engine.ConnectionInputParams{
 		ConfigName:   configName,
@@ -66,7 +79,7 @@ func TestEngine_CreateConnection_StoresScopedAndRedacts(t *testing.T) {
 
 	ctx := context.Background()
 	eng, store := engineWithStore(t)
-	tenant := engine.NewTenantContext("org-1", "product-a")
+	tenant := mustTenant(t, "tenant-a")
 
 	desc, err := eng.CreateConnection(ctx, tenant, newInput("pg-main"))
 	if err != nil {
@@ -76,9 +89,6 @@ func TestEngine_CreateConnection_StoresScopedAndRedacts(t *testing.T) {
 	// Output is the secret-free descriptor.
 	if desc.ConfigName != "pg-main" {
 		t.Fatalf("CreateConnection: ConfigName = %q, want %q", desc.ConfigName, "pg-main")
-	}
-	if desc.ProductName != "product-a" {
-		t.Fatalf("CreateConnection: ProductName = %q, want %q", desc.ProductName, "product-a")
 	}
 	if desc.Host != "db.internal" || desc.Port != 5432 || desc.Username != "svc" {
 		t.Fatalf("CreateConnection: descriptor fields not projected: %+v", desc)
@@ -103,12 +113,12 @@ func TestEngine_CreateConnection_StoresScopedAndRedacts(t *testing.T) {
 	}
 }
 
-func TestEngine_CreateConnection_DuplicateWithinProductConflicts(t *testing.T) {
+func TestEngine_CreateConnection_DuplicateWithinTenantConflicts(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	eng, _ := engineWithStore(t)
-	tenant := engine.NewTenantContext("org-1", "product-a")
+	tenant := mustTenant(t, "tenant-a")
 
 	if _, err := eng.CreateConnection(ctx, tenant, newInput("pg-main")); err != nil {
 		t.Fatalf("CreateConnection first: unexpected error: %v", err)
@@ -128,22 +138,132 @@ func TestEngine_CreateConnection_DuplicateWithinProductConflicts(t *testing.T) {
 	}
 }
 
-func TestEngine_CreateConnection_SameNameDifferentProductIsolated(t *testing.T) {
+// TestEngine_CreateConnection_DuplicateWithProtectorIsRejectedBeforeReEncrypt
+// covers B4 finding #2: a duplicate create (same tenant+configName) while a
+// CredentialProtector is enabled must be rejected by the uniqueness check
+// BEFORE any re-encryption or second persistence. The first record's ciphertext
+// must be untouched and no second record may be created.
+func TestEngine_CreateConnection_DuplicateWithProtectorIsRejectedBeforeReEncrypt(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	protector := newFakeProtector()
+	eng, store := engineWithProtector(t, protector)
+	tenant := mustTenant(t, "tenant-a")
+
+	if _, err := eng.CreateConnection(ctx, tenant, newInput("pg-main")); err != nil {
+		t.Fatalf("CreateConnection first: unexpected error: %v", err)
+	}
+	if protector.calls() != 1 {
+		t.Fatalf("after first create: protector calls = %d, want 1", protector.calls())
+	}
+
+	original, found := store.ProtectedCredential(tenant, "pg-main")
+	if !found {
+		t.Fatalf("expected stored credential after first create")
+	}
+
+	// A duplicate create with a DIFFERENT password must be rejected. Because the
+	// store rejects the duplicate, the Engine never persists a second record; the
+	// protector may or may not be consulted depending on ordering, but the stored
+	// ciphertext and record count must not change.
+	dup := engine.NewConnectionInput(engine.ConnectionInputParams{
+		ConfigName:   "pg-main",
+		Type:         "postgres",
+		Host:         "db.internal",
+		Port:         5432,
+		DatabaseName: "ledger",
+		Username:     "svc",
+		Password:     "different-secret",
+		SSLMode:      "require",
+	})
+
+	_, err := eng.CreateConnection(ctx, tenant, dup)
+	if err == nil {
+		t.Fatalf("CreateConnection duplicate: expected conflict error, got nil")
+	}
+
+	var engErr *engine.EngineError
+	if !errors.As(err, &engErr) {
+		t.Fatalf("CreateConnection duplicate: error type = %T, want *engine.EngineError", err)
+	}
+	if engErr.Category != engine.CategoryValidation {
+		t.Fatalf("CreateConnection duplicate: category = %q, want %q", engErr.Category, engine.CategoryValidation)
+	}
+
+	// The existing record's ciphertext must be untouched.
+	after, found := store.ProtectedCredential(tenant, "pg-main")
+	if !found {
+		t.Fatalf("duplicate create: original credential disappeared")
+	}
+	if string(after.Ciphertext) != string(original.Ciphertext) {
+		t.Fatalf("duplicate create: stored ciphertext mutated: got %q, want %q", after.Ciphertext, original.Ciphertext)
+	}
+
+	// No second record may have been created.
+	list, err := eng.ListConnections(ctx, tenant)
+	if err != nil {
+		t.Fatalf("ListConnections: unexpected error: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("duplicate create: connection count = %d, want 1 (no second record)", len(list))
+	}
+}
+
+// TestEngine_Connection_TenantIsolationThroughEngine covers B4 finding #3: with
+// tenantID as the sole boundary, two tenants may each own a connection with the
+// SAME config name without collision, and neither tenant's Get/List ever sees
+// the other's connection.
+func TestEngine_Connection_TenantIsolationThroughEngine(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	eng, _ := engineWithStore(t)
 
-	tenantA := engine.NewTenantContext("org-1", "product-a")
-	tenantB := engine.NewTenantContext("org-1", "product-b")
+	tenantA := mustTenant(t, "tenant-a")
+	tenantB := mustTenant(t, "tenant-b")
 
-	if _, err := eng.CreateConnection(ctx, tenantA, newInput("pg-main")); err != nil {
-		t.Fatalf("CreateConnection product-a: unexpected error: %v", err)
+	if _, err := eng.CreateConnection(ctx, tenantA, newInput("prod-db")); err != nil {
+		t.Fatalf("CreateConnection tenant-a: unexpected error: %v", err)
 	}
 
-	// Same config name under a DIFFERENT product must succeed (isolation).
-	if _, err := eng.CreateConnection(ctx, tenantB, newInput("pg-main")); err != nil {
-		t.Fatalf("CreateConnection product-b: expected isolation success, got error: %v", err)
+	// Same config name under a DIFFERENT tenant must succeed (no collision).
+	if _, err := eng.CreateConnection(ctx, tenantB, newInput("prod-db")); err != nil {
+		t.Fatalf("CreateConnection tenant-b: expected isolation success, got error: %v", err)
+	}
+
+	// Give tenant B a second, distinct connection so list scoping is observable.
+	if _, err := eng.CreateConnection(ctx, tenantB, newInput("analytics-db")); err != nil {
+		t.Fatalf("CreateConnection tenant-b second: unexpected error: %v", err)
+	}
+
+	// Get is tenant-scoped: tenant A sees only its own prod-db.
+	gotA, err := eng.GetConnection(ctx, tenantA, "prod-db")
+	if err != nil {
+		t.Fatalf("GetConnection tenant-a: unexpected error: %v", err)
+	}
+	if gotA.ConfigName != "prod-db" {
+		t.Fatalf("GetConnection tenant-a: ConfigName = %q, want prod-db", gotA.ConfigName)
+	}
+	if _, err := eng.GetConnection(ctx, tenantA, "analytics-db"); err == nil {
+		t.Fatalf("GetConnection tenant-a: must not see tenant-b's analytics-db")
+	}
+
+	// List is tenant-scoped in both directions.
+	listA, err := eng.ListConnections(ctx, tenantA)
+	if err != nil {
+		t.Fatalf("ListConnections tenant-a: unexpected error: %v", err)
+	}
+	if len(listA) != 1 || listA[0].ConfigName != "prod-db" {
+		t.Fatalf("ListConnections tenant-a = %+v, want exactly [prod-db]", listA)
+	}
+
+	listB, err := eng.ListConnections(ctx, tenantB)
+	if err != nil {
+		t.Fatalf("ListConnections tenant-b: unexpected error: %v", err)
+	}
+	if len(listB) != 2 {
+		t.Fatalf("ListConnections tenant-b: len = %d, want 2 (tenant-a leaked?)", len(listB))
 	}
 }
 
@@ -152,7 +272,7 @@ func TestEngine_GetConnection_FoundAndNotFound(t *testing.T) {
 
 	ctx := context.Background()
 	eng, _ := engineWithStore(t)
-	tenant := engine.NewTenantContext("org-1", "product-a")
+	tenant := mustTenant(t, "tenant-a")
 
 	if _, err := eng.CreateConnection(ctx, tenant, newInput("pg-main")); err != nil {
 		t.Fatalf("CreateConnection: unexpected error: %v", err)
@@ -185,7 +305,7 @@ func TestEngine_GetConnection_DeletedIsNotFound(t *testing.T) {
 
 	ctx := context.Background()
 	eng, _ := engineWithStore(t)
-	tenant := engine.NewTenantContext("org-1", "product-a")
+	tenant := mustTenant(t, "tenant-a")
 
 	if _, err := eng.CreateConnection(ctx, tenant, newInput("pg-main")); err != nil {
 		t.Fatalf("CreateConnection: unexpected error: %v", err)
@@ -208,14 +328,14 @@ func TestEngine_GetConnection_DeletedIsNotFound(t *testing.T) {
 	}
 }
 
-func TestEngine_ListConnections_ByProductDeterministicAndScoped(t *testing.T) {
+func TestEngine_ListConnections_ByTenantDeterministicAndScoped(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	eng, _ := engineWithStore(t)
 
-	tenantA := engine.NewTenantContext("org-1", "product-a")
-	tenantB := engine.NewTenantContext("org-1", "product-b")
+	tenantA := mustTenant(t, "tenant-a")
+	tenantB := mustTenant(t, "tenant-b")
 
 	for _, name := range []string{"zeta", "alpha", "mike"} {
 		if _, err := eng.CreateConnection(ctx, tenantA, newInput(name)); err != nil {
@@ -223,7 +343,7 @@ func TestEngine_ListConnections_ByProductDeterministicAndScoped(t *testing.T) {
 		}
 	}
 	if _, err := eng.CreateConnection(ctx, tenantB, newInput("other")); err != nil {
-		t.Fatalf("CreateConnection product-b: unexpected error: %v", err)
+		t.Fatalf("CreateConnection tenant-b: unexpected error: %v", err)
 	}
 
 	list, err := eng.ListConnections(ctx, tenantA)
@@ -233,7 +353,7 @@ func TestEngine_ListConnections_ByProductDeterministicAndScoped(t *testing.T) {
 
 	wantOrder := []string{"alpha", "mike", "zeta"}
 	if len(list) != len(wantOrder) {
-		t.Fatalf("ListConnections: len = %d, want %d (product-b leaked?)", len(list), len(wantOrder))
+		t.Fatalf("ListConnections: len = %d, want %d (tenant-b leaked?)", len(list), len(wantOrder))
 	}
 	for i, want := range wantOrder {
 		if list[i].ConfigName != want {
@@ -247,7 +367,7 @@ func TestEngine_ListConnections_ExcludesDeleted(t *testing.T) {
 
 	ctx := context.Background()
 	eng, _ := engineWithStore(t)
-	tenant := engine.NewTenantContext("org-1", "product-a")
+	tenant := mustTenant(t, "tenant-a")
 
 	for _, name := range []string{"keep", "drop"} {
 		if _, err := eng.CreateConnection(ctx, tenant, newInput(name)); err != nil {
@@ -272,7 +392,7 @@ func TestEngine_UpdateConnection_PatchPartialFields(t *testing.T) {
 
 	ctx := context.Background()
 	eng, _ := engineWithStore(t)
-	tenant := engine.NewTenantContext("org-1", "product-a")
+	tenant := mustTenant(t, "tenant-a")
 
 	if _, err := eng.CreateConnection(ctx, tenant, newInput("pg-main")); err != nil {
 		t.Fatalf("CreateConnection: unexpected error: %v", err)
@@ -301,7 +421,7 @@ func TestEngine_UpdateConnection_PatchAllFields(t *testing.T) {
 
 	ctx := context.Background()
 	eng, _ := engineWithStore(t)
-	tenant := engine.NewTenantContext("org-1", "product-a")
+	tenant := mustTenant(t, "tenant-a")
 
 	if _, err := eng.CreateConnection(ctx, tenant, newInput("pg-main")); err != nil {
 		t.Fatalf("CreateConnection: unexpected error: %v", err)
@@ -340,8 +460,8 @@ func TestEngine_UpdateConnection_PatchAllFields(t *testing.T) {
 		t.Fatalf("UpdateConnection: not all fields patched: %+v", updated)
 	}
 
-	// Config name and product scope are immutable through a patch.
-	if updated.ConfigName != "pg-main" || updated.ProductName != "product-a" {
+	// Config name is immutable through a patch; identity stays anchored.
+	if updated.ConfigName != "pg-main" {
 		t.Fatalf("UpdateConnection: identity changed: %+v", updated)
 	}
 
@@ -364,7 +484,7 @@ func TestEngine_UpdateConnection_MissingIsNotFound(t *testing.T) {
 
 	ctx := context.Background()
 	eng, _ := engineWithStore(t)
-	tenant := engine.NewTenantContext("org-1", "product-a")
+	tenant := mustTenant(t, "tenant-a")
 
 	newHost := "x"
 	_, err := eng.UpdateConnection(ctx, tenant, "ghost", engine.ConnectionPatch{Host: &newHost})
@@ -386,7 +506,7 @@ func TestEngine_DeleteConnection_MissingIsNotFound(t *testing.T) {
 
 	ctx := context.Background()
 	eng, _ := engineWithStore(t)
-	tenant := engine.NewTenantContext("org-1", "product-a")
+	tenant := mustTenant(t, "tenant-a")
 
 	err := eng.DeleteConnection(ctx, tenant, "ghost")
 	if err == nil {
@@ -413,7 +533,7 @@ func TestEngine_ConnectionOps_RequireConnectionStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() unexpected error: %v", err)
 	}
-	tenant := engine.NewTenantContext("org-1", "product-a")
+	tenant := mustTenant(t, "tenant-a")
 
 	if _, err := eng.CreateConnection(ctx, tenant, newInput("pg-main")); err == nil {
 		t.Fatalf("CreateConnection without store: expected error, got nil")
@@ -462,7 +582,7 @@ func TestEngine_ConnectionOps_PropagateStoreErrors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() unexpected error: %v", err)
 	}
-	tenant := engine.NewTenantContext("org-1", "product-a")
+	tenant := mustTenant(t, "tenant-a")
 
 	if _, err := eng.CreateConnection(ctx, tenant, newInput("c")); err == nil {
 		t.Fatalf("CreateConnection: expected store error, got nil")
@@ -511,7 +631,7 @@ func TestEngine_ConnectionOps_StartSpanWhenObservabilityConfigured(t *testing.T)
 	if err != nil {
 		t.Fatalf("New() unexpected error: %v", err)
 	}
-	tenant := engine.NewTenantContext("org-1", "product-a")
+	tenant := mustTenant(t, "tenant-a")
 
 	if _, err := eng.CreateConnection(ctx, tenant, newInput("pg-main")); err != nil {
 		t.Fatalf("CreateConnection: unexpected error: %v", err)
@@ -596,7 +716,7 @@ func TestEngine_CreateConnection_EncryptsPasswordBeforeStorage(t *testing.T) {
 	ctx := context.Background()
 	protector := newFakeProtector()
 	eng, store := engineWithProtector(t, protector)
-	tenant := engine.NewTenantContext("org-1", "product-a")
+	tenant := mustTenant(t, "tenant-a")
 
 	desc, err := eng.CreateConnection(ctx, tenant, newInput("pg-main"))
 	if err != nil {
@@ -645,7 +765,7 @@ func TestEngine_CreateConnection_NoPasswordDoesNotProtect(t *testing.T) {
 	ctx := context.Background()
 	protector := newFakeProtector()
 	eng, store := engineWithProtector(t, protector)
-	tenant := engine.NewTenantContext("org-1", "product-a")
+	tenant := mustTenant(t, "tenant-a")
 
 	input := engine.NewConnectionInput(engine.ConnectionInputParams{
 		ConfigName: "no-secret",
@@ -678,7 +798,7 @@ func TestEngine_CreateConnection_ProtectorErrorIsSafeAndNoMutation(t *testing.T)
 	protector := newFakeProtector()
 	protector.errOnProtect = errors.New("kms unreachable: secret=s3cr3t")
 	eng, store := engineWithProtector(t, protector)
-	tenant := engine.NewTenantContext("org-1", "product-a")
+	tenant := mustTenant(t, "tenant-a")
 
 	_, err := eng.CreateConnection(ctx, tenant, newInput("pg-main"))
 	if err == nil {
@@ -710,7 +830,7 @@ func TestEngine_UpdateConnection_EncryptsOnlyWhenPasswordChanges(t *testing.T) {
 	ctx := context.Background()
 	protector := newFakeProtector()
 	eng, store := engineWithProtector(t, protector)
-	tenant := engine.NewTenantContext("org-1", "product-a")
+	tenant := mustTenant(t, "tenant-a")
 
 	if _, err := eng.CreateConnection(ctx, tenant, newInput("pg-main")); err != nil {
 		t.Fatalf("CreateConnection: unexpected error: %v", err)
@@ -779,7 +899,7 @@ func TestEngine_UpdateConnection_ProtectorErrorIsSafeAndNoMutation(t *testing.T)
 	ctx := context.Background()
 	protector := newFakeProtector()
 	eng, store := engineWithProtector(t, protector)
-	tenant := engine.NewTenantContext("org-1", "product-a")
+	tenant := mustTenant(t, "tenant-a")
 
 	if _, err := eng.CreateConnection(ctx, tenant, newInput("pg-main")); err != nil {
 		t.Fatalf("CreateConnection: unexpected error: %v", err)
@@ -821,15 +941,16 @@ func TestEngine_UpdateConnection_ProtectorErrorIsSafeAndNoMutation(t *testing.T)
 
 func strPtr(s string) *string { return &s }
 
-func TestEngine_CreateConnection_RequiresProductScope(t *testing.T) {
+func TestEngine_CreateConnection_RequiresTenantScope(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	eng, _ := engineWithStore(t)
 
-	// A tenant with no product scope cannot own a connection; config-name
-	// uniqueness is enforced WITHIN product scope, so an empty scope is invalid.
-	emptyTenant := engine.NewTenantContext("", "")
+	// A tenant with no tenantID cannot own a connection; config-name uniqueness
+	// is enforced WITHIN the tenant scope, so an empty tenant is invalid. The
+	// zero value bypasses the constructor to exercise the operation-level guard.
+	emptyTenant := engine.TenantContext{}
 
 	_, err := eng.CreateConnection(ctx, emptyTenant, newInput("pg-main"))
 	if err == nil {

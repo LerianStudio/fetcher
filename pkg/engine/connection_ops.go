@@ -10,9 +10,10 @@ import "context"
 // MongoDB, the Manager, or any host repository — that is what keeps pkg/engine
 // importable without infrastructure (T-001 boundary).
 //
-// Semantics mirror the Manager's connection services:
-//   - Config-name uniqueness is enforced WITHIN the product scope only; the same
-//     config name under a different product is an isolated, valid record.
+// Semantics mirror develop's authoritative model:
+//   - Config-name uniqueness is enforced WITHIN the tenant scope only; the same
+//     config name under a different tenant is an isolated, valid record
+//     (config_name is unique within the tenant — see pkg/mongodb/connection).
 //   - Create returns the secret-free ConnectionDescriptor; the raw secret never
 //     leaves the input.
 //   - Update applies Manager-compatible partial-patch semantics.
@@ -23,7 +24,7 @@ import "context"
 // the protector can be wired in without reshaping the contract.
 
 // CreateConnection persists a new connection for the tenant and returns the
-// secret-free descriptor. It enforces config-name uniqueness within the product
+// secret-free descriptor. It enforces config-name uniqueness within the tenant
 // scope and rejects an unscoped tenant.
 func (e *Engine) CreateConnection(
 	ctx context.Context,
@@ -38,12 +39,11 @@ func (e *Engine) CreateConnection(
 		return ConnectionDescriptor{}, err
 	}
 
-	if err := validateProductScope(tenant); err != nil {
+	if err := validateTenantScope(tenant); err != nil {
 		return ConnectionDescriptor{}, err
 	}
 
 	descriptor := DescriptorFromInput(input)
-	descriptor.ProductName = tenant.ProductName
 
 	// Protect the secret BEFORE any store write. On failure we return a safe
 	// error and leave the store untouched (atomicity): the Create call below is
@@ -83,7 +83,7 @@ func (e *Engine) GetConnection(
 		return ConnectionDescriptor{}, err
 	}
 
-	if err := validateProductScope(tenant); err != nil {
+	if err := validateTenantScope(tenant); err != nil {
 		return ConnectionDescriptor{}, err
 	}
 
@@ -99,8 +99,8 @@ func (e *Engine) GetConnection(
 	return descriptor, nil
 }
 
-// ListConnections returns the non-deleted connections owned by the tenant's
-// product scope, in the store's deterministic order.
+// ListConnections returns the non-deleted connections owned by the tenant, in
+// the store's deterministic order.
 func (e *Engine) ListConnections(
 	ctx context.Context,
 	tenant TenantContext,
@@ -113,7 +113,7 @@ func (e *Engine) ListConnections(
 		return nil, err
 	}
 
-	if err := validateProductScope(tenant); err != nil {
+	if err := validateTenantScope(tenant); err != nil {
 		return nil, err
 	}
 
@@ -173,7 +173,7 @@ func (e *Engine) UpdateConnection(
 		return ConnectionDescriptor{}, err
 	}
 
-	if err := validateProductScope(tenant); err != nil {
+	if err := validateTenantScope(tenant); err != nil {
 		return ConnectionDescriptor{}, err
 	}
 
@@ -237,8 +237,18 @@ func (e *Engine) DeleteConnection(
 		return err
 	}
 
-	if err := validateProductScope(tenant); err != nil {
+	if err := validateTenantScope(tenant); err != nil {
 		return err
+	}
+
+	// Symmetric with UpdateConnection: confirm the connection exists BEFORE
+	// consulting the active-execution checker. A missing connection is a
+	// not-found error and the guard must not run on a connection that does not
+	// exist (B4 finding #1).
+	if _, found, err := store.FindConnection(ctx, tenant, configName); err != nil {
+		return err
+	} else if !found {
+		return NewEngineError(CategoryNotFound, "connection not found")
 	}
 
 	// Block deletion while active work references the connection, mirroring the
@@ -282,8 +292,8 @@ func (e *Engine) guardActiveExecutions(ctx context.Context, tenant TenantContext
 }
 
 // applyConnectionPatch returns a copy of current with only the non-nil patch
-// fields overwritten. The config name and product scope are immutable through a
-// patch; identity stays anchored to the original descriptor.
+// fields overwritten. The config name is immutable through a patch; identity
+// stays anchored to the original descriptor under its tenant scope.
 func applyConnectionPatch(current ConnectionDescriptor, patch ConnectionPatch) ConnectionDescriptor {
 	if patch.Type != nil {
 		current.Type = *patch.Type
@@ -374,12 +384,13 @@ func (e *Engine) startSpan(ctx context.Context, operation string) (context.Conte
 	return e.options.observability.StartSpan(ctx, operation)
 }
 
-// validateProductScope rejects a tenant that carries no product scope. Config
-// uniqueness and ownership are anchored to the product, so an unscoped tenant
-// cannot own a connection.
-func validateProductScope(tenant TenantContext) error {
-	if tenant.ProductName == "" {
-		return NewEngineError(CategoryValidation, "tenant product scope is required")
+// validateTenantScope rejects a tenant that carries no tenantId. Config
+// uniqueness and ownership are anchored to the tenant, so an unscoped tenant
+// cannot own a connection. This is the operation-level guard that also catches a
+// zero-value TenantContext that bypassed the NewTenantContext constructor.
+func validateTenantScope(tenant TenantContext) error {
+	if tenant.TenantID == "" {
+		return NewEngineError(CategoryValidation, "tenant scope is required")
 	}
 
 	return nil

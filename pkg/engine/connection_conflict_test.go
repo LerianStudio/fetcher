@@ -79,7 +79,7 @@ func TestEngine_UpdateConnection_BlockedByActiveExecutions(t *testing.T) {
 	ctx := context.Background()
 	checker := &fakeActiveExecutionChecker{active: true}
 	eng, store := engineWithChecker(t, checker)
-	tenant := engine.NewTenantContext("org-1", "product-a")
+	tenant := mustTenant(t, "tenant-a")
 
 	if _, err := eng.CreateConnection(ctx, tenant, newInput("pg-main")); err != nil {
 		t.Fatalf("CreateConnection: unexpected error: %v", err)
@@ -111,8 +111,8 @@ func TestEngine_UpdateConnection_BlockedByActiveExecutions(t *testing.T) {
 	if gotName != "pg-main" {
 		t.Fatalf("UpdateConnection: checker asked about %q, want %q", gotName, "pg-main")
 	}
-	if gotTenant.ProductName != "product-a" {
-		t.Fatalf("UpdateConnection: checker tenant = %+v, want product-a scope", gotTenant)
+	if gotTenant.TenantID != "tenant-a" {
+		t.Fatalf("UpdateConnection: checker tenant = %+v, want tenant-a scope", gotTenant)
 	}
 
 	// The store must be unchanged: the host field must not have been patched.
@@ -131,7 +131,7 @@ func TestEngine_DeleteConnection_BlockedByActiveExecutions(t *testing.T) {
 	ctx := context.Background()
 	checker := &fakeActiveExecutionChecker{active: true}
 	eng, store := engineWithChecker(t, checker)
-	tenant := engine.NewTenantContext("org-1", "product-a")
+	tenant := mustTenant(t, "tenant-a")
 
 	if _, err := eng.CreateConnection(ctx, tenant, newInput("pg-main")); err != nil {
 		t.Fatalf("CreateConnection: unexpected error: %v", err)
@@ -167,7 +167,7 @@ func TestEngine_UpdateAndDelete_ProceedWhenCheckerAbsent(t *testing.T) {
 	// engineWithStore wires NO active-execution checker: the conflict gate is
 	// optional, so mutations must proceed.
 	eng, store := engineWithStore(t)
-	tenant := engine.NewTenantContext("org-1", "product-a")
+	tenant := mustTenant(t, "tenant-a")
 
 	if _, err := eng.CreateConnection(ctx, tenant, newInput("pg-main")); err != nil {
 		t.Fatalf("CreateConnection: unexpected error: %v", err)
@@ -196,7 +196,7 @@ func TestEngine_UpdateAndDelete_ProceedWhenNoActiveExecutions(t *testing.T) {
 	ctx := context.Background()
 	checker := &fakeActiveExecutionChecker{active: false}
 	eng, store := engineWithChecker(t, checker)
-	tenant := engine.NewTenantContext("org-1", "product-a")
+	tenant := mustTenant(t, "tenant-a")
 
 	if _, err := eng.CreateConnection(ctx, tenant, newInput("pg-main")); err != nil {
 		t.Fatalf("CreateConnection: unexpected error: %v", err)
@@ -232,7 +232,7 @@ func TestEngine_UpdateAndDelete_CheckerErrorIsSafeAndNoMutation(t *testing.T) {
 	// surface the raw checker error across its boundary.
 	checker := &fakeActiveExecutionChecker{err: errors.New("job store down: dsn=secret")}
 	eng, store := engineWithChecker(t, checker)
-	tenant := engine.NewTenantContext("org-1", "product-a")
+	tenant := mustTenant(t, "tenant-a")
 
 	if _, err := eng.CreateConnection(ctx, tenant, newInput("pg-main")); err != nil {
 		t.Fatalf("CreateConnection: unexpected error: %v", err)

@@ -5,6 +5,7 @@ package engine
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -236,15 +237,19 @@ func TestTenantContext_ZeroValueSafe(t *testing.T) {
 		t.Fatalf("zero TenantContext.IsMultiTenant() = true, want false")
 	}
 
-	populated := NewTenantContext("  org-123  ", "  midaz  ")
+	// tenantID is the sole isolation boundary. It is trimmed and validated.
+	populated, err := NewTenantContext("  tenant-123  ")
+	if err != nil {
+		t.Fatalf("NewTenantContext(valid): unexpected error: %v", err)
+	}
 	if populated.IsZero() {
 		t.Fatalf("populated TenantContext.IsZero() = true, want false")
 	}
-	if populated.OrganizationID != "org-123" || populated.ProductName != "midaz" {
-		t.Fatalf("NewTenantContext fields = %q/%q, want org-123/midaz (trimmed)", populated.OrganizationID, populated.ProductName)
+	if populated.TenantID != "tenant-123" {
+		t.Fatalf("NewTenantContext TenantID = %q, want tenant-123 (trimmed)", populated.TenantID)
 	}
 	if !populated.IsMultiTenant() {
-		t.Fatalf("populated TenantContext.IsMultiTenant() = false, want true")
+		t.Fatalf("populated TenantContext.IsMultiTenant() = false, want true (tenant present)")
 	}
 
 	withReq := populated.WithRequestID("  req-9  ")
@@ -255,14 +260,71 @@ func TestTenantContext_ZeroValueSafe(t *testing.T) {
 	if populated.RequestID != "" {
 		t.Fatalf("WithRequestID mutated the receiver: %q", populated.RequestID)
 	}
+}
 
-	singleTenant := NewTenantContext("", "midaz")
-	if singleTenant.IsMultiTenant() {
-		t.Fatalf("single-tenant context must not report multi-tenant")
+func TestNewTenantContext_ValidatesTenantIDAsOpaqueValue(t *testing.T) {
+	t.Parallel()
+
+	// Valid values mirror lib-commons tenant-manager/core IsValidTenantID:
+	// non-empty, <= MaxTenantIDLength, first char ASCII alphanumeric, rest
+	// [a-zA-Z0-9_-].
+	valid := []string{"t", "tenant-1", "Tenant_9", "0abc", strings.Repeat("a", maxTenantIDLength)}
+	for _, id := range valid {
+		id := id
+		t.Run("valid/"+truncateLabel(id), func(t *testing.T) {
+			t.Parallel()
+
+			tc, err := NewTenantContext(id)
+			if err != nil {
+				t.Fatalf("NewTenantContext(%q): unexpected error: %v", truncateLabel(id), err)
+			}
+			if tc.TenantID != id {
+				t.Fatalf("NewTenantContext(%q): TenantID = %q, want unchanged", truncateLabel(id), tc.TenantID)
+			}
+		})
 	}
-	if singleTenant.IsZero() {
-		t.Fatalf("single-tenant context with product must not be zero")
+
+	invalid := []struct {
+		name string
+		id   string
+	}{
+		{"empty", ""},
+		{"whitespace only", "   "},
+		{"leading hyphen", "-tenant"},
+		{"leading underscore", "_tenant"},
+		{"embedded space", "ten ant"},
+		{"control char", "tenant\x00id"},
+		{"tab", "tenant\tid"},
+		{"slash", "tenant/id"},
+		{"too long", strings.Repeat("a", maxTenantIDLength+1)},
 	}
+	for _, tt := range invalid {
+		tt := tt
+		t.Run("invalid/"+tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := NewTenantContext(tt.id)
+			if err == nil {
+				t.Fatalf("NewTenantContext(%q): expected validation error, got nil", truncateLabel(tt.id))
+			}
+
+			var engErr *EngineError
+			if !errors.As(err, &engErr) {
+				t.Fatalf("NewTenantContext(%q): error type = %T, want *EngineError", truncateLabel(tt.id), err)
+			}
+			if engErr.Category != CategoryValidation {
+				t.Fatalf("NewTenantContext(%q): category = %q, want %q", truncateLabel(tt.id), engErr.Category, CategoryValidation)
+			}
+		})
+	}
+}
+
+func truncateLabel(s string) string {
+	if len(s) > 16 {
+		return s[:16] + "..."
+	}
+
+	return s
 }
 
 func TestConnectionInput_DoesNotLeakSecret(t *testing.T) {

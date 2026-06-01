@@ -134,7 +134,6 @@ func (c ConnectionInput) MarshalJSON() ([]byte, error) {
 type ConnectionDescriptor struct {
 	ID           string `json:"id,omitempty"`
 	ConfigName   string `json:"configName"`
-	ProductName  string `json:"productName,omitempty"`
 	Type         string `json:"type"`
 	Host         string `json:"host"`
 	Port         int    `json:"port"`

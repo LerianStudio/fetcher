@@ -51,7 +51,7 @@ func (s *ResultSink) PersistResult(
 	// The path embeds the tenant scope and a monotonic sequence so distinct
 	// writes never collide even when payloads are identical.
 	s.seq++
-	path := "memory://" + tenant.OrganizationID + "/" + tenant.ProductName + "/" + digest + "-" + strconv.Itoa(s.seq)
+	path := "memory://" + tenant.TenantID + "/" + digest + "-" + strconv.Itoa(s.seq)
 	s.results[path] = stored
 
 	return engine.ResultReference{

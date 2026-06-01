@@ -67,15 +67,15 @@ type ProtectedCredential struct {
 }
 
 // ConnectionStore is an OPTIONAL port for persisting and resolving connection
-// descriptors owned by a tenant/product. When absent, the host is expected to
-// supply connection inputs directly per request and the Engine's connection
-// lifecycle operations are unavailable.
+// descriptors owned by a tenant. When absent, the host is expected to supply
+// connection inputs directly per request and the Engine's connection lifecycle
+// operations are unavailable.
 //
 // The store is the only persistence seam the Engine connection operations use;
 // the Engine never embeds MongoDB, SQL, or any host repository. Implementations
-// MUST scope every record by the supplied TenantContext so connections owned by
-// one tenant/product are never visible to another. They MUST NOT return secret
-// material — ConnectionDescriptor carries none.
+// MUST scope every record by the supplied TenantContext's tenantId so
+// connections owned by one tenant are never visible to another. They MUST NOT
+// return secret material — ConnectionDescriptor carries none.
 type ConnectionStore interface {
 	// FindConnection returns the descriptor for the named connection and whether
 	// it exists for the given tenant. It never returns secret material.
