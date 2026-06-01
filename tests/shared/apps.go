@@ -29,6 +29,10 @@ type AppStartConfig struct {
 	Image string
 	// SkipBuild determines whether to use a pre-built image (true) or build from Dockerfile (false).
 	SkipBuild bool
+	// ExtraEnv is merged on top of ManagerEnv()/WorkerEnv() — last-write-wins.
+	// Use for per-test overrides like DATASOURCE_* env vars in SSL tests.
+	// nil is safe: WithEnv treats nil maps as no-op.
+	ExtraEnv map[string]string
 }
 
 // AppEnv holds the environment configuration needed to start Manager and Worker containers.
@@ -286,6 +290,7 @@ func StartManager(t *testing.T, ctx context.Context, env *AppEnv, cfg AppStartCo
 		WithContext(ctx).
 		ExposePort(ManagerAPIPort).
 		WithEnv(env.ManagerEnv()).
+		WithEnv(cfg.ExtraEnv).
 		WithWait(e2ekit.WaitHTTP(ManagerAPIPort, "/health", 60*time.Second))
 
 	// Add to shared network for container-to-container communication
@@ -341,6 +346,7 @@ func StartWorker(t *testing.T, ctx context.Context, env *AppEnv, cfg AppStartCon
 		WithContext(ctx).
 		ExposePort(WorkerHealthPort).
 		WithEnv(env.WorkerEnv()).
+		WithEnv(cfg.ExtraEnv).
 		WithWait(e2ekit.WaitHTTP(WorkerHealthPort, "/health", 60*time.Second))
 
 	// Add to shared network for container-to-container communication

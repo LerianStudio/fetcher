@@ -219,6 +219,24 @@ Fetcher supports multi-tenant deployments with database-per-tenant isolation. Wh
 
 When `MULTI_TENANT_ENABLED=false` (default), all multi-tenant code paths are bypassed with zero performance impact. See `docs/multi-tenant-guide.md` for activation instructions.
 
+### Internal Datasource env vars
+
+`DATASOURCE_{NAME}_*` env vars configure internal datasources (e.g. `midaz_onboarding`) loaded by `pkg/resolver/env_loader.go`.
+
+| Var                          | Required | Example                                                          |
+|------------------------------|----------|------------------------------------------------------------------|
+| `DATASOURCE_{N}_CONFIG_NAME` | yes      | `midaz_onboarding`                                               |
+| `DATASOURCE_{N}_TYPE`        | yes      | `postgresql` / `mysql` / `oracle` / `mongodb` / `sql_server`     |
+| `DATASOURCE_{N}_HOST`        | yes      | `db.internal.example.com`                                        |
+| `DATASOURCE_{N}_PORT`        | yes      | `5432`                                                           |
+| `DATASOURCE_{N}_DATABASE`    | yes      | `onboarding`                                                     |
+| `DATASOURCE_{N}_USER`        | yes      | `midaz`                                                          |
+| `DATASOURCE_{N}_PASSWORD`    | yes      | from secret manager                                              |
+| `DATASOURCE_{N}_OPTIONS`     | no       | `authSource=admin&directConnection=true` (mongodb only)          |
+| `DATASOURCE_{N}_SSLMODE`     | no       | `require` (postgres); see PROJECT_RULES                          |
+
+See `docs/PROJECT_RULES.md` § Internal datasource SSL/TLS env vars for behavior. For TLS to a managed database, use `_SSLMODE` — that is the validated path. Custom CA / client certificate plumbing for the internal-datasource path is not implemented yet (the driver consumes only `_SSLMODE`); track follow-up in `tasks/fetcher.md`.
+
 ## About Lerian
 
 Fetcher is developed by Lerian, a tech company founded in 2024, led by a team with a track record in developing ledger and core banking solutions. For any inquiries or support, please reach out to us at [contact@lerian.studio](mailto:contact@lerian.studio) or simply open a Discussion in our [GitHub repository](https://github.com/LerianStudio/fetcher/discussions).

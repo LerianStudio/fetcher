@@ -77,6 +77,14 @@ func (h *FetcherHandler) CreateJob(c *fiber.Ctx) error {
 		})
 	}
 
+	// Struct-tag validation — enforces FetcherRequest validation tags
+	// consistently with the connection handlers.
+	if err := httpUtils.ValidateStruct(&request); err != nil {
+		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "request validation failed", err)
+
+		return httpUtils.WithError(c, err)
+	}
+
 	result, err := h.CreateJobCmd.Execute(ctx, request)
 	if err != nil {
 		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to execute create fetcher job command, Error: %s", err.Error()))

@@ -23,7 +23,24 @@ type PostgresConfig struct {
 	EnableProxy bool
 	ProxyName   string
 
+	// SSLMode for the generated DSN. Empty string defaults to "disable" (backward-compat).
+	// Callers wiring up TLS-required postgres (e.g. via WithPGCustomizers + pg.WithSSLCert)
+	// should set this to "require" or stronger so the DSN can succeed against
+	// hostssl-only pg_hba rules.
+	SSLMode string
+
 	Options []PostgresOption
+}
+
+// sslModeOrDefault returns the configured SSL mode, defaulting to "disable" when
+// unset. This preserves the historic DSN behavior — existing callers that leave
+// PostgresConfig.SSLMode at its zero value continue to receive ?sslmode=disable.
+func sslModeOrDefault(s string) string {
+	if s == "" {
+		return "disable"
+	}
+
+	return s
 }
 
 type PostgresEndpoint struct {
@@ -142,7 +159,7 @@ func (p *PostgresInfra) Start(ctx context.Context, env *itestkit.Env) error {
 	endpoint := PostgresEndpoint{
 		Upstream:    upstream,
 		ProxyListen: proxyListen,
-		DSN:         fmt.Sprintf("postgres://%s:%s@%s/%s?sslmode=disable", p.cfg.Username, p.cfg.Password, finalAddr, p.cfg.Database),
+		DSN:         fmt.Sprintf("postgres://%s:%s@%s/%s?sslmode=%s", p.cfg.Username, p.cfg.Password, finalAddr, p.cfg.Database, sslModeOrDefault(p.cfg.SSLMode)),
 	}
 	p.endpoint = &endpoint
 
@@ -232,7 +249,7 @@ func NewPostgresInfraStub(cfg PostgresConfig, host string, port int) *PostgresIn
 	upstream := fmt.Sprintf("%s:%d", host, port)
 	p.endpoint = &PostgresEndpoint{
 		Upstream: upstream,
-		DSN:      fmt.Sprintf("postgres://%s:%s@%s/%s?sslmode=disable", cfg.Username, cfg.Password, upstream, cfg.Database),
+		DSN:      fmt.Sprintf("postgres://%s:%s@%s/%s?sslmode=%s", cfg.Username, cfg.Password, upstream, cfg.Database, sslModeOrDefault(cfg.SSLMode)),
 	}
 	// Store the raw host for HostPort() to return without normalization
 	p.stubHost = host

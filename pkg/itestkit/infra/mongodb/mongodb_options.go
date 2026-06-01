@@ -51,3 +51,20 @@ func WithMongoDBFixedPort(hostPort string) MongoDBOption {
 		))
 	}
 }
+
+// WithMongoDBFile mounts a host file into the MongoDB container at the given
+// container path with the given file mode. Used primarily for TLS/SSL tests
+// that mount a combined PEM (cert+key concatenated) referenced by
+// --tlsCertificateKeyFile. Mirrors the pattern of testcontainers.WithFiles
+// and itestkit.CCopyFile.
+func WithMongoDBFile(hostPath, containerPath string, mode int64) MongoDBOption {
+	return func(o *mongodbOptions) {
+		o.runOpts = append(o.runOpts, testcontainers.WithFiles(
+			testcontainers.ContainerFile{
+				HostFilePath:      hostPath,
+				ContainerFilePath: containerPath,
+				FileMode:          mode,
+			},
+		))
+	}
+}

@@ -2,6 +2,7 @@ package query
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -28,11 +29,12 @@ import (
 
 // GetConnectionSchema retrieves the database schema for a connection.
 type GetConnectionSchema struct {
-	connRepo          connRepo.Repository
-	cryptor           crypto.Cryptor
-	dataSourceFactory datasource.DataSourceFactory
-	resolver          resolver.ConnectionResolver          // nil-safe
-	registry          *resolver.InternalDatasourceRegistry // nil-safe
+	connRepo           connRepo.Repository
+	cryptor            crypto.Cryptor
+	dataSourceFactory  datasource.DataSourceFactory
+	resolver           resolver.ConnectionResolver          // nil-safe
+	registry           *resolver.InternalDatasourceRegistry // nil-safe
+	multiTenantEnabled bool
 }
 
 // NewGetConnectionSchema creates a new GetConnectionSchema service.
@@ -42,13 +44,15 @@ func NewGetConnectionSchema(
 	factory datasource.DataSourceFactory,
 	connResolver resolver.ConnectionResolver,
 	dsRegistry *resolver.InternalDatasourceRegistry,
+	multiTenantEnabled bool,
 ) *GetConnectionSchema {
 	return &GetConnectionSchema{
-		connRepo:          connectionRepo,
-		cryptor:           cryptor,
-		dataSourceFactory: factory,
-		resolver:          connResolver,
-		registry:          dsRegistry,
+		connRepo:           connectionRepo,
+		cryptor:            cryptor,
+		dataSourceFactory:  factory,
+		resolver:           connResolver,
+		registry:           dsRegistry,
+		multiTenantEnabled: multiTenantEnabled,
 	}
 }
 
@@ -78,6 +82,13 @@ func (s *GetConnectionSchema) Execute(ctx context.Context, connectionID uuid.UUI
 			libLog.Err(err),
 		)
 
+		// Preserve typed validation errors (e.g. FET-0414) so they reach the
+		// renderer as HTTP 400 instead of being masked by the generic 500.
+		var ve pkg.ValidationError
+		if errors.As(err, &ve) {
+			return nil, err
+		}
+
 		return nil, pkg.ResponseError{
 			Code:    http.StatusInternalServerError,
 			Title:   "Database Connection Error",
@@ -95,13 +106,15 @@ func (s *GetConnectionSchema) Execute(ctx context.Context, connectionID uuid.UUI
 	}()
 
 	// Determine which PostgreSQL schema(s) to discover.
-	// Priority: explicit Schema field > username-based (internal connections) > default ("public").
+	// Priority: explicit Schema field > username-based (internal multi-tenant connections) > nil (adapter defaults to "public").
+	// The username-as-schema heuristic only holds in multi-tenant deployments where tenant-manager
+	// provisions schemas named after the database user; in single-tenant the adapter's "public"
+	// default is correct and we must pass nil to let it apply.
 	var schemas []string
 	if conn.Schema != nil && *conn.Schema != "" {
 		schemas = []string{*conn.Schema}
-	} else if conn.EncryptionKeyVersion == "" && conn.Username != "" &&
+	} else if s.multiTenantEnabled && conn.EncryptionKeyVersion == "" && conn.Username != "" &&
 		(conn.Type == model.TypePostgreSQL) {
-		// Internal connections: tenant-manager provisions schemas named after the database user.
 		schemas = []string{conn.Username}
 	}
 

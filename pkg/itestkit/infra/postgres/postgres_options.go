@@ -72,3 +72,13 @@ func WithPGFixedPort(hostPort string) PostgresOption {
 		))
 	}
 }
+
+// WithPGCustomizers forwards arbitrary testcontainers.ContainerCustomizer values
+// (e.g. pg.WithSSLCert, pg.WithConfigFile, itestkit.CCopyFile) into the run options.
+// Use for SSL/TLS tests and other advanced container shaping that the typed
+// options do not cover.
+func WithPGCustomizers(c ...testcontainers.ContainerCustomizer) PostgresOption {
+	return func(o *postgresOptions) {
+		o.runOpts = append(o.runOpts, c...)
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/LerianStudio/fetcher/pkg/datasource/sslmode"
 	"github.com/LerianStudio/fetcher/pkg/model"
 
 	libLog "github.com/LerianStudio/lib-observability/log"
@@ -81,6 +82,24 @@ func LoadInternalConnectionsFromEnv(registry *InternalDatasourceRegistry, logger
 			Username:     getEnv("USER"),
 		}
 
+		// Parse SSL env vars (SSLMODE is the gate; CA/Cert/Key are optional).
+		// Behavior parity with TYPE invalid-skip (lines ~53-60): on invalid SSL
+		// mode we log WARN and skip the connection entirely so misconfiguration
+		// surfaces loudly instead of silently downgrading to plaintext.
+		ssl, sslErr := parseSSLFromEnv(getEnv, dbType)
+		if sslErr != nil {
+			logger.Log(context.Background(), libLog.LevelWarn, "Invalid SSLMODE for internal datasource, skipping",
+				libLog.String("config_name", configName),
+				libLog.String("type", string(dbType)),
+				libLog.String("sslmode_value", getEnv("SSLMODE")),
+				libLog.String("error", sslErr.Error()),
+			)
+
+			continue
+		}
+
+		conn.SSL = ssl
+
 		// Parse OPTIONS env var (query-string format: authSource=admin&directConnection=true)
 		// into conn.Metadata so buildMongoDBOptions can use them.
 		if opts := getEnv("OPTIONS"); opts != "" {
@@ -119,4 +138,47 @@ func LoadInternalConnectionsFromEnv(registry *InternalDatasourceRegistry, logger
 	}
 
 	return envConnections
+}
+
+// parseSSLFromEnv reads SSLMODE/SSL_CA/SSL_CERT/SSL_KEY via getEnv and returns
+// the populated SSLConfig. SSLMODE is the gate: when unset, returns (nil, nil)
+// so the connection keeps SSL nil and the driver default applies. When SSLMODE
+// is set but invalid for dbType, returns the validation error so callers can
+// WARN and skip the connection (parity with TYPE invalid-skip).
+func parseSSLFromEnv(getEnv func(string) string, dbType model.DBType) (*model.SSLConfig, error) {
+	sslModeRaw := getEnv("SSLMODE")
+	if sslModeRaw == "" {
+		return nil, nil
+	}
+
+	if err := validateSSLModeForType(dbType, sslModeRaw); err != nil {
+		return nil, err
+	}
+
+	return &model.SSLConfig{
+		Mode: sslModeRaw,
+		CA:   getEnv("SSL_CA"),
+		Cert: getEnv("SSL_CERT"),
+		Key:  getEnv("SSL_KEY"),
+	}, nil
+}
+
+// validateSSLModeForType validates that the SSL mode is valid for the given
+// database type by dispatching to the per-driver allowlist functions in
+// pkg/datasource/sslmode. Returns nil for unknown types (no validation).
+func validateSSLModeForType(dbType model.DBType, mode string) error {
+	switch dbType {
+	case model.TypePostgreSQL:
+		return sslmode.ValidatePostgreSQLMode(mode)
+	case model.TypeMySQL:
+		return sslmode.ValidateMySQLMode(mode)
+	case model.TypeOracle:
+		return sslmode.ValidateOracleMode(mode)
+	case model.TypeMongoDB:
+		return sslmode.ValidateMongoDBMode(mode)
+	case model.TypeSQLServer:
+		return sslmode.ValidateSQLServerMode(mode)
+	default:
+		return nil
+	}
 }

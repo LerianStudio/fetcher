@@ -2,6 +2,7 @@ package query
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -173,6 +174,15 @@ func (s *TestConnection) Execute(ctx context.Context, connectionID uuid.UUID) (*
 			libLog.String("connection_id", connectionID.String()),
 			libLog.Err(err),
 		)
+
+		// Preserve typed validation errors (e.g. FET-0414 from the SSRF host
+		// safety guard) so the renderer maps them to HTTP 400 — masking with
+		// a generic 500 would break the documented FET-0414 contract and drop
+		// the audit signal that a tenant tried to reach a denylisted host.
+		var ve pkg.ValidationError
+		if errors.As(err, &ve) {
+			return nil, err
+		}
 
 		return nil, pkg.ResponseError{
 			Code:    http.StatusInternalServerError,

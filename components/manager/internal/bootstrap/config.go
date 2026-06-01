@@ -18,6 +18,7 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	datasourceFactory "github.com/LerianStudio/fetcher/pkg/datasource"
+	"github.com/LerianStudio/fetcher/pkg/datasource/hostsafety"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/mongodb"
 	"github.com/LerianStudio/fetcher/pkg/mongodb/connection"
@@ -231,6 +232,13 @@ func InitServers() (*Service, error) {
 	} else {
 		logger.Log(ctx, libLog.LevelInfo, "Running in SINGLE-TENANT MODE")
 	}
+
+	// Activate the SSRF host safety guard for tenant-supplied connections when
+	// running in multi-tenant mode. Single-tenant deployments leave it off so
+	// operators can still legitimately point at localhost / RFC1918 hosts.
+	// This must happen before any service / route is built (the factory and the
+	// HTTP DTO validator read the flag fresh on each request).
+	hostsafety.SetHostSafetyEnabled(cfg.MultiTenantEnabled)
 
 	// SaaS TLS enforcement must run before any platform connection opens.
 	// Manager has no S3 dependency (worker-only).
@@ -595,7 +603,7 @@ func assembleService(
 	listConnectionsQuery := connectionQuery.NewListConnections(repositories.connection, connResolver)
 	testConnectionQuery := connectionQuery.NewTestConnection(repositories.connection, cryptoService, platformDependencies.connectionTestStore, dsFactory, connResolver, registry)
 	validateSchemaQuery := connectionQuery.NewValidateSchema(repositories.connection, cryptoService, platformDependencies.schemaCache, dsFactory, connResolver)
-	getConnectionSchemaQuery := connectionQuery.NewGetConnectionSchema(repositories.connection, cryptoService, dsFactory, connResolver, registry)
+	getConnectionSchemaQuery := connectionQuery.NewGetConnectionSchema(repositories.connection, cryptoService, dsFactory, connResolver, registry, cfg.MultiTenantEnabled)
 
 	connectionHandler := in2.NewConnectionHandler(
 		createConnectionCmd,
