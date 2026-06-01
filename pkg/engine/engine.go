@@ -3,6 +3,8 @@
 
 package engine
 
+import "reflect"
+
 // Engine is the embedded runtime facade. A host constructs one Engine with the
 // capability ports it provides and then drives extraction operations through it
 // in later subtasks. ST-T002-02 implements CONSTRUCTOR behavior only: New
@@ -43,14 +45,14 @@ func New(opts ...Option) (*Engine, error) {
 		}
 	}
 
-	if options.connectorRegistry == nil {
+	if isNilPort(options.connectorRegistry) {
 		return nil, NewEngineError(
 			CategoryValidation,
 			"connector registry is required",
 		)
 	}
 
-	if options.encryptedPersistence && options.credentialProtector == nil {
+	if options.encryptedPersistence && isNilPort(options.credentialProtector) {
 		return nil, NewEngineError(
 			CategoryValidation,
 			"credential protector is required when encrypted persistence is enabled",
@@ -67,4 +69,24 @@ func New(opts ...Option) (*Engine, error) {
 // Limits returns the effective resource limits the Engine was constructed with.
 func (e *Engine) Limits() Limits {
 	return e.options.limits
+}
+
+// isNilPort reports whether v is an absent capability port. It catches both a
+// literal nil interface and a TYPED nil — an interface value that wraps a nil
+// pointer (or nil map/chan/func/slice/interface). The latter slips past a plain
+// `== nil` check, so without this New would accept a non-nil interface backed by
+// a nil pointer and only fail with a nil-pointer panic at first use, defeating
+// the constructor's "validate required capabilities at construction" guarantee.
+func isNilPort(v any) bool {
+	if v == nil {
+		return true
+	}
+
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Pointer, reflect.Map, reflect.Chan, reflect.Func, reflect.Slice, reflect.Interface:
+		return rv.IsNil()
+	default:
+		return false
+	}
 }

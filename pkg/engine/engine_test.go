@@ -231,6 +231,61 @@ func TestNew_EncryptedPersistenceRequiresCredentialProtector(t *testing.T) {
 	}
 }
 
+func TestNew_RejectsTypedNilConnectorRegistry(t *testing.T) {
+	t.Parallel()
+
+	// A typed nil: a non-nil ConnectorRegistry interface value that wraps a nil
+	// *fakeConnectorRegistry pointer. A plain `== nil` check would pass it
+	// through, so New must use a typed-nil-aware guard and reject it.
+	var typedNil *fakeConnectorRegistry
+
+	eng, err := New(WithConnectorRegistry(typedNil))
+
+	if err == nil {
+		t.Fatalf("New() error = nil, want %s error for typed-nil connector registry", CategoryValidation)
+	}
+
+	var engErr *EngineError
+	if !errors.As(err, &engErr) {
+		t.Fatalf("New() error type = %T, want *EngineError", err)
+	}
+	if engErr.Category != CategoryValidation {
+		t.Fatalf("New() error category = %q, want %q", engErr.Category, CategoryValidation)
+	}
+	if eng != nil {
+		t.Fatalf("New() engine = %v, want nil on error", eng)
+	}
+}
+
+func TestNew_RejectsTypedNilCredentialProtectorWithEncryptedPersistence(t *testing.T) {
+	t.Parallel()
+
+	// A typed nil credential protector must be rejected exactly like a literal
+	// nil when encrypted persistence is enabled.
+	var typedNil *fakeCredentialProtector
+
+	eng, err := New(
+		WithConnectorRegistry(fakeConnectorRegistry{}),
+		WithEncryptedPersistence(true),
+		WithCredentialProtector(typedNil),
+	)
+
+	if err == nil {
+		t.Fatalf("New() error = nil, want %s error for typed-nil credential protector", CategoryValidation)
+	}
+
+	var engErr *EngineError
+	if !errors.As(err, &engErr) {
+		t.Fatalf("New() error type = %T, want *EngineError", err)
+	}
+	if engErr.Category != CategoryValidation {
+		t.Fatalf("New() error category = %q, want %q", engErr.Category, CategoryValidation)
+	}
+	if eng != nil {
+		t.Fatalf("New() engine = %v, want nil on error", eng)
+	}
+}
+
 func TestNew_AppliesSafeDefaultLimits(t *testing.T) {
 	t.Parallel()
 

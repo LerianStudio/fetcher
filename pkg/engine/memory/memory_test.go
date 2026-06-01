@@ -6,6 +6,7 @@ package memory_test
 import (
 	"context"
 	"errors"
+	"strconv"
 	"sync"
 	"testing"
 
@@ -364,17 +365,5 @@ func TestConcurrentAccess(t *testing.T) {
 }
 
 func configNameFor(worker, iteration int) string {
-	return "conn-" + itoa(worker) + "-" + itoa(iteration)
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	digits := []byte{}
-	for n > 0 {
-		digits = append([]byte{byte('0' + n%10)}, digits...)
-		n /= 10
-	}
-	return string(digits)
+	return "conn-" + strconv.Itoa(worker) + "-" + strconv.Itoa(iteration)
 }

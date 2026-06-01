@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"strconv"
 	"sync"
 
 	"github.com/LerianStudio/fetcher/pkg/engine"
@@ -50,7 +51,7 @@ func (s *ResultSink) PersistResult(
 	// The path embeds the tenant scope and a monotonic sequence so distinct
 	// writes never collide even when payloads are identical.
 	s.seq++
-	path := "memory://" + tenant.OrganizationID + "/" + tenant.ProductName + "/" + digest + "-" + itoaInternal(s.seq)
+	path := "memory://" + tenant.OrganizationID + "/" + tenant.ProductName + "/" + digest + "-" + strconv.Itoa(s.seq)
 	s.results[path] = stored
 
 	return engine.ResultReference{
@@ -120,20 +121,4 @@ func (s *EventSink) Events() []RecordedEvent {
 	copy(out, s.events)
 
 	return out
-}
-
-// itoaInternal converts a non-negative int to its decimal string without
-// importing strconv, keeping the harness's stdlib surface minimal.
-func itoaInternal(n int) string {
-	if n == 0 {
-		return "0"
-	}
-
-	digits := make([]byte, 0, 20)
-	for n > 0 {
-		digits = append([]byte{byte('0' + n%10)}, digits...)
-		n /= 10
-	}
-
-	return string(digits)
 }
