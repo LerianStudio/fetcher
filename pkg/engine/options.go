@@ -9,15 +9,16 @@ package engine
 // the only construction path is New + Option, keeping invariants enforced in
 // one place (the constructor) rather than scattered across callers.
 type Options struct {
-	connectorRegistry   ConnectorRegistry
-	credentialProtector CredentialProtector
-	connectionStore     ConnectionStore
-	executionStore      ExecutionStore
-	resultSink          ResultSink
-	schemaCache         SchemaCache
-	eventSink           EventSink
-	tenantResolver      TenantResolver
-	observability       Observability
+	connectorRegistry      ConnectorRegistry
+	credentialProtector    CredentialProtector
+	connectionStore        ConnectionStore
+	executionStore         ExecutionStore
+	resultSink             ResultSink
+	schemaCache            SchemaCache
+	eventSink              EventSink
+	tenantResolver         TenantResolver
+	activeExecutionChecker ActiveExecutionChecker
+	observability          Observability
 
 	encryptedPersistence bool
 	limits               Limits
@@ -90,6 +91,15 @@ func WithEventSink(sink EventSink) Option {
 func WithTenantResolver(resolver TenantResolver) Option {
 	return func(o *Options) {
 		o.tenantResolver = resolver
+	}
+}
+
+// WithActiveExecutionChecker sets the optional logical conflict checker the
+// Engine consults before mutating a connection (update/delete). When omitted,
+// the Engine performs no conflict gating and mutations proceed.
+func WithActiveExecutionChecker(checker ActiveExecutionChecker) Option {
+	return func(o *Options) {
+		o.activeExecutionChecker = checker
 	}
 }
 

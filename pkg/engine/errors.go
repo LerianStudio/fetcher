@@ -22,6 +22,10 @@ const (
 	CategoryForbidden ErrorCategory = "forbidden"
 	// CategoryLimitExceeded indicates an Engine limit was breached.
 	CategoryLimitExceeded ErrorCategory = "limit_exceeded"
+	// CategoryConflict indicates the operation conflicts with the current state
+	// of the resource — e.g. a mutation blocked because active work references it.
+	// Hosts map it to HTTP 409 Conflict.
+	CategoryConflict ErrorCategory = "conflict"
 	// CategoryUnavailable indicates a dependency (datasource, store) is down.
 	CategoryUnavailable ErrorCategory = "unavailable"
 	// CategoryTimeout indicates an operation exceeded its deadline.
@@ -36,6 +40,7 @@ var validErrorCategories = map[ErrorCategory]struct{}{
 	CategoryUnauthorized:  {},
 	CategoryForbidden:     {},
 	CategoryLimitExceeded: {},
+	CategoryConflict:      {},
 	CategoryUnavailable:   {},
 	CategoryTimeout:       {},
 	CategoryInternal:      {},

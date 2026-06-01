@@ -156,6 +156,27 @@ type TenantResolver interface {
 	Resolve(ctx context.Context, tenant TenantContext) (TenantContext, error)
 }
 
+// ActiveExecutionChecker is an OPTIONAL, LOGICAL port that reports whether a
+// connection has active (in-progress) executions referencing it. The Engine
+// consults it BEFORE mutating a connection (update/delete) so a host can
+// preserve the Manager's behavior of blocking changes while jobs run against the
+// connection.
+//
+// It is deliberately LOGICAL: it does NOT make durable job/execution storage a
+// mandatory Engine dependency. The host decides how to answer (durable job repo,
+// in-memory tracker, distributed lock, or always-false) and the Engine never
+// imports a job repository to ask the question. When the port is absent, the
+// Engine performs no conflict gating and mutations proceed.
+//
+// connectionID is the connection's config name within the tenant scope — the
+// same identity the Engine uses everywhere else to address a connection.
+type ActiveExecutionChecker interface {
+	// HasActiveExecutions reports whether the named connection currently has
+	// active executions for the tenant. It MUST scope its answer by the supplied
+	// TenantContext so one tenant's active work never blocks another's mutation.
+	HasActiveExecutions(ctx context.Context, tenant TenantContext, connectionID string) (bool, error)
+}
+
 // Observability is an OPTIONAL port providing host tracing hooks. The contract
 // is deliberately minimal so the Engine core never imports a tracing library;
 // the host adapts its own tracer (e.g. lib-observability) behind this seam.

@@ -186,6 +186,14 @@ func (e *Engine) UpdateConnection(
 		return ConnectionDescriptor{}, NewEngineError(CategoryNotFound, "connection not found")
 	}
 
+	// Block the mutation while active work references the connection, mirroring
+	// the Manager's active-job guard. The gate runs BEFORE any protect/store write
+	// so a conflict (or a checker failure) leaves the store untouched. It is a
+	// no-op when no checker is configured.
+	if err := e.guardActiveExecutions(ctx, tenant, configName); err != nil {
+		return ConnectionDescriptor{}, err
+	}
+
 	updated := applyConnectionPatch(current, patch)
 
 	// Re-protect the secret ONLY when a password change is supplied. A patch with
@@ -233,7 +241,44 @@ func (e *Engine) DeleteConnection(
 		return err
 	}
 
+	// Block deletion while active work references the connection, mirroring the
+	// Manager's active-job guard. The gate runs BEFORE the store delete so a
+	// conflict (or a checker failure) leaves the connection intact. It is a no-op
+	// when no checker is configured.
+	if err := e.guardActiveExecutions(ctx, tenant, configName); err != nil {
+		return err
+	}
+
 	return store.Delete(ctx, tenant, configName)
+}
+
+// guardActiveExecutions consults the optional ActiveExecutionChecker before a
+// connection mutation. It returns:
+//   - nil when no checker is configured (conflict gating is opt-in);
+//   - a CategoryConflict EngineError when the checker reports active work;
+//   - a CategoryUnavailable EngineError when the checker itself fails — the raw
+//     checker error is DELIBERATELY discarded from the returned message so a host
+//     implementation can never leak internals (DSNs, job IDs) across the Engine
+//     boundary, consistent with protectSecret's error handling.
+//
+// connectionID is the connection's config name within the tenant scope; the
+// checker is always invoked under that scope so one tenant's active work never
+// blocks another's mutation.
+func (e *Engine) guardActiveExecutions(ctx context.Context, tenant TenantContext, connectionID string) error {
+	if isNilPort(e.options.activeExecutionChecker) {
+		return nil
+	}
+
+	active, err := e.options.activeExecutionChecker.HasActiveExecutions(ctx, tenant, connectionID)
+	if err != nil {
+		return NewEngineError(CategoryUnavailable, "failed to check for active executions")
+	}
+
+	if active {
+		return NewEngineError(CategoryConflict, "connection has active executions")
+	}
+
+	return nil
 }
 
 // applyConnectionPatch returns a copy of current with only the non-nil patch
