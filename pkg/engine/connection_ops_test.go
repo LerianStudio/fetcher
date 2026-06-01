@@ -163,10 +163,10 @@ func TestEngine_CreateConnection_DuplicateWithProtectorIsRejectedBeforeReEncrypt
 		t.Fatalf("expected stored credential after first create")
 	}
 
-	// A duplicate create with a DIFFERENT password must be rejected. Because the
-	// store rejects the duplicate, the Engine never persists a second record; the
-	// protector may or may not be consulted depending on ordering, but the stored
-	// ciphertext and record count must not change.
+	// A duplicate create with a DIFFERENT password must be rejected. The Engine
+	// checks existence FIRST, so the protector is NOT invoked a second time: only
+	// the original create encrypted. The stored ciphertext and record count must
+	// not change.
 	dup := engine.NewConnectionInput(engine.ConnectionInputParams{
 		ConfigName:   "pg-main",
 		Type:         "postgres",
@@ -189,6 +189,13 @@ func TestEngine_CreateConnection_DuplicateWithProtectorIsRejectedBeforeReEncrypt
 	}
 	if engErr.Category != engine.CategoryValidation {
 		t.Fatalf("CreateConnection duplicate: category = %q, want %q", engErr.Category, engine.CategoryValidation)
+	}
+
+	// The duplicate was rejected by the existence pre-check BEFORE protect: the
+	// protector must still show exactly one call (the original create). This is
+	// the reject-before-encrypt ordering the test name asserts.
+	if protector.calls() != 1 {
+		t.Fatalf("duplicate create: protector calls = %d, want 1 (reject-before-encrypt: duplicate must NOT re-encrypt)", protector.calls())
 	}
 
 	// The existing record's ciphertext must be untouched.
@@ -941,27 +948,65 @@ func TestEngine_UpdateConnection_ProtectorErrorIsSafeAndNoMutation(t *testing.T)
 
 func strPtr(s string) *string { return &s }
 
-func TestEngine_CreateConnection_RequiresTenantScope(t *testing.T) {
+// TestEngine_ConnectionOps_RejectInvalidTenantScope asserts that EVERY connection
+// operation rejects an invalid tenant scope with CategoryValidation, regardless
+// of how the TenantContext was built. Because TenantContext.TenantID is an
+// exported field, a host can bypass NewTenantContext and hand the Engine either a
+// zero-value context (empty TenantID) OR a malformed one (e.g. spaces). The
+// operation-level guard must catch both shapes for Create, Get, List, Update, and
+// Delete — not just Create.
+func TestEngine_ConnectionOps_RejectInvalidTenantScope(t *testing.T) {
 	t.Parallel()
 
-	ctx := context.Background()
-	eng, _ := engineWithStore(t)
-
-	// A tenant with no tenantID cannot own a connection; config-name uniqueness
-	// is enforced WITHIN the tenant scope, so an empty tenant is invalid. The
-	// zero value bypasses the constructor to exercise the operation-level guard.
-	emptyTenant := engine.TenantContext{}
-
-	_, err := eng.CreateConnection(ctx, emptyTenant, newInput("pg-main"))
-	if err == nil {
-		t.Fatalf("CreateConnection empty scope: expected validation error, got nil")
+	tenants := map[string]engine.TenantContext{
+		"empty":     {},
+		"malformed": {TenantID: "has spaces"},
 	}
 
-	var engErr *engine.EngineError
-	if !errors.As(err, &engErr) {
-		t.Fatalf("CreateConnection empty scope: error type = %T, want *engine.EngineError", err)
+	ops := map[string]func(*engine.Engine, context.Context, engine.TenantContext) error{
+		"Create": func(e *engine.Engine, ctx context.Context, tn engine.TenantContext) error {
+			_, err := e.CreateConnection(ctx, tn, newInput("pg-main"))
+			return err
+		},
+		"Get": func(e *engine.Engine, ctx context.Context, tn engine.TenantContext) error {
+			_, err := e.GetConnection(ctx, tn, "pg-main")
+			return err
+		},
+		"List": func(e *engine.Engine, ctx context.Context, tn engine.TenantContext) error {
+			_, err := e.ListConnections(ctx, tn)
+			return err
+		},
+		"Update": func(e *engine.Engine, ctx context.Context, tn engine.TenantContext) error {
+			host := "x"
+			_, err := e.UpdateConnection(ctx, tn, "pg-main", engine.ConnectionPatch{Host: &host})
+			return err
+		},
+		"Delete": func(e *engine.Engine, ctx context.Context, tn engine.TenantContext) error {
+			return e.DeleteConnection(ctx, tn, "pg-main")
+		},
 	}
-	if engErr.Category != engine.CategoryValidation {
-		t.Fatalf("CreateConnection empty scope: category = %q, want %q", engErr.Category, engine.CategoryValidation)
+
+	for tenantName, tenant := range tenants {
+		for opName, op := range ops {
+			t.Run(tenantName+"/"+opName, func(t *testing.T) {
+				t.Parallel()
+
+				ctx := context.Background()
+				eng, _ := engineWithStore(t)
+
+				err := op(eng, ctx, tenant)
+				if err == nil {
+					t.Fatalf("%s with %s tenant: expected validation error, got nil", opName, tenantName)
+				}
+
+				var engErr *engine.EngineError
+				if !errors.As(err, &engErr) {
+					t.Fatalf("%s with %s tenant: error type = %T, want *engine.EngineError", opName, tenantName, err)
+				}
+				if engErr.Category != engine.CategoryValidation {
+					t.Fatalf("%s with %s tenant: category = %q, want %q", opName, tenantName, engErr.Category, engine.CategoryValidation)
+				}
+			})
+		}
 	}
 }

@@ -45,7 +45,20 @@ func (e *Engine) CreateConnection(
 
 	descriptor := DescriptorFromInput(input)
 
-	// Protect the secret BEFORE any store write. On failure we return a safe
+	// Reject a duplicate (tenantID, configName) BEFORE protecting the secret. The
+	// pre-check both fixes the ordering — a rejected create must never invoke the
+	// protector (wasted KMS/crypto call, an avoidable cost vector) — and preserves
+	// the redaction-on-output contract. It is an optimization plus
+	// correctness-of-ordering, NOT the source of truth: store.Create below remains
+	// the atomic uniqueness backstop so two concurrent creates still have exactly
+	// one winner.
+	if _, found, err := store.FindConnection(ctx, tenant, descriptor.ConfigName); err != nil {
+		return ConnectionDescriptor{}, err
+	} else if found {
+		return ConnectionDescriptor{}, NewEngineError(CategoryValidation, "connection already exists")
+	}
+
+	// Protect the secret BEFORE the store write. On failure we return a safe
 	// error and leave the store untouched (atomicity): the Create call below is
 	// never reached. Protection runs only when encrypted persistence is enabled
 	// and a password is actually supplied.
@@ -61,6 +74,8 @@ func (e *Engine) CreateConnection(
 		descriptor.KeyVersion = protected.KeyVersion
 	}
 
+	// store.Create still enforces uniqueness atomically: the pre-check above is an
+	// optimization, this is the race backstop and source of truth.
 	if err := store.Create(ctx, tenant, descriptor, credential); err != nil {
 		return ConnectionDescriptor{}, err
 	}
@@ -384,12 +399,16 @@ func (e *Engine) startSpan(ctx context.Context, operation string) (context.Conte
 	return e.options.observability.StartSpan(ctx, operation)
 }
 
-// validateTenantScope rejects a tenant that carries no tenantId. Config
-// uniqueness and ownership are anchored to the tenant, so an unscoped tenant
-// cannot own a connection. This is the operation-level guard that also catches a
-// zero-value TenantContext that bypassed the NewTenantContext constructor.
+// validateTenantScope rejects a tenant whose TenantID is empty OR malformed.
+// Config uniqueness and ownership are anchored to the tenant, so an unscoped or
+// ill-shaped tenant cannot own a connection. Because TenantContext.TenantID is an
+// exported field, a host can build a TenantContext directly and bypass
+// NewTenantContext's validation; this operation-level guard applies the SAME
+// isValidTenantID shape check on every operation so the tenant-id contract holds
+// regardless of how the context was constructed. isValidTenantID already rejects
+// the empty string, so a zero-value TenantContext is caught here too.
 func validateTenantScope(tenant TenantContext) error {
-	if tenant.TenantID == "" {
+	if !isValidTenantID(tenant.TenantID) {
 		return NewEngineError(CategoryValidation, "tenant scope is required")
 	}
 

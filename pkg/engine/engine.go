@@ -73,10 +73,14 @@ func (e *Engine) Limits() Limits {
 
 // isNilPort reports whether v is an absent capability port. It catches both a
 // literal nil interface and a TYPED nil — an interface value that wraps a nil
-// pointer (or nil map/chan/func/slice/interface). The latter slips past a plain
-// `== nil` check, so without this New would accept a non-nil interface backed by
-// a nil pointer and only fail with a nil-pointer panic at first use, defeating
-// the constructor's "validate required capabilities at construction" guarantee.
+// pointer (or nil map/chan/func/slice). The latter slips past a plain `== nil`
+// check, so without this New would accept a non-nil interface backed by a nil
+// pointer and only fail with a nil-pointer panic at first use, defeating the
+// constructor's "validate required capabilities at construction" guarantee.
+//
+// reflect.Interface is intentionally absent from the Kind switch: a value passed
+// through the `any` parameter is always concrete, so its Kind is never Interface,
+// and the literal-nil case is already covered by the v == nil guard above.
 func isNilPort(v any) bool {
 	if v == nil {
 		return true
@@ -84,7 +88,7 @@ func isNilPort(v any) bool {
 
 	rv := reflect.ValueOf(v)
 	switch rv.Kind() {
-	case reflect.Pointer, reflect.Map, reflect.Chan, reflect.Func, reflect.Slice, reflect.Interface:
+	case reflect.Pointer, reflect.Map, reflect.Chan, reflect.Func, reflect.Slice:
 		return rv.IsNil()
 	default:
 		return false

@@ -154,9 +154,85 @@ func TestEngine_DeleteConnection_BlockedByActiveExecutions(t *testing.T) {
 		t.Fatalf("DeleteConnection: checker calls = %d, want 1", checker.calls())
 	}
 
+	// The checker must have been consulted under the connection's tenant scope, so
+	// one tenant's active work never blocks another tenant's mutation (symmetric
+	// with the Update-blocked twin).
+	checker.mu.Lock()
+	gotName := checker.asked[0]
+	gotTenant := checker.tenants[0]
+	checker.mu.Unlock()
+	if gotName != "pg-main" {
+		t.Fatalf("DeleteConnection: checker asked about %q, want %q", gotName, "pg-main")
+	}
+	if gotTenant.TenantID != "tenant-a" {
+		t.Fatalf("DeleteConnection: checker tenant = %+v, want tenant-a scope", gotTenant)
+	}
+
 	// The store must be unchanged: the connection must still be present.
 	if _, found, _ := store.FindConnection(ctx, tenant, "pg-main"); !found {
 		t.Fatalf("DeleteConnection: store mutated despite active-execution conflict")
+	}
+}
+
+// TestEngine_DeleteConnection_MissingDoesNotConsultChecker proves the
+// active-execution guard never runs for a connection that does not exist: Delete
+// confirms existence FIRST, so a missing connection short-circuits to NotFound
+// before the checker is consulted (B4 finding #1). Wiring an always-active
+// checker makes the regression observable — if the guard ran, the call count
+// would be 1 (and the error would be a conflict, not not-found).
+func TestEngine_DeleteConnection_MissingDoesNotConsultChecker(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	checker := &fakeActiveExecutionChecker{active: true}
+	eng, _ := engineWithChecker(t, checker)
+	tenant := mustTenant(t, "tenant-a")
+
+	err := eng.DeleteConnection(ctx, tenant, "never-created")
+	if err == nil {
+		t.Fatalf("DeleteConnection missing: expected not-found error, got nil")
+	}
+
+	var engErr *engine.EngineError
+	if !errors.As(err, &engErr) {
+		t.Fatalf("DeleteConnection missing: error type = %T, want *engine.EngineError", err)
+	}
+	if engErr.Category != engine.CategoryNotFound {
+		t.Fatalf("DeleteConnection missing: category = %q, want %q", engErr.Category, engine.CategoryNotFound)
+	}
+
+	if checker.calls() != 0 {
+		t.Fatalf("DeleteConnection missing: checker calls = %d, want 0 (guard must not run on a missing connection)", checker.calls())
+	}
+}
+
+// TestEngine_UpdateConnection_MissingDoesNotConsultChecker is the symmetric proof
+// for Update, which also Finds before guarding: a missing connection yields
+// NotFound without consulting the active-execution checker (B4 finding #1).
+func TestEngine_UpdateConnection_MissingDoesNotConsultChecker(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	checker := &fakeActiveExecutionChecker{active: true}
+	eng, _ := engineWithChecker(t, checker)
+	tenant := mustTenant(t, "tenant-a")
+
+	newHost := "db.replica"
+	_, err := eng.UpdateConnection(ctx, tenant, "never-created", engine.ConnectionPatch{Host: &newHost})
+	if err == nil {
+		t.Fatalf("UpdateConnection missing: expected not-found error, got nil")
+	}
+
+	var engErr *engine.EngineError
+	if !errors.As(err, &engErr) {
+		t.Fatalf("UpdateConnection missing: error type = %T, want *engine.EngineError", err)
+	}
+	if engErr.Category != engine.CategoryNotFound {
+		t.Fatalf("UpdateConnection missing: category = %q, want %q", engErr.Category, engine.CategoryNotFound)
+	}
+
+	if checker.calls() != 0 {
+		t.Fatalf("UpdateConnection missing: checker calls = %d, want 0 (guard must not run on a missing connection)", checker.calls())
 	}
 }
 
