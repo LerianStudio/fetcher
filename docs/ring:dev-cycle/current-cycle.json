@@ -23,6 +23,47 @@
     "rationale": "T-001 Gate 8 used the origin/main...HEAD cumulative diff (207 files, +11,560 lines) and spiraled to 25 iterations remediating Ring-mandated platform compliance unrelated to the 961-line characterization deliverable. From T-002 on, Gate 8 reviews ONLY the diff from each task's start commit to HEAD ({task.review_baseline_commit}...HEAD), confining reviewers to that task's own changes. Reviewers MUST NOT review pre-existing branch delta vs origin/main.",
     "instruction_for_gate8": "When dispatching ring:codereview at Gate 8, set the review target to `git diff {task.review_baseline_commit}...HEAD` (the current task's commits only). Do NOT diff against origin/main. Pass the baseline commit explicitly to every reviewer."
   },
+  "develop_reconciliation": {
+    "phase": "A",
+    "status": "completed",
+    "completed_at": "2026-06-01T00:00:00Z",
+    "strategy": "merge",
+    "merge_commit": "ac6b454d15dba08b11eb87cdeae33d975e5cacf0",
+    "checkpoint_commit": "b96307361b5087516f0f9fae312c574dfe354d34",
+    "backup_branch": "backup/pre-develop-merge-20260601",
+    "develop_tip_merged": "9449b41dc223ec899b09916fb7d606b85a1fc8f5",
+    "position_after": "0 behind / 42 ahead of origin/develop",
+    "conflicts_resolved": "Only go.mod + go.sum (dependency versions). Kept HEAD lib versions (all >= develop: lib-auth v2.8.0, lib-commons v5.2.0 pinned, lib-license-go v2.3.5) plus our-only lib-observability v1.0.0 + lib-streaming v1.3.1; go mod tidy regenerated go.sum. One test-only merge-fallout fixed by backend-engineer: get_connection_schema_test.go:698 missing 6th arg (MultiTenantEnabled bool) for develop's refactored NewGetConnectionSchema signature.",
+    "verification": "go build clean; go vet clean; all test binaries compile; go test ./... = 54 ok / 0 FAIL; make lint = 0 issues.",
+    "tenant_model_finding": "AUTHORITATIVE develop connection model post-merge contradicts the pre-merge plan default of (tenant, org, product, configName). Evidence: (1) pkg/model/connection.go Connection struct has ProductName (required attribute) but NO OrganizationID and NO TenantID field. (2) The product ENTITY/table was removed (commit a6b8339, 'make connections standalone'); ProductName survives only as a string label. (3) pkg/mongodb/connection/indexes.go: unique index on config_name ALONE (partial deleted_at==nil), per-database. (4) pkg/mongodb/connection/connection.mongodb.go FindByName filters by config_name + deleted_at ONLY — no product/org/tenant filter. Tenant isolation is PHYSICAL (DB-per-tenant via tmcore), not a field. => Effective connection identity = (tenant_DB, config_name). Product is non-scoping; org absent. The Engine (in-process, cannot do DB-per-tenant) must carry tenantId logically. B2 scope-key decision escalated to owner: this finding contradicts both the plan default and the owner's stated 'tenantId > orgs/products' hierarchy.",
+    "b2_decision": "RESOLVED by owner 2026-06-01: drop org AND product from the Engine entirely. Rationale: the Engine is embedded INTO each product (matcher, reporter, ...), so the product IS the host process — it does not need to identify itself as 'product' inside its own embedded Engine, and org is the embedder's business grouping, not an Engine isolation concern. One embedded product may serve N tenants, so tenantId REMAINS the isolation boundary (owner: 'tenant TEM que estar no contexto', non-negotiable). DECISION: TenantContext = {TenantID, RequestID} (remove OrganizationID and ProductName); connection scope key / uniqueness = (tenantId, configName). This SIMPLIFIES the T-002/T-003 surface (fewer scope dimensions). Owner's 'tenantId > orgs/products' hierarchy still holds at the business layer — orgs/products live ABOVE the Engine in the host/product layer; the Engine sits below the product. CARRY-FORWARD for T-008/T-010: when wiring the legacy Manager onto the Engine, decide the disposition of the Manager's required ProductName field + X-Product-Name header (keep as host display attribute the Engine ignores, or remove).",
+    "phase_b": {
+      "status": "completed",
+      "completed_at": "2026-06-01T00:00:00Z",
+      "commit": "901159efix(engine): scope connections by tenantId, drop org/product from Engine model",
+      "commit_sha": "901159e",
+      "summary": "TenantContext = {TenantID, RequestID}; removed OrganizationID, ProductName, and ConnectionDescriptor.ProductName. Scope key + config-name uniqueness re-keyed to (tenantID, configName). tenantId validation re-implemented locally as a value (byte-equivalent to lib-commons tenant-manager/core.IsValidTenantID + MaxTenantIDLength=256, ^[a-zA-Z0-9][a-zA-Z0-9_-]*$) WITHOUT importing tenant-manager (verified via go list -deps: no mongo-driver/dbresolver/tenant-manager transitive). Folded in 3 prior T-003 MEDIUMs (Delete-guard symmetry, duplicate-create-with-protector, tenant-isolation-through-Engine). Coverage engine 96.0% / memory 92.7%, race-clean. Independently verified by orchestrator: commit atomic (pkg/engine only), zero forbidden transitive deps, repo build clean, engine tests green with -race."
+    },
+    "phase_c": {
+      "status": "completed",
+      "completed_at": "2026-06-01T00:00:00Z",
+      "gate8_scope": "git diff de2fb12..HEAD -- pkg/engine/ (19 files, ~4513 lines). Baseline de2fb12 + path filter neutralizes the develop merge (pkg/engine absent on develop, so the merge did not touch it). Full Engine surface: T-002 contracts + T-003 lifecycle + Phase B correction reviewed as one coherent unit so multi-tenant-reviewer sees TenantContext and the store scope key together.",
+      "gate8_verdict": "PASS",
+      "gate8_iterations": 2,
+      "gate8_default_reviewers_passed": "9/9",
+      "gate8_conditional_specialists": "none triggered (library/contract code; no observability/streaming/systemplane runtime)",
+      "gate8_iteration_1": "ISSUES_FOUND. 8 PASS; test-reviewer FAIL with 2 HIGH + 2 MEDIUM. HIGH-1: test name 'DuplicateWithProtectorIsRejectedBeforeReEncrypt' asserted an ordering the code lacked (protector called 2x, encrypt-then-reject); aligned with security LOW-3 (wasted-encrypt/DoS vector). HIGH-2: B4 finding #1 (guard not consulted on missing connection) had no behavioral test. MEDIUM-1: validateTenantScope error branch tested only on Create. MEDIUM-2: Delete-blocked test did not assert checker tenant scope. multi-tenant-reviewer re-verified the tenantId-only model FROM SCRATCH (prior org==tenant PASS invalidated) and confirmed PASS.",
+      "gate8_iteration_2": "PASS. Remediation commit cdead4a: CreateConnection reordered to reject-before-encrypt (existence pre-check before protectSecret; store.Create retained as atomic uniqueness backstop) — closes HIGH-1 + security LOW-3; behavioral guard-on-missing tests added for Delete+Update (HIGH-2); validateTenantScope hardened to call isValidTenantID + table-driven invalid-tenant test across all 5 ops (MEDIUM-1 + security LOW-1); Delete-blocked test asserts checker tenant scope (MEDIUM-2); isNilPort unreachable reflect.Interface case dropped (code LOW). 210 tests pass, race-clean, engine 97.4% / memory 92.7%, vet/lint/build clean, dependency_test passes. Re-reviewed 7 surface-affected reviewers (test, code, business-logic, security, nil-safety, multi-tenant, performance) — all PASS, 0 issues; dead-code + lib-commons unaffected (PASS from iter 1).",
+      "carry_forward_low": [
+        "Limits partial-defaulting all-or-nothing (engine.go) — fix when limits consumed (T-006/T-007).",
+        "IsMultiTenant() misnomer + structural collision with tmcore.MultiTenantChecker interface (same signature — a host embedding TenantContext would accidentally satisfy it). API-surface/breaking change; defer to a dedicated cleanup.",
+        "TenantResolver port wired but inert — wire when extraction/schema ops land (later subtask).",
+        "Real MongoDB ConnectionStore adapter (T-008) MUST carry a unique index on (tenantId, config_name); also the find-then-create pre-check becomes a redundant round-trip there — consider insert-and-handle-conflict for that adapter.",
+        "No explicit concurrent-create test (backstop proven by inspection + -race) — optional add.",
+        "dependency_test.go allow-lists tenant-manager/core by import path but that pkg pulls mongo-driver+dbresolver; harden to assert on go list -deps (carried from T-001)."
+      ]
+    }
+  },
   "status": "in_progress",
   "feedback_loop_completed": false,
   "current_task_index": 2,
