@@ -18,7 +18,7 @@ import (
 
 type fakeConnectorRegistry struct{}
 
-func (fakeConnectorRegistry) Connector(string) (Connector, bool) { return nil, false }
+func (fakeConnectorRegistry) Connector(string) (ConnectorFactory, bool) { return nil, false }
 
 type fakeCredentialProtector struct{}
 

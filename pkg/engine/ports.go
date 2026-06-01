@@ -17,19 +17,23 @@ import "context"
 //   - OPTIONAL: the Engine degrades gracefully without them; New succeeds when
 //     they are omitted.
 
-// Connector is a host-provided datasource connector. It is intentionally opaque
-// at the contract layer for ST-T002-02: later subtasks define the connect,
-// discover, plan, and execute behavior. The Engine resolves connectors by
-// type through the ConnectorRegistry.
-type Connector any
+// The Connector and ConnectorFactory contracts (the explicit datasource
+// lifecycle) are defined in connector.go. They are INTERFACES only; concrete
+// drivers are wrapped in the host (pkg/enginecompat), never in Engine core.
 
-// ConnectorRegistry resolves a datasource Connector by its type identifier.
-// It is a REQUIRED capability: an Engine with no way to obtain connectors
-// cannot perform any extraction, so New rejects a missing registry.
+// ConnectorRegistry resolves a datasource ConnectorFactory by its type
+// identifier. It is a REQUIRED capability: an Engine with no way to obtain
+// connector factories cannot perform any extraction, so New rejects a missing
+// registry. Resolution is deterministic by datasource type and performs no I/O —
+// building a Connector (and connecting it) happens later through the resolved
+// factory.
 type ConnectorRegistry interface {
-	// Connector returns the connector registered for the given datasource type
-	// and reports whether one exists. It performs no I/O.
-	Connector(datasourceType string) (Connector, bool)
+	// Connector returns the ConnectorFactory registered for the given datasource
+	// type and reports whether one exists. It performs no I/O. Implementations
+	// MUST resolve deterministically by type; an unregistered type reports
+	// ok=false (callers that want a stable error use the registry's error-
+	// returning lookup, which yields newUnknownConnectorTypeError's category).
+	Connector(datasourceType string) (ConnectorFactory, bool)
 }
 
 // CredentialProtector encrypts and decrypts credential material on behalf of

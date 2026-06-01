@@ -286,16 +286,15 @@ func TestConnectorRegistry_Lookup(t *testing.T) {
 
 	registry := memory.NewConnectorRegistry()
 
-	type fakeConnector struct{ name string }
-	registry.Register("postgres", fakeConnector{name: "pg"})
+	registry.Register("postgres", &recordingFactory{typeName: "pg"})
 
 	// Found.
 	conn, ok := registry.Connector("postgres")
 	if !ok {
 		t.Fatalf("Connector(postgres): expected ok=true")
 	}
-	if fc, isFake := conn.(fakeConnector); !isFake || fc.name != "pg" {
-		t.Fatalf("Connector(postgres): unexpected connector %#v", conn)
+	if fc, isFake := conn.(*recordingFactory); !isFake || fc.typeName != "pg" {
+		t.Fatalf("Connector(postgres): unexpected factory %#v", conn)
 	}
 
 	// Unknown.
@@ -308,7 +307,7 @@ func TestConnectorRegistry_LookupOrError_StableEngineError(t *testing.T) {
 	t.Parallel()
 
 	registry := memory.NewConnectorRegistry()
-	registry.Register("postgres", struct{}{})
+	registry.Register("postgres", &recordingFactory{typeName: "pg"})
 
 	if _, err := registry.LookupOrError("postgres"); err != nil {
 		t.Fatalf("LookupOrError known: unexpected error: %v", err)
@@ -371,7 +370,7 @@ func TestConcurrentAccess(t *testing.T) {
 
 				_ = events.Emit(ctx, tenant, engine.ExecutionState{JobID: name, Status: engine.StatusCompleted})
 
-				registry.Register(name, struct{}{})
+				registry.Register(name, &recordingFactory{typeName: name})
 				_, _ = registry.Connector(name)
 			}
 		}(w)

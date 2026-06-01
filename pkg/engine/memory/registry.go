@@ -9,50 +9,52 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/engine"
 )
 
-// ConnectorRegistry is an in-memory engine.ConnectorRegistry. It resolves fake
-// connectors registered by tests through Register, guarded by an RWMutex. The
-// connectors themselves are opaque (engine.Connector is `any`); the registry
-// only maps a datasource type to whatever value the host registered.
+// ConnectorRegistry is an in-memory engine.ConnectorRegistry. It resolves
+// connector factories registered by tests through Register, guarded by an
+// RWMutex. The registry maps a datasource type to the engine.ConnectorFactory
+// the host registered; the factory builds a connector without opening a
+// connection, preserving the build/connect separation of the connector contract.
 type ConnectorRegistry struct {
-	mu         sync.RWMutex
-	connectors map[string]engine.Connector
+	mu        sync.RWMutex
+	factories map[string]engine.ConnectorFactory
 }
 
 // NewConnectorRegistry returns an empty in-memory connector registry.
 func NewConnectorRegistry() *ConnectorRegistry {
 	return &ConnectorRegistry{
-		connectors: make(map[string]engine.Connector),
+		factories: make(map[string]engine.ConnectorFactory),
 	}
 }
 
-// Register associates a fake connector with a datasource type. A later
+// Register associates a connector factory with a datasource type. A later
 // registration for the same type overwrites the earlier one.
-func (r *ConnectorRegistry) Register(datasourceType string, connector engine.Connector) {
+func (r *ConnectorRegistry) Register(datasourceType string, factory engine.ConnectorFactory) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	r.connectors[datasourceType] = connector
+	r.factories[datasourceType] = factory
 }
 
-// Connector implements engine.ConnectorRegistry. It returns the connector
-// registered for the datasource type and whether one exists. It performs no I/O.
-func (r *ConnectorRegistry) Connector(datasourceType string) (engine.Connector, bool) {
+// Connector implements engine.ConnectorRegistry. It returns the factory
+// registered for the datasource type and whether one exists. Resolution is
+// deterministic by type and performs no I/O.
+func (r *ConnectorRegistry) Connector(datasourceType string) (engine.ConnectorFactory, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	connector, ok := r.connectors[datasourceType]
+	factory, ok := r.factories[datasourceType]
 
-	return connector, ok
+	return factory, ok
 }
 
-// LookupOrError returns the connector for the datasource type or a stable
-// *engine.EngineError with CategoryNotFound when none is registered. It is a
-// harness affordance for tests that want the error path, not part of the port.
-func (r *ConnectorRegistry) LookupOrError(datasourceType string) (engine.Connector, error) {
-	connector, ok := r.Connector(datasourceType)
+// LookupOrError returns the factory for the datasource type or the stable
+// engine.UnknownConnectorTypeError when none is registered. It is a harness
+// affordance for tests that want the error path, not part of the port.
+func (r *ConnectorRegistry) LookupOrError(datasourceType string) (engine.ConnectorFactory, error) {
+	factory, ok := r.Connector(datasourceType)
 	if !ok {
-		return nil, engine.NewEngineError(engine.CategoryNotFound, "connector not registered for datasource type")
+		return nil, engine.UnknownConnectorTypeError(datasourceType)
 	}
 
-	return connector, nil
+	return factory, nil
 }
