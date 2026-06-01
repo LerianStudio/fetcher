@@ -6,6 +6,7 @@ package engine
 import (
 	"context"
 	"sort"
+	"strings"
 )
 
 // This file implements the Engine DiscoverSchema operation: a tenant-scoped read
@@ -329,6 +330,15 @@ func (e *Engine) ValidateSchema(
 		return ValidationReport{}, NewEngineError(CategoryValidation, "schema validation request has no datasources")
 	}
 
+	// Reject empty/whitespace identities as a malformed request BEFORE any
+	// snapshot membership. An empty config / table / field / filter name is not a
+	// legitimate schema mismatch; categorizing it as a not-found report failure
+	// would mask malformed input, so it is a CategoryValidation error — consistent
+	// with the empty-datasources guard above.
+	if err := validateRequestNames(request); err != nil {
+		return ValidationReport{}, err
+	}
+
 	limits := e.options.limits
 
 	// Bound the connector-discovery work by the effective timeout so a single
@@ -406,13 +416,21 @@ func (e *Engine) validateDatasource(
 // filter references against its schema snapshot, recording each missing table /
 // field / invalid filter as a distinct failure. It never touches the network,
 // credentials, or extracted data — only the snapshot's table and field names.
+//
+// Field matching follows the legacy DataSourceSchema.HasField semantics: a field
+// name matches when it is EITHER an exact column OR a PARENT object of a dotted
+// field path (a request for "natural_person" is valid when the snapshot holds
+// "natural_person.mother_name"). The Mongo/plugin_crm path flattens nested
+// objects into dotted names, so parent-object references are a primary pattern.
+// The "." delimiter is required so "natural" never falsely matches
+// "natural_person.x". The same matcher applies to mapped fields and filters.
 func validateMappingAgainstSnapshot(datasource DatasourceMapping, snapshot SchemaSnapshot) []ValidationFailure {
 	var failures []ValidationFailure
 
 	fieldsByTable := indexSnapshotFields(snapshot)
 
 	for _, table := range datasource.Tables {
-		fields, tableExists := fieldsByTable[table.Name]
+		index, tableExists := fieldsByTable[table.Name]
 		if !tableExists {
 			failures = append(failures, ValidationFailure{
 				Type:       ValidationTableNotFound,
@@ -425,7 +443,7 @@ func validateMappingAgainstSnapshot(datasource DatasourceMapping, snapshot Schem
 		}
 
 		for _, field := range table.Fields {
-			if _, ok := fields[field]; !ok {
+			if !index.has(field) {
 				failures = append(failures, ValidationFailure{
 					Type:       ValidationFieldNotFound,
 					ConfigName: datasource.ConfigName,
@@ -437,7 +455,7 @@ func validateMappingAgainstSnapshot(datasource DatasourceMapping, snapshot Schem
 		}
 
 		for _, filterField := range table.FilterFields {
-			if _, ok := fields[filterField]; !ok {
+			if !index.has(filterField) {
 				failures = append(failures, ValidationFailure{
 					Type:       ValidationInvalidFilter,
 					ConfigName: datasource.ConfigName,
@@ -452,21 +470,96 @@ func validateMappingAgainstSnapshot(datasource DatasourceMapping, snapshot Schem
 	return failures
 }
 
-// indexSnapshotFields builds a table -> field-set index from a snapshot for O(1)
-// table and field lookups during validation.
-func indexSnapshotFields(snapshot SchemaSnapshot) map[string]map[string]struct{} {
-	index := make(map[string]map[string]struct{}, len(snapshot.Tables))
+// fieldIndex is a per-table field lookup that supports both exact membership and
+// parent-object matching against dotted field paths. It keeps an exact-membership
+// set for O(1) exact hits and a sorted name slice for a bounded prefix probe.
+type fieldIndex struct {
+	exact  map[string]struct{}
+	sorted []string
+}
+
+// has reports whether a requested field name is present, matching the legacy
+// HasField semantics: an exact column, OR a parent object of any dotted field
+// path (name == col or col starts with name + "."). The "." delimiter prevents a
+// bare string prefix ("natural") from matching a sibling path
+// ("natural_person.x").
+func (i fieldIndex) has(name string) bool {
+	if _, ok := i.exact[name]; ok {
+		return true
+	}
+
+	// Parent-object match: find the first sorted field >= name+"." and confirm it
+	// still carries that prefix. Fields are bounded by Engine limits, so the
+	// sort.Search probe stays cheap.
+	prefix := name + "."
+
+	pos := sort.SearchStrings(i.sorted, prefix)
+	if pos < len(i.sorted) && strings.HasPrefix(i.sorted[pos], prefix) {
+		return true
+	}
+
+	return false
+}
+
+// indexSnapshotFields builds a table -> fieldIndex map from a snapshot. Each
+// index carries an exact-membership set and a sorted name slice so validation can
+// do exact lookups and bounded parent-object prefix probes.
+func indexSnapshotFields(snapshot SchemaSnapshot) map[string]fieldIndex {
+	index := make(map[string]fieldIndex, len(snapshot.Tables))
 
 	for _, table := range snapshot.Tables {
-		fields := make(map[string]struct{}, len(table.Fields))
+		exact := make(map[string]struct{}, len(table.Fields))
+		sorted := make([]string, 0, len(table.Fields))
+
 		for _, field := range table.Fields {
-			fields[field] = struct{}{}
+			exact[field] = struct{}{}
+			sorted = append(sorted, field)
 		}
 
-		index[table.Name] = fields
+		sort.Strings(sorted)
+
+		index[table.Name] = fieldIndex{exact: exact, sorted: sorted}
 	}
 
 	return index
+}
+
+// validateRequestNames rejects empty or whitespace-only identities anywhere in
+// the request — config name, table name, mapped field, or filter field — as a
+// malformed-request CategoryValidation error. This is distinct from a well-formed
+// mapping that fails snapshot membership: an empty name is never a legitimate
+// schema mismatch.
+func validateRequestNames(request SchemaValidationRequest) error {
+	for _, datasource := range request.Datasources {
+		if isBlank(datasource.ConfigName) {
+			return NewEngineError(CategoryValidation, "schema validation request has a blank datasource config name")
+		}
+
+		for _, table := range datasource.Tables {
+			if isBlank(table.Name) {
+				return NewEngineError(CategoryValidation, "schema validation request has a blank table name")
+			}
+
+			for _, field := range table.Fields {
+				if isBlank(field) {
+					return NewEngineError(CategoryValidation, "schema validation request has a blank field name")
+				}
+			}
+
+			for _, filterField := range table.FilterFields {
+				if isBlank(filterField) {
+					return NewEngineError(CategoryValidation, "schema validation request has a blank filter field name")
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+// isBlank reports whether a name is empty or whitespace-only.
+func isBlank(name string) bool {
+	return strings.TrimSpace(name) == ""
 }
 
 // limitFailures enforces the effective Engine count limits against the request

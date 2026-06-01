@@ -89,6 +89,10 @@ type schemaConnFactory struct {
 	discoverErr error
 	snapshot    engine.SchemaSnapshot
 	descrSeen   engine.ConnectionDescriptor
+	// nilConnector, when true, makes Build return (nil, nil): a buggy host that
+	// reports success but yields no connector. The Engine must treat this as a
+	// build failure and never dereference (or Close) the nil connector.
+	nilConnector bool
 }
 
 func (f *schemaConnFactory) Build(_ context.Context, descriptor engine.ConnectionDescriptor) (engine.Connector, error) {
@@ -97,6 +101,10 @@ func (f *schemaConnFactory) Build(_ context.Context, descriptor engine.Connectio
 
 	if f.buildErr != nil {
 		return nil, f.buildErr
+	}
+
+	if f.nilConnector {
+		return nil, nil
 	}
 
 	return &schemaConnConnector{record: f.record, discoverErr: f.discoverErr, snapshot: f.snapshot}, nil
@@ -437,6 +445,62 @@ func TestEngine_DiscoverSchema_BuildFailure_IsSafe(t *testing.T) {
 
 	if record.has("discover") {
 		t.Fatalf("DiscoverSchema: must not discover after a failed build, got %v", record.snapshot())
+	}
+}
+
+func TestEngine_DiscoverSchema_NilConnectorBuild_IsSafeAndDoesNotClose(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	record := &schemaConnRecord{}
+	// A buggy host Build returns (nil, nil): success with no connector. The Engine
+	// must treat it as a build failure (CategoryUnavailable) and must NOT attempt
+	// to discover or close a nil connector.
+	factory := &schemaConnFactory{record: record, nilConnector: true}
+	eng, store := engineForDiscoverSchema(t, factory, memory.NewSchemaCache())
+	tenant := mustTenant(t, "tenant-a")
+	seedConnection(t, store, tenant, "pg-main", "postgres")
+
+	_, err := eng.DiscoverSchema(ctx, tenant, "pg-main")
+	if err == nil {
+		t.Fatalf("DiscoverSchema: expected build failure for nil connector, got nil")
+	}
+
+	var engErr *engine.EngineError
+	if !errors.As(err, &engErr) || engErr.Category != engine.CategoryUnavailable {
+		t.Fatalf("DiscoverSchema: expected CategoryUnavailable for nil connector, got %v", err)
+	}
+
+	if record.has("discover") {
+		t.Fatalf("DiscoverSchema: must not discover with a nil connector, got %v", record.snapshot())
+	}
+	if record.has("close") {
+		t.Fatalf("DiscoverSchema: must not close a nil connector, got %v", record.snapshot())
+	}
+}
+
+func TestEngine_ValidateSchema_NilConnectorBuild_IsSafeAndDoesNotClose(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	record := &schemaConnRecord{}
+	factory := &schemaConnFactory{record: record, nilConnector: true}
+	eng, store := engineForDiscoverSchema(t, factory, memory.NewSchemaCache())
+	tenant := mustTenant(t, "tenant-a")
+	seedConnection(t, store, tenant, "pg-main", "postgres")
+
+	_, err := eng.ValidateSchema(ctx, tenant, validRequest())
+	if err == nil {
+		t.Fatalf("ValidateSchema: expected build failure for nil connector, got nil")
+	}
+
+	var engErr *engine.EngineError
+	if !errors.As(err, &engErr) || engErr.Category != engine.CategoryUnavailable {
+		t.Fatalf("ValidateSchema: expected CategoryUnavailable for nil connector, got %v", err)
+	}
+
+	if record.has("discover") || record.has("close") {
+		t.Fatalf("ValidateSchema: must not discover/close a nil connector, got %v", record.snapshot())
 	}
 }
 
@@ -975,6 +1039,11 @@ func TestEngine_ValidateSchema_LimitViolation_FieldCount(t *testing.T) {
 	if report.Valid || !hasFailureType(report, engine.ValidationLimitExceeded) {
 		t.Fatalf("ValidateSchema: expected limit-exceeded failure, got %+v", report.Failures)
 	}
+	// The field-count breach must carry the field-count Detail, distinct from the
+	// filter-count Detail, so a swap of the two strings is detectable.
+	if !hasFailureDetail(report, engine.ValidationLimitExceeded, "field count") {
+		t.Fatalf("ValidateSchema: expected field-count limit Detail, got %+v", report.Failures)
+	}
 }
 
 func TestEngine_ValidateSchema_LimitViolation_FilterCount(t *testing.T) {
@@ -1007,6 +1076,255 @@ func TestEngine_ValidateSchema_LimitViolation_FilterCount(t *testing.T) {
 	}
 	if report.Valid || !hasFailureType(report, engine.ValidationLimitExceeded) {
 		t.Fatalf("ValidateSchema: expected limit-exceeded failure, got %+v", report.Failures)
+	}
+	// The filter-count breach must carry the filter-count Detail, distinct from
+	// the field-count Detail.
+	if !hasFailureDetail(report, engine.ValidationLimitExceeded, "filter count") {
+		t.Fatalf("ValidateSchema: expected filter-count limit Detail, got %+v", report.Failures)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// FIX 1: nested / parent-object field matching (legacy HasField semantics)
+// ---------------------------------------------------------------------------
+
+// nestedSnapshot models the Mongo/plugin_crm flattening where nested objects
+// become dotted field names. The parent object "natural_person" is NOT a column
+// itself; only its dotted leaves exist.
+func nestedSnapshot(configName string) engine.SchemaSnapshot {
+	return engine.SchemaSnapshot{
+		ConfigName: configName,
+		Tables: []engine.TableSnapshot{
+			{Name: "holders", Fields: []string{
+				"id",
+				"natural_person.mother_name",
+				"natural_person.birth_date",
+				"address.city",
+			}},
+		},
+	}
+}
+
+func TestEngine_ValidateSchema_ParentObjectField_IsValid(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	record := &schemaConnRecord{}
+	factory := &schemaConnFactory{record: record, snapshot: nestedSnapshot("mongo-crm")}
+	eng, store := engineForDiscoverSchema(t, factory, memory.NewSchemaCache())
+	tenant := mustTenant(t, "tenant-a")
+	seedConnection(t, store, tenant, "mongo-crm", "postgres")
+
+	// "natural_person" is a parent of "natural_person.mother_name": valid, even
+	// though it is not itself a flattened column.
+	req := engine.SchemaValidationRequest{
+		Datasources: []engine.DatasourceMapping{
+			{
+				ConfigName: "mongo-crm",
+				Tables: []engine.TableMapping{
+					{Name: "holders", Fields: []string{"id", "natural_person"}},
+				},
+			},
+		},
+	}
+
+	report, err := eng.ValidateSchema(ctx, tenant, req)
+	if err != nil {
+		t.Fatalf("ValidateSchema: unexpected error: %v", err)
+	}
+	if !report.Valid {
+		t.Fatalf("ValidateSchema: parent-object field must be valid, got %+v", report.Failures)
+	}
+}
+
+func TestEngine_ValidateSchema_ParentObjectFilterField_IsValid(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	record := &schemaConnRecord{}
+	factory := &schemaConnFactory{record: record, snapshot: nestedSnapshot("mongo-crm")}
+	eng, store := engineForDiscoverSchema(t, factory, memory.NewSchemaCache())
+	tenant := mustTenant(t, "tenant-a")
+	seedConnection(t, store, tenant, "mongo-crm", "postgres")
+
+	// A filter referencing the parent object "address" (a parent of "address.city")
+	// must validate, identically to mapped fields.
+	req := engine.SchemaValidationRequest{
+		Datasources: []engine.DatasourceMapping{
+			{
+				ConfigName: "mongo-crm",
+				Tables: []engine.TableMapping{
+					{Name: "holders", Fields: []string{"id"}, FilterFields: []string{"address"}},
+				},
+			},
+		},
+	}
+
+	report, err := eng.ValidateSchema(ctx, tenant, req)
+	if err != nil {
+		t.Fatalf("ValidateSchema: unexpected error: %v", err)
+	}
+	if !report.Valid {
+		t.Fatalf("ValidateSchema: parent-object filter field must be valid, got %+v", report.Failures)
+	}
+}
+
+func TestEngine_ValidateSchema_PartialPrefix_IsNotAFalseMatch(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	record := &schemaConnRecord{}
+	factory := &schemaConnFactory{record: record, snapshot: nestedSnapshot("mongo-crm")}
+	eng, store := engineForDiscoverSchema(t, factory, memory.NewSchemaCache())
+	tenant := mustTenant(t, "tenant-a")
+	seedConnection(t, store, tenant, "mongo-crm", "postgres")
+
+	// "natural" is a string prefix of "natural_person.mother_name" but NOT a parent
+	// object (the delimiter is "." not "_"): it must remain field-not-found.
+	req := engine.SchemaValidationRequest{
+		Datasources: []engine.DatasourceMapping{
+			{
+				ConfigName: "mongo-crm",
+				Tables: []engine.TableMapping{
+					{Name: "holders", Fields: []string{"natural"}},
+				},
+			},
+		},
+	}
+
+	report, err := eng.ValidateSchema(ctx, tenant, req)
+	if err != nil {
+		t.Fatalf("ValidateSchema: unexpected error: %v", err)
+	}
+	if report.Valid {
+		t.Fatalf("ValidateSchema: 'natural' must not falsely match 'natural_person.*'")
+	}
+	if !hasFailure(report, engine.ValidationFieldNotFound, "mongo-crm", "holders", "natural") {
+		t.Fatalf("ValidateSchema: expected field-not-found for 'natural', got %+v", report.Failures)
+	}
+}
+
+func TestEngine_ValidateSchema_ExactDottedLeafField_IsValid(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	record := &schemaConnRecord{}
+	factory := &schemaConnFactory{record: record, snapshot: nestedSnapshot("mongo-crm")}
+	eng, store := engineForDiscoverSchema(t, factory, memory.NewSchemaCache())
+	tenant := mustTenant(t, "tenant-a")
+	seedConnection(t, store, tenant, "mongo-crm", "postgres")
+
+	// The exact dotted leaf still validates via exact membership.
+	req := engine.SchemaValidationRequest{
+		Datasources: []engine.DatasourceMapping{
+			{
+				ConfigName: "mongo-crm",
+				Tables: []engine.TableMapping{
+					{Name: "holders", Fields: []string{"natural_person.mother_name"}},
+				},
+			},
+		},
+	}
+
+	report, err := eng.ValidateSchema(ctx, tenant, req)
+	if err != nil {
+		t.Fatalf("ValidateSchema: unexpected error: %v", err)
+	}
+	if !report.Valid {
+		t.Fatalf("ValidateSchema: exact dotted leaf must be valid, got %+v", report.Failures)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// FIX 3: empty / whitespace names are malformed requests, not schema mismatches
+// ---------------------------------------------------------------------------
+
+func TestEngine_ValidateSchema_EmptyTableName_IsMalformedRequest(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	record := &schemaConnRecord{}
+	factory := &schemaConnFactory{record: record, snapshot: validationSnapshot("pg-main")}
+	eng, store := engineForDiscoverSchema(t, factory, memory.NewSchemaCache())
+	tenant := mustTenant(t, "tenant-a")
+	seedConnection(t, store, tenant, "pg-main", "postgres")
+
+	req := engine.SchemaValidationRequest{
+		Datasources: []engine.DatasourceMapping{
+			{
+				ConfigName: "pg-main",
+				Tables:     []engine.TableMapping{{Name: "   ", Fields: []string{"id"}}},
+			},
+		},
+	}
+
+	_, err := eng.ValidateSchema(ctx, tenant, req)
+	if err == nil {
+		t.Fatalf("ValidateSchema: whitespace table name must be a malformed-request error, got nil")
+	}
+
+	var engErr *engine.EngineError
+	if !errors.As(err, &engErr) || engErr.Category != engine.CategoryValidation {
+		t.Fatalf("ValidateSchema: expected CategoryValidation for whitespace table name, got %v", err)
+	}
+}
+
+func TestEngine_ValidateSchema_EmptyFieldName_IsMalformedRequest(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	record := &schemaConnRecord{}
+	factory := &schemaConnFactory{record: record, snapshot: validationSnapshot("pg-main")}
+	eng, store := engineForDiscoverSchema(t, factory, memory.NewSchemaCache())
+	tenant := mustTenant(t, "tenant-a")
+	seedConnection(t, store, tenant, "pg-main", "postgres")
+
+	req := engine.SchemaValidationRequest{
+		Datasources: []engine.DatasourceMapping{
+			{
+				ConfigName: "pg-main",
+				Tables:     []engine.TableMapping{{Name: "public.orders", Fields: []string{""}}},
+			},
+		},
+	}
+
+	_, err := eng.ValidateSchema(ctx, tenant, req)
+	if err == nil {
+		t.Fatalf("ValidateSchema: empty field name must be a malformed-request error, got nil")
+	}
+
+	var engErr *engine.EngineError
+	if !errors.As(err, &engErr) || engErr.Category != engine.CategoryValidation {
+		t.Fatalf("ValidateSchema: expected CategoryValidation for empty field name, got %v", err)
+	}
+}
+
+func TestEngine_ValidateSchema_EmptyConfigName_IsMalformedRequest(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	record := &schemaConnRecord{}
+	factory := &schemaConnFactory{record: record, snapshot: validationSnapshot("pg-main")}
+	eng, _ := engineForDiscoverSchema(t, factory, memory.NewSchemaCache())
+	tenant := mustTenant(t, "tenant-a")
+
+	req := engine.SchemaValidationRequest{
+		Datasources: []engine.DatasourceMapping{
+			{ConfigName: "  ", Tables: []engine.TableMapping{{Name: "public.orders", Fields: []string{"id"}}}},
+		},
+	}
+
+	_, err := eng.ValidateSchema(ctx, tenant, req)
+	if err == nil {
+		t.Fatalf("ValidateSchema: whitespace config name must be a malformed-request error, got nil")
+	}
+
+	var engErr *engine.EngineError
+	if !errors.As(err, &engErr) || engErr.Category != engine.CategoryValidation {
+		t.Fatalf("ValidateSchema: expected CategoryValidation for whitespace config name, got %v", err)
+	}
+	if len(record.snapshot()) != 0 {
+		t.Fatalf("ValidateSchema: no connector access for a malformed config name, got %v", record.snapshot())
 	}
 }
 
@@ -1218,6 +1536,19 @@ func hasFailure(report engine.ValidationReport, failureType engine.ValidationFai
 func hasFailureType(report engine.ValidationReport, failureType engine.ValidationFailureType) bool {
 	for _, f := range report.Failures {
 		if f.Type == failureType {
+			return true
+		}
+	}
+
+	return false
+}
+
+// hasFailureDetail reports whether any failure of the given type carries a Detail
+// containing the given substring, so distinct sub-types (e.g. field-count vs
+// filter-count limit breaches) are individually assertable.
+func hasFailureDetail(report engine.ValidationReport, failureType engine.ValidationFailureType, detailSubstr string) bool {
+	for _, f := range report.Failures {
+		if f.Type == failureType && strings.Contains(f.Detail, detailSubstr) {
 			return true
 		}
 	}

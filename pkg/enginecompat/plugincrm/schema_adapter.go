@@ -79,13 +79,64 @@ func MapTablesForCRMCompatibility(
 	transformed := make(map[string][]string, len(tables))
 	reverse := make(map[string]string, len(tables))
 
-	for logicalName, fields := range tables {
+	// Iterate logical names in sorted order so collision resolution (field union +
+	// reverse mapping) is fully deterministic regardless of Go map-iteration order.
+	for _, logicalName := range sortedKeys(tables) {
+		fields := tables[logicalName]
 		physicalName := resolvePhysicalCollection(logicalName, snapshot, physicalCollections)
+
+		if existing, collision := transformed[physicalName]; collision {
+			// Two distinct logical names resolved to the same physical collection.
+			// Union the field lists (de-duplicated, sorted) so no table's selected or
+			// filter fields are silently dropped — union is the conservative-correct
+			// validation behavior. The reverse map keeps the lexicographically-first
+			// logical name (already established by the sorted iteration), so it stays
+			// deterministic.
+			transformed[physicalName] = unionFields(existing, fields)
+
+			continue
+		}
+
 		transformed[physicalName] = fields
 		reverse[physicalName] = logicalName
 	}
 
 	return transformed, reverse
+}
+
+// sortedKeys returns the map keys in lexicographic order for deterministic
+// iteration.
+func sortedKeys(tables map[string][]string) []string {
+	keys := make([]string, 0, len(tables))
+	for key := range tables {
+		keys = append(keys, key)
+	}
+
+	sort.Strings(keys)
+
+	return keys
+}
+
+// unionFields returns the de-duplicated, sorted union of two field lists so a
+// physical-collection collision merges every referenced field deterministically.
+func unionFields(a, b []string) []string {
+	set := make(map[string]struct{}, len(a)+len(b))
+	for _, f := range a {
+		set[f] = struct{}{}
+	}
+
+	for _, f := range b {
+		set[f] = struct{}{}
+	}
+
+	union := make([]string, 0, len(set))
+	for f := range set {
+		union = append(union, f)
+	}
+
+	sort.Strings(union)
+
+	return union
 }
 
 // resolvePhysicalCollection maps one logical CRM collection name to its physical

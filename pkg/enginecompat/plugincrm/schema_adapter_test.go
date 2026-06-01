@@ -165,15 +165,46 @@ func TestCRMCompatibility_PluginCRM_FirstPrefixMatchWins(t *testing.T) {
 	}
 }
 
+// TestCRMCompatibility_PluginCRM_PhysicalNameCollision_UnionsFields proves that
+// when two distinct logical names resolve to the SAME physical collection, the
+// adapter MERGES (unions) their field lists deterministically rather than letting
+// one map-iteration order silently overwrite the other and drop a table's fields.
+func TestCRMCompatibility_PluginCRM_PhysicalNameCollision_UnionsFields(t *testing.T) {
+	t.Parallel()
+
+	// Both the logical name "holders" (prefix-resolved to "holders_06c4f684") and
+	// the already-physical name "holders_06c4f684" collapse onto the same physical
+	// collection. Their field lists must be unioned, not overwritten.
+	tables := map[string][]string{
+		"holders":          {"document", "name"},
+		"holders_06c4f684": {"name", "email"},
+	}
+	snap := snapshot("plugin_crm", "holders_06c4f684")
+
+	transformed, reverse := plugincrm.MapTablesForCRMCompatibility("plugin_crm", tables, snap)
+
+	if len(transformed) != 1 {
+		t.Fatalf("CRM collision: expected a single physical entry, got %v", transformed)
+	}
+
+	got := transformed["holders_06c4f684"]
+	want := []string{"document", "email", "name"} // de-duplicated, sorted
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("CRM collision: field union = %v, want %v (no field dropped, deterministic)", got, want)
+	}
+
+	// The reverse map must resolve deterministically; the lexicographically-first
+	// logical name wins.
+	if reverse["holders_06c4f684"] != "holders" {
+		t.Fatalf("CRM collision: reverse[%q] = %q, want deterministic %q", "holders_06c4f684", reverse["holders_06c4f684"], "holders")
+	}
+}
+
 // TestPluginCRMCompatibility_IsAdapterScoped_NotImportedByEngineCore enforces the
 // hard dependency boundary: pkg/engine MUST NOT import the plugin_crm
 // compatibility adapter. CRM stays adapter-scoped, never core.
 func TestPluginCRMCompatibility_IsAdapterScoped_NotImportedByEngineCore(t *testing.T) {
 	t.Parallel()
-
-	out, err := exec.Command("go", "list", "-mod=readonly", "-deps", "./...").CombinedOutput()
-	_ = out
-	_ = err
 
 	deps, listErr := exec.Command(
 		"go", "list", "-mod=readonly", "-deps",
