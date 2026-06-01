@@ -14,9 +14,9 @@ Recommended implementation agent for every task: `ring:backend-engineer-golang`.
 
 | Task | Title | Type | Hours | Confidence | Blocks | Status |
 | --- | --- | --- | ---: | --- | --- | --- |
-| T-001 | Characterize runtime seams and enforce Engine dependency boundary | backend | 8h | Medium | none | READY_FOR_DEV_CYCLE |
-| T-002 | Create importable Engine contracts, facade, and in-memory harness | backend | 8h | Medium | T-001 | READY_FOR_DEV_CYCLE |
-| T-003 | Extract embedded connection lifecycle and credential protection | backend | 10h | Medium | T-002 | READY_FOR_DEV_CYCLE |
+| T-001 | Characterize runtime seams and enforce Engine dependency boundary | backend | 8h | Medium | none | ✅ Done |
+| T-002 | Create importable Engine contracts, facade, and in-memory harness | backend | 8h | Medium | T-001 | ✅ Done |
+| T-003 | Extract embedded connection lifecycle and credential protection | backend | 10h | Medium | T-002 | 🔄 Doing |
 | T-004 | Introduce connector registry/factory with explicit connect/test semantics | backend | 12h | Medium | T-002, T-003 | READY_FOR_DEV_CYCLE |
 | T-005 | Extract schema discovery and validation into Engine operations | backend | 12h | Medium | T-003, T-004 | READY_FOR_DEV_CYCLE |
 | T-006 | Add extraction planner with limits and tenant/product scope checks | backend | 10h | Medium | T-005 | READY_FOR_DEV_CYCLE |
