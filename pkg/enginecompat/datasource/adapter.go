@@ -52,7 +52,8 @@ type DataSourceFactory func(ctx context.Context, conn *model.Connection, cryptor
 // the Engine's CredentialProtector.Reveal path or an out-of-band secret store);
 // the adapter only calls this seam at connect time and never persists the
 // returned secret. A resolver returning the empty string yields a credential-free
-// connection, which the underlying factory rejects per its own validation.
+// connection, which the underlying factory passes to the driver; connectivity
+// then fails unless the target datasource permits passwordless auth.
 type CredentialResolver func(ctx context.Context, descriptor engine.ConnectionDescriptor) (string, error)
 
 // ConnectorFactory is the Engine ConnectorFactory implementation that delegates

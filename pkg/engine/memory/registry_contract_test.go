@@ -12,29 +12,29 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/engine/memory"
 )
 
-// recordingFactory is a host-side ConnectorFactory double for registry tests.
-// Build performs no I/O; it just records the type it was registered under.
-type recordingFactory struct {
+// stubFactory is a host-side ConnectorFactory double for registry tests. Build
+// performs no I/O; it just carries the type it was registered under.
+type stubFactory struct {
 	typeName string
 }
 
-func (f *recordingFactory) Build(_ context.Context, _ engine.ConnectionDescriptor) (engine.Connector, error) {
-	return &recordingConnector{}, nil
+func (f *stubFactory) Build(_ context.Context, _ engine.ConnectionDescriptor) (engine.Connector, error) {
+	return &stubConnector{}, nil
 }
 
-// recordingConnector is a minimal Connector that satisfies the lifecycle
-// contract for registry resolution tests.
-type recordingConnector struct{ connected bool }
+// stubConnector is a minimal Connector that satisfies the lifecycle contract for
+// registry resolution tests.
+type stubConnector struct{ connected bool }
 
-func (c *recordingConnector) TestConnection(_ context.Context) error { c.connected = true; return nil }
-func (c *recordingConnector) DiscoverSchema(_ context.Context) (engine.SchemaSnapshot, error) {
+func (c *stubConnector) TestConnection(_ context.Context) error { c.connected = true; return nil }
+func (c *stubConnector) DiscoverSchema(_ context.Context) (engine.SchemaSnapshot, error) {
 	return engine.SchemaSnapshot{}, nil
 }
 
-func (c *recordingConnector) Query(_ context.Context, _ engine.ExtractionRequest) (map[string][]map[string]any, error) {
+func (c *stubConnector) Query(_ context.Context, _ engine.ExtractionRequest) (map[string][]map[string]any, error) {
 	return nil, nil
 }
-func (c *recordingConnector) Close(_ context.Context) error { c.connected = false; return nil }
+func (c *stubConnector) Close(_ context.Context) error { c.connected = false; return nil }
 
 // The registry must satisfy the Engine ConnectorRegistry port exactly.
 var _ engine.ConnectorRegistry = (*memory.ConnectorRegistry)(nil)
@@ -43,15 +43,15 @@ func TestConnectorRegistry_ResolveFactoryByType(t *testing.T) {
 	t.Parallel()
 
 	registry := memory.NewConnectorRegistry()
-	registry.Register("postgres", &recordingFactory{typeName: "postgres"})
-	registry.Register("mongodb", &recordingFactory{typeName: "mongodb"})
+	registry.Register("postgres", &stubFactory{typeName: "postgres"})
+	registry.Register("mongodb", &stubFactory{typeName: "mongodb"})
 
 	// Deterministic resolution by type via the port method.
 	factory, ok := registry.Connector("postgres")
 	if !ok {
 		t.Fatalf("Connector(postgres): expected ok=true")
 	}
-	if rf, isRecording := factory.(*recordingFactory); !isRecording || rf.typeName != "postgres" {
+	if rf, isStub := factory.(*stubFactory); !isStub || rf.typeName != "postgres" {
 		t.Fatalf("Connector(postgres): resolved wrong factory %#v", factory)
 	}
 
@@ -61,7 +61,7 @@ func TestConnectorRegistry_ResolveFactoryByType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build: unexpected error: %v", err)
 	}
-	if rc, isRecording := conn.(*recordingConnector); !isRecording || rc.connected {
+	if rc, isStub := conn.(*stubConnector); !isStub || rc.connected {
 		t.Fatalf("Build must not connect; got %#v", conn)
 	}
 }
@@ -70,7 +70,7 @@ func TestConnectorRegistry_UnknownType_StableEngineError(t *testing.T) {
 	t.Parallel()
 
 	registry := memory.NewConnectorRegistry()
-	registry.Register("postgres", &recordingFactory{typeName: "postgres"})
+	registry.Register("postgres", &stubFactory{typeName: "postgres"})
 
 	// Port-level miss reports ok=false without an I/O excursion.
 	if _, ok := registry.Connector("oracle"); ok {

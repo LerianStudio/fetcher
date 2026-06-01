@@ -106,21 +106,22 @@ func TestConnectorLifecycle_BuildIsSeparableFromConnect(t *testing.T) {
 		t.Fatalf("Build did not receive descriptor; got %#v", factory.descrSeen)
 	}
 
-	// Now drive the full lifecycle: test -> query -> discover -> close.
+	// Now drive the full lifecycle in the order the Connector godoc documents:
+	// test -> discover -> query -> close.
 	if err := conn.TestConnection(ctx); err != nil {
 		t.Fatalf("TestConnection: unexpected error: %v", err)
 	}
-	if _, err := conn.Query(ctx, engine.ExtractionRequest{}); err != nil {
-		t.Fatalf("Query: unexpected error: %v", err)
-	}
 	if _, err := conn.DiscoverSchema(ctx); err != nil {
 		t.Fatalf("DiscoverSchema: unexpected error: %v", err)
+	}
+	if _, err := conn.Query(ctx, engine.ExtractionRequest{}); err != nil {
+		t.Fatalf("Query: unexpected error: %v", err)
 	}
 	if err := conn.Close(ctx); err != nil {
 		t.Fatalf("Close: unexpected error: %v", err)
 	}
 
-	want := []string{"build", "test", "query", "discover", "close"}
+	want := []string{"build", "test", "discover", "query", "close"}
 	if len(record.calls) != len(want) {
 		t.Fatalf("lifecycle calls = %v, want %v", record.calls, want)
 	}

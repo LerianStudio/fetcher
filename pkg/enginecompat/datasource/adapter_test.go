@@ -6,6 +6,7 @@ package enginecompatdatasource_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/LerianStudio/fetcher/pkg/crypto"
@@ -252,7 +253,7 @@ func TestTestConnection_FactoryErrorMapsToUnavailableWithoutLeakingSecret(t *tes
 
 	msg := err.Error()
 	for _, leak := range []string{"s3cr3t", "db.internal", "reader", "password="} {
-		if contains(msg, leak) {
+		if strings.Contains(msg, leak) {
 			t.Fatalf("Engine error leaked secret material %q in %q", leak, msg)
 		}
 	}
@@ -281,7 +282,7 @@ func TestTestConnection_ResolverErrorMapsToUnavailableWithoutLeakingSecret(t *te
 	if captured.conn != nil {
 		t.Fatalf("factory must not be reached when credential resolution fails")
 	}
-	if contains(err.Error(), "deadbeef") || contains(err.Error(), "key version 7") {
+	if strings.Contains(err.Error(), "deadbeef") || strings.Contains(err.Error(), "key version 7") {
 		t.Fatalf("Engine error leaked resolver internals: %q", err.Error())
 	}
 }
@@ -523,7 +524,7 @@ func TestConnector_QueryErrorMapsToUnavailable(t *testing.T) {
 
 	_, err = conn.Query(context.Background(), engine.ExtractionRequest{})
 	assertEngineError(t, err, engine.CategoryUnavailable)
-	if contains(err.Error(), "reader") {
+	if strings.Contains(err.Error(), "reader") {
 		t.Fatalf("query error leaked driver internals: %q", err.Error())
 	}
 }
@@ -567,7 +568,7 @@ func TestConnector_DiscoverSchemaErrorMapsToUnavailable(t *testing.T) {
 
 	_, err = conn.DiscoverSchema(context.Background())
 	assertEngineError(t, err, engine.CategoryUnavailable)
-	if contains(err.Error(), "reader") {
+	if strings.Contains(err.Error(), "reader") {
 		t.Fatalf("schema error leaked driver internals: %q", err.Error())
 	}
 }
@@ -624,7 +625,7 @@ func TestConnector_CloseErrorMapsToUnavailable(t *testing.T) {
 
 	err = conn.Close(context.Background())
 	assertEngineError(t, err, engine.CategoryUnavailable)
-	if contains(err.Error(), "db.internal") {
+	if strings.Contains(err.Error(), "db.internal") {
 		t.Fatalf("close error leaked driver internals: %q", err.Error())
 	}
 }
@@ -675,19 +676,4 @@ func assertEngineError(t *testing.T, err error, want engine.ErrorCategory) {
 	if engErr.Category != want {
 		t.Fatalf("error category = %q, want %q (msg %q)", engErr.Category, want, engErr.Message)
 	}
-}
-
-func contains(haystack, needle string) bool {
-	return len(needle) > 0 && len(haystack) >= len(needle) &&
-		indexOf(haystack, needle) >= 0
-}
-
-func indexOf(haystack, needle string) int {
-	for i := 0; i+len(needle) <= len(haystack); i++ {
-		if haystack[i:i+len(needle)] == needle {
-			return i
-		}
-	}
-
-	return -1
 }

@@ -165,13 +165,18 @@ func TestEngine_TestConnection_Success(t *testing.T) {
 		t.Fatalf("TestConnection: ConfigName = %q, want %q", result.ConfigName, "pg-main")
 	}
 
-	// The connector lifecycle must be build -> test -> close, proving construction
-	// and connectivity are separate and the connector is closed on success.
-	if !record.has("build") || !record.has("test") {
-		t.Fatalf("TestConnection: expected build+test calls, got %v", record.snapshot())
+	// The connector lifecycle must be build -> test -> close IN THAT ORDER, proving
+	// construction and connectivity are separate and the connector is closed AFTER
+	// the connectivity check (a close-before-test regression must fail here).
+	wantSeq := []string{"build", "test", "close"}
+	gotSeq := record.snapshot()
+	if len(gotSeq) != len(wantSeq) {
+		t.Fatalf("TestConnection: lifecycle = %v, want %v", gotSeq, wantSeq)
 	}
-	if !record.has("close") {
-		t.Fatalf("TestConnection: connector must be closed on success, got %v", record.snapshot())
+	for i, step := range wantSeq {
+		if gotSeq[i] != step {
+			t.Fatalf("TestConnection: lifecycle[%d] = %q, want %q (full sequence %v)", i, gotSeq[i], step, gotSeq)
+		}
 	}
 
 	// The factory must receive the SECRET-FREE descriptor.
@@ -338,6 +343,93 @@ func TestEngine_TestConnection_BuildFailure_IsSafeAndStillCloses(t *testing.T) {
 	}
 	if record.has("test") {
 		t.Fatalf("TestConnection: must not invoke test after a failed build, got %v", record.snapshot())
+	}
+}
+
+// nilBuildFactory is a buggy host factory whose Build returns (nil, nil): no
+// error, but no connector either. The Engine must treat this as a build failure
+// and never dereference the nil connector for TestConnection/Close.
+type nilBuildFactory struct {
+	record *testConnRecord
+}
+
+func (f *nilBuildFactory) Build(_ context.Context, _ engine.ConnectionDescriptor) (engine.Connector, error) {
+	f.record.note("build")
+	return nil, nil //nolint:nilnil // deliberately models a buggy host Build for the nil guard test.
+}
+
+var _ engine.ConnectorFactory = (*nilBuildFactory)(nil)
+
+func TestEngine_TestConnection_TypedNilFactory_StableErrorNoPanic(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store := memory.NewConnectionStore()
+	registry := memory.NewConnectorRegistry()
+
+	// Host wiring bug: a TYPED-NIL ConnectorFactory is registered for the type.
+	// The registry returns (factory, ok=true) where factory is a non-nil interface
+	// wrapping a nil *testConnFactory. Without a guard, factory.Build panics.
+	var typedNil *testConnFactory
+	registry.Register("postgres", typedNil)
+
+	eng, err := engine.New(
+		engine.WithConnectorRegistry(registry),
+		engine.WithConnectionStore(store),
+	)
+	if err != nil {
+		t.Fatalf("New() unexpected error: %v", err)
+	}
+
+	tenant := mustTenant(t, "tenant-a")
+	seedConnection(t, store, tenant, "pg-main", "postgres")
+
+	_, err = eng.TestConnection(ctx, tenant, "pg-main")
+	if err == nil {
+		t.Fatalf("TestConnection: expected stable error for typed-nil factory, got nil")
+	}
+
+	var engErr *engine.EngineError
+	if !errors.As(err, &engErr) || engErr.Category != engine.CategoryNotFound {
+		t.Fatalf("TestConnection: expected CategoryNotFound for typed-nil factory, got %v", err)
+	}
+
+	// It must be the SAME stable error an unregistered type produces.
+	want := engine.UnknownConnectorTypeError("postgres").Error()
+	if engErr.Error() != want {
+		t.Fatalf("TestConnection: typed-nil factory error = %q, want stable %q", engErr.Error(), want)
+	}
+}
+
+func TestEngine_TestConnection_BuildReturnsNilConnector_StableErrorNoPanic(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	record := &testConnRecord{}
+	// Build returns (nil, nil): the Engine must treat the nil connector as a build
+	// failure BEFORE registering the deferred Close, so neither TestConnection nor
+	// Close is invoked on a nil interface.
+	factory := &nilBuildFactory{record: record}
+	eng, store := engineForTestConnection(t, factory)
+	tenant := mustTenant(t, "tenant-a")
+	seedConnection(t, store, tenant, "pg-main", "postgres")
+
+	_, err := eng.TestConnection(ctx, tenant, "pg-main")
+	if err == nil {
+		t.Fatalf("TestConnection: expected build-failure error for nil connector, got nil")
+	}
+
+	var engErr *engine.EngineError
+	if !errors.As(err, &engErr) || engErr.Category != engine.CategoryUnavailable {
+		t.Fatalf("TestConnection: expected CategoryUnavailable build failure, got %v", err)
+	}
+
+	// Build was attempted, but no test/close may run against a nil connector.
+	if !record.has("build") {
+		t.Fatalf("TestConnection: expected build attempt, got %v", record.snapshot())
+	}
+	if record.has("test") || record.has("close") {
+		t.Fatalf("TestConnection: must not test/close a nil connector, got %v", record.snapshot())
 	}
 }
 

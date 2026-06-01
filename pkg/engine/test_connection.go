@@ -92,9 +92,12 @@ func (e *Engine) TestConnection(
 
 	// Build is I/O-free per the connector contract; connectivity happens only in
 	// the connector's TestConnection below. A build failure is a safe, redacted
-	// error: the factory's raw error may embed driver internals.
+	// error: the factory's raw error may embed driver internals. A buggy host Build
+	// may also return (nil, nil) — a nil/typed-nil connector with no error; treat
+	// that as a build failure too, BEFORE registering the deferred Close, so the
+	// success path never dereferences a nil connector for TestConnection or Close.
 	connector, err := factory.Build(ctx, descriptor)
-	if err != nil {
+	if err != nil || isNilPort(connector) {
 		return ConnectionTestResult{}, NewEngineError(CategoryUnavailable, "failed to build connector for connection")
 	}
 
@@ -117,7 +120,7 @@ func (e *Engine) TestConnection(
 // guarantees the registry is present, so this never dereferences a nil registry.
 func (e *Engine) requireConnectorFactory(datasourceType string) (ConnectorFactory, error) {
 	factory, ok := e.options.connectorRegistry.Connector(datasourceType)
-	if !ok {
+	if !ok || isNilPort(factory) {
 		return nil, UnknownConnectorTypeError(datasourceType)
 	}
 

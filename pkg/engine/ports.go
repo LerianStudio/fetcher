@@ -31,8 +31,8 @@ type ConnectorRegistry interface {
 	// Connector returns the ConnectorFactory registered for the given datasource
 	// type and reports whether one exists. It performs no I/O. Implementations
 	// MUST resolve deterministically by type; an unregistered type reports
-	// ok=false (callers that want a stable error use the registry's error-
-	// returning lookup, which yields newUnknownConnectorTypeError's category).
+	// ok=false (callers that want a stable error use the exported
+	// UnknownConnectorTypeError, defined in connector.go).
 	Connector(datasourceType string) (ConnectorFactory, bool)
 }
 

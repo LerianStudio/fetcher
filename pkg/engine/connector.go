@@ -45,6 +45,9 @@ type ConnectorFactory interface {
 //
 // Implementations MUST NOT embed credentials, DSNs, or any secret material in
 // returned errors; errors crossing the Engine boundary are pre-redacted.
+//
+// A Connector instance is SINGLE-FLIGHT: it is not safe for concurrent use, and
+// its build, test, discover/query, and close steps all belong to one goroutine.
 type Connector interface {
 	// TestConnection performs the explicit connectivity check. It is the single
 	// step that opens the underlying connection. It returns a CategoryUnavailable
