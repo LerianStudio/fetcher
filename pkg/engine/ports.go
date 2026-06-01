@@ -38,11 +38,32 @@ type ConnectorRegistry interface {
 // because persisting connection secrets without a protector would store
 // plaintext credentials. When encrypted persistence is disabled it is optional.
 type CredentialProtector interface {
-	// Protect encrypts the given plaintext for the tenant. Implementations MUST
-	// NOT log or leak the plaintext.
-	Protect(ctx context.Context, tenant TenantContext, plaintext []byte) ([]byte, error)
-	// Reveal decrypts the given ciphertext for the tenant.
-	Reveal(ctx context.Context, tenant TenantContext, ciphertext []byte) ([]byte, error)
+	// Protect encrypts the given plaintext for the tenant and returns the
+	// protected material together with the key version that protected it. The
+	// HOST owns key management (derivation, rotation, storage); the Engine only
+	// calls this seam and records the returned key version as secret-free
+	// metadata. Implementations MUST NOT log or leak the plaintext, and MUST NOT
+	// embed the plaintext or ciphertext in their returned error.
+	Protect(ctx context.Context, tenant TenantContext, plaintext []byte) (protected []byte, keyVersion int, err error)
+	// Reveal decrypts the given ciphertext for the tenant using the key version
+	// that protected it, so the host can resolve a rotated key.
+	Reveal(ctx context.Context, tenant TenantContext, ciphertext []byte, keyVersion int) (plaintext []byte, err error)
+}
+
+// ProtectedCredential is the secret-bearing sidecar the Engine hands to the
+// ConnectionStore alongside the secret-free ConnectionDescriptor. It carries the
+// already-protected (encrypted) credential material plus the key version that
+// protected it — never plaintext. Keeping it OUT of ConnectionDescriptor
+// preserves the descriptor's "freely loggable, secret-free" output contract:
+// the descriptor is what leaves the Engine to callers, while ProtectedCredential
+// only ever travels inward to the persistence seam.
+type ProtectedCredential struct {
+	// Ciphertext is the host-protected credential material. It is opaque to the
+	// Engine and MUST NOT be logged or returned across the public boundary.
+	Ciphertext []byte
+	// KeyVersion records which key version protected Ciphertext, mirroring the
+	// secret-free metadata on ConnectionDescriptor.
+	KeyVersion int
 }
 
 // ConnectionStore is an OPTIONAL port for persisting and resolving connection
@@ -62,11 +83,21 @@ type ConnectionStore interface {
 	// Create persists a new connection descriptor for the tenant. It MUST return
 	// a CategoryValidation *EngineError when a connection with the same config
 	// name already exists within the tenant scope.
-	Create(ctx context.Context, tenant TenantContext, descriptor ConnectionDescriptor) error
+	//
+	// credential carries the already-protected secret material to persist
+	// alongside the descriptor. It is nil when no secret accompanies the
+	// connection (e.g. encrypted persistence disabled, or no password supplied);
+	// implementations MUST persist the ciphertext as opaque bytes and MUST NOT
+	// log it.
+	Create(ctx context.Context, tenant TenantContext, descriptor ConnectionDescriptor, credential *ProtectedCredential) error
 	// Update replaces an existing connection descriptor for the tenant. It MUST
 	// return a CategoryNotFound *EngineError when no connection with that config
 	// name exists within the tenant scope.
-	Update(ctx context.Context, tenant TenantContext, descriptor ConnectionDescriptor) error
+	//
+	// credential is the newly-protected secret to persist. A nil credential means
+	// the caller supplied NO password change: implementations MUST leave any
+	// existing stored secret intact and MUST NOT wipe it.
+	Update(ctx context.Context, tenant TenantContext, descriptor ConnectionDescriptor, credential *ProtectedCredential) error
 	// Delete removes a connection descriptor for the tenant. It MUST return a
 	// CategoryNotFound *EngineError when no connection with that config name
 	// exists within the tenant scope. After deletion the connection MUST be

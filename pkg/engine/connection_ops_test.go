@@ -435,11 +435,11 @@ func (failingStore) FindConnection(context.Context, engine.TenantContext, string
 	return engine.ConnectionDescriptor{}, false, engine.NewEngineError(engine.CategoryUnavailable, "store down")
 }
 
-func (failingStore) Create(context.Context, engine.TenantContext, engine.ConnectionDescriptor) error {
+func (failingStore) Create(context.Context, engine.TenantContext, engine.ConnectionDescriptor, *engine.ProtectedCredential) error {
 	return engine.NewEngineError(engine.CategoryUnavailable, "store down")
 }
 
-func (failingStore) Update(context.Context, engine.TenantContext, engine.ConnectionDescriptor) error {
+func (failingStore) Update(context.Context, engine.TenantContext, engine.ConnectionDescriptor, *engine.ProtectedCredential) error {
 	return engine.NewEngineError(engine.CategoryUnavailable, "store down")
 }
 
@@ -523,6 +523,303 @@ func TestEngine_ConnectionOps_StartSpanWhenObservabilityConfigured(t *testing.T)
 		t.Fatalf("Observability spans = %v, want [engine.connection.create]", obs.spans)
 	}
 }
+
+// fakeProtector is a deterministic CredentialProtector test double. It does not
+// encrypt for real; it wraps the plaintext with a constant prefix so tests can
+// prove the stored material differs from the plaintext, and reports a fixed key
+// version so descriptor metadata can be asserted. When errOnProtect is set every
+// Protect call fails, exercising the protection-failure path. Calls are counted
+// so tests can assert the protector is invoked only when a password is supplied.
+type fakeProtector struct {
+	mu           sync.Mutex
+	prefix       string
+	keyVersion   int
+	errOnProtect error
+	protectCalls int
+	lastPlain    []byte
+}
+
+func newFakeProtector() *fakeProtector {
+	return &fakeProtector{prefix: "enc:", keyVersion: 7}
+}
+
+func (f *fakeProtector) Protect(_ context.Context, _ engine.TenantContext, plaintext []byte) ([]byte, int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.protectCalls++
+	f.lastPlain = append([]byte(nil), plaintext...)
+
+	if f.errOnProtect != nil {
+		return nil, 0, f.errOnProtect
+	}
+
+	out := append([]byte(f.prefix), plaintext...)
+
+	return out, f.keyVersion, nil
+}
+
+func (f *fakeProtector) Reveal(_ context.Context, _ engine.TenantContext, ciphertext []byte, _ int) ([]byte, error) {
+	return ciphertext, nil
+}
+
+func (f *fakeProtector) calls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return f.protectCalls
+}
+
+// engineWithProtector builds an Engine with the in-memory store, a connector
+// registry, and encrypted persistence backed by the supplied protector.
+func engineWithProtector(t *testing.T, protector engine.CredentialProtector) (*engine.Engine, *memory.ConnectionStore) {
+	t.Helper()
+
+	store := memory.NewConnectionStore()
+
+	eng, err := engine.New(
+		engine.WithConnectorRegistry(memory.NewConnectorRegistry()),
+		engine.WithConnectionStore(store),
+		engine.WithEncryptedPersistence(true),
+		engine.WithCredentialProtector(protector),
+	)
+	if err != nil {
+		t.Fatalf("New() unexpected error: %v", err)
+	}
+
+	return eng, store
+}
+
+func TestEngine_CreateConnection_EncryptsPasswordBeforeStorage(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	protector := newFakeProtector()
+	eng, store := engineWithProtector(t, protector)
+	tenant := engine.NewTenantContext("org-1", "product-a")
+
+	desc, err := eng.CreateConnection(ctx, tenant, newInput("pg-main"))
+	if err != nil {
+		t.Fatalf("CreateConnection: unexpected error: %v", err)
+	}
+
+	// The protector must have been called exactly once with the plaintext secret.
+	if protector.calls() != 1 {
+		t.Fatalf("CreateConnection: protector calls = %d, want 1", protector.calls())
+	}
+
+	// The returned descriptor carries the key-version metadata and no secret.
+	if desc.KeyVersion != protector.keyVersion {
+		t.Fatalf("CreateConnection: descriptor KeyVersion = %d, want %d", desc.KeyVersion, protector.keyVersion)
+	}
+	if containsSecret(t, desc, "s3cr3t") {
+		t.Fatalf("CreateConnection: descriptor leaked secret material: %+v", desc)
+	}
+
+	// The stored protected material must differ from the plaintext password and
+	// carry the protector's key version.
+	cred, found := store.ProtectedCredential(tenant, "pg-main")
+	if !found {
+		t.Fatalf("CreateConnection: expected protected credential to be stored")
+	}
+	if len(cred.Ciphertext) == 0 {
+		t.Fatalf("CreateConnection: stored ciphertext is empty")
+	}
+	if string(cred.Ciphertext) == "s3cr3t" {
+		t.Fatalf("CreateConnection: stored credential equals plaintext (not protected)")
+	}
+	if strings.Contains(string(cred.Ciphertext), "s3cr3t") == false {
+		// The fake protector wraps (does not strip) the plaintext, so the wrapped
+		// form must still contain it; a real protector would not. This asserts the
+		// fake actually saw the plaintext rather than an empty value.
+		t.Fatalf("CreateConnection: fake protector did not receive plaintext, ciphertext = %q", cred.Ciphertext)
+	}
+	if cred.KeyVersion != protector.keyVersion {
+		t.Fatalf("CreateConnection: stored KeyVersion = %d, want %d", cred.KeyVersion, protector.keyVersion)
+	}
+}
+
+func TestEngine_CreateConnection_NoPasswordDoesNotProtect(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	protector := newFakeProtector()
+	eng, store := engineWithProtector(t, protector)
+	tenant := engine.NewTenantContext("org-1", "product-a")
+
+	input := engine.NewConnectionInput(engine.ConnectionInputParams{
+		ConfigName: "no-secret",
+		Type:       "postgres",
+		Host:       "db.internal",
+		Port:       5432,
+		Username:   "svc",
+	})
+
+	desc, err := eng.CreateConnection(ctx, tenant, input)
+	if err != nil {
+		t.Fatalf("CreateConnection: unexpected error: %v", err)
+	}
+
+	if protector.calls() != 0 {
+		t.Fatalf("CreateConnection without password: protector calls = %d, want 0", protector.calls())
+	}
+	if desc.KeyVersion != 0 {
+		t.Fatalf("CreateConnection without password: KeyVersion = %d, want 0", desc.KeyVersion)
+	}
+	if _, found := store.ProtectedCredential(tenant, "no-secret"); found {
+		t.Fatalf("CreateConnection without password: no protected credential should be stored")
+	}
+}
+
+func TestEngine_CreateConnection_ProtectorErrorIsSafeAndNoMutation(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	protector := newFakeProtector()
+	protector.errOnProtect = errors.New("kms unreachable: secret=s3cr3t")
+	eng, store := engineWithProtector(t, protector)
+	tenant := engine.NewTenantContext("org-1", "product-a")
+
+	_, err := eng.CreateConnection(ctx, tenant, newInput("pg-main"))
+	if err == nil {
+		t.Fatalf("CreateConnection: expected protection error, got nil")
+	}
+
+	var engErr *engine.EngineError
+	if !errors.As(err, &engErr) {
+		t.Fatalf("CreateConnection: error type = %T, want *engine.EngineError", err)
+	}
+	// The safe error must not leak the plaintext password nor the raw protector
+	// error (which itself carries the secret in this test).
+	if strings.Contains(engErr.Error(), "s3cr3t") {
+		t.Fatalf("CreateConnection: error leaked secret material: %q", engErr.Error())
+	}
+
+	// Atomicity: nothing must have been written to the store on protection failure.
+	if _, found, _ := store.FindConnection(ctx, tenant, "pg-main"); found {
+		t.Fatalf("CreateConnection: store mutated despite protection failure")
+	}
+	if _, found := store.ProtectedCredential(tenant, "pg-main"); found {
+		t.Fatalf("CreateConnection: protected credential stored despite protection failure")
+	}
+}
+
+func TestEngine_UpdateConnection_EncryptsOnlyWhenPasswordChanges(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	protector := newFakeProtector()
+	eng, store := engineWithProtector(t, protector)
+	tenant := engine.NewTenantContext("org-1", "product-a")
+
+	if _, err := eng.CreateConnection(ctx, tenant, newInput("pg-main")); err != nil {
+		t.Fatalf("CreateConnection: unexpected error: %v", err)
+	}
+	// One protect call so far (the create).
+	if protector.calls() != 1 {
+		t.Fatalf("after create: protector calls = %d, want 1", protector.calls())
+	}
+
+	original, found := store.ProtectedCredential(tenant, "pg-main")
+	if !found {
+		t.Fatalf("expected stored credential after create")
+	}
+
+	// Patch a non-secret field only: the protector MUST NOT be called and the
+	// stored secret MUST be left intact.
+	newHost := "db.replica"
+	updated, err := eng.UpdateConnection(ctx, tenant, "pg-main", engine.ConnectionPatch{Host: &newHost})
+	if err != nil {
+		t.Fatalf("UpdateConnection host-only: unexpected error: %v", err)
+	}
+	if protector.calls() != 1 {
+		t.Fatalf("host-only update: protector calls = %d, want 1 (no re-encrypt)", protector.calls())
+	}
+	if updated.KeyVersion != protector.keyVersion {
+		t.Fatalf("host-only update: KeyVersion = %d, want preserved %d", updated.KeyVersion, protector.keyVersion)
+	}
+
+	afterHost, found := store.ProtectedCredential(tenant, "pg-main")
+	if !found {
+		t.Fatalf("host-only update: stored credential disappeared")
+	}
+	if string(afterHost.Ciphertext) != string(original.Ciphertext) {
+		t.Fatalf("host-only update: stored secret changed: got %q, want %q", afterHost.Ciphertext, original.Ciphertext)
+	}
+
+	// Now supply a new password: the protector MUST be called and the stored
+	// ciphertext MUST change.
+	patch := engine.ConnectionPatch{}.WithPassword("rotated-secret")
+	rotated, err := eng.UpdateConnection(ctx, tenant, "pg-main", patch)
+	if err != nil {
+		t.Fatalf("UpdateConnection password: unexpected error: %v", err)
+	}
+	if protector.calls() != 2 {
+		t.Fatalf("password update: protector calls = %d, want 2", protector.calls())
+	}
+	if containsSecret(t, rotated, "rotated-secret") {
+		t.Fatalf("password update: descriptor leaked rotated secret: %+v", rotated)
+	}
+
+	afterRotate, found := store.ProtectedCredential(tenant, "pg-main")
+	if !found {
+		t.Fatalf("password update: stored credential disappeared")
+	}
+	if string(afterRotate.Ciphertext) == string(original.Ciphertext) {
+		t.Fatalf("password update: stored ciphertext unchanged after rotation")
+	}
+	if string(afterRotate.Ciphertext) == "rotated-secret" {
+		t.Fatalf("password update: stored credential equals plaintext (not protected)")
+	}
+}
+
+func TestEngine_UpdateConnection_ProtectorErrorIsSafeAndNoMutation(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	protector := newFakeProtector()
+	eng, store := engineWithProtector(t, protector)
+	tenant := engine.NewTenantContext("org-1", "product-a")
+
+	if _, err := eng.CreateConnection(ctx, tenant, newInput("pg-main")); err != nil {
+		t.Fatalf("CreateConnection: unexpected error: %v", err)
+	}
+	original, _ := store.ProtectedCredential(tenant, "pg-main")
+
+	// Arm the protector to fail on the next call, then attempt a password update.
+	protector.mu.Lock()
+	protector.errOnProtect = errors.New("kms down: rotated-secret")
+	protector.mu.Unlock()
+
+	patch := engine.ConnectionPatch{Host: strPtr("db.replica")}.WithPassword("rotated-secret")
+	_, err := eng.UpdateConnection(ctx, tenant, "pg-main", patch)
+	if err == nil {
+		t.Fatalf("UpdateConnection: expected protection error, got nil")
+	}
+
+	var engErr *engine.EngineError
+	if !errors.As(err, &engErr) {
+		t.Fatalf("UpdateConnection: error type = %T, want *engine.EngineError", err)
+	}
+	if strings.Contains(engErr.Error(), "rotated-secret") {
+		t.Fatalf("UpdateConnection: error leaked secret material: %q", engErr.Error())
+	}
+
+	// Atomicity: neither the descriptor (host) nor the stored secret may change.
+	current, found, _ := store.FindConnection(ctx, tenant, "pg-main")
+	if !found {
+		t.Fatalf("UpdateConnection: connection vanished after failed update")
+	}
+	if current.Host != "db.internal" {
+		t.Fatalf("UpdateConnection: descriptor mutated despite protection failure: host = %q", current.Host)
+	}
+	afterFail, _ := store.ProtectedCredential(tenant, "pg-main")
+	if string(afterFail.Ciphertext) != string(original.Ciphertext) {
+		t.Fatalf("UpdateConnection: stored secret mutated despite protection failure")
+	}
+}
+
+func strPtr(s string) *string { return &s }
 
 func TestEngine_CreateConnection_RequiresProductScope(t *testing.T) {
 	t.Parallel()

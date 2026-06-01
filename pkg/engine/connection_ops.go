@@ -45,7 +45,23 @@ func (e *Engine) CreateConnection(
 	descriptor := DescriptorFromInput(input)
 	descriptor.ProductName = tenant.ProductName
 
-	if err := store.Create(ctx, tenant, descriptor); err != nil {
+	// Protect the secret BEFORE any store write. On failure we return a safe
+	// error and leave the store untouched (atomicity): the Create call below is
+	// never reached. Protection runs only when encrypted persistence is enabled
+	// and a password is actually supplied.
+	var credential *ProtectedCredential
+
+	if e.options.encryptedPersistence && input.HasPassword() {
+		protected, err := e.protectSecret(ctx, tenant, input.Password())
+		if err != nil {
+			return ConnectionDescriptor{}, err
+		}
+
+		credential = protected
+		descriptor.KeyVersion = protected.KeyVersion
+	}
+
+	if err := store.Create(ctx, tenant, descriptor, credential); err != nil {
 		return ConnectionDescriptor{}, err
 	}
 
@@ -172,7 +188,25 @@ func (e *Engine) UpdateConnection(
 
 	updated := applyConnectionPatch(current, patch)
 
-	if err := store.Update(ctx, tenant, updated); err != nil {
+	// Re-protect the secret ONLY when a password change is supplied. A patch with
+	// no password leaves the existing stored secret and its key version intact:
+	// we pass a nil credential so the store does not wipe it, and preserve the
+	// current descriptor's KeyVersion. Protection runs BEFORE the store write so a
+	// failure leaves the store untouched (atomicity), and only when encrypted
+	// persistence is enabled.
+	var credential *ProtectedCredential
+
+	if e.options.encryptedPersistence && patch.HasPassword() {
+		protected, err := e.protectSecret(ctx, tenant, *patch.password)
+		if err != nil {
+			return ConnectionDescriptor{}, err
+		}
+
+		credential = protected
+		updated.KeyVersion = protected.KeyVersion
+	}
+
+	if err := store.Update(ctx, tenant, updated, credential); err != nil {
 		return ConnectionDescriptor{}, err
 	}
 
@@ -247,6 +281,41 @@ func (e *Engine) requireConnectionStore() (ConnectionStore, error) {
 	}
 
 	return e.options.connectionStore, nil
+}
+
+// protectSecret encrypts a plaintext credential through the host-provided
+// CredentialProtector and returns the protected sidecar to persist. It is the
+// single choke point through which every secret passes before storage.
+//
+// It returns a safe *EngineError on failure. The protector's raw error is
+// DELIBERATELY discarded from the returned message: a host implementation could
+// embed the plaintext or ciphertext in its error, and the Engine boundary must
+// never surface secret material. The category is CategoryUnavailable because a
+// protection failure is an infrastructure-dependency failure, not bad input.
+func (e *Engine) protectSecret(ctx context.Context, tenant TenantContext, plaintext string) (*ProtectedCredential, error) {
+	protector, err := e.requireCredentialProtector()
+	if err != nil {
+		return nil, err
+	}
+
+	ciphertext, keyVersion, protectErr := protector.Protect(ctx, tenant, []byte(plaintext))
+	if protectErr != nil {
+		return nil, NewEngineError(CategoryUnavailable, "failed to protect connection credential")
+	}
+
+	return &ProtectedCredential{Ciphertext: ciphertext, KeyVersion: keyVersion}, nil
+}
+
+// requireCredentialProtector returns the configured protector or a stable error.
+// New already rejects a missing protector when encrypted persistence is enabled
+// (T-002), so this is a defensive guard ensuring no credential write ever
+// proceeds to plaintext persistence if that invariant were somehow bypassed.
+func (e *Engine) requireCredentialProtector() (CredentialProtector, error) {
+	if isNilPort(e.options.credentialProtector) {
+		return nil, NewEngineError(CategoryValidation, "credential protector is not configured")
+	}
+
+	return e.options.credentialProtector, nil
 }
 
 // startSpan starts an optional host span for the operation and returns the

@@ -22,11 +22,11 @@ func (fakeConnectorRegistry) Connector(string) (Connector, bool) { return nil, f
 
 type fakeCredentialProtector struct{}
 
-func (fakeCredentialProtector) Protect(context.Context, TenantContext, []byte) ([]byte, error) {
-	return nil, nil
+func (fakeCredentialProtector) Protect(context.Context, TenantContext, []byte) ([]byte, int, error) {
+	return nil, 0, nil
 }
 
-func (fakeCredentialProtector) Reveal(context.Context, TenantContext, []byte) ([]byte, error) {
+func (fakeCredentialProtector) Reveal(context.Context, TenantContext, []byte, int) ([]byte, error) {
 	return nil, nil
 }
 
@@ -36,11 +36,11 @@ func (fakeConnectionStore) FindConnection(context.Context, TenantContext, string
 	return ConnectionDescriptor{}, false, nil
 }
 
-func (fakeConnectionStore) Create(context.Context, TenantContext, ConnectionDescriptor) error {
+func (fakeConnectionStore) Create(context.Context, TenantContext, ConnectionDescriptor, *ProtectedCredential) error {
 	return nil
 }
 
-func (fakeConnectionStore) Update(context.Context, TenantContext, ConnectionDescriptor) error {
+func (fakeConnectionStore) Update(context.Context, TenantContext, ConnectionDescriptor, *ProtectedCredential) error {
 	return nil
 }
 

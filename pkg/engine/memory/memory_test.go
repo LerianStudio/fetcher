@@ -39,7 +39,7 @@ func TestConnectionStore_CreateGetListUpdateDelete(t *testing.T) {
 
 	// Create + Get.
 	desc := engine.ConnectionDescriptor{ConfigName: "pg-main", Type: "postgres", Host: "h1"}
-	if err := store.Create(ctx, tenant, desc); err != nil {
+	if err := store.Create(ctx, tenant, desc, nil); err != nil {
 		t.Fatalf("Create: unexpected error: %v", err)
 	}
 
@@ -55,7 +55,7 @@ func TestConnectionStore_CreateGetListUpdateDelete(t *testing.T) {
 	}
 
 	// Duplicate create must be a stable validation error.
-	if err := store.Create(ctx, tenant, desc); err == nil {
+	if err := store.Create(ctx, tenant, desc, nil); err == nil {
 		t.Fatalf("Create duplicate: expected error, got nil")
 	}
 
@@ -66,7 +66,7 @@ func TestConnectionStore_CreateGetListUpdateDelete(t *testing.T) {
 
 	// List with deterministic (sorted) ordering.
 	for _, name := range []string{"zeta", "alpha", "mike"} {
-		if err := store.Create(ctx, tenant, engine.ConnectionDescriptor{ConfigName: name, Type: "postgres"}); err != nil {
+		if err := store.Create(ctx, tenant, engine.ConnectionDescriptor{ConfigName: name, Type: "postgres"}, nil); err != nil {
 			t.Fatalf("Create %s: %v", name, err)
 		}
 	}
@@ -86,7 +86,7 @@ func TestConnectionStore_CreateGetListUpdateDelete(t *testing.T) {
 	}
 
 	// Update existing.
-	if err := store.Update(ctx, tenant, engine.ConnectionDescriptor{ConfigName: "pg-main", Type: "postgres", Host: "h2"}); err != nil {
+	if err := store.Update(ctx, tenant, engine.ConnectionDescriptor{ConfigName: "pg-main", Type: "postgres", Host: "h2"}, nil); err != nil {
 		t.Fatalf("Update: unexpected error: %v", err)
 	}
 	got, _, _ = store.FindConnection(ctx, tenant, "pg-main")
@@ -95,7 +95,7 @@ func TestConnectionStore_CreateGetListUpdateDelete(t *testing.T) {
 	}
 
 	// Update unknown is a not-found error.
-	if err := store.Update(ctx, tenant, engine.ConnectionDescriptor{ConfigName: "ghost"}); err == nil {
+	if err := store.Update(ctx, tenant, engine.ConnectionDescriptor{ConfigName: "ghost"}, nil); err == nil {
 		t.Fatalf("Update unknown: expected error, got nil")
 	}
 
@@ -121,7 +121,7 @@ func TestConnectionStore_TenantIsolation(t *testing.T) {
 	tenantA := engine.NewTenantContext("org-1", "product-a")
 	tenantB := engine.NewTenantContext("org-2", "product-b")
 
-	if err := store.Create(ctx, tenantA, engine.ConnectionDescriptor{ConfigName: "shared", Type: "postgres"}); err != nil {
+	if err := store.Create(ctx, tenantA, engine.ConnectionDescriptor{ConfigName: "shared", Type: "postgres"}, nil); err != nil {
 		t.Fatalf("Create tenantA: %v", err)
 	}
 
@@ -339,10 +339,10 @@ func TestConcurrentAccess(t *testing.T) {
 			for i := 0; i < iterations; i++ {
 				name := configNameFor(id, i)
 
-				_ = connStore.Create(ctx, tenant, engine.ConnectionDescriptor{ConfigName: name, Type: "postgres"})
+				_ = connStore.Create(ctx, tenant, engine.ConnectionDescriptor{ConfigName: name, Type: "postgres"}, nil)
 				_, _, _ = connStore.FindConnection(ctx, tenant, name)
 				_, _ = connStore.List(ctx, tenant)
-				_ = connStore.Update(ctx, tenant, engine.ConnectionDescriptor{ConfigName: name, Type: "postgres", Host: "h"})
+				_ = connStore.Update(ctx, tenant, engine.ConnectionDescriptor{ConfigName: name, Type: "postgres", Host: "h"}, nil)
 				_ = connStore.Delete(ctx, tenant, name)
 
 				_ = execStore.SaveExecution(ctx, tenant, engine.ExecutionState{JobID: name, Status: engine.StatusRunning})
