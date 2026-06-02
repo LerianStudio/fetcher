@@ -167,12 +167,30 @@
       "DirectResult.Data []byte lives inside the Engine boundary by design (direct mode returns bytes inline); never on ResultReference. Confirm direct-vs-store split.",
       "Sink injected-error category = CategoryUnavailable (CategoryStorage does not exist in errors.go; Unavailable is the storage-family member per prompt). Confirm acceptable, or whether a dedicated CategoryStorage should be added in ST-T007-04 errors.go work.",
       "T-010 carry: memory sink path concatenates unsanitized tenant ids — acceptable for in-memory double; code comment marks that the real S3/SeaweedFS adapter MUST sanitize tenant ids in physical paths."
+    ],
+    "gate8_verdict": "PASS",
+    "gate8_iterations": 3,
+    "gate8_default_reviewers_passed": "9/9",
+    "gate8_conditional_specialists": "none triggered (diff scan: no tracer/span/metric/event/runtime-config; library/contract+test-double code).",
+    "gate8_scope": "git diff 18ebe75..8056a58 -- pkg/engine/ (10 code files: runner/errors/extraction/contracts_test/result_test/runner_test + memory/{registry,sink,store,sink_result_test}; +ports.go 1-line comment ripple). Boundary independently re-verified CLEAN via go list -deps each iteration.",
+    "gate8_iteration_1": "ISSUES_FOUND. 8 PASS; test NEEDS_DISCUSSION (1 HIGH + 3 MEDIUM + 2 LOW). HIGH: connector build-failure path (BuildErr/(nil,nil) isNilPort guard) had ZERO test despite being the most panic-prone path in an importable lib. MED: store-mode integrity canonical-fill (301-303) + SizeBytes fill (308-310) never exercised (memory sink always set them); reused-connector-instance masked runner-vs-planner close. Security+performance independently confirmed zero goroutines spawned (timeout/cancel leak-free) but flagged post-buffer MaxResultBytes + cooperative-timeout as T-010 carries.",
+    "gate8_iteration_2": "ISSUES_FOUND. Remediation c4860ef (7 fixes: build-failure+nil-connector tests; OmitIntegrity/OmitSizeBytes flags driving canonical-fill; build-per-step factory clone w/ distinct pointers proving runner-owned close, ResetLifecycle removed; RowCounts populated map[configName]int64 sum==RowCount; Reference->*ResultReference omitempty symmetric union; PlanStep.Tables comment; ports.go HMAC->integrity comment). test/code/business-logic/nil-safety RE-REVIEW PASS. dead-code FAIL: FIX-7 dropped TestConnectionCalls() accessor but left backing field write-only + stale comment registry.go:119 — self-inflicted orphan (MEDIUM 'false coverage confidence' + LOW).",
+    "gate8_iteration_3": "PASS 9/9. Cleanup 8056a58 (one file: removed write-only testConnectionCalls field + increment; fixed registry.go:119 comment; simplified Build lock dance — removed f.mu unlock/relock around snapshotBehavior which locks a DISTINCT template Connector.mu, judged a net correctness gain since old code briefly exposed half-init factory state). git grep testConnectionCalls = 0. dead-code+code+test RE-REVIEW PASS; security/multi-tenant/performance/lib-commons carried PASS (cleanup changed no runtime/nil/tenant/secret/perf/dependency surface). engine 97.4%, race+goleak clean, suite 5362, boundary clean, lint 0.",
+    "carry_forward": [
+      "T-010 PERF/DoS: MaxResultBytes is checked POST-assembly+marshal (whole rowset + JSON copy resident at peak) — it bounds DELIVERY, not peak heap. Connector.Query returns the whole result by contract. Real adapters (T-010) should enforce a row/byte ceiling INSIDE Query (LIMIT pushdown or incremental counter). Do NOT mistake MaxResultBytes for memory-DoS protection.",
+      "T-010 TIMEOUT: engine timeout is COOPERATIVE — context.WithTimeout only preempts if the connector honors ctx. Real adapters MUST use QueryContext/PingContext or the timeout is decorative. The fake honors ctx so the suite cannot catch a non-honoring adapter — add a chaos/timeout test against a real adapter at T-010.",
+      "T-010 TENANT: ResultSink.Get(path) takes NO tenant + no scope check (test-harness affordance, not part of the ResultSink port). The real read-back adapter MUST re-assert tenant scope, not trust the path string.",
+      "T-010 TENANT: memory sink concatenates tenant.TenantID verbatim into the logical path — SAFE in-process (validateTenantScope rejects separators before sink access; map key has no traversal surface) but the real S3/SeaweedFS adapter MUST sanitize tenant ids before composing physical object keys (CWE-22).",
+      "T-009/T-010 NIL SURFACE: ExtractionResult consumers MUST branch on mode (Direct==nil XOR Reference==nil) before deref — both are now *T omitempty. No host consumes the result yet; this nil surface goes LIVE at worker/manager integration. Establish a guard-clause convention there.",
+      "T-010 CONTRACT: RowCounts is map[configName]int64 (per-datasource aggregate, sum==RowCount). If the host needs per-TABLE counts, that is an additive change — confirm the per-config shape meets Reporter needs.",
+      "T-008/T-010 PERF (T-006 carry persists): double connector build+connect per datasource (planner schema-discovery, then runner). Build is I/O-free; the duplicate CONNECT is a real round-trip. Collapse when pooling lands behind the ConnectorFactory seam.",
+      "T-010 TEST: memory RecordingExecutionStore records status even when SaveErr is set (test-double choice making ordering observable) — does NOT model a real store where a failed write may not persist. Real execution-store tests must not inherit this assumption."
     ]
   },
   "status": "in_progress",
   "feedback_loop_completed": false,
   "current_task_index": 6,
-  "current_gate": 8,
+  "current_gate": 9,
   "current_subtask_index": 3,
   "gate_progress": {
     "migration_safety_verification": {
