@@ -14,13 +14,22 @@ import (
 )
 
 // ResultSink is an in-memory engine.ResultSink. It stores serialized result
-// payloads in a mutex-protected map keyed by a content-derived path and lets
-// tests read them back through Get. It performs no I/O and persists nothing
+// payloads in a mutex-protected map keyed by a logical, content-derived path and
+// lets tests read them back through Get. It performs no I/O and persists nothing
 // beyond the process.
+//
+// PutErr is a test affordance mirroring the cache/store doubles' GetErr/PutErr
+// idiom: when set, PersistResult fails so runner tests (ST-T007-02/03/04) can
+// force a sink failure deterministically. It is inert (nil) by default.
 type ResultSink struct {
 	mu      sync.RWMutex
 	results map[string][]byte
 	seq     int
+
+	// PutErr, when non-nil, makes PersistResult return a safe storage-category
+	// Engine error. The injected error is NOT echoed across the boundary so no
+	// sensitive underlying detail leaks.
+	PutErr error
 }
 
 // NewResultSink returns an empty in-memory result sink.
@@ -31,14 +40,22 @@ func NewResultSink() *ResultSink {
 }
 
 // PersistResult implements engine.ResultSink. It stores a defensive copy of the
-// payload under a deterministic, collision-resistant path and returns a
-// secret-free reference carrying the path, an integrity HMAC placeholder
-// (content hash), and the byte size.
+// payload under a deterministic, collision-resistant LOGICAL path and returns a
+// secret-free reference carrying the path, canonical integrity (a SHA-256
+// content digest — NOT a bare HMAC placeholder), and the byte size. When PutErr
+// is set it returns a safe storage-category Engine error without echoing the
+// injected detail.
 func (s *ResultSink) PersistResult(
 	_ context.Context,
 	tenant engine.TenantContext,
 	payload []byte,
 ) (engine.ResultReference, error) {
+	if s.PutErr != nil {
+		// Safe storage-category error: the underlying PutErr (which may carry
+		// sensitive detail) is intentionally NOT wrapped or echoed.
+		return engine.ResultReference{}, engine.NewEngineError(engine.CategoryUnavailable, "result sink unavailable")
+	}
+
 	stored := make([]byte, len(payload))
 	copy(stored, payload)
 
@@ -48,16 +65,26 @@ func (s *ResultSink) PersistResult(
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// The path embeds the tenant scope and a monotonic sequence so distinct
-	// writes never collide even when payloads are identical.
+	// The LOGICAL path embeds the tenant scope and a monotonic sequence so
+	// distinct writes never collide even when payloads are identical.
+	//
+	// NOTE: this in-memory double concatenates the tenant id into the logical
+	// path verbatim, which is acceptable for an in-process map key. The REAL
+	// S3/SeaweedFS adapter (T-010) MUST sanitize tenant ids before composing
+	// physical object paths to prevent path traversal / key-injection.
 	s.seq++
 	path := "memory://" + tenant.TenantID + "/" + digest + "-" + strconv.Itoa(s.seq)
 	s.results[path] = stored
 
 	return engine.ResultReference{
 		Path:      path,
-		HMAC:      digest,
 		SizeBytes: int64(len(stored)),
+		Integrity: &engine.ResultIntegrity{
+			// HMAC is one possible integrity SIGNATURE; the in-memory double has
+			// no key, so it records an unkeyed content DIGEST instead.
+			Algorithm: "SHA-256",
+			Digest:    digest,
+		},
 	}, nil
 }
 

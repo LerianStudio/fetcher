@@ -127,23 +127,127 @@ type ExecutionState struct {
 	FailureMessage string `json:"failureMessage,omitempty"`
 }
 
-// ResultReference is the contract pointing to a persisted extraction result.
-// It carries no payload bytes and no secrets — only a location and integrity
-// metadata that the host can use to retrieve and verify the result.
-type ResultReference struct {
-	// Path locates the persisted result in the host's storage.
-	Path string `json:"path,omitempty"`
-	// HMAC is the integrity signature over the persisted result.
-	HMAC string `json:"hmac,omitempty"`
-	// SizeBytes records the serialized result size.
-	SizeBytes int64 `json:"sizeBytes,omitempty"`
+// ProtectionApplier names which layer applied result-byte protection. It is a
+// CLOSED enumeration: only the three values below are valid, so a reviewer can
+// see exactly who is accountable for the protection state on any result.
+type ProtectionApplier string
+
+const (
+	// ProtectionAppliedByEngine indicates the Engine core applied protection.
+	ProtectionAppliedByEngine ProtectionApplier = "engine"
+	// ProtectionAppliedByAdapter indicates a host storage adapter applied it.
+	ProtectionAppliedByAdapter ProtectionApplier = "adapter"
+	// ProtectionAppliedByHost indicates the host process applied it outside the
+	// Engine and its adapters.
+	ProtectionAppliedByHost ProtectionApplier = "host"
+)
+
+var validProtectionAppliers = map[ProtectionApplier]struct{}{
+	ProtectionAppliedByEngine:  {},
+	ProtectionAppliedByAdapter: {},
+	ProtectionAppliedByHost:    {},
 }
 
-// ExtractionResult is the output contract summarizing a finished extraction.
+// IsValid reports whether the applier is one of the closed, accountable values.
+func (a ProtectionApplier) IsValid() bool {
+	_, ok := validProtectionAppliers[a]
+	return ok
+}
+
+// ResultIntegrity is the canonical integrity model over extracted RESULT bytes.
+// It is DISTINCT from credential protection (see ProtectedCredential): it
+// describes the integrity of a result payload, never secret material.
+//
+// When integrity applies, Algorithm names the scheme and EXACTLY one of Digest
+// or Signature carries the value: a Digest is an unkeyed content hash (e.g.
+// SHA-256), a Signature is a keyed MAC (e.g. HMAC-SHA-256). HMAC is therefore
+// ONE possible integrity signature — it is not the result identity itself.
+type ResultIntegrity struct {
+	// Algorithm names the integrity scheme (e.g. "SHA-256", "HMAC-SHA-256").
+	Algorithm string `json:"algorithm,omitempty"`
+	// Digest is the hex-encoded unkeyed content hash, when integrity is a digest.
+	Digest string `json:"digest,omitempty"`
+	// Signature is the hex-encoded keyed MAC, when integrity is a signature.
+	Signature string `json:"signature,omitempty"`
+}
+
+// IsPresent reports whether integrity metadata actually carries a value
+// (a digest or a signature). An empty struct means no integrity was applied.
+func (i ResultIntegrity) IsPresent() bool {
+	return i.Digest != "" || i.Signature != ""
+}
+
+// ResultProtection is the canonical confidentiality model over extracted RESULT
+// bytes. It is its OWN type — it deliberately does NOT reuse the credential
+// encryption sidecar (ProtectedCredential) or its terminology. It describes the
+// protection STATE of a result, not credential ciphertext, and embeds no bytes.
+type ResultProtection struct {
+	// Encrypted reports whether the result bytes are encrypted at rest.
+	Encrypted bool `json:"encrypted"`
+	// KeyVersion records which key version protected the bytes, when known.
+	// It is result-key metadata and is unrelated to credential key versions.
+	KeyVersion int `json:"keyVersion,omitempty"`
+	// Mode names the encryption mode when applicable (e.g. "AES-256-GCM").
+	Mode string `json:"mode,omitempty"`
+	// AppliedBy names the accountable layer; it MUST be a valid ProtectionApplier
+	// ("engine", "adapter", or "host").
+	AppliedBy ProtectionApplier `json:"appliedBy,omitempty"`
+}
+
+// DirectResult is the DIRECT-mode output: the extracted bytes returned inline,
+// with no sink reference. It carries the bytes plus canonical metadata and,
+// optionally, canonical integrity and protection applied by the Engine or host.
+type DirectResult struct {
+	// Data is the serialized result payload returned inline to the host.
+	Data []byte `json:"data,omitempty"`
+	// Format is the output format (e.g. "json").
+	Format string `json:"format,omitempty"`
+	// RowCount is the total number of rows extracted across all tables.
+	RowCount int64 `json:"rowCount,omitempty"`
+	// PlaintextSize records the byte size of the result before any protection.
+	PlaintextSize int64 `json:"plaintextSize,omitempty"`
+	// Integrity optionally describes integrity over Data, when applied.
+	Integrity *ResultIntegrity `json:"integrity,omitempty"`
+	// Protection optionally describes confidentiality over Data, when applied.
+	Protection *ResultProtection `json:"protection,omitempty"`
+	// CompletedAt records when the extraction finished.
+	CompletedAt time.Time `json:"completedAt,omitempty"`
+}
+
+// ResultReference is the STORE-mode contract pointing to a persisted extraction
+// result. It carries no payload bytes and no secrets — only a LOGICAL location
+// plus canonical metadata that the host uses to retrieve and verify the result.
+// It intentionally exposes no physical backend type (no S3/SeaweedFS/Mongo
+// fields): the physical storage adapter lives in the host, behind the ResultSink
+// port, and resolves the logical Path to its own backend.
+type ResultReference struct {
+	// Path is the LOGICAL reference to the persisted result in host storage.
+	Path string `json:"path,omitempty"`
+	// Format is the output format of the persisted bytes (e.g. "json").
+	Format string `json:"format,omitempty"`
+	// RowCount is the total number of rows in the persisted result.
+	RowCount int64 `json:"rowCount,omitempty"`
+	// SizeBytes records the serialized (written) result size.
+	SizeBytes int64 `json:"sizeBytes,omitempty"`
+	// Integrity optionally describes integrity over the written bytes.
+	Integrity *ResultIntegrity `json:"integrity,omitempty"`
+	// Protection optionally describes confidentiality over the written bytes.
+	Protection *ResultProtection `json:"protection,omitempty"`
+	// CompletedAt records when the extraction finished.
+	CompletedAt time.Time `json:"completedAt,omitempty"`
+}
+
+// ExtractionResult is the output contract summarizing a finished extraction. It
+// models the two result shapes SEPARATELY: Direct carries inline bytes (direct
+// mode), Reference points to persisted bytes (store mode). Exactly one is
+// populated for a successful extraction depending on whether a ResultSink is
+// configured.
 type ExtractionResult struct {
 	// State is the terminal execution state.
 	State ExecutionState `json:"state"`
-	// Reference points to the persisted result payload, if any.
+	// Direct carries the inline result payload in direct mode, if any.
+	Direct *DirectResult `json:"direct,omitempty"`
+	// Reference points to the persisted result payload in store mode, if any.
 	Reference ResultReference `json:"reference"`
 	// RowCounts records rows extracted per qualified table (optional).
 	RowCounts map[string]int64 `json:"rowCounts,omitempty"`
