@@ -83,7 +83,12 @@ func NewRoutes(
 	// background refresh; subsequent requests are validated per organization.
 	// lib-license-go fails closed: an invalid/expired org yields 403, and an
 	// all-organizations-invalid result at startup terminates the process.
-	f.Use(licenseClient.Middleware())
+	//
+	// licenseClient is nil when enforcement is gated off for
+	// DEPLOYMENT_MODE=local (dev / E2E); the gate is simply not mounted then.
+	if licenseClient != nil {
+		f.Use(licenseClient.Middleware())
+	}
 
 	// Connections
 	f.Post("/v1/management/connections", auth.Authorize(applicationName, connectionsResource, "post"), WhenEnabled(ttMiddleware), connectionHandler.CreateConnection)
