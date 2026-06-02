@@ -40,6 +40,152 @@ type Limits struct {
 	Timeout time.Duration
 	// MaxResultBytes bounds the serialized result size in bytes.
 	MaxResultBytes int64
+	// ConnectorHardLimits carries connector-type-specific hard bounds (keyed by
+	// datasource type, e.g. a max-rows or max-batch ceiling) for the HOST adapter
+	// to enforce at execute time. It is a documented contract the core carries but
+	// does NOT interpret: keeping it driver-free here is what lets pkg/engine stay
+	// free of any concrete driver import. The planner copies it into the plan so
+	// the host can read it without re-deriving it.
+	ConnectorHardLimits map[string]int
+}
+
+// limitField is a stable, safe identifier for a single limit dimension. It is
+// used as the field path in override-rejection validation errors so a caller can
+// see exactly which limit it breached — never a raw value that could leak data.
+type limitField string
+
+const (
+	limitFieldMaxDatasources limitField = "limits.maxDatasources"
+	limitFieldMaxTables      limitField = "limits.maxTablesPerDatasource"
+	limitFieldMaxFields      limitField = "limits.maxFieldsPerTable"
+	limitFieldMaxConcurrency limitField = "limits.maxConcurrency"
+	limitFieldTimeout        limitField = "limits.timeout"
+	limitFieldMaxResultBytes limitField = "limits.maxResultBytes"
+)
+
+// Effective resolves the limits in force for a single request: it starts from
+// the receiver (the Engine default), applies the allowed per-request overrides,
+// and returns a NEW Limits value. It NEVER mutates the receiver or the override
+// argument — the receiver is the Engine's shared default, so mutating it would
+// leak one request's bounds into every later request.
+//
+// Merge semantics, per field: a positive override value replaces the default; a
+// zero (or negative) override field inherits the default. An override that
+// exceeds the Engine maximum (the default value) is REJECTED with a
+// CategoryValidation EngineError whose message names the violated limit field —
+// the Engine default is the ceiling a request may not raise. ConnectorHardLimits
+// are not request-overridable; they are copied from the default unchanged.
+//
+// A nil override returns a copy of the default with no validation work.
+func (l Limits) Effective(overrides *Limits) (Limits, error) {
+	effective := l
+	effective.ConnectorHardLimits = copyConnectorHardLimits(l.ConnectorHardLimits)
+
+	if overrides == nil {
+		return effective, nil
+	}
+
+	if err := applyIntOverride(&effective.MaxDatasources, overrides.MaxDatasources, l.MaxDatasources, limitFieldMaxDatasources); err != nil {
+		return Limits{}, err
+	}
+
+	if err := applyIntOverride(&effective.MaxTablesPerDatasource, overrides.MaxTablesPerDatasource, l.MaxTablesPerDatasource, limitFieldMaxTables); err != nil {
+		return Limits{}, err
+	}
+
+	if err := applyIntOverride(&effective.MaxFieldsPerTable, overrides.MaxFieldsPerTable, l.MaxFieldsPerTable, limitFieldMaxFields); err != nil {
+		return Limits{}, err
+	}
+
+	if err := applyIntOverride(&effective.MaxConcurrency, overrides.MaxConcurrency, l.MaxConcurrency, limitFieldMaxConcurrency); err != nil {
+		return Limits{}, err
+	}
+
+	if err := applyDurationOverride(&effective.Timeout, overrides.Timeout, l.Timeout); err != nil {
+		return Limits{}, err
+	}
+
+	if err := applyResultBytesOverride(&effective.MaxResultBytes, overrides.MaxResultBytes, l.MaxResultBytes); err != nil {
+		return Limits{}, err
+	}
+
+	return effective, nil
+}
+
+// applyIntOverride applies a single integer override onto target: a positive
+// requested value within the maximum replaces it, a non-positive request inherits
+// the default (no-op), and a request above the maximum is rejected with a safe
+// field-pathed error. maximum 0 means "unbounded default": any positive override
+// is accepted because there is no ceiling to breach.
+func applyIntOverride(target *int, requested, maximum int, field limitField) error {
+	if requested <= 0 {
+		return nil
+	}
+
+	if maximum > 0 && requested > maximum {
+		return overrideExceededError(field)
+	}
+
+	*target = requested
+
+	return nil
+}
+
+// applyDurationOverride applies a timeout override: a positive request within the
+// maximum replaces it, a non-positive request inherits the default, and a request
+// above the maximum is rejected.
+func applyDurationOverride(target *time.Duration, requested, maximum time.Duration) error {
+	if requested <= 0 {
+		return nil
+	}
+
+	if maximum > 0 && requested > maximum {
+		return overrideExceededError(limitFieldTimeout)
+	}
+
+	*target = requested
+
+	return nil
+}
+
+// applyResultBytesOverride applies a result-size override: a positive request
+// within the maximum replaces it, a non-positive request inherits the default,
+// and a request above the maximum is rejected.
+func applyResultBytesOverride(target *int64, requested, maximum int64) error {
+	if requested <= 0 {
+		return nil
+	}
+
+	if maximum > 0 && requested > maximum {
+		return overrideExceededError(limitFieldMaxResultBytes)
+	}
+
+	*target = requested
+
+	return nil
+}
+
+// overrideExceededError builds the canonical override-rejection validation error.
+// The message names the violated limit field path and never echoes the offending
+// value, so the error stays safe and stable.
+func overrideExceededError(field limitField) error {
+	return NewEngineError(CategoryValidation, "limit override exceeds the configured maximum: "+string(field))
+}
+
+// copyConnectorHardLimits returns an independent copy so the plan's limits cannot
+// be mutated through the Engine's shared default map (or vice versa). It returns
+// nil for an empty source.
+func copyConnectorHardLimits(src map[string]int) map[string]int {
+	if len(src) == 0 {
+		return nil
+	}
+
+	out := make(map[string]int, len(src))
+	for k, v := range src {
+		out[k] = v
+	}
+
+	return out
 }
 
 // DefaultLimits returns the stable default Engine limits.

@@ -6,6 +6,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 )
 
@@ -355,7 +356,7 @@ func TestNew_AppliesSafeDefaultLimits(t *testing.T) {
 			}
 
 			got := eng.Limits()
-			if got != tt.want {
+			if !reflect.DeepEqual(got, tt.want) {
 				t.Fatalf("Engine.Limits() = %+v, want %+v", got, tt.want)
 			}
 		})
@@ -454,7 +455,7 @@ func TestNew_ValidFakeCollaboratorsProduceUsableEngine(t *testing.T) {
 		t.Fatalf("New() engine = nil, want usable instance")
 	}
 
-	if eng.Limits() != DefaultLimits() {
+	if !reflect.DeepEqual(eng.Limits(), DefaultLimits()) {
 		t.Fatalf("Engine.Limits() = %+v, want defaults %+v", eng.Limits(), DefaultLimits())
 	}
 }

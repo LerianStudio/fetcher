@@ -62,6 +62,12 @@ type ExtractionRequest struct {
 	Filters map[string]any `json:"filters,omitempty"`
 	// Metadata carries safe, non-secret request metadata.
 	Metadata map[string]any `json:"metadata,omitempty"`
+	// Overrides optionally requests per-request resource bounds. It is applied
+	// over the Engine's default Limits with copy semantics: only fields set to a
+	// positive value override the corresponding default, every override must be
+	// within (<=) the Engine maximum, and the Engine's defaults are never mutated.
+	// A nil Overrides leaves the Engine defaults in force.
+	Overrides *Limits `json:"overrides,omitempty"`
 }
 
 // PlanStep describes a single planned datasource extraction unit. It is a

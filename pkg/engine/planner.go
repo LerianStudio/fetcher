@@ -80,13 +80,26 @@ func (e *Engine) PlanExtraction(
 		return ExtractionPlan{}, NewEngineError(CategoryValidation, "extraction request has no mapped fields")
 	}
 
-	// Reuse the T-005 schema-validation machinery: resolve each scoped connection
-	// cache-first and validate every mapped table, field, and filter reference
-	// against the discovered/cached schema. This is the single source of schema
-	// resolution; the planner never duplicates it.
+	// Resolve the effective limits for THIS request: the Engine default merged
+	// with the allowed per-request overrides, with copy semantics. An override
+	// that exceeds an Engine maximum (or is malformed) is rejected here as a safe
+	// CategoryValidation error pointing at the violated limit field — BEFORE any
+	// connection resolution or connector discovery — and the Engine's shared
+	// default Limits is never mutated.
+	limits, err := e.options.limits.Effective(request.Overrides)
+	if err != nil {
+		return ExtractionPlan{}, err
+	}
+
+	// Reuse the T-005 schema-validation machinery with the EFFECTIVE limits:
+	// resolve each scoped connection cache-first and validate every mapped table,
+	// field, and filter reference against the discovered/cached schema. Count
+	// limits (datasource / table / field / filter) are enforced inside this flow
+	// (limitFailures) before any connector access; the planner never duplicates
+	// either the schema resolution or the count-limit checks.
 	validationRequest := schemaValidationRequestFromExtraction(request)
 
-	report, err := e.ValidateSchema(ctx, tenant, validationRequest)
+	report, err := e.validateSchemaWithLimits(ctx, tenant, validationRequest, limits)
 	if err != nil {
 		// A source-down/connector failure is already a safe, redacted EngineError.
 		return ExtractionPlan{}, err
@@ -96,7 +109,7 @@ func (e *Engine) PlanExtraction(
 		return ExtractionPlan{}, planValidationError(report)
 	}
 
-	return e.buildExtractionPlan(tenant, request), nil
+	return e.buildExtractionPlan(tenant, request, limits), nil
 }
 
 // schemaValidationRequestFromExtraction maps an ExtractionRequest onto the
@@ -135,7 +148,7 @@ func schemaValidationRequestFromExtraction(request ExtractionRequest) SchemaVali
 // their owning table path. The plan carries the tenant identity and effective
 // limits and is secret-free by construction (it copies only identities and
 // host-defined filter values, never credentials).
-func (e *Engine) buildExtractionPlan(tenant TenantContext, request ExtractionRequest) ExtractionPlan {
+func (e *Engine) buildExtractionPlan(tenant TenantContext, request ExtractionRequest, limits Limits) ExtractionPlan {
 	steps := make([]PlanStep, 0, len(request.MappedFields))
 
 	for _, configName := range sortedKeys(request.MappedFields) {
@@ -166,7 +179,7 @@ func (e *Engine) buildExtractionPlan(tenant TenantContext, request ExtractionReq
 		RequestID: tenant.RequestID,
 		Steps:     steps,
 		Metadata:  copyMetadata(request.Metadata),
-		Limits:    e.options.limits,
+		Limits:    limits,
 	}
 }
 

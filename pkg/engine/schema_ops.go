@@ -311,6 +311,22 @@ func (e *Engine) ValidateSchema(
 	tenant TenantContext,
 	request SchemaValidationRequest,
 ) (ValidationReport, error) {
+	return e.validateSchemaWithLimits(ctx, tenant, request, e.options.limits)
+}
+
+// validateSchemaWithLimits is the shared validation core that enforces an
+// EXPLICIT effective Limits, rather than always the Engine default. ValidateSchema
+// calls it with the Engine default; the planner calls it with the per-request
+// effective limits (default merged with allowed overrides) so count-limit
+// enforcement honors overrides without the planner duplicating the resolve →
+// cache → discover → validate flow. The count-limit checks themselves remain in
+// limitFailures, the single source of count enforcement.
+func (e *Engine) validateSchemaWithLimits(
+	ctx context.Context,
+	tenant TenantContext,
+	request SchemaValidationRequest,
+	limits Limits,
+) (ValidationReport, error) {
 	ctx, end := e.startSpan(ctx, "engine.schema.validate")
 	defer end()
 
@@ -338,8 +354,6 @@ func (e *Engine) ValidateSchema(
 	if err := validateRequestNames(request); err != nil {
 		return ValidationReport{}, err
 	}
-
-	limits := e.options.limits
 
 	// Bound the connector-discovery work by the effective timeout so a single
 	// validation never blocks unbounded on a slow datasource. A zero timeout

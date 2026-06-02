@@ -6,9 +6,11 @@ package engine_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/LerianStudio/fetcher/pkg/engine"
 	"github.com/LerianStudio/fetcher/pkg/engine/memory"
@@ -496,6 +498,520 @@ func TestEngine_PlanExtraction_FiltersWithoutValues_NoFilterMap(t *testing.T) {
 
 	if plan.Steps[0].Filters != nil {
 		t.Fatalf("expected no filter map for malformed table filters, got %#v", plan.Steps[0].Filters)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ST-T006-02: effective-limit enforcement + per-request overrides
+// ---------------------------------------------------------------------------
+
+// limitSnapshot builds a wide schema snapshot with the requested number of
+// tables, each carrying the requested number of fields, so count-limit tests
+// can construct requests that sit exactly on or just over a boundary. Table and
+// field names are deterministic.
+func limitSnapshot(configName string, tables, fieldsPerTable int) engine.SchemaSnapshot {
+	snap := engine.SchemaSnapshot{ConfigName: configName}
+
+	for ti := 0; ti < tables; ti++ {
+		table := engine.TableSnapshot{Name: fmt.Sprintf("public.t%02d", ti)}
+		for fi := 0; fi < fieldsPerTable; fi++ {
+			table.Fields = append(table.Fields, fmt.Sprintf("f%02d", fi))
+		}
+
+		snap.Tables = append(snap.Tables, table)
+	}
+
+	return snap
+}
+
+// engineForPlanWithLimits wires an Engine like engineForPlan but with explicit
+// Limits, so override and boundary behavior can be asserted against a known
+// configuration.
+func engineForPlanWithLimits(
+	t *testing.T,
+	factory engine.ConnectorFactory,
+	cache engine.SchemaCache,
+	tenant engine.TenantContext,
+	configName string,
+	limits engine.Limits,
+) *engine.Engine {
+	t.Helper()
+
+	store := memory.NewConnectionStore()
+	registry := memory.NewConnectorRegistry()
+
+	if factory != nil {
+		registry.Register("postgres", factory)
+	}
+
+	descriptor := engine.ConnectionDescriptor{
+		ConfigName: configName,
+		Type:       "postgres",
+		Host:       "db.internal",
+		Port:       5432,
+	}
+	if err := store.Create(context.Background(), tenant, descriptor, nil); err != nil {
+		t.Fatalf("store.Create() unexpected error: %v", err)
+	}
+
+	opts := []engine.Option{
+		engine.WithConnectorRegistry(registry),
+		engine.WithConnectionStore(store),
+		engine.WithLimits(limits),
+	}
+	if cache != nil {
+		opts = append(opts, engine.WithSchemaCache(cache))
+	}
+
+	eng, err := engine.New(opts...)
+	if err != nil {
+		t.Fatalf("New() unexpected error: %v", err)
+	}
+
+	return eng
+}
+
+// fieldSelection enumerates n deterministic field names matching limitSnapshot.
+func fieldSelection(n int) []string {
+	fields := make([]string, 0, n)
+	for fi := 0; fi < n; fi++ {
+		fields = append(fields, fmt.Sprintf("f%02d", fi))
+	}
+
+	return fields
+}
+
+// TestEngine_PlanExtraction_MaxDatasourceCount proves a request exceeding the
+// effective datasource-count limit fails during planning, before execution.
+func TestEngine_PlanExtraction_MaxDatasourceCount(t *testing.T) {
+	tenant := plannerTenant(t)
+	limits := engine.DefaultLimits()
+	limits.MaxDatasources = 1
+
+	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
+	eng := engineForPlanWithLimits(t, factory, memory.NewSchemaCache(), tenant, "orders-db", limits)
+
+	req := engine.ExtractionRequest{
+		MappedFields: map[string]engine.FieldSelection{
+			"orders-db": {"public.orders": {"id"}},
+			"extra-db":  {"public.orders": {"id"}},
+		},
+	}
+
+	_, err := eng.PlanExtraction(context.Background(), tenant, req)
+	assertEngineCategory(t, err, engine.CategoryValidation)
+
+	if factory.record.has("discover") {
+		t.Fatalf("datasource-count breach must short-circuit before connector discovery")
+	}
+}
+
+// TestEngine_PlanExtraction_MaxTableCount proves a request exceeding the
+// effective per-datasource table-count limit fails during planning.
+func TestEngine_PlanExtraction_MaxTableCount(t *testing.T) {
+	tenant := plannerTenant(t)
+	limits := engine.DefaultLimits()
+	limits.MaxTablesPerDatasource = 1
+
+	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
+	eng := engineForPlanWithLimits(t, factory, memory.NewSchemaCache(), tenant, "orders-db", limits)
+
+	req := engine.ExtractionRequest{
+		MappedFields: map[string]engine.FieldSelection{
+			"orders-db": {
+				"public.orders":    {"id"},
+				"public.customers": {"id"},
+			},
+		},
+	}
+
+	_, err := eng.PlanExtraction(context.Background(), tenant, req)
+	assertEngineCategory(t, err, engine.CategoryValidation)
+}
+
+// TestEngine_PlanExtraction_MaxFieldCount proves a request exceeding the
+// effective per-table field-count limit fails during planning.
+func TestEngine_PlanExtraction_MaxFieldCount(t *testing.T) {
+	tenant := plannerTenant(t)
+	limits := engine.DefaultLimits()
+	limits.MaxFieldsPerTable = 2
+
+	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: limitSnapshot("orders-db", 1, 5)}
+	eng := engineForPlanWithLimits(t, factory, memory.NewSchemaCache(), tenant, "orders-db", limits)
+
+	req := engine.ExtractionRequest{
+		MappedFields: map[string]engine.FieldSelection{
+			"orders-db": {"public.t00": fieldSelection(3)},
+		},
+	}
+
+	_, err := eng.PlanExtraction(context.Background(), tenant, req)
+	assertEngineCategory(t, err, engine.CategoryValidation)
+}
+
+// TestEngine_PlanExtraction_MaxFilterCount proves a request whose filter-field
+// references exceed the per-table field budget fails during planning.
+func TestEngine_PlanExtraction_MaxFilterCount(t *testing.T) {
+	tenant := plannerTenant(t)
+	limits := engine.DefaultLimits()
+	limits.MaxFieldsPerTable = 2
+
+	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: limitSnapshot("orders-db", 1, 5)}
+	eng := engineForPlanWithLimits(t, factory, memory.NewSchemaCache(), tenant, "orders-db", limits)
+
+	req := engine.ExtractionRequest{
+		MappedFields: map[string]engine.FieldSelection{
+			"orders-db": {"public.t00": {"f00"}},
+		},
+		Filters: map[string]any{
+			"orders-db": map[string]any{
+				"public.t00": map[string]any{
+					"f00": "a", "f01": "b", "f02": "c",
+				},
+			},
+		},
+	}
+
+	_, err := eng.PlanExtraction(context.Background(), tenant, req)
+	assertEngineCategory(t, err, engine.CategoryValidation)
+}
+
+// TestEngine_PlanExtraction_MaxConcurrencyOverrideRejected proves a per-request
+// override that exceeds the Engine maximum concurrency is rejected as a
+// validation error and never reaches connector discovery.
+func TestEngine_PlanExtraction_MaxConcurrencyOverrideRejected(t *testing.T) {
+	tenant := plannerTenant(t)
+	limits := engine.DefaultLimits()
+	limits.MaxConcurrency = 4
+
+	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
+	eng := engineForPlanWithLimits(t, factory, memory.NewSchemaCache(), tenant, "orders-db", limits)
+
+	req := plannerRequest()
+	req.Overrides = &engine.Limits{MaxConcurrency: 999}
+
+	_, err := eng.PlanExtraction(context.Background(), tenant, req)
+	assertEngineCategory(t, err, engine.CategoryValidation)
+
+	if factory.record.has("discover") {
+		t.Fatalf("an invalid override must be rejected before connector discovery")
+	}
+}
+
+// TestEngine_PlanExtraction_TimeoutDefaulting proves that when a request carries
+// no timeout override, the plan inherits the Engine's default timeout.
+func TestEngine_PlanExtraction_TimeoutDefaulting(t *testing.T) {
+	tenant := plannerTenant(t)
+	limits := engine.DefaultLimits()
+
+	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
+	eng := engineForPlanWithLimits(t, factory, memory.NewSchemaCache(), tenant, "orders-db", limits)
+
+	plan, err := eng.PlanExtraction(context.Background(), tenant, plannerRequest())
+	if err != nil {
+		t.Fatalf("PlanExtraction() error: %v", err)
+	}
+
+	if plan.Limits.Timeout != limits.Timeout {
+		t.Fatalf("expected plan timeout to default to %v, got %v", limits.Timeout, plan.Limits.Timeout)
+	}
+}
+
+// TestEngine_PlanExtraction_ValidOverrideApplied proves a per-request override
+// within the Engine maximums is applied to the produced plan's limits.
+func TestEngine_PlanExtraction_ValidOverrideApplied(t *testing.T) {
+	tenant := plannerTenant(t)
+	limits := engine.DefaultLimits()
+	limits.MaxConcurrency = 8
+
+	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
+	eng := engineForPlanWithLimits(t, factory, memory.NewSchemaCache(), tenant, "orders-db", limits)
+
+	req := plannerRequest()
+	req.Overrides = &engine.Limits{MaxConcurrency: 2}
+
+	plan, err := eng.PlanExtraction(context.Background(), tenant, req)
+	if err != nil {
+		t.Fatalf("PlanExtraction() error: %v", err)
+	}
+
+	if plan.Limits.MaxConcurrency != 2 {
+		t.Fatalf("expected override concurrency 2 applied, got %d", plan.Limits.MaxConcurrency)
+	}
+
+	// Unspecified override fields must inherit the Engine default.
+	if plan.Limits.MaxDatasources != limits.MaxDatasources {
+		t.Fatalf("expected unspecified override field to inherit default %d, got %d",
+			limits.MaxDatasources, plan.Limits.MaxDatasources)
+	}
+}
+
+// TestEngine_PlanExtraction_InvalidOverrideDoesNotMutateDefaults proves a
+// rejected override leaves the Engine's default limits untouched (copy
+// semantics), so a later valid request sees the original defaults.
+func TestEngine_PlanExtraction_InvalidOverrideDoesNotMutateDefaults(t *testing.T) {
+	tenant := plannerTenant(t)
+	limits := engine.DefaultLimits()
+	limits.MaxConcurrency = 4
+
+	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
+	eng := engineForPlanWithLimits(t, factory, memory.NewSchemaCache(), tenant, "orders-db", limits)
+
+	bad := plannerRequest()
+	bad.Overrides = &engine.Limits{MaxConcurrency: 999}
+
+	if _, err := eng.PlanExtraction(context.Background(), tenant, bad); err == nil {
+		t.Fatalf("expected invalid override to be rejected")
+	}
+
+	if got := eng.Limits().MaxConcurrency; got != 4 {
+		t.Fatalf("invalid override mutated Engine default concurrency: got %d want 4", got)
+	}
+
+	// A subsequent valid request must see the untouched defaults.
+	plan, err := eng.PlanExtraction(context.Background(), tenant, plannerRequest())
+	if err != nil {
+		t.Fatalf("PlanExtraction() error after rejected override: %v", err)
+	}
+
+	if plan.Limits.MaxConcurrency != 4 {
+		t.Fatalf("expected default concurrency 4 after rejected override, got %d", plan.Limits.MaxConcurrency)
+	}
+}
+
+// TestEngine_PlanExtraction_CacheHitUnderLimits proves a request within
+// effective limits served from cache avoids connector discovery.
+func TestEngine_PlanExtraction_CacheHitUnderLimits(t *testing.T) {
+	tenant := plannerTenant(t)
+	cache := memory.NewSchemaCache()
+	if err := cache.PutSchema(context.Background(), tenant, plannerSnapshot("orders-db")); err != nil {
+		t.Fatalf("cache.PutSchema() error: %v", err)
+	}
+
+	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
+	eng := engineForPlanWithLimits(t, factory, cache, tenant, "orders-db", engine.DefaultLimits())
+
+	if _, err := eng.PlanExtraction(context.Background(), tenant, plannerRequest()); err != nil {
+		t.Fatalf("PlanExtraction() error: %v", err)
+	}
+
+	if factory.record.has("discover") {
+		t.Fatalf("cache hit under limits must not trigger connector discovery")
+	}
+}
+
+// TestEngine_PlanExtraction_CacheMissUnderLimits proves a request within
+// effective limits with no cache entry uses connector discovery.
+func TestEngine_PlanExtraction_CacheMissUnderLimits(t *testing.T) {
+	tenant := plannerTenant(t)
+	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
+	eng := engineForPlanWithLimits(t, factory, memory.NewSchemaCache(), tenant, "orders-db", engine.DefaultLimits())
+
+	if _, err := eng.PlanExtraction(context.Background(), tenant, plannerRequest()); err != nil {
+		t.Fatalf("PlanExtraction() error: %v", err)
+	}
+
+	if !factory.record.has("discover") {
+		t.Fatalf("cache miss under limits must trigger connector discovery")
+	}
+}
+
+// TestEngine_PlanExtraction_UnknownConfigAfterLimits proves an unknown config
+// name still fails as not-found after the request passes limit validation.
+func TestEngine_PlanExtraction_UnknownConfigAfterLimits(t *testing.T) {
+	tenant := plannerTenant(t)
+	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
+	eng := engineForPlanWithLimits(t, factory, memory.NewSchemaCache(), tenant, "orders-db", engine.DefaultLimits())
+
+	req := engine.ExtractionRequest{
+		MappedFields: map[string]engine.FieldSelection{
+			"ghost-db": {"public.orders": {"id"}},
+		},
+	}
+
+	_, err := eng.PlanExtraction(context.Background(), tenant, req)
+	assertEngineCategory(t, err, engine.CategoryNotFound)
+}
+
+// TestEngine_PlanExtraction_InvalidRefsWithinLimits proves invalid table/field/
+// filter references still fail before execution when the request sits within
+// limit boundaries.
+func TestEngine_PlanExtraction_InvalidRefsWithinLimits(t *testing.T) {
+	tenant := plannerTenant(t)
+	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
+	eng := engineForPlanWithLimits(t, factory, memory.NewSchemaCache(), tenant, "orders-db", engine.DefaultLimits())
+
+	req := engine.ExtractionRequest{
+		MappedFields: map[string]engine.FieldSelection{
+			"orders-db": {"public.orders": {"nonexistent_field"}},
+		},
+	}
+
+	_, err := eng.PlanExtraction(context.Background(), tenant, req)
+	assertEngineCategory(t, err, engine.CategoryValidation)
+}
+
+// TestEngine_PlanExtraction_NoCredentialMaterialAfterLimits proves a valid plan
+// produced after limit checks carries no raw credential material.
+func TestEngine_PlanExtraction_NoCredentialMaterialAfterLimits(t *testing.T) {
+	tenant := plannerTenant(t)
+	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
+	eng := engineForPlanWithLimits(t, factory, memory.NewSchemaCache(), tenant, "orders-db", engine.DefaultLimits())
+
+	plan, err := eng.PlanExtraction(context.Background(), tenant, plannerRequest())
+	if err != nil {
+		t.Fatalf("PlanExtraction() error: %v", err)
+	}
+
+	rendered := strings.ToLower(plannerRender(plan))
+	for _, banned := range []string{"password", "secret", "p@ssw0rd", "ciphertext"} {
+		if strings.Contains(rendered, banned) {
+			t.Fatalf("plan leaked credential material %q: %s", banned, rendered)
+		}
+	}
+}
+
+// TestEngine_PlanExtraction_BoundaryRequestPlansSuccessfully proves a request
+// exactly on the configured limit boundaries plans successfully.
+func TestEngine_PlanExtraction_BoundaryRequestPlansSuccessfully(t *testing.T) {
+	tenant := plannerTenant(t)
+	limits := engine.DefaultLimits()
+	limits.MaxDatasources = 1
+	limits.MaxTablesPerDatasource = 1
+	limits.MaxFieldsPerTable = 3
+
+	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: limitSnapshot("orders-db", 1, 3)}
+	eng := engineForPlanWithLimits(t, factory, memory.NewSchemaCache(), tenant, "orders-db", limits)
+
+	req := engine.ExtractionRequest{
+		MappedFields: map[string]engine.FieldSelection{
+			"orders-db": {"public.t00": fieldSelection(3)},
+		},
+	}
+
+	plan, err := eng.PlanExtraction(context.Background(), tenant, req)
+	if err != nil {
+		t.Fatalf("boundary request must plan successfully, got error: %v", err)
+	}
+
+	if len(plan.Steps) != 1 {
+		t.Fatalf("expected 1 step at boundary, got %d", len(plan.Steps))
+	}
+}
+
+// TestEngine_PlanExtraction_TimeoutOverrideRejected proves a timeout override
+// above the Engine maximum is rejected before any connector discovery.
+func TestEngine_PlanExtraction_TimeoutOverrideRejected(t *testing.T) {
+	tenant := plannerTenant(t)
+	limits := engine.DefaultLimits()
+	limits.Timeout = time.Minute
+
+	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
+	eng := engineForPlanWithLimits(t, factory, memory.NewSchemaCache(), tenant, "orders-db", limits)
+
+	req := plannerRequest()
+	req.Overrides = &engine.Limits{Timeout: time.Hour}
+
+	_, err := eng.PlanExtraction(context.Background(), tenant, req)
+	assertEngineCategory(t, err, engine.CategoryValidation)
+
+	if factory.record.has("discover") {
+		t.Fatalf("timeout override breach must short-circuit before connector discovery")
+	}
+}
+
+// TestEngine_PlanExtraction_TimeoutOverrideApplied proves a timeout override
+// within the Engine maximum is applied to the plan.
+func TestEngine_PlanExtraction_TimeoutOverrideApplied(t *testing.T) {
+	tenant := plannerTenant(t)
+	limits := engine.DefaultLimits()
+	limits.Timeout = time.Hour
+
+	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
+	eng := engineForPlanWithLimits(t, factory, memory.NewSchemaCache(), tenant, "orders-db", limits)
+
+	req := plannerRequest()
+	req.Overrides = &engine.Limits{Timeout: time.Minute}
+
+	plan, err := eng.PlanExtraction(context.Background(), tenant, req)
+	if err != nil {
+		t.Fatalf("PlanExtraction() error: %v", err)
+	}
+
+	if plan.Limits.Timeout != time.Minute {
+		t.Fatalf("expected timeout override 1m applied, got %v", plan.Limits.Timeout)
+	}
+}
+
+// TestEngine_PlanExtraction_ResultBytesOverrideRejected proves a result-size
+// override above the Engine maximum is rejected before connector discovery.
+func TestEngine_PlanExtraction_ResultBytesOverrideRejected(t *testing.T) {
+	tenant := plannerTenant(t)
+	limits := engine.DefaultLimits()
+	limits.MaxResultBytes = 1024
+
+	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
+	eng := engineForPlanWithLimits(t, factory, memory.NewSchemaCache(), tenant, "orders-db", limits)
+
+	req := plannerRequest()
+	req.Overrides = &engine.Limits{MaxResultBytes: 1 << 30}
+
+	_, err := eng.PlanExtraction(context.Background(), tenant, req)
+	assertEngineCategory(t, err, engine.CategoryValidation)
+
+	if factory.record.has("discover") {
+		t.Fatalf("result-size override breach must short-circuit before connector discovery")
+	}
+}
+
+// TestEngine_PlanExtraction_ResultBytesOverrideApplied proves a result-size
+// override within the Engine maximum is applied to the plan.
+func TestEngine_PlanExtraction_ResultBytesOverrideApplied(t *testing.T) {
+	tenant := plannerTenant(t)
+	limits := engine.DefaultLimits()
+	limits.MaxResultBytes = 1 << 30
+
+	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
+	eng := engineForPlanWithLimits(t, factory, memory.NewSchemaCache(), tenant, "orders-db", limits)
+
+	req := plannerRequest()
+	req.Overrides = &engine.Limits{MaxResultBytes: 1024}
+
+	plan, err := eng.PlanExtraction(context.Background(), tenant, req)
+	if err != nil {
+		t.Fatalf("PlanExtraction() error: %v", err)
+	}
+
+	if plan.Limits.MaxResultBytes != 1024 {
+		t.Fatalf("expected result-size override 1024 applied, got %d", plan.Limits.MaxResultBytes)
+	}
+}
+
+// TestEngine_PlanExtraction_ConnectorHardLimitsCopiedAndIsolated proves the
+// connector-specific hard limits configured on the Engine are carried into the
+// plan as an INDEPENDENT copy: mutating the plan's map must not reach back into
+// the Engine's shared default limits.
+func TestEngine_PlanExtraction_ConnectorHardLimitsCopiedAndIsolated(t *testing.T) {
+	tenant := plannerTenant(t)
+	limits := engine.DefaultLimits()
+	limits.ConnectorHardLimits = map[string]int{"postgres": 1000}
+
+	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
+	eng := engineForPlanWithLimits(t, factory, memory.NewSchemaCache(), tenant, "orders-db", limits)
+
+	plan, err := eng.PlanExtraction(context.Background(), tenant, plannerRequest())
+	if err != nil {
+		t.Fatalf("PlanExtraction() error: %v", err)
+	}
+
+	if plan.Limits.ConnectorHardLimits["postgres"] != 1000 {
+		t.Fatalf("expected connector hard limit carried into plan, got %#v", plan.Limits.ConnectorHardLimits)
+	}
+
+	// Mutate the plan's copy and confirm the Engine default is untouched.
+	plan.Limits.ConnectorHardLimits["postgres"] = 1
+	if eng.Limits().ConnectorHardLimits["postgres"] != 1000 {
+		t.Fatalf("plan mutation leaked into Engine default connector hard limits")
 	}
 }
 
