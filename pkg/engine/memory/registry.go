@@ -91,6 +91,24 @@ type Connector struct {
 	// call, so a Close failure never hides the fact that Close was attempted.
 	CloseErr error
 
+	// BlockOnContext, when true, makes Query block in a select on ctx.Done()
+	// instead of returning immediately, modelling a slow datasource. It returns
+	// the context's error (context.DeadlineExceeded or context.Canceled) the
+	// instant the context is done, so a timeout/cancel test is deterministic and
+	// leaves no goroutine blocked. It still records the Query call first, so a
+	// test can assert Query was entered. This is the context-respecting affordance
+	// ST-T007-04 relies on for leak-free timeout testing.
+	BlockOnContext bool
+	// LargeRowFactory, when non-nil, lazily produces the canned Query rows. It
+	// lets a test build an oversized result without holding the bytes in a struct
+	// field. When set it takes precedence over Rows.
+	LargeRowFactory func() map[string][]map[string]any
+	// AfterQuery, when non-nil, runs AFTER a successful Query returns its rows. It
+	// lets a test cancel the context (or otherwise mutate state) the instant a
+	// step completes, so the runner's BETWEEN-steps / DURING-assembly context
+	// guards fire deterministically rather than racily.
+	AfterQuery func()
+
 	// testConnectionCalls and queryCalls record lifecycle invocations so a test
 	// can assert the runner drove TestConnection before Query.
 	testConnectionCalls int
@@ -121,22 +139,56 @@ func (c *Connector) DiscoverSchema(_ context.Context) (engine.SchemaSnapshot, er
 }
 
 // Query implements engine.Connector. It records the call, returns the injected
-// QueryErr when set, and otherwise returns a defensive copy of the canned Rows.
-func (c *Connector) Query(_ context.Context, _ engine.ExtractionRequest) (map[string][]map[string]any, error) {
+// QueryErr when set, optionally blocks on ctx (BlockOnContext) to model a slow
+// datasource so a timeout/cancel test is deterministic, and otherwise returns a
+// defensive copy of the canned Rows (or the LargeRowFactory output).
+func (c *Connector) Query(ctx context.Context, _ engine.ExtractionRequest) (map[string][]map[string]any, error) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	c.queryCalls++
+	queryErr := c.QueryErr
+	block := c.BlockOnContext
+	rowFactory := c.LargeRowFactory
+	canned := c.Rows
+	afterQuery := c.AfterQuery
+	c.mu.Unlock()
 
-	if c.QueryErr != nil {
-		return nil, c.QueryErr
+	if queryErr != nil {
+		// Run the post-query hook even on the error path so a test can cancel the
+		// context and THEN observe a generic (non-context) query error — exercising
+		// the runner's "generic error while context is done" mapping guard.
+		if afterQuery != nil {
+			afterQuery()
+		}
+
+		return nil, queryErr
 	}
 
-	out := make(map[string][]map[string]any, len(c.Rows))
-	for table, rows := range c.Rows {
-		copied := make([]map[string]any, len(rows))
-		copy(copied, rows)
-		out[table] = copied
+	// Respect the context: when asked to block, wait until the context is done
+	// and return its error. This makes the timeout/cancel path deterministic and
+	// leaves NO goroutine parked — the wait ends the instant the deadline fires
+	// or the context is cancelled.
+	if block {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+
+	var out map[string][]map[string]any
+	if rowFactory != nil {
+		out = rowFactory()
+	} else {
+		out = make(map[string][]map[string]any, len(canned))
+		for table, rows := range canned {
+			copied := make([]map[string]any, len(rows))
+			copy(copied, rows)
+			out[table] = copied
+		}
+	}
+
+	// Run the post-query hook AFTER the rows are produced so a test can cancel the
+	// context the instant a step succeeds, exercising the runner's between-steps
+	// and during-assembly context guards deterministically.
+	if afterQuery != nil {
+		afterQuery()
 	}
 
 	return out, nil

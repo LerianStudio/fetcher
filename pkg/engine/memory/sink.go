@@ -22,9 +22,10 @@ import (
 // idiom: when set, PersistResult fails so runner tests (ST-T007-02/03/04) can
 // force a sink failure deterministically. It is inert (nil) by default.
 type ResultSink struct {
-	mu      sync.RWMutex
-	results map[string][]byte
-	seq     int
+	mu       sync.RWMutex
+	results  map[string][]byte
+	seq      int
+	putCount int
 
 	// PutErr, when non-nil, makes PersistResult return a safe storage-category
 	// Engine error. The injected error is NOT echoed across the boundary so no
@@ -57,6 +58,10 @@ func (s *ResultSink) PersistResult(
 	tenant engine.TenantContext,
 	payload []byte,
 ) (engine.ResultReference, error) {
+	s.mu.Lock()
+	s.putCount++
+	s.mu.Unlock()
+
 	if s.PutErr != nil {
 		// Safe storage-category error: the underlying PutErr (which may carry
 		// sensitive detail) is intentionally NOT wrapped or echoed.
@@ -100,6 +105,17 @@ func (s *ResultSink) PersistResult(
 	}
 
 	return ref, nil
+}
+
+// PutCount returns how many times PersistResult was invoked, including calls
+// that failed via PutErr. It lets a size-limit test prove the runner failed an
+// over-limit result BEFORE reaching the sink (PutCount == 0). It is a harness
+// affordance for tests, not part of the Engine port.
+func (s *ResultSink) PutCount() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	return s.putCount
 }
 
 // Get returns a defensive copy of the payload stored at path and whether it

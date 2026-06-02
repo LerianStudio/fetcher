@@ -9,9 +9,11 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/LerianStudio/fetcher/pkg/engine"
 	"github.com/LerianStudio/fetcher/pkg/engine/memory"
+	"go.uber.org/goleak"
 )
 
 // runnerHarness wires an Engine over the in-memory doubles for the runner tests.
@@ -935,6 +937,475 @@ func TestExecuteExtraction_DirectModeGreenWithoutExecutionStore(t *testing.T) {
 
 	if result.Reference.Path != "" {
 		t.Fatalf("direct mode must not return a store reference, got %q", result.Reference.Path)
+	}
+}
+
+// newLimitedRunnerHarness builds a runner harness whose Engine carries the given
+// limits, so the runner reads the effective timeout / result-size bounds the
+// planner stamps onto the plan. It optionally wires a result sink so size-limit
+// tests can prove the failure happens BEFORE a sink write.
+func newLimitedRunnerHarness(t *testing.T, limits engine.Limits, sink engine.ResultSink) *runnerHarness {
+	t.Helper()
+
+	connStore := memory.NewConnectionStore()
+	registry := memory.NewConnectorRegistry()
+
+	opts := []engine.Option{
+		engine.WithConnectionStore(connStore),
+		engine.WithConnectorRegistry(registry),
+		engine.WithLimits(limits),
+	}
+	if sink != nil {
+		opts = append(opts, engine.WithResultSink(sink))
+	}
+
+	eng, err := engine.New(opts...)
+	if err != nil {
+		t.Fatalf("engine.New: unexpected error: %v", err)
+	}
+
+	return &runnerHarness{
+		engine:    eng,
+		store:     connStore,
+		registry:  registry,
+		factories: make(map[string]*memory.ConnectorFactory),
+	}
+}
+
+func TestExecuteExtraction_CancelledBeforeQuerySkipsConnectorWork(t *testing.T) {
+	// NOT t.Parallel(): goleak.VerifyNone must observe a quiet goroutine baseline.
+	// Under t.Parallel() it would see sibling parallel tests' goroutines and the
+	// test runner's own parked goroutine, producing false positives. Running
+	// serially lets goleak prove THIS test leaks nothing.
+	defer goleak.VerifyNone(t)
+
+	h := newRunnerHarness(t)
+	conn := h.seedSource(t, "pg-main", "postgres",
+		map[string][]string{"public.users": {"id"}},
+		map[string][]map[string]any{
+			"public.users": {{"id": 1}},
+		})
+
+	plan := h.planFor(t, map[string]engine.FieldSelection{
+		"pg-main": {"public.users": {"id"}},
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := h.engine.ExecuteExtraction(ctx, plan)
+	if err == nil {
+		t.Fatalf("a context cancelled before the first query must fail, got nil error")
+	}
+
+	var engErr *engine.EngineError
+	if !errors.As(err, &engErr) {
+		t.Fatalf("error is not *engine.EngineError: %T (%v)", err, err)
+	}
+
+	// A cancelled (not deadline-exceeded) context maps to the canceled category,
+	// DISTINCT from timeout.
+	if engErr.Category != engine.CategoryCanceled {
+		t.Fatalf("error category = %q, want %q", engErr.Category, engine.CategoryCanceled)
+	}
+
+	// No connector query work runs when cancellation happens before the query.
+	if conn.QueryCalls() != 0 {
+		t.Fatalf("QueryCalls = %d, want 0 (cancelled-first must not query)", conn.QueryCalls())
+	}
+}
+
+func TestExecuteExtraction_CancelledDuringQueryClosesConnector(t *testing.T) {
+	// NOT t.Parallel(): goleak needs a quiet baseline (see the cancel-before-query
+	// test). The cancel goroutine this test spawns joins before VerifyNone runs.
+	defer goleak.VerifyNone(t)
+
+	h := newRunnerHarness(t)
+	conn := h.seedSource(t, "pg-main", "postgres",
+		map[string][]string{"public.users": {"id"}}, nil)
+	// The fake query blocks on ctx; cancelling mid-query must abort cleanly and
+	// still close the opened connector (the ST-02 invariant survives cancellation).
+	conn.BlockOnContext = true
+
+	plan := h.planFor(t, map[string]engine.FieldSelection{
+		"pg-main": {"public.users": {"id"}},
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+	defer cancel()
+
+	_, err := h.engine.ExecuteExtraction(ctx, plan)
+	if err == nil {
+		t.Fatalf("a context cancelled during query must fail, got nil error")
+	}
+
+	var engErr *engine.EngineError
+	if !errors.As(err, &engErr) {
+		t.Fatalf("error is not *engine.EngineError: %T (%v)", err, err)
+	}
+
+	if engErr.Category != engine.CategoryCanceled {
+		t.Fatalf("error category = %q, want %q", engErr.Category, engine.CategoryCanceled)
+	}
+
+	// The blocking query was entered, then the connector was closed despite the
+	// mid-flight cancellation.
+	if conn.QueryCalls() != 1 {
+		t.Fatalf("QueryCalls = %d, want 1 (the blocking query was entered)", conn.QueryCalls())
+	}
+
+	if conn.CloseCount() != 1 {
+		t.Fatalf("CloseCount = %d, want 1 (connector must close on cancellation)", conn.CloseCount())
+	}
+}
+
+func TestExecuteExtraction_TimeoutDuringQueryReturnsTimeoutError(t *testing.T) {
+	// NOT t.Parallel(): goleak needs a quiet baseline. The runner blocks the
+	// query SYNCHRONOUSLY on ctx (no spawned goroutine), so a clean VerifyNone
+	// here proves the timeout path parks nothing.
+	defer goleak.VerifyNone(t)
+
+	// A short Engine timeout limit derives an execution deadline. The fake query
+	// blocks on ctx, so the deadline fires deterministically and the runner maps
+	// context.DeadlineExceeded to the timeout category.
+	limits := engine.DefaultLimits()
+	limits.Timeout = 30 * time.Millisecond
+
+	h := newLimitedRunnerHarness(t, limits, nil)
+	conn := h.seedSource(t, "pg-main", "postgres",
+		map[string][]string{"public.users": {"id"}}, nil)
+	conn.BlockOnContext = true
+
+	plan := h.planFor(t, map[string]engine.FieldSelection{
+		"pg-main": {"public.users": {"id"}},
+	})
+
+	_, err := h.engine.ExecuteExtraction(context.Background(), plan)
+	if err == nil {
+		t.Fatalf("a query exceeding the timeout must fail, got nil error")
+	}
+
+	var engErr *engine.EngineError
+	if !errors.As(err, &engErr) {
+		t.Fatalf("error is not *engine.EngineError: %T (%v)", err, err)
+	}
+
+	// Deadline exceeded maps to timeout, DISTINCT from a plain cancellation.
+	if engErr.Category != engine.CategoryTimeout {
+		t.Fatalf("error category = %q, want %q", engErr.Category, engine.CategoryTimeout)
+	}
+
+	// The connector that blocked on the deadline is still closed.
+	if conn.CloseCount() != 1 {
+		t.Fatalf("CloseCount = %d, want 1 (connector must close on timeout)", conn.CloseCount())
+	}
+}
+
+func TestExecuteExtraction_TestConnectionContextErrorMapsToCanceled(t *testing.T) {
+	t.Parallel()
+
+	// A connector that returns a context error from TestConnection (a connector
+	// that observed the cancel during connect) must surface as canceled, NOT a
+	// generic unavailable.
+	h := newRunnerHarness(t)
+	conn := h.seedSource(t, "pg-main", "postgres",
+		map[string][]string{"public.users": {"id"}}, nil)
+	conn.TestErr = context.Canceled
+
+	plan := h.planFor(t, map[string]engine.FieldSelection{
+		"pg-main": {"public.users": {"id"}},
+	})
+
+	_, err := h.engine.ExecuteExtraction(context.Background(), plan)
+	if err == nil {
+		t.Fatalf("a context error from TestConnection must fail, got nil error")
+	}
+
+	var engErr *engine.EngineError
+	if !errors.As(err, &engErr) {
+		t.Fatalf("error is not *engine.EngineError: %T (%v)", err, err)
+	}
+
+	if engErr.Category != engine.CategoryCanceled {
+		t.Fatalf("error category = %q, want %q", engErr.Category, engine.CategoryCanceled)
+	}
+
+	if conn.QueryCalls() != 0 {
+		t.Fatalf("QueryCalls = %d, want 0 (query must not run after a context error on connect)", conn.QueryCalls())
+	}
+}
+
+func TestExecuteExtraction_QueryGenericErrorWhileContextDoneMapsToContext(t *testing.T) {
+	t.Parallel()
+
+	// A connector that swallows the context and returns its OWN generic error
+	// while the context is already done must surface as the context category
+	// (the live-ctx guard), not unavailable — the host abandoned the request.
+	h := newRunnerHarness(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	conn := h.seedSource(t, "pg-main", "postgres",
+		map[string][]string{"public.users": {"id"}}, nil)
+	// The connector cancels the context as the query runs, then returns a generic
+	// non-context error. ctx.Err() is therefore set when the runner maps the
+	// failure, so the live-ctx guard (not the generic-unavailable fallback) wins.
+	conn.AfterQuery = cancel
+	conn.QueryErr = errors.New("driver: generic failure host=db.internal password=hunter2")
+
+	plan := h.planFor(t, map[string]engine.FieldSelection{
+		"pg-main": {"public.users": {"id"}},
+	})
+
+	_, err := h.engine.ExecuteExtraction(ctx, plan)
+	if err == nil {
+		t.Fatalf("a generic query error while the context is done must fail, got nil error")
+	}
+
+	var engErr *engine.EngineError
+	if !errors.As(err, &engErr) {
+		t.Fatalf("error is not *engine.EngineError: %T (%v)", err, err)
+	}
+
+	if engErr.Category != engine.CategoryCanceled {
+		t.Fatalf("error category = %q, want %q (live-ctx guard must win over generic error)", engErr.Category, engine.CategoryCanceled)
+	}
+
+	// The safe message must not leak the raw driver detail even on this path.
+	if strings.Contains(engErr.Message, "hunter2") {
+		t.Fatalf("error message leaks raw driver detail: %q", engErr.Message)
+	}
+}
+
+func TestExecuteExtraction_CancelledDuringAssemblyAfterQuery(t *testing.T) {
+	t.Parallel()
+
+	// The connector cancels the context the instant its query succeeds, so the
+	// rows are gathered but the runner's DURING-assembly context guard fires
+	// before serializing — the run aborts as canceled rather than returning a
+	// result the host has already abandoned.
+	h := newRunnerHarness(t)
+	conn := h.seedSource(t, "pg-main", "postgres",
+		map[string][]string{"public.users": {"id"}},
+		map[string][]map[string]any{
+			"public.users": {{"id": 1}},
+		})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	conn.AfterQuery = cancel
+	defer cancel()
+
+	plan := h.planFor(t, map[string]engine.FieldSelection{
+		"pg-main": {"public.users": {"id"}},
+	})
+
+	result, err := h.engine.ExecuteExtraction(ctx, plan)
+	if err == nil {
+		t.Fatalf("a context cancelled during assembly must fail, got nil error")
+	}
+
+	var engErr *engine.EngineError
+	if !errors.As(err, &engErr) {
+		t.Fatalf("error is not *engine.EngineError: %T (%v)", err, err)
+	}
+
+	if engErr.Category != engine.CategoryCanceled {
+		t.Fatalf("error category = %q, want %q", engErr.Category, engine.CategoryCanceled)
+	}
+
+	// The query ran (rows were gathered) but no result crosses the boundary.
+	if conn.QueryCalls() != 1 {
+		t.Fatalf("QueryCalls = %d, want 1 (the query completed before assembly aborted)", conn.QueryCalls())
+	}
+
+	if result.Direct != nil {
+		t.Fatalf("a run aborted during assembly must not return inline bytes, got %+v", result.Direct)
+	}
+
+	// The opened connector is still closed despite the mid-assembly cancellation.
+	if conn.CloseCount() != 1 {
+		t.Fatalf("CloseCount = %d, want 1", conn.CloseCount())
+	}
+}
+
+func TestExecuteExtraction_CancelledBetweenStepsSkipsRemaining(t *testing.T) {
+	t.Parallel()
+
+	// Two steps: the first cancels the context as it finishes; the second step's
+	// per-step pre-query guard must fire, so the second connector is never queried.
+	h := newRunnerHarness(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	connA := h.seedSource(t, "pg-a", "postgres",
+		map[string][]string{"public.a": {"id"}},
+		map[string][]map[string]any{"public.a": {{"id": 1}}})
+	connA.AfterQuery = cancel
+	connZ := h.seedSource(t, "pg-z", "mysql",
+		map[string][]string{"public.z": {"id"}},
+		map[string][]map[string]any{"public.z": {{"id": 2}}})
+
+	plan := h.planFor(t, map[string]engine.FieldSelection{
+		"pg-a": {"public.a": {"id"}},
+		"pg-z": {"public.z": {"id"}},
+	})
+
+	_, err := h.engine.ExecuteExtraction(ctx, plan)
+	if err == nil {
+		t.Fatalf("a context cancelled between steps must fail, got nil error")
+	}
+
+	var engErr *engine.EngineError
+	if !errors.As(err, &engErr) || engErr.Category != engine.CategoryCanceled {
+		t.Fatalf("error = %v, want canceled-category EngineError", err)
+	}
+
+	// Step "pg-a" (sorted first) ran and closed; step "pg-z" was never queried
+	// because the per-step guard fired, but it was also never opened.
+	if connA.QueryCalls() != 1 {
+		t.Fatalf("connA QueryCalls = %d, want 1", connA.QueryCalls())
+	}
+
+	if connZ.QueryCalls() != 0 {
+		t.Fatalf("connZ QueryCalls = %d, want 0 (second step must be skipped after cancel)", connZ.QueryCalls())
+	}
+
+	if connA.CloseCount() != 1 {
+		t.Fatalf("connA CloseCount = %d, want 1 (first step's connector must close)", connA.CloseCount())
+	}
+}
+
+func TestExecuteExtraction_ResultSizeExceededFailsBeforeDirectReturn(t *testing.T) {
+	t.Parallel()
+
+	// A tiny result-size limit makes the (small) result oversized. The execution
+	// must fail with a limit-exceeded error and return NO inline payload.
+	limits := engine.DefaultLimits()
+	limits.MaxResultBytes = 8
+
+	h := newLimitedRunnerHarness(t, limits, nil)
+	h.seedSource(t, "pg-main", "postgres",
+		map[string][]string{"public.users": {"id"}},
+		map[string][]map[string]any{
+			"public.users": {{"id": 1}, {"id": 2}, {"id": 3}},
+		})
+
+	plan := h.planFor(t, map[string]engine.FieldSelection{
+		"pg-main": {"public.users": {"id"}},
+	})
+
+	result, err := h.engine.ExecuteExtraction(context.Background(), plan)
+	if err == nil {
+		t.Fatalf("an oversized result must fail, got nil error")
+	}
+
+	var engErr *engine.EngineError
+	if !errors.As(err, &engErr) {
+		t.Fatalf("error is not *engine.EngineError: %T (%v)", err, err)
+	}
+
+	if engErr.Category != engine.CategoryLimitExceeded {
+		t.Fatalf("error category = %q, want %q", engErr.Category, engine.CategoryLimitExceeded)
+	}
+
+	// No inline payload crosses the boundary for an over-limit result.
+	if result.Direct != nil {
+		t.Fatalf("oversized result must not return inline Direct bytes, got %+v", result.Direct)
+	}
+}
+
+func TestExecuteExtraction_ResultSizeExceededFailsBeforeSinkWrite(t *testing.T) {
+	t.Parallel()
+
+	// In store mode, an oversized result must fail BEFORE the sink is written:
+	// the engine never persists an over-limit payload. A recording sink proves
+	// PersistResult was never called.
+	limits := engine.DefaultLimits()
+	limits.MaxResultBytes = 8
+
+	sink := memory.NewResultSink()
+	h := newLimitedRunnerHarness(t, limits, sink)
+	h.seedSource(t, "pg-main", "postgres",
+		map[string][]string{"public.users": {"id"}},
+		map[string][]map[string]any{
+			"public.users": {{"id": 1}, {"id": 2}, {"id": 3}},
+		})
+
+	plan := h.planFor(t, map[string]engine.FieldSelection{
+		"pg-main": {"public.users": {"id"}},
+	})
+	plan.Mode = engine.ModeStore
+
+	_, err := h.engine.ExecuteExtraction(context.Background(), plan)
+	if err == nil {
+		t.Fatalf("an oversized result in store mode must fail, got nil error")
+	}
+
+	var engErr *engine.EngineError
+	if !errors.As(err, &engErr) {
+		t.Fatalf("error is not *engine.EngineError: %T (%v)", err, err)
+	}
+
+	if engErr.Category != engine.CategoryLimitExceeded {
+		t.Fatalf("error category = %q, want %q", engErr.Category, engine.CategoryLimitExceeded)
+	}
+
+	// The sink must be untouched: nothing was persisted before the size check.
+	if sink.PutCount() != 0 {
+		t.Fatalf("sink PutCount = %d, want 0 (over-limit result must not be persisted)", sink.PutCount())
+	}
+}
+
+func TestExecuteExtraction_TimeoutMarksExecutionFailed(t *testing.T) {
+	// NOT t.Parallel(): goleak needs a quiet baseline (synchronous blocking query,
+	// no spawned goroutine).
+	defer goleak.VerifyNone(t)
+
+	// A timeout records a terminal FAILED transition (deadline exceeded is a
+	// failure, not a host-initiated cancel) through the execution store.
+	limits := engine.DefaultLimits()
+	limits.Timeout = 30 * time.Millisecond
+
+	execStore := memory.NewRecordingExecutionStore()
+
+	connStore := memory.NewConnectionStore()
+	registry := memory.NewConnectorRegistry()
+	eng, err := engine.New(
+		engine.WithConnectionStore(connStore),
+		engine.WithConnectorRegistry(registry),
+		engine.WithLimits(limits),
+		engine.WithExecutionStore(execStore),
+	)
+	if err != nil {
+		t.Fatalf("engine.New: unexpected error: %v", err)
+	}
+	h := &runnerHarness{engine: eng, store: connStore, registry: registry, factories: make(map[string]*memory.ConnectorFactory)}
+
+	conn := h.seedSource(t, "pg-main", "postgres",
+		map[string][]string{"public.users": {"id"}}, nil)
+	conn.BlockOnContext = true
+
+	plan := h.planFor(t, map[string]engine.FieldSelection{
+		"pg-main": {"public.users": {"id"}},
+	})
+
+	if _, err := h.engine.ExecuteExtraction(context.Background(), plan); err == nil {
+		t.Fatalf("a timeout must fail the execution, got nil error")
+	}
+
+	got := execStore.Statuses()
+	want := []engine.ExecutionStatus{engine.StatusRunning, engine.StatusFailed}
+	if len(got) != len(want) {
+		t.Fatalf("execution-store transitions = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("transition[%d] = %q, want %q (full order: %v)", i, got[i], want[i], got)
+		}
 	}
 }
 

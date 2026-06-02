@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"time"
 )
 
@@ -117,6 +118,19 @@ func (e *Engine) ExecuteExtraction(ctx context.Context, plan ExtractionPlan) (Ex
 		return ExtractionResult{}, NewEngineError(CategoryValidation, "store mode requires a configured result sink")
 	}
 
+	// Derive the execution deadline from the plan's effective timeout (resolved by
+	// the planner from the Engine default merged with allowed overrides). A
+	// positive timeout bounds the whole extraction so a slow datasource cannot
+	// block unbounded; a zero timeout leaves the host context unchanged. The host
+	// context's own deadline still applies — WithTimeout keeps the earlier of the
+	// two — so an already-deadlined host ctx is honored either way.
+	if plan.Limits.Timeout > 0 {
+		var cancel context.CancelFunc
+
+		ctx, cancel = context.WithTimeout(ctx, plan.Limits.Timeout)
+		defer cancel()
+	}
+
 	// Mark the execution running through the optional ExecutionStore. The call is
 	// synchronous and BEST-EFFORT: durable scheduling and redelivery are
 	// host-owned, and a status-write failure must never corrupt the result.
@@ -158,12 +172,13 @@ func (e *Engine) runDirectExtraction(
 	connStore ConnectionStore,
 	plan ExtractionPlan,
 ) (extractionOutcome, error) {
-	// A single pre-flight context check: when the host context is ALREADY
-	// cancelled, the execution exits before any connector work. This is the
-	// cancelled STATE semantics this subtask owns; the per-step and deadline
-	// MECHANICS that abort mid-flight are ST-T007-04, deliberately not added here.
-	if err := ctx.Err(); err != nil {
-		return extractionOutcome{}, NewEngineError(CategoryTimeout, "execution canceled")
+	// Pre-flight context check: when the context is ALREADY done (cancelled by the
+	// host, or a deadline that elapsed before any work), exit before any connector
+	// work — and map the context error to the right category (canceled vs timeout)
+	// so the host sees which one fired. This is the BEFORE-first-query gate the
+	// spec requires: connectors are never built or queried in this case.
+	if engErr := contextError(ctx.Err()); engErr != nil {
+		return extractionOutcome{}, engErr
 	}
 
 	// Aggregate rows keyed by config name then qualified table, mirroring the
@@ -175,6 +190,13 @@ func (e *Engine) runDirectExtraction(
 	var rowCount int64
 
 	for _, step := range plan.Steps {
+		// Per-step context check BEFORE the step opens or queries its connector. A
+		// cancel or deadline between steps stops execution without doing the next
+		// step's connector work, mapped to the correct category.
+		if engErr := contextError(ctx.Err()); engErr != nil {
+			return extractionOutcome{}, engErr
+		}
+
 		stepRows, stepCount, err := e.executeStep(ctx, tenant, connStore, step)
 		if err != nil {
 			// Fail-fast: the first failing step aborts execution. Its connector is
@@ -187,11 +209,28 @@ func (e *Engine) runDirectExtraction(
 		rowCount += stepCount
 	}
 
+	// Context check DURING result assembly: after the row batches are gathered but
+	// before serializing and returning them, a cancel or deadline that fired while
+	// the last step ran still aborts the run rather than returning a result the
+	// host has already abandoned.
+	if engErr := contextError(ctx.Err()); engErr != nil {
+		return extractionOutcome{}, engErr
+	}
+
 	payload, err := json.Marshal(aggregated)
 	if err != nil {
 		// The aggregated map holds only extracted data and identities; a marshal
 		// failure is an unexpected internal condition. The error is not echoed.
 		return extractionOutcome{}, NewEngineError(CategoryInternal, "failed to serialize extraction result")
+	}
+
+	// Enforce the effective result-size limit BEFORE the payload can be returned
+	// inline or written to the sink. An over-limit result is a hard execution
+	// failure (limit_exceeded): the bytes are NEVER returned or persisted. A zero
+	// limit means unbounded. The check sits here, in the shared core, so it guards
+	// BOTH delivery modes from a single place.
+	if plan.Limits.MaxResultBytes > 0 && int64(len(payload)) > plan.Limits.MaxResultBytes {
+		return extractionOutcome{}, NewEngineError(CategoryLimitExceeded, "extraction result exceeds the configured size limit")
 	}
 
 	return extractionOutcome{
@@ -302,22 +341,53 @@ func (e *Engine) resolveExecutionMode(requested ExecutionMode) ExecutionMode {
 	}
 }
 
-// recordTerminalFailure records the terminal state for a failed run, choosing
-// the cancelled state when the host context is already cancelled and failed
-// otherwise. It owns ONLY the terminal STATE semantics; the cancellation
-// mechanics that would abort mid-flight are ST-T007-04.
+// recordTerminalFailure records the terminal state for a failed run. The state
+// is chosen from the FAILURE CATEGORY, not from the live ctx.Err(): a host
+// cancellation (canceled category) records the cancelled state, while everything
+// else — including a deadline-exceeded TIMEOUT — records failed. Keying on the
+// category, not ctx.Err(), is what keeps a timeout distinct from a cancel: both
+// leave ctx.Err() non-nil, but only a host cancel is a "canceled" terminal state.
 func (e *Engine) recordTerminalFailure(ctx context.Context, tenant TenantContext, requestID string, cause error) {
-	if ctx.Err() != nil {
-		e.recordExecutionStatus(ctx, tenant, requestID, StatusCanceled, "execution canceled")
-		return
-	}
-
 	message := "execution failed"
-	if engErr, ok := cause.(*EngineError); ok && engErr != nil {
+
+	var engErr *EngineError
+	if asEngineError(cause, &engErr) {
 		message = engErr.Message
+
+		if engErr.Category == CategoryCanceled {
+			e.recordExecutionStatus(ctx, tenant, requestID, StatusCanceled, message)
+			return
+		}
 	}
 
 	e.recordExecutionStatus(ctx, tenant, requestID, StatusFailed, message)
+}
+
+// safeConnectorError maps a connector-step failure to a safe, category-correct
+// EngineError. A context cause takes precedence so a cancel/deadline surfaces as
+// canceled/timeout rather than a generic unavailable: first the connector's own
+// error (a well-behaved connector returns ctx.Err() when it observes the
+// cancel/deadline), then the live context state (a connector that swallows the
+// context but failed while the context was already done). Otherwise the supplied
+// safe fallback message is used — the raw error may embed a DSN, credential, or
+// driver internals, so it is DELIBERATELY discarded.
+func safeConnectorError(ctx context.Context, cause error, fallbackMessage string) *EngineError {
+	if engErr := contextError(cause); engErr != nil {
+		return engErr
+	}
+
+	if engErr := contextError(ctx.Err()); engErr != nil {
+		return engErr
+	}
+
+	return NewEngineError(CategoryUnavailable, fallbackMessage)
+}
+
+// asEngineError reports whether cause is (or wraps) a non-nil *EngineError,
+// binding it to target. It centralizes the cast so the terminal-state logic
+// reads against the error CATEGORY rather than the live context.
+func asEngineError(cause error, target **EngineError) bool {
+	return errors.As(cause, target) && *target != nil
 }
 
 // recordExecutionStatus makes a single, synchronous, BEST-EFFORT status write
@@ -433,16 +503,26 @@ func (e *Engine) executeStep(
 
 	// TestConnection is the single connect step. A connectivity failure is mapped
 	// to a safe error; the connector is still closed by the deferred Close above.
+	// A context error (cancel/deadline) takes precedence so the host sees the real
+	// cause rather than a generic unavailable.
 	if err := connector.TestConnection(ctx); err != nil {
-		return nil, 0, NewEngineError(CategoryUnavailable, "failed to connect to datasource")
+		return nil, 0, safeConnectorError(ctx, err, "failed to connect to datasource")
 	}
 
-	// Query executes the extraction. A query failure is mapped to a safe error:
-	// the connector's raw error may embed a DSN, credential, or driver internals,
-	// so it is DELIBERATELY discarded from the returned message.
+	// Context check immediately BEFORE the query call: a cancel/deadline between
+	// connect and query stops the step without issuing the query.
+	if engErr := contextError(ctx.Err()); engErr != nil {
+		return nil, 0, engErr
+	}
+
+	// Query executes the extraction. A context error (the connector observed the
+	// cancel/deadline and returned it, or the context is done) is mapped to its
+	// canonical category; any other query failure is mapped to a safe unavailable
+	// error: the connector's raw error may embed a DSN, credential, or driver
+	// internals, so it is DELIBERATELY discarded from the returned message.
 	queryResult, err := connector.Query(ctx, extractionRequestForStep(step))
 	if err != nil {
-		return nil, 0, NewEngineError(CategoryUnavailable, "failed to query datasource")
+		return nil, 0, safeConnectorError(ctx, err, "failed to query datasource")
 	}
 
 	var count int64

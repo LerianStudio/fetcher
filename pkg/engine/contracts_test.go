@@ -156,6 +156,7 @@ func TestErrorCategories_AreStableAndValid(t *testing.T) {
 		{CategoryLimitExceeded, "limit_exceeded"},
 		{CategoryUnavailable, "unavailable"},
 		{CategoryTimeout, "timeout"},
+		{CategoryCanceled, "canceled"},
 		{CategoryInternal, "internal"},
 	}
 	for _, tt := range tests {
