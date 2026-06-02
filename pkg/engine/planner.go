@@ -65,7 +65,8 @@ func (e *Engine) PlanExtraction(
 	ctx, end := e.startSpan(ctx, "engine.extraction.plan")
 	defer end()
 
-	if _, err := e.requireConnectionStore(); err != nil {
+	store, err := e.requireConnectionStore()
+	if err != nil {
 		return ExtractionPlan{}, err
 	}
 
@@ -78,6 +79,19 @@ func (e *Engine) PlanExtraction(
 	// meaningful plan.
 	if len(request.MappedFields) == 0 {
 		return ExtractionPlan{}, NewEngineError(CategoryValidation, "extraction request has no mapped fields")
+	}
+
+	// Enforce tenant-scope CONSISTENCY of every referenced connection BEFORE the
+	// limit/schema-validation machinery and BEFORE any connector access. A config
+	// name that does not resolve within this tenant's scope — whether it truly does
+	// not exist or is owned by ANOTHER tenant — is rejected here with the same safe
+	// scoped not-found error, so neither the error category nor the message reveals
+	// cross-tenant existence (no existence oracle), and request shaping (e.g. a
+	// concurrent limit breach) cannot defer or alter that decision. This is a
+	// SCOPE-consistency check only: the Engine never authorizes the actor, it only
+	// confirms the supplied context owns the connections it references.
+	if err := e.requireScopedConnections(ctx, tenant, store, request); err != nil {
+		return ExtractionPlan{}, err
 	}
 
 	// Resolve the effective limits for THIS request: the Engine default merged
@@ -110,6 +124,48 @@ func (e *Engine) PlanExtraction(
 	}
 
 	return e.buildExtractionPlan(tenant, request, limits), nil
+}
+
+// requireScopedConnections confirms every datasource config name referenced by
+// the request resolves to a persisted connection WITHIN the tenant scope, before
+// any limit enforcement, schema validation, or connector access. It is the
+// planner's own first-class scope-consistency gate rather than a side effect of
+// the downstream resolve path.
+//
+// A blank/whitespace config name is rejected as a malformed-request
+// CategoryValidation error (an empty name can never identify a connection). Any
+// reference that does not resolve under this tenant — a name that exists for no
+// tenant, OR a name owned by a DIFFERENT tenant (invisible under this scope) —
+// yields a SINGLE safe CategoryNotFound error with an identical, redacted
+// message in both cases. That identity is deliberate: it denies a cross-tenant
+// existence oracle, since the caller cannot distinguish "unknown to everyone"
+// from "owned by someone else". References are probed in sorted order so the
+// failing name is deterministic.
+//
+// A store error (infrastructure failure) is surfaced as-is: it is the host's
+// already-safe error, not a scope decision.
+func (e *Engine) requireScopedConnections(
+	ctx context.Context,
+	tenant TenantContext,
+	store ConnectionStore,
+	request ExtractionRequest,
+) error {
+	for _, configName := range sortedKeys(request.MappedFields) {
+		if isBlank(configName) {
+			return NewEngineError(CategoryValidation, "extraction request has a blank datasource config name")
+		}
+
+		_, found, err := store.FindConnection(ctx, tenant, configName)
+		if err != nil {
+			return err
+		}
+
+		if !found {
+			return NewEngineError(CategoryNotFound, "extraction references an unknown datasource connection")
+		}
+	}
+
+	return nil
 }
 
 // schemaValidationRequestFromExtraction maps an ExtractionRequest onto the

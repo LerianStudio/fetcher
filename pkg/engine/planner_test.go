@@ -583,13 +583,37 @@ func fieldSelection(n int) []string {
 
 // TestEngine_PlanExtraction_MaxDatasourceCount proves a request exceeding the
 // effective datasource-count limit fails during planning, before execution.
+// Both referenced datasources are persisted under the tenant scope so the test
+// exercises the limit gate in isolation, NOT the earlier scope-consistency gate
+// (an unknown/cross-tenant config is rejected before limits — see
+// TestEngine_PlanExtraction_CrossTenantScopeCheckedBeforeLimits).
 func TestEngine_PlanExtraction_MaxDatasourceCount(t *testing.T) {
 	tenant := plannerTenant(t)
 	limits := engine.DefaultLimits()
 	limits.MaxDatasources = 1
 
+	store := memory.NewConnectionStore()
+	registry := memory.NewConnectorRegistry()
 	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
-	eng := engineForPlanWithLimits(t, factory, memory.NewSchemaCache(), tenant, "orders-db", limits)
+	registry.Register("postgres", factory)
+
+	for _, name := range []string{"orders-db", "extra-db"} {
+		if err := store.Create(context.Background(), tenant, engine.ConnectionDescriptor{
+			ConfigName: name, Type: "postgres", Host: "db.internal", Port: 5432,
+		}, nil); err != nil {
+			t.Fatalf("store.Create(%s) error: %v", name, err)
+		}
+	}
+
+	eng, err := engine.New(
+		engine.WithConnectorRegistry(registry),
+		engine.WithConnectionStore(store),
+		engine.WithSchemaCache(memory.NewSchemaCache()),
+		engine.WithLimits(limits),
+	)
+	if err != nil {
+		t.Fatalf("New() error: %v", err)
+	}
 
 	req := engine.ExtractionRequest{
 		MappedFields: map[string]engine.FieldSelection{
@@ -598,7 +622,7 @@ func TestEngine_PlanExtraction_MaxDatasourceCount(t *testing.T) {
 		},
 	}
 
-	_, err := eng.PlanExtraction(context.Background(), tenant, req)
+	_, err = eng.PlanExtraction(context.Background(), tenant, req)
 	assertEngineCategory(t, err, engine.CategoryValidation)
 
 	if factory.record.has("discover") {
@@ -1012,6 +1036,364 @@ func TestEngine_PlanExtraction_ConnectorHardLimitsCopiedAndIsolated(t *testing.T
 	plan.Limits.ConnectorHardLimits["postgres"] = 1
 	if eng.Limits().ConnectorHardLimits["postgres"] != 1000 {
 		t.Fatalf("plan mutation leaked into Engine default connector hard limits")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ST-T006-03: tenant-scope consistency enforcement in the planner
+// ---------------------------------------------------------------------------
+
+// engineForPlanCrossTenant wires an Engine whose store holds the SAME config
+// name under TWO distinct tenants. It returns the engine plus both tenant
+// contexts so a test can prove that planning under one tenant never resolves a
+// connection owned by the other, and that an unknown config and a cross-tenant
+// config produce the SAME safe error (no existence oracle).
+func engineForPlanCrossTenant(
+	t *testing.T,
+	factory engine.ConnectorFactory,
+	cache engine.SchemaCache,
+	configName string,
+) (*engine.Engine, engine.TenantContext, engine.TenantContext) {
+	t.Helper()
+
+	owner, err := engine.NewTenantContext("tenant-owner")
+	if err != nil {
+		t.Fatalf("NewTenantContext(owner) error: %v", err)
+	}
+
+	intruder, err := engine.NewTenantContext("tenant-intruder")
+	if err != nil {
+		t.Fatalf("NewTenantContext(intruder) error: %v", err)
+	}
+
+	store := memory.NewConnectionStore()
+	registry := memory.NewConnectorRegistry()
+
+	if factory != nil {
+		registry.Register("postgres", factory)
+	}
+
+	descriptor := engine.ConnectionDescriptor{
+		ConfigName: configName,
+		Type:       "postgres",
+		Host:       "db.internal",
+		Port:       5432,
+	}
+
+	// Persist the connection ONLY under the owner tenant. The intruder tenant has
+	// no connection of this name.
+	if err := store.Create(context.Background(), owner, descriptor, nil); err != nil {
+		t.Fatalf("store.Create(owner) error: %v", err)
+	}
+
+	opts := []engine.Option{
+		engine.WithConnectorRegistry(registry),
+		engine.WithConnectionStore(store),
+	}
+	if cache != nil {
+		opts = append(opts, engine.WithSchemaCache(cache))
+	}
+
+	eng, err := engine.New(opts...)
+	if err != nil {
+		t.Fatalf("New() error: %v", err)
+	}
+
+	return eng, owner, intruder
+}
+
+// TestEngine_PlanExtraction_BlankTenantScope_FailsBeforeResolution proves a
+// blank tenant ID (an unscoped context) is rejected as a validation error before
+// any connector access — the planner requires a tenant scope for persisted
+// connection planning.
+func TestEngine_PlanExtraction_BlankTenantScope_FailsBeforeResolution(t *testing.T) {
+	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
+	eng := engineForPlan(t, factory, memory.NewSchemaCache(), plannerTenant(t), "orders-db")
+
+	_, err := eng.PlanExtraction(context.Background(), engine.TenantContext{TenantID: "   "}, plannerRequest())
+	assertEngineCategory(t, err, engine.CategoryValidation)
+
+	if factory.record.has("build") {
+		t.Fatalf("connector must not be built for a blank tenant scope")
+	}
+}
+
+// TestEngine_PlanExtraction_MatchingTenantScope_Succeeds proves planning under
+// the tenant that OWNS the connection succeeds and carries that tenant identity
+// into the plan.
+func TestEngine_PlanExtraction_MatchingTenantScope_Succeeds(t *testing.T) {
+	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
+	eng, owner, _ := engineForPlanCrossTenant(t, factory, memory.NewSchemaCache(), "orders-db")
+
+	plan, err := eng.PlanExtraction(context.Background(), owner, plannerRequest())
+	if err != nil {
+		t.Fatalf("PlanExtraction(owner) error: %v", err)
+	}
+
+	if plan.TenantID != owner.TenantID {
+		t.Fatalf("expected plan tenant %q, got %q", owner.TenantID, plan.TenantID)
+	}
+
+	if len(plan.Steps) != 1 || plan.Steps[0].ConfigName != "orders-db" {
+		t.Fatalf("expected a single orders-db step, got %#v", plan.Steps)
+	}
+}
+
+// TestEngine_PlanExtraction_MismatchedTenantScope_FailsBeforeConnectorAccess
+// proves planning under a tenant that does NOT own the connection fails before
+// any connector access — the cross-tenant connection is invisible under the
+// intruder scope.
+func TestEngine_PlanExtraction_MismatchedTenantScope_FailsBeforeConnectorAccess(t *testing.T) {
+	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
+	eng, _, intruder := engineForPlanCrossTenant(t, factory, memory.NewSchemaCache(), "orders-db")
+
+	_, err := eng.PlanExtraction(context.Background(), intruder, plannerRequest())
+	assertEngineCategory(t, err, engine.CategoryNotFound)
+
+	if factory.record.has("build") || factory.record.has("discover") {
+		t.Fatalf("a cross-tenant connection must never reach the connector, calls=%v", factory.record.snapshot())
+	}
+}
+
+// TestEngine_PlanExtraction_NoCrossTenantExistenceOracle proves the planner
+// returns the SAME safe error category AND message whether a config name is
+// truly unknown to the tenant or exists under a DIFFERENT tenant. A divergent
+// shape would let one tenant probe for the existence of another tenant's
+// connections (an existence oracle).
+func TestEngine_PlanExtraction_NoCrossTenantExistenceOracle(t *testing.T) {
+	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
+	eng, _, intruder := engineForPlanCrossTenant(t, factory, memory.NewSchemaCache(), "orders-db")
+
+	// Case 1: config name that exists under the OWNER tenant, planned by the
+	// intruder — must look identical to a truly-unknown config.
+	_, crossErr := eng.PlanExtraction(context.Background(), intruder, plannerRequest())
+	assertEngineCategory(t, crossErr, engine.CategoryNotFound)
+
+	// Case 2: a config name that exists under NO tenant at all.
+	unknownReq := engine.ExtractionRequest{
+		MappedFields: map[string]engine.FieldSelection{
+			"truly-unknown-db": {"public.orders": {"id"}},
+		},
+	}
+
+	_, unknownErr := eng.PlanExtraction(context.Background(), intruder, unknownReq)
+	assertEngineCategory(t, unknownErr, engine.CategoryNotFound)
+
+	// The two cases MUST be indistinguishable: same category (asserted above) and
+	// same redacted message. Any divergence is a cross-tenant existence oracle.
+	if crossErr.Error() != unknownErr.Error() {
+		t.Fatalf("cross-tenant existence oracle: cross=%q differs from unknown=%q",
+			crossErr.Error(), unknownErr.Error())
+	}
+
+	// The message must not name the owning tenant or otherwise hint at ownership.
+	if strings.Contains(crossErr.Error(), "tenant-owner") {
+		t.Fatalf("scoped not-found error leaked the owning tenant: %v", crossErr)
+	}
+}
+
+// TestEngine_PlanExtraction_CredentialBuildFailureUnderMatchingScope_SafeError
+// proves that, under an otherwise valid matching tenant scope, a connector
+// build/credential-resolution failure surfaces as a safe CategoryUnavailable
+// error that never leaks driver internals.
+func TestEngine_PlanExtraction_CredentialBuildFailureUnderMatchingScope_SafeError(t *testing.T) {
+	factory := &schemaConnFactory{record: &schemaConnRecord{}, buildErr: errInjectedSecret}
+	eng, owner, _ := engineForPlanCrossTenant(t, factory, nil, "orders-db")
+
+	_, err := eng.PlanExtraction(context.Background(), owner, plannerRequest())
+	assertEngineCategory(t, err, engine.CategoryUnavailable)
+
+	if strings.Contains(err.Error(), "super-secret-dsn") || strings.Contains(err.Error(), "p@ssw0rd") {
+		t.Fatalf("error leaked raw driver/credential internals: %v", err)
+	}
+}
+
+// TestEngine_PlanExtraction_CacheHitUnderMatchingScope_NoDiscovery proves a
+// cache hit scoped to the OWNER tenant short-circuits connector discovery while
+// a cross-tenant request never benefits from another tenant's cached schema.
+func TestEngine_PlanExtraction_CacheHitUnderMatchingScope_NoDiscovery(t *testing.T) {
+	cache := memory.NewSchemaCache()
+	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
+	eng, owner, intruder := engineForPlanCrossTenant(t, factory, cache, "orders-db")
+
+	// Seed the cache under the OWNER scope only.
+	if err := cache.PutSchema(context.Background(), owner, plannerSnapshot("orders-db")); err != nil {
+		t.Fatalf("cache.PutSchema(owner) error: %v", err)
+	}
+
+	if _, err := eng.PlanExtraction(context.Background(), owner, plannerRequest()); err != nil {
+		t.Fatalf("PlanExtraction(owner) error: %v", err)
+	}
+
+	if factory.record.has("discover") {
+		t.Fatalf("owner cache hit must not trigger connector discovery, calls=%v", factory.record.snapshot())
+	}
+
+	// The intruder cannot see the owner's connection at all, so it fails as
+	// not-found before any cache scope is even consulted.
+	_, err := eng.PlanExtraction(context.Background(), intruder, plannerRequest())
+	assertEngineCategory(t, err, engine.CategoryNotFound)
+}
+
+// TestEngine_PlanExtraction_CacheMissUnderMatchingScope_Discovers proves a
+// cache miss under the matching scope falls through to connector discovery.
+func TestEngine_PlanExtraction_CacheMissUnderMatchingScope_Discovers(t *testing.T) {
+	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
+	eng, owner, _ := engineForPlanCrossTenant(t, factory, memory.NewSchemaCache(), "orders-db")
+
+	if _, err := eng.PlanExtraction(context.Background(), owner, plannerRequest()); err != nil {
+		t.Fatalf("PlanExtraction(owner) error: %v", err)
+	}
+
+	if !factory.record.has("discover") {
+		t.Fatalf("cache miss under matching scope must trigger discovery, calls=%v", factory.record.snapshot())
+	}
+}
+
+// TestEngine_PlanExtraction_InvalidRefsUnderMatchingScope_FailBeforeExecution
+// proves invalid table/field/filter references fail before any executable plan
+// is produced even under a valid, matching tenant scope.
+func TestEngine_PlanExtraction_InvalidRefsUnderMatchingScope_FailBeforeExecution(t *testing.T) {
+	cases := map[string]engine.ExtractionRequest{
+		"invalid table": {
+			MappedFields: map[string]engine.FieldSelection{
+				"orders-db": {"public.ghost": {"id"}},
+			},
+		},
+		"invalid field": {
+			MappedFields: map[string]engine.FieldSelection{
+				"orders-db": {"public.orders": {"nonexistent_field"}},
+			},
+		},
+		"invalid filter": {
+			MappedFields: map[string]engine.FieldSelection{
+				"orders-db": {"public.orders": {"id"}},
+			},
+			Filters: map[string]any{
+				"orders-db": map[string]any{
+					"public.orders": map[string]any{"ghost_field": "x"},
+				},
+			},
+		},
+	}
+
+	for name, req := range cases {
+		t.Run(name, func(t *testing.T) {
+			factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
+			eng, owner, _ := engineForPlanCrossTenant(t, factory, memory.NewSchemaCache(), "orders-db")
+
+			_, err := eng.PlanExtraction(context.Background(), owner, req)
+			assertEngineCategory(t, err, engine.CategoryValidation)
+		})
+	}
+}
+
+// TestEngine_PlanExtraction_TenantIDPropagatedNoOrgOrProduct proves the plan
+// carries ONLY the tenant identity (tenantId + requestId) into the plan for
+// adapters/observability — never an organization or product concept, which the
+// embedded Engine does not model.
+func TestEngine_PlanExtraction_TenantIDPropagatedNoOrgOrProduct(t *testing.T) {
+	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
+	eng, owner, _ := engineForPlanCrossTenant(t, factory, memory.NewSchemaCache(), "orders-db")
+
+	scoped := owner.WithRequestID("req-scope-1")
+
+	plan, err := eng.PlanExtraction(context.Background(), scoped, plannerRequest())
+	if err != nil {
+		t.Fatalf("PlanExtraction() error: %v", err)
+	}
+
+	if plan.TenantID != scoped.TenantID {
+		t.Fatalf("expected plan tenant %q, got %q", scoped.TenantID, plan.TenantID)
+	}
+
+	if plan.RequestID != scoped.RequestID {
+		t.Fatalf("expected plan request id %q, got %q", scoped.RequestID, plan.RequestID)
+	}
+
+	// The plan must not carry any organization or product identity. The Engine
+	// model is tenant-only; assert the metadata never grew an org/product key.
+	for _, banned := range []string{"organization", "organizationId", "product", "productName"} {
+		if _, ok := plan.Metadata[banned]; ok {
+			t.Fatalf("plan metadata leaked a non-tenant scope key %q: %#v", banned, plan.Metadata)
+		}
+	}
+}
+
+// TestEngine_PlanExtraction_CrossTenantScopeCheckedBeforeLimits proves the
+// planner enforces tenant-scope CONSISTENCY before the limit/schema-validation
+// machinery. An intruder referencing a connection owned by another tenant MUST
+// receive the scoped not-found error, even when the same request ALSO breaches a
+// count limit. Otherwise the error category depends on attacker-controlled
+// request shape, both deferring scope enforcement past the limit gate and
+// creating a divergent-error existence oracle.
+func TestEngine_PlanExtraction_CrossTenantScopeCheckedBeforeLimits(t *testing.T) {
+	owner, err := engine.NewTenantContext("tenant-owner")
+	if err != nil {
+		t.Fatalf("NewTenantContext(owner) error: %v", err)
+	}
+
+	intruder, err := engine.NewTenantContext("tenant-intruder")
+	if err != nil {
+		t.Fatalf("NewTenantContext(intruder) error: %v", err)
+	}
+
+	store := memory.NewConnectionStore()
+	registry := memory.NewConnectorRegistry()
+	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
+	registry.Register("postgres", factory)
+
+	if err := store.Create(context.Background(), owner, engine.ConnectionDescriptor{
+		ConfigName: "orders-db", Type: "postgres", Host: "db.internal", Port: 5432,
+	}, nil); err != nil {
+		t.Fatalf("store.Create(owner) error: %v", err)
+	}
+
+	limits := engine.DefaultLimits()
+	limits.MaxDatasources = 1
+
+	eng, err := engine.New(
+		engine.WithConnectorRegistry(registry),
+		engine.WithConnectionStore(store),
+		engine.WithLimits(limits),
+	)
+	if err != nil {
+		t.Fatalf("New() error: %v", err)
+	}
+
+	// The intruder references the owner's connection AND a second datasource that
+	// breaches MaxDatasources=1. Scope must be decided first: the result must be a
+	// scoped not-found, NOT a limit/validation error.
+	req := engine.ExtractionRequest{
+		MappedFields: map[string]engine.FieldSelection{
+			"orders-db": {"public.orders": {"id"}},
+			"extra-db":  {"public.orders": {"id"}},
+		},
+	}
+
+	_, planErr := eng.PlanExtraction(context.Background(), intruder, req)
+	assertEngineCategory(t, planErr, engine.CategoryNotFound)
+
+	if factory.record.has("build") || factory.record.has("discover") {
+		t.Fatalf("cross-tenant scope breach must short-circuit before connector access, calls=%v",
+			factory.record.snapshot())
+	}
+
+	// The scoped not-found for a limit-breaching request must be byte-identical to
+	// the scoped not-found for a clean single-datasource cross-tenant request, so
+	// request shaping cannot turn the planner into an existence oracle.
+	cleanReq := engine.ExtractionRequest{
+		MappedFields: map[string]engine.FieldSelection{
+			"orders-db": {"public.orders": {"id"}},
+		},
+	}
+
+	_, cleanErr := eng.PlanExtraction(context.Background(), intruder, cleanReq)
+	assertEngineCategory(t, cleanErr, engine.CategoryNotFound)
+
+	if planErr.Error() != cleanErr.Error() {
+		t.Fatalf("request-shaping oracle: limit-breach cross-tenant error %q differs from clean %q",
+			planErr.Error(), cleanErr.Error())
 	}
 }
 
