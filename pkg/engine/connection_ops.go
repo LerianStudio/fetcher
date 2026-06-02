@@ -277,6 +277,52 @@ func (e *Engine) DeleteConnection(
 	return store.Delete(ctx, tenant, configName)
 }
 
+// CheckActiveExecutions runs the shared active-execution conflict gate for a
+// connection within the tenant scope, independent of the Engine's own
+// connection persistence. It is the gate that UpdateConnection and
+// DeleteConnection apply internally, exposed as a standalone capability so a
+// host that owns connection persistence itself (e.g. the Manager, which keeps
+// its UUID-keyed MongoDB repository) can still delegate the SHARED policy
+// decision — "block a mutation while active work references the connection" —
+// to the Engine under a per-request tenant scope.
+//
+// It returns:
+//   - nil when no checker is configured, or the checker reports no active work;
+//   - a CategoryConflict *EngineError when active work references the connection;
+//   - the checker's own error (WRAPPED, not replaced) when the checker fails, so
+//     the host that owns the checker can preserve its existing error-mapping
+//     contract (e.g. errors.Is on the underlying repository error). This differs
+//     from guardActiveExecutions, which is used by the Engine's own persistence
+//     ops and DISCARDS the raw error: there the error would cross to external
+//     embedding callers, whereas CheckActiveExecutions returns in-process to the
+//     same host that supplied the checker, so no boundary is crossed;
+//   - a CategoryValidation *EngineError when the tenant scope is missing.
+//
+// connectionID is the connection's config name within the tenant scope.
+func (e *Engine) CheckActiveExecutions(ctx context.Context, tenant TenantContext, connectionID string) error {
+	ctx, end := e.startSpan(ctx, "engine.connection.check_active_executions")
+	defer end()
+
+	if err := validateTenantScope(tenant); err != nil {
+		return err
+	}
+
+	if isNilPort(e.options.activeExecutionChecker) {
+		return nil
+	}
+
+	active, err := e.options.activeExecutionChecker.HasActiveExecutions(ctx, tenant, connectionID)
+	if err != nil {
+		return err
+	}
+
+	if active {
+		return NewEngineError(CategoryConflict, "connection has active executions")
+	}
+
+	return nil
+}
+
 // guardActiveExecutions consults the optional ActiveExecutionChecker before a
 // connection mutation. It returns:
 //   - nil when no checker is configured (conflict gating is opt-in);

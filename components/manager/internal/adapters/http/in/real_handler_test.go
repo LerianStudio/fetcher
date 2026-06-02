@@ -126,7 +126,7 @@ func TestConnectionHandler_UpdateConnection_RealHandlerSuccess(t *testing.T) {
 	})
 
 	handler := &ConnectionHandler{
-		UpdateCmd: commandSvc.NewUpdateConnection(mockConnRepo, mockJobRepo, nil),
+		UpdateCmd: commandSvc.NewUpdateConnection(mockConnRepo, mockJobRepo, nil, connectionEngineForJobRepo(t, mockJobRepo)),
 	}
 	app.Patch("/v1/management/connections/:id", handler.UpdateConnection)
 

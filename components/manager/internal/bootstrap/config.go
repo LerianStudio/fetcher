@@ -596,9 +596,20 @@ func assembleService(
 
 	dsFactory := datasourceFactory.NewDataSourceFromConnectionWithLogger(logger)
 
+	// Build the embedded Engine that the connection command services delegate
+	// their shared, tenant-scoped active-execution conflict gate to. The Engine
+	// consults the Manager's job repository through the connectioncompat
+	// ActiveExecutionChecker adapter; connection persistence and HTTP mapping
+	// stay in the Manager. A construction failure is fatal — the gate is required
+	// for update/delete safety.
+	connEngine, engErr := connectionEngine(repositories.job)
+	if engErr != nil {
+		return nil, wrapBootstrapError("build connection engine", engErr)
+	}
+
 	createConnectionCmd := connectionCommand.NewCreateConnection(repositories.connection, cryptoService)
-	updateConnectionCmd := connectionCommand.NewUpdateConnection(repositories.connection, repositories.job, cryptoService)
-	deleteConnectionCmd := connectionCommand.NewDeleteConnection(repositories.connection, repositories.job)
+	updateConnectionCmd := connectionCommand.NewUpdateConnection(repositories.connection, repositories.job, cryptoService, connEngine)
+	deleteConnectionCmd := connectionCommand.NewDeleteConnection(repositories.connection, repositories.job, connEngine)
 	getConnectionQuery := connectionQuery.NewGetConnection(repositories.connection, connResolver, registry)
 	listConnectionsQuery := connectionQuery.NewListConnections(repositories.connection, connResolver)
 	testConnectionQuery := connectionQuery.NewTestConnection(repositories.connection, cryptoService, platformDependencies.connectionTestStore, dsFactory, connResolver, registry)

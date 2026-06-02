@@ -73,6 +73,74 @@ func engineWithChecker(t *testing.T, checker engine.ActiveExecutionChecker) (*en
 	return eng, store
 }
 
+// TestEngine_CheckActiveExecutions_StandaloneGate exercises the standalone
+// host-facing conflict gate that a host owning its own connection persistence
+// delegates to. Unlike the persistence ops, it requires no ConnectionStore and
+// WRAPS (does not discard) the checker's own error so the host can preserve its
+// error mapping.
+func TestEngine_CheckActiveExecutions_StandaloneGate(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	tenant := mustTenant(t, "tenant-a")
+
+	newEngine := func(t *testing.T, checker engine.ActiveExecutionChecker) *engine.Engine {
+		t.Helper()
+
+		opts := []engine.Option{engine.WithConnectorRegistry(memory.NewConnectorRegistry())}
+		if checker != nil {
+			opts = append(opts, engine.WithActiveExecutionChecker(checker))
+		}
+
+		eng, err := engine.New(opts...)
+		if err != nil {
+			t.Fatalf("New() unexpected error: %v", err)
+		}
+
+		return eng
+	}
+
+	t.Run("no checker configured is a no-op", func(t *testing.T) {
+		t.Parallel()
+
+		if err := newEngine(t, nil).CheckActiveExecutions(ctx, tenant, "pg-main"); err != nil {
+			t.Fatalf("CheckActiveExecutions without checker: unexpected error: %v", err)
+		}
+	})
+
+	t.Run("active executions yield a conflict", func(t *testing.T) {
+		t.Parallel()
+
+		err := newEngine(t, &fakeActiveExecutionChecker{active: true}).CheckActiveExecutions(ctx, tenant, "pg-main")
+
+		var engErr *engine.EngineError
+		if !errors.As(err, &engErr) || engErr.Category != engine.CategoryConflict {
+			t.Fatalf("CheckActiveExecutions active: error = %v, want CategoryConflict", err)
+		}
+	})
+
+	t.Run("checker error is wrapped not replaced", func(t *testing.T) {
+		t.Parallel()
+
+		checkerErr := errors.New("job store down")
+		err := newEngine(t, &fakeActiveExecutionChecker{err: checkerErr}).CheckActiveExecutions(ctx, tenant, "pg-main")
+		if !errors.Is(err, checkerErr) {
+			t.Fatalf("CheckActiveExecutions checker error: want wrapped %v, got %v", checkerErr, err)
+		}
+	})
+
+	t.Run("missing tenant scope is rejected", func(t *testing.T) {
+		t.Parallel()
+
+		err := newEngine(t, &fakeActiveExecutionChecker{}).CheckActiveExecutions(ctx, engine.TenantContext{}, "pg-main")
+
+		var engErr *engine.EngineError
+		if !errors.As(err, &engErr) || engErr.Category != engine.CategoryValidation {
+			t.Fatalf("CheckActiveExecutions no tenant: error = %v, want CategoryValidation", err)
+		}
+	})
+}
+
 func TestEngine_UpdateConnection_BlockedByActiveExecutions(t *testing.T) {
 	t.Parallel()
 

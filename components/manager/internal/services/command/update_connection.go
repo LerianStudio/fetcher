@@ -9,6 +9,7 @@ import (
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
+	"github.com/LerianStudio/fetcher/pkg/engine"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
 	"github.com/LerianStudio/fetcher/pkg/ports/job"
@@ -23,13 +24,15 @@ type UpdateConnection struct {
 	connRepo connRepo.Repository
 	jobRepo  job.Repository
 	cryptor  crypto.Cryptor
+	engine   *engine.Engine
 }
 
-func NewUpdateConnection(connectionRepo connRepo.Repository, jobRepo job.Repository, cryptor crypto.Cryptor) *UpdateConnection {
+func NewUpdateConnection(connectionRepo connRepo.Repository, jobRepo job.Repository, cryptor crypto.Cryptor, eng *engine.Engine) *UpdateConnection {
 	return &UpdateConnection{
 		connRepo: connectionRepo,
 		jobRepo:  jobRepo,
 		cryptor:  cryptor,
+		engine:   eng,
 	}
 }
 
@@ -64,20 +67,16 @@ func (s *UpdateConnection) Execute(ctx context.Context, connectionID uuid.UUID, 
 		)
 	}
 
-	active, err := s.jobRepo.ExistsRunningByMappedFieldKey(ctx, current.ConfigName)
-	if err != nil {
+	if err := checkActiveJobsViaEngine(ctx, s.engine, current.ConfigName); err != nil {
+		if conflict := asActiveJobConflict(err, "cannot update connection with active jobs"); conflict != nil {
+			libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Connection has active jobs", constant.ErrJobInProgress)
+
+			return nil, conflict
+		}
+
 		libOpentelemetry.HandleSpanError(span, "Failed to check for active jobs", err)
+
 		return nil, fmt.Errorf("failed to check for active jobs: %w", err)
-	}
-
-	if active {
-		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Connection has active jobs", constant.ErrJobInProgress)
-
-		return nil, pkg.ValidateBusinessError(
-			constant.ErrJobInProgress,
-			"connection",
-			"cannot update connection with active jobs",
-		)
 	}
 
 	if errPatch := current.ApplyPatch(

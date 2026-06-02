@@ -619,7 +619,7 @@ func TestConnectionHandler_UpdateConnection_Success(t *testing.T) {
 	// 4. Update connection
 	mockConnRepo.EXPECT().Update(gomock.Any(), gomock.Any()).Return(updatedConn, nil)
 
-	updateCmd := command.NewUpdateConnection(mockConnRepo, mockJobRepo, mockCryptor)
+	updateCmd := command.NewUpdateConnection(mockConnRepo, mockJobRepo, mockCryptor, connectionEngineForJobRepo(t, mockJobRepo))
 	handler := &ConnectionHandler{UpdateCmd: updateCmd}
 
 	app := setupConnectionTestApp()
@@ -655,7 +655,7 @@ func TestConnectionHandler_UpdateConnection_NotFound(t *testing.T) {
 	// Service finds no connection -> not found
 	mockConnRepo.EXPECT().FindByID(gomock.Any(), connID).Return(nil, nil)
 
-	updateCmd := command.NewUpdateConnection(mockConnRepo, mockJobRepo, mockCryptor)
+	updateCmd := command.NewUpdateConnection(mockConnRepo, mockJobRepo, mockCryptor, connectionEngineForJobRepo(t, mockJobRepo))
 	handler := &ConnectionHandler{UpdateCmd: updateCmd}
 
 	app := setupConnectionTestApp()
@@ -727,7 +727,7 @@ func TestConnectionHandler_UpdateConnection_Conflict_ActiveJobs(t *testing.T) {
 	mockConnRepo.EXPECT().FindByID(gomock.Any(), connID).Return(testConn, nil)
 	mockJobRepo.EXPECT().ExistsRunningByMappedFieldKey(gomock.Any(), "test-connection").Return(true, nil)
 
-	updateCmd := command.NewUpdateConnection(mockConnRepo, mockJobRepo, mockCryptor)
+	updateCmd := command.NewUpdateConnection(mockConnRepo, mockJobRepo, mockCryptor, connectionEngineForJobRepo(t, mockJobRepo))
 	handler := &ConnectionHandler{UpdateCmd: updateCmd}
 
 	app := setupConnectionTestApp()
@@ -768,7 +768,7 @@ func TestConnectionHandler_DeleteConnection_Success(t *testing.T) {
 	// 3. Delete connection
 	mockConnRepo.EXPECT().Delete(gomock.Any(), connID, gomock.Any()).Return(nil)
 
-	deleteCmd := command.NewDeleteConnection(mockConnRepo, mockJobRepo)
+	deleteCmd := command.NewDeleteConnection(mockConnRepo, mockJobRepo, connectionEngineForJobRepo(t, mockJobRepo))
 	handler := &ConnectionHandler{DeleteCmd: deleteCmd}
 
 	app := setupConnectionTestApp()
@@ -796,7 +796,7 @@ func TestConnectionHandler_DeleteConnection_NotFound(t *testing.T) {
 	// Service finds no connection -> not found
 	mockConnRepo.EXPECT().FindByID(gomock.Any(), connID).Return(nil, nil)
 
-	deleteCmd := command.NewDeleteConnection(mockConnRepo, mockJobRepo)
+	deleteCmd := command.NewDeleteConnection(mockConnRepo, mockJobRepo, connectionEngineForJobRepo(t, mockJobRepo))
 	handler := &ConnectionHandler{DeleteCmd: deleteCmd}
 
 	app := setupConnectionTestApp()
@@ -826,7 +826,7 @@ func TestConnectionHandler_DeleteConnection_Conflict_ActiveJobs(t *testing.T) {
 	mockConnRepo.EXPECT().FindByID(gomock.Any(), connID).Return(testConn, nil)
 	mockJobRepo.EXPECT().ExistsRunningByMappedFieldKey(gomock.Any(), "test-connection").Return(true, nil)
 
-	deleteCmd := command.NewDeleteConnection(mockConnRepo, mockJobRepo)
+	deleteCmd := command.NewDeleteConnection(mockConnRepo, mockJobRepo, connectionEngineForJobRepo(t, mockJobRepo))
 	handler := &ConnectionHandler{DeleteCmd: deleteCmd}
 
 	app := setupConnectionTestApp()

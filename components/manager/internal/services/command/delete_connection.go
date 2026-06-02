@@ -9,6 +9,7 @@ import (
 
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
+	"github.com/LerianStudio/fetcher/pkg/engine"
 	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
 	"github.com/LerianStudio/fetcher/pkg/ports/job"
 
@@ -22,12 +23,14 @@ import (
 type DeleteConnection struct {
 	connRepo connRepo.Repository
 	jobRepo  job.Repository
+	engine   *engine.Engine
 }
 
-func NewDeleteConnection(connectionRepo connRepo.Repository, jobRepo job.Repository) *DeleteConnection {
+func NewDeleteConnection(connectionRepo connRepo.Repository, jobRepo job.Repository, eng *engine.Engine) *DeleteConnection {
 	return &DeleteConnection{
 		connRepo: connectionRepo,
 		jobRepo:  jobRepo,
+		engine:   eng,
 	}
 }
 
@@ -57,16 +60,16 @@ func (s *DeleteConnection) Execute(ctx context.Context, connectionID uuid.UUID) 
 		)
 	}
 
-	active, err := s.jobRepo.ExistsRunningByMappedFieldKey(ctx, current.ConfigName)
-	if err != nil {
+	if err := checkActiveJobsViaEngine(ctx, s.engine, current.ConfigName); err != nil {
+		if conflict := asActiveJobConflict(err, "cannot delete connection with active jobs"); conflict != nil {
+			libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Connection has active jobs", constant.ErrJobInProgress)
+
+			return conflict
+		}
+
 		libOpentelemetry.HandleSpanError(span, "Failed to check for active jobs", err)
+
 		return fmt.Errorf("failed to check for active jobs: %w", err)
-	}
-
-	if active {
-		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Connection has active jobs", constant.ErrJobInProgress)
-
-		return pkg.ValidateBusinessError(constant.ErrJobInProgress, "connection", "cannot delete connection with active jobs")
 	}
 
 	if err := s.connRepo.Delete(ctx, connectionID, time.Now().UTC()); err != nil {
