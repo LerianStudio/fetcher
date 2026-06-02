@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/LerianStudio/fetcher/pkg/engine"
+	"github.com/LerianStudio/fetcher/pkg/enginecompat/connectioncompat"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	netHTTP "github.com/LerianStudio/fetcher/pkg/net/http"
 	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
@@ -45,11 +46,12 @@ func (r *recordingObservability) seen(op string) bool {
 	return false
 }
 
-func engineWithObservability(t *testing.T, obs engine.Observability) *engine.Engine {
+func engineWithObservability(t *testing.T, obs engine.Observability, connRepo connRepo.Repository) *engine.Engine {
 	t.Helper()
 
 	eng, err := engine.New(
 		engine.WithConnectorRegistry(stubConnectorRegistry{}),
+		engine.WithConnectionStore(connectioncompat.NewConnectionStore(connRepo)),
 		engine.WithObservability(obs),
 	)
 	require.NoError(t, err)
@@ -76,11 +78,12 @@ func TestGetConnection_RoutesScopeAuthorityThroughEngine(t *testing.T) {
 	connID := uuid.New()
 	mockConnRepo.EXPECT().FindByID(gomock.Any(), connID).Return(&model.Connection{ID: connID, ConfigName: "c"}, nil)
 
-	svc := NewGetConnection(mockConnRepo, nil, nil, engineWithObservability(t, obs))
+	svc := NewGetConnection(mockConnRepo, nil, nil, engineWithObservability(t, obs, mockConnRepo))
 
 	_, err := svc.Execute(testContext(), connID)
 	require.NoError(t, err)
 	assert.True(t, obs.seen("engine.connection.authorize_access"), "get must route the scope authority through the Engine")
+	assert.True(t, obs.seen("engine.connection.get_by_id"), "get must route the external read PERSISTENCE through the Engine ID-addressed op")
 }
 
 // TestListConnections_RoutesScopeAuthorityThroughEngine proves the list read
@@ -95,9 +98,10 @@ func TestListConnections_RoutesScopeAuthorityThroughEngine(t *testing.T) {
 
 	mockConnRepo.EXPECT().List(gomock.Any(), gomock.Any()).Return(nil, int64(0), nil)
 
-	svc := NewListConnections(mockConnRepo, nil, engineWithObservability(t, obs))
+	svc := NewListConnections(mockConnRepo, nil, engineWithObservability(t, obs, mockConnRepo))
 
 	_, err := svc.Execute(testContext(), "", netHTTP.QueryHeader{Limit: 10, Page: 1})
 	require.NoError(t, err)
 	assert.True(t, obs.seen("engine.connection.authorize_access"), "list must route the scope authority through the Engine")
+	assert.True(t, obs.seen("engine.connection.list_paged"), "list must route the paginated read PERSISTENCE through the Engine ID-addressed op")
 }

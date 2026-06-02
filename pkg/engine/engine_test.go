@@ -53,6 +53,22 @@ func (fakeConnectionStore) List(context.Context, TenantContext) ([]ConnectionDes
 	return nil, nil
 }
 
+func (fakeConnectionStore) FindByID(context.Context, TenantContext, string) (ConnectionDescriptor, bool, error) {
+	return ConnectionDescriptor{}, false, nil
+}
+
+func (fakeConnectionStore) UpdateByID(context.Context, TenantContext, string, ConnectionDescriptor, *ProtectedCredential) error {
+	return nil
+}
+
+func (fakeConnectionStore) DeleteByID(context.Context, TenantContext, string) error {
+	return nil
+}
+
+func (fakeConnectionStore) ListPaged(context.Context, TenantContext, ConnectionListParams) (ConnectionPage, error) {
+	return ConnectionPage{}, nil
+}
+
 type fakeExecutionStore struct{}
 
 func (fakeExecutionStore) SaveExecution(context.Context, TenantContext, ExecutionState) error {

@@ -195,7 +195,109 @@ func (s *ConnectionStore) List(
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	scope := scopeOf(tenant)
+	return s.scopedDescriptorsLocked(scopeOf(tenant)), nil
+}
+
+// FindByID implements the ID-addressed engine.ConnectionStore lookup. The
+// harness addresses by the opaque descriptor ID within the tenant scope; a
+// connection whose descriptor carries no ID is never matched, and a soft-deleted
+// connection reports found=false (the harness models a hard map delete, so an
+// absent key is the deleted state). The Engine never interprets the ID — the
+// harness treats it as an opaque token exactly as the production adapter does.
+func (s *ConnectionStore) FindByID(
+	_ context.Context,
+	tenant engine.TenantContext,
+	id string,
+) (engine.ConnectionDescriptor, bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	stored, _, found := s.findByIDLocked(scopeOf(tenant), id)
+	if !found {
+		return engine.ConnectionDescriptor{}, false, nil
+	}
+
+	return stored.descriptor, true, nil
+}
+
+// UpdateByID replaces the connection addressed by the opaque ID within the
+// tenant scope. A nil credential preserves the existing stored secret. A missing
+// ID yields the Engine's not-found rule.
+func (s *ConnectionStore) UpdateByID(
+	_ context.Context,
+	tenant engine.TenantContext,
+	id string,
+	descriptor engine.ConnectionDescriptor,
+	credential *engine.ProtectedCredential,
+) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	existing, key, found := s.findByIDLocked(scopeOf(tenant), id)
+	if !found {
+		return engine.NewEngineError(engine.CategoryNotFound, "connection not found")
+	}
+
+	updated := storedConnection{descriptor: descriptor, credential: existing.credential}
+	if credential != nil {
+		updated.credential = cloneCredential(credential)
+	}
+
+	// The descriptor's config name may change under an ID-addressed update; the
+	// map is keyed by config name, so re-key when it does to keep both addressing
+	// dimensions (ID and config name) consistent.
+	if descriptor.ConfigName != key.configName {
+		delete(s.connections, key)
+		key = connectionKey{scope: key.scope, configName: descriptor.ConfigName}
+	}
+
+	s.connections[key] = updated
+
+	return nil
+}
+
+// DeleteByID removes the connection addressed by the opaque ID within the tenant
+// scope. A missing ID yields the Engine's not-found rule. The harness models a
+// hard map delete; the production adapter maps this to the Manager's SOFT delete.
+func (s *ConnectionStore) DeleteByID(
+	_ context.Context,
+	tenant engine.TenantContext,
+	id string,
+) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, key, found := s.findByIDLocked(scopeOf(tenant), id)
+	if !found {
+		return engine.NewEngineError(engine.CategoryNotFound, "connection not found")
+	}
+
+	delete(s.connections, key)
+
+	return nil
+}
+
+// ListPaged implements the OPAQUE-params paginated list. The harness does not
+// interpret the params (it has no real pagination concept); it returns the full
+// tenant set with Total set to the item count, which is enough to exercise the
+// Engine's tenant-scope-only delegation. The production adapter reproduces the
+// Manager's exact pagination behavior.
+func (s *ConnectionStore) ListPaged(
+	_ context.Context,
+	tenant engine.TenantContext,
+	_ engine.ConnectionListParams,
+) (engine.ConnectionPage, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	items := s.scopedDescriptorsLocked(scopeOf(tenant))
+
+	return engine.ConnectionPage{Items: items, Total: int64(len(items))}, nil
+}
+
+// scopedDescriptorsLocked returns the tenant's descriptors sorted by config name
+// for deterministic output. Callers must hold at least the read lock.
+func (s *ConnectionStore) scopedDescriptorsLocked(scope tenantScope) []engine.ConnectionDescriptor {
 	descriptors := make([]engine.ConnectionDescriptor, 0)
 
 	for key, stored := range s.connections {
@@ -208,7 +310,24 @@ func (s *ConnectionStore) List(
 		return descriptors[i].ConfigName < descriptors[j].ConfigName
 	})
 
-	return descriptors, nil
+	return descriptors
+}
+
+// findByIDLocked resolves a stored connection by the opaque descriptor ID within
+// the tenant scope, returning it with its map key. An empty id never matches.
+// Callers must hold at least the read lock.
+func (s *ConnectionStore) findByIDLocked(scope tenantScope, id string) (storedConnection, connectionKey, bool) {
+	if id == "" {
+		return storedConnection{}, connectionKey{}, false
+	}
+
+	for key, stored := range s.connections {
+		if key.scope == scope && stored.descriptor.ID == id {
+			return stored, key, true
+		}
+	}
+
+	return storedConnection{}, connectionKey{}, false
 }
 
 // executionKey identifies a stored execution within its tenant scope.

@@ -12,6 +12,7 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/engine"
 	"github.com/LerianStudio/fetcher/pkg/enginecompat/connectioncompat"
 	"github.com/LerianStudio/fetcher/pkg/model"
+	netHTTP "github.com/LerianStudio/fetcher/pkg/net/http"
 	connPort "github.com/LerianStudio/fetcher/pkg/ports/connection"
 
 	"github.com/google/uuid"
@@ -286,6 +287,239 @@ func TestConnectionStore_FindReturnsNotFoundAsAbsent(t *testing.T) {
 	_, found, err := store.FindConnection(context.Background(), mustTenant(t, "tenant-a"), "ghost")
 	require.NoError(t, err)
 	assert.False(t, found)
+}
+
+// TestConnectionStore_FindByID_ResolvesViaUUID proves the ID-addressed lookup
+// parses the opaque id back to the Manager's uuid.UUID and resolves through
+// repo.FindByID, packing the rich record losslessly.
+func TestConnectionStore_FindByID_ResolvesViaUUID(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	repo := connPort.NewMockRepository(ctrl)
+	existing := richConnection("pg-main")
+
+	repo.EXPECT().FindByID(gomock.Any(), existing.ID).Return(existing, nil)
+
+	store := connectioncompat.NewConnectionStore(repo)
+	got, found, err := store.FindByID(context.Background(), mustTenant(t, "tenant-a"), existing.ID.String())
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, existing, connectioncompat.ConnectionFromDescriptor(got))
+}
+
+// TestConnectionStore_FindByID_SoftDeletedIsAbsent proves a soft-deleted
+// connection (repo returns nil because of the deleted_at filter) reports
+// found=false, so routing by id never resurfaces a deleted record.
+func TestConnectionStore_FindByID_SoftDeletedIsAbsent(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	repo := connPort.NewMockRepository(ctrl)
+	id := uuid.New()
+	repo.EXPECT().FindByID(gomock.Any(), id).Return(nil, nil)
+
+	store := connectioncompat.NewConnectionStore(repo)
+	_, found, err := store.FindByID(context.Background(), mustTenant(t, "tenant-a"), id.String())
+	require.NoError(t, err)
+	assert.False(t, found)
+}
+
+// TestConnectionStore_FindByID_UnparseableIDIsAbsent proves a non-UUID opaque id
+// is reported as found=false (the Engine maps it to its byte-safe not-found
+// rule) WITHOUT touching the repo — the existence oracle never distinguishes a
+// malformed id from a missing one.
+func TestConnectionStore_FindByID_UnparseableIDIsAbsent(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	repo := connPort.NewMockRepository(ctrl) // no calls expected
+	store := connectioncompat.NewConnectionStore(repo)
+
+	_, found, err := store.FindByID(context.Background(), mustTenant(t, "tenant-a"), "not-a-uuid")
+	require.NoError(t, err)
+	assert.False(t, found)
+}
+
+// TestConnectionStore_FindByID_PropagatesRepoError proves a repo error on the
+// id-addressed read surfaces unchanged.
+func TestConnectionStore_FindByID_PropagatesRepoError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	repoErr := errors.New("mongo down")
+	repo := connPort.NewMockRepository(ctrl)
+	id := uuid.New()
+	repo.EXPECT().FindByID(gomock.Any(), id).Return(nil, repoErr)
+
+	store := connectioncompat.NewConnectionStore(repo)
+	_, _, err := store.FindByID(context.Background(), mustTenant(t, "tenant-a"), id.String())
+	require.ErrorIs(t, err, repoErr)
+}
+
+// TestConnectionStore_UpdateByID_MapsToRepoUpdate proves the id-addressed update
+// lands on the Manager's UUID-keyed repo Update with the patched rich record
+// reconstructed from the opaque payload (UUID identity preserved, no field loss).
+func TestConnectionStore_UpdateByID_MapsToRepoUpdate(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	repo := connPort.NewMockRepository(ctrl)
+	updatedRich := richConnection("pg-main")
+	updatedRich.Host = "new-host.internal"
+
+	repo.EXPECT().Update(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, c *model.Connection) (*model.Connection, error) {
+			assert.Equal(t, "new-host.internal", c.Host)
+			assert.Equal(t, updatedRich.ID, c.ID, "UUID identity must be preserved through the seam")
+			return c, nil
+		})
+
+	store := connectioncompat.NewConnectionStore(repo)
+	desc := connectioncompat.DescriptorFromConnection(updatedRich)
+
+	require.NoError(t, store.UpdateByID(context.Background(), mustTenant(t, "tenant-a"), updatedRich.ID.String(), desc, nil))
+}
+
+// TestConnectionStore_UpdateByID_RequiresPackedRecord proves UpdateByID refuses a
+// bare descriptor (no opaque host record), mapping it to the validation rule.
+func TestConnectionStore_UpdateByID_RequiresPackedRecord(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	store := connectioncompat.NewConnectionStore(connPort.NewMockRepository(ctrl))
+	err := store.UpdateByID(context.Background(), mustTenant(t, "tenant-a"), uuid.New().String(), engine.ConnectionDescriptor{ConfigName: "x"}, nil)
+
+	var engErr *engine.EngineError
+	require.True(t, errors.As(err, &engErr))
+	assert.Equal(t, engine.CategoryValidation, engErr.Category)
+}
+
+// TestConnectionStore_UpdateByID_VanishedRecordMapsToNotFound proves that when
+// repo.Update returns (nil, nil) — the record no longer matches the non-deleted
+// filter (e.g. soft-deleted between read and write) — the adapter maps it to the
+// Engine's not-found rule rather than a fake-success returning the stale record.
+func TestConnectionStore_UpdateByID_VanishedRecordMapsToNotFound(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	repo := connPort.NewMockRepository(ctrl)
+	rich := richConnection("pg-main")
+	repo.EXPECT().Update(gomock.Any(), gomock.Any()).Return(nil, nil)
+
+	store := connectioncompat.NewConnectionStore(repo)
+	err := store.UpdateByID(context.Background(), mustTenant(t, "tenant-a"), rich.ID.String(),
+		connectioncompat.DescriptorFromConnection(rich), nil)
+
+	var engErr *engine.EngineError
+	require.True(t, errors.As(err, &engErr))
+	assert.Equal(t, engine.CategoryNotFound, engErr.Category)
+}
+
+// TestConnectionStore_DeleteByID_SoftDeletesViaUUID proves the id-addressed
+// delete parses the opaque id and maps to the Manager's UUID-keyed SOFT delete
+// (deleted_at), never a hard delete.
+func TestConnectionStore_DeleteByID_SoftDeletesViaUUID(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	repo := connPort.NewMockRepository(ctrl)
+	id := uuid.New()
+	repo.EXPECT().Delete(gomock.Any(), id, gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ uuid.UUID, deletedAt time.Time) error {
+			assert.False(t, deletedAt.IsZero(), "soft-delete must carry a deleted_at timestamp")
+			return nil
+		})
+
+	store := connectioncompat.NewConnectionStore(repo)
+	require.NoError(t, store.DeleteByID(context.Background(), mustTenant(t, "tenant-a"), id.String()))
+}
+
+// TestConnectionStore_DeleteByID_UnparseableIDIsNotFound proves a non-UUID id
+// surfaces the not-found category without touching the repo.
+func TestConnectionStore_DeleteByID_UnparseableIDIsNotFound(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	store := connectioncompat.NewConnectionStore(connPort.NewMockRepository(ctrl))
+	err := store.DeleteByID(context.Background(), mustTenant(t, "tenant-a"), "not-a-uuid")
+
+	var engErr *engine.EngineError
+	require.True(t, errors.As(err, &engErr))
+	assert.Equal(t, engine.CategoryNotFound, engErr.Category)
+}
+
+// TestConnectionStore_ListPaged_ReproducesRepoPagination proves ListPaged unpacks
+// the host's native QueryHeader from the opaque params, runs repo.List with the
+// EXACT filters, and returns the page + total verbatim — the Manager's
+// pagination behavior is reproduced. Each rich record round-trips losslessly.
+func TestConnectionStore_ListPaged_ReproducesRepoPagination(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	repo := connPort.NewMockRepository(ctrl)
+	a := richConnection("pg-a")
+	b := richConnection("pg-b")
+
+	filters := netHTTP.QueryHeader{Limit: 10, Page: 2, ProductName: "plugin_crm", Type: "POSTGRESQL"}
+	repo.EXPECT().List(gomock.Any(), filters).Return([]*model.Connection{a, b}, int64(42), nil)
+
+	store := connectioncompat.NewConnectionStore(repo)
+	page, err := store.ListPaged(context.Background(), mustTenant(t, "tenant-a"), engine.ConnectionListParams{Filter: filters})
+	require.NoError(t, err)
+
+	assert.Equal(t, int64(42), page.Total, "total must be the repo total verbatim")
+	require.Len(t, page.Items, 2)
+	assert.Equal(t, a, connectioncompat.ConnectionFromDescriptor(page.Items[0]))
+	assert.Equal(t, b, connectioncompat.ConnectionFromDescriptor(page.Items[1]))
+}
+
+// TestConnectionStore_ListPaged_EmptyPage proves an empty page round-trips (no
+// items, zero total) — the last-page / no-results edge case.
+func TestConnectionStore_ListPaged_EmptyPage(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	repo := connPort.NewMockRepository(ctrl)
+	filters := netHTTP.QueryHeader{Limit: 10, Page: 99}
+	repo.EXPECT().List(gomock.Any(), filters).Return([]*model.Connection{}, int64(0), nil)
+
+	store := connectioncompat.NewConnectionStore(repo)
+	page, err := store.ListPaged(context.Background(), mustTenant(t, "tenant-a"), engine.ConnectionListParams{Filter: filters})
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), page.Total)
+	assert.Empty(t, page.Items)
+}
+
+// TestConnectionStore_ListPaged_MalformedParamsIsValidationError proves a missing
+// or wrong-typed opaque filter maps to the Engine's validation rule rather than a
+// silent unfiltered list.
+func TestConnectionStore_ListPaged_MalformedParamsIsValidationError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	store := connectioncompat.NewConnectionStore(connPort.NewMockRepository(ctrl))
+	_, err := store.ListPaged(context.Background(), mustTenant(t, "tenant-a"), engine.ConnectionListParams{Filter: "not-a-query-header"})
+
+	var engErr *engine.EngineError
+	require.True(t, errors.As(err, &engErr))
+	assert.Equal(t, engine.CategoryValidation, engErr.Category)
+}
+
+// TestConnectionStore_ListPaged_PropagatesRepoError proves a repo list error
+// surfaces unchanged.
+func TestConnectionStore_ListPaged_PropagatesRepoError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	repoErr := errors.New("mongo down")
+	repo := connPort.NewMockRepository(ctrl)
+	filters := netHTTP.QueryHeader{Limit: 10, Page: 1}
+	repo.EXPECT().List(gomock.Any(), filters).Return(nil, int64(0), repoErr)
+
+	store := connectioncompat.NewConnectionStore(repo)
+	_, err := store.ListPaged(context.Background(), mustTenant(t, "tenant-a"), engine.ConnectionListParams{Filter: filters})
+	require.ErrorIs(t, err, repoErr)
 }
 
 func mustTenant(t *testing.T, id string) engine.TenantContext {

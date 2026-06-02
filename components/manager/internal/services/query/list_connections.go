@@ -5,13 +5,12 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/LerianStudio/lib-observability"
-
 	"github.com/LerianStudio/fetcher/pkg/engine"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/net/http"
 	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
 	"github.com/LerianStudio/fetcher/pkg/resolver"
+	observability "github.com/LerianStudio/lib-observability"
 
 	libLog "github.com/LerianStudio/lib-observability/log"
 	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
@@ -59,7 +58,13 @@ func (s *ListConnections) Execute(ctx context.Context, productName string, filte
 		libOpentelemetry.HandleSpanError(span, "Failed to convert fetcher input to JSON string", err)
 	}
 
-	list, totalCount, err := s.connRepo.List(ctx, filters)
+	// Route the paginated, filtered external list through the Engine's
+	// ID-addressed ListConnectionsPaged op: the Engine validates the tenant scope
+	// and delegates to ConnectionStore.ListPaged -> repo.List, carrying the host's
+	// QueryHeader as OPAQUE params. The adapter reproduces the Manager's exact
+	// pagination; the resolver-merge + total math below stays Manager-side and
+	// byte-identical.
+	list, totalCount, err := listConnectionsViaEngine(ctx, s.engine, filters)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to list connections", err)
 		return nil, fmt.Errorf("failed to list connections: %w", err)

@@ -12,6 +12,7 @@ import (
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/engine"
+	"github.com/LerianStudio/fetcher/pkg/enginecompat/connectioncompat"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
 
@@ -165,11 +166,12 @@ func (r *recordingObservability) seen(op string) bool {
 	return false
 }
 
-func engineWithObservability(t *testing.T, obs engine.Observability, checker engine.ActiveExecutionChecker) *engine.Engine {
+func engineWithObservability(t *testing.T, obs engine.Observability, checker engine.ActiveExecutionChecker, connRepo connRepo.Repository) *engine.Engine {
 	t.Helper()
 
 	eng, err := engine.New(
 		engine.WithConnectorRegistry(stubConnectorRegistry{}),
+		engine.WithConnectionStore(connectioncompat.NewConnectionStore(connRepo)),
 		engine.WithActiveExecutionChecker(checker),
 		engine.WithObservability(obs),
 	)
@@ -197,11 +199,13 @@ func TestUpdateConnection_RoutesScopeAuthorityThroughEngine(t *testing.T) {
 	mockConnRepo.EXPECT().Update(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, c *model.Connection) (*model.Connection, error) { return c, nil })
 
-	svc := NewUpdateConnection(mockConnRepo, nil, mockCrypto, engineWithObservability(t, obs, spy))
+	svc := NewUpdateConnection(mockConnRepo, nil, mockCrypto, engineWithObservability(t, obs, spy, mockConnRepo))
 
 	_, err := svc.Execute(testContext(), connID, newUpdateConnectionInput())
 	require.NoError(t, err)
 	assert.True(t, obs.seen("engine.connection.authorize_access"), "update must route the scope authority through the Engine")
+	assert.True(t, obs.seen("engine.connection.get_by_id"), "update must route its read PERSISTENCE through the Engine ID-addressed op")
+	assert.True(t, obs.seen("engine.connection.update_by_id"), "update must route its write PERSISTENCE through the Engine ID-addressed op")
 }
 
 // TestDeleteConnection_RoutesScopeAuthorityThroughEngine proves delete consults
@@ -220,8 +224,10 @@ func TestDeleteConnection_RoutesScopeAuthorityThroughEngine(t *testing.T) {
 	mockConnRepo.EXPECT().FindByID(gomock.Any(), connID).Return(existing, nil)
 	mockConnRepo.EXPECT().Delete(gomock.Any(), connID, gomock.Any()).Return(nil)
 
-	svc := NewDeleteConnection(mockConnRepo, nil, engineWithObservability(t, obs, spy))
+	svc := NewDeleteConnection(mockConnRepo, nil, engineWithObservability(t, obs, spy, mockConnRepo))
 
 	require.NoError(t, svc.Execute(testContext(), connID))
 	assert.True(t, obs.seen("engine.connection.authorize_access"), "delete must route the scope authority through the Engine")
+	assert.True(t, obs.seen("engine.connection.get_by_id"), "delete must route its read PERSISTENCE through the Engine ID-addressed op")
+	assert.True(t, obs.seen("engine.connection.delete_by_id"), "delete must route its SOFT delete PERSISTENCE through the Engine ID-addressed op")
 }

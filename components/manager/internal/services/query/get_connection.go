@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/LerianStudio/lib-observability"
+	observability "github.com/LerianStudio/lib-observability"
 
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
@@ -43,8 +43,10 @@ func (s *GetConnection) Execute(ctx context.Context, connectionID uuid.UUID) (*m
 	)
 
 	// Route the per-request tenant-scope authority through the Engine before any
-	// read. The Manager keeps its UUID identity + internal-datasource registry
-	// resolution; the Engine owns only the scope rule.
+	// read. This is the single scope gate for the internal-datasource branch
+	// (which is a resolver concern, never persisted); the external read below
+	// routes its PERSISTENCE through the Engine's ID-addressed op, which also
+	// re-validates the scope as part of resolving through the store.
 	if err := authorizeConnectionAccess(ctx, s.engine); err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to authorize tenant scope", err)
 		return nil, err
@@ -72,8 +74,10 @@ func (s *GetConnection) Execute(ctx context.Context, connectionID uuid.UUID) (*m
 		}
 	}
 
-	// Fallback to MongoDB lookup for external connections
-	current, err := s.connRepo.FindByID(ctx, connectionID)
+	// Fallback to the external connection read, routed through the Engine's
+	// ID-addressed op (Engine tenant-scope + ConnectionStore.FindByID ->
+	// repo.FindByID). The rich record round-trips through the opaque host payload.
+	current, err := getConnectionByIDViaEngine(ctx, s.engine, connectionID)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to find connection by ID", err)
 		return nil, fmt.Errorf("failed to find connection by id: %w", err)

@@ -30,27 +30,33 @@ func connectionEngineForConnRepo(t *testing.T, connRepo connPort.Repository, job
 	return eng
 }
 
-// scopeAuthorityEngine builds the minimal Engine read services route their
-// tenant-scope authority through. Get/List keep their own persistence, so no
-// ConnectionStore is wired.
-func scopeAuthorityEngine(t *testing.T) *engine.Engine {
+// scopeAuthorityEngine builds the connection-authority Engine the read services
+// route their PERSISTENCE through after the read-path deepening: Get's external
+// fallback flows through FindByID and List through ListConnectionsPaged, both
+// landing on the supplied connection repo via the connectioncompat adapter.
+// Handler tests pass the same mock repo they assert on.
+func scopeAuthorityEngine(t *testing.T, connRepo connPort.Repository) *engine.Engine {
 	t.Helper()
 
-	eng, err := engine.New(engine.WithConnectorRegistry(noopConnectorRegistryForTest{}))
+	eng, err := engine.New(
+		engine.WithConnectorRegistry(noopConnectorRegistryForTest{}),
+		engine.WithConnectionStore(connectioncompat.NewConnectionStore(connRepo)),
+	)
 	require.NoError(t, err)
 
 	return eng
 }
 
-// connectionEngineForJobRepo builds the connection-gate Engine the command
-// services delegate to, wired to the supplied job repository through the
-// connectioncompat adapter — mirroring the Manager bootstrap. Handler tests use
-// it to supply the Engine dependency with constructor-wiring changes only.
-func connectionEngineForJobRepo(t *testing.T, jobRepo job.Repository) *engine.Engine {
+// connectionEngineForJobRepo builds the connection-authority Engine the command
+// services delegate to, wired to BOTH the supplied connection repo (so
+// Update/Delete persistence flows through the Engine ID-addressed ops) and the
+// job repository active-execution checker — mirroring the Manager bootstrap.
+func connectionEngineForJobRepo(t *testing.T, connRepo connPort.Repository, jobRepo job.Repository) *engine.Engine {
 	t.Helper()
 
 	eng, err := engine.New(
 		engine.WithConnectorRegistry(noopConnectorRegistryForTest{}),
+		engine.WithConnectionStore(connectioncompat.NewConnectionStore(connRepo)),
 		engine.WithActiveExecutionChecker(connectioncompat.NewJobActiveExecutionChecker(jobRepo)),
 	)
 	require.NoError(t, err)

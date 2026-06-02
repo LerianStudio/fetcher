@@ -138,6 +138,150 @@ func (e *Engine) ListConnections(
 	return store.List(ctx, tenant)
 }
 
+// GetConnectionByID returns the descriptor addressed by the OPAQUE, host-owned
+// id within the tenant scope. It is the ID-addressed read the host uses when it
+// owns a UUID identity model (the Manager): the Engine validates the per-request
+// tenant scope, then resolves through ConnectionStore.FindByID. A missing or
+// soft-deleted connection yields a CategoryNotFound error — the same byte-safe
+// error an unknown id and a cross-tenant id both produce, so the existence
+// oracle never distinguishes "not yours" from "does not exist".
+func (e *Engine) GetConnectionByID(
+	ctx context.Context,
+	tenant TenantContext,
+	id string,
+) (ConnectionDescriptor, error) {
+	ctx, end := e.startSpan(ctx, "engine.connection.get_by_id")
+	defer end()
+
+	store, err := e.requireConnectionStore()
+	if err != nil {
+		return ConnectionDescriptor{}, err
+	}
+
+	if err := validateTenantScope(tenant); err != nil {
+		return ConnectionDescriptor{}, err
+	}
+
+	descriptor, found, err := store.FindByID(ctx, tenant, id)
+	if err != nil {
+		return ConnectionDescriptor{}, err
+	}
+
+	if !found {
+		return ConnectionDescriptor{}, NewEngineError(CategoryNotFound, "connection not found")
+	}
+
+	return descriptor, nil
+}
+
+// ListConnectionsPaged returns the tenant's connection page, carrying the host's
+// OPAQUE list params through to ConnectionStore.ListPaged. The Engine enforces
+// ONLY tenant scope; it neither reads nor interprets the params and returns the
+// store's page verbatim. This is the read the Manager routes its paginated,
+// filtered, resolver-merged list through: the Engine is the single tenant-scope
+// authority, the host owns the pagination mechanics.
+func (e *Engine) ListConnectionsPaged(
+	ctx context.Context,
+	tenant TenantContext,
+	params ConnectionListParams,
+) (ConnectionPage, error) {
+	ctx, end := e.startSpan(ctx, "engine.connection.list_paged")
+	defer end()
+
+	store, err := e.requireConnectionStore()
+	if err != nil {
+		return ConnectionPage{}, err
+	}
+
+	if err := validateTenantScope(tenant); err != nil {
+		return ConnectionPage{}, err
+	}
+
+	return store.ListPaged(ctx, tenant, params)
+}
+
+// UpdateConnectionByID persists the host's already-patched record addressed by
+// the OPAQUE id within the tenant scope and returns the updated secret-free
+// descriptor. It is the ID-addressed write the Manager routes through after
+// applying its own domain patch (cryptor re-encryption stays host-side): the
+// Engine validates the tenant scope, re-protects the secret only when the patch
+// carries one (encrypted persistence enabled), and delegates to
+// ConnectionStore.UpdateByID. The conflict gate is NOT re-run here — the caller
+// runs the shared CheckActiveExecutions gate against the resolved config name
+// before applying its patch, so the gate fires exactly once and keeps its
+// host-mapped error contract.
+//
+// descriptor carries the patched rich record in HostAttributes and the same
+// opaque id. A nil patch.Password leaves the stored secret intact.
+func (e *Engine) UpdateConnectionByID(
+	ctx context.Context,
+	tenant TenantContext,
+	id string,
+	descriptor ConnectionDescriptor,
+	patch ConnectionPatch,
+) (ConnectionDescriptor, error) {
+	ctx, end := e.startSpan(ctx, "engine.connection.update_by_id")
+	defer end()
+
+	store, err := e.requireConnectionStore()
+	if err != nil {
+		return ConnectionDescriptor{}, err
+	}
+
+	if err := validateTenantScope(tenant); err != nil {
+		return ConnectionDescriptor{}, err
+	}
+
+	// Re-protect the secret ONLY when the patch carries a password change and
+	// encrypted persistence is enabled. A nil credential means "no password
+	// change": ConnectionStore.UpdateByID leaves the existing stored secret
+	// intact. Protection runs BEFORE the store write so a failure leaves the store
+	// untouched (atomicity), mirroring UpdateConnection.
+	var credential *ProtectedCredential
+
+	if e.options.encryptedPersistence && patch.HasPassword() {
+		protected, err := e.protectSecret(ctx, tenant, *patch.password)
+		if err != nil {
+			return ConnectionDescriptor{}, err
+		}
+
+		credential = protected
+		descriptor.KeyVersion = protected.KeyVersion
+	}
+
+	if err := store.UpdateByID(ctx, tenant, id, descriptor, credential); err != nil {
+		return ConnectionDescriptor{}, err
+	}
+
+	return descriptor, nil
+}
+
+// DeleteConnectionByID removes the connection addressed by the OPAQUE id within
+// the tenant scope, making it unavailable for get/list/extraction selection. A
+// store that models soft-delete soft-deletes. A missing connection yields a
+// CategoryNotFound error. As with UpdateConnectionByID the conflict gate is the
+// caller's responsibility (run once via CheckActiveExecutions before delete), so
+// this op performs scope validation + the ID-addressed delete only.
+func (e *Engine) DeleteConnectionByID(
+	ctx context.Context,
+	tenant TenantContext,
+	id string,
+) error {
+	ctx, end := e.startSpan(ctx, "engine.connection.delete_by_id")
+	defer end()
+
+	store, err := e.requireConnectionStore()
+	if err != nil {
+		return err
+	}
+
+	if err := validateTenantScope(tenant); err != nil {
+		return err
+	}
+
+	return store.DeleteByID(ctx, tenant, id)
+}
+
 // ConnectionPatch carries the partially-updatable fields of a connection. A nil
 // pointer leaves the corresponding field unchanged, mirroring the Manager's
 // patch semantics. The secret is supplied through the Password pointer so it is

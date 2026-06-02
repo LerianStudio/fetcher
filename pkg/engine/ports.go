@@ -110,6 +110,33 @@ type ConnectionStore interface {
 	// List returns the connection descriptors owned by the tenant in a
 	// deterministic order. Deleted connections MUST NOT appear.
 	List(ctx context.Context, tenant TenantContext) ([]ConnectionDescriptor, error)
+
+	// FindByID returns the descriptor addressed by the OPAQUE, host-owned id
+	// within the tenant scope and whether it exists. The id is the host's own
+	// addressing token (e.g. the Manager's uuid.UUID rendered as a string); the
+	// Engine never parses or interprets it, it only tenant-scopes on it. A
+	// soft-deleted connection MUST report found=false so routing by id never
+	// resurfaces a deleted record. It never returns secret material.
+	FindByID(ctx context.Context, tenant TenantContext, id string) (ConnectionDescriptor, bool, error)
+	// UpdateByID replaces the connection addressed by the opaque id within the
+	// tenant scope. The descriptor carries the host's already-patched record (in
+	// HostAttributes) and the same opaque id identity. credential is the
+	// newly-protected secret to persist; a nil credential means NO password change
+	// and implementations MUST leave any existing stored secret intact. It MUST
+	// return a CategoryNotFound *EngineError when no connection with that id exists
+	// within the tenant scope.
+	UpdateByID(ctx context.Context, tenant TenantContext, id string, descriptor ConnectionDescriptor, credential *ProtectedCredential) error
+	// DeleteByID removes the connection addressed by the opaque id within the
+	// tenant scope. Implementations that model soft-delete MUST soft-delete (never
+	// hard delete). It MUST return a CategoryNotFound *EngineError when no
+	// connection with that id exists within the tenant scope. After deletion the
+	// connection MUST be invisible to FindByID and ListPaged.
+	DeleteByID(ctx context.Context, tenant TenantContext, id string) error
+	// ListPaged returns the connection page owned by the tenant, carrying the
+	// host's OPAQUE list params (ConnectionListParams.Filter) verbatim. The Engine
+	// enforces tenant scope only; the implementation owns pagination, filtering,
+	// ordering, and total math. Soft-deleted connections MUST NOT appear.
+	ListPaged(ctx context.Context, tenant TenantContext, params ConnectionListParams) (ConnectionPage, error)
 }
 
 // ExecutionStore is an OPTIONAL port for persisting and reading execution

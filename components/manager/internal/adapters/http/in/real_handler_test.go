@@ -86,7 +86,7 @@ func TestConnectionHandler_ListConnections_RealHandlerSuccess(t *testing.T) {
 	})
 
 	handler := &ConnectionHandler{
-		ListQuery: querySvc.NewListConnections(mockConnRepo, nil, scopeAuthorityEngine(t)),
+		ListQuery: querySvc.NewListConnections(mockConnRepo, nil, scopeAuthorityEngine(t, mockConnRepo)),
 	}
 	app.Get("/v1/management/connections", handler.ListConnections)
 
@@ -126,7 +126,7 @@ func TestConnectionHandler_UpdateConnection_RealHandlerSuccess(t *testing.T) {
 	})
 
 	handler := &ConnectionHandler{
-		UpdateCmd: commandSvc.NewUpdateConnection(mockConnRepo, mockJobRepo, nil, connectionEngineForJobRepo(t, mockJobRepo)),
+		UpdateCmd: commandSvc.NewUpdateConnection(mockConnRepo, mockJobRepo, nil, connectionEngineForJobRepo(t, mockConnRepo, mockJobRepo)),
 	}
 	app.Patch("/v1/management/connections/:id", handler.UpdateConnection)
 

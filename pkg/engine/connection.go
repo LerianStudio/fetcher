@@ -176,6 +176,36 @@ type ConnectionDescriptor struct {
 	HostAttributes map[string]any `json:"-"`
 }
 
+// ConnectionListParams is the OPAQUE list-mechanics carrier the Engine forwards
+// to ConnectionStore.ListPaged without interpreting a single field. It exists so
+// a host with a richer read surface than the Engine's flat List — the Manager's
+// paginated, filtered, resolver-merged connection list — can carry its native
+// filter/pagination object THROUGH the Engine's tenant-scoped read authority
+// without the Engine learning what a page, a limit, a product filter, or a sort
+// key is. The Engine enforces ONLY tenant scope, then delegates; it never reads,
+// validates, paginates, sorts, or filters on this value.
+//
+// Filter holds the host's native list parameters (e.g. the Manager's
+// net/http.QueryHeader) as an opaque any. The adapter on the host side
+// type-asserts it back to its concrete type; the Engine treats it as a black box,
+// exactly as it treats ConnectionDescriptor.HostAttributes.
+type ConnectionListParams struct {
+	Filter any
+}
+
+// ConnectionPage is the OPAQUE result the Engine returns from ListConnectionsPaged.
+// It carries the page of secret-free descriptors the store produced plus the
+// host's total count, WITHOUT the Engine interpreting either: the Engine does not
+// compute Total, does not slice Items, and does not re-order them. It returns
+// verbatim whatever ConnectionStore.ListPaged produced, so the host's exact
+// pagination behavior (page size, total math, ordering) remains the host's
+// contract. Each descriptor's HostAttributes carries the host's rich record for a
+// lossless round-trip, identical to the single-record paths.
+type ConnectionPage struct {
+	Items []ConnectionDescriptor
+	Total int64
+}
+
 // DescriptorFromInput projects a ConnectionInput onto a secret-free descriptor.
 func DescriptorFromInput(input ConnectionInput) ConnectionDescriptor {
 	return ConnectionDescriptor{

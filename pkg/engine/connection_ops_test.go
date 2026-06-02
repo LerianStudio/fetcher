@@ -578,6 +578,22 @@ func (failingStore) List(context.Context, engine.TenantContext) ([]engine.Connec
 	return nil, engine.NewEngineError(engine.CategoryUnavailable, "store down")
 }
 
+func (failingStore) FindByID(context.Context, engine.TenantContext, string) (engine.ConnectionDescriptor, bool, error) {
+	return engine.ConnectionDescriptor{}, false, engine.NewEngineError(engine.CategoryUnavailable, "store down")
+}
+
+func (failingStore) UpdateByID(context.Context, engine.TenantContext, string, engine.ConnectionDescriptor, *engine.ProtectedCredential) error {
+	return engine.NewEngineError(engine.CategoryUnavailable, "store down")
+}
+
+func (failingStore) DeleteByID(context.Context, engine.TenantContext, string) error {
+	return engine.NewEngineError(engine.CategoryUnavailable, "store down")
+}
+
+func (failingStore) ListPaged(context.Context, engine.TenantContext, engine.ConnectionListParams) (engine.ConnectionPage, error) {
+	return engine.ConnectionPage{}, engine.NewEngineError(engine.CategoryUnavailable, "store down")
+}
+
 func TestEngine_ConnectionOps_PropagateStoreErrors(t *testing.T) {
 	t.Parallel()
 

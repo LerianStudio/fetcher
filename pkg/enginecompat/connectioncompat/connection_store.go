@@ -11,6 +11,8 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/model"
 	netHTTP "github.com/LerianStudio/fetcher/pkg/net/http"
 	connPort "github.com/LerianStudio/fetcher/pkg/ports/connection"
+
+	"github.com/google/uuid"
 )
 
 // listAllPageSize is the page size the port-completeness List uses to fetch the
@@ -229,4 +231,122 @@ func (s *ConnectionStore) List(
 	}
 
 	return descriptors, nil
+}
+
+// FindByID implements the ID-addressed engine.ConnectionStore lookup. The Engine
+// hands the opaque host id (the Manager's uuid.UUID rendered as a string); the
+// adapter parses it back to a uuid.UUID and resolves through the Manager's
+// UUID-keyed repo (already tenant-scoped via the request context). A parse
+// failure or a missing/soft-deleted connection reports found=false so the Engine
+// maps it to its byte-safe not-found rule — routing by id never resurfaces a
+// soft-deleted record because repo.FindByID applies the deleted_at filter.
+func (s *ConnectionStore) FindByID(
+	ctx context.Context,
+	_ engine.TenantContext,
+	id string,
+) (engine.ConnectionDescriptor, bool, error) {
+	connID, parseErr := uuid.Parse(id)
+	if parseErr != nil {
+		// A malformed opaque id is treated as "not found", NOT a propagated error:
+		// the existence oracle must never distinguish a malformed id from a missing
+		// one. The parse error carries no tenant-safe signal, so it is deliberately
+		// discarded (the Engine maps found=false to its byte-safe not-found rule).
+		//nolint:nilerr // intentional: malformed id is an absence, not a surfaced error (existence oracle).
+		return engine.ConnectionDescriptor{}, false, nil
+	}
+
+	conn, err := s.repo.FindByID(ctx, connID)
+	if err != nil {
+		return engine.ConnectionDescriptor{}, false, err
+	}
+
+	if conn == nil {
+		return engine.ConnectionDescriptor{}, false, nil
+	}
+
+	return DescriptorFromConnection(conn), true, nil
+}
+
+// UpdateByID implements the ID-addressed engine.ConnectionStore write. The rich
+// record carried in the opaque payload already holds the host-patched,
+// re-encrypted state and the original UUID identity, so the adapter persists it
+// through the Manager's UUID-keyed repo Update directly — no second read, no
+// identity loss. The id argument is the same opaque token; the persisted record
+// carries the authoritative UUID.
+func (s *ConnectionStore) UpdateByID(
+	ctx context.Context,
+	_ engine.TenantContext,
+	_ string,
+	descriptor engine.ConnectionDescriptor,
+	_ *engine.ProtectedCredential,
+) error {
+	conn := ConnectionFromDescriptor(descriptor)
+	if conn == nil {
+		return engine.NewEngineError(engine.CategoryValidation, "connection record is missing from descriptor")
+	}
+
+	updated, err := s.repo.Update(ctx, conn)
+	if err != nil {
+		return err
+	}
+
+	// repo.Update returns (nil, nil) when the record no longer matches the
+	// non-deleted filter — e.g. it was soft-deleted between the read and the write
+	// (TOCTOU). The Manager's pre-delegation contract surfaced this as not-found
+	// rather than a fake-success returning the stale record, so the adapter maps it
+	// to the Engine's not-found rule to keep the public response byte-identical.
+	if updated == nil {
+		return engine.NewEngineError(engine.CategoryNotFound, "connection not found")
+	}
+
+	return nil
+}
+
+// DeleteByID implements the ID-addressed engine.ConnectionStore delete. The
+// adapter parses the opaque id back to the Manager's uuid.UUID and maps the
+// Engine's delete to a SOFT delete (deleted_at = now) — never a hard delete. An
+// unparseable id is the Engine's not-found rule.
+func (s *ConnectionStore) DeleteByID(
+	ctx context.Context,
+	_ engine.TenantContext,
+	id string,
+) error {
+	connID, err := uuid.Parse(id)
+	if err != nil {
+		return engine.NewEngineError(engine.CategoryNotFound, "connection not found")
+	}
+
+	return s.repo.Delete(ctx, connID, time.Now().UTC())
+}
+
+// ListPaged implements the OPAQUE-params paginated list. It unpacks the host's
+// native net/http.QueryHeader from the opaque ConnectionListParams.Filter and
+// runs the Manager's UUID-keyed, tenant-scoped repo List with the EXACT filters
+// and pagination the Manager built — so the public pagination behavior (page
+// size, total, ordering, product/type filter) is reproduced byte-identically.
+// Each rich record is packed into its descriptor's opaque payload for a lossless
+// round-trip; the Manager unpacks them and applies its resolver-merge + total
+// math on top. A missing or wrong-typed filter is a programming error mapped to
+// the Engine's validation rule rather than a silent unfiltered list.
+func (s *ConnectionStore) ListPaged(
+	ctx context.Context,
+	_ engine.TenantContext,
+	params engine.ConnectionListParams,
+) (engine.ConnectionPage, error) {
+	filters, ok := params.Filter.(netHTTP.QueryHeader)
+	if !ok {
+		return engine.ConnectionPage{}, engine.NewEngineError(engine.CategoryValidation, "connection list params are missing or malformed")
+	}
+
+	conns, total, err := s.repo.List(ctx, filters)
+	if err != nil {
+		return engine.ConnectionPage{}, err
+	}
+
+	items := make([]engine.ConnectionDescriptor, 0, len(conns))
+	for _, conn := range conns {
+		items = append(items, DescriptorFromConnection(conn))
+	}
+
+	return engine.ConnectionPage{Items: items, Total: total}, nil
 }

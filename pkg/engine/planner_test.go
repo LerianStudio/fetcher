@@ -1703,6 +1703,22 @@ func (s *countingStore) List(ctx context.Context, tenant engine.TenantContext) (
 	return s.inner.List(ctx, tenant)
 }
 
+func (s *countingStore) FindByID(ctx context.Context, tenant engine.TenantContext, id string) (engine.ConnectionDescriptor, bool, error) {
+	return s.inner.FindByID(ctx, tenant, id)
+}
+
+func (s *countingStore) UpdateByID(ctx context.Context, tenant engine.TenantContext, id string, descriptor engine.ConnectionDescriptor, credential *engine.ProtectedCredential) error {
+	return s.inner.UpdateByID(ctx, tenant, id, descriptor, credential)
+}
+
+func (s *countingStore) DeleteByID(ctx context.Context, tenant engine.TenantContext, id string) error {
+	return s.inner.DeleteByID(ctx, tenant, id)
+}
+
+func (s *countingStore) ListPaged(ctx context.Context, tenant engine.TenantContext, params engine.ConnectionListParams) (engine.ConnectionPage, error) {
+	return s.inner.ListPaged(ctx, tenant, params)
+}
+
 // engineWithExplicitStore wires an Engine around an explicit ConnectionStore (e.g. a
 // countingStore) with the given limits, registering the factory under
 // "postgres".

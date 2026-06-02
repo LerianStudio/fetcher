@@ -3,15 +3,13 @@ package command
 import (
 	"context"
 	"fmt"
-	"time"
-
-	"github.com/LerianStudio/lib-observability"
 
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/engine"
 	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
 	"github.com/LerianStudio/fetcher/pkg/ports/job"
+	observability "github.com/LerianStudio/lib-observability"
 
 	libLog "github.com/LerianStudio/lib-observability/log"
 	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
@@ -45,16 +43,17 @@ func (s *DeleteConnection) Execute(ctx context.Context, connectionID uuid.UUID) 
 		attribute.String("app.request.connection_id", connectionID.String()),
 	)
 
-	// Route the per-request tenant-scope authority through the Engine before any
-	// read or mutation, symmetric with UpdateConnection. Delete keeps its
-	// UUID-keyed soft-delete persistence; the Engine owns the scope rule and the
-	// active-execution conflict gate.
+	// Route the per-request tenant-scope authority AND persistence through the
+	// Engine, symmetric with UpdateConnection. Delete's read flows through the
+	// Engine's ID-addressed FindByID and the SOFT delete through DeleteByID (the
+	// connectioncompat adapter maps it to repo.Delete with a deleted_at stamp).
+	// The Manager keeps its conflict gate and HTTP mapping.
 	if err := authorizeConnectionAccess(ctx, s.engine); err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to authorize tenant scope", err)
 		return err
 	}
 
-	current, err := s.connRepo.FindByID(ctx, connectionID)
+	current, err := getConnectionByIDViaEngine(ctx, s.engine, connectionID)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to find connection by ID", err)
 		return fmt.Errorf("failed to find connection by id: %w", err)
@@ -81,7 +80,7 @@ func (s *DeleteConnection) Execute(ctx context.Context, connectionID uuid.UUID) 
 		return fmt.Errorf("failed to check for active jobs: %w", err)
 	}
 
-	if err := s.connRepo.Delete(ctx, connectionID, time.Now().UTC()); err != nil {
+	if err := deleteConnectionByIDViaEngine(ctx, s.engine, connectionID); err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to delete connection", err)
 		return fmt.Errorf("failed to delete connection: %w", err)
 	}

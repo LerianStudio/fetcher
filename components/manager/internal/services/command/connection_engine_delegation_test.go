@@ -39,13 +39,17 @@ func (s *spyActiveExecutionChecker) HasActiveExecutions(_ context.Context, tenan
 }
 
 // newTestEngine builds an Engine wired with the supplied active-execution
-// checker. A stub connector registry satisfies the Engine's only REQUIRED port;
-// connection persistence stays in the Manager, so no ConnectionStore is wired.
-func newTestEngine(t *testing.T, checker engine.ActiveExecutionChecker) *engine.Engine {
+// checker AND a ConnectionStore over the supplied connection repo. After the
+// read-path deepening, Update/Delete route their persistence (FindByID/Update/
+// DeleteByID) through the Engine, so the store must be present for the mock
+// repo expectations to land through the Engine gate. A stub connector registry
+// satisfies the Engine's only other REQUIRED port.
+func newTestEngine(t *testing.T, checker engine.ActiveExecutionChecker, connRepo connRepo.Repository) *engine.Engine {
 	t.Helper()
 
 	eng, err := engine.New(
 		engine.WithConnectorRegistry(stubConnectorRegistry{}),
+		engine.WithConnectionStore(connectioncompat.NewConnectionStore(connRepo)),
 		engine.WithActiveExecutionChecker(checker),
 	)
 	require.NoError(t, err)
@@ -70,7 +74,7 @@ func TestUpdateConnection_DelegatesConflictGateToEngine(t *testing.T) {
 	mockCrypto.EXPECT().Encrypt(gomock.Any(), gomock.Any()).Return("enc", "v1", nil).AnyTimes()
 
 	spy := &spyActiveExecutionChecker{active: false}
-	eng := newTestEngine(t, spy)
+	eng := newTestEngine(t, spy, mockConnRepo)
 
 	svc := NewUpdateConnection(mockConnRepo, mockJobRepo, mockCrypto, eng)
 
@@ -110,7 +114,7 @@ func TestUpdateConnection_EngineGateBlocksActiveJobs(t *testing.T) {
 	mockCrypto.EXPECT().Encrypt(gomock.Any(), gomock.Any()).Return("enc", "v1", nil).AnyTimes()
 
 	spy := &spyActiveExecutionChecker{active: true}
-	eng := newTestEngine(t, spy)
+	eng := newTestEngine(t, spy, mockConnRepo)
 
 	svc := NewUpdateConnection(mockConnRepo, mockJobRepo, mockCrypto, eng)
 
@@ -126,35 +130,13 @@ func TestUpdateConnection_EngineGateBlocksActiveJobs(t *testing.T) {
 	assert.True(t, spy.called)
 }
 
-// TestUpdateConnection_NilEngineSkipsGate proves a service constructed without
-// an Engine (defensive guard) skips the gate rather than panicking: the update
-// proceeds straight to persistence.
-func TestUpdateConnection_NilEngineSkipsGate(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockJobRepo := jobRepo.NewMockRepository(ctrl)
-	mockCrypto := crypto.NewMockCryptor(ctrl)
-	mockCrypto.EXPECT().Encrypt(gomock.Any(), gomock.Any()).Return("enc", "v1", nil).AnyTimes()
-
-	svc := NewUpdateConnection(mockConnRepo, mockJobRepo, mockCrypto, nil)
-
-	ctx := testContext()
-	connID := uuid.New()
-	existingConn := newExistingConnection(connID)
-
-	mockConnRepo.EXPECT().FindByID(gomock.Any(), connID).Return(existingConn, nil)
-	mockConnRepo.EXPECT().
-		Update(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, conn *model.Connection) (*model.Connection, error) {
-			return conn, nil
-		})
-
-	result, err := svc.Execute(ctx, connID, newUpdateConnectionInput())
-	require.NoError(t, err)
-	require.NotNil(t, result)
-}
+// NOTE: the pre-deepening TestUpdateConnection_NilEngineSkipsGate was removed in
+// this commit. Its premise — "a nil Engine skips the gate and the update
+// proceeds straight to the Manager's own persistence" — no longer exists once
+// Update routes its PERSISTENCE (FindByID/Update) through the Engine. There is no
+// Manager-side persistence path to fall back to, so a nil Engine is not a valid
+// Update construction; the assembled Manager always wires the connection-authority
+// Engine (see bootstrap.connectionEngine).
 
 // TestUpdateConnection_EngineCheckerFailureWrapsError proves a checker (job
 // repo) failure surfaced through the Engine is wrapped so the existing
@@ -174,7 +156,7 @@ func TestUpdateConnection_EngineCheckerFailureWrapsError(t *testing.T) {
 		ExistsRunningByMappedFieldKey(gomock.Any(), gomock.Any()).
 		Return(false, repoErr)
 
-	svc := NewUpdateConnection(mockConnRepo, mockJobRepo, mockCrypto, engineForJobRepo(t, mockJobRepo))
+	svc := NewUpdateConnection(mockConnRepo, mockJobRepo, mockCrypto, engineForConnRepo(t, mockConnRepo, mockJobRepo))
 
 	ctx := testContext()
 	connID := uuid.New()
@@ -196,7 +178,7 @@ func TestDeleteConnection_DelegatesConflictGateToEngine(t *testing.T) {
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 
 	spy := &spyActiveExecutionChecker{active: false}
-	eng := newTestEngine(t, spy)
+	eng := newTestEngine(t, spy, mockConnRepo)
 
 	svc := NewDeleteConnection(mockConnRepo, mockJobRepo, eng)
 

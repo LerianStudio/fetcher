@@ -39,7 +39,7 @@ func TestListConnections_Execute_Success(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewListConnections(mockConnRepo, nil, scopeAuthorityEngine(t))
+	svc := NewListConnections(mockConnRepo, nil, scopeAuthorityEngine(t, mockConnRepo))
 
 	ctx := testContext()
 	filters := http.QueryHeader{
@@ -87,7 +87,7 @@ func TestListConnections_Execute_EmptyList(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewListConnections(mockConnRepo, nil, scopeAuthorityEngine(t))
+	svc := NewListConnections(mockConnRepo, nil, scopeAuthorityEngine(t, mockConnRepo))
 
 	ctx := testContext()
 	filters := http.QueryHeader{
@@ -121,7 +121,7 @@ func TestListConnections_Execute_RepositoryError(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewListConnections(mockConnRepo, nil, scopeAuthorityEngine(t))
+	svc := NewListConnections(mockConnRepo, nil, scopeAuthorityEngine(t, mockConnRepo))
 
 	ctx := testContext()
 	filters := http.QueryHeader{
@@ -158,7 +158,7 @@ func TestNewListConnections(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewListConnections(mockConnRepo, nil, scopeAuthorityEngine(t))
+	svc := NewListConnections(mockConnRepo, nil, scopeAuthorityEngine(t, mockConnRepo))
 
 	if svc == nil {
 		t.Fatal("expected non-nil service")
@@ -290,7 +290,7 @@ func TestListConnections_Execute_TableDriven(t *testing.T) {
 
 			tt.setupMocks(mockConnRepo, tt.filters)
 
-			svc := NewListConnections(mockConnRepo, nil, scopeAuthorityEngine(t))
+			svc := NewListConnections(mockConnRepo, nil, scopeAuthorityEngine(t, mockConnRepo))
 
 			result, err := svc.Execute(ctx, "", tt.filters)
 
@@ -325,7 +325,7 @@ func TestListConnections_Execute_OrganizationIsolation(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewListConnections(mockConnRepo, nil, scopeAuthorityEngine(t))
+	svc := NewListConnections(mockConnRepo, nil, scopeAuthorityEngine(t, mockConnRepo))
 
 	ctx := testContext()
 	filters := http.QueryHeader{
@@ -372,7 +372,7 @@ func TestListConnections_Execute_DifferentOrganizations(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewListConnections(mockConnRepo, nil, scopeAuthorityEngine(t))
+	svc := NewListConnections(mockConnRepo, nil, scopeAuthorityEngine(t, mockConnRepo))
 
 	ctx := testContext()
 	filters := http.QueryHeader{
@@ -429,7 +429,7 @@ func TestListConnections_Execute_WithMetadataFilter(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewListConnections(mockConnRepo, nil, scopeAuthorityEngine(t))
+	svc := NewListConnections(mockConnRepo, nil, scopeAuthorityEngine(t, mockConnRepo))
 
 	ctx := testContext()
 
@@ -469,7 +469,7 @@ func TestListConnections_Execute_WithDateFilters(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewListConnections(mockConnRepo, nil, scopeAuthorityEngine(t))
+	svc := NewListConnections(mockConnRepo, nil, scopeAuthorityEngine(t, mockConnRepo))
 
 	ctx := testContext()
 
@@ -527,7 +527,7 @@ func TestListConnections_Execute_WithSortOrder(t *testing.T) {
 
 			mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-			svc := NewListConnections(mockConnRepo, nil, scopeAuthorityEngine(t))
+			svc := NewListConnections(mockConnRepo, nil, scopeAuthorityEngine(t, mockConnRepo))
 
 			ctx := testContext()
 			filters := http.QueryHeader{
@@ -567,7 +567,7 @@ func TestListConnections_Execute_ConnectionTypes(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewListConnections(mockConnRepo, nil, scopeAuthorityEngine(t))
+	svc := NewListConnections(mockConnRepo, nil, scopeAuthorityEngine(t, mockConnRepo))
 
 	ctx := testContext()
 	filters := http.QueryHeader{
@@ -628,7 +628,7 @@ func TestListConnections_Execute_WithCursor(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewListConnections(mockConnRepo, nil, scopeAuthorityEngine(t))
+	svc := NewListConnections(mockConnRepo, nil, scopeAuthorityEngine(t, mockConnRepo))
 
 	ctx := testContext()
 	filters := http.QueryHeader{
@@ -664,7 +664,7 @@ func TestListConnections_Execute_EmptyFilters(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewListConnections(mockConnRepo, nil, scopeAuthorityEngine(t))
+	svc := NewListConnections(mockConnRepo, nil, scopeAuthorityEngine(t, mockConnRepo))
 
 	ctx := testContext()
 	filters := http.QueryHeader{} // Empty filters
@@ -731,7 +731,7 @@ func TestListConnections_Execute_Pagination(t *testing.T) {
 
 			mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-			svc := NewListConnections(mockConnRepo, nil, scopeAuthorityEngine(t))
+			svc := NewListConnections(mockConnRepo, nil, scopeAuthorityEngine(t, mockConnRepo))
 
 			ctx := testContext()
 			filters := http.QueryHeader{
@@ -774,7 +774,7 @@ func TestListConnections_Execute_ConnectionWithSSL(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewListConnections(mockConnRepo, nil, scopeAuthorityEngine(t))
+	svc := NewListConnections(mockConnRepo, nil, scopeAuthorityEngine(t, mockConnRepo))
 
 	ctx := testContext()
 	filters := http.QueryHeader{
@@ -875,7 +875,7 @@ func TestListConnections_Execute_ErrorScenarios(t *testing.T) {
 
 			mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-			svc := NewListConnections(mockConnRepo, nil, scopeAuthorityEngine(t))
+			svc := NewListConnections(mockConnRepo, nil, scopeAuthorityEngine(t, mockConnRepo))
 
 			ctx := testContext()
 			filters := http.QueryHeader{
@@ -909,7 +909,7 @@ func TestListConnections_Execute_EmptyOrganizationID(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewListConnections(mockConnRepo, nil, scopeAuthorityEngine(t))
+	svc := NewListConnections(mockConnRepo, nil, scopeAuthorityEngine(t, mockConnRepo))
 
 	ctx := testContext()
 
@@ -941,7 +941,7 @@ func TestListConnections_Execute_WithProductNameFilter(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewListConnections(mockConnRepo, nil, scopeAuthorityEngine(t))
+	svc := NewListConnections(mockConnRepo, nil, scopeAuthorityEngine(t, mockConnRepo))
 
 	ctx := testContext()
 	filters := http.QueryHeader{}

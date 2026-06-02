@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/LerianStudio/lib-observability"
-
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
@@ -13,6 +11,7 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/model"
 	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
 	"github.com/LerianStudio/fetcher/pkg/ports/job"
+	observability "github.com/LerianStudio/lib-observability"
 
 	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
 
@@ -52,18 +51,18 @@ func (s *UpdateConnection) Execute(ctx context.Context, connectionID uuid.UUID, 
 		libOpentelemetry.HandleSpanError(span, "Failed to convert fetcher input to JSON string", err)
 	}
 
-	// The Engine is the AUTHORITY for the per-request tenant scope on every
-	// connection rule. Update keeps its UUID identity model and MongoDB
-	// persistence (the Engine's connection ops are config-name-keyed and would
-	// force a redundant read that breaks the response contract), so it routes the
-	// SCOPE decision and the active-execution conflict gate through the Engine
-	// while persisting via the Manager repo.
+	// The Engine is the AUTHORITY for the per-request tenant scope AND the
+	// connection persistence. Update routes its read and write through the
+	// Engine's ID-addressed ops (FindByID/UpdateByID via the connectioncompat
+	// adapter over the Manager's UUID-keyed repo); the Manager keeps its rich
+	// model, domain patch, cryptor re-encryption, and HTTP response mapping. The
+	// active-execution conflict gate also flows through the Engine.
 	if err := authorizeConnectionAccess(ctx, s.engine); err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to authorize tenant scope", err)
 		return nil, err
 	}
 
-	current, err := s.connRepo.FindByID(ctx, connectionID)
+	current, err := getConnectionByIDViaEngine(ctx, s.engine, connectionID)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to find connection by ID", err)
 		return nil, fmt.Errorf("failed to find connection by id: %w", err)
@@ -135,7 +134,7 @@ func (s *UpdateConnection) Execute(ctx context.Context, connectionID uuid.UUID, 
 		return nil, fmt.Errorf("failed to apply connection patch: %w", errPatch)
 	}
 
-	updated, err := s.connRepo.Update(ctx, current)
+	updated, err := updateConnectionByIDViaEngine(ctx, s.engine, connectionID, current)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to update connection", err)
 		return nil, fmt.Errorf("failed to update connection: %w", err)
