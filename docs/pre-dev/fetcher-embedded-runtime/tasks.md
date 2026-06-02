@@ -20,8 +20,8 @@ Recommended implementation agent for every task: `ring:backend-engineer-golang`.
 | T-004 | Introduce connector registry/factory with explicit connect/test semantics | backend | 12h | Medium | T-002, T-003 | ✅ Done |
 | T-005 | Extract schema discovery and validation into Engine operations | backend | 12h | Medium | T-003, T-004 | ✅ Done |
 | T-006 | Add extraction planner with limits and tenant/product scope checks | backend | 10h | Medium | T-005 | ✅ Done |
-| T-007 | Add synchronous execution runner, canonical result model, and result sink port | backend | 14h | Medium | T-006 | 🔄 Doing |
-| T-008 | Migrate Manager connection/schema compatibility paths over Engine | backend | 12h | Medium | T-003, T-005 | READY_FOR_DEV_CYCLE |
+| T-007 | Add synchronous execution runner, canonical result model, and result sink port | backend | 14h | Medium | T-006 | ✅ Done |
+| T-008 | Migrate Manager connection/schema compatibility paths over Engine | backend | 12h | Medium | T-003, T-005 | 🔄 Doing |
 | T-009 | Migrate Manager job creation/planning path over Engine while preserving RabbitMQ dispatch | backend | 14h | Medium | T-006, T-008 | READY_FOR_DEV_CYCLE |
 | T-010 | Migrate Worker extraction path over Engine while preserving job status/results/events | backend | 16h | Medium | T-007, T-009 | READY_FOR_DEV_CYCLE |
 
