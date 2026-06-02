@@ -78,7 +78,7 @@ func TestGetConnection_RoutesScopeAuthorityThroughEngine(t *testing.T) {
 	connID := uuid.New()
 	mockConnRepo.EXPECT().FindByID(gomock.Any(), connID).Return(&model.Connection{ID: connID, ConfigName: "c"}, nil)
 
-	svc := NewGetConnection(mockConnRepo, nil, nil, engineWithObservability(t, obs, mockConnRepo))
+	svc := NewGetConnection(nil, nil, engineWithObservability(t, obs, mockConnRepo))
 
 	_, err := svc.Execute(testContext(), connID)
 	require.NoError(t, err)
@@ -98,7 +98,7 @@ func TestListConnections_RoutesScopeAuthorityThroughEngine(t *testing.T) {
 
 	mockConnRepo.EXPECT().List(gomock.Any(), gomock.Any()).Return(nil, int64(0), nil)
 
-	svc := NewListConnections(mockConnRepo, nil, engineWithObservability(t, obs, mockConnRepo))
+	svc := NewListConnections(nil, engineWithObservability(t, obs, mockConnRepo))
 
 	_, err := svc.Execute(testContext(), "", netHTTP.QueryHeader{Limit: 10, Page: 1})
 	require.NoError(t, err)

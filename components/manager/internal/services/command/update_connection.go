@@ -9,8 +9,6 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/engine"
 	"github.com/LerianStudio/fetcher/pkg/model"
-	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
-	"github.com/LerianStudio/fetcher/pkg/ports/job"
 	observability "github.com/LerianStudio/lib-observability"
 
 	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
@@ -20,18 +18,14 @@ import (
 )
 
 type UpdateConnection struct {
-	connRepo connRepo.Repository
-	jobRepo  job.Repository
-	cryptor  crypto.Cryptor
-	engine   *engine.Engine
+	cryptor crypto.Cryptor
+	engine  *engine.Engine
 }
 
-func NewUpdateConnection(connectionRepo connRepo.Repository, jobRepo job.Repository, cryptor crypto.Cryptor, eng *engine.Engine) *UpdateConnection {
+func NewUpdateConnection(cryptor crypto.Cryptor, eng *engine.Engine) *UpdateConnection {
 	return &UpdateConnection{
-		connRepo: connectionRepo,
-		jobRepo:  jobRepo,
-		cryptor:  cryptor,
-		engine:   eng,
+		cryptor: cryptor,
+		engine:  eng,
 	}
 }
 

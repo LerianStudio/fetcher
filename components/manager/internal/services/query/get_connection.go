@@ -10,7 +10,6 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/engine"
 	"github.com/LerianStudio/fetcher/pkg/model"
-	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
 	"github.com/LerianStudio/fetcher/pkg/resolver"
 
 	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
@@ -21,14 +20,13 @@ import (
 )
 
 type GetConnection struct {
-	connRepo connRepo.Repository
 	resolver resolver.ConnectionResolver          // nil-safe
 	registry *resolver.InternalDatasourceRegistry // nil-safe
-	engine   *engine.Engine                       // nil-safe scope authority
+	engine   *engine.Engine                       // scope authority + ID-addressed read persistence
 }
 
-func NewGetConnection(connectionRepo connRepo.Repository, connResolver resolver.ConnectionResolver, dsRegistry *resolver.InternalDatasourceRegistry, eng *engine.Engine) *GetConnection {
-	return &GetConnection{connRepo: connectionRepo, resolver: connResolver, registry: dsRegistry, engine: eng}
+func NewGetConnection(connResolver resolver.ConnectionResolver, dsRegistry *resolver.InternalDatasourceRegistry, eng *engine.Engine) *GetConnection {
+	return &GetConnection{resolver: connResolver, registry: dsRegistry, engine: eng}
 }
 
 func (s *GetConnection) Execute(ctx context.Context, connectionID uuid.UUID) (*model.Connection, error) {

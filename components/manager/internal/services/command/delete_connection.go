@@ -7,8 +7,6 @@ import (
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/engine"
-	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
-	"github.com/LerianStudio/fetcher/pkg/ports/job"
 	observability "github.com/LerianStudio/lib-observability"
 
 	libLog "github.com/LerianStudio/lib-observability/log"
@@ -19,16 +17,12 @@ import (
 )
 
 type DeleteConnection struct {
-	connRepo connRepo.Repository
-	jobRepo  job.Repository
-	engine   *engine.Engine
+	engine *engine.Engine
 }
 
-func NewDeleteConnection(connectionRepo connRepo.Repository, jobRepo job.Repository, eng *engine.Engine) *DeleteConnection {
+func NewDeleteConnection(eng *engine.Engine) *DeleteConnection {
 	return &DeleteConnection{
-		connRepo: connectionRepo,
-		jobRepo:  jobRepo,
-		engine:   eng,
+		engine: eng,
 	}
 }
 

@@ -69,14 +69,13 @@ func TestUpdateConnection_DelegatesConflictGateToEngine(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockCrypto.EXPECT().Encrypt(gomock.Any(), gomock.Any()).Return("enc", "v1", nil).AnyTimes()
 
 	spy := &spyActiveExecutionChecker{active: false}
 	eng := newTestEngine(t, spy, mockConnRepo)
 
-	svc := NewUpdateConnection(mockConnRepo, mockJobRepo, mockCrypto, eng)
+	svc := NewUpdateConnection(mockCrypto, eng)
 
 	ctx := testContext()
 	connID := uuid.New()
@@ -109,14 +108,13 @@ func TestUpdateConnection_EngineGateBlocksActiveJobs(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockCrypto.EXPECT().Encrypt(gomock.Any(), gomock.Any()).Return("enc", "v1", nil).AnyTimes()
 
 	spy := &spyActiveExecutionChecker{active: true}
 	eng := newTestEngine(t, spy, mockConnRepo)
 
-	svc := NewUpdateConnection(mockConnRepo, mockJobRepo, mockCrypto, eng)
+	svc := NewUpdateConnection(mockCrypto, eng)
 
 	ctx := testContext()
 	connID := uuid.New()
@@ -156,7 +154,7 @@ func TestUpdateConnection_EngineCheckerFailureWrapsError(t *testing.T) {
 		ExistsRunningByMappedFieldKey(gomock.Any(), gomock.Any()).
 		Return(false, repoErr)
 
-	svc := NewUpdateConnection(mockConnRepo, mockJobRepo, mockCrypto, engineForConnRepo(t, mockConnRepo, mockJobRepo))
+	svc := NewUpdateConnection(mockCrypto, engineForConnRepo(t, mockConnRepo, mockJobRepo))
 
 	ctx := testContext()
 	connID := uuid.New()
@@ -175,12 +173,11 @@ func TestDeleteConnection_DelegatesConflictGateToEngine(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 
 	spy := &spyActiveExecutionChecker{active: false}
 	eng := newTestEngine(t, spy, mockConnRepo)
 
-	svc := NewDeleteConnection(mockConnRepo, mockJobRepo, eng)
+	svc := NewDeleteConnection(eng)
 
 	ctx := testContext()
 	connID := uuid.New()

@@ -608,10 +608,10 @@ func assembleService(
 	}
 
 	createConnectionCmd := connectionCommand.NewCreateConnection(cryptoService, connEngine)
-	updateConnectionCmd := connectionCommand.NewUpdateConnection(repositories.connection, repositories.job, cryptoService, connEngine)
-	deleteConnectionCmd := connectionCommand.NewDeleteConnection(repositories.connection, repositories.job, connEngine)
-	getConnectionQuery := connectionQuery.NewGetConnection(repositories.connection, connResolver, registry, connEngine)
-	listConnectionsQuery := connectionQuery.NewListConnections(repositories.connection, connResolver, connEngine)
+	updateConnectionCmd := connectionCommand.NewUpdateConnection(cryptoService, connEngine)
+	deleteConnectionCmd := connectionCommand.NewDeleteConnection(connEngine)
+	getConnectionQuery := connectionQuery.NewGetConnection(connResolver, registry, connEngine)
+	listConnectionsQuery := connectionQuery.NewListConnections(connResolver, connEngine)
 	testConnectionQuery := connectionQuery.NewTestConnection(repositories.connection, cryptoService, platformDependencies.connectionTestStore, dsFactory, connResolver, registry)
 	validateSchemaQuery := connectionQuery.NewValidateSchema(repositories.connection, cryptoService, platformDependencies.schemaCache, dsFactory, connResolver)
 	getConnectionSchemaQuery := connectionQuery.NewGetConnectionSchema(repositories.connection, cryptoService, dsFactory, connResolver, registry, cfg.MultiTenantEnabled)

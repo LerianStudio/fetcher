@@ -303,7 +303,7 @@ func TestConnectionHandler_GetConnection_Success(t *testing.T) {
 
 	mockConnRepo.EXPECT().FindByID(gomock.Any(), connID).Return(testConn, nil)
 
-	getQuery := query.NewGetConnection(mockConnRepo, nil, nil, scopeAuthorityEngine(t, mockConnRepo))
+	getQuery := query.NewGetConnection(nil, nil, scopeAuthorityEngine(t, mockConnRepo))
 	handler := &ConnectionHandler{GetQuery: getQuery}
 
 	app := setupConnectionTestApp()
@@ -335,7 +335,7 @@ func TestConnectionHandler_GetConnection_NotFound(t *testing.T) {
 	// Service returns nil for not found
 	mockConnRepo.EXPECT().FindByID(gomock.Any(), connID).Return(nil, nil)
 
-	getQuery := query.NewGetConnection(mockConnRepo, nil, nil, scopeAuthorityEngine(t, mockConnRepo))
+	getQuery := query.NewGetConnection(nil, nil, scopeAuthorityEngine(t, mockConnRepo))
 	handler := &ConnectionHandler{GetQuery: getQuery}
 
 	app := setupConnectionTestApp()
@@ -416,7 +416,7 @@ func TestConnectionHandler_ListConnections_Success(t *testing.T) {
 	// ListConnections service: no productName header -> calls connRepo.List directly
 	mockConnRepo.EXPECT().List(gomock.Any(), gomock.Any()).Return(conns, int64(2), nil)
 
-	listQuery := query.NewListConnections(mockConnRepo, nil, scopeAuthorityEngine(t, mockConnRepo))
+	listQuery := query.NewListConnections(nil, scopeAuthorityEngine(t, mockConnRepo))
 	handler := &ConnectionHandler{ListQuery: listQuery}
 
 	app := setupConnectionTestApp()
@@ -448,7 +448,7 @@ func TestConnectionHandler_ListConnections_EmptyList(t *testing.T) {
 	// Service returns nil list, which gets converted to empty slice
 	mockConnRepo.EXPECT().List(gomock.Any(), gomock.Any()).Return(nil, int64(0), nil)
 
-	listQuery := query.NewListConnections(mockConnRepo, nil, scopeAuthorityEngine(t, mockConnRepo))
+	listQuery := query.NewListConnections(nil, scopeAuthorityEngine(t, mockConnRepo))
 	handler := &ConnectionHandler{ListQuery: listQuery}
 
 	app := setupConnectionTestApp()
@@ -479,7 +479,7 @@ func TestConnectionHandler_ListConnections_InvalidPaginationParams(t *testing.T)
 
 	// The handler validates query params before calling the service,
 	// so no mock expectations needed for invalid params
-	listQuery := query.NewListConnections(mockConnRepo, nil, scopeAuthorityEngine(t, mockConnRepo))
+	listQuery := query.NewListConnections(nil, scopeAuthorityEngine(t, mockConnRepo))
 	handler := &ConnectionHandler{ListQuery: listQuery}
 
 	app := setupConnectionTestApp()
@@ -531,7 +531,7 @@ func TestConnectionHandler_ListConnections_WithProductNameFilter(t *testing.T) {
 	// ListConnections service: with productName header -> filters.ProductName is set
 	mockConnRepo.EXPECT().List(gomock.Any(), gomock.Any()).Return(conns, int64(2), nil)
 
-	listQuery := query.NewListConnections(mockConnRepo, nil, scopeAuthorityEngine(t, mockConnRepo))
+	listQuery := query.NewListConnections(nil, scopeAuthorityEngine(t, mockConnRepo))
 	handler := &ConnectionHandler{ListQuery: listQuery}
 
 	app := setupConnectionTestApp()
@@ -618,7 +618,7 @@ func TestConnectionHandler_UpdateConnection_Success(t *testing.T) {
 	// 4. Update connection
 	mockConnRepo.EXPECT().Update(gomock.Any(), gomock.Any()).Return(updatedConn, nil)
 
-	updateCmd := command.NewUpdateConnection(mockConnRepo, mockJobRepo, mockCryptor, connectionEngineForJobRepo(t, mockConnRepo, mockJobRepo))
+	updateCmd := command.NewUpdateConnection(mockCryptor, connectionEngineForJobRepo(t, mockConnRepo, mockJobRepo))
 	handler := &ConnectionHandler{UpdateCmd: updateCmd}
 
 	app := setupConnectionTestApp()
@@ -654,7 +654,7 @@ func TestConnectionHandler_UpdateConnection_NotFound(t *testing.T) {
 	// Service finds no connection -> not found
 	mockConnRepo.EXPECT().FindByID(gomock.Any(), connID).Return(nil, nil)
 
-	updateCmd := command.NewUpdateConnection(mockConnRepo, mockJobRepo, mockCryptor, connectionEngineForJobRepo(t, mockConnRepo, mockJobRepo))
+	updateCmd := command.NewUpdateConnection(mockCryptor, connectionEngineForJobRepo(t, mockConnRepo, mockJobRepo))
 	handler := &ConnectionHandler{UpdateCmd: updateCmd}
 
 	app := setupConnectionTestApp()
@@ -726,7 +726,7 @@ func TestConnectionHandler_UpdateConnection_Conflict_ActiveJobs(t *testing.T) {
 	mockConnRepo.EXPECT().FindByID(gomock.Any(), connID).Return(testConn, nil)
 	mockJobRepo.EXPECT().ExistsRunningByMappedFieldKey(gomock.Any(), "test-connection").Return(true, nil)
 
-	updateCmd := command.NewUpdateConnection(mockConnRepo, mockJobRepo, mockCryptor, connectionEngineForJobRepo(t, mockConnRepo, mockJobRepo))
+	updateCmd := command.NewUpdateConnection(mockCryptor, connectionEngineForJobRepo(t, mockConnRepo, mockJobRepo))
 	handler := &ConnectionHandler{UpdateCmd: updateCmd}
 
 	app := setupConnectionTestApp()
@@ -767,7 +767,7 @@ func TestConnectionHandler_DeleteConnection_Success(t *testing.T) {
 	// 3. Delete connection
 	mockConnRepo.EXPECT().Delete(gomock.Any(), connID, gomock.Any()).Return(nil)
 
-	deleteCmd := command.NewDeleteConnection(mockConnRepo, mockJobRepo, connectionEngineForJobRepo(t, mockConnRepo, mockJobRepo))
+	deleteCmd := command.NewDeleteConnection(connectionEngineForJobRepo(t, mockConnRepo, mockJobRepo))
 	handler := &ConnectionHandler{DeleteCmd: deleteCmd}
 
 	app := setupConnectionTestApp()
@@ -795,7 +795,7 @@ func TestConnectionHandler_DeleteConnection_NotFound(t *testing.T) {
 	// Service finds no connection -> not found
 	mockConnRepo.EXPECT().FindByID(gomock.Any(), connID).Return(nil, nil)
 
-	deleteCmd := command.NewDeleteConnection(mockConnRepo, mockJobRepo, connectionEngineForJobRepo(t, mockConnRepo, mockJobRepo))
+	deleteCmd := command.NewDeleteConnection(connectionEngineForJobRepo(t, mockConnRepo, mockJobRepo))
 	handler := &ConnectionHandler{DeleteCmd: deleteCmd}
 
 	app := setupConnectionTestApp()
@@ -825,7 +825,7 @@ func TestConnectionHandler_DeleteConnection_Conflict_ActiveJobs(t *testing.T) {
 	mockConnRepo.EXPECT().FindByID(gomock.Any(), connID).Return(testConn, nil)
 	mockJobRepo.EXPECT().ExistsRunningByMappedFieldKey(gomock.Any(), "test-connection").Return(true, nil)
 
-	deleteCmd := command.NewDeleteConnection(mockConnRepo, mockJobRepo, connectionEngineForJobRepo(t, mockConnRepo, mockJobRepo))
+	deleteCmd := command.NewDeleteConnection(connectionEngineForJobRepo(t, mockConnRepo, mockJobRepo))
 	handler := &ConnectionHandler{DeleteCmd: deleteCmd}
 
 	app := setupConnectionTestApp()

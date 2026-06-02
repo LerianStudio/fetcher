@@ -8,7 +8,6 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/engine"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/net/http"
-	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
 	"github.com/LerianStudio/fetcher/pkg/resolver"
 	observability "github.com/LerianStudio/lib-observability"
 
@@ -19,13 +18,12 @@ import (
 )
 
 type ListConnections struct {
-	connRepo connRepo.Repository
 	resolver resolver.ConnectionResolver // nil-safe: if nil, no internal datasources
-	engine   *engine.Engine              // nil-safe scope authority
+	engine   *engine.Engine              // scope authority + paginated read persistence
 }
 
-func NewListConnections(connectionRepo connRepo.Repository, connResolver resolver.ConnectionResolver, eng *engine.Engine) *ListConnections {
-	return &ListConnections{connRepo: connectionRepo, resolver: connResolver, engine: eng}
+func NewListConnections(connResolver resolver.ConnectionResolver, eng *engine.Engine) *ListConnections {
+	return &ListConnections{resolver: connResolver, engine: eng}
 }
 
 func (s *ListConnections) Execute(ctx context.Context, productName string, filters http.QueryHeader) (*model.Pagination, error) {

@@ -199,7 +199,7 @@ func TestUpdateConnection_RoutesScopeAuthorityThroughEngine(t *testing.T) {
 	mockConnRepo.EXPECT().Update(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, c *model.Connection) (*model.Connection, error) { return c, nil })
 
-	svc := NewUpdateConnection(mockConnRepo, nil, mockCrypto, engineWithObservability(t, obs, spy, mockConnRepo))
+	svc := NewUpdateConnection(mockCrypto, engineWithObservability(t, obs, spy, mockConnRepo))
 
 	_, err := svc.Execute(testContext(), connID, newUpdateConnectionInput())
 	require.NoError(t, err)
@@ -224,7 +224,7 @@ func TestDeleteConnection_RoutesScopeAuthorityThroughEngine(t *testing.T) {
 	mockConnRepo.EXPECT().FindByID(gomock.Any(), connID).Return(existing, nil)
 	mockConnRepo.EXPECT().Delete(gomock.Any(), connID, gomock.Any()).Return(nil)
 
-	svc := NewDeleteConnection(mockConnRepo, nil, engineWithObservability(t, obs, spy, mockConnRepo))
+	svc := NewDeleteConnection(engineWithObservability(t, obs, spy, mockConnRepo))
 
 	require.NoError(t, svc.Execute(testContext(), connID))
 	assert.True(t, obs.seen("engine.connection.authorize_access"), "delete must route the scope authority through the Engine")

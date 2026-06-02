@@ -39,7 +39,7 @@ func TestGetConnection_Execute_Success(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewGetConnection(mockConnRepo, nil, nil, scopeAuthorityEngine(t, mockConnRepo))
+	svc := NewGetConnection(nil, nil, scopeAuthorityEngine(t, mockConnRepo))
 
 	ctx := testContext()
 	connID := uuid.New()
@@ -87,7 +87,7 @@ func TestGetConnection_Execute_NotFoundError(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewGetConnection(mockConnRepo, nil, nil, scopeAuthorityEngine(t, mockConnRepo))
+	svc := NewGetConnection(nil, nil, scopeAuthorityEngine(t, mockConnRepo))
 
 	ctx := testContext()
 	connID := uuid.New()
@@ -121,7 +121,7 @@ func TestGetConnection_Execute_RepositoryError(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewGetConnection(mockConnRepo, nil, nil, scopeAuthorityEngine(t, mockConnRepo))
+	svc := NewGetConnection(nil, nil, scopeAuthorityEngine(t, mockConnRepo))
 
 	ctx := testContext()
 	connID := uuid.New()
@@ -155,7 +155,7 @@ func TestGetConnection_Execute_OrganizationIsolation(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewGetConnection(mockConnRepo, nil, nil, scopeAuthorityEngine(t, mockConnRepo))
+	svc := NewGetConnection(nil, nil, scopeAuthorityEngine(t, mockConnRepo))
 
 	ctx := testContext()
 	differentOrgID := uuid.New()
@@ -239,7 +239,7 @@ func TestGetConnection_Execute_TableDriven(t *testing.T) {
 
 			tt.setupMocks(mockConnRepo, connID, existingConn)
 
-			svc := NewGetConnection(mockConnRepo, nil, nil, scopeAuthorityEngine(t, mockConnRepo))
+			svc := NewGetConnection(nil, nil, scopeAuthorityEngine(t, mockConnRepo))
 
 			result, err := svc.Execute(ctx, connID)
 
@@ -276,7 +276,7 @@ func TestGetConnection_Execute_ConnectionWithSSL(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewGetConnection(mockConnRepo, nil, nil, scopeAuthorityEngine(t, mockConnRepo))
+	svc := NewGetConnection(nil, nil, scopeAuthorityEngine(t, mockConnRepo))
 
 	ctx := testContext()
 	connID := uuid.New()
@@ -347,7 +347,7 @@ func TestGetConnection_Execute_AllDatabaseTypes(t *testing.T) {
 
 			mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-			svc := NewGetConnection(mockConnRepo, nil, nil, scopeAuthorityEngine(t, mockConnRepo))
+			svc := NewGetConnection(nil, nil, scopeAuthorityEngine(t, mockConnRepo))
 
 			ctx := testContext()
 			connID := uuid.New()
@@ -383,14 +383,14 @@ func TestNewGetConnection(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewGetConnection(mockConnRepo, nil, nil, scopeAuthorityEngine(t, mockConnRepo))
+	svc := NewGetConnection(nil, nil, scopeAuthorityEngine(t, mockConnRepo))
 
 	if svc == nil {
 		t.Fatal("expected non-nil service")
 	}
 
-	if svc.connRepo == nil {
-		t.Fatal("expected connRepo to be set")
+	if svc.engine == nil {
+		t.Fatal("expected engine to be set")
 	}
 }
 
@@ -401,7 +401,7 @@ func TestGetConnection_Execute_ConnectionWithAllFields(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewGetConnection(mockConnRepo, nil, nil, scopeAuthorityEngine(t, mockConnRepo))
+	svc := NewGetConnection(nil, nil, scopeAuthorityEngine(t, mockConnRepo))
 
 	ctx := testContext()
 	connID := uuid.New()
@@ -511,7 +511,7 @@ func TestGetConnection_Execute_MultipleRepositoryErrors(t *testing.T) {
 
 			mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-			svc := NewGetConnection(mockConnRepo, nil, nil, scopeAuthorityEngine(t, mockConnRepo))
+			svc := NewGetConnection(nil, nil, scopeAuthorityEngine(t, mockConnRepo))
 
 			ctx := testContext()
 			connID := uuid.New()
@@ -545,7 +545,7 @@ func TestGetConnection_Execute_EmptyUUIDs(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewGetConnection(mockConnRepo, nil, nil, scopeAuthorityEngine(t, mockConnRepo))
+	svc := NewGetConnection(nil, nil, scopeAuthorityEngine(t, mockConnRepo))
 
 	ctx := testContext()
 	connID := uuid.Nil
