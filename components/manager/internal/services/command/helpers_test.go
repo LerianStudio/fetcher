@@ -6,6 +6,7 @@ import (
 
 	"github.com/LerianStudio/fetcher/pkg/engine"
 	"github.com/LerianStudio/fetcher/pkg/enginecompat/connectioncompat"
+	connPort "github.com/LerianStudio/fetcher/pkg/ports/connection"
 	"github.com/LerianStudio/fetcher/pkg/ports/job"
 	"github.com/LerianStudio/fetcher/pkg/testutil"
 
@@ -26,6 +27,24 @@ func engineForJobRepo(t *testing.T, jobRepo job.Repository) *engine.Engine {
 
 	eng, err := engine.New(
 		engine.WithConnectorRegistry(stubConnectorRegistry{}),
+		engine.WithActiveExecutionChecker(connectioncompat.NewJobActiveExecutionChecker(jobRepo)),
+	)
+	require.NoError(t, err)
+
+	return eng
+}
+
+// engineForConnRepo builds the connection-authority Engine the Manager bootstrap
+// wires: a ConnectionStore over the connection repo (so Create persistence flows
+// through the Engine) plus the active-execution checker over the job repo. Tests
+// pass the SAME mock connection/job repos they assert on, so the Engine's
+// pre-check + store write land on those mocks with the pre-delegation call shape.
+func engineForConnRepo(t *testing.T, connRepo connPort.Repository, jobRepo job.Repository) *engine.Engine {
+	t.Helper()
+
+	eng, err := engine.New(
+		engine.WithConnectorRegistry(stubConnectorRegistry{}),
+		engine.WithConnectionStore(connectioncompat.NewConnectionStore(connRepo)),
 		engine.WithActiveExecutionChecker(connectioncompat.NewJobActiveExecutionChecker(jobRepo)),
 	)
 	require.NoError(t, err)

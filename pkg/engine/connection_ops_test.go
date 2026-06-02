@@ -133,8 +133,8 @@ func TestEngine_CreateConnection_DuplicateWithinTenantConflicts(t *testing.T) {
 	if !errors.As(err, &engErr) {
 		t.Fatalf("CreateConnection duplicate: error type = %T, want *engine.EngineError", err)
 	}
-	if engErr.Category != engine.CategoryValidation {
-		t.Fatalf("CreateConnection duplicate: category = %q, want %q", engErr.Category, engine.CategoryValidation)
+	if engErr.Category != engine.CategoryConflict {
+		t.Fatalf("CreateConnection duplicate: category = %q, want %q", engErr.Category, engine.CategoryConflict)
 	}
 }
 
@@ -187,8 +187,8 @@ func TestEngine_CreateConnection_DuplicateWithProtectorIsRejectedBeforeReEncrypt
 	if !errors.As(err, &engErr) {
 		t.Fatalf("CreateConnection duplicate: error type = %T, want *engine.EngineError", err)
 	}
-	if engErr.Category != engine.CategoryValidation {
-		t.Fatalf("CreateConnection duplicate: category = %q, want %q", engErr.Category, engine.CategoryValidation)
+	if engErr.Category != engine.CategoryConflict {
+		t.Fatalf("CreateConnection duplicate: category = %q, want %q", engErr.Category, engine.CategoryConflict)
 	}
 
 	// The duplicate was rejected by the existence pre-check BEFORE protect: the

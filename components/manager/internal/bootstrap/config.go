@@ -602,16 +602,16 @@ func assembleService(
 	// ActiveExecutionChecker adapter; connection persistence and HTTP mapping
 	// stay in the Manager. A construction failure is fatal — the gate is required
 	// for update/delete safety.
-	connEngine, engErr := connectionEngine(repositories.job)
+	connEngine, engErr := connectionEngine(repositories.connection, repositories.job)
 	if engErr != nil {
 		return nil, wrapBootstrapError("build connection engine", engErr)
 	}
 
-	createConnectionCmd := connectionCommand.NewCreateConnection(repositories.connection, cryptoService)
+	createConnectionCmd := connectionCommand.NewCreateConnection(cryptoService, connEngine)
 	updateConnectionCmd := connectionCommand.NewUpdateConnection(repositories.connection, repositories.job, cryptoService, connEngine)
 	deleteConnectionCmd := connectionCommand.NewDeleteConnection(repositories.connection, repositories.job, connEngine)
-	getConnectionQuery := connectionQuery.NewGetConnection(repositories.connection, connResolver, registry)
-	listConnectionsQuery := connectionQuery.NewListConnections(repositories.connection, connResolver)
+	getConnectionQuery := connectionQuery.NewGetConnection(repositories.connection, connResolver, registry, connEngine)
+	listConnectionsQuery := connectionQuery.NewListConnections(repositories.connection, connResolver, connEngine)
 	testConnectionQuery := connectionQuery.NewTestConnection(repositories.connection, cryptoService, platformDependencies.connectionTestStore, dsFactory, connResolver, registry)
 	validateSchemaQuery := connectionQuery.NewValidateSchema(repositories.connection, cryptoService, platformDependencies.schemaCache, dsFactory, connResolver)
 	getConnectionSchemaQuery := connectionQuery.NewGetConnectionSchema(repositories.connection, cryptoService, dsFactory, connResolver, registry, cfg.MultiTenantEnabled)

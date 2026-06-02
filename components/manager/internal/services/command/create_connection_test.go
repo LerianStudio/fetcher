@@ -40,7 +40,7 @@ func TestCreateConnection_Execute_Success(t *testing.T) {
 		Encrypt(gomock.Any(), gomock.Any()).
 		Return("encrypted-password", "v1", nil)
 
-	svc := NewCreateConnection(mockConnRepo, mockCrypto)
+	svc := NewCreateConnection(mockCrypto, engineForConnRepo(t, mockConnRepo, nil))
 
 	ctx := testContext()
 	input := newValidConnectionInput()
@@ -96,7 +96,7 @@ func TestCreateConnection_Execute_ConflictError(t *testing.T) {
 		Encrypt(gomock.Any(), gomock.Any()).
 		Return("encrypted-password", "v1", nil)
 
-	svc := NewCreateConnection(mockConnRepo, mockCrypto)
+	svc := NewCreateConnection(mockCrypto, engineForConnRepo(t, mockConnRepo, nil))
 
 	ctx := testContext()
 	input := newValidConnectionInput()
@@ -139,7 +139,7 @@ func TestCreateConnection_Execute_FindByNameError(t *testing.T) {
 		Encrypt(gomock.Any(), gomock.Any()).
 		Return("encrypted-password", "v1", nil)
 
-	svc := NewCreateConnection(mockConnRepo, mockCrypto)
+	svc := NewCreateConnection(mockCrypto, engineForConnRepo(t, mockConnRepo, nil))
 
 	ctx := testContext()
 	input := newValidConnectionInput()
@@ -177,7 +177,7 @@ func TestCreateConnection_Execute_CreateError(t *testing.T) {
 		Encrypt(gomock.Any(), gomock.Any()).
 		Return("encrypted-password", "v1", nil)
 
-	svc := NewCreateConnection(mockConnRepo, mockCrypto)
+	svc := NewCreateConnection(mockCrypto, engineForConnRepo(t, mockConnRepo, nil))
 
 	ctx := testContext()
 	input := newValidConnectionInput()
@@ -222,7 +222,7 @@ func TestCreateConnection_Execute_EncryptionError(t *testing.T) {
 		Encrypt(gomock.Any(), gomock.Any()).
 		Return("", "", encryptionError)
 
-	svc := NewCreateConnection(mockConnRepo, mockCrypto)
+	svc := NewCreateConnection(mockCrypto, engineForConnRepo(t, mockConnRepo, nil))
 
 	ctx := testContext()
 	input := newValidConnectionInput()
@@ -394,7 +394,7 @@ func TestCreateConnection_Execute_ValidationErrors(t *testing.T) {
 				Return("encrypted-password", "v1", nil).
 				AnyTimes()
 
-			svc := NewCreateConnection(mockConnRepo, mockCrypto)
+			svc := NewCreateConnection(mockCrypto, engineForConnRepo(t, mockConnRepo, nil))
 
 			ctx := testContext()
 
@@ -438,7 +438,7 @@ func TestCreateConnection_Execute_WithSSL(t *testing.T) {
 		Encrypt(gomock.Any(), gomock.Any()).
 		Return("encrypted-password", "v1", nil)
 
-	svc := NewCreateConnection(mockConnRepo, mockCrypto)
+	svc := NewCreateConnection(mockCrypto, engineForConnRepo(t, mockConnRepo, nil))
 
 	ctx := testContext()
 	certValue := "-----BEGIN CERTIFICATE-----\ntest-cert\n-----END CERTIFICATE-----"
@@ -524,7 +524,7 @@ func TestCreateConnection_Execute_AllDatabaseTypes(t *testing.T) {
 				Encrypt(gomock.Any(), gomock.Any()).
 				Return("encrypted-password", "v1", nil)
 
-			svc := NewCreateConnection(mockConnRepo, mockCrypto)
+			svc := NewCreateConnection(mockCrypto, engineForConnRepo(t, mockConnRepo, nil))
 
 			ctx := testContext()
 
@@ -572,14 +572,14 @@ func TestNewCreateConnection(t *testing.T) {
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockCrypto := crypto.NewMockCryptor(ctrl)
 
-	svc := NewCreateConnection(mockConnRepo, mockCrypto)
+	svc := NewCreateConnection(mockCrypto, engineForConnRepo(t, mockConnRepo, nil))
 
 	if svc == nil {
 		t.Fatal("expected non-nil service")
 	}
 
-	if svc.connRepo == nil {
-		t.Fatal("expected connRepo to be set")
+	if svc.engine == nil {
+		t.Fatal("expected engine to be set")
 	}
 
 	if svc.cryptor == nil {
@@ -617,7 +617,7 @@ func TestCreateConnection_Execute_ConfigNameEdgeCases(t *testing.T) {
 				Return("encrypted-password", "v1", nil).
 				AnyTimes()
 
-			svc := NewCreateConnection(mockConnRepo, mockCrypto)
+			svc := NewCreateConnection(mockCrypto, engineForConnRepo(t, mockConnRepo, nil))
 
 			ctx := testContext()
 

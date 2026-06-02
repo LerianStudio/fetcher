@@ -55,7 +55,10 @@ func (e *Engine) CreateConnection(
 	if _, found, err := store.FindConnection(ctx, tenant, descriptor.ConfigName); err != nil {
 		return ConnectionDescriptor{}, err
 	} else if found {
-		return ConnectionDescriptor{}, NewEngineError(CategoryValidation, "connection already exists")
+		// A duplicate (tenantID, configName) is a CONFLICT with the current state
+		// of the resource, not malformed input — CategoryConflict maps to HTTP 409,
+		// which is the duplicate-create status hosts (e.g. the Manager) preserve.
+		return ConnectionDescriptor{}, NewEngineError(CategoryConflict, "connection already exists")
 	}
 
 	// Protect the secret BEFORE the store write. On failure we return a safe
@@ -147,6 +150,15 @@ type ConnectionPatch struct {
 	Schema       *string
 	Username     *string
 	SSLMode      *string
+
+	// HostAttributes optionally re-supplies the OPAQUE host payload. A nil map
+	// leaves the existing stored payload intact (mirroring the nil-pointer
+	// patch semantics of the typed fields); a non-nil map REPLACES it wholesale.
+	// The Engine never reads a key from it — it only forwards it onto the
+	// updated descriptor so the host can re-stamp its rich record (e.g. a fresh
+	// UpdatedAt) without the Engine interpreting host fields. See
+	// ConnectionDescriptor.HostAttributes.
+	HostAttributes map[string]any
 
 	// password holds an optional new secret. It is unexported so default struct
 	// formatting and JSON marshaling skip it. Build a patch with NewSecretPatch
@@ -323,6 +335,26 @@ func (e *Engine) CheckActiveExecutions(ctx context.Context, tenant TenantContext
 	return nil
 }
 
+// AuthorizeConnectionAccess applies the Engine's connection-read RULE: a
+// tenant-owned connection read is permitted only under a present, well-formed
+// tenant scope. It is the authority entrypoint a host uses for read paths
+// (get/list) that keep their OWN identity model and persistence — the Manager,
+// for example, reads by uuid.UUID and paginates on its repository, neither of
+// which the Engine's config-name-keyed, flat ConnectionStore ops model. Routing
+// the SCOPE decision through the Engine makes it the single authority for
+// "which tenant may read a connection" without dragging the host's UUID or
+// pagination identity into the Engine, and without a redundant persistence
+// round-trip.
+//
+// It returns a CategoryValidation *EngineError when the tenant scope is missing
+// or malformed, and nil otherwise. It performs no I/O and consults no store.
+func (e *Engine) AuthorizeConnectionAccess(ctx context.Context, tenant TenantContext) error {
+	_, end := e.startSpan(ctx, "engine.connection.authorize_access")
+	defer end()
+
+	return validateTenantScope(tenant)
+}
+
 // guardActiveExecutions consults the optional ActiveExecutionChecker before a
 // connection mutation. It returns:
 //   - nil when no checker is configured (conflict gating is opt-in);
@@ -382,6 +414,13 @@ func applyConnectionPatch(current ConnectionDescriptor, patch ConnectionPatch) C
 
 	if patch.SSLMode != nil {
 		current.SSLMode = *patch.SSLMode
+	}
+
+	// Replace the opaque host payload only when the patch supplies a fresh one;
+	// a nil map preserves the existing payload (the current descriptor already
+	// carries it). The Engine forwards the payload verbatim and reads no key.
+	if patch.HostAttributes != nil {
+		current.HostAttributes = patch.HostAttributes
 	}
 
 	return current

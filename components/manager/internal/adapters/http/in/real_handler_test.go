@@ -41,7 +41,7 @@ func TestConnectionHandler_CreateConnection_RealHandlerSuccess(t *testing.T) {
 	})
 
 	handler := &ConnectionHandler{
-		CreateCmd: commandSvc.NewCreateConnection(mockConnRepo, mockCryptor),
+		CreateCmd: commandSvc.NewCreateConnection(mockCryptor, connectionEngineForConnRepo(t, mockConnRepo, nil)),
 	}
 	app.Post("/v1/management/connections", handler.CreateConnection)
 
@@ -86,7 +86,7 @@ func TestConnectionHandler_ListConnections_RealHandlerSuccess(t *testing.T) {
 	})
 
 	handler := &ConnectionHandler{
-		ListQuery: querySvc.NewListConnections(mockConnRepo, nil),
+		ListQuery: querySvc.NewListConnections(mockConnRepo, nil, scopeAuthorityEngine(t)),
 	}
 	app.Get("/v1/management/connections", handler.ListConnections)
 

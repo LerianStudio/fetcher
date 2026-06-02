@@ -45,6 +45,15 @@ func (s *DeleteConnection) Execute(ctx context.Context, connectionID uuid.UUID) 
 		attribute.String("app.request.connection_id", connectionID.String()),
 	)
 
+	// Route the per-request tenant-scope authority through the Engine before any
+	// read or mutation, symmetric with UpdateConnection. Delete keeps its
+	// UUID-keyed soft-delete persistence; the Engine owns the scope rule and the
+	// active-execution conflict gate.
+	if err := authorizeConnectionAccess(ctx, s.engine); err != nil {
+		libOpentelemetry.HandleSpanError(span, "Failed to authorize tenant scope", err)
+		return err
+	}
+
 	current, err := s.connRepo.FindByID(ctx, connectionID)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to find connection by ID", err)

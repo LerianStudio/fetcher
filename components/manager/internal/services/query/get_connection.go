@@ -8,6 +8,7 @@ import (
 
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
+	"github.com/LerianStudio/fetcher/pkg/engine"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
 	"github.com/LerianStudio/fetcher/pkg/resolver"
@@ -23,10 +24,11 @@ type GetConnection struct {
 	connRepo connRepo.Repository
 	resolver resolver.ConnectionResolver          // nil-safe
 	registry *resolver.InternalDatasourceRegistry // nil-safe
+	engine   *engine.Engine                       // nil-safe scope authority
 }
 
-func NewGetConnection(connectionRepo connRepo.Repository, connResolver resolver.ConnectionResolver, dsRegistry *resolver.InternalDatasourceRegistry) *GetConnection {
-	return &GetConnection{connRepo: connectionRepo, resolver: connResolver, registry: dsRegistry}
+func NewGetConnection(connectionRepo connRepo.Repository, connResolver resolver.ConnectionResolver, dsRegistry *resolver.InternalDatasourceRegistry, eng *engine.Engine) *GetConnection {
+	return &GetConnection{connRepo: connectionRepo, resolver: connResolver, registry: dsRegistry, engine: eng}
 }
 
 func (s *GetConnection) Execute(ctx context.Context, connectionID uuid.UUID) (*model.Connection, error) {
@@ -39,6 +41,14 @@ func (s *GetConnection) Execute(ctx context.Context, connectionID uuid.UUID) (*m
 		attribute.String("app.request.request_id", reqID),
 		attribute.String("app.request.connection_id", connectionID.String()),
 	)
+
+	// Route the per-request tenant-scope authority through the Engine before any
+	// read. The Manager keeps its UUID identity + internal-datasource registry
+	// resolution; the Engine owns only the scope rule.
+	if err := authorizeConnectionAccess(ctx, s.engine); err != nil {
+		libOpentelemetry.HandleSpanError(span, "Failed to authorize tenant scope", err)
+		return nil, err
+	}
 
 	// Check if this is an internal datasource (deterministic UUID per tenant)
 	if s.registry != nil && s.resolver != nil {

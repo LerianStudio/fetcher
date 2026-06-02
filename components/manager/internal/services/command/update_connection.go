@@ -52,6 +52,17 @@ func (s *UpdateConnection) Execute(ctx context.Context, connectionID uuid.UUID, 
 		libOpentelemetry.HandleSpanError(span, "Failed to convert fetcher input to JSON string", err)
 	}
 
+	// The Engine is the AUTHORITY for the per-request tenant scope on every
+	// connection rule. Update keeps its UUID identity model and MongoDB
+	// persistence (the Engine's connection ops are config-name-keyed and would
+	// force a redundant read that breaks the response contract), so it routes the
+	// SCOPE decision and the active-execution conflict gate through the Engine
+	// while persisting via the Manager repo.
+	if err := authorizeConnectionAccess(ctx, s.engine); err != nil {
+		libOpentelemetry.HandleSpanError(span, "Failed to authorize tenant scope", err)
+		return nil, err
+	}
+
 	current, err := s.connRepo.FindByID(ctx, connectionID)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to find connection by ID", err)

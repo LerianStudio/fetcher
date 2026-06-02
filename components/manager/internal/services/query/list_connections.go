@@ -7,6 +7,7 @@ import (
 
 	"github.com/LerianStudio/lib-observability"
 
+	"github.com/LerianStudio/fetcher/pkg/engine"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/net/http"
 	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
@@ -21,10 +22,11 @@ import (
 type ListConnections struct {
 	connRepo connRepo.Repository
 	resolver resolver.ConnectionResolver // nil-safe: if nil, no internal datasources
+	engine   *engine.Engine              // nil-safe scope authority
 }
 
-func NewListConnections(connectionRepo connRepo.Repository, connResolver resolver.ConnectionResolver) *ListConnections {
-	return &ListConnections{connRepo: connectionRepo, resolver: connResolver}
+func NewListConnections(connectionRepo connRepo.Repository, connResolver resolver.ConnectionResolver, eng *engine.Engine) *ListConnections {
+	return &ListConnections{connRepo: connectionRepo, resolver: connResolver, engine: eng}
 }
 
 func (s *ListConnections) Execute(ctx context.Context, productName string, filters http.QueryHeader) (*model.Pagination, error) {
@@ -36,6 +38,15 @@ func (s *ListConnections) Execute(ctx context.Context, productName string, filte
 	span.SetAttributes(
 		attribute.String("app.request.request_id", reqID),
 	)
+
+	// Route the per-request tenant-scope authority through the Engine before the
+	// read. The Manager keeps its paginated, resolver-merged list (a host
+	// presentation concern the Engine's flat list does not model); the Engine
+	// owns only the scope rule — the single authority for which tenant may read.
+	if err := authorizeConnectionAccess(ctx, s.engine); err != nil {
+		libOpentelemetry.HandleSpanError(span, "Failed to authorize tenant scope", err)
+		return nil, err
+	}
 
 	if productName != "" {
 		span.SetAttributes(attribute.String("app.request.product_name", productName))

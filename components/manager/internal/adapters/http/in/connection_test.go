@@ -105,7 +105,7 @@ func TestConnectionHandler_CreateConnection_Success(t *testing.T) {
 	// 3. Create connection
 	mockConnRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(testConn, nil)
 
-	createCmd := command.NewCreateConnection(mockConnRepo, mockCryptor)
+	createCmd := command.NewCreateConnection(mockCryptor, connectionEngineForConnRepo(t, mockConnRepo, nil))
 	handler := &ConnectionHandler{CreateCmd: createCmd}
 
 	app := setupConnectionTestApp()
@@ -240,7 +240,7 @@ func TestConnectionHandler_CreateConnection_Conflict(t *testing.T) {
 	mockCryptor.EXPECT().Encrypt(gomock.Any(), "secretpassword").Return("encrypted-password", "v1", nil)
 	mockConnRepo.EXPECT().FindByName(gomock.Any(), "test-connection").Return(existingConn, nil)
 
-	createCmd := command.NewCreateConnection(mockConnRepo, mockCryptor)
+	createCmd := command.NewCreateConnection(mockCryptor, connectionEngineForConnRepo(t, mockConnRepo, nil))
 	handler := &ConnectionHandler{CreateCmd: createCmd}
 
 	app := setupConnectionTestApp()
@@ -270,7 +270,7 @@ func TestConnectionHandler_CreateConnection_InternalError(t *testing.T) {
 	mockConnRepo.EXPECT().FindByName(gomock.Any(), "test-connection").Return(nil, nil)
 	mockConnRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil, assert.AnError)
 
-	createCmd := command.NewCreateConnection(mockConnRepo, mockCryptor)
+	createCmd := command.NewCreateConnection(mockCryptor, connectionEngineForConnRepo(t, mockConnRepo, nil))
 	handler := &ConnectionHandler{CreateCmd: createCmd}
 
 	app := setupConnectionTestApp()
@@ -304,7 +304,7 @@ func TestConnectionHandler_GetConnection_Success(t *testing.T) {
 
 	mockConnRepo.EXPECT().FindByID(gomock.Any(), connID).Return(testConn, nil)
 
-	getQuery := query.NewGetConnection(mockConnRepo, nil, nil)
+	getQuery := query.NewGetConnection(mockConnRepo, nil, nil, scopeAuthorityEngine(t))
 	handler := &ConnectionHandler{GetQuery: getQuery}
 
 	app := setupConnectionTestApp()
@@ -336,7 +336,7 @@ func TestConnectionHandler_GetConnection_NotFound(t *testing.T) {
 	// Service returns nil for not found
 	mockConnRepo.EXPECT().FindByID(gomock.Any(), connID).Return(nil, nil)
 
-	getQuery := query.NewGetConnection(mockConnRepo, nil, nil)
+	getQuery := query.NewGetConnection(mockConnRepo, nil, nil, scopeAuthorityEngine(t))
 	handler := &ConnectionHandler{GetQuery: getQuery}
 
 	app := setupConnectionTestApp()
@@ -417,7 +417,7 @@ func TestConnectionHandler_ListConnections_Success(t *testing.T) {
 	// ListConnections service: no productName header -> calls connRepo.List directly
 	mockConnRepo.EXPECT().List(gomock.Any(), gomock.Any()).Return(conns, int64(2), nil)
 
-	listQuery := query.NewListConnections(mockConnRepo, nil)
+	listQuery := query.NewListConnections(mockConnRepo, nil, scopeAuthorityEngine(t))
 	handler := &ConnectionHandler{ListQuery: listQuery}
 
 	app := setupConnectionTestApp()
@@ -449,7 +449,7 @@ func TestConnectionHandler_ListConnections_EmptyList(t *testing.T) {
 	// Service returns nil list, which gets converted to empty slice
 	mockConnRepo.EXPECT().List(gomock.Any(), gomock.Any()).Return(nil, int64(0), nil)
 
-	listQuery := query.NewListConnections(mockConnRepo, nil)
+	listQuery := query.NewListConnections(mockConnRepo, nil, scopeAuthorityEngine(t))
 	handler := &ConnectionHandler{ListQuery: listQuery}
 
 	app := setupConnectionTestApp()
@@ -480,7 +480,7 @@ func TestConnectionHandler_ListConnections_InvalidPaginationParams(t *testing.T)
 
 	// The handler validates query params before calling the service,
 	// so no mock expectations needed for invalid params
-	listQuery := query.NewListConnections(mockConnRepo, nil)
+	listQuery := query.NewListConnections(mockConnRepo, nil, scopeAuthorityEngine(t))
 	handler := &ConnectionHandler{ListQuery: listQuery}
 
 	app := setupConnectionTestApp()
@@ -532,7 +532,7 @@ func TestConnectionHandler_ListConnections_WithProductNameFilter(t *testing.T) {
 	// ListConnections service: with productName header -> filters.ProductName is set
 	mockConnRepo.EXPECT().List(gomock.Any(), gomock.Any()).Return(conns, int64(2), nil)
 
-	listQuery := query.NewListConnections(mockConnRepo, nil)
+	listQuery := query.NewListConnections(mockConnRepo, nil, scopeAuthorityEngine(t))
 	handler := &ConnectionHandler{ListQuery: listQuery}
 
 	app := setupConnectionTestApp()

@@ -24,6 +24,17 @@ type ConnectionInputParams struct {
 	Username     string
 	Password     string
 	SSLMode      string
+
+	// HostAttributes is an OPAQUE host payload. The Engine carries it from input
+	// to descriptor to the ConnectionStore and back without reading, validating,
+	// or scoping on a single key — exactly like ExtractionPlan.Metadata. It exists
+	// so a host with a richer persisted record (e.g. the Manager's ProductName,
+	// full SSL CA/Cert/Key, uuid identity, metadata, timestamps) can round-trip
+	// that record through the Engine's (tenantID, configName)-scoped connection
+	// ops WITHOUT those host fields becoming Engine scoping dimensions and WITHOUT
+	// field loss. It is secret-free by host contract; the Engine never serializes
+	// it outward (see ConnectionDescriptor.HostAttributes, json:"-").
+	HostAttributes map[string]any
 }
 
 // ConnectionInput is the credential-bearing input contract for a datasource
@@ -40,6 +51,11 @@ type ConnectionInput struct {
 	Schema       string
 	Username     string
 	SSLMode      string
+
+	// hostAttributes is the OPAQUE host payload (see ConnectionInputParams). It
+	// is unexported so default formatting and JSON marshaling skip it; the Engine
+	// only forwards it through DescriptorFromInput. It is never interpreted here.
+	hostAttributes map[string]any
 
 	// password is unexported so default struct formatting (%+v, %#v) and
 	// encoding/json both skip it. The redacted MarshalJSON/String methods
@@ -65,15 +81,16 @@ type connectionInputJSON struct {
 // unexported password field.
 func NewConnectionInput(params ConnectionInputParams) ConnectionInput {
 	return ConnectionInput{
-		ConfigName:   params.ConfigName,
-		Type:         params.Type,
-		Host:         params.Host,
-		Port:         params.Port,
-		DatabaseName: params.DatabaseName,
-		Schema:       params.Schema,
-		Username:     params.Username,
-		SSLMode:      params.SSLMode,
-		password:     params.Password,
+		ConfigName:     params.ConfigName,
+		Type:           params.Type,
+		Host:           params.Host,
+		Port:           params.Port,
+		DatabaseName:   params.DatabaseName,
+		Schema:         params.Schema,
+		Username:       params.Username,
+		SSLMode:        params.SSLMode,
+		hostAttributes: params.HostAttributes,
+		password:       params.Password,
 	}
 }
 
@@ -147,18 +164,29 @@ type ConnectionDescriptor struct {
 	// ciphertext itself is never carried in this descriptor. ST-T003-02 wires
 	// the CredentialProtector that populates it; until then it stays zero.
 	KeyVersion int `json:"keyVersion,omitempty"`
+
+	// HostAttributes is the OPAQUE host payload the Engine carries through its
+	// (tenantID, configName)-scoped connection ops without interpreting any key
+	// (see ConnectionInputParams.HostAttributes). It is json:"-" because it is
+	// host-internal: it travels input -> descriptor -> ConnectionStore and back,
+	// but is never part of the descriptor's PUBLIC serialized output contract.
+	// The Engine treats it as a black box — it neither scopes nor validates on
+	// it, which is what keeps host concepts (ProductName, org) out of Engine
+	// scope while still enabling a lossless rich-model round-trip.
+	HostAttributes map[string]any `json:"-"`
 }
 
 // DescriptorFromInput projects a ConnectionInput onto a secret-free descriptor.
 func DescriptorFromInput(input ConnectionInput) ConnectionDescriptor {
 	return ConnectionDescriptor{
-		ConfigName:   input.ConfigName,
-		Type:         input.Type,
-		Host:         input.Host,
-		Port:         input.Port,
-		DatabaseName: input.DatabaseName,
-		Schema:       input.Schema,
-		Username:     input.Username,
-		SSLMode:      input.SSLMode,
+		ConfigName:     input.ConfigName,
+		Type:           input.Type,
+		Host:           input.Host,
+		Port:           input.Port,
+		DatabaseName:   input.DatabaseName,
+		Schema:         input.Schema,
+		Username:       input.Username,
+		SSLMode:        input.SSLMode,
+		HostAttributes: input.hostAttributes,
 	}
 }
