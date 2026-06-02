@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -534,16 +535,39 @@ func initPlatformDependencies(cfg *Config, logger libLog.Logger, messageSigner c
 		return nil, wrapBootstrapError("initialize schema cache", errCache)
 	}
 
+	licenseClient := libLicense.NewLicenseClient(
+		constant.ApplicationName,
+		cfg.LicenseKey,
+		cfg.OrganizationIDs,
+		&licenseLogger,
+	)
+
+	// Fail closed. lib-license-go validates at startup (and on the 7-day
+	// refresh) and reports an invalid/expired/unreachable license by calling
+	// its shutdown manager's Terminate(). In global mode there is NO
+	// per-request enforcement, so the only thing standing between an invalid
+	// license and served traffic is the process actually stopping. The
+	// terminate path is a no-op unless a handler is wired here (lib-commons'
+	// ServerManager deliberately skips the license terminator during normal
+	// shutdown), so without this the service would run fail-OPEN. Register a
+	// handler that logs the reason and exits non-zero so an invalid license
+	// cannot serve requests; the orchestrator restarts and re-validates.
+	if licenseClient != nil {
+		licenseClient.SetTerminationHandler(func(reason string) {
+			licenseLogger.Log(context.Background(), libLog.LevelError,
+				fmt.Sprintf("license validation failed; terminating manager: %s", reason))
+			os.Exit(1)
+		})
+	} else {
+		return nil, wrapBootstrapError("initialize license client",
+			fmt.Errorf("license client is nil; check LICENSE_KEY and ORGANIZATION_IDS"))
+	}
+
 	return &managerPlatformDependencies{
-		rabbitPublisher: rabbitPublisher,
-		rabbitMQCleanup: rabbitMQCleanup,
-		authClient:      middleware.NewAuthClient(cfg.AuthAddress, cfg.AuthEnabled, &authLogger),
-		licenseClient: libLicense.NewLicenseClient(
-			constant.ApplicationName,
-			cfg.LicenseKey,
-			cfg.OrganizationIDs,
-			&licenseLogger,
-		),
+		rabbitPublisher:              rabbitPublisher,
+		rabbitMQCleanup:              rabbitMQCleanup,
+		authClient:                   middleware.NewAuthClient(cfg.AuthAddress, cfg.AuthEnabled, &authLogger),
+		licenseClient:                licenseClient,
 		connectionTestStore:          ratelimit.New(10, time.Minute),
 		schemaCache:                  cacheAdapter.NewSchemaCache(genericCache, schemaCacheTTL),
 		rabbitMQAdapter:              rabbitAdapter,
