@@ -116,7 +116,7 @@ type ConnectorBehavior struct {
 // A Connector plays two roles. A TEMPLATE connector (returned by seedSource) is
 // configured by a test and never executed directly: the factory clones its
 // embedded ConnectorBehavior into each connector it builds. The template's
-// lifecycle accessors (CloseCount, QueryCalls, TestConnectionCalls) DELEGATE to
+// lifecycle accessors (CloseCount, QueryCalls) DELEGATE to
 // the connector the factory built most recently — the one the RUNNER opened —
 // so a test asserts against the runner's freshly-built connector, not a reused
 // planner instance. A BUILT connector (returned by the factory) carries the
@@ -135,10 +135,9 @@ type Connector struct {
 	// nil on a built connector, which records its own counters directly.
 	factory *ConnectorFactory
 
-	// testConnectionCalls and queryCalls record lifecycle invocations so a test
-	// can assert the runner drove TestConnection before Query.
-	testConnectionCalls int
-	queryCalls          int
+	// queryCalls records Query invocations so a test can assert the runner drove
+	// Query the expected number of times.
+	queryCalls int
 	// closeCount records every Close call. The runner MUST close every connector
 	// it opens, on both the success and failure paths; CloseCount is how a test
 	// proves the invariant.
@@ -161,8 +160,6 @@ func NewTemplateConnector(behavior ConnectorBehavior) *Connector {
 func (c *Connector) TestConnection(_ context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-
-	c.testConnectionCalls++
 
 	return c.TestErr
 }
@@ -359,9 +356,9 @@ func (f *ConnectorFactory) Build(_ context.Context, _ engine.ConnectionDescripto
 	conn := &Connector{}
 
 	if f.template != nil {
-		f.mu.Unlock()
+		// snapshotBehavior locks the TEMPLATE connector's own mutex, which is a
+		// distinct mutex from f.mu, so taking it while holding f.mu cannot deadlock.
 		conn.ConnectorBehavior = f.template.snapshotBehavior()
-		f.mu.Lock()
 	}
 
 	f.built = append(f.built, conn)
