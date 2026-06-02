@@ -64,21 +64,44 @@ type ExtractionRequest struct {
 	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
-// PlanStep describes a single planned datasource extraction unit.
+// PlanStep describes a single planned datasource extraction unit. It is a
+// deterministic, secret-free per-datasource work item: tables are sorted, the
+// selected fields per table are sorted, and any matching filters are attached on
+// their owning table path. It carries NO credential material — the host resolves
+// credentials at execute time behind the connector seam.
 type PlanStep struct {
 	// ConfigName identifies the target datasource.
 	ConfigName string `json:"configName"`
-	// Tables lists the qualified tables the step will read.
+	// Tables lists the qualified tables the step will read, in sorted order.
 	Tables []string `json:"tables"`
+	// Fields maps each qualified table to its selected field names, sorted.
+	Fields map[string][]string `json:"fields,omitempty"`
+	// Filters carries the host-defined filter criteria for this datasource,
+	// attached on the matching table path. It is intentionally untyped at the
+	// contract layer; adapters interpret it. It carries no credential material.
+	Filters map[string]map[string]any `json:"filters,omitempty"`
 }
 
-// ExtractionPlan is the contract describing how a request will be executed.
-// It is derived from an ExtractionRequest by later subtasks; here it is a
-// data-only shape with no planning behavior.
+// ExtractionPlan is the contract describing how a request will be executed. It
+// is derived from an ExtractionRequest by PlanExtraction: a deterministic,
+// secret-free executable plan. The plan carries the tenant identity (tenantId
+// only — never organization or product) plus an optional request id for
+// downstream adapters and observability, and preserves safe request metadata
+// (including metadata.source) for compatibility paths.
 type ExtractionPlan struct {
-	// Steps enumerates the planned per-datasource extraction units.
+	// TenantID is the isolation boundary the plan was built under. It is the
+	// SOLE tenant identity the plan carries; the Engine never carries an
+	// organization or product concept.
+	TenantID string `json:"tenantId"`
+	// RequestID correlates the plan with a single host request. Optional.
+	RequestID string `json:"requestId,omitempty"`
+	// Steps enumerates the planned per-datasource extraction units, in sorted
+	// order by config name.
 	Steps []PlanStep `json:"steps"`
-	// Limits records the bounds applied to the plan.
+	// Metadata carries safe, non-secret request metadata preserved for
+	// compatibility paths (e.g. metadata.source = plugin_crm).
+	Metadata map[string]any `json:"metadata,omitempty"`
+	// Limits records the effective bounds applied to the plan.
 	Limits Limits `json:"limits"`
 }
 
