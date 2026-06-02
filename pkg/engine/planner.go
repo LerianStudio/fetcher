@@ -81,27 +81,43 @@ func (e *Engine) PlanExtraction(
 		return ExtractionPlan{}, NewEngineError(CategoryValidation, "extraction request has no mapped fields")
 	}
 
-	// Enforce tenant-scope CONSISTENCY of every referenced connection BEFORE the
-	// limit/schema-validation machinery and BEFORE any connector access. A config
-	// name that does not resolve within this tenant's scope — whether it truly does
-	// not exist or is owned by ANOTHER tenant — is rejected here with the same safe
-	// scoped not-found error, so neither the error category nor the message reveals
-	// cross-tenant existence (no existence oracle), and request shaping (e.g. a
-	// concurrent limit breach) cannot defer or alter that decision. This is a
-	// SCOPE-consistency check only: the Engine never authorizes the actor, it only
-	// confirms the supplied context owns the connections it references.
-	if err := e.requireScopedConnections(ctx, tenant, store, request); err != nil {
+	// Reject a datasource that selects zero tables (an empty FieldSelection) as
+	// malformed input, symmetric with the empty-MappedFields guard above. Such a
+	// datasource would otherwise validate clean and emit a vacuous PlanStep with no
+	// tables or fields that reaches execute time.
+	if err := requireNonEmptySelections(request); err != nil {
 		return ExtractionPlan{}, err
 	}
 
-	// Resolve the effective limits for THIS request: the Engine default merged
-	// with the allowed per-request overrides, with copy semantics. An override
-	// that exceeds an Engine maximum (or is malformed) is rejected here as a safe
-	// CategoryValidation error pointing at the violated limit field — BEFORE any
-	// connection resolution or connector discovery — and the Engine's shared
-	// default Limits is never mutated.
+	// Resolve the effective limits for THIS request BEFORE any per-connection
+	// access: the Engine default merged with the allowed per-request overrides,
+	// with copy semantics. An override that exceeds an Engine maximum (or is
+	// malformed) is rejected here as a safe CategoryValidation error pointing at
+	// the violated limit field — and the Engine's shared default Limits is never
+	// mutated. Resolving it first lets the datasource-count ceiling bound the
+	// existence probe below; a rejected override therefore cannot bypass the bound.
 	limits, err := e.options.limits.Effective(request.Overrides)
 	if err != nil {
+		return ExtractionPlan{}, err
+	}
+
+	// Enforce tenant-scope CONSISTENCY of every referenced connection BEFORE the
+	// schema-validation machinery and BEFORE any connector access. A config name
+	// that does not resolve within this tenant's scope — whether it truly does not
+	// exist or is owned by ANOTHER tenant — is rejected here with the same safe
+	// scoped not-found error, so neither the error category nor the message reveals
+	// cross-tenant existence (no existence oracle). The per-connection existence
+	// probe is BOUNDED by the effective MaxDatasources ceiling (CWE-770): a request
+	// whose datasource count exceeds the ceiling is rejected with a safe
+	// limit-exceeded validation error after at most ceiling+1 store lookups, so a
+	// request naming thousands of configs cannot trigger thousands of probes before
+	// the count gate fires. The count check is request-shape-only and reveals
+	// nothing cross-tenant, so it is safe to interleave with the probe; a genuinely
+	// unresolvable config encountered within the bound still yields the scoped
+	// not-found, preserving the existence-oracle identity. This is a
+	// SCOPE-consistency check only: the Engine never authorizes the actor, it only
+	// confirms the supplied context owns the connections it references.
+	if err := e.requireScopedConnections(ctx, tenant, store, request, limits); err != nil {
 		return ExtractionPlan{}, err
 	}
 
@@ -149,8 +165,28 @@ func (e *Engine) requireScopedConnections(
 	tenant TenantContext,
 	store ConnectionStore,
 	request ExtractionRequest,
+	limits Limits,
 ) error {
-	for _, configName := range sortedKeys(request.MappedFields) {
+	names := sortedKeys(request.MappedFields)
+
+	// Bound the per-connection existence probe by the effective MaxDatasources
+	// ceiling (CWE-770). A request whose datasource count exceeds the ceiling is
+	// rejected with a safe limit-exceeded validation error after probing at most
+	// ceiling+1 names, so a request naming thousands of configs cannot fan out into
+	// thousands of store lookups before the count gate fires. The ceiling+1 budget
+	// lets a genuinely unresolvable config among the first names still surface as
+	// the scoped not-found (preserving the existence-oracle identity), while a fully
+	// resolvable over-limit request is rejected by count before exhausting the loop.
+	probeBudget := len(names)
+	if limits.MaxDatasources > 0 && probeBudget > limits.MaxDatasources {
+		probeBudget = limits.MaxDatasources + 1
+	}
+
+	for i, configName := range names {
+		if i >= probeBudget {
+			break
+		}
+
 		if isBlank(configName) {
 			return NewEngineError(CategoryValidation, "extraction request has a blank datasource config name")
 		}
@@ -162,6 +198,28 @@ func (e *Engine) requireScopedConnections(
 
 		if !found {
 			return NewEngineError(CategoryNotFound, "extraction references an unknown datasource connection")
+		}
+	}
+
+	// Every probed name within the bound resolved under this tenant. If the request
+	// still exceeds the datasource ceiling, reject it as a safe limit-exceeded
+	// validation error. The message names the violated field path and reveals
+	// nothing about any specific config's existence.
+	if limits.MaxDatasources > 0 && len(names) > limits.MaxDatasources {
+		return NewEngineError(CategoryValidation, "datasource count exceeds the configured maximum: "+string(limitFieldMaxDatasources))
+	}
+
+	return nil
+}
+
+// requireNonEmptySelections rejects any datasource whose FieldSelection selects
+// zero tables. An empty selection can never produce a meaningful plan step; it is
+// a malformed request, symmetric with the empty-MappedFields guard. Names are
+// probed in sorted order so the failing datasource is deterministic.
+func requireNonEmptySelections(request ExtractionRequest) error {
+	for _, configName := range sortedKeys(request.MappedFields) {
+		if len(request.MappedFields[configName]) == 0 {
+			return NewEngineError(CategoryValidation, "extraction datasource selects no tables")
 		}
 	}
 
@@ -294,6 +352,12 @@ func filterFieldsByTable(filters map[string]any, configName string) map[string][
 		for field := range fields {
 			names = append(names, field)
 		}
+
+		// Sort so the filter-field references are emitted deterministically, matching
+		// every other name slice in the planner (which all go through sortedCopy).
+		// Ranging a Go map is unordered, so without this the slice order — and any
+		// derived plan/report shape — would depend on map-iteration order.
+		sort.Strings(names)
 
 		out[table] = names
 	}

@@ -130,6 +130,8 @@ func plannerRequest() engine.ExtractionRequest {
 // TestEngine_PlanExtraction_DeterministicPlanFromMappedFields proves equivalent
 // requests yield deeply-equal plans regardless of map-iteration order.
 func TestEngine_PlanExtraction_DeterministicPlanFromMappedFields(t *testing.T) {
+	t.Parallel()
+
 	tenant := plannerTenant(t)
 	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
 	eng := engineForPlan(t, factory, memory.NewSchemaCache(), tenant, "orders-db")
@@ -152,9 +154,57 @@ func TestEngine_PlanExtraction_DeterministicPlanFromMappedFields(t *testing.T) {
 	}
 }
 
+// TestEngine_PlanExtraction_FilterFieldOrderingDeterministic proves that a
+// datasource carrying MULTIPLE filter fields on one table yields a byte-stable
+// plan across runs. The filter-field references are extracted from a Go map, so
+// without an explicit sort their order — and any plan/report shape derived from
+// it — would depend on map-iteration order.
+func TestEngine_PlanExtraction_FilterFieldOrderingDeterministic(t *testing.T) {
+	t.Parallel()
+
+	tenant := plannerTenant(t)
+
+	req := engine.ExtractionRequest{
+		MappedFields: map[string]engine.FieldSelection{
+			"orders-db": {"public.orders": {"id"}},
+		},
+		Filters: map[string]any{
+			"orders-db": map[string]any{
+				"public.orders": map[string]any{
+					// Multiple filter fields, all valid against plannerSnapshot, so the
+					// only variable is their extraction order.
+					"status": "open", "amount": 1, "id": 2,
+				},
+			},
+		},
+	}
+
+	factoryA := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
+	engA := engineForPlan(t, factoryA, memory.NewSchemaCache(), tenant, "orders-db")
+
+	first, err := engA.PlanExtraction(context.Background(), tenant, req)
+	if err != nil {
+		t.Fatalf("PlanExtraction() first error: %v", err)
+	}
+
+	factoryB := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
+	engB := engineForPlan(t, factoryB, memory.NewSchemaCache(), tenant, "orders-db")
+
+	second, err := engB.PlanExtraction(context.Background(), tenant, req)
+	if err != nil {
+		t.Fatalf("PlanExtraction() second error: %v", err)
+	}
+
+	if !reflect.DeepEqual(first, second) {
+		t.Fatalf("multi-filter-field plan was non-deterministic:\n first=%#v\nsecond=%#v", first, second)
+	}
+}
+
 // TestEngine_PlanExtraction_StableOrdering proves datasource, table, and field
 // keys are sorted, not emitted in map-iteration order.
 func TestEngine_PlanExtraction_StableOrdering(t *testing.T) {
+	t.Parallel()
+
 	tenant := plannerTenant(t)
 	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
 	eng := engineForPlan(t, factory, memory.NewSchemaCache(), tenant, "orders-db")
@@ -188,6 +238,8 @@ func TestEngine_PlanExtraction_StableOrdering(t *testing.T) {
 // TestEngine_PlanExtraction_FilterAttachment proves filters attach only to the
 // matching datasource/table/field path.
 func TestEngine_PlanExtraction_FilterAttachment(t *testing.T) {
+	t.Parallel()
+
 	tenant := plannerTenant(t)
 	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
 	eng := engineForPlan(t, factory, memory.NewSchemaCache(), tenant, "orders-db")
@@ -219,6 +271,8 @@ func TestEngine_PlanExtraction_FilterAttachment(t *testing.T) {
 // TestEngine_PlanExtraction_MetadataPreserved proves request metadata, including
 // metadata.source, survives into the plan.
 func TestEngine_PlanExtraction_MetadataPreserved(t *testing.T) {
+	t.Parallel()
+
 	tenant := plannerTenant(t)
 	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
 	eng := engineForPlan(t, factory, memory.NewSchemaCache(), tenant, "orders-db")
@@ -245,6 +299,8 @@ func TestEngine_PlanExtraction_MetadataPreserved(t *testing.T) {
 // TestEngine_PlanExtraction_EmptyMappedFields_Validation proves an empty request
 // fails with a validation error before any resolution.
 func TestEngine_PlanExtraction_EmptyMappedFields_Validation(t *testing.T) {
+	t.Parallel()
+
 	tenant := plannerTenant(t)
 	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
 	eng := engineForPlan(t, factory, memory.NewSchemaCache(), tenant, "orders-db")
@@ -253,9 +309,37 @@ func TestEngine_PlanExtraction_EmptyMappedFields_Validation(t *testing.T) {
 	assertEngineCategory(t, err, engine.CategoryValidation)
 }
 
+// TestEngine_PlanExtraction_DatasourceSelectsNoTables_Validation proves a
+// datasource present in MappedFields with an empty FieldSelection (zero tables)
+// is rejected as a malformed request, symmetric with the empty-MappedFields
+// guard. Without the guard such a request validates clean and emits a vacuous
+// PlanStep with no tables/fields that reaches execute time.
+func TestEngine_PlanExtraction_DatasourceSelectsNoTables_Validation(t *testing.T) {
+	t.Parallel()
+
+	tenant := plannerTenant(t)
+	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
+	eng := engineForPlan(t, factory, memory.NewSchemaCache(), tenant, "orders-db")
+
+	req := engine.ExtractionRequest{
+		MappedFields: map[string]engine.FieldSelection{
+			"orders-db": {},
+		},
+	}
+
+	_, err := eng.PlanExtraction(context.Background(), tenant, req)
+	assertEngineCategory(t, err, engine.CategoryValidation)
+
+	if factory.record.has("discover") {
+		t.Fatalf("a zero-table datasource selection must be rejected before connector discovery")
+	}
+}
+
 // TestEngine_PlanExtraction_UnknownConfigName_NotFound proves an unknown config
 // name fails as not-found before execution.
 func TestEngine_PlanExtraction_UnknownConfigName_NotFound(t *testing.T) {
+	t.Parallel()
+
 	tenant := plannerTenant(t)
 	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
 	eng := engineForPlan(t, factory, memory.NewSchemaCache(), tenant, "orders-db")
@@ -277,6 +361,8 @@ func TestEngine_PlanExtraction_UnknownConfigName_NotFound(t *testing.T) {
 // TestEngine_PlanExtraction_SourceFailure_SafeError proves a connector/source
 // failure returns a safe unavailable error and never leaks driver internals.
 func TestEngine_PlanExtraction_SourceFailure_SafeError(t *testing.T) {
+	t.Parallel()
+
 	tenant := plannerTenant(t)
 	factory := &schemaConnFactory{record: &schemaConnRecord{}, buildErr: errInjectedSecret}
 	eng := engineForPlan(t, factory, nil, tenant, "orders-db")
@@ -292,6 +378,8 @@ func TestEngine_PlanExtraction_SourceFailure_SafeError(t *testing.T) {
 // TestEngine_PlanExtraction_SchemaCacheHit_NoDiscovery proves a cache hit avoids
 // connector schema discovery.
 func TestEngine_PlanExtraction_SchemaCacheHit_NoDiscovery(t *testing.T) {
+	t.Parallel()
+
 	tenant := plannerTenant(t)
 	cache := memory.NewSchemaCache()
 	if err := cache.PutSchema(context.Background(), tenant, plannerSnapshot("orders-db")); err != nil {
@@ -314,6 +402,8 @@ func TestEngine_PlanExtraction_SchemaCacheHit_NoDiscovery(t *testing.T) {
 // TestEngine_PlanExtraction_SchemaCacheMiss_Discovers proves a cache miss uses
 // connector discovery via the registry.
 func TestEngine_PlanExtraction_SchemaCacheMiss_Discovers(t *testing.T) {
+	t.Parallel()
+
 	tenant := plannerTenant(t)
 	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
 	eng := engineForPlan(t, factory, memory.NewSchemaCache(), tenant, "orders-db")
@@ -331,6 +421,8 @@ func TestEngine_PlanExtraction_SchemaCacheMiss_Discovers(t *testing.T) {
 // TestEngine_PlanExtraction_InvalidTableReference_FailsBeforeExecution proves an
 // invalid table reference fails before any executable plan is produced.
 func TestEngine_PlanExtraction_InvalidTableReference_FailsBeforeExecution(t *testing.T) {
+	t.Parallel()
+
 	tenant := plannerTenant(t)
 	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
 	eng := engineForPlan(t, factory, memory.NewSchemaCache(), tenant, "orders-db")
@@ -348,6 +440,8 @@ func TestEngine_PlanExtraction_InvalidTableReference_FailsBeforeExecution(t *tes
 // TestEngine_PlanExtraction_InvalidFieldReference_FailsBeforeExecution proves an
 // invalid field reference fails before any executable plan is produced.
 func TestEngine_PlanExtraction_InvalidFieldReference_FailsBeforeExecution(t *testing.T) {
+	t.Parallel()
+
 	tenant := plannerTenant(t)
 	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
 	eng := engineForPlan(t, factory, memory.NewSchemaCache(), tenant, "orders-db")
@@ -365,6 +459,8 @@ func TestEngine_PlanExtraction_InvalidFieldReference_FailsBeforeExecution(t *tes
 // TestEngine_PlanExtraction_InvalidFilterReference_FailsBeforeExecution proves an
 // invalid filter field reference fails before any executable plan is produced.
 func TestEngine_PlanExtraction_InvalidFilterReference_FailsBeforeExecution(t *testing.T) {
+	t.Parallel()
+
 	tenant := plannerTenant(t)
 	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
 	eng := engineForPlan(t, factory, memory.NewSchemaCache(), tenant, "orders-db")
@@ -389,6 +485,8 @@ func TestEngine_PlanExtraction_InvalidFilterReference_FailsBeforeExecution(t *te
 // TestEngine_PlanExtraction_NoRawCredentialMaterial proves a valid plan carries
 // no raw credential material anywhere in its structure.
 func TestEngine_PlanExtraction_NoRawCredentialMaterial(t *testing.T) {
+	t.Parallel()
+
 	tenant := plannerTenant(t)
 	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
 	eng := engineForPlan(t, factory, memory.NewSchemaCache(), tenant, "orders-db")
@@ -409,6 +507,8 @@ func TestEngine_PlanExtraction_NoRawCredentialMaterial(t *testing.T) {
 // TestEngine_PlanExtraction_PlanCopiesAreImmutable proves mutating a returned
 // plan slice/map does not corrupt a freshly planned, equivalent request.
 func TestEngine_PlanExtraction_PlanCopiesAreImmutable(t *testing.T) {
+	t.Parallel()
+
 	tenant := plannerTenant(t)
 	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
 	eng := engineForPlan(t, factory, memory.NewSchemaCache(), tenant, "orders-db")
@@ -446,6 +546,8 @@ func TestEngine_PlanExtraction_PlanCopiesAreImmutable(t *testing.T) {
 // fails with a stable error when no ConnectionStore is configured, before any
 // tenant or request inspection.
 func TestEngine_PlanExtraction_NoConnectionStore_StableError(t *testing.T) {
+	t.Parallel()
+
 	registry := memory.NewConnectorRegistry()
 
 	eng, err := engine.New(engine.WithConnectorRegistry(registry))
@@ -460,6 +562,8 @@ func TestEngine_PlanExtraction_NoConnectionStore_StableError(t *testing.T) {
 // TestEngine_PlanExtraction_InvalidTenantScope_FailsBeforeResolution proves an
 // invalid tenant scope fails before any connection resolution.
 func TestEngine_PlanExtraction_InvalidTenantScope_FailsBeforeResolution(t *testing.T) {
+	t.Parallel()
+
 	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
 	eng := engineForPlan(t, factory, memory.NewSchemaCache(), plannerTenant(t), "orders-db")
 
@@ -475,6 +579,8 @@ func TestEngine_PlanExtraction_InvalidTenantScope_FailsBeforeResolution(t *testi
 // whose filter map is empty (or malformed at the table layer) produces a step
 // with no filter map rather than an empty one, keeping the plan minimal.
 func TestEngine_PlanExtraction_FiltersWithoutValues_NoFilterMap(t *testing.T) {
+	t.Parallel()
+
 	tenant := plannerTenant(t)
 	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
 	eng := engineForPlan(t, factory, memory.NewSchemaCache(), tenant, "orders-db")
@@ -588,6 +694,8 @@ func fieldSelection(n int) []string {
 // (an unknown/cross-tenant config is rejected before limits — see
 // TestEngine_PlanExtraction_CrossTenantScopeCheckedBeforeLimits).
 func TestEngine_PlanExtraction_MaxDatasourceCount(t *testing.T) {
+	t.Parallel()
+
 	tenant := plannerTenant(t)
 	limits := engine.DefaultLimits()
 	limits.MaxDatasources = 1
@@ -633,6 +741,8 @@ func TestEngine_PlanExtraction_MaxDatasourceCount(t *testing.T) {
 // TestEngine_PlanExtraction_MaxTableCount proves a request exceeding the
 // effective per-datasource table-count limit fails during planning.
 func TestEngine_PlanExtraction_MaxTableCount(t *testing.T) {
+	t.Parallel()
+
 	tenant := plannerTenant(t)
 	limits := engine.DefaultLimits()
 	limits.MaxTablesPerDatasource = 1
@@ -656,6 +766,8 @@ func TestEngine_PlanExtraction_MaxTableCount(t *testing.T) {
 // TestEngine_PlanExtraction_MaxFieldCount proves a request exceeding the
 // effective per-table field-count limit fails during planning.
 func TestEngine_PlanExtraction_MaxFieldCount(t *testing.T) {
+	t.Parallel()
+
 	tenant := plannerTenant(t)
 	limits := engine.DefaultLimits()
 	limits.MaxFieldsPerTable = 2
@@ -676,6 +788,8 @@ func TestEngine_PlanExtraction_MaxFieldCount(t *testing.T) {
 // TestEngine_PlanExtraction_MaxFilterCount proves a request whose filter-field
 // references exceed the per-table field budget fails during planning.
 func TestEngine_PlanExtraction_MaxFilterCount(t *testing.T) {
+	t.Parallel()
+
 	tenant := plannerTenant(t)
 	limits := engine.DefaultLimits()
 	limits.MaxFieldsPerTable = 2
@@ -704,6 +818,8 @@ func TestEngine_PlanExtraction_MaxFilterCount(t *testing.T) {
 // override that exceeds the Engine maximum concurrency is rejected as a
 // validation error and never reaches connector discovery.
 func TestEngine_PlanExtraction_MaxConcurrencyOverrideRejected(t *testing.T) {
+	t.Parallel()
+
 	tenant := plannerTenant(t)
 	limits := engine.DefaultLimits()
 	limits.MaxConcurrency = 4
@@ -725,6 +841,8 @@ func TestEngine_PlanExtraction_MaxConcurrencyOverrideRejected(t *testing.T) {
 // TestEngine_PlanExtraction_TimeoutDefaulting proves that when a request carries
 // no timeout override, the plan inherits the Engine's default timeout.
 func TestEngine_PlanExtraction_TimeoutDefaulting(t *testing.T) {
+	t.Parallel()
+
 	tenant := plannerTenant(t)
 	limits := engine.DefaultLimits()
 
@@ -744,6 +862,8 @@ func TestEngine_PlanExtraction_TimeoutDefaulting(t *testing.T) {
 // TestEngine_PlanExtraction_ValidOverrideApplied proves a per-request override
 // within the Engine maximums is applied to the produced plan's limits.
 func TestEngine_PlanExtraction_ValidOverrideApplied(t *testing.T) {
+	t.Parallel()
+
 	tenant := plannerTenant(t)
 	limits := engine.DefaultLimits()
 	limits.MaxConcurrency = 8
@@ -774,6 +894,8 @@ func TestEngine_PlanExtraction_ValidOverrideApplied(t *testing.T) {
 // rejected override leaves the Engine's default limits untouched (copy
 // semantics), so a later valid request sees the original defaults.
 func TestEngine_PlanExtraction_InvalidOverrideDoesNotMutateDefaults(t *testing.T) {
+	t.Parallel()
+
 	tenant := plannerTenant(t)
 	limits := engine.DefaultLimits()
 	limits.MaxConcurrency = 4
@@ -806,6 +928,8 @@ func TestEngine_PlanExtraction_InvalidOverrideDoesNotMutateDefaults(t *testing.T
 // TestEngine_PlanExtraction_CacheHitUnderLimits proves a request within
 // effective limits served from cache avoids connector discovery.
 func TestEngine_PlanExtraction_CacheHitUnderLimits(t *testing.T) {
+	t.Parallel()
+
 	tenant := plannerTenant(t)
 	cache := memory.NewSchemaCache()
 	if err := cache.PutSchema(context.Background(), tenant, plannerSnapshot("orders-db")); err != nil {
@@ -827,6 +951,8 @@ func TestEngine_PlanExtraction_CacheHitUnderLimits(t *testing.T) {
 // TestEngine_PlanExtraction_CacheMissUnderLimits proves a request within
 // effective limits with no cache entry uses connector discovery.
 func TestEngine_PlanExtraction_CacheMissUnderLimits(t *testing.T) {
+	t.Parallel()
+
 	tenant := plannerTenant(t)
 	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
 	eng := engineForPlanWithLimits(t, factory, memory.NewSchemaCache(), tenant, "orders-db", engine.DefaultLimits())
@@ -840,9 +966,15 @@ func TestEngine_PlanExtraction_CacheMissUnderLimits(t *testing.T) {
 	}
 }
 
-// TestEngine_PlanExtraction_UnknownConfigAfterLimits proves an unknown config
-// name still fails as not-found after the request passes limit validation.
-func TestEngine_PlanExtraction_UnknownConfigAfterLimits(t *testing.T) {
+// TestEngine_PlanExtraction_UnknownConfigName_NotFound_RegardlessOfLimits proves
+// an unknown config name fails as not-found on an Engine configured with explicit
+// limits. The scope-consistency gate (requireScopedConnections) rejects the
+// unknown name BEFORE the schema/limit machinery runs, so the outcome is
+// independent of the configured limits — the name accurately reflects that
+// ordering rather than implying the rejection happens after limit validation.
+func TestEngine_PlanExtraction_UnknownConfigName_NotFound_RegardlessOfLimits(t *testing.T) {
+	t.Parallel()
+
 	tenant := plannerTenant(t)
 	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
 	eng := engineForPlanWithLimits(t, factory, memory.NewSchemaCache(), tenant, "orders-db", engine.DefaultLimits())
@@ -861,6 +993,8 @@ func TestEngine_PlanExtraction_UnknownConfigAfterLimits(t *testing.T) {
 // filter references still fail before execution when the request sits within
 // limit boundaries.
 func TestEngine_PlanExtraction_InvalidRefsWithinLimits(t *testing.T) {
+	t.Parallel()
+
 	tenant := plannerTenant(t)
 	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
 	eng := engineForPlanWithLimits(t, factory, memory.NewSchemaCache(), tenant, "orders-db", engine.DefaultLimits())
@@ -878,6 +1012,8 @@ func TestEngine_PlanExtraction_InvalidRefsWithinLimits(t *testing.T) {
 // TestEngine_PlanExtraction_NoCredentialMaterialAfterLimits proves a valid plan
 // produced after limit checks carries no raw credential material.
 func TestEngine_PlanExtraction_NoCredentialMaterialAfterLimits(t *testing.T) {
+	t.Parallel()
+
 	tenant := plannerTenant(t)
 	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
 	eng := engineForPlanWithLimits(t, factory, memory.NewSchemaCache(), tenant, "orders-db", engine.DefaultLimits())
@@ -898,6 +1034,8 @@ func TestEngine_PlanExtraction_NoCredentialMaterialAfterLimits(t *testing.T) {
 // TestEngine_PlanExtraction_BoundaryRequestPlansSuccessfully proves a request
 // exactly on the configured limit boundaries plans successfully.
 func TestEngine_PlanExtraction_BoundaryRequestPlansSuccessfully(t *testing.T) {
+	t.Parallel()
+
 	tenant := plannerTenant(t)
 	limits := engine.DefaultLimits()
 	limits.MaxDatasources = 1
@@ -926,6 +1064,8 @@ func TestEngine_PlanExtraction_BoundaryRequestPlansSuccessfully(t *testing.T) {
 // TestEngine_PlanExtraction_TimeoutOverrideRejected proves a timeout override
 // above the Engine maximum is rejected before any connector discovery.
 func TestEngine_PlanExtraction_TimeoutOverrideRejected(t *testing.T) {
+	t.Parallel()
+
 	tenant := plannerTenant(t)
 	limits := engine.DefaultLimits()
 	limits.Timeout = time.Minute
@@ -947,6 +1087,8 @@ func TestEngine_PlanExtraction_TimeoutOverrideRejected(t *testing.T) {
 // TestEngine_PlanExtraction_TimeoutOverrideApplied proves a timeout override
 // within the Engine maximum is applied to the plan.
 func TestEngine_PlanExtraction_TimeoutOverrideApplied(t *testing.T) {
+	t.Parallel()
+
 	tenant := plannerTenant(t)
 	limits := engine.DefaultLimits()
 	limits.Timeout = time.Hour
@@ -970,6 +1112,8 @@ func TestEngine_PlanExtraction_TimeoutOverrideApplied(t *testing.T) {
 // TestEngine_PlanExtraction_ResultBytesOverrideRejected proves a result-size
 // override above the Engine maximum is rejected before connector discovery.
 func TestEngine_PlanExtraction_ResultBytesOverrideRejected(t *testing.T) {
+	t.Parallel()
+
 	tenant := plannerTenant(t)
 	limits := engine.DefaultLimits()
 	limits.MaxResultBytes = 1024
@@ -991,6 +1135,8 @@ func TestEngine_PlanExtraction_ResultBytesOverrideRejected(t *testing.T) {
 // TestEngine_PlanExtraction_ResultBytesOverrideApplied proves a result-size
 // override within the Engine maximum is applied to the plan.
 func TestEngine_PlanExtraction_ResultBytesOverrideApplied(t *testing.T) {
+	t.Parallel()
+
 	tenant := plannerTenant(t)
 	limits := engine.DefaultLimits()
 	limits.MaxResultBytes = 1 << 30
@@ -1011,11 +1157,98 @@ func TestEngine_PlanExtraction_ResultBytesOverrideApplied(t *testing.T) {
 	}
 }
 
+// TestEngine_PlanExtraction_MaxDatasourcesOverrideRejected proves a per-request
+// override that raises MaxDatasources above the Engine maximum is rejected as a
+// validation error whose field path names the violated limit — pinning the
+// limitField wiring for the datasource dimension, not just the category.
+func TestEngine_PlanExtraction_MaxDatasourcesOverrideRejected(t *testing.T) {
+	t.Parallel()
+
+	tenant := plannerTenant(t)
+	limits := engine.DefaultLimits()
+	limits.MaxDatasources = 4
+
+	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
+	eng := engineForPlanWithLimits(t, factory, memory.NewSchemaCache(), tenant, "orders-db", limits)
+
+	req := plannerRequest()
+	req.Overrides = &engine.Limits{MaxDatasources: 999}
+
+	_, err := eng.PlanExtraction(context.Background(), tenant, req)
+	assertEngineCategory(t, err, engine.CategoryValidation)
+
+	if !strings.Contains(err.Error(), "maxDatasources") {
+		t.Fatalf("override-rejection error must name the violated field maxDatasources, got %q", err.Error())
+	}
+
+	if factory.record.has("discover") {
+		t.Fatalf("an invalid override must be rejected before connector discovery")
+	}
+}
+
+// TestEngine_PlanExtraction_MaxTablesOverrideRejected proves a per-request
+// override that raises MaxTablesPerDatasource above the Engine maximum is
+// rejected as a validation error.
+func TestEngine_PlanExtraction_MaxTablesOverrideRejected(t *testing.T) {
+	t.Parallel()
+
+	tenant := plannerTenant(t)
+	limits := engine.DefaultLimits()
+	limits.MaxTablesPerDatasource = 5
+
+	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
+	eng := engineForPlanWithLimits(t, factory, memory.NewSchemaCache(), tenant, "orders-db", limits)
+
+	req := plannerRequest()
+	req.Overrides = &engine.Limits{MaxTablesPerDatasource: 999}
+
+	_, err := eng.PlanExtraction(context.Background(), tenant, req)
+	assertEngineCategory(t, err, engine.CategoryValidation)
+
+	if !strings.Contains(err.Error(), "maxTablesPerDatasource") {
+		t.Fatalf("override-rejection error must name the violated field maxTablesPerDatasource, got %q", err.Error())
+	}
+
+	if factory.record.has("discover") {
+		t.Fatalf("an invalid override must be rejected before connector discovery")
+	}
+}
+
+// TestEngine_PlanExtraction_MaxFieldsOverrideRejected proves a per-request
+// override that raises MaxFieldsPerTable above the Engine maximum is rejected as
+// a validation error.
+func TestEngine_PlanExtraction_MaxFieldsOverrideRejected(t *testing.T) {
+	t.Parallel()
+
+	tenant := plannerTenant(t)
+	limits := engine.DefaultLimits()
+	limits.MaxFieldsPerTable = 10
+
+	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
+	eng := engineForPlanWithLimits(t, factory, memory.NewSchemaCache(), tenant, "orders-db", limits)
+
+	req := plannerRequest()
+	req.Overrides = &engine.Limits{MaxFieldsPerTable: 999}
+
+	_, err := eng.PlanExtraction(context.Background(), tenant, req)
+	assertEngineCategory(t, err, engine.CategoryValidation)
+
+	if !strings.Contains(err.Error(), "maxFieldsPerTable") {
+		t.Fatalf("override-rejection error must name the violated field maxFieldsPerTable, got %q", err.Error())
+	}
+
+	if factory.record.has("discover") {
+		t.Fatalf("an invalid override must be rejected before connector discovery")
+	}
+}
+
 // TestEngine_PlanExtraction_ConnectorHardLimitsCopiedAndIsolated proves the
 // connector-specific hard limits configured on the Engine are carried into the
 // plan as an INDEPENDENT copy: mutating the plan's map must not reach back into
 // the Engine's shared default limits.
 func TestEngine_PlanExtraction_ConnectorHardLimitsCopiedAndIsolated(t *testing.T) {
+	t.Parallel()
+
 	tenant := plannerTenant(t)
 	limits := engine.DefaultLimits()
 	limits.ConnectorHardLimits = map[string]int{"postgres": 1000}
@@ -1107,6 +1340,8 @@ func engineForPlanCrossTenant(
 // any connector access — the planner requires a tenant scope for persisted
 // connection planning.
 func TestEngine_PlanExtraction_BlankTenantScope_FailsBeforeResolution(t *testing.T) {
+	t.Parallel()
+
 	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
 	eng := engineForPlan(t, factory, memory.NewSchemaCache(), plannerTenant(t), "orders-db")
 
@@ -1122,6 +1357,8 @@ func TestEngine_PlanExtraction_BlankTenantScope_FailsBeforeResolution(t *testing
 // the tenant that OWNS the connection succeeds and carries that tenant identity
 // into the plan.
 func TestEngine_PlanExtraction_MatchingTenantScope_Succeeds(t *testing.T) {
+	t.Parallel()
+
 	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
 	eng, owner, _ := engineForPlanCrossTenant(t, factory, memory.NewSchemaCache(), "orders-db")
 
@@ -1144,6 +1381,8 @@ func TestEngine_PlanExtraction_MatchingTenantScope_Succeeds(t *testing.T) {
 // any connector access — the cross-tenant connection is invisible under the
 // intruder scope.
 func TestEngine_PlanExtraction_MismatchedTenantScope_FailsBeforeConnectorAccess(t *testing.T) {
+	t.Parallel()
+
 	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
 	eng, _, intruder := engineForPlanCrossTenant(t, factory, memory.NewSchemaCache(), "orders-db")
 
@@ -1161,6 +1400,8 @@ func TestEngine_PlanExtraction_MismatchedTenantScope_FailsBeforeConnectorAccess(
 // shape would let one tenant probe for the existence of another tenant's
 // connections (an existence oracle).
 func TestEngine_PlanExtraction_NoCrossTenantExistenceOracle(t *testing.T) {
+	t.Parallel()
+
 	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
 	eng, _, intruder := engineForPlanCrossTenant(t, factory, memory.NewSchemaCache(), "orders-db")
 
@@ -1197,6 +1438,8 @@ func TestEngine_PlanExtraction_NoCrossTenantExistenceOracle(t *testing.T) {
 // build/credential-resolution failure surfaces as a safe CategoryUnavailable
 // error that never leaks driver internals.
 func TestEngine_PlanExtraction_CredentialBuildFailureUnderMatchingScope_SafeError(t *testing.T) {
+	t.Parallel()
+
 	factory := &schemaConnFactory{record: &schemaConnRecord{}, buildErr: errInjectedSecret}
 	eng, owner, _ := engineForPlanCrossTenant(t, factory, nil, "orders-db")
 
@@ -1212,6 +1455,8 @@ func TestEngine_PlanExtraction_CredentialBuildFailureUnderMatchingScope_SafeErro
 // cache hit scoped to the OWNER tenant short-circuits connector discovery while
 // a cross-tenant request never benefits from another tenant's cached schema.
 func TestEngine_PlanExtraction_CacheHitUnderMatchingScope_NoDiscovery(t *testing.T) {
+	t.Parallel()
+
 	cache := memory.NewSchemaCache()
 	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
 	eng, owner, intruder := engineForPlanCrossTenant(t, factory, cache, "orders-db")
@@ -1238,6 +1483,8 @@ func TestEngine_PlanExtraction_CacheHitUnderMatchingScope_NoDiscovery(t *testing
 // TestEngine_PlanExtraction_CacheMissUnderMatchingScope_Discovers proves a
 // cache miss under the matching scope falls through to connector discovery.
 func TestEngine_PlanExtraction_CacheMissUnderMatchingScope_Discovers(t *testing.T) {
+	t.Parallel()
+
 	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
 	eng, owner, _ := engineForPlanCrossTenant(t, factory, memory.NewSchemaCache(), "orders-db")
 
@@ -1254,6 +1501,8 @@ func TestEngine_PlanExtraction_CacheMissUnderMatchingScope_Discovers(t *testing.
 // proves invalid table/field/filter references fail before any executable plan
 // is produced even under a valid, matching tenant scope.
 func TestEngine_PlanExtraction_InvalidRefsUnderMatchingScope_FailBeforeExecution(t *testing.T) {
+	t.Parallel()
+
 	cases := map[string]engine.ExtractionRequest{
 		"invalid table": {
 			MappedFields: map[string]engine.FieldSelection{
@@ -1279,6 +1528,8 @@ func TestEngine_PlanExtraction_InvalidRefsUnderMatchingScope_FailBeforeExecution
 
 	for name, req := range cases {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
 			factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
 			eng, owner, _ := engineForPlanCrossTenant(t, factory, memory.NewSchemaCache(), "orders-db")
 
@@ -1293,6 +1544,8 @@ func TestEngine_PlanExtraction_InvalidRefsUnderMatchingScope_FailBeforeExecution
 // adapters/observability — never an organization or product concept, which the
 // embedded Engine does not model.
 func TestEngine_PlanExtraction_TenantIDPropagatedNoOrgOrProduct(t *testing.T) {
+	t.Parallel()
+
 	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
 	eng, owner, _ := engineForPlanCrossTenant(t, factory, memory.NewSchemaCache(), "orders-db")
 
@@ -1328,6 +1581,8 @@ func TestEngine_PlanExtraction_TenantIDPropagatedNoOrgOrProduct(t *testing.T) {
 // request shape, both deferring scope enforcement past the limit gate and
 // creating a divergent-error existence oracle.
 func TestEngine_PlanExtraction_CrossTenantScopeCheckedBeforeLimits(t *testing.T) {
+	t.Parallel()
+
 	owner, err := engine.NewTenantContext("tenant-owner")
 	if err != nil {
 		t.Fatalf("NewTenantContext(owner) error: %v", err)
@@ -1394,6 +1649,190 @@ func TestEngine_PlanExtraction_CrossTenantScopeCheckedBeforeLimits(t *testing.T)
 	if planErr.Error() != cleanErr.Error() {
 		t.Fatalf("request-shaping oracle: limit-breach cross-tenant error %q differs from clean %q",
 			planErr.Error(), cleanErr.Error())
+	}
+}
+
+// countingStore wraps a ConnectionStore and counts FindConnection calls so a
+// test can prove the planner bounds the per-connection existence probe by the
+// effective MaxDatasources ceiling rather than probing every requested config
+// name. An optional findErr forces every FindConnection to return that error so
+// the store-error passthrough branch can be exercised.
+type countingStore struct {
+	inner   engine.ConnectionStore
+	calls   int
+	findErr error
+}
+
+func (s *countingStore) FindConnection(
+	ctx context.Context,
+	tenant engine.TenantContext,
+	configName string,
+) (engine.ConnectionDescriptor, bool, error) {
+	s.calls++
+
+	if s.findErr != nil {
+		return engine.ConnectionDescriptor{}, false, s.findErr
+	}
+
+	return s.inner.FindConnection(ctx, tenant, configName)
+}
+
+func (s *countingStore) Create(
+	ctx context.Context,
+	tenant engine.TenantContext,
+	descriptor engine.ConnectionDescriptor,
+	credential *engine.ProtectedCredential,
+) error {
+	return s.inner.Create(ctx, tenant, descriptor, credential)
+}
+
+func (s *countingStore) Update(
+	ctx context.Context,
+	tenant engine.TenantContext,
+	descriptor engine.ConnectionDescriptor,
+	credential *engine.ProtectedCredential,
+) error {
+	return s.inner.Update(ctx, tenant, descriptor, credential)
+}
+
+func (s *countingStore) Delete(ctx context.Context, tenant engine.TenantContext, configName string) error {
+	return s.inner.Delete(ctx, tenant, configName)
+}
+
+func (s *countingStore) List(ctx context.Context, tenant engine.TenantContext) ([]engine.ConnectionDescriptor, error) {
+	return s.inner.List(ctx, tenant)
+}
+
+// engineWithExplicitStore wires an Engine around an explicit ConnectionStore (e.g. a
+// countingStore) with the given limits, registering the factory under
+// "postgres".
+func engineWithExplicitStore(
+	t *testing.T,
+	store engine.ConnectionStore,
+	factory engine.ConnectorFactory,
+	cache engine.SchemaCache,
+	limits engine.Limits,
+) *engine.Engine {
+	t.Helper()
+
+	registry := memory.NewConnectorRegistry()
+	if factory != nil {
+		registry.Register("postgres", factory)
+	}
+
+	opts := []engine.Option{
+		engine.WithConnectorRegistry(registry),
+		engine.WithConnectionStore(store),
+		engine.WithLimits(limits),
+	}
+	if cache != nil {
+		opts = append(opts, engine.WithSchemaCache(cache))
+	}
+
+	eng, err := engine.New(opts...)
+	if err != nil {
+		t.Fatalf("New() error: %v", err)
+	}
+
+	return eng
+}
+
+// TestEngine_PlanExtraction_BlankConfigName_Validation proves a blank/whitespace
+// datasource config name is rejected as a malformed-request validation error
+// before any connector access — an empty name can never identify a connection.
+func TestEngine_PlanExtraction_BlankConfigName_Validation(t *testing.T) {
+	t.Parallel()
+
+	tenant := plannerTenant(t)
+	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
+	eng := engineForPlan(t, factory, memory.NewSchemaCache(), tenant, "orders-db")
+
+	req := engine.ExtractionRequest{
+		MappedFields: map[string]engine.FieldSelection{
+			"  ": {"public.orders": {"id"}},
+		},
+	}
+
+	_, err := eng.PlanExtraction(context.Background(), tenant, req)
+	assertEngineCategory(t, err, engine.CategoryValidation)
+
+	if factory.record.has("build") || factory.record.has("discover") {
+		t.Fatalf("a blank config name must be rejected before connector access")
+	}
+}
+
+// TestEngine_PlanExtraction_StoreError_Propagates proves an infrastructure
+// FindConnection error surfaces from the planner as-is (the host's already-safe
+// error), not masked into a not-found or validation error.
+func TestEngine_PlanExtraction_StoreError_Propagates(t *testing.T) {
+	t.Parallel()
+
+	tenant := plannerTenant(t)
+	sentinel := errors.New("store unavailable")
+
+	store := &countingStore{inner: memory.NewConnectionStore(), findErr: sentinel}
+	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
+	eng := engineWithExplicitStore(t, store, factory, memory.NewSchemaCache(), engine.DefaultLimits())
+
+	req := engine.ExtractionRequest{
+		MappedFields: map[string]engine.FieldSelection{
+			"orders-db": {"public.orders": {"id"}},
+		},
+	}
+
+	_, err := eng.PlanExtraction(context.Background(), tenant, req)
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("expected the store error to propagate unmasked, got %v", err)
+	}
+}
+
+// TestEngine_PlanExtraction_DatasourceCountBoundsProbe proves the per-connection
+// existence probe is bounded by the effective MaxDatasources ceiling: a request
+// whose MappedFields count exceeds MaxDatasources is rejected with a
+// limit-exceeded validation error WITHOUT probing every requested config name.
+// All referenced connections resolve, so the only thing that can reject the
+// request is the count bound — and it must do so before issuing N store lookups.
+func TestEngine_PlanExtraction_DatasourceCountBoundsProbe(t *testing.T) {
+	t.Parallel()
+
+	tenant := plannerTenant(t)
+	limits := engine.DefaultLimits()
+	limits.MaxDatasources = 2
+
+	inner := memory.NewConnectionStore()
+
+	const total = 50
+
+	mapped := make(map[string]engine.FieldSelection, total)
+
+	for i := 0; i < total; i++ {
+		name := fmt.Sprintf("db-%03d", i)
+		if err := inner.Create(context.Background(), tenant, engine.ConnectionDescriptor{
+			ConfigName: name, Type: "postgres", Host: "db.internal", Port: 5432,
+		}, nil); err != nil {
+			t.Fatalf("store.Create(%s) error: %v", name, err)
+		}
+
+		mapped[name] = engine.FieldSelection{"public.orders": {"id"}}
+	}
+
+	store := &countingStore{inner: inner}
+	factory := &schemaConnFactory{record: &schemaConnRecord{}, snapshot: plannerSnapshot("orders-db")}
+	eng := engineWithExplicitStore(t, store, factory, memory.NewSchemaCache(), limits)
+
+	_, err := eng.PlanExtraction(context.Background(), tenant, engine.ExtractionRequest{MappedFields: mapped})
+	assertEngineCategory(t, err, engine.CategoryValidation)
+
+	if !strings.Contains(err.Error(), "maxDatasources") {
+		t.Fatalf("count-limit breach must name the violated field maxDatasources, got %q", err.Error())
+	}
+
+	// The probe must be bounded by the effective ceiling, NOT run once per config
+	// name. Allow a small constant slack (ceiling + 1) for an implementation that
+	// detects the overflow by probing one config past the limit.
+	if store.calls > limits.MaxDatasources+1 {
+		t.Fatalf("existence probe was not bounded: FindConnection called %d times for %d configs (ceiling %d)",
+			store.calls, total, limits.MaxDatasources)
 	}
 }
 

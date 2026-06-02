@@ -459,3 +459,43 @@ func TestNew_ValidFakeCollaboratorsProduceUsableEngine(t *testing.T) {
 		t.Fatalf("Engine.Limits() = %+v, want defaults %+v", eng.Limits(), DefaultLimits())
 	}
 }
+
+// TestNew_HardLimitsOnlyConfigIsNotClobbered proves a Limits value that carries
+// ONLY ConnectorHardLimits (every numeric/duration bound left at its zero value)
+// is treated as a configured limit set, NOT as an absent one. Before the fix
+// IsZero ignored ConnectorHardLimits, so New replaced the whole struct with
+// DefaultLimits() and silently dropped the host's connector hard limits.
+func TestNew_HardLimitsOnlyConfigIsNotClobbered(t *testing.T) {
+	t.Parallel()
+
+	hard := map[string]int{"postgres": 1_000_000, "mongodb": 500_000}
+
+	eng, err := New(
+		WithConnectorRegistry(fakeConnectorRegistry{}),
+		WithLimits(Limits{ConnectorHardLimits: hard}),
+	)
+	if err != nil {
+		t.Fatalf("New() unexpected error = %v", err)
+	}
+
+	got := eng.Limits().ConnectorHardLimits
+	if !reflect.DeepEqual(got, hard) {
+		t.Fatalf("Engine.Limits().ConnectorHardLimits = %#v, want %#v (hard limits were clobbered)", got, hard)
+	}
+}
+
+// TestLimits_IsZero_ConsidersConnectorHardLimits pins the IsZero predicate
+// directly: a hard-limits-only config is NOT zero, while the genuine empty value
+// is.
+func TestLimits_IsZero_ConsidersConnectorHardLimits(t *testing.T) {
+	t.Parallel()
+
+	if (Limits{}).IsZero() != true {
+		t.Fatalf("empty Limits must report IsZero() == true")
+	}
+
+	hardOnly := Limits{ConnectorHardLimits: map[string]int{"postgres": 10}}
+	if hardOnly.IsZero() {
+		t.Fatalf("a hard-limits-only Limits must NOT report IsZero() == true")
+	}
+}

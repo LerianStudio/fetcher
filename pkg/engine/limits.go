@@ -27,6 +27,10 @@ const (
 // Limits describes the resource bounds an Engine operation must respect.
 // The zero value is intentionally not a usable configuration — callers obtain
 // safe defaults via DefaultLimits and may override individual fields.
+//
+// Limits is NOT comparable with `==`: it carries a map field
+// (ConnectorHardLimits), so comparing two Limits values with `==` is a compile
+// error. Use reflect.DeepEqual (or field-wise comparison) to compare them.
 type Limits struct {
 	// MaxDatasources bounds datasources per extraction request.
 	MaxDatasources int
@@ -209,5 +213,6 @@ func (l Limits) IsZero() bool {
 		l.MaxFieldsPerTable == 0 &&
 		l.MaxConcurrency == 0 &&
 		l.Timeout == 0 &&
-		l.MaxResultBytes == 0
+		l.MaxResultBytes == 0 &&
+		len(l.ConnectorHardLimits) == 0
 }
