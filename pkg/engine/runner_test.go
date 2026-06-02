@@ -396,6 +396,548 @@ func TestExecuteExtraction_RejectsUnscopedTenant(t *testing.T) {
 	}
 }
 
+// newStoreRunnerHarness builds an Engine wired with a ResultSink and a recording
+// ExecutionStore on top of the standard runner harness, so store-mode and
+// execution-state transition tests exercise the same plan/connector path.
+func newStoreRunnerHarness(t *testing.T, sink engine.ResultSink, store engine.ExecutionStore) *runnerHarness {
+	t.Helper()
+
+	connStore := memory.NewConnectionStore()
+	registry := memory.NewConnectorRegistry()
+
+	opts := []engine.Option{
+		engine.WithConnectionStore(connStore),
+		engine.WithConnectorRegistry(registry),
+	}
+	if sink != nil {
+		opts = append(opts, engine.WithResultSink(sink))
+	}
+	if store != nil {
+		opts = append(opts, engine.WithExecutionStore(store))
+	}
+
+	eng, err := engine.New(opts...)
+	if err != nil {
+		t.Fatalf("engine.New: unexpected error: %v", err)
+	}
+
+	return &runnerHarness{
+		engine:    eng,
+		store:     connStore,
+		registry:  registry,
+		factories: make(map[string]*memory.ConnectorFactory),
+	}
+}
+
+func TestExecuteExtraction_StoreModeReturnsReference(t *testing.T) {
+	t.Parallel()
+
+	sink := memory.NewResultSink()
+	h := newStoreRunnerHarness(t, sink, nil)
+	h.seedSource(t, "pg-main", "postgres",
+		map[string][]string{"public.users": {"id"}},
+		map[string][]map[string]any{
+			"public.users": {{"id": 1}, {"id": 2}},
+		})
+
+	plan := h.planFor(t, map[string]engine.FieldSelection{
+		"pg-main": {"public.users": {"id"}},
+	})
+
+	result, err := h.engine.ExecuteExtraction(context.Background(), plan)
+	if err != nil {
+		t.Fatalf("ExecuteExtraction: unexpected error: %v", err)
+	}
+
+	// Store mode returns a reference and NOT inline bytes.
+	if result.Direct != nil {
+		t.Fatalf("store mode must not return inline Direct bytes, got %+v", result.Direct)
+	}
+
+	if result.Reference.Path == "" {
+		t.Fatalf("store mode must return a ResultReference with a path, got %+v", result.Reference)
+	}
+
+	// The reference resolves to the persisted payload through the sink.
+	stored, ok := sink.Get(result.Reference.Path)
+	if !ok {
+		t.Fatalf("sink has no payload at reference path %q", result.Reference.Path)
+	}
+
+	var decoded map[string]map[string][]map[string]any
+	if err := json.Unmarshal(stored, &decoded); err != nil {
+		t.Fatalf("stored payload is not valid JSON: %v", err)
+	}
+
+	if len(decoded["pg-main"]["public.users"]) != 2 {
+		t.Fatalf("stored pg-main rows = %d, want 2", len(decoded["pg-main"]["public.users"]))
+	}
+
+	if result.Reference.RowCount != 2 {
+		t.Fatalf("Reference.RowCount = %d, want 2", result.Reference.RowCount)
+	}
+
+	if result.State.Status != engine.StatusCompleted {
+		t.Fatalf("State.Status = %q, want %q", result.State.Status, engine.StatusCompleted)
+	}
+}
+
+func TestExecuteExtraction_StoreModeWithoutSinkFailsClearly(t *testing.T) {
+	t.Parallel()
+
+	// No sink is configured, but the plan explicitly requests store mode.
+	h := newStoreRunnerHarness(t, nil, nil)
+	h.seedSource(t, "pg-main", "postgres",
+		map[string][]string{"public.users": {"id"}},
+		map[string][]map[string]any{
+			"public.users": {{"id": 1}},
+		})
+
+	plan := h.planFor(t, map[string]engine.FieldSelection{
+		"pg-main": {"public.users": {"id"}},
+	})
+	plan.Mode = engine.ModeStore
+
+	_, err := h.engine.ExecuteExtraction(context.Background(), plan)
+	if err == nil {
+		t.Fatalf("store mode without a sink must fail, got nil error")
+	}
+
+	var engErr *engine.EngineError
+	if !errors.As(err, &engErr) {
+		t.Fatalf("error is not *engine.EngineError: %T (%v)", err, err)
+	}
+
+	if engErr.Category != engine.CategoryValidation {
+		t.Fatalf("error category = %q, want %q", engErr.Category, engine.CategoryValidation)
+	}
+}
+
+func TestExecuteExtraction_DirectModePreservesIntegrityAndProtection(t *testing.T) {
+	t.Parallel()
+
+	h := newRunnerHarness(t)
+	h.seedSource(t, "pg-main", "postgres",
+		map[string][]string{"public.users": {"id"}},
+		map[string][]map[string]any{
+			"public.users": {{"id": 1}},
+		})
+
+	plan := h.planFor(t, map[string]engine.FieldSelection{
+		"pg-main": {"public.users": {"id"}},
+	})
+
+	result, err := h.engine.ExecuteExtraction(context.Background(), plan)
+	if err != nil {
+		t.Fatalf("ExecuteExtraction: unexpected error: %v", err)
+	}
+
+	if result.Direct == nil {
+		t.Fatalf("expected a direct result, got nil")
+	}
+
+	// Direct mode carries canonical integrity over the inline bytes: an algorithm
+	// plus a digest (the Engine computes an unkeyed content digest in direct mode).
+	if result.Direct.Integrity == nil {
+		t.Fatalf("direct mode must carry integrity metadata, got nil")
+	}
+
+	if result.Direct.Integrity.Algorithm == "" {
+		t.Fatalf("integrity.algorithm must be set")
+	}
+
+	if result.Direct.Integrity.Digest == "" && result.Direct.Integrity.Signature == "" {
+		t.Fatalf("integrity must carry a digest or a signature")
+	}
+
+	// Direct mode applies no result-byte encryption: protection is present but
+	// reports not-encrypted, attributed to the engine.
+	if result.Direct.Protection == nil {
+		t.Fatalf("direct mode must carry protection metadata, got nil")
+	}
+
+	if result.Direct.Protection.Encrypted {
+		t.Fatalf("direct mode must not report encrypted result bytes")
+	}
+
+	if !result.Direct.Protection.AppliedBy.IsValid() {
+		t.Fatalf("protection.appliedBy = %q is not a valid applier", result.Direct.Protection.AppliedBy)
+	}
+
+	if result.Direct.Protection.AppliedBy != engine.ProtectionAppliedByEngine {
+		t.Fatalf("direct mode protection.appliedBy = %q, want %q", result.Direct.Protection.AppliedBy, engine.ProtectionAppliedByEngine)
+	}
+}
+
+func TestExecuteExtraction_StoreModePreservesSinkIntegrityAndProtection(t *testing.T) {
+	t.Parallel()
+
+	// The sink reports its own canonical integrity + protection metadata; the
+	// Engine MUST preserve exactly what the sink/adapter returned.
+	sink := memory.NewResultSink()
+	sink.ProtectionResult = &engine.ResultProtection{
+		Encrypted:  true,
+		KeyVersion: 7,
+		Mode:       "AES-256-GCM",
+		AppliedBy:  engine.ProtectionAppliedByAdapter,
+	}
+
+	h := newStoreRunnerHarness(t, sink, nil)
+	h.seedSource(t, "pg-main", "postgres",
+		map[string][]string{"public.users": {"id"}},
+		map[string][]map[string]any{
+			"public.users": {{"id": 1}},
+		})
+
+	plan := h.planFor(t, map[string]engine.FieldSelection{
+		"pg-main": {"public.users": {"id"}},
+	})
+
+	result, err := h.engine.ExecuteExtraction(context.Background(), plan)
+	if err != nil {
+		t.Fatalf("ExecuteExtraction: unexpected error: %v", err)
+	}
+
+	if result.Reference.Integrity == nil || result.Reference.Integrity.Algorithm == "" {
+		t.Fatalf("store mode must preserve sink integrity metadata, got %+v", result.Reference.Integrity)
+	}
+
+	if result.Reference.Integrity.Digest == "" && result.Reference.Integrity.Signature == "" {
+		t.Fatalf("preserved integrity must carry a digest or a signature")
+	}
+
+	if result.Reference.Protection == nil {
+		t.Fatalf("store mode must preserve sink protection metadata, got nil")
+	}
+
+	if !result.Reference.Protection.Encrypted {
+		t.Fatalf("store mode must preserve the sink's encrypted=true protection")
+	}
+
+	if result.Reference.Protection.KeyVersion != 7 {
+		t.Fatalf("protection.keyVersion = %d, want 7", result.Reference.Protection.KeyVersion)
+	}
+
+	if result.Reference.Protection.Mode != "AES-256-GCM" {
+		t.Fatalf("protection.mode = %q, want AES-256-GCM", result.Reference.Protection.Mode)
+	}
+
+	if result.Reference.Protection.AppliedBy != engine.ProtectionAppliedByAdapter {
+		t.Fatalf("protection.appliedBy = %q, want %q", result.Reference.Protection.AppliedBy, engine.ProtectionAppliedByAdapter)
+	}
+}
+
+func TestExecuteExtraction_StoreModeRejectsInvalidProtectionAppliedBy(t *testing.T) {
+	t.Parallel()
+
+	// A sink that returns an out-of-enum appliedBy is a contract violation: the
+	// Engine must reject it as a safe error rather than propagate a bad value.
+	sink := memory.NewResultSink()
+	sink.ProtectionResult = &engine.ResultProtection{
+		Encrypted: true,
+		AppliedBy: engine.ProtectionApplier("rogue"),
+	}
+
+	h := newStoreRunnerHarness(t, sink, nil)
+	h.seedSource(t, "pg-main", "postgres",
+		map[string][]string{"public.users": {"id"}},
+		map[string][]map[string]any{
+			"public.users": {{"id": 1}},
+		})
+
+	plan := h.planFor(t, map[string]engine.FieldSelection{
+		"pg-main": {"public.users": {"id"}},
+	})
+
+	_, err := h.engine.ExecuteExtraction(context.Background(), plan)
+	if err == nil {
+		t.Fatalf("an invalid protection.appliedBy must fail, got nil error")
+	}
+
+	var engErr *engine.EngineError
+	if !errors.As(err, &engErr) {
+		t.Fatalf("error is not *engine.EngineError: %T (%v)", err, err)
+	}
+
+	if engErr.Category != engine.CategoryValidation {
+		t.Fatalf("error category = %q, want %q", engErr.Category, engine.CategoryValidation)
+	}
+}
+
+func TestExecuteExtraction_StoreModeDoesNotReuseCredentialProtection(t *testing.T) {
+	t.Parallel()
+
+	// Result protection describes EXTRACTED RESULT bytes, never persisted
+	// datasource credentials. ProtectedCredential is the credential sidecar; it
+	// must NEVER appear as result protection metadata. We assert the result
+	// protection type is engine.ResultProtection and carries no credential
+	// ciphertext field — the types are structurally disjoint.
+	sink := memory.NewResultSink()
+	sink.ProtectionResult = &engine.ResultProtection{
+		Encrypted: true,
+		AppliedBy: engine.ProtectionAppliedByAdapter,
+	}
+
+	h := newStoreRunnerHarness(t, sink, nil)
+	h.seedSource(t, "pg-main", "postgres",
+		map[string][]string{"public.users": {"id"}},
+		map[string][]map[string]any{
+			"public.users": {{"id": 1}},
+		})
+
+	plan := h.planFor(t, map[string]engine.FieldSelection{
+		"pg-main": {"public.users": {"id"}},
+	})
+
+	result, err := h.engine.ExecuteExtraction(context.Background(), plan)
+	if err != nil {
+		t.Fatalf("ExecuteExtraction: unexpected error: %v", err)
+	}
+
+	// The result protection is the canonical ResultProtection, NOT a
+	// ProtectedCredential. A ProtectedCredential carries Ciphertext + KeyVersion;
+	// ResultProtection carries protection STATE only and embeds no secret bytes.
+	var _ engine.ResultProtection = *result.Reference.Protection
+
+	// Round-trip the reference metadata to JSON and assert it carries no
+	// credential ciphertext key, proving credential protection terminology is not
+	// reused for result protection.
+	encoded, err := json.Marshal(result.Reference)
+	if err != nil {
+		t.Fatalf("marshal reference: %v", err)
+	}
+
+	for _, leaked := range []string{"ciphertext", "Ciphertext", "ProtectedCredential"} {
+		if strings.Contains(string(encoded), leaked) {
+			t.Fatalf("result reference must not expose credential-protection field %q: %s", leaked, encoded)
+		}
+	}
+}
+
+func TestExecuteExtraction_ExecutionStoreTransitionsInOrder(t *testing.T) {
+	t.Parallel()
+
+	sink := memory.NewResultSink()
+	execStore := memory.NewRecordingExecutionStore()
+	h := newStoreRunnerHarness(t, sink, execStore)
+	h.seedSource(t, "pg-main", "postgres",
+		map[string][]string{"public.users": {"id"}},
+		map[string][]map[string]any{
+			"public.users": {{"id": 1}},
+		})
+
+	plan := h.planFor(t, map[string]engine.FieldSelection{
+		"pg-main": {"public.users": {"id"}},
+	})
+
+	if _, err := h.engine.ExecuteExtraction(context.Background(), plan); err != nil {
+		t.Fatalf("ExecuteExtraction: unexpected error: %v", err)
+	}
+
+	got := execStore.Statuses()
+	want := []engine.ExecutionStatus{engine.StatusRunning, engine.StatusCompleted}
+	if len(got) != len(want) {
+		t.Fatalf("execution-store transitions = %v, want %v", got, want)
+	}
+
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("transition[%d] = %q, want %q (full order: %v)", i, got[i], want[i], got)
+		}
+	}
+}
+
+func TestExecuteExtraction_SinkWriteErrorMarksExecutionFailed(t *testing.T) {
+	t.Parallel()
+
+	sink := memory.NewResultSink()
+	sink.PutErr = errors.New("sink down")
+	execStore := memory.NewRecordingExecutionStore()
+	h := newStoreRunnerHarness(t, sink, execStore)
+	h.seedSource(t, "pg-main", "postgres",
+		map[string][]string{"public.users": {"id"}},
+		map[string][]map[string]any{
+			"public.users": {{"id": 1}},
+		})
+
+	plan := h.planFor(t, map[string]engine.FieldSelection{
+		"pg-main": {"public.users": {"id"}},
+	})
+
+	_, err := h.engine.ExecuteExtraction(context.Background(), plan)
+	if err == nil {
+		t.Fatalf("a sink write failure must fail the execution, got nil error")
+	}
+
+	got := execStore.Statuses()
+	want := []engine.ExecutionStatus{engine.StatusRunning, engine.StatusFailed}
+	if len(got) != len(want) {
+		t.Fatalf("execution-store transitions = %v, want %v", got, want)
+	}
+
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("transition[%d] = %q, want %q (full order: %v)", i, got[i], want[i], got)
+		}
+	}
+}
+
+func TestExecuteExtraction_QueryFailureMarksExecutionFailed(t *testing.T) {
+	t.Parallel()
+
+	execStore := memory.NewRecordingExecutionStore()
+	h := newStoreRunnerHarness(t, nil, execStore)
+	conn := h.seedSource(t, "pg-main", "postgres",
+		map[string][]string{"public.users": {"id"}}, nil)
+	conn.QueryErr = errors.New("boom")
+
+	plan := h.planFor(t, map[string]engine.FieldSelection{
+		"pg-main": {"public.users": {"id"}},
+	})
+
+	if _, err := h.engine.ExecuteExtraction(context.Background(), plan); err == nil {
+		t.Fatalf("a query failure must fail the execution, got nil error")
+	}
+
+	got := execStore.Statuses()
+	want := []engine.ExecutionStatus{engine.StatusRunning, engine.StatusFailed}
+	if len(got) != len(want) {
+		t.Fatalf("execution-store transitions = %v, want %v", got, want)
+	}
+
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("transition[%d] = %q, want %q (full order: %v)", i, got[i], want[i], got)
+		}
+	}
+}
+
+func TestExecuteExtraction_CancelledContextMarksCancelled(t *testing.T) {
+	t.Parallel()
+
+	execStore := memory.NewRecordingExecutionStore()
+	h := newStoreRunnerHarness(t, nil, execStore)
+	h.seedSource(t, "pg-main", "postgres",
+		map[string][]string{"public.users": {"id"}},
+		map[string][]map[string]any{
+			"public.users": {{"id": 1}},
+		})
+
+	plan := h.planFor(t, map[string]engine.FieldSelection{
+		"pg-main": {"public.users": {"id"}},
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := h.engine.ExecuteExtraction(ctx, plan)
+	if err == nil {
+		t.Fatalf("a cancelled context must fail the execution, got nil error")
+	}
+
+	got := execStore.Statuses()
+	want := []engine.ExecutionStatus{engine.StatusRunning, engine.StatusCanceled}
+	if len(got) != len(want) {
+		t.Fatalf("execution-store transitions = %v, want %v", got, want)
+	}
+
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("transition[%d] = %q, want %q (full order: %v)", i, got[i], want[i], got)
+		}
+	}
+}
+
+func TestExecuteExtraction_StatusWriteFailureDoesNotCorruptResult(t *testing.T) {
+	t.Parallel()
+
+	// An ExecutionStore that fails its status writes must NOT corrupt the result
+	// contract: status persistence is best-effort, the extraction still succeeds.
+	execStore := memory.NewRecordingExecutionStore()
+	execStore.SaveErr = errors.New("status store down")
+	h := newStoreRunnerHarness(t, nil, execStore)
+	h.seedSource(t, "pg-main", "postgres",
+		map[string][]string{"public.users": {"id"}},
+		map[string][]map[string]any{
+			"public.users": {{"id": 1}},
+		})
+
+	plan := h.planFor(t, map[string]engine.FieldSelection{
+		"pg-main": {"public.users": {"id"}},
+	})
+
+	result, err := h.engine.ExecuteExtraction(context.Background(), plan)
+	if err != nil {
+		t.Fatalf("a best-effort status-write failure must not fail the extraction: %v", err)
+	}
+
+	if result.Direct == nil || result.Direct.RowCount != 1 {
+		t.Fatalf("extraction result must be intact despite status-write failure, got %+v", result.Direct)
+	}
+}
+
+func TestExecuteExtraction_ModeDirectOverridesConfiguredSink(t *testing.T) {
+	t.Parallel()
+
+	// A sink IS configured (auto-mode would store), but the plan explicitly forces
+	// direct mode: the result must be inline and the sink must be untouched.
+	sink := memory.NewResultSink()
+	h := newStoreRunnerHarness(t, sink, nil)
+	h.seedSource(t, "pg-main", "postgres",
+		map[string][]string{"public.users": {"id"}},
+		map[string][]map[string]any{
+			"public.users": {{"id": 1}},
+		})
+
+	plan := h.planFor(t, map[string]engine.FieldSelection{
+		"pg-main": {"public.users": {"id"}},
+	})
+	plan.Mode = engine.ModeDirect
+
+	result, err := h.engine.ExecuteExtraction(context.Background(), plan)
+	if err != nil {
+		t.Fatalf("ExecuteExtraction: unexpected error: %v", err)
+	}
+
+	if result.Direct == nil || result.Direct.RowCount != 1 {
+		t.Fatalf("forced direct mode must return inline rows, got %+v", result.Direct)
+	}
+
+	if result.Reference.Path != "" {
+		t.Fatalf("forced direct mode must not write a store reference, got %q", result.Reference.Path)
+	}
+}
+
+func TestExecuteExtraction_DirectModeGreenWithoutExecutionStore(t *testing.T) {
+	t.Parallel()
+
+	// Direct mode must remain fully functional with NO execution store and NO
+	// result sink configured — the baseline T-007-02 contract is unchanged.
+	h := newRunnerHarness(t)
+	h.seedSource(t, "pg-main", "postgres",
+		map[string][]string{"public.users": {"id"}},
+		map[string][]map[string]any{
+			"public.users": {{"id": 1}, {"id": 2}},
+		})
+
+	plan := h.planFor(t, map[string]engine.FieldSelection{
+		"pg-main": {"public.users": {"id"}},
+	})
+
+	result, err := h.engine.ExecuteExtraction(context.Background(), plan)
+	if err != nil {
+		t.Fatalf("ExecuteExtraction: unexpected error: %v", err)
+	}
+
+	if result.Direct == nil || result.Direct.RowCount != 2 {
+		t.Fatalf("direct mode without an execution store must return inline rows, got %+v", result.Direct)
+	}
+
+	if result.Reference.Path != "" {
+		t.Fatalf("direct mode must not return a store reference, got %q", result.Reference.Path)
+	}
+}
+
 func TestExecuteExtraction_UnknownConnectionIsNotFound(t *testing.T) {
 	t.Parallel()
 

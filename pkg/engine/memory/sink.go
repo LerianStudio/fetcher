@@ -30,6 +30,13 @@ type ResultSink struct {
 	// Engine error. The injected error is NOT echoed across the boundary so no
 	// sensitive underlying detail leaks.
 	PutErr error
+
+	// ProtectionResult, when non-nil, is the canonical result protection metadata
+	// the sink reports on the returned reference. It models an adapter that
+	// encrypts the stored bytes and stamps its own protection state; the Engine
+	// MUST preserve exactly this metadata (after validating appliedBy). It is inert
+	// (nil) by default, modelling an unencrypted store.
+	ProtectionResult *engine.ResultProtection
 }
 
 // NewResultSink returns an empty in-memory result sink.
@@ -76,7 +83,7 @@ func (s *ResultSink) PersistResult(
 	path := "memory://" + tenant.TenantID + "/" + digest + "-" + strconv.Itoa(s.seq)
 	s.results[path] = stored
 
-	return engine.ResultReference{
+	ref := engine.ResultReference{
 		Path:      path,
 		SizeBytes: int64(len(stored)),
 		Integrity: &engine.ResultIntegrity{
@@ -85,7 +92,14 @@ func (s *ResultSink) PersistResult(
 			Algorithm: "SHA-256",
 			Digest:    digest,
 		},
-	}, nil
+	}
+
+	if s.ProtectionResult != nil {
+		protection := *s.ProtectionResult
+		ref.Protection = &protection
+	}
+
+	return ref, nil
 }
 
 // Get returns a defensive copy of the payload stored at path and whether it

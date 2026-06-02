@@ -260,3 +260,67 @@ func (s *ExecutionStore) FindExecution(
 
 	return state, ok, nil
 }
+
+// RecordingExecutionStore is an in-memory engine.ExecutionStore that records the
+// ORDER of status transitions the runner drives, so tests can assert the
+// processing -> completed / failed / cancelled call ordering deterministically.
+//
+// SaveErr is a test affordance mirroring the sink's PutErr idiom: when set,
+// SaveExecution returns a safe Engine error so tests can verify that a
+// best-effort status-write failure does not corrupt the extraction result. The
+// transition is still recorded so ordering remains observable.
+type RecordingExecutionStore struct {
+	mu       sync.RWMutex
+	statuses []engine.ExecutionStatus
+
+	// SaveErr, when non-nil, makes SaveExecution return a safe Engine error after
+	// recording the attempted status.
+	SaveErr error
+}
+
+// NewRecordingExecutionStore returns an empty recording execution store.
+func NewRecordingExecutionStore() *RecordingExecutionStore {
+	return &RecordingExecutionStore{}
+}
+
+// SaveExecution implements engine.ExecutionStore by recording the status in
+// transition order. When SaveErr is set it returns a safe error WITHOUT echoing
+// the injected detail, after recording the attempted transition.
+func (s *RecordingExecutionStore) SaveExecution(
+	_ context.Context,
+	_ engine.TenantContext,
+	state engine.ExecutionState,
+) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.statuses = append(s.statuses, state.Status)
+
+	if s.SaveErr != nil {
+		return engine.NewEngineError(engine.CategoryUnavailable, "execution store unavailable")
+	}
+
+	return nil
+}
+
+// FindExecution implements engine.ExecutionStore. The recording double does not
+// retain full state, so it always reports the execution as absent.
+func (s *RecordingExecutionStore) FindExecution(
+	_ context.Context,
+	_ engine.TenantContext,
+	_ string,
+) (engine.ExecutionState, bool, error) {
+	return engine.ExecutionState{}, false, nil
+}
+
+// Statuses returns a copy of the recorded status transitions in order. It is a
+// harness affordance for tests, not part of the Engine port.
+func (s *RecordingExecutionStore) Statuses() []engine.ExecutionStatus {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	out := make([]engine.ExecutionStatus, len(s.statuses))
+	copy(out, s.statuses)
+
+	return out
+}

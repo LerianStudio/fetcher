@@ -5,6 +5,8 @@ package engine
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"time"
 )
@@ -23,15 +25,33 @@ import (
 //   - aggregate rows into the canonical DirectResult (serialized payload, total
 //     row count, plaintext size, completion time).
 //
+// What the runner ALSO does (ST-T007-03):
+//   - selects the result delivery mode (direct vs store) and, in store mode,
+//     writes the serialized payload to the host ResultSink and returns a
+//     ResultReference instead of inline bytes;
+//   - carries canonical integrity + protection metadata on BOTH modes: direct
+//     mode stamps an unkeyed SHA-256 content digest applied BY the engine with no
+//     result-byte encryption; store mode PRESERVES exactly the integrity +
+//     protection the sink/adapter reported, after validating protection.appliedBy
+//     against the closed {engine, adapter, host} enumeration;
+//   - drives optional, synchronous ExecutionStore status transitions
+//     (running -> completed on success; running -> failed on error, including a
+//     sink WRITE failure; running -> cancelled when the host context is already
+//     cancelled). Status writes are BEST-EFFORT: a status-write error never
+//     corrupts the extraction result. A sink WRITE failure, by contrast, DOES
+//     fail the execution — the two are deliberately distinct.
+//
 // What the runner DELIBERATELY does NOT do (these belong to other layers, and
 // reaching into them here would be a scope violation):
-//   - store-mode persistence via ResultSink and ExecutionStore state transitions
-//     (ST-T007-03) — direct mode only here, with a clean seam left at the return;
-//   - cancellation, timeout, and result size-limit enforcement (ST-T007-04);
-//   - result-byte ENCRYPTION, HMAC signing of stored bytes, job-status
-//     persistence, and RabbitMQ/streaming notifications — those are WORKER (host)
-//     concerns (T-010). The runner returns plaintext bytes inline; the host
-//     protects and persists them behind its own seams.
+//   - cancellation MECHANICS during connector calls, timeout/deadline
+//     enforcement, and result size-limit accounting (ST-T007-04) — only the
+//     cancelled STATE semantics live here, via a single pre-flight context check;
+//   - durable scheduling, async retry policy, and at-least-once redelivery — all
+//     host-owned; the Engine makes optional persistence CALLS synchronously inline
+//     with no goroutines, queues, or retry loops;
+//   - result-byte ENCRYPTION itself (the host adapter encrypts behind the
+//     ResultSink seam and reports the protection state the Engine preserves) and
+//     RabbitMQ/streaming notifications — those are WORKER (host) concerns (T-010).
 //
 // CONNECTOR LIFECYCLE INVARIANT (the load-bearing guarantee): every connector
 // that is successfully built MUST be closed, on BOTH the success path and EVERY
@@ -76,7 +96,7 @@ func (e *Engine) ExecuteExtraction(ctx context.Context, plan ExtractionPlan) (Ex
 	ctx, end := e.startSpan(ctx, "engine.extraction.execute")
 	defer end()
 
-	store, err := e.requireConnectionStore()
+	connStore, err := e.requireConnectionStore()
 	if err != nil {
 		return ExtractionResult{}, err
 	}
@@ -89,6 +109,63 @@ func (e *Engine) ExecuteExtraction(ctx context.Context, plan ExtractionPlan) (Ex
 		return ExtractionResult{}, err
 	}
 
+	// Resolve the delivery mode and validate it against the configured sink BEFORE
+	// any resource access. Requesting store mode without a sink is a clear,
+	// up-front validation error, not a late surprise after extraction work.
+	mode := e.resolveExecutionMode(plan.Mode)
+	if mode == ModeStore && isNilPort(e.options.resultSink) {
+		return ExtractionResult{}, NewEngineError(CategoryValidation, "store mode requires a configured result sink")
+	}
+
+	// Mark the execution running through the optional ExecutionStore. The call is
+	// synchronous and BEST-EFFORT: durable scheduling and redelivery are
+	// host-owned, and a status-write failure must never corrupt the result.
+	e.recordExecutionStatus(ctx, tenant, plan.RequestID, StatusRunning, "")
+
+	result, err := e.runDirectExtraction(ctx, tenant, connStore, plan)
+	if err != nil {
+		// Distinguish a cancelled context from a genuine failure for the recorded
+		// terminal state. Cancellation MECHANICS (per-step checks, timeouts) are
+		// ST-T007-04; here we only honor an already-cancelled host context for the
+		// terminal STATE semantics this subtask owns.
+		e.recordTerminalFailure(ctx, tenant, plan.RequestID, err)
+		return ExtractionResult{}, err
+	}
+
+	if mode == ModeStore {
+		return e.completeStoreMode(ctx, tenant, plan.RequestID, result)
+	}
+
+	return e.completeDirectMode(ctx, tenant, plan.RequestID, result), nil
+}
+
+// extractionOutcome is the in-flight, mode-agnostic product of a successful run:
+// the serialized payload, its row count, and the completion time. Both delivery
+// modes are built from it.
+type extractionOutcome struct {
+	payload     []byte
+	rowCount    int64
+	completedAt time.Time
+}
+
+// runDirectExtraction performs the synchronous per-step extraction (build, test,
+// query, close every connector) and serializes the aggregated rows. It is the
+// shared core of both delivery modes; it is named "direct" because it returns the
+// plaintext bytes in-process, regardless of whether the caller then stores them.
+func (e *Engine) runDirectExtraction(
+	ctx context.Context,
+	tenant TenantContext,
+	connStore ConnectionStore,
+	plan ExtractionPlan,
+) (extractionOutcome, error) {
+	// A single pre-flight context check: when the host context is ALREADY
+	// cancelled, the execution exits before any connector work. This is the
+	// cancelled STATE semantics this subtask owns; the per-step and deadline
+	// MECHANICS that abort mid-flight are ST-T007-04, deliberately not added here.
+	if err := ctx.Err(); err != nil {
+		return extractionOutcome{}, NewEngineError(CategoryTimeout, "execution canceled")
+	}
+
 	// Aggregate rows keyed by config name then qualified table, mirroring the
 	// Worker's result shape (map[database]map[table][]rows) so the serialized
 	// payload is byte-compatible during the strangler migration. Steps run in the
@@ -98,12 +175,12 @@ func (e *Engine) ExecuteExtraction(ctx context.Context, plan ExtractionPlan) (Ex
 	var rowCount int64
 
 	for _, step := range plan.Steps {
-		stepRows, stepCount, err := e.executeStep(ctx, tenant, store, step)
+		stepRows, stepCount, err := e.executeStep(ctx, tenant, connStore, step)
 		if err != nil {
 			// Fail-fast: the first failing step aborts execution. Its connector is
 			// already closed by executeStep's deferred Close, and every earlier
 			// step's connector closed when its executeStep call returned.
-			return ExtractionResult{}, err
+			return extractionOutcome{}, err
 		}
 
 		aggregated[step.ConfigName] = stepRows
@@ -114,24 +191,195 @@ func (e *Engine) ExecuteExtraction(ctx context.Context, plan ExtractionPlan) (Ex
 	if err != nil {
 		// The aggregated map holds only extracted data and identities; a marshal
 		// failure is an unexpected internal condition. The error is not echoed.
-		return ExtractionResult{}, NewEngineError(CategoryInternal, "failed to serialize extraction result")
+		return extractionOutcome{}, NewEngineError(CategoryInternal, "failed to serialize extraction result")
 	}
 
-	completedAt := time.Now().UTC()
+	return extractionOutcome{
+		payload:     payload,
+		rowCount:    rowCount,
+		completedAt: time.Now().UTC(),
+	}, nil
+}
+
+// completeDirectMode finalizes an inline (direct) result: it stamps canonical
+// integrity (an unkeyed SHA-256 content digest) and protection (not encrypted,
+// applied by the engine) over the plaintext bytes, records the completed state,
+// and returns the DirectResult.
+func (e *Engine) completeDirectMode(
+	ctx context.Context,
+	tenant TenantContext,
+	requestID string,
+	outcome extractionOutcome,
+) ExtractionResult {
+	e.recordExecutionStatus(ctx, tenant, requestID, StatusCompleted, "")
 
 	return ExtractionResult{
 		State: ExecutionState{
+			JobID:       requestID,
 			Status:      StatusCompleted,
-			CompletedAt: &completedAt,
+			CompletedAt: &outcome.completedAt,
 		},
 		Direct: &DirectResult{
-			Data:          payload,
+			Data:          outcome.payload,
 			Format:        directResultFormat,
-			RowCount:      rowCount,
-			PlaintextSize: int64(len(payload)),
-			CompletedAt:   completedAt,
+			RowCount:      outcome.rowCount,
+			PlaintextSize: int64(len(outcome.payload)),
+			Integrity:     engineContentIntegrity(outcome.payload),
+			Protection:    enginePlaintextProtection(),
+			CompletedAt:   outcome.completedAt,
 		},
+	}
+}
+
+// completeStoreMode persists the payload to the host ResultSink and returns a
+// ResultReference carrying the metadata the sink reported. It PRESERVES the
+// sink's integrity + protection (validating protection.appliedBy against the
+// closed enumeration) and fills in canonical fields the sink left empty. A sink
+// WRITE failure marks the execution failed and returns the error — distinct from
+// a best-effort status-write failure.
+func (e *Engine) completeStoreMode(
+	ctx context.Context,
+	tenant TenantContext,
+	requestID string,
+	outcome extractionOutcome,
+) (ExtractionResult, error) {
+	reference, err := e.options.resultSink.PersistResult(ctx, tenant, outcome.payload)
+	if err != nil {
+		e.recordExecutionStatus(ctx, tenant, requestID, StatusFailed, "failed to persist extraction result")
+		return ExtractionResult{}, NewEngineError(CategoryUnavailable, "failed to persist extraction result")
+	}
+
+	// The sink's protection metadata must name an accountable layer. An
+	// out-of-enum appliedBy is a contract violation we refuse to propagate.
+	if reference.Protection != nil && !reference.Protection.AppliedBy.IsValid() {
+		e.recordExecutionStatus(ctx, tenant, requestID, StatusFailed, "invalid result protection metadata")
+		return ExtractionResult{}, NewEngineError(CategoryValidation, "result protection appliedBy is invalid")
+	}
+
+	// Preserve the sink's metadata; fill canonical fields it left unset. When the
+	// sink reports no integrity, the Engine stamps an unkeyed content digest so a
+	// stored result always carries verifiable integrity.
+	if reference.Integrity == nil {
+		reference.Integrity = engineContentIntegrity(outcome.payload)
+	}
+
+	reference.Format = directResultFormat
+	reference.RowCount = outcome.rowCount
+
+	if reference.SizeBytes == 0 {
+		reference.SizeBytes = int64(len(outcome.payload))
+	}
+
+	reference.CompletedAt = outcome.completedAt
+
+	e.recordExecutionStatus(ctx, tenant, requestID, StatusCompleted, "")
+
+	return ExtractionResult{
+		State: ExecutionState{
+			JobID:       requestID,
+			Status:      StatusCompleted,
+			CompletedAt: &outcome.completedAt,
+		},
+		Reference: reference,
 	}, nil
+}
+
+// resolveExecutionMode maps the requested mode onto an effective mode. ModeAuto
+// (the zero value) resolves to store when a ResultSink is configured and direct
+// otherwise, preserving the historical default for callers that set no mode.
+func (e *Engine) resolveExecutionMode(requested ExecutionMode) ExecutionMode {
+	switch requested {
+	case ModeStore:
+		return ModeStore
+	case ModeDirect:
+		return ModeDirect
+	default:
+		if !isNilPort(e.options.resultSink) {
+			return ModeStore
+		}
+
+		return ModeDirect
+	}
+}
+
+// recordTerminalFailure records the terminal state for a failed run, choosing
+// the cancelled state when the host context is already cancelled and failed
+// otherwise. It owns ONLY the terminal STATE semantics; the cancellation
+// mechanics that would abort mid-flight are ST-T007-04.
+func (e *Engine) recordTerminalFailure(ctx context.Context, tenant TenantContext, requestID string, cause error) {
+	if ctx.Err() != nil {
+		e.recordExecutionStatus(ctx, tenant, requestID, StatusCanceled, "execution canceled")
+		return
+	}
+
+	message := "execution failed"
+	if engErr, ok := cause.(*EngineError); ok && engErr != nil {
+		message = engErr.Message
+	}
+
+	e.recordExecutionStatus(ctx, tenant, requestID, StatusFailed, message)
+}
+
+// recordExecutionStatus makes a single, synchronous, BEST-EFFORT status write
+// through the optional ExecutionStore. When no store is configured it is a no-op,
+// so direct mode runs without durable execution tracking. A store error is
+// DELIBERATELY swallowed: optional status persistence must never corrupt the
+// extraction result contract (mirroring the legacy best-effort job-status writes
+// and the T-003 ActiveExecutionChecker precedent that an optional-port error
+// leaves the primary outcome intact). A sink WRITE failure is handled separately
+// and DOES fail the execution.
+func (e *Engine) recordExecutionStatus(
+	ctx context.Context,
+	tenant TenantContext,
+	requestID string,
+	status ExecutionStatus,
+	failureMessage string,
+) {
+	if isNilPort(e.options.executionStore) {
+		return
+	}
+
+	state := ExecutionState{
+		JobID:          requestID,
+		Status:         status,
+		FailureMessage: failureMessage,
+	}
+
+	if status.IsTerminal() {
+		completedAt := time.Now().UTC()
+		state.CompletedAt = &completedAt
+	} else {
+		state.StartedAt = time.Now().UTC()
+	}
+
+	// Best-effort: discard the store error so it cannot corrupt the result.
+	_ = e.options.executionStore.SaveExecution(ctx, tenant, state)
+}
+
+// engineContentIntegrity computes the canonical, engine-applied integrity over
+// result bytes: an unkeyed SHA-256 content digest. HMAC is ONE possible keyed
+// integrity signature; the Engine core holds no key, so it records a digest, not
+// a signature. The host adapter may instead supply a keyed signature behind the
+// ResultSink seam, which store mode preserves.
+func engineContentIntegrity(payload []byte) *ResultIntegrity {
+	sum := sha256.Sum256(payload)
+
+	return &ResultIntegrity{
+		Algorithm: "SHA-256",
+		Digest:    hex.EncodeToString(sum[:]),
+	}
+}
+
+// enginePlaintextProtection is the canonical protection state for direct-mode
+// bytes the Engine returns in the clear: not encrypted, attributed to the engine.
+// It is the RESULT protection model (ResultProtection) and is intentionally
+// disjoint from the credential-protection sidecar (ProtectedCredential): it
+// describes extracted RESULT bytes, never persisted datasource credentials.
+func enginePlaintextProtection() *ResultProtection {
+	return &ResultProtection{
+		Encrypted: false,
+		AppliedBy: ProtectionAppliedByEngine,
+	}
 }
 
 // executeStep runs a single planned datasource step: resolve the scoped

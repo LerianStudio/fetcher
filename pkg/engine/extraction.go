@@ -48,6 +48,24 @@ func (s ExecutionStatus) IsTerminal() bool {
 	return ok
 }
 
+// ExecutionMode selects how a finished extraction is returned: inline (direct)
+// or persisted to a host ResultSink (store). The zero value is AUTO, which lets
+// the Engine pick store mode when a ResultSink is configured and direct mode
+// otherwise — preserving the T-007-02 default for hosts that set no mode.
+type ExecutionMode string
+
+const (
+	// ModeAuto is the zero value: store when a ResultSink is configured, else
+	// direct. It keeps the historical behavior for callers that set no mode.
+	ModeAuto ExecutionMode = ""
+	// ModeDirect forces inline (direct) results. It never persists and never
+	// requires a ResultSink.
+	ModeDirect ExecutionMode = "direct"
+	// ModeStore forces store-and-reference results. It REQUIRES a configured
+	// ResultSink; requesting it without one is a validation error.
+	ModeStore ExecutionMode = "store"
+)
+
 // FieldSelection maps a qualified table name to the field names to extract.
 type FieldSelection map[string][]string
 
@@ -109,6 +127,10 @@ type ExtractionPlan struct {
 	Metadata map[string]any `json:"metadata,omitempty"`
 	// Limits records the effective bounds applied to the plan.
 	Limits Limits `json:"limits"`
+	// Mode selects the result delivery mode (direct vs store). The zero value is
+	// ModeAuto, which preserves the historical behavior: store when a ResultSink
+	// is configured, direct otherwise.
+	Mode ExecutionMode `json:"mode,omitempty"`
 }
 
 // ExecutionState is the contract describing the live state of an execution.
