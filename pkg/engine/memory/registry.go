@@ -60,19 +60,15 @@ func (r *ConnectorRegistry) LookupOrError(datasourceType string) (engine.Connect
 	return factory, nil
 }
 
-// Connector is an in-memory engine.Connector with deterministic, injectable
-// behavior so runner tests (ST-T007-02/03/04) can exercise the success path and
-// every failure path without a real datasource. It serves canned Rows from
-// Query and RECORDS its lifecycle: CloseCount counts every Close call so a test
-// can assert the runner's "close every opened connector" invariant on both the
-// success and failure paths.
-//
-// The error fields mirror the cache/store/sink doubles' *Err idiom: when set,
-// the corresponding lifecycle step returns the injected error so a test can
-// force that step to fail deterministically. They are inert (nil) by default.
-type Connector struct {
-	mu sync.Mutex
-
+// ConnectorBehavior is the injectable, COPY-by-value behavior of a fake
+// connector: the canned data and the per-step failure switches. It is held on
+// the template Connector a test configures (via seedSource) and is cloned into
+// every connector the factory builds, so each built connector carries the SAME
+// behavior but its OWN lifecycle counters. Separating behavior (shared, copied)
+// from counters (per-instance) is what makes build-per-step honest: the runner's
+// freshly-built connector records its own Close/Query independently of the
+// planner's, instead of both mutating one shared instance.
+type ConnectorBehavior struct {
 	// Rows is the canned Query result keyed by qualified table name. Query
 	// returns a defensive shallow copy so callers cannot mutate the canned data.
 	Rows map[string][]map[string]any
@@ -108,6 +104,36 @@ type Connector struct {
 	// step completes, so the runner's BETWEEN-steps / DURING-assembly context
 	// guards fire deterministically rather than racily.
 	AfterQuery func()
+}
+
+// Connector is an in-memory engine.Connector with deterministic, injectable
+// behavior so runner tests (ST-T007-02/03/04) can exercise the success path and
+// every failure path without a real datasource. It serves canned Rows from
+// Query and RECORDS its lifecycle: CloseCount counts every Close call so a test
+// can assert the runner's "close every opened connector" invariant on both the
+// success and failure paths.
+//
+// A Connector plays two roles. A TEMPLATE connector (returned by seedSource) is
+// configured by a test and never executed directly: the factory clones its
+// embedded ConnectorBehavior into each connector it builds. The template's
+// lifecycle accessors (CloseCount, QueryCalls, TestConnectionCalls) DELEGATE to
+// the connector the factory built most recently — the one the RUNNER opened —
+// so a test asserts against the runner's freshly-built connector, not a reused
+// planner instance. A BUILT connector (returned by the factory) carries the
+// cloned behavior and its own counters; it is the instance the runner drives.
+//
+// The error fields mirror the cache/store/sink doubles' *Err idiom: when set,
+// the corresponding lifecycle step returns the injected error so a test can
+// force that step to fail deterministically. They are inert (nil) by default.
+type Connector struct {
+	mu sync.Mutex
+
+	ConnectorBehavior
+
+	// factory, when set, makes the lifecycle accessors of this (template)
+	// connector delegate to the factory's most-recently-built connector. It is
+	// nil on a built connector, which records its own counters directly.
+	factory *ConnectorFactory
 
 	// testConnectionCalls and queryCalls record lifecycle invocations so a test
 	// can assert the runner drove TestConnection before Query.
@@ -117,6 +143,17 @@ type Connector struct {
 	// it opens, on both the success and failure paths; CloseCount is how a test
 	// proves the invariant.
 	closeCount int
+}
+
+// NewTemplateConnector returns a TEMPLATE connector carrying the given behavior.
+// A test configures it (further field assignments are allowed via the promoted
+// ConnectorBehavior fields) and wires it into a ConnectorFactory; the factory
+// clones the behavior into each connector it builds. The template is never
+// executed directly — its lifecycle accessors delegate to the runner's built
+// connector. A composite literal cannot set the promoted ConnectorBehavior
+// fields, so this constructor is the seam that seeds them.
+func NewTemplateConnector(behavior ConnectorBehavior) *Connector {
+	return &Connector{ConnectorBehavior: behavior}
 }
 
 // TestConnection implements engine.Connector. It records the call and returns
@@ -141,7 +178,8 @@ func (c *Connector) DiscoverSchema(_ context.Context) (engine.SchemaSnapshot, er
 // Query implements engine.Connector. It records the call, returns the injected
 // QueryErr when set, optionally blocks on ctx (BlockOnContext) to model a slow
 // datasource so a timeout/cancel test is deterministic, and otherwise returns a
-// defensive copy of the canned Rows (or the LargeRowFactory output).
+// defensive copy of the canned Rows (or the LargeRowFactory output). The runner
+// drives the BUILT connector, so the call is recorded on its own counter.
 func (c *Connector) Query(ctx context.Context, _ engine.ExtractionRequest) (map[string][]map[string]any, error) {
 	c.mu.Lock()
 	c.queryCalls++
@@ -206,93 +244,162 @@ func (c *Connector) Close(_ context.Context) error {
 	return c.CloseErr
 }
 
-// CloseCount returns the number of times Close was called. It is a harness
-// affordance for tests asserting the close-every-opened-connector invariant.
+// CloseCount returns the number of times Close was called. On a TEMPLATE
+// connector it DELEGATES to the factory's most-recently-built connector — the
+// one the runner opened — so the close-every-opened-connector invariant is
+// asserted against the runner's freshly-built connector, not the planner's.
+// On a built connector it returns its own count.
 func (c *Connector) CloseCount() int {
+	if target := c.lifecycleTarget(); target != c {
+		return target.CloseCount()
+	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	return c.closeCount
 }
 
-// ResetLifecycle zeroes the recorded lifecycle counts (build is recorded on the
-// factory, not here). It lets a test discard the lifecycle of a SETUP operation —
-// e.g. PlanExtraction, which builds and closes a connector to discover schema —
-// so a later assertion measures only the operation under test (the runner).
-func (c *Connector) ResetLifecycle() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	c.testConnectionCalls = 0
-	c.queryCalls = 0
-	c.closeCount = 0
-}
-
-// QueryCalls returns the number of times Query was called.
+// QueryCalls returns the number of times Query was called, delegating to the
+// runner's freshly-built connector when called on a template (see CloseCount).
 func (c *Connector) QueryCalls() int {
+	if target := c.lifecycleTarget(); target != c {
+		return target.QueryCalls()
+	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	return c.queryCalls
 }
 
-// TestConnectionCalls returns the number of times TestConnection was called.
-func (c *Connector) TestConnectionCalls() int {
+// lifecycleTarget returns the connector whose counters a lifecycle accessor
+// should read. A template connector (factory set) defers to the factory's
+// most-recently-built connector — the runner's — falling back to itself when
+// nothing has been built yet. A built connector returns itself.
+func (c *Connector) lifecycleTarget() *Connector {
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	factory := c.factory
+	c.mu.Unlock()
 
-	return c.testConnectionCalls
+	if factory == nil {
+		return c
+	}
+
+	if last := factory.LastBuilt(); last != nil {
+		return last
+	}
+
+	return c
 }
 
 // ConnectorFactory is an in-memory engine.ConnectorFactory. Build is side-effect
-// free with respect to the network: it returns the pre-seeded Connector (or a
-// fresh empty one) WITHOUT opening any connection, preserving the connector
-// contract's build/connect separation. A BuildErr, when set, makes Build fail so
-// a test can exercise the runner's build-failure path.
+// free with respect to the network: it CLONES the template connector's behavior
+// into a FRESH connector on every call (build-per-step), WITHOUT opening any
+// connection, preserving the connector contract's build/connect separation. Each
+// built connector is distinct (its own pointer and counters), so a bug where the
+// runner closed the planner's connector instead of its own would be visible. A
+// BuildErr, when set, makes Build fail so a test can exercise the runner's
+// build-failure path. A NilConnector flag forces the (nil, nil) buggy-host
+// branch so a test can drive the runner's nil-connector guard.
 type ConnectorFactory struct {
 	mu sync.Mutex
 
-	// Conn is the connector Build returns. When nil, Build lazily allocates and
-	// retains a fresh empty Connector so a test can inspect it after execution.
-	Conn *Connector
+	// template carries the behavior every built connector clones. Tests configure
+	// it through the *Connector seedSource returns; its lifecycle accessors
+	// delegate to the most-recently-built connector below.
+	template *Connector
+	// built records every connector this factory produced, in build order, so a
+	// test can assert against the runner's connector (the last one built).
+	built []*Connector
+
 	// BuildErr, when non-nil, makes Build fail before producing a connector.
 	BuildErr error
-	// buildCount records how many times Build was invoked.
-	buildCount int
+	// NilConnector, when true, makes Build return (nil, nil) — the buggy-host
+	// branch the runner's isNilPort guard must catch without panicking. It takes
+	// precedence over producing a real connector but not over BuildErr.
+	NilConnector bool
 }
 
-// NewConnectorFactory returns a factory that builds the supplied connector. A
-// nil connector makes Build allocate a fresh empty Connector on first use.
+// NewConnectorFactory returns a factory that clones the supplied connector's
+// behavior into each connector it builds. A nil connector makes the factory
+// build behavior-less connectors. The supplied connector is wired as the
+// factory's template so its lifecycle accessors delegate to the runner's built
+// connector.
 func NewConnectorFactory(conn *Connector) *ConnectorFactory {
-	return &ConnectorFactory{Conn: conn}
+	f := &ConnectorFactory{template: conn}
+	if conn != nil {
+		conn.factory = f
+	}
+
+	return f
 }
 
-// Build implements engine.ConnectorFactory. It performs NO I/O: it records the
-// call and returns the seeded connector, deferring all connectivity to
-// TestConnection. When BuildErr is set it fails before producing a connector.
+// Build implements engine.ConnectorFactory. It performs NO I/O: it clones the
+// template's behavior into a FRESH connector, records it, and returns it,
+// deferring all connectivity to TestConnection. When BuildErr is set it fails
+// before producing a connector; when NilConnector is set it returns (nil, nil)
+// to exercise the runner's nil-connector guard.
 func (f *ConnectorFactory) Build(_ context.Context, _ engine.ConnectionDescriptor) (engine.Connector, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	f.buildCount++
-
 	if f.BuildErr != nil {
+		// A failed build produces NO connector to record or close: the runner must
+		// never close something it never built.
 		return nil, f.BuildErr
 	}
 
-	if f.Conn == nil {
-		f.Conn = &Connector{}
+	if f.NilConnector {
+		// The buggy-host branch: a real *Connector value is never produced, so the
+		// returned engine.Connector is an untyped nil the runner must reject.
+		return nil, nil
 	}
 
-	return f.Conn, nil
+	conn := &Connector{}
+
+	if f.template != nil {
+		f.mu.Unlock()
+		conn.ConnectorBehavior = f.template.snapshotBehavior()
+		f.mu.Lock()
+	}
+
+	f.built = append(f.built, conn)
+
+	return conn, nil
 }
 
-// BuildCount returns the number of times Build was invoked.
+// snapshotBehavior returns a copy of the template's injectable behavior under
+// its lock, so Build clones the data and failure switches the test configured.
+func (c *Connector) snapshotBehavior() ConnectorBehavior {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return c.ConnectorBehavior
+}
+
+// BuildCount returns the number of connectors this factory built. It excludes
+// failed builds (BuildErr / NilConnector produce no connector), so it measures
+// exactly how many connectors the runner could have opened.
 func (f *ConnectorFactory) BuildCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	return f.buildCount
+	return len(f.built)
+}
+
+// LastBuilt returns the most-recently-built connector, or nil when none built.
+// In a runner test the planner builds first and the runner builds last, so the
+// last built connector is the one the runner opened.
+func (f *ConnectorFactory) LastBuilt() *Connector {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if len(f.built) == 0 {
+		return nil
+	}
+
+	return f.built[len(f.built)-1]
 }
 
 // compile-time proof the harness doubles satisfy the Engine connector contracts.

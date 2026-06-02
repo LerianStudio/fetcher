@@ -55,11 +55,12 @@ func TestDirectResult_CarriesDataAndNoRequiredReference(t *testing.T) {
 	}
 
 	// Direct mode carries no sink reference: the result is whole on its own.
+	// Reference is a nil-discriminated pointer, so direct mode leaves it nil.
 	result := engine.ExtractionResult{Direct: &direct}
 	if result.Direct == nil {
 		t.Fatalf("ExtractionResult.Direct must be retained")
 	}
-	if result.Reference != (engine.ResultReference{}) {
+	if result.Reference != nil {
 		t.Fatalf("direct-mode result must carry no populated sink reference, got %+v", result.Reference)
 	}
 }
@@ -77,10 +78,10 @@ func TestDirectResult_CarriesCanonicalIntegrityAndProtection(t *testing.T) {
 			Digest:    hex.EncodeToString(sum[:]),
 		},
 		Protection: &engine.ResultProtection{
-			Encrypted: true,
+			Encrypted:  true,
 			KeyVersion: 3,
-			Mode:      "AES-256-GCM",
-			AppliedBy: engine.ProtectionAppliedByEngine,
+			Mode:       "AES-256-GCM",
+			AppliedBy:  engine.ProtectionAppliedByEngine,
 		},
 	}
 

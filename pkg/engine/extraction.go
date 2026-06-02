@@ -96,7 +96,10 @@ type ExtractionRequest struct {
 type PlanStep struct {
 	// ConfigName identifies the target datasource.
 	ConfigName string `json:"configName"`
-	// Tables lists the qualified tables the step will read, in sorted order.
+	// Tables lists the qualified tables the step will read, in sorted order. The
+	// executor reads Fields (below), NOT Tables, to build the query; Tables is
+	// planner-determinism / observability metadata recording what the plan
+	// resolved to.
 	Tables []string `json:"tables"`
 	// Fields maps each qualified table to its selected field names, sorted.
 	Fields map[string][]string `json:"fields,omitempty"`
@@ -260,17 +263,22 @@ type ResultReference struct {
 }
 
 // ExtractionResult is the output contract summarizing a finished extraction. It
-// models the two result shapes SEPARATELY: Direct carries inline bytes (direct
-// mode), Reference points to persisted bytes (store mode). Exactly one is
-// populated for a successful extraction depending on whether a ResultSink is
-// configured.
+// models the two result shapes SEPARATELY and SYMMETRICALLY: Direct carries
+// inline bytes (direct mode), Reference points to persisted bytes (store mode).
+// BOTH arms are nil-discriminated pointers, so exactly one is non-nil for a
+// successful extraction and the unused arm is omitted from JSON entirely —
+// direct mode emits no empty "reference", store mode emits no empty "direct".
 type ExtractionResult struct {
 	// State is the terminal execution state.
 	State ExecutionState `json:"state"`
-	// Direct carries the inline result payload in direct mode, if any.
+	// Direct carries the inline result payload in direct mode; nil in store mode.
 	Direct *DirectResult `json:"direct,omitempty"`
-	// Reference points to the persisted result payload in store mode, if any.
-	Reference ResultReference `json:"reference"`
-	// RowCounts records rows extracted per qualified table (optional).
+	// Reference points to the persisted result payload in store mode; nil in
+	// direct mode.
+	Reference *ResultReference `json:"reference,omitempty"`
+	// RowCounts records rows extracted per datasource config name (optional). The
+	// key is the plan step's ConfigName; the value is that source's aggregate row
+	// count across its tables. The sum of the values equals the result's total
+	// row count.
 	RowCounts map[string]int64 `json:"rowCounts,omitempty"`
 }

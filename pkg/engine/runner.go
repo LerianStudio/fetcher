@@ -154,11 +154,12 @@ func (e *Engine) ExecuteExtraction(ctx context.Context, plan ExtractionPlan) (Ex
 }
 
 // extractionOutcome is the in-flight, mode-agnostic product of a successful run:
-// the serialized payload, its row count, and the completion time. Both delivery
-// modes are built from it.
+// the serialized payload, its row count, the per-config row counts, and the
+// completion time. Both delivery modes are built from it.
 type extractionOutcome struct {
 	payload     []byte
 	rowCount    int64
+	rowCounts   map[string]int64
 	completedAt time.Time
 }
 
@@ -187,6 +188,13 @@ func (e *Engine) runDirectExtraction(
 	// plan's already-sorted order, so iteration order is deterministic.
 	aggregated := make(map[string]map[string][]map[string]any, len(plan.Steps))
 
+	// rowCounts records the per-datasource (per-config) aggregate row count, so the
+	// host can attribute the total back to each source without re-walking the
+	// payload. The key is the plan step's ConfigName; the value is the sum of rows
+	// across all of that config's tables. The grand total is the sum of the values
+	// and equals rowCount below.
+	rowCounts := make(map[string]int64, len(plan.Steps))
+
 	var rowCount int64
 
 	for _, step := range plan.Steps {
@@ -206,6 +214,7 @@ func (e *Engine) runDirectExtraction(
 		}
 
 		aggregated[step.ConfigName] = stepRows
+		rowCounts[step.ConfigName] = stepCount
 		rowCount += stepCount
 	}
 
@@ -236,6 +245,7 @@ func (e *Engine) runDirectExtraction(
 	return extractionOutcome{
 		payload:     payload,
 		rowCount:    rowCount,
+		rowCounts:   rowCounts,
 		completedAt: time.Now().UTC(),
 	}, nil
 }
@@ -267,6 +277,7 @@ func (e *Engine) completeDirectMode(
 			Protection:    enginePlaintextProtection(),
 			CompletedAt:   outcome.completedAt,
 		},
+		RowCounts: outcome.rowCounts,
 	}
 }
 
@@ -319,7 +330,8 @@ func (e *Engine) completeStoreMode(
 			Status:      StatusCompleted,
 			CompletedAt: &outcome.completedAt,
 		},
-		Reference: reference,
+		Reference: &reference,
+		RowCounts: outcome.rowCounts,
 	}, nil
 }
 

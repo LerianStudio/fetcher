@@ -38,6 +38,19 @@ type ResultSink struct {
 	// MUST preserve exactly this metadata (after validating appliedBy). It is inert
 	// (nil) by default, modelling an unencrypted store.
 	ProtectionResult *engine.ResultProtection
+
+	// OmitIntegrity, when true, makes PersistResult return a reference with NIL
+	// Integrity, modelling a sink that reports no integrity of its own. It drives
+	// the Engine's canonical-fill fallback (stamp an unkeyed SHA-256 digest so a
+	// stored result always carries verifiable integrity). It is false by default,
+	// so the sink reports its own content digest.
+	OmitIntegrity bool
+
+	// OmitSizeBytes, when true, makes PersistResult return a reference with
+	// SizeBytes == 0, modelling a sink that does not report the written size. It
+	// drives the Engine's canonical-fill fallback (set SizeBytes from the payload
+	// length). It is false by default, so the sink reports the stored byte size.
+	OmitSizeBytes bool
 }
 
 // NewResultSink returns an empty in-memory result sink.
@@ -97,6 +110,16 @@ func (s *ResultSink) PersistResult(
 			Algorithm: "SHA-256",
 			Digest:    digest,
 		},
+	}
+
+	// Test affordances modelling a sink that under-reports: the Engine fills the
+	// missing canonical fields so a stored result is always whole.
+	if s.OmitIntegrity {
+		ref.Integrity = nil
+	}
+
+	if s.OmitSizeBytes {
+		ref.SizeBytes = 0
 	}
 
 	if s.ProtectionResult != nil {

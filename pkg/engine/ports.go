@@ -128,7 +128,7 @@ type ExecutionStore interface {
 // not persist them.
 type ResultSink interface {
 	// PersistResult stores the serialized result for the tenant and returns a
-	// secret-free reference (path, HMAC, size).
+	// secret-free reference (path, integrity, size).
 	PersistResult(ctx context.Context, tenant TenantContext, payload []byte) (ResultReference, error)
 }
 

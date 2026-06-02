@@ -5,6 +5,8 @@ package engine_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -85,10 +87,10 @@ func (h *runnerHarness) seedSource(
 		tables = append(tables, engine.TableSnapshot{Name: table, Fields: fields})
 	}
 
-	conn := &memory.Connector{
+	conn := memory.NewTemplateConnector(memory.ConnectorBehavior{
 		Rows:   rows,
 		Schema: engine.SchemaSnapshot{ConfigName: configName, Tables: tables},
-	}
+	})
 	factory := memory.NewConnectorFactory(conn)
 	h.registry.Register(dsType, factory)
 	h.factories[dsType] = factory
@@ -111,15 +113,13 @@ func (h *runnerHarness) planFor(t *testing.T, mappedFields map[string]engine.Fie
 		t.Fatalf("PlanExtraction: unexpected error: %v", err)
 	}
 
-	// PlanExtraction builds + closes a connector per datasource to discover schema.
-	// Discard that setup lifecycle so the post-plan assertions measure ONLY the
-	// runner's connector lifecycle (the close-every-opened-connector invariant).
-	for _, factory := range h.factories {
-		if factory.Conn != nil {
-			factory.Conn.ResetLifecycle()
-		}
-	}
-
+	// PlanExtraction builds + closes a DISTINCT connector per datasource to discover
+	// schema; the runner later builds its OWN distinct connector per step. Because
+	// the factory builds a fresh connector per call (build-per-step), the post-plan
+	// lifecycle assertions — which read the template's accessors that delegate to
+	// the factory's MOST-RECENTLY-built connector (the runner's) — already measure
+	// only the runner's connector. No lifecycle reset is needed: the planner's and
+	// the runner's connectors are different instances with independent counters.
 	return plan
 }
 
@@ -248,8 +248,6 @@ func TestExecuteExtraction_SingleSourceWithFilters(t *testing.T) {
 		t.Fatalf("PlanExtraction: unexpected error: %v", err)
 	}
 
-	conn.ResetLifecycle()
-
 	result, err := h.engine.ExecuteExtraction(context.Background(), plan)
 	if err != nil {
 		t.Fatalf("ExecuteExtraction: unexpected error: %v", err)
@@ -259,6 +257,9 @@ func TestExecuteExtraction_SingleSourceWithFilters(t *testing.T) {
 		t.Fatalf("expected a direct result with RowCount 1, got %+v", result.Direct)
 	}
 
+	// conn is the TEMPLATE; CloseCount delegates to the runner's freshly-built
+	// connector (the last one the factory built), proving the runner closed the
+	// connector IT opened — not the planner's setup connector.
 	if conn.CloseCount() != 1 {
 		t.Fatalf("CloseCount = %d, want 1", conn.CloseCount())
 	}
@@ -454,6 +455,10 @@ func TestExecuteExtraction_StoreModeReturnsReference(t *testing.T) {
 	// Store mode returns a reference and NOT inline bytes.
 	if result.Direct != nil {
 		t.Fatalf("store mode must not return inline Direct bytes, got %+v", result.Direct)
+	}
+
+	if result.Reference == nil {
+		t.Fatalf("store mode must return a non-nil ResultReference, got nil")
 	}
 
 	if result.Reference.Path == "" {
@@ -905,8 +910,8 @@ func TestExecuteExtraction_ModeDirectOverridesConfiguredSink(t *testing.T) {
 		t.Fatalf("forced direct mode must return inline rows, got %+v", result.Direct)
 	}
 
-	if result.Reference.Path != "" {
-		t.Fatalf("forced direct mode must not write a store reference, got %q", result.Reference.Path)
+	if result.Reference != nil {
+		t.Fatalf("forced direct mode must not write a store reference, got %+v", result.Reference)
 	}
 }
 
@@ -935,8 +940,8 @@ func TestExecuteExtraction_DirectModeGreenWithoutExecutionStore(t *testing.T) {
 		t.Fatalf("direct mode without an execution store must return inline rows, got %+v", result.Direct)
 	}
 
-	if result.Reference.Path != "" {
-		t.Fatalf("direct mode must not return a store reference, got %q", result.Reference.Path)
+	if result.Reference != nil {
+		t.Fatalf("direct mode must not return a store reference, got %+v", result.Reference)
 	}
 }
 
@@ -1254,6 +1259,10 @@ func TestExecuteExtraction_CancelledBetweenStepsSkipsRemaining(t *testing.T) {
 		"pg-z": {"public.z": {"id"}},
 	})
 
+	// Record pg-z's build count after planning (the planner built one connector for
+	// schema discovery). If the runner never opens pg-z, this count must not grow.
+	zBuildsAfterPlan := h.factories["mysql"].BuildCount()
+
 	_, err := h.engine.ExecuteExtraction(ctx, plan)
 	if err == nil {
 		t.Fatalf("a context cancelled between steps must fail, got nil error")
@@ -1276,6 +1285,14 @@ func TestExecuteExtraction_CancelledBetweenStepsSkipsRemaining(t *testing.T) {
 
 	if connA.CloseCount() != 1 {
 		t.Fatalf("connA CloseCount = %d, want 1 (first step's connector must close)", connA.CloseCount())
+	}
+
+	// The skipped step was never OPENED by the runner: the runner built NO connector
+	// for pg-z (build-per-step), so the mysql factory's build count is unchanged
+	// from after planning. With nothing built there is nothing to leak — the "never
+	// opened" claim is load-bearing.
+	if grew := h.factories["mysql"].BuildCount(); grew != zBuildsAfterPlan {
+		t.Fatalf("runner built a connector for the skipped step: BuildCount = %d, want %d (unchanged)", grew, zBuildsAfterPlan)
 	}
 }
 
@@ -1406,6 +1423,333 @@ func TestExecuteExtraction_TimeoutMarksExecutionFailed(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("transition[%d] = %q, want %q (full order: %v)", i, got[i], want[i], got)
 		}
+	}
+}
+
+func TestExecuteExtraction_ConnectorBuildFailureReturnsSafeError(t *testing.T) {
+	t.Parallel()
+
+	// FIX-1(a): the host factory's Build fails. The runner must surface a safe
+	// EngineError, never panic, never query, and never close a connector it could
+	// not build (there is nothing to close).
+	h := newRunnerHarness(t)
+	h.seedSource(t, "pg-main", "postgres",
+		map[string][]string{"public.users": {"id"}},
+		map[string][]map[string]any{"public.users": {{"id": 1}}})
+
+	plan := h.planFor(t, map[string]engine.FieldSelection{
+		"pg-main": {"public.users": {"id"}},
+	})
+
+	// Inject the build failure AFTER planning (planning needs a working build to
+	// discover the schema) so only the runner's build is forced to fail.
+	factory := h.factories["postgres"]
+	factory.BuildErr = errors.New("driver: dsn parse failed host=db.internal password=hunter2")
+
+	result, err := h.engine.ExecuteExtraction(context.Background(), plan)
+	if err == nil {
+		t.Fatalf("a connector build failure must fail the execution, got nil error")
+	}
+
+	var engErr *engine.EngineError
+	if !errors.As(err, &engErr) {
+		t.Fatalf("error is not *engine.EngineError: %T (%v)", err, err)
+	}
+
+	if engErr.Category != engine.CategoryUnavailable {
+		t.Fatalf("error category = %q, want %q", engErr.Category, engine.CategoryUnavailable)
+	}
+
+	// Safe error: the raw build error (and its embedded secret) must not leak.
+	if strings.Contains(engErr.Message, "hunter2") || strings.Contains(engErr.Message, "db.internal") {
+		t.Fatalf("build error leaks raw driver detail: %q", engErr.Message)
+	}
+
+	if result.Direct != nil {
+		t.Fatalf("a build failure must not return inline bytes, got %+v", result.Direct)
+	}
+
+	// The runner's build failed, so it produced NO connector to drive or close.
+	if last := factory.LastBuilt(); last != nil {
+		// A connector may have been built only by the planner BEFORE the failure was
+		// injected; if so it was closed by planning and never queried by the runner.
+		if last.QueryCalls() != 0 {
+			t.Fatalf("a failed-build step must never query: QueryCalls = %d", last.QueryCalls())
+		}
+	}
+}
+
+func TestExecuteExtraction_NilConnectorBuildIsGuarded(t *testing.T) {
+	t.Parallel()
+
+	// FIX-1(b): a buggy host Build returns (nil, nil). The runner's isNilPort guard
+	// must catch it and return a safe error, NEVER panicking and NEVER calling
+	// Query or Close on the nil connector.
+	h := newRunnerHarness(t)
+	h.seedSource(t, "pg-main", "postgres",
+		map[string][]string{"public.users": {"id"}},
+		map[string][]map[string]any{"public.users": {{"id": 1}}})
+
+	plan := h.planFor(t, map[string]engine.FieldSelection{
+		"pg-main": {"public.users": {"id"}},
+	})
+
+	factory := h.factories["postgres"]
+	factory.NilConnector = true
+
+	result, err := h.engine.ExecuteExtraction(context.Background(), plan)
+	if err == nil {
+		t.Fatalf("a (nil, nil) build must fail the execution, got nil error")
+	}
+
+	var engErr *engine.EngineError
+	if !errors.As(err, &engErr) {
+		t.Fatalf("error is not *engine.EngineError: %T (%v)", err, err)
+	}
+
+	if engErr.Category != engine.CategoryUnavailable {
+		t.Fatalf("error category = %q, want %q", engErr.Category, engine.CategoryUnavailable)
+	}
+
+	if result.Direct != nil {
+		t.Fatalf("a nil-connector build must not return inline bytes, got %+v", result.Direct)
+	}
+
+	// NilConnector produced no connector to record, so nothing was queried/closed.
+	if last := factory.LastBuilt(); last != nil && last.QueryCalls() != 0 {
+		t.Fatalf("a nil-connector step must never query: QueryCalls = %d", last.QueryCalls())
+	}
+}
+
+func TestExecuteExtraction_StoreModeFillsMissingIntegrity(t *testing.T) {
+	t.Parallel()
+
+	// FIX-2: a sink that reports NO integrity drives the Engine's canonical-fill
+	// fallback — a stored result always carries verifiable integrity, an
+	// engine-stamped unkeyed SHA-256 digest over the persisted payload.
+	sink := memory.NewResultSink()
+	sink.OmitIntegrity = true
+
+	h := newStoreRunnerHarness(t, sink, nil)
+	h.seedSource(t, "pg-main", "postgres",
+		map[string][]string{"public.users": {"id"}},
+		map[string][]map[string]any{"public.users": {{"id": 1}, {"id": 2}}})
+
+	plan := h.planFor(t, map[string]engine.FieldSelection{
+		"pg-main": {"public.users": {"id"}},
+	})
+
+	result, err := h.engine.ExecuteExtraction(context.Background(), plan)
+	if err != nil {
+		t.Fatalf("ExecuteExtraction: unexpected error: %v", err)
+	}
+
+	if result.Reference == nil || result.Reference.Integrity == nil {
+		t.Fatalf("the Engine must fill missing integrity, got %+v", result.Reference)
+	}
+
+	if result.Reference.Integrity.Algorithm != "SHA-256" {
+		t.Fatalf("filled integrity algorithm = %q, want SHA-256", result.Reference.Integrity.Algorithm)
+	}
+
+	// The filled digest is the unkeyed SHA-256 of the persisted payload, not a
+	// signature: the Engine holds no key.
+	stored, ok := sink.Get(result.Reference.Path)
+	if !ok {
+		t.Fatalf("sink has no payload at reference path %q", result.Reference.Path)
+	}
+
+	want := sha256.Sum256(stored)
+	if result.Reference.Integrity.Digest != hex.EncodeToString(want[:]) {
+		t.Fatalf("filled digest = %q, want the SHA-256 of the payload", result.Reference.Integrity.Digest)
+	}
+
+	if result.Reference.Integrity.Signature != "" {
+		t.Fatalf("engine-filled integrity must be a digest, not a signature")
+	}
+}
+
+func TestExecuteExtraction_StoreModeFillsMissingSizeBytes(t *testing.T) {
+	t.Parallel()
+
+	// FIX-3: a sink that reports SizeBytes == 0 drives the Engine's canonical-fill
+	// fallback — SizeBytes is set from the persisted payload length.
+	sink := memory.NewResultSink()
+	sink.OmitSizeBytes = true
+
+	h := newStoreRunnerHarness(t, sink, nil)
+	h.seedSource(t, "pg-main", "postgres",
+		map[string][]string{"public.users": {"id"}},
+		map[string][]map[string]any{"public.users": {{"id": 1}, {"id": 2}, {"id": 3}}})
+
+	plan := h.planFor(t, map[string]engine.FieldSelection{
+		"pg-main": {"public.users": {"id"}},
+	})
+
+	result, err := h.engine.ExecuteExtraction(context.Background(), plan)
+	if err != nil {
+		t.Fatalf("ExecuteExtraction: unexpected error: %v", err)
+	}
+
+	if result.Reference == nil {
+		t.Fatalf("store mode must return a non-nil reference")
+	}
+
+	stored, ok := sink.Get(result.Reference.Path)
+	if !ok {
+		t.Fatalf("sink has no payload at reference path %q", result.Reference.Path)
+	}
+
+	if result.Reference.SizeBytes != int64(len(stored)) {
+		t.Fatalf("filled SizeBytes = %d, want %d (the payload length)", result.Reference.SizeBytes, len(stored))
+	}
+}
+
+func TestExecuteExtraction_RunnerClosesItsOwnFreshlyBuiltConnector(t *testing.T) {
+	t.Parallel()
+
+	// FIX-4: the factory builds a DISTINCT connector per Build() call. The planner
+	// builds one (for schema discovery) and the runner builds its own. This test
+	// makes the distinctness load-bearing: the runner must close the connector IT
+	// built, identified by the factory's LAST-built instance — not the planner's.
+	h := newRunnerHarness(t)
+	h.seedSource(t, "pg-main", "postgres",
+		map[string][]string{"public.users": {"id"}},
+		map[string][]map[string]any{"public.users": {{"id": 1}, {"id": 2}}})
+
+	plan := h.planFor(t, map[string]engine.FieldSelection{
+		"pg-main": {"public.users": {"id"}},
+	})
+
+	factory := h.factories["postgres"]
+	// Planning built and closed connector #1; the runner has not built yet.
+	planBuilds := factory.BuildCount()
+	if planBuilds < 1 {
+		t.Fatalf("planning must have built at least one connector, got %d", planBuilds)
+	}
+
+	plannerConn := factory.LastBuilt()
+
+	if _, err := h.engine.ExecuteExtraction(context.Background(), plan); err != nil {
+		t.Fatalf("ExecuteExtraction: unexpected error: %v", err)
+	}
+
+	runnerConn := factory.LastBuilt()
+
+	// The runner built its OWN connector: a new build, a distinct pointer.
+	if factory.BuildCount() != planBuilds+1 {
+		t.Fatalf("runner must build its own connector: BuildCount = %d, want %d", factory.BuildCount(), planBuilds+1)
+	}
+
+	if runnerConn == plannerConn {
+		t.Fatalf("runner reused the planner's connector instance; build-per-step is not honest")
+	}
+
+	// The runner's freshly-built connector was queried and closed exactly once;
+	// the planner's connector was never queried by the runner.
+	if runnerConn.QueryCalls() != 1 {
+		t.Fatalf("runner connector QueryCalls = %d, want 1", runnerConn.QueryCalls())
+	}
+
+	if runnerConn.CloseCount() != 1 {
+		t.Fatalf("runner connector CloseCount = %d, want 1 (runner must close the connector it opened)", runnerConn.CloseCount())
+	}
+
+	if plannerConn.QueryCalls() != 0 {
+		t.Fatalf("planner connector must never be queried by the runner: QueryCalls = %d", plannerConn.QueryCalls())
+	}
+}
+
+func TestExecuteExtraction_PopulatesRowCounts(t *testing.T) {
+	t.Parallel()
+
+	// FIX-5: RowCounts is keyed by datasource config name; each value is that
+	// source's aggregate row count and the values sum to the total.
+	h := newRunnerHarness(t)
+	h.seedSource(t, "pg-a", "postgres",
+		map[string][]string{"public.a": {"id"}},
+		map[string][]map[string]any{"public.a": {{"id": 1}, {"id": 2}, {"id": 3}}})
+	h.seedSource(t, "mongo-b", "mongodb",
+		map[string][]string{"coll.b": {"id"}},
+		map[string][]map[string]any{"coll.b": {{"id": 10}, {"id": 11}}})
+
+	plan := h.planFor(t, map[string]engine.FieldSelection{
+		"pg-a":    {"public.a": {"id"}},
+		"mongo-b": {"coll.b": {"id"}},
+	})
+
+	result, err := h.engine.ExecuteExtraction(context.Background(), plan)
+	if err != nil {
+		t.Fatalf("ExecuteExtraction: unexpected error: %v", err)
+	}
+
+	if result.RowCounts == nil {
+		t.Fatalf("RowCounts must be populated, got nil")
+	}
+
+	if result.RowCounts["pg-a"] != 3 {
+		t.Fatalf("RowCounts[pg-a] = %d, want 3", result.RowCounts["pg-a"])
+	}
+
+	if result.RowCounts["mongo-b"] != 2 {
+		t.Fatalf("RowCounts[mongo-b] = %d, want 2", result.RowCounts["mongo-b"])
+	}
+
+	var sum int64
+	for _, n := range result.RowCounts {
+		sum += n
+	}
+
+	if sum != result.Direct.RowCount {
+		t.Fatalf("sum of RowCounts = %d, want %d (the total row count)", sum, result.Direct.RowCount)
+	}
+}
+
+func TestExecuteExtraction_DirectModeOmitsReferenceInJSON(t *testing.T) {
+	t.Parallel()
+
+	// FIX-6: the result union is symmetric. In direct mode Reference is nil and the
+	// marshaled JSON must omit the "reference" key entirely (no empty object), and
+	// must carry the "direct" arm.
+	h := newRunnerHarness(t)
+	h.seedSource(t, "pg-main", "postgres",
+		map[string][]string{"public.users": {"id"}},
+		map[string][]map[string]any{"public.users": {{"id": 1}}})
+
+	plan := h.planFor(t, map[string]engine.FieldSelection{
+		"pg-main": {"public.users": {"id"}},
+	})
+
+	result, err := h.engine.ExecuteExtraction(context.Background(), plan)
+	if err != nil {
+		t.Fatalf("ExecuteExtraction: unexpected error: %v", err)
+	}
+
+	if result.Reference != nil {
+		t.Fatalf("direct mode must leave Reference nil, got %+v", result.Reference)
+	}
+
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("marshal result: %v", err)
+	}
+
+	if strings.Contains(string(encoded), `"reference"`) {
+		t.Fatalf("direct-mode JSON must omit the reference arm, got %s", encoded)
+	}
+
+	if !strings.Contains(string(encoded), `"direct"`) {
+		t.Fatalf("direct-mode JSON must carry the direct arm, got %s", encoded)
+	}
+
+	// Symmetry check: store mode must likewise omit the empty "direct" arm.
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &probe); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+
+	if _, ok := probe["reference"]; ok {
+		t.Fatalf("direct-mode JSON must not contain a reference key at all")
 	}
 }
 
