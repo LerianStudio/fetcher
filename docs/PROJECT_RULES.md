@@ -2,7 +2,7 @@
 
 ## Overview
 
-Fetcher is a **data extraction microservices system** built with Go following **Hexagonal Architecture** and **CQRS (Command Query Responsibility Segregation)** patterns. The system extracts data from multiple external databases, encrypts the results, and stores them in a distributed file system.
+Fetcher is a **data extraction platform** built with Go following **Hexagonal Architecture** and **CQRS (Command Query Responsibility Segregation)** patterns. It extracts data from multiple external databases, encrypts the results, and stores them in a distributed file system. It ships in two forms: the standalone **Manager + Worker** services, and an **embedded runtime engine** (`pkg/engine`) that other Lerian products (Matcher, Reporter) import in-process. The Manager and Worker themselves run *over* the engine — the engine owns the extraction rules, the services own the operational shell.
 
 ### Technology Stack
 
@@ -11,9 +11,11 @@ Fetcher is a **data extraction microservices system** built with Go following **
 | **Language** | Go | Source of truth: `go.mod` |
 | **Web Framework** | Fiber | v2.52.10 |
 | **Message Queue** | RabbitMQ | v1.10.0 |
+| **Event Streaming** | lib-streaming (Kafka/Redpanda) | v1.3.1 — mandatory for Worker job events |
 | **Primary Database** | MongoDB | Latest |
 | **File Storage** | SeaweedFS (default) / S3-compatible | SeaweedFS 3.97 / AWS SDK v2 |
 | **Observability** | OpenTelemetry | v1.39.0 |
+| **Auth / License** | lib-auth / lib-license-go | v2.8.0 / v2.3.5 (license fail-closed off `local`) |
 | **API Documentation** | Swagger/Swaggo | v1.16.6 |
 
 ### Supported External Databases
@@ -35,33 +37,47 @@ fetcher/
 │   ├── manager/                   # HTTP API server
 │   └── worker/                    # Async job processor
 ├── pkg/                           # Shared packages
+│   ├── engine/                    # Embedded runtime core (infra-free extraction rules + ports)
+│   │   └── memory/                # In-memory port impls (TEST/EMBEDDED harness only)
+│   ├── enginecompat/              # Adapters bridging engine ports to Fetcher infrastructure
+│   │   ├── connectioncompat/      # Mongo connection repo + job repo → engine ports
+│   │   ├── schemacompat/          # Datasource factory + crypto + Redis → engine ports
+│   │   ├── datasource/            # Worker extraction ConnectorFactory
+│   │   ├── plugincrm/             # CRM detection helpers
+│   │   └── tablenorm/             # Table/field key normalization
 │   ├── model/                     # Domain models (entities, DTOs)
+│   │   └── datasource/            # Per-DB config models (postgres, mysql, oracle, sqlserver, mongodb)
+│   ├── ports/                     # Repository/port interfaces (connection, job, cache, publisher, storage, messaging, datasource)
+│   ├── resolver/                  # Internal datasource env loading + multi-tenant resolution
 │   ├── mongodb/                   # MongoDB repositories (connection, job)
 │   ├── postgres/                  # PostgreSQL adapter
 │   ├── mysql/                     # MySQL adapter
 │   ├── oracle/                    # Oracle adapter
 │   ├── sqlserver/                 # SQL Server adapter
-│   ├── rabbitmq/                  # RabbitMQ adapter
+│   ├── rabbitmq/                  # RabbitMQ adapter (incl. security_envelope.go)
 │   ├── seaweedfs/                 # SeaweedFS client
 │   ├── storage/                   # Storage factory (SeaweedFS / S3 abstraction)
 │   ├── crypto/                    # Encryption service
 │   ├── datasource/                # DataSource factory + SSL mode utils
+│   │   ├── hostsafety/            # SSRF host-safety guard (adapter over libSSRF)
+│   │   └── sslmode/               # SSL mode validation/injection
+│   ├── schemautil/                # Schema operation utilities
 │   ├── redis/                     # Redis/Valkey client adapter
 │   ├── ratelimit/                 # Rate limiter (Redis-backed)
 │   ├── metrics/                   # Multi-tenant OTel metrics (no-op when disabled)
 │   ├── multitenant/               # Multi-tenant cross-cutting test suite
-│   ├── net/http/                  # HTTP utilities
+│   ├── bootstrap/readyz/          # Canonical /readyz readiness probe wiring + SaaS TLS enforcement
+│   ├── startup/                   # Bootstrap error sanitization (redacts credentials from stderr)
+│   ├── net/http/                  # HTTP utilities (incl. with_body.go safe_host validator)
+│   ├── itestkit/                  # Integration/E2E test kit (testcontainers, chaos, queue/metrics addons)
+│   ├── testutil/                  # Unit-test helpers (context, mocks)
+│   ├── shell/                     # Makefile color/template/ASCII assets (not Go)
 │   └── constant/                  # Application constants
-├── tests/                         # Test infrastructure and integration tests
-│   ├── shared/                    # Shared test infrastructure library
-│   │   ├── config/                # Configuration, ports, timeouts
-│   │   ├── client/                # API clients (Manager, RabbitMQ, SeaweedFS)
-│   │   ├── containers/            # Docker container orchestration
-│   │   ├── network/               # Docker network management
-│   │   ├── fixtures/              # Database init scripts (embedded SQL)
-│   │   └── topology/              # RabbitMQ exchange/queue setup
-│   └── integration/               # Integration tests
-│       └── containers/            # End-to-end container tests
+├── tests/                         # Black-box test suites (build-tagged)
+│   ├── shared/                    # Shared E2E/chaos helpers (package e2eshared) + fixtures, testdata
+│   ├── e2e/                       # End-to-end tests (//go:build e2e)
+│   ├── chaos/                     # Chaos tests with Toxiproxy (//go:build chaos)
+│   └── fuzz/                      # Fuzz tests
 ├── scripts/                       # Build and validation scripts
 ├── .github/                       # CI/CD workflows
 └── .githooks/                     # Git hooks for code quality
@@ -136,23 +152,31 @@ components/manager/
     │       ├── schema_cache_interface.go  # SchemaCacheRepository interface
     │       └── schema_cache.go           # Redis-backed schema cache implementation
     ├── bootstrap/
-    │   ├── config.go               # Dependency injection
-    │   ├── server.go               # HTTP server wrapper
-    │   └── service.go              # Application service wrapper
+    │   ├── config.go               # Dependency injection + license/SSRF/TLS gating
+    │   ├── server.go               # HTTP server wrapper (drain-aware)
+    │   ├── service.go              # Application service wrapper
+    │   ├── connection_engine.go    # Wires the connection engine (engine.New + connectioncompat)
+    │   ├── schema_engine.go        # Wires the schema engine (engine.New + schemacompat)
+    │   └── readyz_adapters.go      # /readyz dependency checker wiring
     └── services/
         ├── command/                # CQRS Commands (Write operations)
         │   ├── create_connection.go
         │   ├── update_connection.go
         │   ├── delete_connection.go
         │   ├── create_fetcher_job.go
-        │   └── assign_connection.go
+        │   ├── assign_connection.go
+        │   ├── connection_engine_ops.go    # Update/Delete delegated to the connection engine
+        │   ├── active_jobs_gate.go          # Active-execution conflict gate
+        │   └── extraction_request_mapper.go # Maps FetcherRequest → engine.ExtractionRequest
         └── query/                  # CQRS Queries (Read operations)
             ├── get_connection.go
             ├── list_connections.go
-            ├── test_connection.go
+            ├── test_connection.go               # NOT delegated to the engine (direct via factory)
             ├── get_job.go
-            ├── get_connection_schema.go
+            ├── get_connection_schema.go          # Always-fresh discovery via schema engine
             ├── validate_schema.go
+            ├── connection_engine_access.go       # Tenant-scope reads via the connection engine
+            ├── schema_engine_access.go           # Schema validation via the schema engine
             └── list_unassigned_connections.go
 ```
 
@@ -223,14 +247,21 @@ components/worker/
     │       ├── consumer.rabbitmq.go # RabbitMQ consumer adapter (Primary Adapter)
     │       └── publisher.rabbitmq.go # RabbitMQ publisher adapter (Secondary Adapter)
     ├── bootstrap/
-    │   ├── config.go                # Dependency injection
+    │   ├── config.go                # Dependency injection + license/TLS gating
     │   ├── service.go               # Application service wrapper
-    │   └── consumer.go              # Multi-queue consumer orchestration with tenant ID extraction from AMQP headers and tenant MongoDB resolution
+    │   ├── consumer.go              # Multi-queue consumer orchestration with tenant ID extraction from AMQP headers and tenant MongoDB resolution
+    │   ├── worker_multi_tenant_consumer.go # Per-tenant consumer fan-out (multi-tenant mode)
+    │   ├── extraction_engine.go     # Wires the mandatory EngineRunner (nil runner is startup-fatal)
+    │   ├── health_server.go         # Lightweight HTTP server for /health + /readyz
+    │   ├── readyz_adapters.go       # /readyz dependency checker wiring (adds S3 HeadBucket)
+    │   └── retry_guard.go           # Redelivery/retry guard for poison messages
     └── services/
         ├── service.go               # UseCase struct definition
-        ├── extract-data.go          # Main data extraction logic
-        ├── extract_crm_data.go      # Plugin CRM specific extraction
-        └── job_notification.go      # Job event notification publishing
+        ├── extract_data.go          # Generic extraction entry point + result encrypt/store/HMAC
+        ├── extract_engine.go        # extractViaEngine: routes generic extraction through the engine
+        ├── extract_crm_data.go      # Plugin CRM extraction (EXCEPTION: bypasses the engine)
+        ├── job_notification.go      # Job event notification publishing
+        └── terminal_event_repairer.go # Repairs/re-emits missed terminal job events
 ```
 
 ---
@@ -246,6 +277,55 @@ components/worker/
 | `os.go` | OS-level utilities |
 | `utils.go` | General utility functions |
 | `time_utils.go` | Time manipulation utilities |
+
+### engine (`pkg/engine/`) — Embedded Runtime Core
+
+The **embedded runtime engine** is the importable, infrastructure-free core that owns extraction **rules**: connection lifecycle, schema discovery/validation, query planning, extraction execution, canonical result/error contracts, limits, and tenant-safety. It is designed to embed in any host (the Fetcher Manager and Worker today; Matcher and Reporter tomorrow) without dragging infrastructure with it.
+
+| File | Purpose |
+|------|---------|
+| `engine.go` | Facade — `engine.New(opts ...Option) (*Engine, error)` |
+| `options.go` | Functional options wiring host-provided ports |
+| `ports.go` | Host-provided port interfaces (the engine's only dependencies) |
+| `connection.go`, `connection_ops.go` | Connection lifecycle rules |
+| `schema.go`, `schema_ops.go` | Schema discovery/validation rules |
+| `planner.go`, `extraction.go`, `runner.go` | Query planning + extraction execution |
+| `connector.go`, `result_test.go` (contract) | Canonical result/error contracts |
+| `limits.go` | Limit enforcement |
+| `test_connection.go` | Connection test |
+| `dependency_test.go` | **Build-enforced boundary guard** (see below) |
+| `memory/` | In-memory port implementations for TEST/EMBEDDED harness only — **not production persistence** |
+
+**Ports (`pkg/engine/ports.go`).** The engine depends ONLY on host-provided interfaces:
+
+- **Required:** `ConnectorRegistry`, `CredentialProtector`
+- **Optional:** `ConnectionStore`, `ExecutionStore`, `ResultSink`, `SchemaCache`, `EventSink`, `TenantResolver`, `ActiveExecutionChecker`, `Observability`
+
+**Boundary contract (build-enforced).** `dependency_test.go` runs `go list -deps` and **fails the build** if the engine transitively imports any infrastructure. Forbidden imports include: Fiber, swag, amqp091-go, lib-streaming, mongo-driver, go-redis, SQL drivers (pgx/mysql/mssqldb/go-ora/lib-pq), `database/sql`, `os/exec`, `plugin`, `net/http`, `net/rpc`, aws-sdk-go-v2, `pkg/seaweedfs`, the local infra packages (`pkg/rabbitmq`, `pkg/storage`, `pkg/mongodb`, `pkg/redis`, `pkg/net/http`, `pkg/postgres`, `pkg/mysql`, `pkg/oracle`, `pkg/sqlserver`, `pkg/datasource`, `pkg/ratelimit`, `pkg/bootstrap/readyz`), lib-auth, lib-license-go, `components/*/internal`, and `deployments/helm/infra`. Rationale: the engine must embed in any host without pulling in infrastructure.
+
+**Execution modes:**
+
+| Mode | Behavior |
+|------|----------|
+| **Direct** | Inline bytes + SHA-256 integrity |
+| **Store** | Persisted via `ResultSink`, returns a reference |
+| **Auto** | Store if a sink is present, else Direct |
+
+**Limits enforced:** `timeout` (via `context.WithTimeout`), `MaxResultBytes` (post-serialization), `MaxDatasources` / `MaxTablesPerDatasource` / `MaxFieldsPerTable` (at planning). Per-request `Overrides` may only **lower** limits, never raise them.
+
+**Isolation:** `TenantID` is the **sole** isolation dimension. The engine core has no org/product concept — those belong to the host.
+
+### enginecompat (`pkg/enginecompat/`) — Compatibility Adapters
+
+Bridges the engine's ports to Fetcher's concrete infrastructure. The engine stays infra-free; these adapters do the wiring.
+
+| Subpackage | Purpose |
+|------------|---------|
+| `connectioncompat/` | Mongo connection repo → `ConnectionStore`; job repo → `ActiveExecutionChecker`; tenant bridge |
+| `schemacompat/` | Datasource factory + crypto → `ConnectorFactory`; Redis → `SchemaCache`; request-scoped `ConnectionStore` via `WithResolvedConnections` |
+| `datasource/` | Worker extraction `ConnectorFactory` (wraps the existing `pkg/datasource` factory) |
+| `plugincrm/` | CRM detection helpers |
+| `tablenorm/` | Table/field key normalization |
 
 ### constant (`pkg/constant/`)
 
@@ -274,7 +354,32 @@ Domain models including entities, DTOs, requests, and responses.
 **Subpackages:**
 
 - `model/job/` - Job queue message types (`job_queue.go`)
-- `model/datasource/` - DataSource interface and configurations for each database type
+- `model/datasource/` - DataSource interface + per-DB config models: `postgres/`, `mysql/`, `oracle/`, `sqlserver/`, `mongodb/`
+
+### ports (`pkg/ports/`)
+
+Repository and port interfaces (the hexagonal "ports"), grouped by subdirectory. Each has a `*.mock.go` generated alongside via `mockgen`.
+
+| Subpackage | Interface |
+|------------|-----------|
+| `connection/` | `Repository` — connection persistence |
+| `job/` | `Repository` — job persistence |
+| `cache/` | `SchemaCacheRepository` — Redis schema cache |
+| `publisher/` | `Repository` — job event publishing |
+| `storage/` | `Repository` — object storage |
+| `messaging/` | `Publisher` — message dispatch |
+| `datasource/` | `CRM` — plugin CRM datasource contract |
+
+### resolver (`pkg/resolver/`)
+
+Resolves which datasource/database a request targets, and loads operator-defined internal datasources.
+
+| File | Purpose |
+|------|---------|
+| `env_loader.go` | Loads internal datasources from `DATASOURCE_{NAME}_*` env vars (incl. SSL mode) |
+| `registry.go` | Internal datasource registry |
+| `resolver.go`, `single_tenant.go`, `multi_tenant.go` | Tenant→database resolution (single vs multi-tenant) |
+| `tenant_config_adapter.go` | Adapts tenant config provider to the resolver |
 
 ### mongodb (`pkg/mongodb/`)
 
@@ -334,11 +439,11 @@ Each database type has its own package implementing the DataSource interface:
 
 ### datasource (`pkg/datasource/`)
 
-DataSource factory that creates the appropriate database adapter based on connection type.
+DataSource factory that creates the appropriate database adapter based on connection type. Also home to the SSRF guard (`hostsafety/`) and SSL mode utilities (`sslmode/`).
 
 | File | Purpose |
 |------|---------|
-| `datasource-factory.go` | Factory pattern implementation |
+| `datasource_factory.go` | Factory pattern implementation + pre-dial SSRF host check |
 
 ```go
 func NewDataSourceFromConnection(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor, logger log.Logger) (datasource.DataSource, error) {
@@ -378,7 +483,7 @@ SeaweedFS HTTP client. Used directly by `pkg/storage` when `STORAGE_PROVIDER=sea
 | File | Purpose |
 |------|---------|
 | `seaweedfs.go` | SeaweedFS HTTP client operations |
-| `external/external-data.go` | `SimpleRepository` — implements `storage.Repository` against SeaweedFS Filer |
+| `external/external_data.go` | `SimpleRepository` — implements `storage.Repository` against SeaweedFS Filer |
 
 ### crypto (`pkg/crypto/`)
 
@@ -397,8 +502,18 @@ HTTP utilities for the Fiber framework.
 | `errors.go` | HTTP error handling and responses |
 | `response.go` | Standard response formatting |
 | `cursor.go` | Cursor-based pagination utilities |
-| `withBody.go` | Request body handling |
+| `with_body.go` | Request body handling + the `safe_host` SSRF validator tag |
+| `with_recover.go` | Panic-recovery middleware |
+| `request_id.go` | Request ID propagation |
 | `http-utils.go` | General HTTP utilities |
+
+### schemautil (`pkg/schemautil/`)
+
+Utility functions for handling database schema operations (shared between the schema engine path and adapters).
+
+### startup (`pkg/startup/`)
+
+Bootstrap-time error sanitization. `SanitizeError` redacts connection strings and credential fragments (e.g. `amqp://user:pass@host`) from errors before they are printed to stderr during startup.
 
 ### metrics (`pkg/metrics/`)
 
@@ -504,6 +619,23 @@ Commands and Queries are separated:
 - **Queries** (Read operations): `GetConnection`, `ListConnections`, `TestConnection`, `GetJob`, `GetConnectionSchema`, `ValidateSchema`, `ListUnassignedConnections`
 
 **Worker Exception:** The Worker component does **not** follow CQRS. Instead, it uses a single `UseCase` struct (`components/worker/internal/services/service.go`) that holds all dependencies and exposes methods like `ExtractExternalData()` and `SendJobNotification()`. This is intentional because the Worker has no HTTP API and processes messages from a single queue, making CQRS separation unnecessary.
+
+### Embedded Runtime Engine
+
+Both components run their extraction logic over the embedded runtime engine (`pkg/engine`, see [Packages](#engine-pkgengine--embedded-runtime-core)). The engine owns the *rules*; the host owns the *infrastructure*. Wiring happens in each component's `bootstrap/` package via `pkg/enginecompat` adapters.
+
+**Manager** wires **two** engine instances in `components/manager/internal/bootstrap/`:
+
+| File | Engine | Delegated operations |
+|------|--------|----------------------|
+| `connection_engine.go` | Connection engine | Connection CRUD |
+| `schema_engine.go` | Schema engine | Schema discovery / validation |
+
+The Manager retains ownership of auth, license, HTTP, rate-limiting, idempotency, RabbitMQ dispatch, and `/readyz`. **Test-connection does NOT go through the engine** — it still dials directly via the datasource factory.
+
+**Worker** wires a **mandatory** `EngineRunner` in `components/worker/internal/bootstrap/extraction_engine.go`; a `nil` runner is **startup-fatal**. Generic extraction flows: Worker `UseCase` → `extract_engine.go` (`extractViaEngine`) → `EngineRunner.RunExtraction` → `engine.PlanExtraction` + `engine.ExecuteExtraction` (DIRECT mode). The Worker owns encrypt/store/HMAC, job status, and event publishing **outside** the engine. `plugin_crm` is the documented **exception** that bypasses the engine entirely (legacy `extract_crm_data.go`: collection-prefix fan-out, filter-field hashing, PII decryption).
+
+> **Note:** The Worker's legacy direct extraction path has been **removed** — generic extraction can only run through the engine.
 
 ---
 
@@ -765,6 +897,8 @@ sequenceDiagram
 
 ### Worker Component - Extract Data Flow
 
+Generic extraction now runs **through the embedded engine** (DIRECT mode). The Worker owns everything *outside* the engine: decrypting nothing inside the rules (the engine's `CredentialProtector` port handles that), but encrypt/store/HMAC of results, job status, and event publishing. `plugin_crm` is the documented **exception** — it bypasses the engine entirely and uses the legacy `extract_crm_data.go` path.
+
 ```mermaid
 sequenceDiagram
     participant RabbitMQ as RabbitMQ Queue
@@ -773,10 +907,11 @@ sequenceDiagram
     participant Handler as handlerGenerateReport
     participant UseCase as ExtractExternalData
     participant JobRepo as JobRepository
-    participant ConnRepo as ConnectionRepository
-    participant Cryptor as Crypto Service
+    participant Engine as Embedded Engine
+    participant Connector as Engine Connector port
     participant Factory as DataSourceFactory
     participant ExternalDB as External Database
+    participant Cryptor as Crypto Service
     participant Storage as Object Storage
     participant Publisher as RabbitMQ Publisher
     participant MongoDB
@@ -797,22 +932,28 @@ sequenceDiagram
         UseCase-->>Handler: Skip (idempotent)
     else Job pending/in_progress
         UseCase->>JobRepo: UpdateStatus(IN_PROGRESS)
-        UseCase->>ConnRepo: FindByConfigNames(job.configNames)
-        ConnRepo-->>UseCase: []Connection
 
-        loop For each connection
-            UseCase->>Cryptor: Decrypt(password)
-            Cryptor-->>UseCase: decryptedPassword
+        alt plugin_crm source (engine bypass)
+            UseCase->>UseCase: extractCRMData (collection-prefix fan-out,<br/>filter-field hashing, PII decryption)
             UseCase->>Factory: NewDataSourceFromConnection()
             Factory-->>UseCase: DataSource
-            UseCase->>ExternalDB: Connect()
-            ExternalDB-->>UseCase: OK
-            UseCase->>ExternalDB: Query(tables, fields, filters)
+            UseCase->>ExternalDB: Query()
             ExternalDB-->>UseCase: []map[string]any
-            UseCase->>ExternalDB: Close()
+        else Generic source (via engine)
+            UseCase->>UseCase: extractViaEngine(ctx, job)
+            UseCase->>Engine: PlanExtraction(plan)
+            Engine-->>UseCase: validated plan (limits enforced)
+            UseCase->>Engine: ExecuteExtraction(plan) [DIRECT mode]
+            Engine->>Connector: Open + Query (engine port)
+            Connector->>Factory: NewDataSourceFromConnection()
+            Factory-->>Connector: DataSource
+            Connector->>ExternalDB: Connect / Query / Close
+            ExternalDB-->>Connector: rows
+            Connector-->>Engine: rows
+            Engine-->>UseCase: Result (inline bytes + SHA-256)
         end
 
-        UseCase->>Cryptor: Encrypt(results)
+        UseCase->>Cryptor: Encrypt(results) + HMAC
         Cryptor-->>UseCase: encryptedData
         UseCase->>Storage: Store(encryptedData, TTL)
         Storage-->>UseCase: fileId
@@ -906,7 +1047,7 @@ sequenceDiagram
 2. **Create model** in `pkg/model/datasource/<dbtype>/`:
    - `datasource-config.go` - Configuration struct
 
-3. **Update factory** in `pkg/datasource/datasource-factory.go`:
+3. **Update factory** in `pkg/datasource/datasource_factory.go`:
    - Add new case in switch statement
    - Add helper function for creating the adapter
 
@@ -915,6 +1056,8 @@ sequenceDiagram
 
 5. **Update model** in `pkg/model/connection.go`:
    - Add new type to ConnectionType enum if needed
+
+6. **Reachable through the engine:** extraction now flows through the embedded engine, so the new type must be reachable via the engine's connector registry. In practice the `pkg/enginecompat/datasource` `ConnectorFactory` **wraps** the existing `pkg/datasource` factory, so adding the factory case in step 3 is sufficient — no separate engine registration is required. Add an engine-path extraction test to confirm the new type resolves through `enginecompat`.
 
 ### Adding a New API Endpoint
 
@@ -994,113 +1137,48 @@ Operator guidance for the MongoDB allowlist: `_SSLMODE=insecure` (and `skip-veri
 
 ## Test Infrastructure
 
-### Overview
+### Layout
 
-The `tests/shared/` package provides a centralized test infrastructure library for integration and chaos tests. It uses testcontainers-go for Docker container orchestration.
+| Suite | Location | Build tag | Notes |
+|-------|----------|-----------|-------|
+| **Unit** | `*_test.go` alongside source | none | `make test-unit` |
+| **E2E** | `tests/e2e/` | `e2e` | `make test-e2e` (`make test-integration` is an alias) |
+| **Chaos** | `tests/chaos/` | `chaos` | `make test-chaos` (Toxiproxy fault injection) |
+| **Fuzz** | `tests/fuzz/` | none | `make test-fuzzy` |
 
-### Design Patterns
+The container/infrastructure orchestration that used to live under `tests/shared/{containers,network,...}` has moved to the reusable **`pkg/itestkit`** library. `tests/shared/` is now a flat set of E2E/chaos helpers (package `shared`, conventionally imported as `e2eshared`): `client.go` (Manager API client), `apps.go` (app container startup), `assertions.go` + `helpers.go` (job polling, product-name generation), `readyz.go` (`/readyz` probes), `infra.go`, `storage_bucket.go`, plus `fixtures/` and `testdata/`.
 
-| Pattern | Implementation |
-|---------|----------------|
-| **Factory Pattern** | `Default*Options()` functions + `Start*()` functions |
-| **Wrapper Pattern** | Container structs encapsulate testcontainers with connection info |
-| **Options Pattern** | Flexible configuration with sensible defaults |
-| **Embedded Resources** | SQL fixtures embedded in binary via `//go:embed` |
+### itestkit (`pkg/itestkit/`)
 
-### Package Reference
+Infrastructure-agnostic test kit built on testcontainers-go. See [`pkg/itestkit/README.md`](../pkg/itestkit/README.md) for the full builder/suite API.
 
-| Package | Purpose |
-|---------|---------|
-| `tests/shared/config` | Configuration constants, ports, timeouts, infrastructure state |
-| `tests/shared/client` | HTTP clients for Manager API, RabbitMQ events, SeaweedFS |
-| `tests/shared/containers` | Docker container orchestration (PostgreSQL, MySQL, SQL Server, Oracle, MongoDB, RabbitMQ, Redis, SeaweedFS) |
-| `pkg/itestkit/infra/minio` | MinIO container for S3 integration and E2E tests (activated via `E2E_ENABLE_S3=true`) |
-| `tests/shared/network` | Docker network creation for container communication |
-| `tests/shared/fixtures` | Test data and SQL initialization scripts |
-| `tests/shared/topology` | RabbitMQ exchange and queue configuration |
+| Path | Purpose |
+|------|---------|
+| `itestkit/infra/{postgres,mysql,oracle,mssql,mongodb,rabbitmq,redis,seaweedfs,minio}` | Pre-built container providers |
+| `itestkit/addons/e2ekit` | Build app images from Dockerfile (BuildKit secrets, wait strategies, env rewriting) |
+| `itestkit/addons/metricskit` | Chaos SLO assertions and reporting |
+| `itestkit/addons/queuekit` | AMQP message-queue testing (matchers, consumer builder, assertions) |
 
-### Container Usage Pattern
+`minio` is the S3-compatible provider for S3 integration/E2E tests (activated via `E2E_ENABLE_S3=true`).
 
-All containers follow the same pattern:
-
-```go
-// 1. Create network
-net, _ := network.CreateNetwork(ctx)
-
-// 2. Configure with defaults
-opts := containers.DefaultPostgresOptions(config.NetworkName)
-opts.InitScript, _ = fixtures.GetPostgresInitSQL()
-
-// 3. Start container
-pg, _ := containers.StartPostgres(ctx, opts)
-defer pg.Stop(ctx)
-
-// 4. Access connection info
-fmt.Println(pg.URL)           // Full connection string
-fmt.Println(pg.Internal.Host) // Docker network hostname
-fmt.Println(pg.Internal.Port) // Internal port (int)
-```
-
-### Available Containers
-
-| Service | Image | Default Network Alias |
-|---------|-------|----------------------|
-| PostgreSQL | `postgres:16` | `postgres-external` |
-| MySQL | `mysql:8` | `mysql-external` |
-| SQL Server | `mcr.microsoft.com/mssql/server:2022-latest` | `mssql-external` |
-| Oracle | `gvenzl/oracle-xe:21-slim-faststart` | `oracle-external` |
-| MongoDB | `mongo:7` | `fetcher-mongodb` / `fetcher-mongodb-external` |
-| RabbitMQ | `rabbitmq:3-management` | `fetcher-rabbitmq` |
-| Redis/Valkey | `valkey/valkey:8` | `fetcher-valkey` |
-| SeaweedFS | `chrislusf/seaweedfs:*` | `fetcher-seaweedfs-*` |
-| MinIO (S3) | `minio/minio:*` | `fetcher-minio` (optional; requires `E2E_ENABLE_S3=true`) |
-
-### Key Types
-
-```go
-// Database connection info for Docker network
-type InternalDBConnection struct {
-    Host     string // Docker network hostname
-    Port     int    // Internal port (int, not string)
-    Username string // Database username
-    Password string // Database password
-    Database string // Database name
-}
-
-// Manager API client request
-type ConnectionInput struct {
-    ConfigName   string         `json:"configName"`
-    Type         string         `json:"type"`         // POSTGRESQL, MYSQL, SQL_SERVER, ORACLE, MONGODB
-    Host         string         `json:"host"`
-    Port         int            `json:"port"`         // int type
-    DatabaseName string         `json:"databaseName"`
-    Username     string         `json:"userName"`
-    Password     string         `json:"password"`
-    Metadata     map[string]any `json:"metadata,omitempty"`
-}
-```
-
-### Running Integration Tests
+### Running Tests
 
 ```bash
-# Run all integration tests with pre-built images
-MANAGER_IMAGE=fetcher-manager:local \
-WORKER_IMAGE=fetcher-worker:local \
-  make test-integration
+make test-unit                         # Unit tests (all components)
+make test-e2e                          # E2E suite (requires Docker; -tags=e2e)
+make test-integration                  # Alias for the E2E suite
+make test-chaos                        # Chaos suite (Toxiproxy; -tags=chaos)
+make test-fuzzy                        # Fuzz tests
+make test-all                          # All suites sequentially
 
-# Run specific test
-MANAGER_IMAGE=fetcher-manager:local \
-WORKER_IMAGE=fetcher-worker:local \
-  make test-integration TEST=TestSingleDatasourcePostgreSQL
-
-# Start infrastructure for debugging
-make test-integration-infra
-
-# Clean up test infrastructure
-make test-integration-clean
+# E2E with pre-built images (skip in-test build)
+E2E_SKIP_BUILD=true \
+MANAGER_IMAGE=fetcher-manager:latest \
+WORKER_IMAGE=fetcher-worker:latest \
+  make test-e2e
 ```
 
-> **See [`tests/shared/README.md`](../tests/shared/README.md)** for comprehensive API documentation and [`tests/integration/containers/README.md`](../tests/integration/containers/README.md) for integration test execution modes.
+> **See [`tests/e2e/README.md`](../tests/e2e/README.md)** for E2E conventions and the test catalog, and [`pkg/itestkit/README.md`](../pkg/itestkit/README.md) for the container kit API.
 
 ---
 
@@ -1263,19 +1341,24 @@ The guard is scoped to **reconnaissance by authenticated tenants** against inter
 | Worker | `components/worker/cmd/app/main.go` | Entry point |
 | Worker | `components/worker/internal/bootstrap/config.go` | DI container |
 | Worker | `components/worker/internal/bootstrap/consumer.go` | Consumer orchestration + tenant DB resolution |
-| Worker | `components/worker/internal/services/extract-data.go` | Data extraction logic |
+| Worker | `components/worker/internal/services/extract_data.go` | Generic extraction entry + result encrypt/store/HMAC |
+| Worker | `components/worker/internal/services/extract_engine.go` | Routes generic extraction through the embedded engine |
+| Worker | `components/worker/internal/bootstrap/extraction_engine.go` | Wires the mandatory EngineRunner |
+| Shared | `pkg/engine/engine.go` | Embedded runtime engine facade (`engine.New`) |
+| Shared | `pkg/engine/ports.go` | Engine host-provided port interfaces |
+| Shared | `pkg/engine/dependency_test.go` | Build-enforced engine boundary guard |
 | Shared | `pkg/model/connection.go` | Connection domain |
 | Shared | `pkg/model/job.go` | Job domain |
-| Shared | `pkg/datasource/datasource-factory.go` | DataSource factory |
+| Shared | `pkg/datasource/datasource_factory.go` | DataSource factory + pre-dial SSRF check |
 | Shared | `pkg/mongodb/tenant.go` | Shared tenant-aware database resolution |
 | Shared | `pkg/metrics/tenant_metrics.go` | Multi-tenant OTel metrics |
 | Shared | `pkg/constant/app.go` | Service and module constants |
 | Shared | `pkg/rabbitmq/rabbitmq.go` | RabbitMQ adapter |
 | Infra | `components/infra/docker-compose.yml` | Infrastructure |
 | Infra | `components/infra/rabbitmq/etc/definitions.json` | RabbitMQ topology |
-| Tests | `tests/shared/config/ports.go` | Test infrastructure ports |
-| Tests | `tests/shared/config/timeouts.go` | Test timeouts configuration |
-| Tests | `tests/shared/containers/*.go` | Container orchestration (all DBs) |
-| Tests | `tests/shared/client/manager.go` | Manager API test client |
-| Tests | `tests/shared/fixtures/loader.go` | SQL fixtures and test data |
-| Tests | `tests/integration/containers/integration_test.go` | E2E integration tests |
+| Tests | `tests/shared/client.go` | Manager API test client (package `shared`, imported as `e2eshared`) |
+| Tests | `tests/shared/helpers.go` | Product-name generation, job polling helpers |
+| Tests | `tests/shared/readyz.go` | `/readyz` probe helpers |
+| Tests | `pkg/itestkit/` | Container orchestration kit (infra providers + e2ekit/metricskit/queuekit addons) |
+| Tests | `tests/e2e/` | End-to-end suite (`//go:build e2e`) |
+| Tests | `tests/chaos/` | Chaos suite (`//go:build chaos`, Toxiproxy) |

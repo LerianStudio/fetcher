@@ -1,13 +1,14 @@
 # Lerian Fetcher: Enterprise-Grade Data Extraction Adapter
 
-Lerian Fetcher is a centralized data extraction microservice designed to abstract and unify access to external data sources. It provides a secure, reliable, and scalable interface for Lerian products to connect, validate, and extract data from multiple database types.
+Lerian Fetcher is a centralized data extraction platform designed to abstract and unify access to external data sources. It provides a secure, reliable, and scalable interface for Lerian products to connect, validate, and extract data from multiple database types — available both as standalone services and as an **embedded runtime engine** that host applications import in-process.
 
 ## Why Fetcher?
 
 - **Unified Data Access**: Single interface for extracting data from PostgreSQL, MySQL, Oracle, SQL Server, and MongoDB
-- **Enterprise Security**: Password encryption, SSL/TLS support per database, message signing, and replay attack prevention
+- **Run It Your Way**: Deploy as standalone Manager + Worker services, or embed the **Fetcher Engine** (`pkg/engine`) directly in your application — no separate service, queue, or storage stack required
+- **Enterprise Security**: Password encryption, SSL/TLS support per database, message signing with replay protection, and SSRF host validation
 - **Developer-Friendly**: Clean REST API with comprehensive OpenAPI documentation and advanced filtering capabilities
-- **Battle-Tested Reliability**: Circuit breaker pattern, connection pooling, and graceful error handling for production workloads
+- **Battle-Tested Reliability**: Circuit breaker pattern, connection pooling, readiness probing, and graceful error handling for production workloads
 
 ## Problem Statement
 
@@ -27,9 +28,141 @@ Fetcher centralizes all external data source access into a single, secure servic
 3. **Data Extraction**: Unified query interface with advanced filtering, pagination, and multi-table support
 4. **Job Orchestration**: Async processing with deduplication, status tracking, and event notifications
 
+## Embedded Runtime Engine
+
+Fetcher is more than a service — it is an importable **Engine** that host applications such as Matcher and Reporter run in-process, rather than operating a separate Fetcher deployment. The Engine moves the canonical capabilities of data extraction — connection lifecycle, schema discovery and validation, query planning, extraction execution, result handling, error taxonomy, limits, and tenant-safety — behind a single composition root at `pkg/engine`, without the service shell.
+
+The design follows a three-layer model:
+
+| Layer | Package | Owns |
+|-------|---------|------|
+| **Engine core** | `pkg/engine` | The *rules* of extraction. Infrastructure-free: depends only on host-provided port interfaces. A build-enforced boundary test forbids it from importing HTTP frameworks, message brokers, database drivers, object storage SDKs, or tenant-runtime middleware. |
+| **Compatibility adapters** | `pkg/enginecompat/*` | Bridges between the Engine's ports and Fetcher's real infrastructure (MongoDB, Redis, datasource drivers), preserving the standalone services' exact behavior. |
+| **Host applications** | Manager, Worker, or external products | The operational *shell*: auth, license enforcement, HTTP routes, queues, state stores, storage, telemetry, process lifecycle. |
+
+The guiding principle is **the Engine owns what makes Fetcher *Fetcher*; host applications own *how* Fetcher runs**. The standalone Manager and Worker are themselves hosts that run over the Engine — so every product, internal or external, shares one canonical owner of datasource and extraction behavior.
+
+### Embedding the Engine in Your Application
+
+Embedding the Engine is three steps: **import it, provide the ports it needs, construct it with `engine.New`.** No infrastructure ships with the import — you wire the parts your host actually uses.
+
+#### 1. Install
+
+```bash
+go get github.com/LerianStudio/fetcher/pkg/engine
+```
+
+#### 2. Provide the ports
+
+The Engine depends only on host-provided interfaces. Only one is always required; the rest are opt-in and degrade gracefully when absent.
+
+| Port | Required? | Without it |
+|------|-----------|------------|
+| `ConnectorRegistry` | **Always** | `engine.New` fails — extraction is impossible |
+| `CredentialProtector` | Only with `WithEncryptedPersistence(true)` | Credentials are not encrypted at rest |
+| `ConnectionStore` | Optional | Connection CRUD returns a "not configured" error |
+| `SchemaCache` | Optional | Schema is always discovered live |
+| `ResultSink` | Optional | Store mode unavailable; extraction runs in Direct mode |
+| `ExecutionStore` | Optional | No durable execution-state tracking |
+| `EventSink` | Optional | No lifecycle events emitted |
+| `TenantResolver`, `ActiveExecutionChecker`, `Observability` | Optional | Resolution/conflict-gating/tracing become no-ops |
+
+For tests and quick starts, the **`pkg/engine/memory`** harness satisfies every port in-memory — no MongoDB, Redis, RabbitMQ, or storage required.
+
+#### 3. Construct, plan, execute
+
+This example is fully self-contained (it uses the in-memory harness) and mirrors the real engine tests:
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+
+	"github.com/LerianStudio/fetcher/pkg/engine"
+	"github.com/LerianStudio/fetcher/pkg/engine/memory"
+)
+
+func main() {
+	ctx := context.Background()
+
+	// Provide ports. In production these are your real adapters (see pkg/enginecompat);
+	// here the in-memory harness stands in so the example runs with zero infrastructure.
+	store := memory.NewConnectionStore()
+	registry := memory.NewConnectorRegistry()
+
+	// Construct the Engine. WithConnectorRegistry is the only required option.
+	eng, err := engine.New(
+		engine.WithConnectorRegistry(registry),
+		engine.WithConnectionStore(store),
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Every operation is scoped to a tenant — the sole isolation dimension.
+	tenant, err := engine.NewTenantContext("tenant-123")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Register a connector for the datasource type, then persist a connection.
+	conn := memory.NewTemplateConnector(memory.ConnectorBehavior{
+		Schema: engine.SchemaSnapshot{
+			ConfigName: "pg-main",
+			Tables:     []engine.TableSnapshot{{Name: "public.users", Fields: []string{"id", "email"}}},
+		},
+		Rows: map[string][]map[string]any{
+			"public.users": {{"id": 1, "email": "a@example.com"}},
+		},
+	})
+	registry.Register("postgres", memory.NewConnectorFactory(conn))
+
+	if _, err = eng.CreateConnection(ctx, tenant, engine.NewConnectionInput(engine.ConnectionInputParams{
+		ConfigName: "pg-main",
+		Type:       "postgres",
+		Host:       "localhost",
+		Port:       5432,
+	})); err != nil {
+		log.Fatal(err)
+	}
+
+	// Plan validates the request against the live schema and enforces limits.
+	plan, err := eng.PlanExtraction(ctx, tenant, engine.ExtractionRequest{
+		MappedFields: map[string]engine.FieldSelection{
+			"pg-main": {"public.users": {"id", "email"}},
+		},
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Execute. With no ResultSink wired, the Engine runs in Direct mode and returns
+	// inline JSON bytes plus a SHA-256 integrity digest.
+	result, err := eng.ExecuteExtraction(ctx, plan)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Printf("rows=%d bytes=%d\n", result.Direct.RowCount, len(result.Direct.Data))
+}
+```
+
+#### Moving to production
+
+Swap the memory harness for real adapters. Fetcher's own services are the reference implementation — read how they wire the Engine via `pkg/enginecompat`:
+
+- **Connection CRUD** — [`components/manager/internal/bootstrap/connection_engine.go`](components/manager/internal/bootstrap/connection_engine.go)
+- **Schema discovery + caching** — [`components/manager/internal/bootstrap/schema_engine.go`](components/manager/internal/bootstrap/schema_engine.go)
+- **Plan + execute extraction** — [`components/worker/internal/bootstrap/extraction_engine.go`](components/worker/internal/bootstrap/extraction_engine.go)
+
+For the full port reference and the build-enforced import boundary, see [`docs/PROJECT_RULES.md`](docs/PROJECT_RULES.md) § *engine (`pkg/engine/`)*.
+
 ## Core Architecture
 
-Lerian Fetcher is built as a cloud-native platform following Hexagonal Architecture and CQRS patterns:
+Lerian Fetcher is built as a cloud-native platform following Hexagonal Architecture and CQRS patterns. The standalone Manager and Worker services run *over* the embedded Engine described above:
 
 ### Services
 
@@ -62,6 +195,9 @@ Lerian Fetcher is built as a cloud-native platform following Hexagonal Architect
 | Database | Versions | Key Features |
 |----------|----------|--------------|
 | **PostgreSQL** | 12+ | Multi-schema support, JSONB auto-parsing, connection pooling |
+| **MySQL** | 8.0+ | JSON field auto-parsing, multi-table extraction, connection pooling |
+| **Oracle** | 19c+ | Owner/schema namespaces, multi-table extraction, connection pooling |
+| **SQL Server** | 2019+ | Multi-schema support, table filter matching, connection pooling |
 | **MongoDB** | 7.0+ | Schemaless inference, statistical sampling, aggregation pipelines |
 
 ### API Endpoints
@@ -89,7 +225,8 @@ Lerian Fetcher is built as a cloud-native platform following Hexagonal Architect
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/health` | Health check |
+| `GET` | `/health` | Liveness check |
+| `GET` | `/readyz` | Readiness check — parallel dependency probes (MongoDB, RabbitMQ, Redis; S3 on Worker), returns 503 while draining on SIGTERM |
 | `GET` | `/version` | Version info |
 | `GET` | `/swagger/*` | Swagger UI |
 
@@ -103,13 +240,16 @@ For hands-on API exploration and testing scenarios, the following resources are 
 
 ### Technical Highlights
 
+- **Embedded Runtime Engine**: Infrastructure-free, importable extraction core (`pkg/engine`) with a build-enforced dependency boundary
 - **Hexagonal Architecture**: Clear separation between domain logic and external dependencies
 - **CQRS Pattern**: Separate command and query responsibilities for optimized performance
 - **Event-Driven Design**: RabbitMQ-based async processing for scalable job handling
 - **Circuit Breaker**: Prevents cascading failures with configurable thresholds
 - **Advanced Filtering**: 10 operators (eq, gt, gte, lt, lte, between, in, nin, ne, like)
 - **Schema Discovery**: Automatic table/column detection across all database types
-- **Message Signing**: HMAC-SHA256 signing with replay attack prevention
+- **Message Signing**: HMAC-SHA256 signing bound to tenant + route (exchange/routing key) to prevent cross-tenant and cross-route replay
+- **SSRF Protection**: Connection host validation against private/metadata address ranges (multi-tenant deployments)
+- **Readiness Probing**: `/readyz` with parallel dependency checks, SaaS TLS enforcement, and SIGTERM drain coupling
 - **Multi-Tenant Support**: Database-per-tenant isolation via JWT-based tenant context, with zero overhead when disabled
 - **OpenTelemetry**: Distributed tracing and metrics for comprehensive observability
 
