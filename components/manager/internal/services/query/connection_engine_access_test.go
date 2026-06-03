@@ -60,9 +60,11 @@ func engineWithObservability(t *testing.T, obs engine.Observability, connRepo co
 }
 
 // TestAuthorizeConnectionAccess_NilEngineIsNoOp proves a read service built
-// without an Engine (test-only) skips the scope gate rather than panicking.
+// without an Engine (test-only) skips the scope gate rather than panicking. It
+// exercises the shared connectioncompat.AuthorizeAccess helper that command and
+// query both delegate to.
 func TestAuthorizeConnectionAccess_NilEngineIsNoOp(t *testing.T) {
-	require.NoError(t, authorizeConnectionAccess(testContext(), nil))
+	require.NoError(t, connectioncompat.AuthorizeAccess(testContext(), nil))
 }
 
 // TestGetConnection_RoutesScopeAuthorityThroughEngine proves the get read

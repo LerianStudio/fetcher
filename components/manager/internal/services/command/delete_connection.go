@@ -7,6 +7,7 @@ import (
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/engine"
+	"github.com/LerianStudio/fetcher/pkg/enginecompat/connectioncompat"
 	observability "github.com/LerianStudio/lib-observability"
 
 	libLog "github.com/LerianStudio/lib-observability/log"
@@ -42,12 +43,12 @@ func (s *DeleteConnection) Execute(ctx context.Context, connectionID uuid.UUID) 
 	// Engine's ID-addressed FindByID and the SOFT delete through DeleteByID (the
 	// connectioncompat adapter maps it to repo.Delete with a deleted_at stamp).
 	// The Manager keeps its conflict gate and HTTP mapping.
-	if err := authorizeConnectionAccess(ctx, s.engine); err != nil {
+	if err := connectioncompat.AuthorizeAccess(ctx, s.engine); err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to authorize tenant scope", err)
 		return err
 	}
 
-	current, err := getConnectionByIDViaEngine(ctx, s.engine, connectionID)
+	current, err := connectioncompat.FindByID(ctx, s.engine, connectionID.String())
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to find connection by ID", err)
 		return fmt.Errorf("failed to find connection by id: %w", err)

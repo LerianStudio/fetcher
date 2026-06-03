@@ -8,6 +8,7 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/engine"
+	"github.com/LerianStudio/fetcher/pkg/enginecompat/connectioncompat"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	observability "github.com/LerianStudio/lib-observability"
 
@@ -51,12 +52,12 @@ func (s *UpdateConnection) Execute(ctx context.Context, connectionID uuid.UUID, 
 	// adapter over the Manager's UUID-keyed repo); the Manager keeps its rich
 	// model, domain patch, cryptor re-encryption, and HTTP response mapping. The
 	// active-execution conflict gate also flows through the Engine.
-	if err := authorizeConnectionAccess(ctx, s.engine); err != nil {
+	if err := connectioncompat.AuthorizeAccess(ctx, s.engine); err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to authorize tenant scope", err)
 		return nil, err
 	}
 
-	current, err := getConnectionByIDViaEngine(ctx, s.engine, connectionID)
+	current, err := connectioncompat.FindByID(ctx, s.engine, connectionID.String())
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to find connection by ID", err)
 		return nil, fmt.Errorf("failed to find connection by id: %w", err)

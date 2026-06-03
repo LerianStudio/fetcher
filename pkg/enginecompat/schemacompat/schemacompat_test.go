@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Lerian Studio. All rights reserved.
 // SPDX-License-Identifier: Elastic-2.0
 
-package enginecompatschema_test
+package schemacompat_test
 
 import (
 	"context"
@@ -12,7 +12,7 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/engine"
 	"github.com/LerianStudio/fetcher/pkg/enginecompat/connectioncompat"
-	schemacompat "github.com/LerianStudio/fetcher/pkg/enginecompat/schemacompat"
+	"github.com/LerianStudio/fetcher/pkg/enginecompat/schemacompat"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	modelDatasource "github.com/LerianStudio/fetcher/pkg/model/datasource"
 

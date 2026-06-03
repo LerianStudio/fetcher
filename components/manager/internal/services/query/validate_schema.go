@@ -5,7 +5,7 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/LerianStudio/lib-observability"
+	observability "github.com/LerianStudio/lib-observability"
 
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
@@ -207,7 +207,10 @@ func (s *ValidateSchema) validateConfigs(
 		tables := spec.GetTablesByConfigName(configName)
 		schemas := schemaScopeForConfig(conn, tables)
 
-		schema, err := discoverSchemaViaEngine(ctx, s.engine, conn, schemas)
+		// ValidateSchema stays CACHE-FIRST (forceRefresh=false): a cache hit
+		// short-circuits live discovery and a miss writes through, unchanged across
+		// the embedded-Engine migration. Only GET .../schema is always-fresh.
+		schema, err := discoverSchemaViaEngine(ctx, s.engine, conn, schemas, false)
 		if err != nil {
 			// Preserve typed validation errors (e.g. FET-0414 host safety) as
 			// top-level errors: burying them as per-datasource warnings would yield

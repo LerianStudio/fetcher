@@ -7,13 +7,13 @@ import (
 	"net/http"
 	"sort"
 
-	"github.com/LerianStudio/lib-observability"
-
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/engine"
+	"github.com/LerianStudio/fetcher/pkg/enginecompat/connectioncompat"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/resolver"
+	observability "github.com/LerianStudio/lib-observability"
 
 	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
 	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
@@ -84,7 +84,11 @@ func (s *GetConnectionSchema) Execute(ctx context.Context, connectionID uuid.UUI
 	// unset to let it apply.
 	applySchemaResolutionHeuristic(conn, s.multiTenantEnabled)
 
-	schema, err := discoverSchemaViaEngine(ctx, s.schemaEngine, conn, nil)
+	// GET .../schema is ALWAYS-FRESH: forceRefresh bypasses the schema cache
+	// entirely (no read, no write), preserving the pre-embedded-Engine contract
+	// where this endpoint reflected the live datasource on every call. ValidateSchema
+	// keeps its cache-first path.
+	schema, err := discoverSchemaViaEngine(ctx, s.schemaEngine, conn, nil, true)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "failed to discover schema", err)
 
@@ -135,7 +139,7 @@ func (s *GetConnectionSchema) resolveConnection(ctx context.Context, connectionI
 	// read (mirrors GetConnection): the internal branch below is a resolver
 	// concern, and the external read re-validates scope while resolving through
 	// the store.
-	if err := authorizeConnectionAccess(ctx, s.connectionEngine); err != nil {
+	if err := connectioncompat.AuthorizeAccess(ctx, s.connectionEngine); err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to authorize tenant scope", err)
 		return nil, err
 	}
@@ -161,7 +165,7 @@ func (s *GetConnectionSchema) resolveConnection(ctx context.Context, connectionI
 		}
 	}
 
-	conn, findErr := getConnectionByIDViaEngine(ctx, s.connectionEngine, connectionID)
+	conn, findErr := connectioncompat.FindByID(ctx, s.connectionEngine, connectionID.String())
 	if findErr != nil {
 		libOpentelemetry.HandleSpanError(span, "failed to find connection", findErr)
 		return nil, fmt.Errorf("failed to find connection by id: %w", findErr)

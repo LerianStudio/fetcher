@@ -92,6 +92,14 @@ func MapTablesForCRMCompatibility(
 			// validation behavior. The reverse map keeps the lexicographically-first
 			// logical name (already established by the sorted iteration), so it stays
 			// deterministic.
+			//
+			// This deterministic field-list UNION is an INTENTIONAL improvement over
+			// the legacy Manager behavior, which was a nondeterministic last-write-wins
+			// (the surviving field list depended on Go map-iteration order, so one
+			// logical name's fields could silently overwrite another's). No stable
+			// contract is broken: the legacy outcome was never deterministic, and the
+			// union is strictly safer — it can only ADD fields to validate, never drop
+			// a referenced field. The behavior is therefore changed on purpose.
 			transformed[physicalName] = unionFields(existing, fields)
 
 			continue

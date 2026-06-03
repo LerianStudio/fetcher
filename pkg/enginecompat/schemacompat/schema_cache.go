@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Lerian Studio. All rights reserved.
 // SPDX-License-Identifier: Elastic-2.0
 
-// Package enginecompatschema is the host-side compatibility seam that lets the
+// Package schemacompat is the host-side compatibility seam that lets the
 // Manager route schema DISCOVERY (and only discovery) through the embedded
 // Engine while keeping connection resolution, schema VALIDATION, DB-type name
 // normalization, and plugin_crm policy on the host. It adapts three host
@@ -23,7 +23,7 @@
 // model, the host cache port, and connectioncompat (to reuse the rich-record
 // round-trip). pkg/engine MUST NOT import this package; the dependency boundary
 // test in pkg/engine keeps that invariant enforced.
-package enginecompatschema
+package schemacompat
 
 import (
 	"context"

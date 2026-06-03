@@ -9,6 +9,7 @@ import (
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/engine"
+	"github.com/LerianStudio/fetcher/pkg/enginecompat/connectioncompat"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/resolver"
 
@@ -45,7 +46,7 @@ func (s *GetConnection) Execute(ctx context.Context, connectionID uuid.UUID) (*m
 	// (which is a resolver concern, never persisted); the external read below
 	// routes its PERSISTENCE through the Engine's ID-addressed op, which also
 	// re-validates the scope as part of resolving through the store.
-	if err := authorizeConnectionAccess(ctx, s.engine); err != nil {
+	if err := connectioncompat.AuthorizeAccess(ctx, s.engine); err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to authorize tenant scope", err)
 		return nil, err
 	}
@@ -75,7 +76,7 @@ func (s *GetConnection) Execute(ctx context.Context, connectionID uuid.UUID) (*m
 	// Fallback to the external connection read, routed through the Engine's
 	// ID-addressed op (Engine tenant-scope + ConnectionStore.FindByID ->
 	// repo.FindByID). The rich record round-trips through the opaque host payload.
-	current, err := getConnectionByIDViaEngine(ctx, s.engine, connectionID)
+	current, err := connectioncompat.FindByID(ctx, s.engine, connectionID.String())
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to find connection by ID", err)
 		return nil, fmt.Errorf("failed to find connection by id: %w", err)

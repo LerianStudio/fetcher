@@ -277,6 +277,96 @@ func TestEngine_DiscoverSchema_NoCache_DiscoversEveryTime(t *testing.T) {
 	}
 }
 
+// TestEngine_DiscoverSchemaFresh_BypassesCacheAndDiscoversLive proves the
+// always-fresh GET-schema contract: DiscoverSchemaFresh ignores a pre-warmed
+// cache entry, discovers LIVE through the connector on every call, and does NOT
+// write the discovered snapshot back — the cache is left exactly as it was.
+func TestEngine_DiscoverSchemaFresh_BypassesCacheAndDiscoversLive(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	record := &schemaConnRecord{}
+	factory := &schemaConnFactory{record: record, snapshot: sampleSnapshot("pg-main")}
+	cache := memory.NewSchemaCache()
+	eng, store := engineForDiscoverSchema(t, factory, cache)
+	tenant := mustTenant(t, "tenant-a")
+	seedConnection(t, store, tenant, "pg-main", "postgres")
+
+	// Pre-warm the cache with a DISTINCT snapshot. A cache-first call would return
+	// this; an always-fresh call must ignore it and discover live instead.
+	preWarm := engine.SchemaSnapshot{
+		ConfigName: "pg-main",
+		Tables:     []engine.TableSnapshot{{Name: "public.cached_only", Fields: []string{"x"}}},
+	}
+	if err := cache.PutSchema(ctx, tenant, preWarm); err != nil {
+		t.Fatalf("cache.PutSchema: unexpected error: %v", err)
+	}
+
+	got, err := eng.DiscoverSchemaFresh(ctx, tenant, "pg-main")
+	if err != nil {
+		t.Fatalf("DiscoverSchemaFresh: unexpected error: %v", err)
+	}
+
+	// The result is the LIVE snapshot (sampleSnapshot tables), NOT the cached one.
+	if got.HasTable("public.cached_only") {
+		t.Fatalf("DiscoverSchemaFresh: returned the cached snapshot, expected a live discovery: %+v", got)
+	}
+	if !got.HasTable("public.orders") || !got.HasTable("public.customers") {
+		t.Fatalf("DiscoverSchemaFresh: expected the live snapshot tables, got %+v", got)
+	}
+
+	// The connector MUST have been built and queried (live discovery), proving the
+	// cache read was bypassed.
+	if !record.has("build") || !record.has("discover") {
+		t.Fatalf("DiscoverSchemaFresh: expected a live build+discover, got lifecycle %v", record.snapshot())
+	}
+
+	// The cache MUST be left untouched: the pre-warmed entry is unchanged, NOT
+	// overwritten with the live snapshot (no write-through on the fresh path).
+	cached, ok, cacheErr := cache.GetSchema(ctx, tenant, "pg-main")
+	if cacheErr != nil {
+		t.Fatalf("cache.GetSchema: unexpected error: %v", cacheErr)
+	}
+	if !ok {
+		t.Fatalf("DiscoverSchemaFresh: pre-warmed cache entry vanished")
+	}
+	if !cached.HasTable("public.cached_only") || cached.HasTable("public.orders") {
+		t.Fatalf("DiscoverSchemaFresh: cache was mutated by the always-fresh path: %+v", cached)
+	}
+}
+
+// TestEngine_DiscoverSchemaFresh_DiscoversEveryCall proves a second always-fresh
+// call discovers AGAIN even though a prior call ran — the cache is never
+// consulted, so there is no short-circuit between calls.
+func TestEngine_DiscoverSchemaFresh_DiscoversEveryCall(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	record := &schemaConnRecord{}
+	factory := &schemaConnFactory{record: record, snapshot: sampleSnapshot("pg-main")}
+	cache := memory.NewSchemaCache()
+	eng, store := engineForDiscoverSchema(t, factory, cache)
+	tenant := mustTenant(t, "tenant-a")
+	seedConnection(t, store, tenant, "pg-main", "postgres")
+
+	if _, err := eng.DiscoverSchemaFresh(ctx, tenant, "pg-main"); err != nil {
+		t.Fatalf("DiscoverSchemaFresh #1: unexpected error: %v", err)
+	}
+	if _, err := eng.DiscoverSchemaFresh(ctx, tenant, "pg-main"); err != nil {
+		t.Fatalf("DiscoverSchemaFresh #2: unexpected error: %v", err)
+	}
+
+	discoverCount := 0
+	for _, c := range record.snapshot() {
+		if c == "discover" {
+			discoverCount++
+		}
+	}
+	if discoverCount != 2 {
+		t.Fatalf("DiscoverSchemaFresh: expected 2 live discoveries (cache never consulted), got %d (%v)", discoverCount, record.snapshot())
+	}
+}
+
 func TestEngine_DiscoverSchema_UnknownConnection_ScopedNotFound(t *testing.T) {
 	t.Parallel()
 

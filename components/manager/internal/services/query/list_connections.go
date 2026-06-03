@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/LerianStudio/fetcher/pkg/engine"
+	"github.com/LerianStudio/fetcher/pkg/enginecompat/connectioncompat"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/net/http"
 	"github.com/LerianStudio/fetcher/pkg/resolver"
@@ -40,7 +41,7 @@ func (s *ListConnections) Execute(ctx context.Context, productName string, filte
 	// read. The Manager keeps its paginated, resolver-merged list (a host
 	// presentation concern the Engine's flat list does not model); the Engine
 	// owns only the scope rule — the single authority for which tenant may read.
-	if err := authorizeConnectionAccess(ctx, s.engine); err != nil {
+	if err := connectioncompat.AuthorizeAccess(ctx, s.engine); err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to authorize tenant scope", err)
 		return nil, err
 	}

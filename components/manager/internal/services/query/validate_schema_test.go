@@ -1445,11 +1445,13 @@ func TestNormalizeFieldNameForValidation(t *testing.T) {
 // TestValidateSchema_Execute_HostSafetyRejectionPropagates verifies the
 // validate_schema path surfaces a host-safety (SSRF / FET-0414) rejection as a
 // top-level error (HTTP 400 via the renderer) instead of burying it as a
-// per-datasource DATA_SOURCE_DOWN warning that yields a 200. The guard now runs
-// HOST-side before discovery is delegated to the Engine (the Engine redacts
-// connector errors), so a tenant connection whose host is denylisted is rejected
-// before any cache or datasource call — preserving the FET-0414 audit signal and
-// its 400 mapping. The datasource factory must NOT be invoked.
+// per-datasource DATA_SOURCE_DOWN warning that yields a 200. The guard runs
+// HOST-side before discovery is delegated to the Engine: the Engine returns
+// transport-neutral errors, but typed pkg.ValidationErrors are preserved verbatim
+// and re-mapped host-side to 400 (validate_schema.go errors.As-propagates the
+// typed ValidationError). So a tenant connection whose host is denylisted is
+// rejected before any cache or datasource call — preserving the FET-0414 audit
+// signal and its 400 mapping. The datasource factory must NOT be invoked.
 func TestValidateSchema_Execute_HostSafetyRejectionPropagates(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()

@@ -13,25 +13,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// authorizeConnectionAccess routes the per-request tenant-scope authority
-// decision through the Engine for connection mutations that keep their own
-// (UUID-keyed) persistence. The tenant is derived fresh from this request's
-// context (single-tenant falls back to connectioncompat.SingleTenantID), never
-// ambient or cached. A nil engine (test-only construction) is a no-op so the
-// operation proceeds, mirroring the conflict gate's defensive guard.
-func authorizeConnectionAccess(ctx context.Context, eng *engine.Engine) error {
-	if eng == nil {
-		return nil
-	}
-
-	tenant, err := connectioncompat.TenantContextFromRequest(ctx)
-	if err != nil {
-		return err
-	}
-
-	return eng.AuthorizeConnectionAccess(ctx, tenant)
-}
-
 // engineInputFromConnection builds the Engine's credential-bearing connection
 // input from the Manager's rich record, packing the FULL record into the opaque
 // host payload (connectioncompat.DescriptorFromConnection) so the Engine carries
@@ -53,31 +34,6 @@ func engineInputFromConnection(conn *model.Connection) engine.ConnectionInput {
 		SSLMode:        descriptor.SSLMode,
 		HostAttributes: descriptor.HostAttributes,
 	})
-}
-
-// getConnectionByIDViaEngine routes the connection read for a mutation through
-// the Engine's ID-addressed op (Engine tenant-scope + ConnectionStore.FindByID
-// -> repo.FindByID), returning the rich record unpacked from the opaque host
-// payload. It returns (nil, nil) when the connection is not found so the caller
-// maps it to the Manager's existing not-found business error. A nil engine
-// (test-only) is unreachable in the assembled Manager.
-func getConnectionByIDViaEngine(ctx context.Context, eng *engine.Engine, connectionID uuid.UUID) (*model.Connection, error) {
-	tenant, err := connectioncompat.TenantContextFromRequest(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	descriptor, err := eng.GetConnectionByID(ctx, tenant, connectionID.String())
-	if err != nil {
-		var engErr *engine.EngineError
-		if errors.As(err, &engErr) && engErr.Category == engine.CategoryNotFound {
-			return nil, nil
-		}
-
-		return nil, err
-	}
-
-	return connectioncompat.ConnectionFromDescriptor(descriptor), nil
 }
 
 // updateConnectionByIDViaEngine routes the connection write through the Engine's

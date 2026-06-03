@@ -8,7 +8,7 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/datasource"
 	"github.com/LerianStudio/fetcher/pkg/engine"
 	"github.com/LerianStudio/fetcher/pkg/enginecompat/connectioncompat"
-	schemacompat "github.com/LerianStudio/fetcher/pkg/enginecompat/schemacompat"
+	"github.com/LerianStudio/fetcher/pkg/enginecompat/schemacompat"
 	cacheRepo "github.com/LerianStudio/fetcher/pkg/ports/cache"
 	connPort "github.com/LerianStudio/fetcher/pkg/ports/connection"
 	"github.com/LerianStudio/fetcher/pkg/testutil"

@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Lerian Studio. All rights reserved.
 // SPDX-License-Identifier: Elastic-2.0
 
-package enginecompatschema
+package schemacompat
 
 import (
 	"context"

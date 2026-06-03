@@ -90,7 +90,47 @@ func (e *Engine) DiscoverSchema(
 		return SchemaSnapshot{}, NewEngineError(CategoryNotFound, "connection not found")
 	}
 
-	return e.resolveSchema(ctx, tenant, descriptor)
+	return e.resolveSchema(ctx, tenant, descriptor, false)
+}
+
+// DiscoverSchemaFresh is the ALWAYS-FRESH variant of DiscoverSchema: it resolves
+// the scoped connection and discovers the schema LIVE through the connector on
+// every call, NEVER consulting and NEVER populating the optional SchemaCache.
+//
+// It exists to preserve the pre-embedded-Engine GET-schema contract, where the
+// Manager's GET .../schema endpoint neither read nor wrote the schema cache and
+// therefore always reflected the live datasource. Cache-first DiscoverSchema (and
+// the cache-first ValidateSchema path) are unchanged; only this method bypasses
+// the cache entirely, so the two freshness contracts coexist without a global
+// cache toggle. Tenant scope is still validated BEFORE any resource access — the
+// bypass is a CACHE decision, never an authorization one.
+func (e *Engine) DiscoverSchemaFresh(
+	ctx context.Context,
+	tenant TenantContext,
+	configName string,
+) (SchemaSnapshot, error) {
+	ctx, end := e.startSpan(ctx, "engine.schema.discover_fresh")
+	defer end()
+
+	store, err := e.requireConnectionStore()
+	if err != nil {
+		return SchemaSnapshot{}, err
+	}
+
+	if err := validateTenantScope(tenant); err != nil {
+		return SchemaSnapshot{}, err
+	}
+
+	descriptor, found, err := store.FindConnection(ctx, tenant, configName)
+	if err != nil {
+		return SchemaSnapshot{}, err
+	}
+
+	if !found {
+		return SchemaSnapshot{}, NewEngineError(CategoryNotFound, "connection not found")
+	}
+
+	return e.resolveSchema(ctx, tenant, descriptor, true)
 }
 
 // resolveSchema serves the schema snapshot for an already-resolved connection
@@ -107,13 +147,22 @@ func (e *Engine) DiscoverSchema(
 // and discovery failures are mapped to safe CategoryUnavailable errors — the
 // raw error may embed a DSN, credential, or driver internals, so it is
 // DELIBERATELY discarded from the returned message.
+//
+// skipCache forces an ALWAYS-FRESH resolution: when true the cache is neither
+// READ (no short-circuit) nor WRITTEN (no write-through), so the call reflects
+// the live datasource and leaves the cache untouched. DiscoverSchemaFresh sets
+// it to preserve the legacy GET-schema freshness; DiscoverSchema and the
+// ValidateSchema path leave it false to stay cache-first.
 func (e *Engine) resolveSchema(
 	ctx context.Context,
 	tenant TenantContext,
 	descriptor ConnectionDescriptor,
+	skipCache bool,
 ) (SchemaSnapshot, error) {
-	if snapshot, ok := e.cachedSchema(ctx, tenant, descriptor.ConfigName); ok {
-		return snapshot, nil
+	if !skipCache {
+		if snapshot, ok := e.cachedSchema(ctx, tenant, descriptor.ConfigName); ok {
+			return snapshot, nil
+		}
 	}
 
 	// Resolve the connector factory by datasource type. An unregistered type yields
@@ -152,10 +201,14 @@ func (e *Engine) resolveSchema(
 	// used, regardless of what the connector populated.
 	snapshot.ConfigName = descriptor.ConfigName
 
-	// Write through to the cache when configured. A write failure is tolerated: the
-	// discovery already succeeded, so failing to populate an optimization cache must
-	// not fail the operation.
-	e.cacheSchema(ctx, tenant, snapshot)
+	// Write through to the cache when configured, UNLESS the caller requested an
+	// always-fresh resolution (skipCache) — an always-fresh GET must leave the
+	// cache untouched, neither reading nor poisoning it. A write failure is
+	// otherwise tolerated: the discovery already succeeded, so failing to populate
+	// an optimization cache must not fail the operation.
+	if !skipCache {
+		e.cacheSchema(ctx, tenant, snapshot)
+	}
 
 	return snapshot, nil
 }
@@ -418,7 +471,7 @@ func (e *Engine) validateDatasource(
 	// Resolve the schema cache-first. A cache hit validates WITHOUT connector
 	// discovery; a cache miss discovers live and validates from the discovered
 	// snapshot. A source-down failure surfaces here as a safe EngineError.
-	snapshot, err := e.resolveSchema(ctx, tenant, descriptor)
+	snapshot, err := e.resolveSchema(ctx, tenant, descriptor, false)
 	if err != nil {
 		return nil, err
 	}

@@ -14,7 +14,7 @@ import (
 	"github.com/LerianStudio/fetcher/components/manager/internal/services/query"
 	pkgdatasource "github.com/LerianStudio/fetcher/pkg/datasource"
 	"github.com/LerianStudio/fetcher/pkg/engine"
-	schemacompat "github.com/LerianStudio/fetcher/pkg/enginecompat/schemacompat"
+	"github.com/LerianStudio/fetcher/pkg/enginecompat/schemacompat"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/model/datasource"
 	jobRepo "github.com/LerianStudio/fetcher/pkg/mongodb/job"

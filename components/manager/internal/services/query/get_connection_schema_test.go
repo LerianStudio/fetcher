@@ -12,6 +12,7 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/datasource/hostsafety"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/model/datasource"
+	cacheRepo "github.com/LerianStudio/fetcher/pkg/ports/cache"
 	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
 	"github.com/LerianStudio/fetcher/pkg/resolver"
 
@@ -117,6 +118,55 @@ func TestGetConnectionSchema_Execute_Success(t *testing.T) {
 	assert.Contains(t, tableNames, "users")
 	assert.Contains(t, tableNames, "orders")
 	assert.NotContains(t, tableNames, "pg_catalog")
+}
+
+// TestGetConnectionSchema_Execute_AlwaysFresh_BypassesCache proves the migration
+// preserves the pre-embedded-Engine GET-schema freshness contract: the endpoint
+// is ALWAYS-LIVE, so the schema cache is NEITHER read NOR written. The cache mock
+// is wired with NO Get/Set expectations and the gomock controller fails the test
+// if either is called; the datasource factory IS invoked (live discovery) on the
+// call, proving the discovery actually ran. ValidateSchema's cache-first contract
+// is asserted separately by the validate_schema cache tests.
+func TestGetConnectionSchema_Execute_AlwaysFresh_BypassesCache(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockDataSource := datasource.NewMockDataSource(ctrl)
+
+	// Strict cache mock: any Get or Set is an unexpected call and fails the test,
+	// proving GET schema never consults or populates the cache.
+	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
+
+	mockFactory := func(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor) (datasource.DataSource, error) {
+		return mockDataSource, nil
+	}
+
+	// Build the service with a CACHE-BACKED schema engine (unlike the nil-cache
+	// helper) so the bypass is exercised against a live cache port.
+	connEng := scopeAuthorityEngine(t, mockConnRepo)
+	schemaEng := schemaDiscoveryEngine(t, mockFactory, nil, mockSchemaCache)
+	svc := NewGetConnectionSchema(nil, nil, connEng, schemaEng, false)
+
+	ctx := testContext()
+	connID := uuid.New()
+	existingConn := newSchemaConnectionFixture(connID, model.TypePostgreSQL)
+
+	mockConnRepo.EXPECT().
+		FindByID(gomock.Any(), connID).
+		Return(existingConn, nil)
+
+	// Live discovery MUST run on every call (cache bypassed): factory + close fire.
+	schema := model.NewDataSourceSchema("test-connection")
+	schema.AddTable("users", []string{"id", "name"})
+	mockDataSource.EXPECT().GetSchemaInfo(gomock.Any(), gomock.Any()).Return(schema, nil)
+	mockDataSource.EXPECT().Close(gomock.Any()).Return(nil)
+
+	result, err := svc.Execute(ctx, connID)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Len(t, result.Tables, 1)
+	assert.Equal(t, "users", result.Tables[0].Name)
 }
 
 // TestGetConnectionSchema_Execute_NotFound tests connection not found scenario.
@@ -667,10 +717,13 @@ func TestNewGetConnectionSchema(t *testing.T) {
 
 // TestGetConnectionSchema_Execute_HostSafetyRejectionPropagates verifies that a
 // host-safety (SSRF / FET-0414) rejection is surfaced verbatim as a
-// pkg.ValidationError rather than masked behind a generic 500. The guard now runs
-// HOST-side before discovery is delegated to the Engine (the Engine deliberately
-// redacts connector errors), so a tenant connection whose host is denylisted is
-// rejected before any datasource call. The factory therefore must NOT be invoked.
+// pkg.ValidationError rather than masked behind a generic 500. The guard runs
+// HOST-side before discovery is delegated to the Engine: the Engine returns
+// transport-neutral errors, but typed pkg.ValidationErrors are preserved verbatim
+// and re-mapped host-side to 400. Running the SSRF guard host-side keeps the
+// FET-0414 audit signal and its 400 mapping intact, so a tenant connection whose
+// host is denylisted is rejected before any datasource call. The factory
+// therefore must NOT be invoked.
 func TestGetConnectionSchema_Execute_HostSafetyRejectionPropagates(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()

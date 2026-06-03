@@ -6,7 +6,7 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/datasource"
 	"github.com/LerianStudio/fetcher/pkg/engine"
-	schemacompat "github.com/LerianStudio/fetcher/pkg/enginecompat/schemacompat"
+	"github.com/LerianStudio/fetcher/pkg/enginecompat/schemacompat"
 	cachePort "github.com/LerianStudio/fetcher/pkg/ports/cache"
 )
 
