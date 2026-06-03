@@ -1822,6 +1822,125 @@ func TestCreateFetcherJob_Execute_ValidationFailure_CreatesNoJobAndDoesNotPublis
 	require.True(t, errors.As(err, &ve), "expected a ValidationError, got %T", err)
 }
 
+// --- ST-T009-03: RabbitMQ dispatch boundary LOCK tests ---------------------
+//
+// ST-02 already locked: publish-exactly-once-on-success, no-publish-on-duplicate,
+// no-publish-on-validation-failure. ST-03 adds the remaining dispatch-boundary
+// invariants WITHOUT duplicating those:
+//   (a) a job PERSISTENCE failure (Create returns a non-duplicate error) emits NO
+//       message — no orphan publish ahead of a job that was never stored;
+//   (b) the dispatch routing/topology (exchange + routing key) is byte-identical:
+//       publish targets the default exchange ("") with the configured queue name
+//       as the routing key.
+// The spec's "publish after successful Engine planning" is STALE under Option 2
+// (no PlanExtraction at create); the real invariant is "publish only after
+// successful validation + persistence", which (a) locks.
+
+// TestCreateFetcherJob_Execute_PersistenceFailure_DoesNotPublish locks that when
+// the job repository's Create fails with a non-duplicate error, Execute returns an
+// internal error and NEVER publishes — so a failed persistence cannot leave an
+// orphan queue message pointing at a job that was never stored. This is a DIFFERENT
+// direction from PublishFailureMarksJobFailed (publish-attempted-then-fails): here
+// persistence fails BEFORE publish is ever reachable.
+func TestCreateFetcherJob_Execute_PersistenceFailure_DoesNotPublish(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockJobRepo := jobRepo.NewMockRepository(ctrl)
+	mockConnTester := NewMockConnectionTester(ctrl)
+	mockRabbitMQ := messaging.NewMockMessagePublisher(ctrl)
+
+	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, nil, mockRabbitMQ, mockConnTester, "fetcher.extract-external-data.queue", nil)
+
+	ctx := testContext()
+	conn := &model.Connection{ID: uuid.New(), ProductName: "test-product", ConfigName: "datasource1", Type: model.TypePostgreSQL}
+	request := newValidFetcherRequest()
+
+	mockJobRepo.EXPECT().
+		FindByRequestHashWithinWindow(gomock.Any(), gomock.Any(), DeduplicationWindowMinutes).
+		Return(nil, nil)
+	mockConnRepo.EXPECT().
+		FindByConfigNames(gomock.Any(), []string{"datasource1"}).
+		Return([]*model.Connection{conn}, nil)
+	mockConnTester.EXPECT().
+		TestConnection(gomock.Any(), conn).
+		Return(nil)
+
+	// Persistence fails with a non-duplicate error.
+	mockJobRepo.EXPECT().
+		Create(gomock.Any(), gomock.Any()).
+		Return(nil, errors.New("mongodb write failed"))
+
+	// Guard: NO mockRabbitMQ.ProducerDefault expectation — publish must never be
+	// reached when persistence fails (no orphan message). Likewise no jobRepo.Update,
+	// since there is no created job to mark FAILED.
+
+	result, err := svc.Execute(ctx, request)
+	require.Nil(t, result, "no result when persistence fails")
+	require.Error(t, err, "a persistence failure must surface as an error")
+
+	var internalErr pkg.InternalServerError
+	require.True(t, errors.As(err, &internalErr), "expected InternalServerError, got %T: %v", err, err)
+}
+
+// TestCreateFetcherJob_Execute_DispatchRoutingTopologyIsByteIdentical locks the
+// dispatch routing/topology: a successful create publishes to the DEFAULT exchange
+// ("") with the configured queue name as the routing key, capturing the exact
+// exchange/key arguments rather than matching them loosely. A change to the
+// exchange or routing key would break the un-migrated Worker's consumption and is
+// the kind of drift this test guards against.
+func TestCreateFetcherJob_Execute_DispatchRoutingTopologyIsByteIdentical(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockJobRepo := jobRepo.NewMockRepository(ctrl)
+	mockConnTester := NewMockConnectionTester(ctrl)
+	mockRabbitMQ := messaging.NewMockMessagePublisher(ctrl)
+
+	const queueName = "fetcher.extract-external-data.queue"
+
+	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, nil, mockRabbitMQ, mockConnTester, queueName, nil)
+
+	ctx := testContext()
+	conn := &model.Connection{ID: uuid.New(), ProductName: "test-product", ConfigName: "datasource1", Type: model.TypePostgreSQL}
+	request := newValidFetcherRequest()
+
+	mockJobRepo.EXPECT().
+		FindByRequestHashWithinWindow(gomock.Any(), gomock.Any(), DeduplicationWindowMinutes).
+		Return(nil, nil)
+	mockConnRepo.EXPECT().
+		FindByConfigNames(gomock.Any(), []string{"datasource1"}).
+		Return([]*model.Connection{conn}, nil)
+	mockConnTester.EXPECT().
+		TestConnection(gomock.Any(), conn).
+		Return(nil)
+	mockJobRepo.EXPECT().
+		Create(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, j *model.Job) (*model.Job, error) { return j, nil })
+
+	var (
+		gotExchange string
+		gotKey      string
+	)
+
+	mockRabbitMQ.EXPECT().
+		ProducerDefault(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, exchange, key string, _ []byte, _ *map[string]any) error {
+			gotExchange = exchange
+			gotKey = key
+			return nil
+		}).
+		Times(1)
+
+	_, err := svc.Execute(ctx, request)
+	require.NoError(t, err)
+
+	require.Equal(t, "", gotExchange, "dispatch must target the default exchange (empty string), unchanged")
+	require.Equal(t, queueName, gotKey, "dispatch routing key must be the configured queue name, unchanged")
+}
+
 // TestCreateFetcherJob_Execute_PreservesFET0414FromConnectionTester verifies
 // that when the injected ConnectionTester returns a pkg.ValidationError
 // (FET-0414 host safety rejection from the factory), CreateFetcherJob
