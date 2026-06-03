@@ -125,6 +125,79 @@ func TestFetcherRequest_ComputeRequestHash(t *testing.T) {
 		}
 	})
 
+	t.Run("equivalent requests with reordered map keys produce the same hash", func(t *testing.T) {
+		// Idempotency lock (T-009 ST-02): dedup keys on the request hash, so the
+		// hash MUST be stable across map-iteration order. Two requests that differ
+		// only in datasource/table insertion order are the SAME request and must
+		// hash identically — otherwise equivalent retries would dodge the 5-minute
+		// dedup window. encoding/json marshals map keys in sorted order, which is
+		// the property this pins; the ST-01 request->engine mapping must not perturb
+		// it (mapMappedFields/mappedFieldsFromExtraction preserve the leaf slices).
+		request1 := FetcherRequest{
+			DataRequest: DataRequest{
+				MappedFields: map[string]map[string][]string{
+					"ds_alpha": {"orders": {"id", "total"}},
+					"ds_beta":  {"customers": {"id", "name"}},
+				},
+			},
+			Metadata: map[string]any{"source": "test-product"},
+		}
+
+		request2 := FetcherRequest{
+			DataRequest: DataRequest{
+				MappedFields: map[string]map[string][]string{
+					"ds_beta":  {"customers": {"id", "name"}},
+					"ds_alpha": {"orders": {"id", "total"}},
+				},
+			},
+			Metadata: map[string]any{"source": "test-product"},
+		}
+
+		hash1, err1 := request1.ComputeRequestHash()
+		if err1 != nil {
+			t.Fatalf("unexpected error computing hash1: %v", err1)
+		}
+
+		hash2, err2 := request2.ComputeRequestHash()
+		if err2 != nil {
+			t.Fatalf("unexpected error computing hash2: %v", err2)
+		}
+
+		if hash1 != hash2 {
+			t.Fatalf("equivalent requests (reordered map keys) must hash identically for dedup, got %s and %s", hash1, hash2)
+		}
+	})
+
+	t.Run("field selection order is significant in the hash", func(t *testing.T) {
+		// The companion invariant: a field SLICE is order-sensitive (it is a JSON
+		// array, not a set), so reordering selected fields is a DISTINCT request and
+		// must hash differently. Pinning both directions documents exactly what the
+		// dedup key treats as equivalent vs distinct, so a future "normalization"
+		// that sorts field slices cannot silently change dedup semantics.
+		request1 := FetcherRequest{
+			DataRequest: DataRequest{
+				MappedFields: map[string]map[string][]string{
+					"ds": {"t": {"a", "b"}},
+				},
+			},
+		}
+
+		request2 := FetcherRequest{
+			DataRequest: DataRequest{
+				MappedFields: map[string]map[string][]string{
+					"ds": {"t": {"b", "a"}},
+				},
+			},
+		}
+
+		hash1, _ := request1.ComputeRequestHash()
+		hash2, _ := request2.ComputeRequestHash()
+
+		if hash1 == hash2 {
+			t.Fatalf("reordered field selections must hash differently (slice order is significant), both got %s", hash1)
+		}
+	})
+
 	t.Run("metadata affects hash", func(t *testing.T) {
 		request1 := FetcherRequest{
 			DataRequest: DataRequest{

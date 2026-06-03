@@ -1683,6 +1683,145 @@ func TestPublishToQueue_PayloadByteIdenticalFromIntermediate(t *testing.T) {
 	require.JSONEq(t, string(legacyBytes), string(gotBytes), "queue payload must be byte-identical to the legacy shape")
 }
 
+// --- ST-T009-02: idempotency & persistence LOCK tests ----------------------
+//
+// These pin the existing idempotency/persistence behavior with the DISTINCT
+// assertions the subtask asks for. Under Option 2 there is NO PlanExtraction at
+// creation and the mapper is pure/infallible, so there is no new create-time
+// failure mode — these LOCK the already-correct behavior, they do not change it.
+
+// TestCreateFetcherJob_Execute_DuplicateWithinWindow_DoesNotPublish explicitly
+// locks that a duplicate within the dedup window returns the existing job and
+// publishes NO new message — asserted against a REAL publisher mock whose
+// ProducerDefault is never expected (so any publish call fails the test). The
+// pre-existing duplicate test used a nil publisher, which only proved this
+// implicitly.
+func TestCreateFetcherJob_Execute_DuplicateWithinWindow_DoesNotPublish(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockJobRepo := jobRepo.NewMockRepository(ctrl)
+	mockRabbitMQ := messaging.NewMockMessagePublisher(ctrl)
+
+	svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, mockRabbitMQ, "fetcher.extract-external-data.queue", nil, nil)
+
+	ctx := testContext()
+	request := newValidFetcherRequest()
+
+	existingJobID := uuid.New()
+	existingJob := &model.Job{
+		ID:        existingJobID,
+		Status:    model.JobStatusPending,
+		CreatedAt: time.Now().UTC().Add(-2 * time.Minute),
+	}
+
+	mockJobRepo.EXPECT().
+		FindByRequestHashWithinWindow(gomock.Any(), gomock.Any(), DeduplicationWindowMinutes).
+		Return(existingJob, nil)
+
+	// Guard: NO mockJobRepo.Create and NO mockRabbitMQ.ProducerDefault expectations.
+	// A duplicate must neither persist a new job nor publish a message.
+
+	result, err := svc.Execute(ctx, request)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.True(t, result.IsDuplicate, "duplicate within window must be reported as a duplicate")
+	require.False(t, result.IsNewCreated, "duplicate must not be a new creation")
+	require.Equal(t, existingJobID, result.Job.ID, "the existing job must be returned unchanged")
+}
+
+// TestCreateFetcherJob_Execute_NewRequest_CreatesPendingAndPublishesExactlyOnce
+// locks that a new valid request persists a PENDING job and publishes EXACTLY
+// once (Times(1)) — pinning both the persisted status and the single-publish
+// guarantee together against real mocks.
+func TestCreateFetcherJob_Execute_NewRequest_CreatesPendingAndPublishesExactlyOnce(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockJobRepo := jobRepo.NewMockRepository(ctrl)
+	mockConnTester := NewMockConnectionTester(ctrl)
+	mockRabbitMQ := messaging.NewMockMessagePublisher(ctrl)
+
+	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, nil, mockRabbitMQ, mockConnTester, "fetcher.extract-external-data.queue", nil)
+
+	ctx := testContext()
+	conn := &model.Connection{ID: uuid.New(), ProductName: "test-product", ConfigName: "datasource1", Type: model.TypePostgreSQL}
+	request := newValidFetcherRequest()
+
+	mockJobRepo.EXPECT().
+		FindByRequestHashWithinWindow(gomock.Any(), gomock.Any(), DeduplicationWindowMinutes).
+		Return(nil, nil)
+	mockConnRepo.EXPECT().
+		FindByConfigNames(gomock.Any(), []string{"datasource1"}).
+		Return([]*model.Connection{conn}, nil)
+	mockConnTester.EXPECT().
+		TestConnection(gomock.Any(), conn).
+		Return(nil)
+
+	// Persisted job must be PENDING at creation.
+	mockJobRepo.EXPECT().
+		Create(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, j *model.Job) (*model.Job, error) {
+			assert.Equal(t, model.JobStatusPending, j.Status, "a newly created job must be persisted as PENDING")
+			return j, nil
+		}).
+		Times(1)
+
+	// Publish must happen EXACTLY once.
+	mockRabbitMQ.EXPECT().
+		ProducerDefault(gomock.Any(), "", "fetcher.extract-external-data.queue", gomock.Any(), gomock.Any()).
+		Return(nil).
+		Times(1)
+
+	result, err := svc.Execute(ctx, request)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.True(t, result.IsNewCreated, "a new valid request must create a new job")
+	require.False(t, result.IsDuplicate, "a new valid request must not be a duplicate")
+	require.Equal(t, model.JobStatusPending, result.Job.Status, "the returned job must be PENDING")
+}
+
+// TestCreateFetcherJob_Execute_ValidationFailure_CreatesNoJobAndDoesNotPublish
+// is the Option-2 replacement for the spec's STALE "Engine planning failure does
+// not create or publish a job" assertion. Under Option 2 there is no planning at
+// creation, so the equivalent guard is: a MANAGER validation failure (here, the
+// metadata.source gate) creates no job and publishes nothing. Asserted against
+// real Create/publish mocks with no expectations set.
+func TestCreateFetcherJob_Execute_ValidationFailure_CreatesNoJobAndDoesNotPublish(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockJobRepo := jobRepo.NewMockRepository(ctrl)
+	mockRabbitMQ := messaging.NewMockMessagePublisher(ctrl)
+
+	svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, mockRabbitMQ, "q", nil, nil)
+
+	ctx := testContext()
+	// Valid mappedFields but missing metadata.source -> Manager validation failure
+	// BEFORE any persistence or publish.
+	request := model.FetcherRequest{
+		DataRequest: model.DataRequest{
+			MappedFields: map[string]map[string][]string{
+				"datasource1": {"table1": {"field1"}},
+			},
+		},
+		Metadata: map[string]any{"key": "value"},
+	}
+
+	// Guard: validation must short-circuit BEFORE dedup lookup, Create, or publish.
+	// No mock expectations are set, so any repository or publisher call fails.
+
+	result, err := svc.Execute(ctx, request)
+	require.Error(t, err, "a Manager validation failure must surface as an error")
+	require.Nil(t, result, "no job result when validation fails")
+
+	var ve pkg.ValidationError
+	require.True(t, errors.As(err, &ve), "expected a ValidationError, got %T", err)
+}
+
 // TestCreateFetcherJob_Execute_PreservesFET0414FromConnectionTester verifies
 // that when the injected ConnectionTester returns a pkg.ValidationError
 // (FET-0414 host safety rejection from the factory), CreateFetcherJob
