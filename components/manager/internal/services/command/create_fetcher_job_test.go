@@ -1611,11 +1611,12 @@ func TestPublishToQueue_TenantIDHeaderPropagation(t *testing.T) {
 // has no non-orphan consumer on the create path until the planning/execution
 // consumer lands (ST-03 / T-010). See extraction_request_mapper.go SCOPE NOTE.
 
-// TestMapToExtractionRequest_MapsFieldsFiltersMetadata asserts the pure mapper
-// projects the Manager request onto engine.ExtractionRequest with mapped fields,
-// filters, and metadata.source carried opaque. RED: mapToExtractionRequest does
-// not exist yet.
-func TestMapToExtractionRequest_MapsFieldsFiltersMetadata(t *testing.T) {
+// TestMapToExtractionRequest_MapsFieldsAndMetadata_DefersFilters asserts the pure
+// mapper projects MappedFields and opaque Metadata (incl. metadata.source) onto
+// engine.ExtractionRequest, and that Filters are intentionally NOT projected at
+// create (deferred to the T-010 execution consumer) even when the request carries
+// them — so the engine request never holds a filter shape unvalidated by a consumer.
+func TestMapToExtractionRequest_MapsFieldsAndMetadata_DefersFilters(t *testing.T) {
 	request := model.FetcherRequest{
 		DataRequest: model.DataRequest{
 			MappedFields: map[string]map[string][]string{
@@ -1641,8 +1642,11 @@ func TestMapToExtractionRequest_MapsFieldsFiltersMetadata(t *testing.T) {
 	require.Equal(t, "plugin_crm", req.Metadata["source"], "metadata.source must be preserved opaque")
 	require.Equal(t, "value", req.Metadata["key"], "all metadata is carried opaque")
 
-	// Filters are carried (datasource-keyed). The engine contract is map[string]any.
-	require.Contains(t, req.Filters, "postgres_db", "filters must be carried per datasource")
+	// Filters are intentionally NOT projected at create (Option 2): they stay on the
+	// typed request.DataRequest.Filters path for the persisted job and queue payload.
+	// The engine-request filter projection is deferred to the T-010 execution
+	// consumer, which pins it against the planner's nested filter shape.
+	require.Nil(t, req.Filters, "filters are not projected into the engine request at create (deferred to T-010)")
 
 	// B2: the engine request carries NO product/org concept and the mapper must
 	// not invent Overrides (no per-request bounds in this subtask).

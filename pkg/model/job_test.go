@@ -225,7 +225,11 @@ func TestFetcherRequest_ComputeRequestHash(t *testing.T) {
 		}
 	})
 
-	t.Run("nil metadata produces different hash than empty metadata", func(t *testing.T) {
+	t.Run("nil and empty metadata hash identically under omitempty", func(t *testing.T) {
+		// The Metadata field is `json:",omitempty"`, so both a nil map and an empty
+		// map serialize away entirely — they MUST produce the same hash. Asserting
+		// this pins the dedup-equivalence boundary: a request that omits metadata and
+		// one that sends {} are the same request and must not dodge the dedup window.
 		request1 := FetcherRequest{
 			DataRequest: DataRequest{
 				MappedFields: map[string]map[string][]string{
@@ -247,11 +251,8 @@ func TestFetcherRequest_ComputeRequestHash(t *testing.T) {
 		hash1, _ := request1.ComputeRequestHash()
 		hash2, _ := request2.ComputeRequestHash()
 
-		// Note: nil metadata and empty metadata may produce same or different hashes
-		// depending on JSON marshaling. This test documents the behavior.
-		// With omitempty, both should produce the same hash (no metadata field)
 		if hash1 != hash2 {
-			t.Logf("nil and empty metadata produce different hashes: %s vs %s", hash1, hash2)
+			t.Fatalf("nil and empty metadata must hash identically under omitempty, got %s and %s", hash1, hash2)
 		}
 	})
 }
