@@ -28,9 +28,10 @@ import (
 //
 // The seam keeps the Engine wiring (connector registry, request-scoped connection
 // store, host-side table-name normalization) OUT of the UseCase: the UseCase owns
-// message parsing, job lookup, ack/nack, and skip logic. When EngineRunner is nil
-// the UseCase falls back to the legacy direct-datasource extraction path, so
-// wiring is opt-in per deployment.
+// message parsing, job lookup, ack/nack, and skip logic. EngineRunner is MANDATORY
+// — the legacy direct-datasource extraction path was removed in the strangler
+// completion (T-010) and UseCase.Validate rejects a nil runner at wiring time, so a
+// nil EngineRunner is a bootstrap wiring bug, not a supported fallback.
 type EngineRunner interface {
 	// RunExtraction plans and executes the request in DIRECT mode for the tenant,
 	// returning the inline ExtractionResult. The jobID is the host execution
@@ -92,9 +93,10 @@ type UseCase struct {
 	// When nil, falls back to ConnectionRepository.FindByConfigNames (backwards compatible).
 	ConnectionResolver resolver.ConnectionResolver
 
-	// EngineRunner routes extraction through the embedded Engine (plan-then-execute,
-	// DIRECT mode). When nil, the Worker uses the legacy direct-datasource path,
-	// keeping the migration opt-in and every legacy test unchanged.
+	// EngineRunner routes generic-datasource extraction through the embedded Engine
+	// (plan-then-execute, DIRECT mode). It is MANDATORY: the legacy direct-datasource
+	// path was removed (strangler completion, T-010) and Validate rejects a nil
+	// runner at bootstrap. A nil EngineRunner is a wiring bug, not a fallback.
 	EngineRunner EngineRunner
 }
 

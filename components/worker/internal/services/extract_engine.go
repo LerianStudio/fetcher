@@ -251,10 +251,13 @@ func datasourceTypesByConfig(connections []*model.Connection) map[string]model.D
 }
 
 // mapMappedFields converts the Worker selection into map[string]engine.FieldSelection,
-// canonicalizing each table key for its datasource type. Field slices are shared
-// (the Engine treats them as a read-only selection). A datasource that has two
-// requested table names canonicalizing to the same key keeps the first (a benign
-// dedupe that matches the legacy lookup, which would resolve both to one table).
+// canonicalizing each table key AND each field name for its datasource type. Table
+// keys use tablenorm.NormalizeTable; field names use tablenorm.NormalizeField (a
+// no-op for PG/MySQL/SQLServer, which were case-sensitive; UPPERCASE for Oracle,
+// which stores identifiers uppercased and matched case-insensitively in the legacy
+// path). A datasource with two table names canonicalizing to the same key keeps the
+// first (a benign dedupe that matches the legacy lookup, which would resolve both to
+// one table).
 func mapMappedFields(
 	mappedFields map[string]map[string][]string,
 	typesByConfig map[string]model.DBType,
@@ -270,7 +273,7 @@ func mapMappedFields(
 		selection := make(engine.FieldSelection, len(tables))
 
 		for table, fields := range tables {
-			selection[tablenorm.NormalizeTable(dbType, table)] = fields
+			selection[tablenorm.NormalizeTable(dbType, table)] = normalizeFieldsForType(dbType, fields)
 		}
 
 		out[configName] = selection
@@ -279,12 +282,40 @@ func mapMappedFields(
 	return out
 }
 
+// normalizeFieldsForType canonicalizes a field-name slice for the datasource type.
+// It is a no-op for types whose identifiers are case-sensitive (PG/MySQL/SQLServer),
+// and folds to UPPERCASE for Oracle, restoring the legacy Oracle EqualFold/ToUpper
+// matching at the host seam so the Engine's literal field membership succeeds. A nil
+// input yields nil (shared, no allocation) so the no-op path stays allocation-free.
+func normalizeFieldsForType(dbType model.DBType, fields []string) []string {
+	if !tablenorm.FoldsFieldCase(dbType) || fields == nil {
+		return fields
+	}
+
+	out := make([]string, len(fields))
+	for i, field := range fields {
+		out[i] = tablenorm.NormalizeField(dbType, field)
+	}
+
+	return out
+}
+
 // mapFilters projects the Worker's typed nested filters into the Engine's opaque
-// Filters payload, canonicalizing the table keys per datasource type so they align
-// with the normalized mapped-field and snapshot table keys. The inner value keeps
-// the typed map[string]map[string]job.FilterCondition shape the enginecompat
-// datasource connector already interprets (filtersForConfig), so the filter bytes
-// reaching the underlying datasource are unchanged from the legacy path.
+// Filters payload. It emits FULLY-NESTED map[string]any (config -> table -> field ->
+// value) because that is the shape the planner's datasourceFilters reads
+// (planner.go: it asserts map[string]any at the config AND table levels and copies
+// each field's value as an opaque any). Emitting the typed
+// map[string]map[string]job.FilterCondition at the config level — as a prior
+// revision did — fails the planner's map[string]any assertion, so step.Filters is
+// never set and the generic datasource extracts UNFILTERED (a data-scoping defect).
+// The leaf VALUE is the modelJob.FilterCondition carried as any: it survives the
+// plan->execute round-trip untouched and the adapter's filtersForConfig reconstructs
+// the typed map at the connector boundary.
+//
+// Table keys are canonicalized per datasource type (tablenorm) so they align with
+// the normalized mapped-field and snapshot table keys; field keys are canonicalized
+// per type too (Oracle folds to UPPERCASE — see normalizeFieldsForType) so an Oracle
+// filter field matches the uppercased schema identity, restoring legacy parity.
 func mapFilters(
 	filters map[string]map[string]map[string]modelJob.FilterCondition,
 	typesByConfig map[string]model.DBType,
@@ -297,13 +328,18 @@ func mapFilters(
 
 	for configName, tables := range filters {
 		dbType := typesByConfig[configName]
-		normalized := make(map[string]map[string]modelJob.FilterCondition, len(tables))
+		tableMap := make(map[string]any, len(tables))
 
 		for table, conditions := range tables {
-			normalized[tablenorm.NormalizeTable(dbType, table)] = conditions
+			fieldMap := make(map[string]any, len(conditions))
+			for field, condition := range conditions {
+				fieldMap[tablenorm.NormalizeField(dbType, field)] = condition
+			}
+
+			tableMap[tablenorm.NormalizeTable(dbType, table)] = fieldMap
 		}
 
-		out[configName] = normalized
+		out[configName] = tableMap
 	}
 
 	return out

@@ -3,6 +3,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -17,6 +18,17 @@ import (
 	libLog "github.com/LerianStudio/lib-observability/log"
 	libOtel "github.com/LerianStudio/lib-observability/tracing"
 	"go.opentelemetry.io/otel/attribute"
+)
+
+// Static, host-free errors recorded on the EXPORTED span for plugin_crm datasource
+// create/connect failures. The raw driver errors embed the DSN/host:port (via the
+// MongoDB driver's ConnectionError / ServerSelectionError), and sanitizeSpanMessage
+// only strips Bearer/Basic, so the raw error would leak host:port onto a span. These
+// static messages mirror the generic engine adapter's redaction; the verbatim error
+// is preserved only in the returned (wrapped) error and the local log.
+var (
+	errCRMDataSourceCreate  = errors.New("failed to create plugin_crm data source")
+	errCRMDataSourceConnect = errors.New("failed to connect to plugin_crm data source")
 )
 
 var (
@@ -84,12 +96,21 @@ func (uc *UseCase) queryPluginCRMDatabase(
 
 		dataSource, err := uc.CreateDataSource(ctx, foundConnection)
 		if err != nil {
-			libOtel.HandleSpanError(span, "Error creating data source", err)
+			// The factory's raw error may embed the DSN/host:port via the driver's
+			// connection/topology errors. Record a STATIC, host-free message on the
+			// EXPORTED span (mirroring the generic engine adapter, adapter.go); keep the
+			// verbatim %w-wrapped error only in the returned error and the local log.
+			libOtel.HandleSpanError(span, "Error creating data source", errCRMDataSourceCreate)
+			logger.Log(ctx, libLog.LevelError, "error creating plugin_crm data source", libLog.Err(err))
+
 			return fmt.Errorf("failed to query database %s: failed to create data source: %w", databaseName, err)
 		}
 
 		if err := dataSource.Connect(ctx, logger); err != nil {
-			libOtel.HandleSpanError(span, "Error connecting to data source", err)
+			// Same redaction as above: the driver connect error embeds host:port.
+			libOtel.HandleSpanError(span, "Error connecting to data source", errCRMDataSourceConnect)
+			logger.Log(ctx, libLog.LevelError, "error connecting to plugin_crm data source", libLog.Err(err))
+
 			return fmt.Errorf("failed to query database %s: failed to connect: %w", databaseName, err)
 		}
 

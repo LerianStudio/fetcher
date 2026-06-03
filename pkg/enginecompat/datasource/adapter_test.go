@@ -13,6 +13,7 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/engine"
 	enginecompatdatasource "github.com/LerianStudio/fetcher/pkg/enginecompat/datasource"
 	"github.com/LerianStudio/fetcher/pkg/enginecompat/schemacompat"
+	"github.com/LerianStudio/fetcher/pkg/enginecompat/tablenorm"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/model/datasource"
 	"github.com/LerianStudio/fetcher/pkg/model/job"
@@ -482,6 +483,66 @@ func TestConnector_QueryMapsTypedFiltersForConfig(t *testing.T) {
 	}
 }
 
+// TestConnector_QueryReconstructsNestedAnyFilters covers the FIX-1 production shape:
+// after the planner round-trips host filters, the connector receives the per-config
+// filters as fully-nested map[string]any (table -> field -> FilterCondition-as-any),
+// NOT the typed map. filtersForConfig must reconstruct the typed
+// map[table]map[field]FilterCondition the DataSource expects. It also covers the
+// skip branches: a non-map table value and a non-FilterCondition leaf are dropped
+// without dropping the whole datasource's valid filters.
+func TestConnector_QueryReconstructsNestedAnyFilters(t *testing.T) {
+	t.Parallel()
+
+	captured := &capturedFactoryCall{}
+	ds := &fakeDataSource{config: datasource.DataSourceConfig{Type: "POSTGRESQL"}}
+	factory := newFakeFactory(ds, nil, captured)
+
+	adapter := enginecompatdatasource.NewConnectorFactory(factory, constResolver("p", nil), nil)
+
+	conn, err := adapter.Build(context.Background(), sampleDescriptor())
+	if err != nil {
+		t.Fatalf("Build: unexpected error: %v", err)
+	}
+	if err := conn.TestConnection(context.Background()); err != nil {
+		t.Fatalf("TestConnection: unexpected error: %v", err)
+	}
+
+	// The nested any shape the planner produces (datasourceFilters -> map[string]any
+	// all the way down, FilterCondition at the leaf).
+	req := engine.ExtractionRequest{
+		Filters: map[string]any{
+			"pg-main": map[string]any{
+				"accounts": map[string]any{
+					"status": job.FilterCondition{Equals: []any{"active"}},
+					"bogus":  "not-a-filter-condition", // non-FilterCondition leaf -> skipped
+				},
+				"badtable": "not-a-map", // non-map table value -> skipped
+			},
+		},
+	}
+
+	if _, err := conn.Query(context.Background(), req); err != nil {
+		t.Fatalf("Query: unexpected error: %v", err)
+	}
+
+	if ds.queryFilters == nil {
+		t.Fatalf("nested any filters were not reconstructed for the DataSource")
+	}
+	cond, ok := ds.queryFilters["accounts"]["status"]
+	if !ok {
+		t.Fatalf("status filter not reconstructed; got %#v", ds.queryFilters)
+	}
+	if len(cond.Equals) != 1 || cond.Equals[0] != "active" {
+		t.Fatalf("filter value not preserved; got %#v", cond)
+	}
+	if _, leaked := ds.queryFilters["accounts"]["bogus"]; leaked {
+		t.Fatalf("non-FilterCondition leaf must be skipped; got %#v", ds.queryFilters["accounts"])
+	}
+	if _, leaked := ds.queryFilters["badtable"]; leaked {
+		t.Fatalf("non-map table value must be skipped; got %#v", ds.queryFilters)
+	}
+}
+
 func TestConnector_QueryMismatchedFilterShapeYieldsNoFilters(t *testing.T) {
 	t.Parallel()
 
@@ -816,12 +877,22 @@ func TestNormalizationSeam_PublicPrefixedRequestStillExecutes(t *testing.T) {
 		t.Fatalf("NewTenantContext: %v", err)
 	}
 
-	// The Worker mapper canonicalizes the requested "public.users" -> "users" via
-	// tablenorm before handing it to the Engine; we mirror that canonical form here
-	// (the literal "users" is what the normalized request carries).
+	// The request carries the ACTUAL "public." prefix a caller would send. It is run
+	// through tablenorm.NormalizeTable exactly as the Worker mapper does, producing
+	// the canonical "users" that must match the snapshot the adapter normalized from
+	// "users". This is the genuine cross-side reconciliation: if NormalizeTable were
+	// reduced to identity, the request key would stay "public.users", the snapshot key
+	// is "users", the literal match would FAIL, and this test would fail — so the
+	// no-op mutation is caught (FIX-4: non-vacuous seam proof).
+	const requestedTable = "public.users" // PG public-schema table addressed WITH the prefix
+	canonicalTable := tablenorm.NormalizeTable(model.TypePostgreSQL, requestedTable)
+	if canonicalTable == requestedTable {
+		t.Fatalf("normalization must strip the public. prefix; got %q (identity no-op?)", canonicalTable)
+	}
+
 	request := engine.ExtractionRequest{
 		MappedFields: map[string]engine.FieldSelection{
-			"pg-main": {"users": {"id", "name"}},
+			"pg-main": {canonicalTable: {"id", "name"}},
 		},
 	}
 
@@ -873,6 +944,115 @@ func TestNormalizationSeam_GenuinelyMissingTableStillFails(t *testing.T) {
 	_, err = eng.PlanExtraction(ctx, tenant, request)
 	if err == nil {
 		t.Fatal("expected PlanExtraction to reject a genuinely missing table, got nil")
+	}
+
+	assertEngineError(t, err, engine.CategoryValidation)
+}
+
+// oracleConnection builds a rich Oracle *model.Connection for config "ora-main".
+func oracleConnection() *model.Connection {
+	conn := &model.Connection{
+		ID:           uuid.New(),
+		ConfigName:   "ora-main",
+		Type:         model.TypeOracle,
+		Host:         "ora.internal",
+		Port:         1521,
+		DatabaseName: "ORCL",
+		Username:     "reader",
+	}
+	conn.SetPlaintextPassword("p")
+
+	return conn
+}
+
+// TestNormalizationSeam_OracleCaseInsensitiveMatching is the FIX-2 (HIGH) regression
+// guard. Oracle stores identifiers UPPERCASED and the legacy adapter matched table
+// AND field names case-insensitively (EqualFold / ToUpper). The engine matches
+// literally, so the host seam must fold Oracle identifiers to UPPERCASE on BOTH the
+// request side (tablenorm.NormalizeTable / NormalizeField, mirrored here) and the
+// snapshot side (adapter DiscoverSchema). A lowercase/mixed-case Oracle request must
+// therefore execute against the uppercased snapshot — restoring legacy parity.
+func TestNormalizationSeam_OracleCaseInsensitiveMatching(t *testing.T) {
+	t.Parallel()
+
+	// The DISCOVERED Oracle schema reports identifiers uppercased, as Oracle does.
+	schema := model.NewDataSourceSchema("ora-main")
+	schema.AddTable("ACCOUNTS", []string{"ID", "BALANCE"})
+
+	ds := &fakeDataSource{
+		config:       datasource.DataSourceConfig{Type: string(model.TypeOracle)},
+		schemaResult: schema,
+		queryResult:  map[string][]map[string]any{"ACCOUNTS": {{"ID": 1, "BALANCE": 100}}},
+	}
+
+	eng := newNormalizationEngine(t, ds)
+	ctx := schemacompat.WithResolvedConnections(context.Background(), []*model.Connection{oracleConnection()})
+
+	tenant, err := engine.NewTenantContext("tenant-ora")
+	if err != nil {
+		t.Fatalf("NewTenantContext: %v", err)
+	}
+
+	// The caller addresses the table and fields in LOWERCASE. The worker mapper folds
+	// them to UPPERCASE via tablenorm; we mirror that canonical form, which must match
+	// the uppercased snapshot. An identity-no-op for Oracle would leave "accounts" /
+	// "id" lowercase and FAIL the literal match — so this proves the fold is real.
+	canonTable := tablenorm.NormalizeTable(model.TypeOracle, "accounts")
+	if canonTable != "ACCOUNTS" {
+		t.Fatalf("Oracle table must fold to UPPERCASE; got %q", canonTable)
+	}
+	canonField := tablenorm.NormalizeField(model.TypeOracle, "id")
+	if canonField != "ID" {
+		t.Fatalf("Oracle field must fold to UPPERCASE; got %q", canonField)
+	}
+
+	request := engine.ExtractionRequest{
+		MappedFields: map[string]engine.FieldSelection{
+			"ora-main": {canonTable: {canonField, tablenorm.NormalizeField(model.TypeOracle, "balance")}},
+		},
+	}
+
+	plan, err := eng.PlanExtraction(ctx, tenant, request)
+	if err != nil {
+		t.Fatalf("PlanExtraction rejected a case-folded Oracle request the legacy worker accepted: %v", err)
+	}
+
+	result, err := eng.ExecuteExtraction(ctx, plan)
+	if err != nil {
+		t.Fatalf("ExecuteExtraction: %v", err)
+	}
+	if result.Direct == nil || !strings.Contains(string(result.Direct.Data), "BALANCE") {
+		t.Fatalf("expected extracted Oracle rows, got %#v", result)
+	}
+}
+
+// TestNormalizationSeam_OracleGenuinelyMissingTableStillFails proves Oracle case
+// folding does NOT weaken strict validation: a table absent from the snapshot under
+// its UPPERCASE canonical form is still rejected.
+func TestNormalizationSeam_OracleGenuinelyMissingTableStillFails(t *testing.T) {
+	t.Parallel()
+
+	schema := model.NewDataSourceSchema("ora-main")
+	schema.AddTable("ACCOUNTS", []string{"ID"})
+
+	ds := &fakeDataSource{config: datasource.DataSourceConfig{Type: string(model.TypeOracle)}, schemaResult: schema}
+	eng := newNormalizationEngine(t, ds)
+	ctx := schemacompat.WithResolvedConnections(context.Background(), []*model.Connection{oracleConnection()})
+
+	tenant, err := engine.NewTenantContext("tenant-ora")
+	if err != nil {
+		t.Fatalf("NewTenantContext: %v", err)
+	}
+
+	request := engine.ExtractionRequest{
+		MappedFields: map[string]engine.FieldSelection{
+			"ora-main": {tablenorm.NormalizeTable(model.TypeOracle, "ghosts"): {"ID"}},
+		},
+	}
+
+	_, err = eng.PlanExtraction(ctx, tenant, request)
+	if err == nil {
+		t.Fatal("expected PlanExtraction to reject a genuinely missing Oracle table, got nil")
 	}
 
 	assertEngineError(t, err, engine.CategoryValidation)

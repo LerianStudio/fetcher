@@ -307,23 +307,66 @@ func tablesForConfig(configName string, request engine.ExtractionRequest) map[st
 }
 
 // filtersForConfig extracts the per-table filter conditions for this connector's
-// config name from the Engine request's opaque Filters payload. The contract
-// keeps Filters untyped; the adapter interprets the host-supplied shape
-// map[config]map[table]map[field]job.FilterCondition and returns the inner
-// map[table]map[field]FilterCondition the DataSource expects. A missing or
-// mismatched shape yields a nil filter map (no filtering).
+// config name from the Engine request's opaque Filters payload and RECONSTRUCTS the
+// typed map[table]map[field]job.FilterCondition the DataSource expects.
+//
+// The planner deep-copies host filters into a nested map[string]any (config -> table
+// -> field -> value, value left opaque), so by the time the runner hands a step's
+// filters back to the connector, the shape is map[string]any all the way down with
+// the leaf field VALUE being whatever the host put there. The Worker mapper
+// (mapFilters) puts a job.FilterCondition at each leaf, so this walks the nested
+// any-maps and asserts each leaf back to job.FilterCondition. A missing config, a
+// non-map level, or a non-FilterCondition leaf is skipped (no filtering for that
+// path) rather than dropping the whole datasource's filters silently — the same
+// conservative behavior the legacy path had for unrecognized filter shapes.
+//
+// This reconstruction is the EXECUTE half of the plan->execute filter round-trip;
+// emitting the typed shape directly from the mapper would fail the planner's
+// map[string]any assertion and drop filters entirely (the generic datasource would
+// extract unfiltered).
 func filtersForConfig(configName string, request engine.ExtractionRequest) map[string]map[string]job.FilterCondition {
 	raw, ok := request.Filters[configName]
 	if !ok {
 		return nil
 	}
 
-	typed, ok := raw.(map[string]map[string]job.FilterCondition)
+	// Fast path: a caller that already supplied the typed shape (e.g. a test
+	// constructing the request directly) is honored as-is.
+	if typed, ok := raw.(map[string]map[string]job.FilterCondition); ok {
+		return typed
+	}
+
+	tables, ok := raw.(map[string]any)
 	if !ok {
 		return nil
 	}
 
-	return typed
+	out := make(map[string]map[string]job.FilterCondition, len(tables))
+
+	for table, tableRaw := range tables {
+		fields, ok := tableRaw.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		conditions := make(map[string]job.FilterCondition, len(fields))
+
+		for field, value := range fields {
+			if condition, ok := value.(job.FilterCondition); ok {
+				conditions[field] = condition
+			}
+		}
+
+		if len(conditions) > 0 {
+			out[table] = conditions
+		}
+	}
+
+	if len(out) == 0 {
+		return nil
+	}
+
+	return out
 }
 
 // snapshotFromSchema maps the legacy *model.DataSourceSchema into a secret-free
@@ -375,7 +418,7 @@ func snapshotFromSchema(configName string, dbType model.DBType, schema *model.Da
 
 		var fields []string
 		if table != nil {
-			fields = table.GetColumnsList()
+			fields = normalizeSnapshotFields(dbType, table.GetColumnsList())
 		}
 
 		tables = append(tables, engine.TableSnapshot{Name: tablenorm.NormalizeTable(dbType, tableName), Fields: fields})
@@ -384,4 +427,22 @@ func snapshotFromSchema(configName string, dbType model.DBType, schema *model.Da
 	snapshot.Tables = tables
 
 	return snapshot
+}
+
+// normalizeSnapshotFields canonicalizes a snapshot's field names for the datasource
+// type so the snapshot side and the request side (worker mapper) reconcile to the
+// SAME identity before the Engine's literal field match. It is the IDENTITY for
+// case-sensitive types (PG/MySQL/SQLServer) and folds to UPPERCASE for Oracle,
+// mirroring tablenorm.NormalizeField on the request side. A nil input yields nil.
+func normalizeSnapshotFields(dbType model.DBType, fields []string) []string {
+	if !tablenorm.FoldsFieldCase(dbType) || fields == nil {
+		return fields
+	}
+
+	out := make([]string, len(fields))
+	for i, field := range fields {
+		out[i] = tablenorm.NormalizeField(dbType, field)
+	}
+
+	return out
 }

@@ -35,7 +35,7 @@ func TestMapJobToExtractionRequest_NormalizesTableKeysPerType(t *testing.T) {
 	message := ExtractExternalDataMessage{
 		MappedFields: map[string]map[string][]string{
 			"pg":  {"public.users": {"id"}},
-			"ora": {"public.x": {"c"}}, // oracle: no stripping
+			"ora": {"accounts": {"balance"}}, // oracle: case-folded to UPPERCASE (FIX-2)
 		},
 		Filters: map[string]map[string]map[string]modelJob.FilterCondition{
 			"pg": {"public.users": {"status": {Equals: []any{"a"}}}},
@@ -50,21 +50,29 @@ func TestMapJobToExtractionRequest_NormalizesTableKeysPerType(t *testing.T) {
 
 	req := mapJobToExtractionRequest(message, connections)
 
-	// Postgres public-schema table canonicalizes to the unqualified name.
+	// Postgres public-schema table canonicalizes to the unqualified name (case kept).
 	if _, ok := req.MappedFields["pg"]["users"]; !ok {
 		t.Fatalf("expected pg public.users to normalize to users, got %#v", req.MappedFields["pg"])
 	}
-	// Oracle keeps the name verbatim (no default-schema stripping).
-	if _, ok := req.MappedFields["ora"]["public.x"]; !ok {
-		t.Fatalf("expected oracle public.x preserved, got %#v", req.MappedFields["ora"])
+	// Oracle table AND fields fold to UPPERCASE (FIX-2: legacy case-insensitive parity).
+	oraFields, ok := req.MappedFields["ora"]["ACCOUNTS"]
+	if !ok {
+		t.Fatalf("expected oracle accounts to fold to ACCOUNTS, got %#v", req.MappedFields["ora"])
+	}
+	if len(oraFields) != 1 || oraFields[0] != "BALANCE" {
+		t.Fatalf("expected oracle field folded to BALANCE, got %v", oraFields)
 	}
 
-	// Filter table keys are normalized in lockstep so they align with mapped fields.
-	pgFilters, ok := req.Filters["pg"].(map[string]map[string]modelJob.FilterCondition)
-	require.True(t, ok, "expected typed pg filters, got %T", req.Filters["pg"])
-	if _, ok := pgFilters["users"]; !ok {
-		t.Fatalf("expected pg filter table to normalize to users, got %#v", pgFilters)
-	}
+	// FIX-1: filters are emitted as fully-nested map[string]any (config -> table ->
+	// field -> FilterCondition-as-any) so they survive the planner's map[string]any
+	// assertion. Table key normalized in lockstep with mapped fields.
+	pgFilters, ok := req.Filters["pg"].(map[string]any)
+	require.True(t, ok, "expected nested map[string]any pg filters, got %T", req.Filters["pg"])
+	usersFilters, ok := pgFilters["users"].(map[string]any)
+	require.True(t, ok, "expected pg filter table normalized to users (nested any), got %#v", pgFilters)
+	cond, ok := usersFilters["status"].(modelJob.FilterCondition)
+	require.True(t, ok, "expected status FilterCondition leaf, got %T", usersFilters["status"])
+	assert.Equal(t, "a", cond.Equals[0])
 
 	// metadata.source is carried opaque.
 	assert.Equal(t, "plugin_crm", req.Metadata["source"])
