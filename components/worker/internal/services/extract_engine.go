@@ -10,6 +10,7 @@ import (
 
 	"github.com/LerianStudio/fetcher/pkg/engine"
 	"github.com/LerianStudio/fetcher/pkg/enginecompat/connectioncompat"
+	plugincrm "github.com/LerianStudio/fetcher/pkg/enginecompat/plugincrm"
 	"github.com/LerianStudio/fetcher/pkg/enginecompat/schemacompat"
 	"github.com/LerianStudio/fetcher/pkg/enginecompat/tablenorm"
 	"github.com/LerianStudio/fetcher/pkg/model"
@@ -24,6 +25,15 @@ import (
 // is wired, and falls back to the legacy direct-datasource path otherwise. The
 // fallback keeps the migration opt-in: a deployment with no Engine wired behaves
 // byte-identically to the pre-migration Worker.
+//
+// plugin_crm is the ONE datasource the generic Engine path does not cover: its
+// extraction needs collection prefix fan-out, search-field filter hashing, and PII
+// field decryption — product policy that the Engine core stays agnostic of. So when
+// the Engine is wired, the message is SPLIT by datasource: the plugin_crm portion
+// (if any) extracts through the EXPLICIT Worker CRM compatibility path
+// (queryExternalData -> queryDatabase -> QueryPluginCRM), and the remaining generic
+// datasources extract through the Engine runner. Both merge into the same result.
+// A job with no plugin_crm datasource never touches CRM code.
 func (uc *UseCase) extractInto(
 	ctx context.Context,
 	message ExtractExternalDataMessage,
@@ -34,7 +44,100 @@ func (uc *UseCase) extractInto(
 		return uc.queryExternalData(ctx, message, connections, result)
 	}
 
-	return uc.extractViaEngine(ctx, message, connections, result)
+	crmMessage, genericMessage := splitCRMCompatibility(message, connections)
+
+	// plugin_crm portion: explicit CRM compatibility path, Worker-owned, byte-identical
+	// to the legacy extraction (reuses queryExternalData -> QueryPluginCRM unchanged).
+	if crmMessage != nil {
+		if err := uc.queryExternalData(ctx, *crmMessage, connections, result); err != nil {
+			return err
+		}
+	}
+
+	// Generic portion: the Engine runner. Skipped entirely for a CRM-only job so a
+	// plan-then-execute call is never made with an empty request.
+	if genericMessage != nil {
+		if err := uc.extractViaEngine(ctx, *genericMessage, connections, result); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// splitCRMCompatibility partitions a message into its plugin_crm portion (extracted
+// through the Worker CRM compatibility path) and its generic portion (extracted
+// through the Engine runner). It returns nil for a portion that has no datasources,
+// so a CRM-only or generic-only job runs exactly one path.
+//
+// The CRM selection is EXACT and explicit (plugincrm.IsPluginCRM on the config name,
+// AND a MongoDB connection type), mirroring the legacy queryDatabase branch. A
+// generic datasource — including names that merely resemble "plugin_crm" — never
+// triggers CRM behavior. Metadata is carried on BOTH portions unchanged so each path
+// sees the same opaque metadata.source it does today.
+func splitCRMCompatibility(
+	message ExtractExternalDataMessage,
+	connections []*model.Connection,
+) (crm, generic *ExtractExternalDataMessage) {
+	crmTypes := mongoConfigsByName(connections)
+
+	crmFields := map[string]map[string][]string{}
+	genericFields := map[string]map[string][]string{}
+
+	for configName, tables := range message.MappedFields {
+		if plugincrm.IsPluginCRM(configName) && crmTypes[configName] {
+			crmFields[configName] = tables
+		} else {
+			genericFields[configName] = tables
+		}
+	}
+
+	if len(crmFields) > 0 {
+		crm = subMessage(message, crmFields)
+	}
+
+	if len(genericFields) > 0 {
+		generic = subMessage(message, genericFields)
+	}
+
+	return crm, generic
+}
+
+// mongoConfigsByName indexes which config names resolve to a MongoDB connection, so
+// the CRM split predicate matches the legacy "MongoDB AND plugin_crm" condition.
+func mongoConfigsByName(connections []*model.Connection) map[string]bool {
+	mongo := make(map[string]bool, len(connections))
+
+	for _, conn := range connections {
+		if conn != nil && conn.Type == model.TypeMongoDB {
+			mongo[conn.ConfigName] = true
+		}
+	}
+
+	return mongo
+}
+
+// subMessage builds a message carrying only the given datasources' mapped fields,
+// their matching filters, and the original (opaque) metadata. The job id is
+// preserved so both portions report against the same job.
+func subMessage(message ExtractExternalDataMessage, fields map[string]map[string][]string) *ExtractExternalDataMessage {
+	var filters map[string]map[string]map[string]modelJob.FilterCondition
+
+	if len(message.Filters) > 0 {
+		filters = make(map[string]map[string]map[string]modelJob.FilterCondition, len(fields))
+		for configName := range fields {
+			if f, ok := message.Filters[configName]; ok {
+				filters[configName] = f
+			}
+		}
+	}
+
+	return &ExtractExternalDataMessage{
+		JobID:        message.JobID,
+		MappedFields: fields,
+		Filters:      filters,
+		Metadata:     message.Metadata,
+	}
 }
 
 // extractViaEngine maps the queued job into an engine.ExtractionRequest, bridges
