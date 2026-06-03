@@ -32,7 +32,7 @@ type crmCompatDataSource struct {
 func (d crmCompatDataSource) GetConfig() modelDatasource.DataSourceConfig {
 	return modelDatasource.DataSourceConfig{Type: string(model.TypeMongoDB), ConfigName: "plugin_crm"}
 }
-func (d crmCompatDataSource) GetType() string { return string(model.TypeMongoDB) }
+func (d crmCompatDataSource) GetType() string                              { return string(model.TypeMongoDB) }
 func (d crmCompatDataSource) Connect(context.Context, libLog.Logger) error { return nil }
 func (d crmCompatDataSource) Close(context.Context) error                  { return nil }
 func (d crmCompatDataSource) Query(context.Context, map[string][]string, map[string]map[string]modelJob.FilterCondition, libLog.Logger) (map[string][]map[string]any, error) {

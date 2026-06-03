@@ -224,6 +224,26 @@ set-env:
 	@echo "[ok] Environment files set up successfully"
 
 #-------------------------------------------------------
+# CI Pipeline
+#-------------------------------------------------------
+
+# Deterministic, non-live quality gate. Mirrors the Lerian CI pattern
+# (cf. plugin-br-bank-transfer) restricted to steps that need no Docker
+# daemon, no live infrastructure, and no GITHUB_TOKEN — so it runs the
+# same locally and in CI. Docker-bound steps (generate-docs, test-e2e,
+# test-chaos) stay available standalone and run in their own CI stages.
+.PHONY: ci
+ci:
+	$(call print_title,Running full CI pipeline)
+	@$(MAKE) tidy
+	@$(MAKE) format
+	@$(MAKE) vet
+	@$(MAKE) lint
+	@$(MAKE) sec
+	@$(MAKE) test-unit
+	@echo "[ok] CI pipeline passed"
+
+#-------------------------------------------------------
 # Build Commands
 #-------------------------------------------------------
 
@@ -533,6 +553,16 @@ check-tests:
 # Code Quality Commands
 #-------------------------------------------------------
 
+.PHONY: vet
+vet:
+	$(call print_title,Running go vet)
+	@if find . -name "*.go" -type f | grep -q .; then \
+		go vet ./...; \
+		echo "[ok] go vet completed successfully"; \
+	else \
+		echo "No Go files found, skipping go vet"; \
+	fi
+
 .PHONY: lint
 lint:
 	$(call print_title,Running linters)
@@ -573,7 +603,7 @@ sec:
 	fi
 	@if find . -name "*.go" -type f | grep -q .; then \
 		echo "Running security checks..."; \
-		gosec -quiet -exclude-dir=.docs -exclude-dir=docs ./...; \
+		gosec -quiet -exclude-dir=.docs -exclude-dir=docs ./... && \
 		echo "[ok] Security checks completed"; \
 	else \
 		echo "No Go files found, skipping security checks"; \
