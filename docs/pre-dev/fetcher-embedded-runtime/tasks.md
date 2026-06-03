@@ -23,7 +23,7 @@ Recommended implementation agent for every task: `ring:backend-engineer-golang`.
 | T-007 | Add synchronous execution runner, canonical result model, and result sink port | backend | 14h | Medium | T-006 | ✅ Done |
 | T-008 | Migrate Manager connection/schema compatibility paths over Engine | backend | 12h | Medium | T-003, T-005 | ✅ Done |
 | T-009 | Migrate Manager job creation/planning path over Engine while preserving RabbitMQ dispatch | backend | 14h | Medium | T-006, T-008 | ✅ Done |
-| T-010 | Migrate Worker extraction path over Engine while preserving job status/results/events | backend | 16h | Medium | T-007, T-009 | 🔄 Doing |
+| T-010 | Migrate Worker extraction path over Engine while preserving job status/results/events | backend | 16h | Medium | T-007, T-009 | ✅ Done |
 
 ## Business Deliverables
 
