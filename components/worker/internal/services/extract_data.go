@@ -19,7 +19,6 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/engine"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	modelJob "github.com/LerianStudio/fetcher/pkg/model/job"
-	portDS "github.com/LerianStudio/fetcher/pkg/ports/datasource"
 	tms3 "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/s3"
 	observability "github.com/LerianStudio/lib-observability"
 	libLog "github.com/LerianStudio/lib-observability/log"
@@ -485,109 +484,6 @@ func (uc *UseCase) publishJobNotificationPayload(ctx context.Context, status, jo
 	if err := uc.emitJobNotificationEvent(ctx, status, jobID, payload); err != nil {
 		logger.Log(ctx, libLog.LevelError, "error emitting job notification with lib-streaming", libLog.Err(err))
 		return fmt.Errorf("emitting job notification event: %w", err)
-	}
-
-	return nil
-}
-
-// queryExternalData retrieves data from external data sources specified in the message and populates the result map.
-func (uc *UseCase) queryExternalData(ctx context.Context, message ExtractExternalDataMessage, connections []*model.Connection, result map[string]map[string][]map[string]any) error {
-	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
-
-	ctx, span := tracer.Start(ctx, "service.extract_external_data.query_external_data")
-	defer span.End()
-
-	span.SetAttributes(attribute.String("app.request.request_id", reqID))
-
-	for databaseName, tables := range message.MappedFields {
-		if err := uc.queryDatabase(ctx, databaseName, tables, connections, message.Filters, result, logger, tracer); err != nil {
-			return fmt.Errorf("failed to query database %s: %w", databaseName, err)
-		}
-	}
-
-	return nil
-}
-
-// queryDatabase handles data retrieval for a specific database.
-func (uc *UseCase) queryDatabase(
-	ctx context.Context,
-	databaseName string,
-	tables map[string][]string,
-	connections []*model.Connection,
-	allFilters map[string]map[string]map[string]modelJob.FilterCondition,
-	result map[string]map[string][]map[string]any,
-	logger libLog.Logger,
-	tracer trace.Tracer,
-) error {
-	ctx, dbSpan := tracer.Start(ctx, "service.extract_external_data.query_external_data.database")
-	defer dbSpan.End()
-
-	logger.Log(ctx, libLog.LevelInfo, "querying database", libLog.String("database_name", databaseName))
-
-	var foundConnection *model.Connection
-
-	for _, conn := range connections {
-		if conn != nil && conn.ConfigName == databaseName {
-			foundConnection = conn
-			break
-		}
-	}
-
-	if foundConnection == nil {
-		err := pkg.ValidationError{Code: "FET-0054", Title: "Connection Not Found", Message: fmt.Sprintf("connection not found for database: %s", databaseName)}
-		libOtel.HandleSpanBusinessErrorEvent(dbSpan, "Connection not found", err)
-
-		return err
-	}
-
-	// Create DataSource using injected factory
-	dataSource, err := uc.CreateDataSource(ctx, foundConnection)
-	if err != nil {
-		libOtel.HandleSpanError(dbSpan, "Error creating data source", err)
-		return fmt.Errorf("failed to create data source for %s: %w", databaseName, err)
-	}
-
-	// Establish connection
-	if err := dataSource.Connect(ctx, logger); err != nil {
-		libOtel.HandleSpanError(dbSpan, "Error connecting to data source", err)
-		return fmt.Errorf("failed to connect to %s: %w", databaseName, err)
-	}
-
-	// Ensure connection is closed after query
-	defer func() {
-		if closeErr := dataSource.Close(ctx); closeErr != nil {
-			logger.Log(ctx, libLog.LevelWarn, "error closing connection",
-				libLog.String("database_name", databaseName),
-				libLog.Err(closeErr),
-			)
-		}
-	}()
-
-	// Prepare a result map for this database
-	if _, databaseExists := result[databaseName]; !databaseExists {
-		result[databaseName] = make(map[string][]map[string]any)
-	}
-
-	databaseFilters := allFilters[databaseName]
-
-	if foundConnection.Type == model.TypeMongoDB && databaseName == "plugin_crm" {
-		crmDS, ok := dataSource.(portDS.CRMQueryable)
-		if !ok {
-			return pkg.ValidationError{Code: "FET-0055", Title: "Unsupported Operation", Message: "data source for plugin_crm does not support CRM queries"}
-		}
-
-		return uc.QueryPluginCRM(ctx, crmDS, databaseName, tables, databaseFilters, result, logger)
-	}
-
-	queryResult, errQuery := dataSource.Query(ctx, tables, databaseFilters, logger)
-	if errQuery != nil {
-		libOtel.HandleSpanError(dbSpan, "Error querying data source", errQuery)
-		return fmt.Errorf("failed to query %s: %w", databaseName, errQuery)
-	}
-
-	// Merge query results into the result map
-	for tableOrCollection, tableResult := range queryResult {
-		result[databaseName][tableOrCollection] = tableResult
 	}
 
 	return nil

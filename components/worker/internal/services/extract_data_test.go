@@ -1207,33 +1207,6 @@ func TestEncryptData(t *testing.T) {
 	})
 }
 
-// TestQueryExternalData_EmptyMappedFields tests queryExternalData with empty mapped fields.
-func TestQueryExternalData_EmptyMappedFields(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mocks := newTestMocks(ctrl)
-	uc := newTestUseCase(mocks)
-
-	ctx := testContext()
-
-	message := ExtractExternalDataMessage{
-		JobID:        newTestJobID(),
-		MappedFields: map[string]map[string][]string{}, // empty
-	}
-
-	result := make(map[string]map[string][]map[string]any)
-
-	err := uc.queryExternalData(ctx, message, nil, result)
-	if err != nil {
-		t.Fatalf("expected no error for empty mapped fields, got: %v", err)
-	}
-
-	if len(result) != 0 {
-		t.Errorf("expected empty result, got %d entries", len(result))
-	}
-}
-
 // TestExtractExternalData_JobRepositoryFindError tests error handling when job lookup fails.
 func TestExtractExternalData_JobRepositoryFindError(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -1504,95 +1477,6 @@ func TestCountTotalRows_LargeDataset(t *testing.T) {
 	count := countTotalRows(result)
 	if count != expectedCount {
 		t.Fatalf("expected count %d, got %d", expectedCount, count)
-	}
-}
-
-// TestQueryDatabase_ConnectionNotFound tests queryDatabase when connection is not found.
-func TestQueryDatabase_ConnectionNotFound(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mocks := newTestMocks(ctrl)
-	uc := newTestUseCase(mocks)
-
-	ctx := testContext()
-	logger := testLogger()
-
-	// Empty connections list - connection not found for database
-	connections := []*model.Connection{}
-
-	tables := map[string][]string{
-		"users": {"id", "name", "email"},
-	}
-
-	result := make(map[string]map[string][]map[string]any)
-
-	err := uc.queryDatabase(
-		ctx,
-		"postgres_db",
-		tables,
-		connections,
-		nil,
-		result,
-		logger,
-		testTracer(),
-	)
-
-	if err == nil {
-		t.Fatal("expected error when connection not found")
-	}
-
-	if !strings.Contains(err.Error(), "connection not found for database: postgres_db") {
-		t.Errorf("unexpected error message: %v", err)
-	}
-}
-
-// TestQueryDatabase_ConnectionFoundButDifferentConfigName tests queryDatabase with multiple connections.
-func TestQueryDatabase_ConnectionFoundButDifferentConfigName(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mocks := newTestMocks(ctrl)
-	uc := newTestUseCase(mocks)
-
-	ctx := testContext()
-	logger := testLogger()
-
-	// Connections with different config names
-	connections := []*model.Connection{
-		{
-			ConfigName: "mysql_db",
-			Type:       model.TypeMySQL,
-		},
-		{
-			ConfigName: "oracle_db",
-			Type:       model.TypeOracle,
-		},
-	}
-
-	tables := map[string][]string{
-		"users": {"id", "name"},
-	}
-
-	result := make(map[string]map[string][]map[string]any)
-
-	err := uc.queryDatabase(
-		ctx,
-		"postgres_db", // This config name doesn't exist in connections
-		tables,
-		connections,
-		nil,
-		result,
-		logger,
-		testTracer(),
-	)
-
-	if err == nil {
-		t.Fatal("expected error when connection not found")
-	}
-
-	if !strings.Contains(err.Error(), "connection not found for database: postgres_db") {
-		t.Errorf("unexpected error message: %v", err)
 	}
 }
 
@@ -2005,39 +1889,6 @@ func TestExtractExternalData_ParseErrorWithJobIDInHeaders(t *testing.T) {
 	}
 }
 
-// TestQueryExternalData_WithConnections tests queryExternalData with connections but connection not found for specific database.
-func TestQueryExternalData_WithConnections(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mocks := newTestMocks(ctrl)
-	uc := newTestUseCase(mocks)
-
-	ctx := testContext()
-
-	message := ExtractExternalDataMessage{
-		JobID: newTestJobID(),
-		MappedFields: map[string]map[string][]string{
-			"missing_db": {"table1": {"field1"}},
-		},
-	}
-
-	// Connections don't include the requested database
-	connections := []*model.Connection{
-		{
-			ConfigName: "other_db",
-			Type:       model.TypePostgreSQL,
-		},
-	}
-
-	result := make(map[string]map[string][]map[string]any)
-
-	err := uc.queryExternalData(ctx, message, connections, result)
-	if err == nil {
-		t.Fatal("expected error when connection not found for database")
-	}
-}
-
 // TestEncryptData_NilKeyReturnsError tests that nil derived key returns error.
 func TestEncryptData_NilKeyReturnsError(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -2085,43 +1936,6 @@ func TestEncryptData_Success(t *testing.T) {
 	}
 }
 
-// TestQueryExternalData_MultipleDatabase tests queryExternalData with multiple databases.
-func TestQueryExternalData_MultipleDatabase(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mocks := newTestMocks(ctrl)
-	uc := newTestUseCase(mocks)
-
-	ctx := testContext()
-
-	message := ExtractExternalDataMessage{
-		JobID: newTestJobID(),
-		MappedFields: map[string]map[string][]string{
-			"db1": {"table1": {"field1"}},
-			"db2": {"table2": {"field2"}},
-		},
-	}
-
-	// Neither connection exists - both db1 and db2 will fail with "connection not found"
-	// We don't include any connections to ensure the error is hit before
-	// any DataSource creation (which would require mocking Decrypt)
-	connections := []*model.Connection{}
-
-	result := make(map[string]map[string][]map[string]any)
-
-	// This should fail because neither db1 nor db2 connection is found
-	err := uc.queryExternalData(ctx, message, connections, result)
-	if err == nil {
-		t.Fatal("expected error when database connection not found")
-	}
-
-	// Verify error is about connection not found
-	if !strings.Contains(err.Error(), "connection not found") {
-		t.Errorf("expected 'connection not found' error, got: %v", err)
-	}
-}
-
 // TestSaveExternalData_EmptyResult tests saveExternalData with empty result.
 func TestSaveExternalData_EmptyResult(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -2163,75 +1977,6 @@ func TestSaveExternalData_EmptyResult(t *testing.T) {
 	// Should have 0 rows
 	if resultData.RowCount != 0 {
 		t.Errorf("expected row count 0 for empty result, got %d", resultData.RowCount)
-	}
-}
-
-// TestQueryDatabase_WithFilters tests queryDatabase with database filters.
-func TestQueryDatabase_WithFilters(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mocks := newTestMocks(ctrl)
-	uc := newTestUseCase(mocks)
-
-	ctx := testContext()
-	logger := testLogger()
-
-	connections := []*model.Connection{}
-	tables := map[string][]string{
-		"users": {"id", "name"},
-	}
-
-	allFilters := map[string]map[string]map[string]modelJob.FilterCondition{
-		"postgres_db": {
-			"users": {
-				"status": {Equals: []any{"active"}},
-			},
-		},
-	}
-
-	result := make(map[string]map[string][]map[string]any)
-
-	// Should fail because connection not found
-	err := uc.queryDatabase(
-		ctx,
-		"postgres_db",
-		tables,
-		connections,
-		allFilters,
-		result,
-		logger,
-		testTracer(),
-	)
-
-	if err == nil {
-		t.Fatal("expected error when connection not found")
-	}
-}
-
-// TestQueryExternalData_NilConnections tests queryExternalData with nil connections.
-func TestQueryExternalData_NilConnections(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mocks := newTestMocks(ctrl)
-	uc := newTestUseCase(mocks)
-
-	ctx := testContext()
-
-	message := ExtractExternalDataMessage{
-		JobID: newTestJobID(),
-		MappedFields: map[string]map[string][]string{
-			"db1": {"table1": {"field1"}},
-		},
-	}
-
-	result := make(map[string]map[string][]map[string]any)
-
-	// nil connections should result in connection not found error
-	err := uc.queryExternalData(ctx, message, nil, result)
-	if err == nil {
-		t.Fatal("expected error with nil connections")
 	}
 }
 

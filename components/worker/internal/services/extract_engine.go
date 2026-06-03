@@ -20,36 +20,30 @@ import (
 	libOtel "github.com/LerianStudio/lib-observability/tracing"
 )
 
-// extractInto fills result with the extracted data for the message. It routes
-// through the embedded Engine (plan-then-execute, DIRECT mode) when an EngineRunner
-// is wired, and falls back to the legacy direct-datasource path otherwise. The
-// fallback keeps the migration opt-in: a deployment with no Engine wired behaves
-// byte-identically to the pre-migration Worker.
+// extractInto fills result with the extracted data for the message. After the
+// strangler completion (T-010) extraction flows ONLY through the embedded Engine
+// runner (mandatory; see UseCase.Validate) for generic datasources, and through the
+// explicit plugin_crm compatibility path for CRM.
 //
 // plugin_crm is the ONE datasource the generic Engine path does not cover: its
 // extraction needs collection prefix fan-out, search-field filter hashing, and PII
-// field decryption — product policy that the Engine core stays agnostic of. So when
-// the Engine is wired, the message is SPLIT by datasource: the plugin_crm portion
-// (if any) extracts through the EXPLICIT Worker CRM compatibility path
-// (queryExternalData -> queryDatabase -> QueryPluginCRM), and the remaining generic
-// datasources extract through the Engine runner. Both merge into the same result.
-// A job with no plugin_crm datasource never touches CRM code.
+// field decryption — product policy that the Engine core stays agnostic of. So the
+// message is SPLIT by datasource: the plugin_crm portion (if any) extracts through
+// the EXPLICIT Worker CRM compatibility path (queryPluginCRMDatabase -> QueryPluginCRM),
+// and the remaining generic datasources extract through the Engine runner. Both merge
+// into the same result. A job with no plugin_crm datasource never touches CRM code.
 func (uc *UseCase) extractInto(
 	ctx context.Context,
 	message ExtractExternalDataMessage,
 	connections []*model.Connection,
 	result map[string]map[string][]map[string]any,
 ) error {
-	if uc.EngineRunner == nil {
-		return uc.queryExternalData(ctx, message, connections, result)
-	}
-
 	crmMessage, genericMessage := splitCRMCompatibility(message, connections)
 
 	// plugin_crm portion: explicit CRM compatibility path, Worker-owned, byte-identical
-	// to the legacy extraction (reuses queryExternalData -> QueryPluginCRM unchanged).
+	// to the legacy extraction (reuses the unchanged QueryPluginCRM chain).
 	if crmMessage != nil {
-		if err := uc.queryExternalData(ctx, *crmMessage, connections, result); err != nil {
+		if err := uc.queryPluginCRMDatabase(ctx, *crmMessage, connections, result); err != nil {
 			return err
 		}
 	}
@@ -71,7 +65,7 @@ func (uc *UseCase) extractInto(
 // so a CRM-only or generic-only job runs exactly one path.
 //
 // The CRM selection is EXACT and explicit (plugincrm.IsPluginCRM on the config name,
-// AND a MongoDB connection type), mirroring the legacy queryDatabase branch. A
+// AND a MongoDB connection type), mirroring the legacy MongoDB/plugin_crm branch. A
 // generic datasource — including names that merely resemble "plugin_crm" — never
 // triggers CRM behavior. Metadata is carried on BOTH portions unchanged so each path
 // sees the same opaque metadata.source it does today.

@@ -9,6 +9,8 @@ import (
 	"github.com/LerianStudio/lib-observability"
 
 	"github.com/LerianStudio/fetcher/pkg"
+	"github.com/LerianStudio/fetcher/pkg/model"
+	modelDatasource "github.com/LerianStudio/fetcher/pkg/model/datasource"
 	modelJob "github.com/LerianStudio/fetcher/pkg/model/job"
 	portDS "github.com/LerianStudio/fetcher/pkg/ports/datasource"
 	libCrypto "github.com/LerianStudio/lib-commons/v5/commons/crypto"
@@ -46,6 +48,106 @@ var (
 		return uc.decryptPluginCRMData(logger, collectionResult, fields)
 	}
 )
+
+// queryPluginCRMDatabase is the self-contained plugin_crm extraction path. It is
+// the ONLY caller of the CRM compatibility chain after the strangler completion:
+// the generic extraction path was removed, so plugin_crm no longer rides through a
+// shared generic database query. It resolves the CRM connection, opens the datasource through
+// the injected factory, asserts the CRM capability, and dispatches to QueryPluginCRM
+// — preserving the legacy connection lifecycle (Connect, deferred Close) and CRM
+// behavior (fan-out / merge / filter-hash / decrypt) byte-identically.
+//
+// It handles ONLY plugin_crm config names within the supplied message; the caller
+// (extractInto) has already partitioned the CRM portion via splitCRMCompatibility,
+// so every datasource here is a CRM datasource.
+func (uc *UseCase) queryPluginCRMDatabase(
+	ctx context.Context,
+	message ExtractExternalDataMessage,
+	connections []*model.Connection,
+	result map[string]map[string][]map[string]any,
+) error {
+	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
+
+	ctx, span := tracer.Start(ctx, "service.extract_external_data.query_plugin_crm_database")
+	defer span.End()
+
+	span.SetAttributes(attribute.String("app.request.request_id", reqID))
+
+	for databaseName, collections := range message.MappedFields {
+		foundConnection := findConnectionByConfigName(connections, databaseName)
+		if foundConnection == nil {
+			err := pkg.ValidationError{Code: "FET-0054", Title: "Connection Not Found", Message: fmt.Sprintf("connection not found for database: %s", databaseName)}
+			libOtel.HandleSpanBusinessErrorEvent(span, "Connection not found", err)
+
+			return fmt.Errorf("failed to query database %s: %w", databaseName, err)
+		}
+
+		dataSource, err := uc.CreateDataSource(ctx, foundConnection)
+		if err != nil {
+			libOtel.HandleSpanError(span, "Error creating data source", err)
+			return fmt.Errorf("failed to query database %s: failed to create data source: %w", databaseName, err)
+		}
+
+		if err := dataSource.Connect(ctx, logger); err != nil {
+			libOtel.HandleSpanError(span, "Error connecting to data source", err)
+			return fmt.Errorf("failed to query database %s: failed to connect: %w", databaseName, err)
+		}
+
+		if err := uc.dispatchPluginCRMQuery(ctx, dataSource, databaseName, collections, message.Filters, result, logger); err != nil {
+			return fmt.Errorf("failed to query database %s: %w", databaseName, err)
+		}
+	}
+
+	return nil
+}
+
+// dispatchPluginCRMQuery asserts the CRM capability on the datasource, ensures the
+// connection is closed after the query, and runs QueryPluginCRM. It is split from
+// queryPluginCRMDatabase so the deferred Close is scoped per-datasource (closing
+// each connection before the next, matching the legacy per-database lifecycle).
+func (uc *UseCase) dispatchPluginCRMQuery(
+	ctx context.Context,
+	dataSource modelDatasource.DataSource,
+	databaseName string,
+	collections map[string][]string,
+	allFilters map[string]map[string]map[string]modelJob.FilterCondition,
+	result map[string]map[string][]map[string]any,
+	logger libLog.Logger,
+) error {
+	defer func() {
+		if closeErr := dataSource.Close(ctx); closeErr != nil {
+			logger.Log(ctx, libLog.LevelWarn, "error closing connection",
+				libLog.String("database_name", databaseName),
+				libLog.Err(closeErr),
+			)
+		}
+	}()
+
+	crmDS, ok := dataSource.(portDS.CRMQueryable)
+	if !ok {
+		return pkg.ValidationError{Code: "FET-0055", Title: "Unsupported Operation", Message: "data source for plugin_crm does not support CRM queries"}
+	}
+
+	if result[databaseName] == nil {
+		result[databaseName] = make(map[string][]map[string]any)
+	}
+
+	databaseFilters := allFilters[databaseName]
+
+	return uc.QueryPluginCRM(ctx, crmDS, databaseName, collections, databaseFilters, result, logger)
+}
+
+// findConnectionByConfigName returns the connection whose ConfigName matches the
+// given name, or nil when none matches.
+func findConnectionByConfigName(connections []*model.Connection, configName string) *model.Connection {
+	for _, conn := range connections {
+		if conn != nil && conn.ConfigName == configName {
+			return conn
+		}
+	}
+
+	return nil
+}
 
 // QueryPluginCRM handles querying MongoDB plugin_crm database with special processing.
 // It lists all available collections once and dispatches matching collections to each

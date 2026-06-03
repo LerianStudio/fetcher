@@ -6,11 +6,43 @@ import (
 	"testing"
 
 	"github.com/LerianStudio/fetcher/pkg/crypto"
+	"github.com/LerianStudio/fetcher/pkg/engine"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/model/datasource"
 	"github.com/google/uuid"
 	"go.uber.org/mock/gomock"
 )
+
+// stubEngineRunner is a no-op EngineRunner used to satisfy the mandatory-runner
+// wiring guard in tests that only need a non-nil runner.
+type stubEngineRunner struct{}
+
+func (stubEngineRunner) RunExtraction(context.Context, engine.TenantContext, string, engine.ExtractionRequest) (engine.ExtractionResult, error) {
+	return engine.ExtractionResult{}, nil
+}
+
+// TestUseCase_Validate_RequiresEngineRunner locks the strangler completion: the
+// legacy extraction path is gone, so the Engine runner is MANDATORY. Validate must
+// reject a nil EngineRunner at wiring time (fail fast at construction) rather than
+// nil-panicking deep in extraction.
+func TestUseCase_Validate_RequiresEngineRunner(t *testing.T) {
+	t.Run("nil engine runner is rejected", func(t *testing.T) {
+		uc := &UseCase{}
+
+		err := uc.Validate()
+		if err == nil {
+			t.Fatal("expected Validate to reject a nil EngineRunner, got nil")
+		}
+	})
+
+	t.Run("non-nil engine runner passes", func(t *testing.T) {
+		uc := &UseCase{EngineRunner: stubEngineRunner{}}
+
+		if err := uc.Validate(); err != nil {
+			t.Fatalf("expected Validate to pass with an EngineRunner, got %v", err)
+		}
+	})
+}
 
 func TestSetStorageEncryptDerivedKey(t *testing.T) {
 	t.Run("sets derived key", func(t *testing.T) {

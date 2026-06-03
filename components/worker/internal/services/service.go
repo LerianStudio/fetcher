@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"errors"
 
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/engine"
@@ -96,6 +97,23 @@ type UseCase struct {
 	// keeping the migration opt-in and every legacy test unchanged.
 	EngineRunner EngineRunner
 }
+
+// Validate verifies the UseCase is wired with the mandatory capabilities the
+// extraction path requires. After the strangler completion (T-010) the legacy
+// direct-datasource extraction path is gone, so the embedded Engine runner is
+// MANDATORY: a nil EngineRunner would nil-panic deep in extraction. The guard
+// fails fast at wiring time (bootstrap) with a clear error instead. The bootstrap
+// is the sole guarantor that EngineRunner is set.
+func (uc *UseCase) Validate() error {
+	if uc.EngineRunner == nil {
+		return errEngineRunnerRequired
+	}
+
+	return nil
+}
+
+// errEngineRunnerRequired is returned by Validate when no Engine runner is wired.
+var errEngineRunnerRequired = errors.New("worker UseCase requires a non-nil EngineRunner: the legacy extraction path has been removed")
 
 // SetStorageEncryptDerivedKey configures the HKDF-derived AES-256 key for storage encryption.
 func (uc *UseCase) SetStorageEncryptDerivedKey(key []byte) {

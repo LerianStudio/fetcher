@@ -265,6 +265,37 @@ func TestExtractInto_MixedCRMAndGeneric_CRMCompatibilityRoutesBoth(t *testing.T)
 	assert.NotContains(t, *runner.seen, "plugin_crm", "Engine runner must never receive plugin_crm")
 }
 
+// TestQueryPluginCRMDatabase_NonCRMQueryableDataSource_Rejected proves that a
+// plugin_crm connection whose datasource does NOT implement the CRM capability is
+// rejected with the FET-0055 unsupported-operation error, preserving the legacy
+// CRM-cast guard.
+func TestQueryPluginCRMDatabase_NonCRMQueryableDataSource_Rejected(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+
+	// Plain DataSource mock — does NOT implement CRMQueryable.
+	plainDS := modelDatasource.NewMockDataSource(ctrl)
+	plainDS.EXPECT().Connect(gomock.Any(), gomock.Any()).Return(nil)
+	plainDS.EXPECT().Close(gomock.Any()).Return(nil)
+	uc.SetDataSourceFactory(func(context.Context, *model.Connection, workerCrypto.Cryptor) (modelDatasource.DataSource, error) {
+		return plainDS, nil
+	})
+
+	message := ExtractExternalDataMessage{
+		JobID:        newTestJobID(),
+		MappedFields: map[string]map[string][]string{"plugin_crm": {"holders": {"id"}}},
+	}
+	connections := []*model.Connection{{ConfigName: "plugin_crm", Type: model.TypeMongoDB}}
+	result := make(map[string]map[string][]map[string]any)
+
+	err := uc.queryPluginCRMDatabase(testContext(), message, connections, result)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "does not support CRM queries")
+}
+
 // fixedGenericRunner returns fixed direct bytes and records which config names it
 // was asked to extract.
 type fixedGenericRunner struct {

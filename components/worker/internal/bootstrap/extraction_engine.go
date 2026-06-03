@@ -5,13 +5,36 @@ package bootstrap
 
 import (
 	"context"
+	"fmt"
 
+	"github.com/LerianStudio/fetcher/components/worker/internal/services"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/datasource"
 	"github.com/LerianStudio/fetcher/pkg/engine"
 	enginecompatdatasource "github.com/LerianStudio/fetcher/pkg/enginecompat/datasource"
 	"github.com/LerianStudio/fetcher/pkg/enginecompat/schemacompat"
 )
+
+// wireEngineRunner builds the embedded extraction Engine, sets it as the Worker
+// UseCase's mandatory EngineRunner, and fails fast at startup if the resulting
+// wiring is invalid. After the strangler completion (T-010) the legacy extraction
+// path is gone, so a nil runner is a wiring bug that must surface here — not
+// nil-panic during extraction. Extracting this keeps InitWorker's complexity down
+// while making the bootstrap the sole guarantor that EngineRunner is set.
+func wireEngineRunner(service *services.UseCase, dsFactory datasource.DataSourceFactory, cryptor crypto.Cryptor) error {
+	extractionEngine, err := newExtractionEngine(dsFactory, cryptor)
+	if err != nil {
+		return fmt.Errorf("build extraction engine: %w", err)
+	}
+
+	service.EngineRunner = newWorkerEngineRunner(extractionEngine)
+
+	if err := service.Validate(); err != nil {
+		return fmt.Errorf("worker service wiring invalid: %w", err)
+	}
+
+	return nil
+}
 
 // extractionConnectorRegistry resolves the single extraction ConnectorFactory for
 // any datasource type. Type validation happens inside the factory's Build (from
@@ -32,7 +55,7 @@ func (r extractionConnectorRegistry) Connector(string) (engine.ConnectorFactory,
 //   - ConnectorRegistry: the enginecompat datasource ConnectorFactory. The Worker
 //     seeds the FULL resolved connection record into each descriptor, so the
 //     factory's rich-record path connects with the exact SSL/schema/encrypted
-//     credential the Worker resolved (the legacy queryDatabase credential path).
+//     credential the Worker resolved (the legacy direct-datasource credential path).
 //     The CredentialResolver is a no-op fallback that is never reached on this path.
 //   - ConnectionStore: the request-scoped schemacompat store, which returns the
 //     connection the Worker already resolved (seeded via WithResolvedConnections)
