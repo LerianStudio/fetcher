@@ -324,8 +324,10 @@
       "MEMORY UPDATE (cycle-completion): HMAC drift now CONFIRMED IN CODE — Fetcher signs PLAINTEXT (json.MarshalIndent 2-space, pre-encryption), declared in integrity.signature; matcher signs ciphertext; reconciliation lands at matcher's embedding. Update engine-embedding-model.md (was 'documented in some notes')."
     ]
   },
-  "status": "in_progress",
-  "feedback_loop_completed": false,
+  "status": "completed",
+  "completed_at": "2026-06-03T00:00:00Z",
+  "feedback_loop_completed": true,
+  "dev_report": "docs/feedbacks/cycle-2026-06-03/fetcher-embedded-runtime-cycle-report.md",
   "current_task_index": 9,
   "current_gate": 9,
   "current_subtask_index": 3,
