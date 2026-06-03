@@ -73,6 +73,23 @@ func NewRoutes(
 	// Version
 	f.Get("/version", commonsHttp.Version)
 
+	// License enforcement. Mounted AFTER the unauthenticated probes
+	// (/health, /readyz, /metrics, /version, /swagger) and BEFORE the /v1/*
+	// business routes: Fiber walks the stack in registration order and stops
+	// at the first matching terminal handler, so probe requests never reach
+	// this middleware (kept ungated for Kubernetes/LB), while every business
+	// request flows through it. The first /v1/* request triggers the
+	// lib-license-go startup validation (sync.Once) and starts the 7-day
+	// background refresh; subsequent requests are validated per organization.
+	// lib-license-go fails closed: an invalid/expired org yields 403, and an
+	// all-organizations-invalid result at startup terminates the process.
+	//
+	// licenseClient is nil when enforcement is gated off for
+	// DEPLOYMENT_MODE=local (dev / E2E); the gate is simply not mounted then.
+	if licenseClient != nil {
+		f.Use(licenseClient.Middleware())
+	}
+
 	// Connections
 	f.Post("/v1/management/connections", auth.Authorize(applicationName, connectionsResource, "post"), WhenEnabled(ttMiddleware), connectionHandler.CreateConnection)
 	f.Get("/v1/management/connections", auth.Authorize(applicationName, connectionsResource, "get"), WhenEnabled(ttMiddleware), connectionHandler.ListConnections)
