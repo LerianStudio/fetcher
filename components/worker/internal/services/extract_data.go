@@ -127,7 +127,7 @@ func (uc *UseCase) ExtractExternalData(ctx context.Context, body []byte, headers
 	}
 
 	result := make(map[string]map[string][]map[string]any)
-	if err := uc.queryExternalData(ctx, *message, connections, result); err != nil {
+	if err := uc.extractInto(ctx, *message, connections, result); err != nil {
 		return uc.handleErrorWithUpdate(ctx, message.JobID, *message, span, "Error querying external data", err, logger)
 	}
 

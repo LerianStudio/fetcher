@@ -10,11 +10,182 @@ import (
 	"time"
 
 	"github.com/LerianStudio/fetcher/pkg/constant"
+	"github.com/LerianStudio/fetcher/pkg/engine"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	modelJob "github.com/LerianStudio/fetcher/pkg/model/job"
+	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
 	"github.com/google/uuid"
 	"go.uber.org/mock/gomock"
 )
+
+// capturingEngineRunner is a test fake for the Engine extraction seam. It records
+// every execution input the Worker maps and hands to the Engine, so the mapping
+// contract (job id, mapped fields, filters, metadata.source, tenant scope) can be
+// asserted at the seam without a live Engine.
+type capturingEngineRunner struct {
+	calls  []engineRunnerCall
+	result engine.ExtractionResult
+	err    error
+}
+
+type engineRunnerCall struct {
+	tenant  engine.TenantContext
+	jobID   string
+	request engine.ExtractionRequest
+}
+
+func (r *capturingEngineRunner) RunExtraction(
+	_ context.Context,
+	tenant engine.TenantContext,
+	jobID string,
+	request engine.ExtractionRequest,
+) (engine.ExtractionResult, error) {
+	r.calls = append(r.calls, engineRunnerCall{tenant: tenant, jobID: jobID, request: request})
+	return r.result, r.err
+}
+
+// TestExtractExternalData_MapsEligibleJobToEngineExecution proves the Worker maps
+// a pending, eligible job's queue message + persisted record into the Engine
+// execution input and invokes the Engine runner EXACTLY ONCE. It pins the locked
+// tenant model (B2): engine.TenantContext carries tenantId + requestId ONLY — no
+// organization, no product. metadata.source ("plugin_crm" here) is preserved as
+// opaque execution metadata. Filters and mapped fields reach the Engine intact.
+func TestExtractExternalData_MapsEligibleJobToEngineExecution(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+	uc.SetStorageEncryptDerivedKey([]byte("01234567890123456789012345678901")) // valid 32-byte AES key
+
+	runner := &capturingEngineRunner{
+		result: engine.ExtractionResult{
+			Direct: &engine.DirectResult{
+				Data:     []byte(`{"postgres_db":{"users":[{"id":1}]}}`),
+				Format:   "json",
+				RowCount: 1,
+			},
+		},
+	}
+	uc.EngineRunner = runner
+
+	const tenantID = "tenant-engine-exec"
+	ctx := tmcore.ContextWithTenantID(testContext(), tenantID)
+	jobID := newTestJobID()
+
+	filters := map[string]map[string]map[string]modelJob.FilterCondition{
+		"postgres_db": {"users": {"status": {Equals: []any{"active"}}}},
+	}
+
+	message := ExtractExternalDataMessage{
+		JobID: jobID,
+		MappedFields: map[string]map[string][]string{
+			"postgres_db": {"users": {"id", "name"}},
+		},
+		Filters:  filters,
+		Metadata: map[string]any{"source": "plugin_crm"},
+	}
+	body := mustMarshalMessage(t, message)
+
+	pendingJob := &model.Job{ID: jobID, Status: model.JobStatusPending}
+	connection := &model.Connection{ConfigName: "postgres_db", Type: model.TypePostgreSQL}
+
+	mocks.jobRepo.EXPECT().FindByID(gomock.Any(), jobID).Return(pendingJob, nil).Times(2)
+	mocks.jobRepo.EXPECT().
+		UpdateStatus(gomock.Any(), jobID, model.JobStatusProcessing, "", "", nil).
+		Return(nil)
+	mocks.connRepo.EXPECT().
+		FindByConfigNames(gomock.Any(), []string{"postgres_db"}).
+		Return([]*model.Connection{connection}, nil)
+
+	// Terminal completion path (status + event) is preserved Worker-side; allow it.
+	mocks.jobRepo.EXPECT().
+		UpdateStatus(gomock.Any(), jobID, model.JobStatusCompleted, gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil).AnyTimes()
+	mocks.seaweedFS.EXPECT().Put(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	mocks.rabbitPublisher.EXPECT().
+		Publish(gomock.Any(), "test-exchange", "job.completed", gomock.Any()).
+		Return(nil).AnyTimes()
+
+	if err := uc.ExtractExternalData(ctx, body, nil); err != nil {
+		t.Fatalf("expected eligible job to reach engine execution, got error: %v", err)
+	}
+
+	if len(runner.calls) != 1 {
+		t.Fatalf("expected engine runner to be invoked exactly once, got %d calls", len(runner.calls))
+	}
+
+	call := runner.calls[0]
+
+	// Tenant bridge: tenantId only, dual-tenant-truth with the Worker-resolved tenant.
+	if call.tenant.TenantID != tenantID {
+		t.Fatalf("expected engine tenant id %q, got %q", tenantID, call.tenant.TenantID)
+	}
+
+	// Execution identity: the host job id reaches the Engine as the execution key.
+	if call.jobID != jobID.String() {
+		t.Fatalf("expected engine execution job id %q, got %q", jobID.String(), call.jobID)
+	}
+
+	// Mapped fields reach the Engine intact.
+	sel, ok := call.request.MappedFields["postgres_db"]
+	if !ok {
+		t.Fatalf("expected mapped fields for postgres_db to reach engine, got %#v", call.request.MappedFields)
+	}
+	if got := sel["users"]; len(got) != 2 || got[0] != "id" || got[1] != "name" {
+		t.Fatalf("expected users fields [id name] to reach engine, got %v", got)
+	}
+
+	// Filters reach the Engine (opaque, keyed by datasource config name).
+	if call.request.Filters == nil {
+		t.Fatal("expected filters to reach engine execution input, got nil")
+	}
+	if _, ok := call.request.Filters["postgres_db"]; !ok {
+		t.Fatalf("expected postgres_db filters to reach engine, got %#v", call.request.Filters)
+	}
+
+	// metadata.source is preserved as opaque execution metadata.
+	if src, _ := call.request.Metadata["source"].(string); src != "plugin_crm" {
+		t.Fatalf("expected metadata.source=plugin_crm to reach engine, got %q", src)
+	}
+}
+
+// TestExtractExternalData_CompletedJobSkipsEngineExecution proves the completed-job
+// skip logic stays Worker-owned: a job already in completed status is skipped and
+// the Engine runner is NEVER invoked.
+func TestExtractExternalData_CompletedJobSkipsEngineExecution(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+
+	runner := &capturingEngineRunner{}
+	uc.EngineRunner = runner
+
+	ctx := testContext()
+	jobID := newTestJobID()
+
+	body := mustMarshalMessage(t, ExtractExternalDataMessage{
+		JobID: jobID,
+		MappedFields: map[string]map[string][]string{
+			"postgres_db": {"users": {"id"}},
+		},
+		Metadata: map[string]any{"source": "test-service"},
+	})
+
+	mocks.jobRepo.EXPECT().
+		FindByID(gomock.Any(), jobID).
+		Return(&model.Job{ID: jobID, Status: model.JobStatusCompleted}, nil)
+
+	if err := uc.ExtractExternalData(ctx, body, nil); err != nil {
+		t.Fatalf("expected completed job to be skipped without error, got: %v", err)
+	}
+
+	if len(runner.calls) != 0 {
+		t.Fatalf("expected engine runner NOT to be invoked for completed job, got %d calls", len(runner.calls))
+	}
+}
 
 // TestParseMessage_ValidMessage tests successful message parsing.
 func TestParseMessage_ValidMessage(t *testing.T) {

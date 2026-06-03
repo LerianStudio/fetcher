@@ -33,6 +33,9 @@ import (
 
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/engine"
+	"github.com/LerianStudio/fetcher/pkg/enginecompat/connectioncompat"
+	"github.com/LerianStudio/fetcher/pkg/enginecompat/schemacompat"
+	"github.com/LerianStudio/fetcher/pkg/enginecompat/tablenorm"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/model/datasource"
 	"github.com/LerianStudio/fetcher/pkg/model/job"
@@ -107,12 +110,26 @@ type Connector struct {
 	ds datasource.DataSource
 }
 
-// TestConnection performs the explicit connectivity check. It resolves the
-// credential, assembles an in-memory *model.Connection, and invokes the legacy
-// factory — which connects eagerly (and, for MongoDB, pings). The resulting
-// DataSource is cached for subsequent lifecycle calls. All failures are mapped
-// to safe Engine errors that carry no secret, DSN, or driver internals.
+// TestConnection performs the explicit connectivity check by lazily creating the
+// underlying datasource through the host factory (which connects eagerly and, for
+// MongoDB, pings). The resulting DataSource is cached for subsequent lifecycle
+// calls. All failures are mapped to safe Engine errors that carry no secret, DSN,
+// or driver internals.
 func (c *Connector) TestConnection(ctx context.Context) error {
+	return c.ensureConnected(ctx)
+}
+
+// ensureConnected lazily creates and caches the underlying datasource through the
+// host factory. It is idempotent: a second call is a no-op once connected. It backs
+// BOTH lifecycle entry points — TestConnection (the explicit execute-path connect)
+// and DiscoverSchema (the plan-path connect, on which the Engine does NOT call
+// TestConnection first), mirroring the schemacompat connector's lazy-connect so the
+// extraction connector serves the discovery/validation path too.
+func (c *Connector) ensureConnected(ctx context.Context) error {
+	if c.ds != nil {
+		return nil
+	}
+
 	conn, err := c.buildConnection(ctx)
 	if err != nil {
 		return err
@@ -131,11 +148,13 @@ func (c *Connector) TestConnection(ctx context.Context) error {
 	return nil
 }
 
-// DiscoverSchema reads the datasource schema through the underlying DataSource
-// and maps it into a secret-free Engine SchemaSnapshot.
+// DiscoverSchema reads the datasource schema through the underlying DataSource and
+// maps it into a secret-free Engine SchemaSnapshot. It lazily connects on first use
+// because the Engine's discovery/validation lifecycle is build -> discover -> close
+// without a separate TestConnection step.
 func (c *Connector) DiscoverSchema(ctx context.Context) (engine.SchemaSnapshot, error) {
-	if c.ds == nil {
-		return engine.SchemaSnapshot{}, engine.NewEngineError(engine.CategoryUnavailable, "datasource is not connected")
+	if err := c.ensureConnected(ctx); err != nil {
+		return engine.SchemaSnapshot{}, err
 	}
 
 	schemaArg := c.schemaArg()
@@ -145,7 +164,11 @@ func (c *Connector) DiscoverSchema(ctx context.Context) (engine.SchemaSnapshot, 
 		return engine.SchemaSnapshot{}, engine.NewEngineError(engine.CategoryUnavailable, "failed to discover datasource schema")
 	}
 
-	return snapshotFromSchema(c.descriptor.ConfigName, schema), nil
+	// The descriptor type is already validated at Build time, so a parse error here
+	// is a defensive no-op default (empty type -> no default-schema stripping).
+	dbType, _ := model.NewTypeFromString(c.descriptor.Type)
+
+	return snapshotFromSchema(c.descriptor.ConfigName, dbType, schema), nil
 }
 
 // Query executes the extraction request through the underlying DataSource. It
@@ -185,11 +208,26 @@ func (c *Connector) Close(ctx context.Context) error {
 	return nil
 }
 
-// buildConnection resolves the credential and assembles an in-memory
-// *model.Connection from the secret-free descriptor. EncryptionKeyVersion is
-// left empty so the legacy factory treats the resolved password as plaintext
-// (its in-memory connection contract) rather than ciphertext to decrypt.
+// buildConnection produces the *model.Connection the host factory connects with.
+//
+// It has TWO faithful paths:
+//
+//   - RICH-RECORD path (Worker wiring): when the descriptor carries the host's full
+//     connection record in its opaque HostAttributes payload (seeded via
+//     connectioncompat.DescriptorFromConnection), that record is used VERBATIM —
+//     preserving the exact SSL config, schema, and ENCRYPTED password + key version
+//     the host resolved, so the factory decrypts via the cryptor exactly like the
+//     legacy queryDatabase path. This is the byte-identical extraction credential
+//     path the Worker needs.
+//   - RESOLVER path (Manager-style wiring): when no rich record is present, the
+//     adapter assembles an in-memory connection from the secret-free descriptor and
+//     the CredentialResolver's plaintext password (EncryptionKeyVersion left empty so
+//     the factory treats it as plaintext).
 func (c *Connector) buildConnection(ctx context.Context) (*model.Connection, error) {
+	if rich := connectioncompat.ConnectionFromDescriptor(c.descriptor); rich != nil {
+		return rich, nil
+	}
+
 	password, err := c.resolver(ctx, c.descriptor)
 	if err != nil {
 		// The resolver's raw error may carry key versions or ciphertext; discard
@@ -291,7 +329,24 @@ func filtersForConfig(configName string, request engine.ExtractionRequest) map[s
 // snapshotFromSchema maps the legacy *model.DataSourceSchema into a secret-free
 // Engine SchemaSnapshot. A nil schema yields an empty snapshot carrying only the
 // config name.
-func snapshotFromSchema(configName string, schema *model.DataSourceSchema) engine.SchemaSnapshot {
+//
+// It performs the two host-side reconciliations that keep the embedded Engine's
+// LITERAL table match byte-identical to the legacy Worker's extraction path
+// (owner decision Option 2, T-010):
+//
+//   - SYSTEM-TABLE EXCLUSION: reuses schemacompat.IsSystemTable so the snapshot the
+//     extraction Engine validates against carries the same non-system tables the
+//     schema-discovery Engine (Manager) does. Without it the extraction path and the
+//     discovery path could disagree on what counts as a valid table.
+//   - TABLE-NAME NORMALIZATION: reuses tablenorm (which wraps the SAME
+//     schemautil.NormalizeTableNameForLookup the legacy adapters call) so a table the
+//     legacy Worker addressed as "public.transactions" canonicalizes to the same
+//     "transactions" the requested name canonicalizes to in the mapper, and the
+//     Engine's exact match succeeds exactly where the legacy normalization did.
+//
+// Both reconciliations live HERE, at the enginecompat seam, never in the Engine
+// core — the Engine stays literal and free of datasource-naming knowledge.
+func snapshotFromSchema(configName string, dbType model.DBType, schema *model.DataSourceSchema) engine.SchemaSnapshot {
 	snapshot := engine.SchemaSnapshot{ConfigName: configName}
 	if schema == nil {
 		return snapshot
@@ -314,12 +369,16 @@ func snapshotFromSchema(configName string, schema *model.DataSourceSchema) engin
 			tableName = table.TableName
 		}
 
+		if schemacompat.IsSystemTable(dbType, tableName) {
+			continue
+		}
+
 		var fields []string
 		if table != nil {
 			fields = table.GetColumnsList()
 		}
 
-		tables = append(tables, engine.TableSnapshot{Name: tableName, Fields: fields})
+		tables = append(tables, engine.TableSnapshot{Name: tablenorm.NormalizeTable(dbType, tableName), Fields: fields})
 	}
 
 	snapshot.Tables = tables

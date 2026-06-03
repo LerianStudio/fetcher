@@ -12,6 +12,7 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/engine"
 	enginecompatdatasource "github.com/LerianStudio/fetcher/pkg/enginecompat/datasource"
+	"github.com/LerianStudio/fetcher/pkg/enginecompat/schemacompat"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/model/datasource"
 	"github.com/LerianStudio/fetcher/pkg/model/job"
@@ -377,13 +378,21 @@ func TestConnector_DiscoverSchemaDelegatesAndMapsSnapshot(t *testing.T) {
 	if snapshot.ConfigName != "pg-main" {
 		t.Errorf("snapshot ConfigName = %q, want pg-main", snapshot.ConfigName)
 	}
-	if !snapshot.HasTable("public.accounts") {
-		t.Fatalf("snapshot missing table public.accounts; got %#v", snapshot.Tables)
+	// Option 2 (T-010): the snapshot table identity is canonicalized host-side via
+	// tablenorm, so the PostgreSQL public-schema table "public.accounts" is keyed by
+	// its canonical "accounts". This is what lets the Engine's literal match accept a
+	// request for either "accounts" or "public.accounts" (both canonicalize equally),
+	// preserving the legacy normalizeTableNameForLookup behavior.
+	if !snapshot.HasTable("accounts") {
+		t.Fatalf("snapshot missing canonical table accounts; got %#v", snapshot.Tables)
+	}
+	if snapshot.HasTable("public.accounts") {
+		t.Fatalf("snapshot should carry the canonical name, not public.accounts; got %#v", snapshot.Tables)
 	}
 
 	var fields []string
 	for _, table := range snapshot.Tables {
-		if table.Name == "public.accounts" {
+		if table.Name == "accounts" {
 			fields = table.Fields
 		}
 	}
@@ -529,11 +538,47 @@ func TestConnector_QueryErrorMapsToUnavailable(t *testing.T) {
 	}
 }
 
-func TestConnector_DiscoverSchemaBeforeConnectFails(t *testing.T) {
+// TestConnector_DiscoverSchemaLazilyConnects proves DiscoverSchema connects on
+// first use WITHOUT a prior TestConnection. The Engine's plan/validation lifecycle
+// is build -> discover -> close (no explicit TestConnection), so the extraction
+// connector must lazily connect there, matching the schemacompat connector. A
+// factory error on that lazy connect surfaces as a safe unavailable error.
+func TestConnector_DiscoverSchemaLazilyConnects(t *testing.T) {
 	t.Parallel()
 
 	captured := &capturedFactoryCall{}
-	factory := newFakeFactory(&fakeDataSource{}, nil, captured)
+	schema := model.NewDataSourceSchema("pg-main")
+	ds := &fakeDataSource{config: datasource.DataSourceConfig{Type: "POSTGRESQL"}, schemaResult: schema}
+	factory := newFakeFactory(ds, nil, captured)
+
+	adapter := enginecompatdatasource.NewConnectorFactory(factory, constResolver("p", nil), nil)
+
+	conn, err := adapter.Build(context.Background(), sampleDescriptor())
+	if err != nil {
+		t.Fatalf("Build: unexpected error: %v", err)
+	}
+
+	// No TestConnection called first — DiscoverSchema must connect itself.
+	snapshot, err := conn.DiscoverSchema(context.Background())
+	if err != nil {
+		t.Fatalf("DiscoverSchema should lazily connect, got error: %v", err)
+	}
+	if snapshot.ConfigName != "pg-main" {
+		t.Fatalf("snapshot ConfigName = %q, want pg-main", snapshot.ConfigName)
+	}
+	if captured.conn == nil {
+		t.Fatal("expected the factory to be invoked by the lazy connect")
+	}
+}
+
+// TestConnector_DiscoverSchemaLazyConnectFactoryErrorIsSafe proves a factory failure
+// on the lazy connect surfaces as a safe unavailable error carrying no driver
+// internals.
+func TestConnector_DiscoverSchemaLazyConnectFactoryErrorIsSafe(t *testing.T) {
+	t.Parallel()
+
+	captured := &capturedFactoryCall{}
+	factory := newFakeFactory(nil, errors.New("dial tcp db.internal:5432: connection refused for reader"), captured)
 
 	adapter := enginecompatdatasource.NewConnectorFactory(factory, constResolver("p", nil), nil)
 
@@ -544,6 +589,9 @@ func TestConnector_DiscoverSchemaBeforeConnectFails(t *testing.T) {
 
 	_, err = conn.DiscoverSchema(context.Background())
 	assertEngineError(t, err, engine.CategoryUnavailable)
+	if strings.Contains(err.Error(), "reader") {
+		t.Fatalf("schema connect error leaked driver internals: %q", err.Error())
+	}
 }
 
 func TestConnector_DiscoverSchemaErrorMapsToUnavailable(t *testing.T) {
@@ -676,4 +724,156 @@ func assertEngineError(t *testing.T, err error, want engine.ErrorCategory) {
 	if engErr.Category != want {
 		t.Fatalf("error category = %q, want %q (msg %q)", engErr.Category, want, engErr.Message)
 	}
+}
+
+// newNormalizationEngine wires a REAL engine over the extraction ConnectorFactory
+// and the schemacompat request-scoped ConnectionStore — the exact production
+// topology the Worker runner builds — so a test can drive PlanExtraction through
+// the genuine normalization seam (snapshot side in DiscoverSchema, request side in
+// the worker mapper) rather than a fake.
+func newNormalizationEngine(t *testing.T, ds datasource.DataSource) *engine.Engine {
+	t.Helper()
+
+	captured := &capturedFactoryCall{}
+	factory := newFakeFactory(ds, nil, captured)
+
+	registry := singleConnectorRegistry{
+		factory: enginecompatdatasource.NewConnectorFactory(factory, constResolver("p", nil), nil),
+	}
+
+	eng, err := engine.New(
+		engine.WithConnectorRegistry(registry),
+		engine.WithConnectionStore(schemacompat.NewConnectionStore()),
+	)
+	if err != nil {
+		t.Fatalf("engine.New: %v", err)
+	}
+
+	return eng
+}
+
+// singleConnectorRegistry resolves one ConnectorFactory for any type, mirroring the
+// worker/manager registries (type validation happens in the factory's Build).
+type singleConnectorRegistry struct {
+	factory engine.ConnectorFactory
+}
+
+func (r singleConnectorRegistry) Connector(string) (engine.ConnectorFactory, bool) {
+	return r.factory, true
+}
+
+// pgConnection builds a rich PostgreSQL *model.Connection for config "pg-main", the
+// record the Worker resolves and seeds into the context.
+func pgConnection() *model.Connection {
+	conn := &model.Connection{
+		ID:           uuid.New(),
+		ConfigName:   "pg-main",
+		Type:         model.TypePostgreSQL,
+		Host:         "db.internal",
+		Port:         5432,
+		DatabaseName: "ledger",
+		Username:     "reader",
+	}
+	conn.SetPlaintextPassword("p")
+
+	return conn
+}
+
+// publicUsersSchema is a PostgreSQL schema whose only table is the public-schema
+// "users", which GetSchemaInfo returns unqualified (the legacy storage convention
+// for public-schema tables). The host snapshot normalization keys it as "users".
+func publicUsersSchema() *model.DataSourceSchema {
+	schema := model.NewDataSourceSchema("pg-main")
+	schema.AddTable("users", []string{"id", "name"})
+
+	return schema
+}
+
+// TestNormalizationSeam_PublicPrefixedRequestStillExecutes is the MANDATORY
+// behavior-preservation test for owner decision Option 2 (T-010). A job that
+// addresses a PostgreSQL public-schema table with the "public." prefix
+// ("public.users") must validate and execute against a snapshot the host normalized
+// to "users" — exactly as the legacy Worker's normalizeTableNameForLookup accepted
+// it. It proves the strict execution-layer validation does NOT regress the legacy
+// prefix tolerance: the request side (worker mapper, modeled here by normalizing the
+// requested table key with tablenorm) and the snapshot side (adapter DiscoverSchema)
+// canonicalize to the same identity, so the Engine's literal match succeeds.
+func TestNormalizationSeam_PublicPrefixedRequestStillExecutes(t *testing.T) {
+	t.Parallel()
+
+	ds := &fakeDataSource{
+		config:       datasource.DataSourceConfig{Type: "POSTGRESQL"},
+		schemaResult: publicUsersSchema(),
+		queryResult:  map[string][]map[string]any{"users": {{"id": 1, "name": "Ada"}}},
+	}
+
+	eng := newNormalizationEngine(t, ds)
+
+	ctx := schemacompat.WithResolvedConnections(context.Background(), []*model.Connection{pgConnection()})
+
+	tenant, err := engine.NewTenantContext("tenant-norm")
+	if err != nil {
+		t.Fatalf("NewTenantContext: %v", err)
+	}
+
+	// The Worker mapper canonicalizes the requested "public.users" -> "users" via
+	// tablenorm before handing it to the Engine; we mirror that canonical form here
+	// (the literal "users" is what the normalized request carries).
+	request := engine.ExtractionRequest{
+		MappedFields: map[string]engine.FieldSelection{
+			"pg-main": {"users": {"id", "name"}},
+		},
+	}
+
+	plan, err := eng.PlanExtraction(ctx, tenant, request)
+	if err != nil {
+		t.Fatalf("PlanExtraction rejected a public-schema table the legacy worker accepted: %v", err)
+	}
+
+	result, err := eng.ExecuteExtraction(ctx, plan)
+	if err != nil {
+		t.Fatalf("ExecuteExtraction: %v", err)
+	}
+	if result.Direct == nil {
+		t.Fatalf("expected a direct-mode result, got %#v", result)
+	}
+	if !strings.Contains(string(result.Direct.Data), "Ada") {
+		t.Fatalf("expected extracted rows in direct payload, got %q", string(result.Direct.Data))
+	}
+}
+
+// TestNormalizationSeam_GenuinelyMissingTableStillFails proves the normalization
+// seam does NOT weaken strict validation: a table that does not exist in the
+// snapshot under ANY canonical form is still rejected by PlanExtraction. This is
+// the T-009-deferred strict-validation target — preserved alongside the prefix
+// tolerance, not traded away for it.
+func TestNormalizationSeam_GenuinelyMissingTableStillFails(t *testing.T) {
+	t.Parallel()
+
+	ds := &fakeDataSource{
+		config:       datasource.DataSourceConfig{Type: "POSTGRESQL"},
+		schemaResult: publicUsersSchema(),
+	}
+
+	eng := newNormalizationEngine(t, ds)
+
+	ctx := schemacompat.WithResolvedConnections(context.Background(), []*model.Connection{pgConnection()})
+
+	tenant, err := engine.NewTenantContext("tenant-norm")
+	if err != nil {
+		t.Fatalf("NewTenantContext: %v", err)
+	}
+
+	request := engine.ExtractionRequest{
+		MappedFields: map[string]engine.FieldSelection{
+			"pg-main": {"ghost_table": {"id"}},
+		},
+	}
+
+	_, err = eng.PlanExtraction(ctx, tenant, request)
+	if err == nil {
+		t.Fatal("expected PlanExtraction to reject a genuinely missing table, got nil")
+	}
+
+	assertEngineError(t, err, engine.CategoryValidation)
 }

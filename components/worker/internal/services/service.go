@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/LerianStudio/fetcher/pkg/crypto"
+	"github.com/LerianStudio/fetcher/pkg/engine"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/model/datasource"
 	"github.com/LerianStudio/fetcher/pkg/ports/connection"
@@ -12,6 +13,34 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/resolver"
 	streaming "github.com/LerianStudio/lib-streaming"
 )
+
+// EngineRunner is the Worker's seam onto the embedded Engine's synchronous
+// extraction runner. The Worker maps a queued job into an engine.ExtractionRequest
+// and hands it, the tenant scope (tenantId + requestId ONLY — owner decision B2),
+// and the host job id to this seam, which plans then executes the extraction in
+// DIRECT mode and returns the inline result.
+//
+// The resolved connections the Worker already looked up (internal + external)
+// travel through the ctx (seeded via schemacompat.WithResolvedConnections), so the
+// Engine never re-resolves and tenant-manager stays out of the Engine core — the
+// same context-seed contract the Manager schema path uses.
+//
+// The seam keeps the Engine wiring (connector registry, request-scoped connection
+// store, host-side table-name normalization) OUT of the UseCase: the UseCase owns
+// message parsing, job lookup, ack/nack, and skip logic. When EngineRunner is nil
+// the UseCase falls back to the legacy direct-datasource extraction path, so
+// wiring is opt-in per deployment.
+type EngineRunner interface {
+	// RunExtraction plans and executes the request in DIRECT mode for the tenant,
+	// returning the inline ExtractionResult. The jobID is the host execution
+	// identity.
+	RunExtraction(
+		ctx context.Context,
+		tenant engine.TenantContext,
+		jobID string,
+		request engine.ExtractionRequest,
+	) (engine.ExtractionResult, error)
+}
 
 // UseCase is a struct that coordinates the handling of template files, report storage, external data sources, and report data.
 type UseCase struct {
@@ -61,6 +90,11 @@ type UseCase struct {
 	// ConnectionResolver resolves datasource connections (internal + external).
 	// When nil, falls back to ConnectionRepository.FindByConfigNames (backwards compatible).
 	ConnectionResolver resolver.ConnectionResolver
+
+	// EngineRunner routes extraction through the embedded Engine (plan-then-execute,
+	// DIRECT mode). When nil, the Worker uses the legacy direct-datasource path,
+	// keeping the migration opt-in and every legacy test unchanged.
+	EngineRunner EngineRunner
 }
 
 // SetStorageEncryptDerivedKey configures the HKDF-derived AES-256 key for storage encryption.

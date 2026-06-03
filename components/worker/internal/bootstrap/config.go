@@ -221,7 +221,20 @@ func InitWorker() (*Service, error) {
 	}
 	service.SetStorageEncryptDerivedKey(keyDeriver.GetStorageEncryptKey())
 	service.SetCRMSecrets(cfg.CryptoEncryptSecretKeyPluginCRM, cfg.CryptoHashSecretKeyPluginCRM)
-	service.SetDataSourceFactory(datasource.NewDataSourceFromConnectionWithLogger(logger))
+
+	dsFactory := datasource.NewDataSourceFromConnectionWithLogger(logger)
+	service.SetDataSourceFactory(dsFactory)
+
+	// Route extraction through the embedded Engine (plan-then-execute, DIRECT mode).
+	// Connection resolution, message parsing, ack/nack, and the job lifecycle stay
+	// Worker-owned; the Engine owns only the validated extraction. Host-side schema-
+	// name normalization (Option 2) lives at the enginecompat seam.
+	extractionEngine, err := newExtractionEngine(dsFactory, cryptoService)
+	if err != nil {
+		return nil, fmt.Errorf("build extraction engine: %w", err)
+	}
+
+	service.EngineRunner = newWorkerEngineRunner(extractionEngine)
 
 	// Create ConnectionResolver based on multi-tenant mode
 	dsRegistry := resolver.NewInternalDatasourceRegistry()
