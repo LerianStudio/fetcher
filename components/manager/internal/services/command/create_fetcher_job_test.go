@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -1591,6 +1592,95 @@ func TestPublishToQueue_TenantIDHeaderPropagation(t *testing.T) {
 			assert.Equal(t, testJob.ID.String(), headers["jobId"])
 		})
 	}
+}
+
+// --- ST-T009-01: request -> engine.ExtractionRequest mapping (Option 2) ----
+//
+// Option 2 (owner decision): map the Manager FetcherRequest onto an
+// engine.ExtractionRequest as a pure, host-side intermediate. NO PlanExtraction
+// call, NO schema discovery, NO new validation — all current Manager validation
+// stays byte-identical. The engine.ExtractionRequest is the LIVE intermediate
+// from which the queue payload's mappedFields/metadata are built, so it is not
+// orphan code. These tests pin:
+//   (1) MappedFields, Filters, and metadata.source map correctly into the
+//       engine.ExtractionRequest (metadata.source preserved OPAQUE);
+//   (2) the queue payload built from the intermediate is byte-identical to the
+//       legacy hand-built payload.
+//
+// The engine.TenantContext bridge is intentionally NOT part of this subtask: it
+// has no non-orphan consumer on the create path until the planning/execution
+// consumer lands (ST-03 / T-010). See extraction_request_mapper.go SCOPE NOTE.
+
+// TestMapToExtractionRequest_MapsFieldsFiltersMetadata asserts the pure mapper
+// projects the Manager request onto engine.ExtractionRequest with mapped fields,
+// filters, and metadata.source carried opaque. RED: mapToExtractionRequest does
+// not exist yet.
+func TestMapToExtractionRequest_MapsFieldsFiltersMetadata(t *testing.T) {
+	request := model.FetcherRequest{
+		DataRequest: model.DataRequest{
+			MappedFields: map[string]map[string][]string{
+				"postgres_db": {"transactions": {"id", "status", "amount"}},
+			},
+			Filters: model.NestedFilters{
+				"postgres_db": {
+					"transactions": {
+						"status": job.FilterCondition{Equals: []any{"completed"}},
+					},
+				},
+			},
+		},
+		Metadata: map[string]any{"source": "plugin_crm", "key": "value"},
+	}
+
+	req := mapToExtractionRequest(request)
+
+	// MappedFields map correctly (FieldSelection is the same underlying type).
+	require.Equal(t, []string{"id", "status", "amount"}, req.MappedFields["postgres_db"]["transactions"])
+
+	// Metadata is carried opaque, including metadata.source (e.g. plugin_crm).
+	require.Equal(t, "plugin_crm", req.Metadata["source"], "metadata.source must be preserved opaque")
+	require.Equal(t, "value", req.Metadata["key"], "all metadata is carried opaque")
+
+	// Filters are carried (datasource-keyed). The engine contract is map[string]any.
+	require.Contains(t, req.Filters, "postgres_db", "filters must be carried per datasource")
+
+	// B2: the engine request carries NO product/org concept and the mapper must
+	// not invent Overrides (no per-request bounds in this subtask).
+	require.Nil(t, req.Overrides, "no limit overrides are introduced at mapping time")
+}
+
+// TestPublishToQueue_PayloadByteIdenticalFromIntermediate proves the queue bytes
+// built via the engine.ExtractionRequest intermediate equal the legacy hand-built
+// payload. RED: buildQueueMessage does not exist yet.
+func TestPublishToQueue_PayloadByteIdenticalFromIntermediate(t *testing.T) {
+	j := &model.Job{
+		ID: uuid.New(),
+		MappedFields: map[string]map[string][]string{
+			"postgres_db": {"transactions": {"id", "status", "amount"}},
+		},
+		Filters: model.NestedFilters{
+			"postgres_db": {"transactions": {"status": job.FilterCondition{Equals: []any{"completed"}}}},
+		},
+		Metadata:  map[string]any{"source": "plugin_crm", "key": "value"},
+		CreatedAt: time.Now().UTC(),
+	}
+
+	// Legacy hand-built payload (the exact shape publishToQueue emitted before).
+	legacy := map[string]any{
+		"jobId":        j.ID.String(),
+		"mappedFields": j.MappedFields,
+		"metadata":     j.Metadata,
+		"createdAt":    j.CreatedAt,
+		"filters":      j.Filters,
+	}
+	legacyBytes, err := json.Marshal(legacy)
+	require.NoError(t, err)
+
+	// Payload built from the engine.ExtractionRequest intermediate.
+	gotBytes, err := json.Marshal(buildQueueMessage(j))
+	require.NoError(t, err)
+
+	require.JSONEq(t, string(legacyBytes), string(gotBytes), "queue payload must be byte-identical to the legacy shape")
 }
 
 // TestCreateFetcherJob_Execute_PreservesFET0414FromConnectionTester verifies

@@ -220,9 +220,18 @@ func (s *CreateFetcherJob) validateAndBuildJob(span trace.Span, request model.Fe
 
 	span.SetAttributes(attribute.String("app.request.request_hash", requestHash))
 
+	// Map the Manager request onto the embedded Engine's request contract as the
+	// LIVE intermediate (T-009 ST-01, Option 2). The persisted job's mapped fields
+	// and metadata are sourced from this engine.ExtractionRequest, so the job — and
+	// the queue payload built from it — flow through the engine-shaped request. This
+	// is a pure projection: no validation, no schema discovery, no PlanExtraction.
+	// Filters stay on the typed path (request.DataRequest.Filters) so the persisted
+	// and published filter bytes remain byte-identical.
+	extractionReq := mapToExtractionRequest(request)
+
 	newJob, err := model.NewJob(
-		request.Metadata,
-		request.DataRequest.MappedFields,
+		extractionReq.Metadata,
+		mappedFieldsFromExtraction(extractionReq),
 		request.DataRequest.Filters,
 		model.JobStatusPending,
 		"",
@@ -664,19 +673,7 @@ func (s *CreateFetcherJob) publishToQueue(ctx context.Context, j *model.Job) err
 		return nil
 	}
 
-	message := map[string]any{
-		"jobId":        j.ID.String(),
-		"mappedFields": j.MappedFields,
-		"metadata":     j.Metadata,
-		"createdAt":    j.CreatedAt,
-	}
-
-	// Filters are already in the nested format expected by Worker
-	if len(j.Filters) > 0 {
-		message["filters"] = j.Filters
-	}
-
-	messageBytes, err := json.Marshal(message)
+	messageBytes, err := json.Marshal(buildQueueMessage(j))
 	if err != nil {
 		return fmt.Errorf("failed to marshal job message: %w", err)
 	}
@@ -692,6 +689,30 @@ func (s *CreateFetcherJob) publishToQueue(ctx context.Context, j *model.Job) err
 	}
 
 	return s.rabbitMQ.ProducerDefault(ctx, "", s.queueName, messageBytes, &header)
+}
+
+// buildQueueMessage assembles the RabbitMQ payload for a created job. The job's
+// mapped fields and metadata are sourced from the engine.ExtractionRequest
+// intermediate (see validateAndBuildJob), so the queue payload is built FROM the
+// engine-shaped request. The emitted shape is byte-identical to the legacy
+// hand-built payload: jobId / mappedFields / metadata / createdAt, with filters
+// included only when present and carried as the typed nested format the Worker
+// already consumes (NOT the engine's opaque map[string]any), so the published
+// bytes do not drift while the un-migrated Worker still reads the legacy shape.
+func buildQueueMessage(j *model.Job) map[string]any {
+	message := map[string]any{
+		"jobId":        j.ID.String(),
+		"mappedFields": j.MappedFields,
+		"metadata":     j.Metadata,
+		"createdAt":    j.CreatedAt,
+	}
+
+	// Filters are already in the nested format expected by Worker.
+	if len(j.Filters) > 0 {
+		message["filters"] = j.Filters
+	}
+
+	return message
 }
 
 func isNilRabbitMQAdapter(adapter messaging.MessagePublisher) bool {
