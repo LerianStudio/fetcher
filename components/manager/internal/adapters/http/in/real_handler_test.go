@@ -163,7 +163,7 @@ func TestConnectionHandler_ValidateSchema_RealHandlerFailureResponse(t *testing.
 	mockSchemaCache.EXPECT().Get(gomock.Any(), "db1").Return(model.NewDataSourceSchema("db1"), nil)
 
 	handler := &ConnectionHandler{
-		ValidateSchemaQuery: querySvc.NewValidateSchema(mockConnRepo, nil, mockSchemaCache, nil, nil),
+		ValidateSchemaQuery: querySvc.NewValidateSchema(mockConnRepo, newSchemaEngineForTest(t, nil, mockSchemaCache), nil),
 	}
 	app.Post("/v1/management/connections/validate-schema", handler.ValidateSchema)
 
@@ -201,9 +201,15 @@ func TestConnectionHandler_GetConnectionSchema_RealHandlerSuccess(t *testing.T) 
 	mockDataSource.EXPECT().Close(gomock.Any()).Return(nil)
 
 	handler := &ConnectionHandler{
-		GetSchemaQuery: querySvc.NewGetConnectionSchema(mockConnRepo, nil, func(_ context.Context, _ *model.Connection, _ crypto.Cryptor) (datasourceModel.DataSource, error) {
-			return mockDataSource, nil
-		}, nil, nil, false),
+		GetSchemaQuery: querySvc.NewGetConnectionSchema(
+			nil,
+			nil,
+			connectionEngineForConnRepo(t, mockConnRepo, nil),
+			newSchemaEngineForTest(t, func(_ context.Context, _ *model.Connection, _ crypto.Cryptor) (datasourceModel.DataSource, error) {
+				return mockDataSource, nil
+			}, nil),
+			false,
+		),
 	}
 	app.Get("/v1/management/connections/:id/schema", handler.GetConnectionSchema)
 

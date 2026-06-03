@@ -613,8 +613,14 @@ func assembleService(
 	getConnectionQuery := connectionQuery.NewGetConnection(connResolver, registry, connEngine)
 	listConnectionsQuery := connectionQuery.NewListConnections(connResolver, connEngine)
 	testConnectionQuery := connectionQuery.NewTestConnection(repositories.connection, cryptoService, platformDependencies.connectionTestStore, dsFactory, connResolver, registry)
-	validateSchemaQuery := connectionQuery.NewValidateSchema(repositories.connection, cryptoService, platformDependencies.schemaCache, dsFactory, connResolver)
-	getConnectionSchemaQuery := connectionQuery.NewGetConnectionSchema(repositories.connection, cryptoService, dsFactory, connResolver, registry, cfg.MultiTenantEnabled)
+
+	schemaEng, schemaEngErr := schemaEngine(dsFactory, cryptoService, platformDependencies.schemaCache, getSchemaCacheTTL(cfg.SchemaCacheTTLSeconds))
+	if schemaEngErr != nil {
+		return nil, wrapBootstrapError("build schema engine", schemaEngErr)
+	}
+
+	validateSchemaQuery := connectionQuery.NewValidateSchema(repositories.connection, schemaEng, connResolver)
+	getConnectionSchemaQuery := connectionQuery.NewGetConnectionSchema(connResolver, registry, connEngine, schemaEng, cfg.MultiTenantEnabled)
 
 	connectionHandler := in2.NewConnectionHandler(
 		createConnectionCmd,

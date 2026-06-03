@@ -9,15 +9,40 @@ import (
 
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
+	"github.com/LerianStudio/fetcher/pkg/datasource/hostsafety"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/model/datasource"
 	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
+	"github.com/LerianStudio/fetcher/pkg/resolver"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
+
+// newGetConnectionSchemaSvc wires the GetConnectionSchema service the way the
+// production bootstrap does: connection resolution flows through the connection
+// authority Engine (over the connection repo), and schema DISCOVERY flows through
+// the schema-discovery Engine (over the datasource factory). The connection
+// repo's FindByID expectations are satisfied through the connection Engine; the
+// datasource factory's GetSchemaInfo/Close expectations through the schema Engine.
+func newGetConnectionSchemaSvc(
+	t *testing.T,
+	mockConnRepo connRepo.Repository,
+	factory dsFactoryFunc,
+	multiTenantEnabled bool,
+) *GetConnectionSchema {
+	t.Helper()
+
+	connEng := scopeAuthorityEngine(t, mockConnRepo)
+	schemaEng := schemaDiscoveryEngine(t, factory, nil, nil)
+
+	return NewGetConnectionSchema(nil, nil, connEng, schemaEng, multiTenantEnabled)
+}
+
+// dsFactoryFunc mirrors datasource.DataSourceFactory for test factory closures.
+type dsFactoryFunc = func(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor) (datasource.DataSource, error)
 
 // newSchemaConnectionFixture creates a valid Connection for testing GetConnectionSchema service.
 func newSchemaConnectionFixture(connID uuid.UUID, dbType model.DBType) *model.Connection {
@@ -42,7 +67,6 @@ func TestGetConnectionSchema_Execute_Success(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockDataSource := datasource.NewMockDataSource(ctrl)
 
 	// Create mock factory
@@ -50,7 +74,7 @@ func TestGetConnectionSchema_Execute_Success(t *testing.T) {
 		return mockDataSource, nil
 	}
 
-	svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory, nil, nil, false)
+	svc := newGetConnectionSchemaSvc(t, mockConnRepo, mockFactory, false)
 
 	ctx := testContext()
 	connID := uuid.New()
@@ -101,7 +125,6 @@ func TestGetConnectionSchema_Execute_NotFound(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := crypto.NewMockCryptor(ctrl)
 
 	// Mock factory won't be called
 	mockFactory := func(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor) (datasource.DataSource, error) {
@@ -109,7 +132,7 @@ func TestGetConnectionSchema_Execute_NotFound(t *testing.T) {
 		return nil, nil
 	}
 
-	svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory, nil, nil, false)
+	svc := newGetConnectionSchemaSvc(t, mockConnRepo, mockFactory, false)
 
 	ctx := testContext()
 	connID := uuid.New()
@@ -136,14 +159,13 @@ func TestGetConnectionSchema_Execute_RepositoryError(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := crypto.NewMockCryptor(ctrl)
 
 	mockFactory := func(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor) (datasource.DataSource, error) {
 		t.Fatal("factory should not be called on repository error")
 		return nil, nil
 	}
 
-	svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory, nil, nil, false)
+	svc := newGetConnectionSchemaSvc(t, mockConnRepo, mockFactory, false)
 
 	ctx := testContext()
 	connID := uuid.New()
@@ -168,14 +190,13 @@ func TestGetConnectionSchema_Execute_DataSourceFactoryError(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := crypto.NewMockCryptor(ctrl)
 
 	factoryError := errors.New("failed to create datasource")
 	mockFactory := func(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor) (datasource.DataSource, error) {
 		return nil, factoryError
 	}
 
-	svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory, nil, nil, false)
+	svc := newGetConnectionSchemaSvc(t, mockConnRepo, mockFactory, false)
 
 	ctx := testContext()
 	connID := uuid.New()
@@ -203,14 +224,13 @@ func TestGetConnectionSchema_Execute_GetSchemaInfoError(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockDataSource := datasource.NewMockDataSource(ctrl)
 
 	mockFactory := func(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor) (datasource.DataSource, error) {
 		return mockDataSource, nil
 	}
 
-	svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory, nil, nil, false)
+	svc := newGetConnectionSchemaSvc(t, mockConnRepo, mockFactory, false)
 
 	ctx := testContext()
 	connID := uuid.New()
@@ -321,14 +341,13 @@ func TestGetConnectionSchema_Execute_FiltersSystemTables(t *testing.T) {
 			defer ctrl.Finish()
 
 			mockConnRepo := connRepo.NewMockRepository(ctrl)
-			mockCrypto := crypto.NewMockCryptor(ctrl)
 			mockDataSource := datasource.NewMockDataSource(ctrl)
 
 			mockFactory := func(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor) (datasource.DataSource, error) {
 				return mockDataSource, nil
 			}
 
-			svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory, nil, nil, false)
+			svc := newGetConnectionSchemaSvc(t, mockConnRepo, mockFactory, false)
 
 			ctx := testContext()
 			connID := uuid.New()
@@ -381,14 +400,13 @@ func TestGetConnectionSchema_Execute_NilSchema(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockDataSource := datasource.NewMockDataSource(ctrl)
 
 	mockFactory := func(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor) (datasource.DataSource, error) {
 		return mockDataSource, nil
 	}
 
-	svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory, nil, nil, false)
+	svc := newGetConnectionSchemaSvc(t, mockConnRepo, mockFactory, false)
 
 	ctx := testContext()
 	connID := uuid.New()
@@ -422,14 +440,13 @@ func TestGetConnectionSchema_Execute_EmptySchema(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockDataSource := datasource.NewMockDataSource(ctrl)
 
 	mockFactory := func(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor) (datasource.DataSource, error) {
 		return mockDataSource, nil
 	}
 
-	svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory, nil, nil, false)
+	svc := newGetConnectionSchemaSvc(t, mockConnRepo, mockFactory, false)
 
 	ctx := testContext()
 	connID := uuid.New()
@@ -463,14 +480,13 @@ func TestGetConnectionSchema_Execute_OrganizationIsolation(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := crypto.NewMockCryptor(ctrl)
 
 	mockFactory := func(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor) (datasource.DataSource, error) {
 		t.Fatal("factory should not be called when connection not found")
 		return nil, nil
 	}
 
-	svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory, nil, nil, false)
+	svc := newGetConnectionSchemaSvc(t, mockConnRepo, mockFactory, false)
 
 	ctx := testContext()
 	connID := uuid.New()
@@ -548,14 +564,13 @@ func TestGetConnectionSchema_Execute_SchemaResolution_MultiTenantGating(t *testi
 			defer ctrl.Finish()
 
 			mockConnRepo := connRepo.NewMockRepository(ctrl)
-			mockCrypto := crypto.NewMockCryptor(ctrl)
 			mockDataSource := datasource.NewMockDataSource(ctrl)
 
 			mockFactory := func(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor) (datasource.DataSource, error) {
 				return mockDataSource, nil
 			}
 
-			svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory, nil, nil, tt.multiTenantEnabled)
+			svc := newGetConnectionSchemaSvc(t, mockConnRepo, mockFactory, tt.multiTenantEnabled)
 
 			ctx := testContext()
 			connID := uuid.New()
@@ -583,125 +598,108 @@ func TestGetConnectionSchema_Execute_SchemaResolution_MultiTenantGating(t *testi
 	}
 }
 
+// TestGetConnectionSchema_Execute_InternalDatasource verifies that an internal
+// datasource (resolved via the registry + resolver, a host concern) is resolved
+// on the host hot path and never routed through the Engine's connection store,
+// then has its schema discovered through the schema Engine.
+func TestGetConnectionSchema_Execute_InternalDatasource(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockResolver := resolver.NewMockConnectionResolver(ctrl)
+	mockDataSource := datasource.NewMockDataSource(ctrl)
+	registry := resolver.NewInternalDatasourceRegistry()
+
+	// The deterministic per-tenant UUID for the built-in internal "midaz_onboarding"
+	// config in single-tenant mode (empty tenant id).
+	connID := uuid.NewSHA1(resolver.InternalDatasourceNamespace, []byte("/midaz_onboarding"))
+
+	internalConn := &model.Connection{
+		ConfigName:   "midaz_onboarding",
+		Type:         model.TypePostgreSQL,
+		Host:         "internal-db",
+		DatabaseName: "ledger",
+		// EncryptionKeyVersion intentionally empty: internal/in-memory connection.
+	}
+
+	mockResolver.EXPECT().
+		ResolveInternalByConfigName(gomock.Any(), "midaz_onboarding").
+		Return(internalConn, nil)
+
+	schema := model.NewDataSourceSchema("midaz_onboarding")
+	schema.AddTable("account", []string{"id", "name"})
+	mockDataSource.EXPECT().GetSchemaInfo(gomock.Any(), gomock.Any()).Return(schema, nil)
+	mockDataSource.EXPECT().Close(gomock.Any()).Return(nil)
+
+	factory := func(context.Context, *model.Connection, crypto.Cryptor) (datasource.DataSource, error) {
+		return mockDataSource, nil
+	}
+
+	svc := NewGetConnectionSchema(mockResolver, registry,
+		scopeAuthorityEngine(t, mockConnRepo),
+		schemaDiscoveryEngine(t, factory, nil, nil),
+		false,
+	)
+
+	result, err := svc.Execute(testContext(), connID)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "midaz_onboarding", result.ConfigName)
+	require.Len(t, result.Tables, 1)
+	assert.Equal(t, "account", result.Tables[0].Name)
+}
+
 // TestNewGetConnectionSchema verifies the constructor.
 func TestNewGetConnectionSchema(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockFactory := func(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor) (datasource.DataSource, error) {
 		return nil, nil
 	}
 
-	svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, mockFactory, nil, nil, false)
+	svc := newGetConnectionSchemaSvc(t, mockConnRepo, mockFactory, false)
 
 	assert.NotNil(t, svc)
 }
 
-// TestIsSystemTable tests the isSystemTable function for all database types.
-func TestIsSystemTable(t *testing.T) {
-	tests := []struct {
-		name      string
-		dbType    model.DBType
-		tableName string
-		expected  bool
-	}{
-		// PostgreSQL
-		{"PostgreSQL pg_catalog", model.TypePostgreSQL, "pg_catalog", true},
-		{"PostgreSQL information_schema", model.TypePostgreSQL, "information_schema", true},
-		{"PostgreSQL pg_toast", model.TypePostgreSQL, "pg_toast", true},
-		{"PostgreSQL pg_temp_1", model.TypePostgreSQL, "pg_temp_1", true},
-		{"PostgreSQL user table", model.TypePostgreSQL, "users", false},
-
-		// MySQL
-		{"MySQL mysql", model.TypeMySQL, "mysql", true},
-		{"MySQL information_schema", model.TypeMySQL, "information_schema", true},
-		{"MySQL performance_schema", model.TypeMySQL, "performance_schema", true},
-		{"MySQL sys", model.TypeMySQL, "sys", true},
-		{"MySQL user table", model.TypeMySQL, "products", false},
-
-		// Oracle - uppercase (standard)
-		{"Oracle SYS", model.TypeOracle, "SYS", true},
-		{"Oracle SYSTEM", model.TypeOracle, "SYSTEM", true},
-		{"Oracle OUTLN", model.TypeOracle, "OUTLN", true},
-		{"Oracle XDB", model.TypeOracle, "XDB", true},
-		{"Oracle MDSYS", model.TypeOracle, "MDSYS", true},
-		{"Oracle CTXSYS", model.TypeOracle, "CTXSYS", true},
-		{"Oracle DBSNMP", model.TypeOracle, "DBSNMP", true},
-		{"Oracle user table", model.TypeOracle, "EMPLOYEES", false},
-		// Oracle - lowercase (driver-dependent)
-		{"Oracle sys lowercase", model.TypeOracle, "sys", true},
-		{"Oracle system lowercase", model.TypeOracle, "system", true},
-		{"Oracle mixed case Sys", model.TypeOracle, "Sys", true},
-		{"Oracle mixed case System", model.TypeOracle, "System", true},
-
-		// SQL Server - exact matches
-		{"SQLServer sys", model.TypeSQLServer, "sys", true},
-		{"SQLServer INFORMATION_SCHEMA", model.TypeSQLServer, "INFORMATION_SCHEMA", true},
-		{"SQLServer user table", model.TypeSQLServer, "Customers", false},
-		// SQL Server - db_ prefix (per business requirement)
-		{"SQLServer db_owner", model.TypeSQLServer, "db_owner", true},
-		{"SQLServer db_backup", model.TypeSQLServer, "db_backup", true},
-		{"SQLServer db_accessadmin", model.TypeSQLServer, "db_accessadmin", true},
-		{"SQLServer db_backup.audit_logs", model.TypeSQLServer, "db_backup.audit_logs", true},
-		{"SQLServer dbo.users", model.TypeSQLServer, "dbo.users", false},
-		{"SQLServer sales.orders", model.TypeSQLServer, "sales.orders", false},
-
-		// MongoDB - databases
-		{"MongoDB admin", model.TypeMongoDB, "admin", true},
-		{"MongoDB local", model.TypeMongoDB, "local", true},
-		{"MongoDB config", model.TypeMongoDB, "config", true},
-		{"MongoDB user collection", model.TypeMongoDB, "users", false},
-		// MongoDB - system.* prefix (per business requirement)
-		{"MongoDB system.indexes", model.TypeMongoDB, "system.indexes", true},
-		{"MongoDB system.users", model.TypeMongoDB, "system.users", true},
-		{"MongoDB system.profile", model.TypeMongoDB, "system.profile", true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := isSystemTable(tt.dbType, tt.tableName)
-			assert.Equal(t, tt.expected, result, "isSystemTable(%s, %s)", tt.dbType, tt.tableName)
-		})
-	}
-}
-
-// TestGetConnectionSchema_Execute_FactoryValidationErrorPropagates verifies
-// Fix 4: when the datasource factory returns a pkg.ValidationError
-// (FET-0414 host safety rejection), Execute must propagate it verbatim rather
-// than mask it behind a generic 500. Same rationale as TestConnection.
-func TestGetConnectionSchema_Execute_FactoryValidationErrorPropagates(t *testing.T) {
+// TestGetConnectionSchema_Execute_HostSafetyRejectionPropagates verifies that a
+// host-safety (SSRF / FET-0414) rejection is surfaced verbatim as a
+// pkg.ValidationError rather than masked behind a generic 500. The guard now runs
+// HOST-side before discovery is delegated to the Engine (the Engine deliberately
+// redacts connector errors), so a tenant connection whose host is denylisted is
+// rejected before any datasource call. The factory therefore must NOT be invoked.
+func TestGetConnectionSchema_Execute_HostSafetyRejectionPropagates(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
+	hostsafety.SetHostSafetyEnabled(true)
+	defer hostsafety.SetHostSafetyEnabled(false)
+
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := crypto.NewMockCryptor(ctrl)
 
 	connID := uuid.New()
 	existingConn := newSchemaConnectionFixture(connID, model.TypePostgreSQL)
+	existingConn.Host = "127.0.0.1" // denylisted by the SSRF guard for tenant connections
 
 	mockConnRepo.EXPECT().
 		FindByID(gomock.Any(), connID).
 		Return(existingConn, nil)
 
-	factoryErr := pkg.ValidationError{
-		EntityType: "connection",
-		Code:       "FET-0414",
-		Title:      "Forbidden Host",
-		Message:    "Host is not a valid external database endpoint",
-	}
 	stubFactory := func(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor) (datasource.DataSource, error) {
-		return nil, factoryErr
+		t.Fatal("factory must not be called when the host-safety guard rejects the connection")
+		return nil, nil
 	}
 
-	svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, stubFactory, nil, nil, false)
+	svc := newGetConnectionSchemaSvc(t, mockConnRepo, stubFactory, false)
 
 	_, err := svc.Execute(testContext(), connID)
 	require.Error(t, err)
 
 	var ve pkg.ValidationError
 	require.True(t, errors.As(err, &ve),
-		"GetConnectionSchema must propagate factory's pkg.ValidationError unchanged, got: %T %v", err, err)
+		"GetConnectionSchema must propagate the host-safety pkg.ValidationError unchanged, got: %T %v", err, err)
 	assert.Equal(t, "FET-0414", ve.Code)
 }

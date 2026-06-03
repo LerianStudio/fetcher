@@ -12,9 +12,13 @@ import (
 
 	"github.com/LerianStudio/fetcher/components/manager/internal/services/command"
 	"github.com/LerianStudio/fetcher/components/manager/internal/services/query"
+	pkgdatasource "github.com/LerianStudio/fetcher/pkg/datasource"
+	"github.com/LerianStudio/fetcher/pkg/engine"
+	schemacompat "github.com/LerianStudio/fetcher/pkg/enginecompat/schemacompat"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/model/datasource"
 	jobRepo "github.com/LerianStudio/fetcher/pkg/mongodb/job"
+	cacheRepo "github.com/LerianStudio/fetcher/pkg/ports/cache"
 	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
 	observability "github.com/LerianStudio/lib-observability"
 
@@ -1089,7 +1093,6 @@ func TestConnectionHandler_ValidateSchema_Success(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCryptor := crypto.NewMockCryptor(ctrl)
 	mockCache := newNoopSchemaCache()
 
 	testConn := createTestConnection(uuid.New())
@@ -1106,7 +1109,7 @@ func TestConnectionHandler_ValidateSchema_Success(t *testing.T) {
 	failingFactory := func(_ context.Context, _ *model.Connection, _ crypto.Cryptor) (datasource.DataSource, error) {
 		return nil, fmt.Errorf("connection refused")
 	}
-	validateSchemaQuery := query.NewValidateSchema(mockConnRepo, mockCryptor, mockCache, failingFactory, nil)
+	validateSchemaQuery := query.NewValidateSchema(mockConnRepo, newSchemaEngineForTest(t, failingFactory, mockCache), nil)
 	handler := &ConnectionHandler{ValidateSchemaQuery: validateSchemaQuery}
 
 	app := setupConnectionTestApp()
@@ -1129,7 +1132,6 @@ func TestConnectionHandler_ValidateSchema_Failure_DataSourceNotFound(t *testing.
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCryptor := crypto.NewMockCryptor(ctrl)
 	mockCache := newNoopSchemaCache()
 
 	// Return a connection with a different config name so "unknown_ds" is not found in the map
@@ -1170,7 +1172,7 @@ func TestConnectionHandler_ValidateSchema_Failure_DataSourceNotFound(t *testing.
 		return nil, fmt.Errorf("connection refused")
 	}
 
-	validateSchemaQuery := query.NewValidateSchema(mockConnRepo, mockCryptor, mockCache, failingFactory, nil)
+	validateSchemaQuery := query.NewValidateSchema(mockConnRepo, newSchemaEngineForTest(t, failingFactory, mockCache), nil)
 	handler := &ConnectionHandler{ValidateSchemaQuery: validateSchemaQuery}
 
 	app := setupConnectionTestApp()
@@ -1249,13 +1251,12 @@ func TestConnectionHandler_ValidateSchema_InternalError(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCryptor := crypto.NewMockCryptor(ctrl)
 	mockCache := newNoopSchemaCache()
 
 	// FindByConfigNames returns an error -> internal server error
 	mockConnRepo.EXPECT().FindByConfigNames(gomock.Any(), gomock.Any()).Return(nil, assert.AnError)
 
-	validateSchemaQuery := query.NewValidateSchema(mockConnRepo, mockCryptor, mockCache, nil, nil)
+	validateSchemaQuery := query.NewValidateSchema(mockConnRepo, newSchemaEngineForTest(t, nil, mockCache), nil)
 	handler := &ConnectionHandler{ValidateSchemaQuery: validateSchemaQuery}
 
 	app := setupConnectionTestApp()
@@ -1332,6 +1333,31 @@ func TestConnectionHandler_ListConnections_HandlerDirectly_InvalidSortOrder(t *t
 // ============================================================================
 // Helpers
 // ============================================================================
+
+// newSchemaEngineForTest builds the schema-discovery Engine the schema services
+// delegate DISCOVERY to, mirroring the production schemaEngine wiring (a
+// schemacompat ConnectorFactory over the supplied datasource factory + the cache
+// behind the engine.SchemaCache port).
+func newSchemaEngineForTest(t *testing.T, factory pkgdatasource.DataSourceFactory, cache cacheRepo.SchemaCacheRepository) *engine.Engine {
+	t.Helper()
+
+	eng, err := engine.New(
+		engine.WithConnectorRegistry(schemaConnectorRegistryForTest{factory: schemacompat.NewConnectorFactory(factory, nil)}),
+		engine.WithConnectionStore(schemacompat.NewConnectionStore()),
+		engine.WithSchemaCache(schemacompat.NewSchemaCache(cache, 0)),
+	)
+	require.NoError(t, err)
+
+	return eng
+}
+
+type schemaConnectorRegistryForTest struct {
+	factory engine.ConnectorFactory
+}
+
+func (r schemaConnectorRegistryForTest) Connector(string) (engine.ConnectorFactory, bool) {
+	return r.factory, true
+}
 
 // noopSchemaCache is a simple in-test implementation of SchemaCacheRepository
 // that always returns cache miss. This avoids needing the gomock generated cache mock
