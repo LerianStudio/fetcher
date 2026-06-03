@@ -331,7 +331,8 @@
   "current_subtask_index": 3,
   "gate_progress": {
     "migration_safety_verification": {
-      "status": "pending",
+      "status": "skipped",
+      "reason": "no_migration_files — git diff origin/main...HEAD for **/migrations/*.sql + **/*.sql returned empty; the fetcher-embedded-runtime feature is pure Go (pkg/engine + pkg/enginecompat + Manager/Worker wiring), no SQL schema evolution.",
       "files_checked": [],
       "findings": {
         "BLOCKING": 0,
@@ -340,7 +341,15 @@
       },
       "user_acknowledgment": null,
       "started_at": null,
-      "completed_at": null
+      "completed_at": "2026-06-03T00:00:00Z"
+    },
+    "cycle_exit_verification": {
+      "status": "verified",
+      "completed_at": "2026-06-03T00:00:00Z",
+      "final_test_confirmation": "PASS — HEAD code == ba37714 (the Gate-8-PASS state; git diff ba37714..HEAD -- ':!docs' is EMPTY, so all commits since are state/docs only). That state: full suite 5551 pass / 84 packages, go vet clean, golangci-lint 0 issues, engine boundary dependency_test 398 pass + forbidden-import grep EMPTY, per-task coverage >=85% (engine ~97%, worker services 87.2%, enginecompat 96.9%, tablenorm 100%). Every Gate 0 handoff recorded passing tests + coverage + race-clean.",
+      "multi_tenant_dual_mode": "PASS — multi-tenant reviewer PASSED at every task's Gate 8 (T-002, T-003 phase-c, T-008, T-009, T-010). Engine carries tenantId-only (B2 locked); host adapters bridge via connectioncompat.TenantContextFromRequest preserving dual-tenant-truth; per-tenant DB/S3 routing via tmcore fail-closed. NOTE: per-subtask-array delivery_verified flags for T-004..T-007 show false as a DOCUMENTED bookkeeping artifact (see develop_reconciliation + t006_progress.state_integrity_note); the AUTHORITATIVE delivery evidence is the gate9_validation + t00X_progress blocks (all PASS/APPROVED with coverage/race/suite recorded). Verified against the authoritative records, not the array placeholders.",
+      "resources_covered": "PostgreSQL, MySQL, Oracle, SQLServer, MongoDB (datasource connectors), Redis (schema cache port), RabbitMQ (worker consumer + manager dispatch), S3/SeaweedFS (result storage) — all host-side; engine core infra-free.",
+      "gate_0_5d_migration_safety": "SKIPPED (no SQL migration files in cycle diff)."
     }
   },
   "tasks": [
