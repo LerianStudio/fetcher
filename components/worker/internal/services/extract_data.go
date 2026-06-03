@@ -16,6 +16,7 @@ import (
 
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
+	"github.com/LerianStudio/fetcher/pkg/engine"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	modelJob "github.com/LerianStudio/fetcher/pkg/model/job"
 	portDS "github.com/LerianStudio/fetcher/pkg/ports/datasource"
@@ -675,12 +676,54 @@ func (uc *UseCase) saveExternalData(
 	)
 
 	return &JobResultData{
-		Path:      resultPath,
-		SizeBytes: sizeBytes,
-		RowCount:  rowCount,
-		Format:    "json",
-		HMAC:      documentHMAC,
+		Path:       resultPath,
+		SizeBytes:  sizeBytes,
+		RowCount:   rowCount,
+		Format:     "json",
+		HMAC:       documentHMAC,
+		Integrity:  resultIntegrity(documentHMAC),
+		Protection: resultProtection(),
 	}, nil
+}
+
+// resultStorageProtectionMode names the protection mode for the stored extraction
+// result. The Worker storage adapter manages encryption (AES-256-GCM via the
+// HKDF-derived storage key), so the canonical mode is "adapter-managed" rather than
+// a specific cipher string — the Engine never sees or names the cipher.
+const resultStorageProtectionMode = "adapter-managed"
+
+// resultIntegrity declares the canonical T-007 integrity over the stored result.
+// It turns the tacit HMAC convention into an explicit field: the signature is the
+// EXACT documentHMAC the Worker already computed — HMAC-SHA256 over the PLAINTEXT
+// extraction JSON (before encryption). When no signer is configured (documentHMAC
+// empty), no integrity is declared rather than an empty, misleading one.
+//
+// It is a keyed signature (Signature), never an unkeyed content hash (Digest):
+// HMAC is one possible integrity SIGNATURE in the T-007 model.
+func resultIntegrity(documentHMAC string) *engine.ResultIntegrity {
+	if documentHMAC == "" {
+		return nil
+	}
+
+	return &engine.ResultIntegrity{
+		Algorithm: "HMAC-SHA256",
+		Signature: documentHMAC,
+	}
+}
+
+// resultProtection declares the canonical T-007 confidentiality over the stored
+// result bytes. The bytes are ALWAYS encrypted on the store path (encryptData
+// errors otherwise), the Worker storage layer applied it (AppliedBy = adapter), and
+// it is adapter-managed. KeyVersion is intentionally omitted: the HKDF-derived
+// storage key the Worker uses carries no version label today (see Gate-8 seam), and
+// the field is omitempty so an unset version is honestly absent rather than a
+// fabricated zero. This describes the STORED RESULT only, never credentials.
+func resultProtection() *engine.ResultProtection {
+	return &engine.ResultProtection{
+		Encrypted: true,
+		AppliedBy: engine.ProtectionAppliedByAdapter,
+		Mode:      resultStorageProtectionMode,
+	}
 }
 
 // encryptData encrypts extracted data using AES-GCM with the HKDF-derived storage key.

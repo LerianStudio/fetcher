@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/LerianStudio/fetcher/pkg"
+	"github.com/LerianStudio/fetcher/pkg/engine"
 	libOutbox "github.com/LerianStudio/lib-commons/v5/commons/outbox"
 	"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
 	observability "github.com/LerianStudio/lib-observability"
@@ -35,6 +36,17 @@ type JobResultData struct {
 	// HMAC is the HMAC-SHA256 signature of the result data (before encryption).
 	// Consumers can use this to verify data integrity using the external HMAC key.
 	HMAC string `json:"hmac,omitempty"`
+
+	// Integrity is the canonical T-007 integrity declaration over the stored result.
+	// It makes the tacit "what does the HMAC sign" convention EXPLICIT: the signature
+	// is the keyed HMAC-SHA256 over the PLAINTEXT extraction JSON (the same value as
+	// HMAC above). It is a keyed signature, never an unkeyed Digest.
+	Integrity *engine.ResultIntegrity `json:"integrity,omitempty"`
+
+	// Protection is the canonical T-007 confidentiality declaration over the stored
+	// result bytes. It describes the STORED EXTRACTION RESULT only — never connection
+	// credentials (T-007 invariant: result-protection != credential-protection).
+	Protection *engine.ResultProtection `json:"protection,omitempty"`
 }
 
 // JobNotificationOptions contains optional data for job notifications.
