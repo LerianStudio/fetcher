@@ -135,12 +135,17 @@ func newReadyzMultiTenantRedisClient(cfg *Config) *redis.Client {
 		return nil
 	}
 
+	redisPort := cfg.MultiTenantRedisPort
+	if redisPort == "" {
+		redisPort = "6379"
+	}
+
 	// Use the tenant-manager Redis option builder instead of hand-rolled Redis
 	// options. The full NewTenantPubSubRedisClient helper pings immediately;
 	// /readyz must construct even when Redis is down so the checker can report it.
 	opts, err := tmredis.BuildOptions(tmredis.TenantPubSubRedisConfig{
 		Host:     cfg.MultiTenantRedisHost,
-		Port:     cfg.MultiTenantRedisPort,
+		Port:     redisPort,
 		Password: cfg.MultiTenantRedisPassword,
 		TLS:      cfg.MultiTenantRedisTLS,
 	})

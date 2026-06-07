@@ -4,6 +4,7 @@
 package services
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -313,7 +314,11 @@ func decodeDirectResult(
 	}
 
 	decoded := make(map[string]map[string][]map[string]any)
-	if err := json.Unmarshal(direct.Data, &decoded); err != nil {
+
+	dec := json.NewDecoder(bytes.NewReader(direct.Data))
+	dec.UseNumber()
+
+	if err := dec.Decode(&decoded); err != nil {
 		logger.Log(ctx, libLog.LevelError, "failed to decode direct engine result", libLog.Err(err))
 		return fmt.Errorf("decode direct engine result: %w", err)
 	}
@@ -404,9 +409,10 @@ func datasourceTypesByConfig(connections []*model.Connection) map[string]model.D
 // keys use tablenorm.NormalizeTable; field names use tablenorm.NormalizeField (a
 // no-op for PG/MySQL/SQLServer, which were case-sensitive; UPPERCASE for Oracle,
 // which stores identifiers uppercased and matched case-insensitively in the legacy
-// path). A datasource with two table names canonicalizing to the same key keeps the
-// first (a benign dedupe that matches the legacy lookup, which would resolve both to
-// one table).
+// path). A datasource with two table names canonicalizing to the same key MERGES
+// (unions) their field lists deterministically (see appendUniqueFields), so no
+// requested column is silently dropped and the result is independent of map iteration
+// order — both source tables resolve to one table in the legacy lookup anyway.
 func mapMappedFields(
 	mappedFields map[string]map[string][]string,
 	typesByConfig map[string]model.DBType,
@@ -422,10 +428,40 @@ func mapMappedFields(
 		selection := make(engine.FieldSelection, len(tables))
 
 		for table, fields := range tables {
-			selection[tablenorm.NormalizeTable(dbType, table)] = normalizeFieldsForType(dbType, fields)
+			normTable := tablenorm.NormalizeTable(dbType, table)
+			normFields := normalizeFieldsForType(dbType, fields)
+
+			if existing, ok := selection[normTable]; ok {
+				selection[normTable] = appendUniqueFields(existing, normFields)
+				continue
+			}
+
+			selection[normTable] = normFields
 		}
 
 		out[configName] = selection
+	}
+
+	return out
+}
+
+// appendUniqueFields returns base plus any fields from extra not already present,
+// preserving base's order then extra's order. Used to merge field selections when
+// two source table names canonicalize to the same key (e.g. Oracle case folding),
+// so no requested column is dropped and the result is independent of map iteration order.
+func appendUniqueFields(base, extra []string) []string {
+	seen := make(map[string]struct{}, len(base))
+	for _, f := range base {
+		seen[f] = struct{}{}
+	}
+
+	out := base
+
+	for _, f := range extra {
+		if _, ok := seen[f]; !ok {
+			seen[f] = struct{}{}
+			out = append(out, f)
+		}
 	}
 
 	return out
@@ -485,7 +521,19 @@ func mapFilters(
 				fieldMap[tablenorm.NormalizeField(dbType, field)] = condition
 			}
 
-			tableMap[tablenorm.NormalizeTable(dbType, table)] = fieldMap
+			normTable := tablenorm.NormalizeTable(dbType, table)
+			if existing, ok := tableMap[normTable]; ok {
+				merged := existing.(map[string]any)
+				for k, v := range fieldMap {
+					if _, exists := merged[k]; !exists {
+						merged[k] = v
+					}
+				}
+
+				tableMap[normTable] = merged
+			} else {
+				tableMap[normTable] = fieldMap
+			}
 		}
 
 		out[configName] = tableMap

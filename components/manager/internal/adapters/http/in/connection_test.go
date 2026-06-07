@@ -20,6 +20,7 @@ import (
 	jobRepo "github.com/LerianStudio/fetcher/pkg/mongodb/job"
 	cacheRepo "github.com/LerianStudio/fetcher/pkg/ports/cache"
 	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
+	"github.com/LerianStudio/fetcher/pkg/testutil"
 	observability "github.com/LerianStudio/lib-observability"
 
 	"github.com/LerianStudio/fetcher/pkg/crypto"
@@ -42,7 +43,7 @@ func setupConnectionTestApp() *fiber.App {
 	// Middleware to inject test context with logger and tracer
 	app.Use(func(c *fiber.Ctx) error {
 		logger := &libLog.GoLogger{Level: libLog.LevelDebug}
-		ctx := observability.ContextWithHeaderID(c.UserContext(), "test-request-id")
+		ctx := observability.ContextWithHeaderID(testutil.TestContext(), "test-request-id")
 		ctx = observability.ContextWithLogger(ctx, logger)
 		ctx = observability.ContextWithTracer(ctx, otel.Tracer("test"))
 		c.SetUserContext(ctx)

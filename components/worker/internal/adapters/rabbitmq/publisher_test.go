@@ -301,6 +301,9 @@ func TestPublish_MultiTenant_UsesCanonicalSecureEnvelope(t *testing.T) {
 
 	tp := sdktrace.NewTracerProvider()
 	defer func() { require.NoError(t, tp.Shutdown(context.Background())) }()
+
+	prevPropagator := otel.GetTextMapPropagator()
+	t.Cleanup(func() { otel.SetTextMapPropagator(prevPropagator) })
 	otel.SetTextMapPropagator(propagation.TraceContext{})
 
 	ctx := observability.ContextWithTracer(context.Background(), tp.Tracer("publisher-test"))

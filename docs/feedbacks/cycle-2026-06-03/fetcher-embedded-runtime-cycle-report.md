@@ -8,7 +8,7 @@
 
 ## Outcome
 
-The strangler extraction is complete. `pkg/engine` is now an importable, infra-free Engine core; the Manager (connections, schema, job-creation) and the Worker (extraction) both run over it; the legacy Worker extraction path is deleted. Products (matcher, reporter) can now embed the Engine in-process instead of calling Fetcher as a network service. Zero public-contract drift across the entire migration (HTTP responses, queue payloads, stored result bytes, HMAC, status/events all byte-identical).
+The strangler extraction is complete. `pkg/engine` is now an importable, infra-free Engine core; the Manager (connections, schema, job-creation) and the Worker (extraction) both run over it; the legacy Worker extraction path is deleted. Products (matcher, reporter) can now embed the Engine in-process instead of calling Fetcher as a network service. The migration introduced intentional, documented breaking changes — tracked as breaking for the v2.0.0 cut: normalized extraction result table keys, indented (changed) stored result bytes, and a source-less notification routing-key change (`job.<status>` instead of `job.<status>.<source>`). Outside those deltas, the HTTP response shapes, queue payloads, and HMAC/status semantics were preserved. See `docs/compatibility-waivers.md` for the full breaking-change log.
 
 ## Per-Task Scorecard
 

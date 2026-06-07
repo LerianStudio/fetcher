@@ -122,7 +122,7 @@ graph LR
 ```
 
 - **Inbound adapters** (`internal/adapters/http/in/`) are thin Fiber handlers with Swagger annotations. They extract the organization ID via `httpUtils.GetOrganizationID(c)` and the product name from the `X-Product-Name` header, then call a service.
-- **Commands** (`internal/services/command/`) handle Create, Update, and Delete.
+- **Commands** (`internal/services/command/`) handle connection Create, Update, and Delete, plus job creation (`CreateFetcherJob`) and connection assignment (`AssignConnection`).
 - **Queries** (`internal/services/query/`) handle Get, List, Test, and Validate.
 - **Bootstrap** (`internal/bootstrap/`) wires dependencies, including the two engines, and holds configuration.
 

@@ -126,7 +126,14 @@ func (pr *PublisherRoutes) PublishStreamingTarget(ctx context.Context, exchange,
 		return fmt.Errorf("rabbitmq streaming publish channel is nil")
 	}
 
-	headers := callerHeaders
+	var headers map[string]any
+	if len(callerHeaders) > 0 {
+		headers = make(map[string]any, len(callerHeaders)+1)
+		for k, v := range callerHeaders {
+			headers[k] = v
+		}
+	}
+
 	if tenantID := tmcore.GetTenantIDContext(ctx); tenantID != "" {
 		if headers == nil {
 			headers = map[string]any{}
@@ -272,10 +279,12 @@ func (pr *PublisherRoutes) PublishWithHeaders(ctx context.Context, exchange, rou
 			return fmt.Errorf("failed to declare exchange %s on tenant %s vhost: %w", exchange, tenantID, err)
 		}
 
-		headers := map[string]any{rabbitmq.HeaderTenantID: tenantID}
+		headers := make(map[string]any, len(callerHeaders)+1)
 		for key, value := range callerHeaders {
 			headers[key] = value
 		}
+
+		headers[rabbitmq.HeaderTenantID] = tenantID
 
 		msg := rabbitmq.BuildSecurePublishing(ctx, reqID, exchange, routingKey, body, headers, pr.signer, true)
 		if contentType != "" {
@@ -313,9 +322,13 @@ func (pr *PublisherRoutes) PublishWithHeaders(ctx context.Context, exchange, rou
 
 	// Forward tenant ID from context to AMQP headers for multi-tenant isolation.
 	// When no tenant context is present (single-tenant mode), headers remain nil.
-	headersValue := callerHeaders
-
-	var headers *map[string]any
+	var headersValue map[string]any
+	if len(callerHeaders) > 0 {
+		headersValue = make(map[string]any, len(callerHeaders)+1)
+		for k, v := range callerHeaders {
+			headersValue[k] = v
+		}
+	}
 
 	if tenantID := tmcore.GetTenantIDContext(ctx); tenantID != "" {
 		if headersValue == nil {
@@ -325,6 +338,7 @@ func (pr *PublisherRoutes) PublishWithHeaders(ctx context.Context, exchange, rou
 		headersValue[rabbitmq.HeaderTenantID] = tenantID
 	}
 
+	var headers *map[string]any
 	if headersValue != nil {
 		headers = &headersValue
 	}

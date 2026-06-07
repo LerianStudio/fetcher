@@ -759,6 +759,15 @@ func assembleService(
 		})
 	}
 
+	if platformDependencies.readyzMultiTenantRedisClient != nil {
+		mtRdb := platformDependencies.readyzMultiTenantRedisClient
+
+		shutdownHooks = append(shutdownHooks, func(context.Context) error {
+			_ = mtRdb.Close()
+			return nil
+		})
+	}
+
 	if platformDependencies.tmMongoManager != nil {
 		mgr := platformDependencies.tmMongoManager
 
@@ -956,10 +965,18 @@ func initManagerEventDiscovery(
 		tmevent.WithService(constant.ApplicationName),
 	)
 	if err != nil {
+		if closeErr := redisClient.Close(); closeErr != nil {
+			logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to close tenant event Redis client: %v", closeErr))
+		}
+
 		return nil, wrapBootstrapError("create tenant event listener", err)
 	}
 
 	if err := listener.Start(context.Background()); err != nil {
+		if closeErr := redisClient.Close(); closeErr != nil {
+			logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to close tenant event Redis client: %v", closeErr))
+		}
+
 		return nil, wrapBootstrapError("start tenant event listener", err)
 	}
 

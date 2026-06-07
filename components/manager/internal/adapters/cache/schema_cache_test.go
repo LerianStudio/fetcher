@@ -8,6 +8,7 @@ import (
 
 	"github.com/LerianStudio/fetcher/pkg/model"
 	rediscache "github.com/LerianStudio/fetcher/pkg/redis"
+	"github.com/LerianStudio/fetcher/pkg/testutil"
 	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
 	libLog "github.com/LerianStudio/lib-observability/log"
 	"github.com/stretchr/testify/assert"
@@ -130,8 +131,8 @@ func TestSchemaCache_InMemoryBackend_TenantScopedRawConfigNames(t *testing.T) {
 
 	cache := NewSchemaCache(backend, time.Minute)
 	configName := "shared_config"
-	ctxA := tmcore.ContextWithTenantID(context.Background(), "tenant-schema-a")
-	ctxB := tmcore.ContextWithTenantID(context.Background(), "tenant-schema-b")
+	ctxA := tmcore.ContextWithTenantID(testutil.TestContext(), "tenant-schema-a")
+	ctxB := tmcore.ContextWithTenantID(testutil.TestContext(), "tenant-schema-b")
 	schemaA := &model.DataSourceSchema{
 		ConfigName: configName,
 		Tables: map[string]*model.TableSchema{
@@ -172,8 +173,8 @@ func TestSchemaCache_InMemoryBackend_DeleteTenantIsolation(t *testing.T) {
 
 	cache := NewSchemaCache(backend, time.Minute)
 	configName := "shared_config_delete"
-	ctxA := tmcore.ContextWithTenantID(context.Background(), "tenant-schema-delete-a")
-	ctxB := tmcore.ContextWithTenantID(context.Background(), "tenant-schema-delete-b")
+	ctxA := tmcore.ContextWithTenantID(testutil.TestContext(), "tenant-schema-delete-a")
+	ctxB := tmcore.ContextWithTenantID(testutil.TestContext(), "tenant-schema-delete-b")
 
 	require.NoError(t, cache.Set(ctxA, configName, &model.DataSourceSchema{ConfigName: configName}, 0))
 	require.NoError(t, cache.Set(ctxB, configName, &model.DataSourceSchema{ConfigName: configName}, 0))
@@ -196,8 +197,8 @@ func TestSchemaCache_InMemoryBackend_ClearTenantIsolation(t *testing.T) {
 
 	cache := NewSchemaCache(backend, time.Minute)
 	configName := "shared_config_clear"
-	ctxA := tmcore.ContextWithTenantID(context.Background(), "tenant-schema-clear-a")
-	ctxB := tmcore.ContextWithTenantID(context.Background(), "tenant-schema-clear-b")
+	ctxA := tmcore.ContextWithTenantID(testutil.TestContext(), "tenant-schema-clear-a")
+	ctxB := tmcore.ContextWithTenantID(testutil.TestContext(), "tenant-schema-clear-b")
 
 	require.NoError(t, cache.Set(ctxA, configName, &model.DataSourceSchema{ConfigName: configName}, 0))
 	require.NoError(t, cache.Set(ctxB, configName, &model.DataSourceSchema{ConfigName: configName}, 0))

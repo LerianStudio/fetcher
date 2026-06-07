@@ -21,13 +21,21 @@ func (stubEngineRunner) RunExtraction(context.Context, engine.TenantContext, str
 	return engine.ExtractionResult{}, nil
 }
 
-// TestUseCase_Validate_RequiresEngineRunner locks the strangler completion: the
-// legacy extraction path is gone, so the Engine runner is MANDATORY. Validate must
-// reject a nil EngineRunner at wiring time (fail fast at construction) rather than
-// nil-panicking deep in extraction.
+// stubDataSourceFactory is a no-op datasource factory used to satisfy the
+// mandatory-factory wiring guard in tests that only need a non-nil factory.
+func stubDataSourceFactory(context.Context, *model.Connection, crypto.Cryptor) (datasource.DataSource, error) {
+	return nil, nil
+}
+
+// TestUseCase_Validate_RequiresEngineRunner locks the strangler completion plus
+// the plugin_crm wiring guard: the legacy generic extraction path is gone, so the
+// Engine runner is MANDATORY; and CreateDataSource (still used by plugin_crm)
+// dereferences dataSourceFactory unconditionally, so that factory is MANDATORY
+// too. Validate must reject either nil dependency at wiring time (fail fast at
+// construction) rather than nil-panicking deep in extraction.
 func TestUseCase_Validate_RequiresEngineRunner(t *testing.T) {
 	t.Run("nil engine runner is rejected", func(t *testing.T) {
-		uc := &UseCase{}
+		uc := &UseCase{dataSourceFactory: stubDataSourceFactory}
 
 		err := uc.Validate()
 		if err == nil {
@@ -35,11 +43,20 @@ func TestUseCase_Validate_RequiresEngineRunner(t *testing.T) {
 		}
 	})
 
-	t.Run("non-nil engine runner passes", func(t *testing.T) {
+	t.Run("nil dataSourceFactory is rejected", func(t *testing.T) {
 		uc := &UseCase{EngineRunner: stubEngineRunner{}}
 
+		err := uc.Validate()
+		if err == nil {
+			t.Fatal("expected Validate to reject a nil dataSourceFactory, got nil")
+		}
+	})
+
+	t.Run("both dependencies wired passes", func(t *testing.T) {
+		uc := &UseCase{EngineRunner: stubEngineRunner{}, dataSourceFactory: stubDataSourceFactory}
+
 		if err := uc.Validate(); err != nil {
-			t.Fatalf("expected Validate to pass with an EngineRunner, got %v", err)
+			t.Fatalf("expected Validate to pass with EngineRunner and dataSourceFactory, got %v", err)
 		}
 	})
 }

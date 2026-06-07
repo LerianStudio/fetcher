@@ -338,7 +338,7 @@ func (uc *UseCase) handleErrorWithUpdate(
 	}
 
 	metadata := terminalEventPendingMetadata("failed", notificationPayload)
-	metadata["error"] = err.Error()
+	metadata["error"] = sanitizeErrorForNotification(err.Error())
 
 	if errUpdate := uc.JobRepository.UpdateStatus(ctx, jobID, model.JobStatusFailed, "", "", metadata); errUpdate != nil {
 		libOtel.HandleSpanError(span, "Error to update report status with error.", errUpdate)

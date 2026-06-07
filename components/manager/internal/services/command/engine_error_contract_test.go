@@ -70,6 +70,7 @@ func TestEngineErrorContract_NonConflictCategoriesFallThrough(t *testing.T) {
 		engine.CategoryValidation,
 		engine.CategoryNotFound,
 		engine.CategoryUnavailable,
+		engine.CategoryConnect,
 		engine.CategoryTimeout,
 		engine.CategoryCanceled,
 		engine.CategoryUnauthorized,

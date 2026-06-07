@@ -111,11 +111,19 @@ func (uc *UseCase) Validate() error {
 		return errEngineRunnerRequired
 	}
 
+	if uc.dataSourceFactory == nil {
+		return errDataSourceFactoryRequired
+	}
+
 	return nil
 }
 
 // errEngineRunnerRequired is returned by Validate when no Engine runner is wired.
 var errEngineRunnerRequired = errors.New("worker UseCase requires a non-nil EngineRunner: the legacy extraction path has been removed")
+
+// errDataSourceFactoryRequired is returned by Validate when no datasource factory is wired.
+// The plugin_crm extraction path calls CreateDataSource, which dereferences this factory.
+var errDataSourceFactoryRequired = errors.New("worker UseCase requires a non-nil dataSourceFactory for plugin_crm extraction")
 
 // SetStorageEncryptDerivedKey configures the HKDF-derived AES-256 key for storage encryption.
 func (uc *UseCase) SetStorageEncryptDerivedKey(key []byte) {

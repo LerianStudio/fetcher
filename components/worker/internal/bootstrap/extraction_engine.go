@@ -96,11 +96,12 @@ func newExtractionEngine(dsFactory datasource.DataSourceFactory, cryptor crypto.
 
 // noopCredentialResolver is the unreachable fallback resolver. The Worker always
 // seeds the rich connection record into the descriptor, so the enginecompat
-// connector uses its rich-record path and never calls the resolver. It returns an
-// empty password defensively rather than panicking, should the rich record ever be
-// absent (which would then fail at connect time, not here).
-func noopCredentialResolver(context.Context, engine.ConnectionDescriptor) (string, error) {
-	return "", nil
+// connector uses its rich-record path and never calls the resolver. Reaching it
+// means the rich record was absent — a wiring defect — so it fails fast with an
+// explicit error rather than returning an empty password that would degrade into a
+// confusing "bad credential" failure at connect time.
+func noopCredentialResolver(_ context.Context, descriptor engine.ConnectionDescriptor) (string, error) {
+	return "", fmt.Errorf("worker credential resolver reached for connection %q: the rich connection record was not seeded into the descriptor — this is a wiring defect, not a runtime credential miss", descriptor.ID)
 }
 
 // workerEngineRunner implements services.EngineRunner. It plans then executes an

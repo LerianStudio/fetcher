@@ -4,6 +4,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/LerianStudio/fetcher/pkg/testutil"
 	observability "github.com/LerianStudio/lib-observability"
 
 	libLog "github.com/LerianStudio/lib-observability/log"
@@ -23,7 +24,7 @@ func setupMiddlewareTestApp() *fiber.App {
 	// Middleware to inject test context with logger and tracer
 	app.Use(func(c *fiber.Ctx) error {
 		logger := &libLog.GoLogger{Level: libLog.LevelDebug}
-		ctx := observability.ContextWithHeaderID(c.UserContext(), "test-request-id")
+		ctx := observability.ContextWithHeaderID(testutil.TestContext(), "test-request-id")
 		ctx = observability.ContextWithLogger(ctx, logger)
 		ctx = observability.ContextWithTracer(ctx, otel.Tracer("test"))
 		c.SetUserContext(ctx)

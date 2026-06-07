@@ -106,7 +106,7 @@ func (r *TerminalEventRepairer) Run(launcher *commons.Launcher) error {
 
 	for {
 		if err := r.RepairOnce(ctx); err != nil {
-			r.logger.Log(ctx, libLog.LevelError, "failed to repair pending terminal job events", libLog.Err(err))
+			logger.Log(ctx, libLog.LevelError, "failed to repair pending terminal job events", libLog.Err(err))
 		}
 
 		select {

@@ -61,3 +61,15 @@
 | New behavior | Events are emitted with DefinitionKey `job.<status>` (exact bindings `job.completed` / `job.failed`). `source` is available ONLY in the event payload metadata. |
 | Impact | Topic subscribers using `job.<status>.<source>` or `job.<status>.*` patterns will not match the new key. Routing-level filtering by source now requires payload inspection or a future Subject/attribute change. |
 | Decision | Accepted. No consumers bind by source at decision time (2026-06-07). |
+
+## Breaking change: streaming env vars are now mandatory for the Worker
+
+| Field | Value |
+|-------|-------|
+| Owner | Platform Engineering / Fetcher maintainers |
+| Since | lib-streaming migration (v2.0.0) |
+| Scope | Worker startup (`components/worker`) |
+| New requirement | `STREAMING_ENABLED` must be `true` for the Worker to start. Terminal job-event notifications (`job.completed` / `job.failed`) are mandatory and emitted via lib-streaming. |
+| Exchange | `RABBITMQ_JOB_EVENTS_EXCHANGE` (default `fetcher.job.events`) is the job-events exchange used by the streaming RabbitMQ route target. |
+| Behavioral impact if unset | Worker startup fails fast (fail-closed wiring). There is no silent degradation and no legacy fallback — a missing or `false` `STREAMING_ENABLED` blocks the Worker from starting. |
+| Decision | Accepted as the new v2.0.0 contract. Operators must set `STREAMING_ENABLED=true` and provision the `fetcher.job.events` exchange before upgrade. |

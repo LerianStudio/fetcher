@@ -13,7 +13,7 @@ This dependency map distinguishes Engine core dependencies from optional adapter
 | Dependency | Current version | Engine core | Optional adapter | Current compatibility shell | Notes |
 | --- | --- | --- | --- | --- | --- |
 | Go standard library | Go 1.25.x | Yes | Yes | Yes | Core should stay mostly standard-library plus explicit ports. |
-| `github.com/LerianStudio/lib-commons/v5` | v5.1.0 | Limited | Yes | Yes | Mandatory Lerian library, but avoid dragging service shell concerns into core. Current code uses logging, telemetry, tenant manager, RabbitMQ helpers. |
+| `github.com/LerianStudio/lib-commons/v5` | v5.2.0 | Limited | Yes | Yes | Mandatory Lerian library, but avoid dragging service shell concerns into core. Current code uses logging, telemetry, tenant manager, RabbitMQ helpers. |
 | `github.com/LerianStudio/lib-auth/v2` | v2.7.0 | No | No | Yes | Auth stays host/Manager adapter concern. |
 | `github.com/LerianStudio/lib-license-go/v2` | v2.3.4 | No | No | Yes | License stays host/Manager adapter concern. |
 | `github.com/google/uuid` | v1.6.0 | Yes | Yes | Yes | Safe for logical IDs. |

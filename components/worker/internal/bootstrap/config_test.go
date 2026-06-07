@@ -12,6 +12,7 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/bootstrap/readyz"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	pkgRabbitMQ "github.com/LerianStudio/fetcher/pkg/rabbitmq"
+	"github.com/LerianStudio/fetcher/pkg/testutil"
 	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
 	mongoDB "github.com/LerianStudio/lib-commons/v5/commons/mongo"
 	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
@@ -108,10 +109,10 @@ func TestWorkerMultiTenantConsumer_UsesConfiguredTenantManagerClientWithCircuitB
 	require.NotNil(t, consumer)
 	assert.Same(t, tmClient, consumer.tenantClient)
 
-	_, firstErr := tmClient.GetTenantConfig(context.Background(), "tenant-cb", constant.ApplicationName)
+	_, firstErr := tmClient.GetTenantConfig(testutil.TestContext(), "tenant-cb", constant.ApplicationName)
 	require.Error(t, firstErr)
 
-	_, secondErr := tmClient.GetTenantConfig(context.Background(), "tenant-cb", constant.ApplicationName)
+	_, secondErr := tmClient.GetTenantConfig(testutil.TestContext(), "tenant-cb", constant.ApplicationName)
 	require.ErrorIs(t, secondErr, tmcore.ErrCircuitBreakerOpen)
 }
 
@@ -192,7 +193,7 @@ func TestInitJobEventEmitter_DisabledFailsStartup(t *testing.T) {
 	t.Setenv("STREAMING_BROKERS", "")
 	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "")
 
-	emitter, enabled, err := initJobEventEmitter(context.Background(), &Config{}, testBootstrapLogger(), &libOtel.Telemetry{}, nil, nil)
+	emitter, enabled, err := initJobEventEmitter(testutil.TestContext(), &Config{}, testBootstrapLogger(), &libOtel.Telemetry{}, nil, nil)
 	require.Error(t, err)
 	assert.Nil(t, emitter)
 	assert.False(t, enabled)
@@ -213,7 +214,7 @@ func TestInitJobEventEmitter_EnabledRequiresOutboxRepository(t *testing.T) {
 	adapter := pkgRabbitMQ.NewMockAdapter(ctrl)
 	publisher := workerRabbitMQ.NewPublisherRoutesWithAdapter(adapter, testBootstrapLogger(), telemetry)
 
-	emitter, enabled, err := initJobEventEmitter(context.Background(), &Config{RabbitMQJobEventsExchange: "job.events", OtelLibraryName: "test"}, testBootstrapLogger(), telemetry, publisher, nil)
+	emitter, enabled, err := initJobEventEmitter(testutil.TestContext(), &Config{RabbitMQJobEventsExchange: "job.events", OtelLibraryName: "test"}, testBootstrapLogger(), telemetry, publisher, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "streaming outbox repository is required")
 	assert.False(t, enabled)
@@ -504,7 +505,7 @@ func TestInitMongoConnection_PassesTLSConfig(t *testing.T) {
 		MongoTLSCACert:  "dGVzdC1jYS1jZXJ0",
 	}
 
-	_, _ = initMongoConnection(context.Background(), cfg, testBootstrapLogger())
+	_, _ = initMongoConnection(testutil.TestContext(), cfg, testBootstrapLogger())
 
 	require.NotNil(t, capturedConfig.TLS, "TLS config should be set when MongoTLSCACert is non-empty")
 	assert.Equal(t, "dGVzdC1jYS1jZXJ0", capturedConfig.TLS.CACertBase64)
@@ -532,7 +533,7 @@ func TestInitMongoConnection_NoTLSWhenCertEmpty(t *testing.T) {
 		MongoTLSCACert:  "",
 	}
 
-	_, _ = initMongoConnection(context.Background(), cfg, testBootstrapLogger())
+	_, _ = initMongoConnection(testutil.TestContext(), cfg, testBootstrapLogger())
 
 	assert.Nil(t, capturedConfig.TLS, "TLS config should be nil when MongoTLSCACert is empty")
 }
