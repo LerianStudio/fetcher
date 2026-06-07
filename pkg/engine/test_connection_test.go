@@ -289,9 +289,12 @@ func TestEngine_TestConnection_ConnectivityFailure_IsSafeAndStillCloses(t *testi
 		t.Fatalf("TestConnection: expected Success=false on connectivity failure, got %+v", result)
 	}
 
+	// A CONNECTIVITY failure is the connect stage: it carries the connect-distinct
+	// CategoryConnect, the same category the schema discovery path uses for a
+	// connect failure, so both Engine connect paths classify identically.
 	var engErr *engine.EngineError
-	if !errors.As(err, &engErr) || engErr.Category != engine.CategoryUnavailable {
-		t.Fatalf("TestConnection: expected CategoryUnavailable, got %v", err)
+	if !errors.As(err, &engErr) || engErr.Category != engine.CategoryConnect {
+		t.Fatalf("TestConnection: expected CategoryConnect, got %v", err)
 	}
 
 	// The error MUST NOT leak secret/DSN/driver-internal material.

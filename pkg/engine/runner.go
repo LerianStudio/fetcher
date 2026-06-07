@@ -71,6 +71,30 @@ import (
 // direct-mode contract simple (a DirectResult is whole or absent) and matches the
 // host's existing job-failure semantics; a future collect-all-errors policy would
 // be an additive change, not a silent behavior shift.
+//
+// RESULT-SIZE LIMIT — TWO LAYERS. MaxResultBytes is enforced by two complementary
+// guards so an over-limit extraction fails FAST rather than after fully
+// materializing AND serializing the whole result:
+//
+//  1. Per-step lower-bound (fail-fast). After each step completes, the runner
+//     compact-marshals that step's rows and adds their length to a running sum.
+//     Compact JSON is a SOUND LOWER BOUND of the final INDENTED payload (indenting
+//     only ADDS whitespace, never removes bytes), so the per-step sum is always <=
+//     the final serialized size. The moment the running sum exceeds MaxResultBytes
+//     the final payload is GUARANTEED to exceed it too, and the run aborts BEFORE
+//     building or querying any further step's connector — bounding peak memory to
+//     roughly one over-limit step rather than the whole result twice over. The
+//     per-step compact bytes are MEASURED and discarded immediately; they are never
+//     retained, so the guard adds no second full buffer.
+//
+//  2. Post-marshal authoritative check (source of truth). The lower bound can PASS
+//     while the true indented size still exceeds the limit (whitespace pushes a
+//     just-under-limit compact sum over once indented). The final check on the
+//     actual indented payload therefore remains and is the authoritative gate; the
+//     per-step guard never replaces it, only short-circuits the obvious cases early.
+//
+// Both layers share the SAME CategoryLimitExceeded error and message, and both are
+// gated on MaxResultBytes > 0 (a zero/negative limit means unbounded).
 
 // directResultFormat is the serialization format of the inline direct-mode
 // payload. It mirrors the Worker's "json" result format so downstream consumers
@@ -197,6 +221,13 @@ func (e *Engine) runDirectExtraction(
 
 	var rowCount int64
 
+	// runningSize accumulates a SOUND LOWER BOUND of the final serialized size: the
+	// sum of each step's COMPACT-marshaled byte length. Compact <= indented always,
+	// so once this sum exceeds MaxResultBytes the final indented payload is
+	// guaranteed to exceed it too — letting the run fail fast before the next step
+	// does any connector work. See the file header's TWO-LAYER limit note.
+	var runningSize int64
+
 	for _, step := range plan.Steps {
 		// Per-step context check BEFORE the step opens or queries its connector. A
 		// cancel or deadline between steps stops execution without doing the next
@@ -216,6 +247,23 @@ func (e *Engine) runDirectExtraction(
 		aggregated[step.ConfigName] = stepRows
 		rowCounts[step.ConfigName] = stepCount
 		rowCount += stepCount
+
+		// Fail-fast result-size guard. Measure this step's compact size and add it to
+		// the running lower bound. The early exit happens BETWEEN steps, AFTER the
+		// current step's connector is already closed (executeStep's deferred Close
+		// ran on return) and BEFORE the next step is built or queried — preserving the
+		// connector-close-per-step invariant. The terminal-state and connector
+		// invariants are identical to the post-marshal check: this returns the same
+		// CategoryLimitExceeded error, which runDirectExtraction's caller routes
+		// through recordTerminalFailure exactly like the authoritative check below.
+		exceeded, err := exceedsRunningSize(&runningSize, stepRows, plan.Limits.MaxResultBytes)
+		if err != nil {
+			return extractionOutcome{}, err
+		}
+
+		if exceeded {
+			return extractionOutcome{}, NewEngineError(CategoryLimitExceeded, "extraction result exceeds the configured size limit")
+		}
 	}
 
 	// Context check DURING result assembly: after the row batches are gathered but
@@ -226,7 +274,22 @@ func (e *Engine) runDirectExtraction(
 		return extractionOutcome{}, engErr
 	}
 
-	payload, err := json.Marshal(aggregated)
+	// Serialize INDENTED (two-space) rather than compact. The serialized form is
+	// part of the host-facing result contract, not an engine-private detail: an
+	// in-process host (Worker/Reporter) persists these exact bytes as the stored
+	// artifact and HMACs them for EXTERNAL verification. Emitting the indented shape
+	// the artifact already uses lets such a host store DirectResult.Data directly,
+	// eliminating a decode + re-marshal round-trip (and its transient ~MaxResultBytes
+	// allocations each way) on the engine->host seam.
+	//
+	// DELIBERATE semantic shift: indented JSON is larger than compact, so this grows
+	// PlaintextSize, changes the SHA-256 digest value, AND changes the byte count the
+	// MaxResultBytes limit measures. That is intended — the limit now bounds the
+	// serialized ARTIFACT size as it is actually stored, which is the size that
+	// matters operationally. Both delivery modes share this payload (store mode
+	// persists the same bytes via the sink), so the indented shape is consistent
+	// across direct and store results.
+	payload, err := json.MarshalIndent(aggregated, "", "  ")
 	if err != nil {
 		// The aggregated map holds only extracted data and identities; a marshal
 		// failure is an unexpected internal condition. The error is not echoed.
@@ -234,10 +297,13 @@ func (e *Engine) runDirectExtraction(
 	}
 
 	// Enforce the effective result-size limit BEFORE the payload can be returned
-	// inline or written to the sink. An over-limit result is a hard execution
-	// failure (limit_exceeded): the bytes are NEVER returned or persisted. A zero
-	// limit means unbounded. The check sits here, in the shared core, so it guards
-	// BOTH delivery modes from a single place.
+	// inline or written to the sink. This is the AUTHORITATIVE post-marshal check
+	// (layer 2 of the two-layer guard documented in the file header): it measures
+	// the actual indented payload and remains the source of truth even when the
+	// per-step lower bound passed. An over-limit result is a hard execution failure
+	// (limit_exceeded): the bytes are NEVER returned or persisted. A zero limit
+	// means unbounded. The check sits here, in the shared core, so it guards BOTH
+	// delivery modes from a single place.
 	if plan.Limits.MaxResultBytes > 0 && int64(len(payload)) > plan.Limits.MaxResultBytes {
 		return extractionOutcome{}, NewEngineError(CategoryLimitExceeded, "extraction result exceeds the configured size limit")
 	}
@@ -248,6 +314,35 @@ func (e *Engine) runDirectExtraction(
 		rowCounts:   rowCounts,
 		completedAt: time.Now().UTC(),
 	}, nil
+}
+
+// exceedsRunningSize advances the running lower-bound size by the COMPACT
+// serialized length of one step's rows and reports whether the accumulated bound
+// has crossed the limit. It is the per-step half of the two-layer result-size
+// guard: compact bytes are a sound lower bound of the final INDENTED payload
+// (indenting only adds whitespace), so a crossing here proves the final payload is
+// over-limit too.
+//
+// The compact bytes are measured and discarded immediately — only the int64 sum is
+// retained — so the guard bounds peak memory rather than holding a second buffer.
+// A nil/empty rows map contributes the length of compact-empty JSON, never an
+// error. A zero or negative limit means unbounded: the function never reports a
+// crossing, mirroring the post-marshal check's gating.
+func exceedsRunningSize(runningSize *int64, stepRows map[string][]map[string]any, maxResultBytes int64) (bool, error) {
+	encoded, err := json.Marshal(stepRows)
+	if err != nil {
+		// stepRows holds only extracted data; a marshal failure is an unexpected
+		// internal condition. The error is not echoed, matching the post-marshal path.
+		return false, NewEngineError(CategoryInternal, "failed to serialize extraction result")
+	}
+
+	*runningSize += int64(len(encoded))
+
+	if maxResultBytes <= 0 {
+		return false, nil
+	}
+
+	return *runningSize > maxResultBytes, nil
 }
 
 // completeDirectMode finalizes an inline (direct) result: it stamps canonical

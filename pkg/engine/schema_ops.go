@@ -5,6 +5,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"strings"
 )
@@ -191,8 +192,22 @@ func (e *Engine) resolveSchema(
 
 	// Discover the schema live. A discovery failure is mapped to a safe error: the
 	// connector's raw error may embed a DSN, credential, or driver internals.
+	//
+	// STAGE PASS-THROUGH: the schemacompat connector merges the CONNECT stage into
+	// DiscoverSchema (lazy connect on first read), and signals a connect-stage
+	// failure by returning an already-safe CategoryConnect EngineError. That
+	// classification is itself credential-free, so it is passed THROUGH unchanged
+	// rather than re-wrapped — preserving the connect-vs-discover stage distinction
+	// the host needs to tell "could not connect" apart from "connected but the read
+	// failed". Any other failure (a bare driver/read error) is still redacted to
+	// CategoryUnavailable.
 	snapshot, err := connector.DiscoverSchema(ctx)
 	if err != nil {
+		var engErr *EngineError
+		if errors.As(err, &engErr) && engErr != nil && engErr.Category == CategoryConnect {
+			return SchemaSnapshot{}, engErr
+		}
+
 		return SchemaSnapshot{}, NewEngineError(CategoryUnavailable, "failed to discover datasource schema")
 	}
 

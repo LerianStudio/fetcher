@@ -1335,6 +1335,155 @@ func TestExecuteExtraction_ResultSizeExceededFailsBeforeDirectReturn(t *testing.
 	}
 }
 
+func TestExecuteExtraction_ResultSizeExceededFailsFastBetweenSteps(t *testing.T) {
+	t.Parallel()
+
+	// Layer 1 (per-step lower bound): step "pg-a" (sorted first) alone produces rows
+	// whose compact size already exceeds a tiny MaxResultBytes. The runner must fail
+	// fast AFTER step "pg-a" closes its connector and BEFORE step "pg-z" is ever
+	// built or queried — the whole point of the early guard is that the second
+	// datasource is never touched.
+	limits := engine.DefaultLimits()
+	limits.MaxResultBytes = 8
+
+	h := newLimitedRunnerHarness(t, limits, nil)
+	connA := h.seedSource(t, "pg-a", "postgres",
+		map[string][]string{"public.a": {"id", "name"}},
+		map[string][]map[string]any{
+			"public.a": {
+				{"id": 1, "name": "alice-with-a-long-enough-value-to-exceed-eight-bytes"},
+				{"id": 2, "name": "bob-also-contributes-more-than-the-tiny-limit"},
+			},
+		})
+	connZ := h.seedSource(t, "pg-z", "mysql",
+		map[string][]string{"public.z": {"id"}},
+		map[string][]map[string]any{
+			"public.z": {{"id": 99}},
+		})
+
+	plan := h.planFor(t, map[string]engine.FieldSelection{
+		"pg-a": {"public.a": {"id", "name"}},
+		"pg-z": {"public.z": {"id"}},
+	})
+
+	// Record pg-z's build count AFTER planning (the planner built one connector per
+	// datasource for schema discovery). If the runner fails fast it must never build
+	// pg-z's connector, so this count must not grow.
+	zBuildsAfterPlan := h.factories["mysql"].BuildCount()
+
+	result, err := h.engine.ExecuteExtraction(context.Background(), plan)
+	if err == nil {
+		t.Fatalf("an oversized first step must fail fast, got nil error")
+	}
+
+	var engErr *engine.EngineError
+	if !errors.As(err, &engErr) {
+		t.Fatalf("error is not *engine.EngineError: %T (%v)", err, err)
+	}
+
+	if engErr.Category != engine.CategoryLimitExceeded {
+		t.Fatalf("error category = %q, want %q", engErr.Category, engine.CategoryLimitExceeded)
+	}
+
+	// No inline payload crosses the boundary for an over-limit result.
+	if result.Direct != nil {
+		t.Fatalf("oversized result must not return inline Direct bytes, got %+v", result.Direct)
+	}
+
+	// Step "pg-a" ran and closed its connector.
+	if connA.QueryCalls() != 1 {
+		t.Fatalf("connA QueryCalls = %d, want 1 (first step must run)", connA.QueryCalls())
+	}
+
+	if connA.CloseCount() != 1 {
+		t.Fatalf("connA CloseCount = %d, want 1 (first step's connector must close)", connA.CloseCount())
+	}
+
+	// Step "pg-z" was NEVER queried...
+	if connZ.QueryCalls() != 0 {
+		t.Fatalf("connZ QueryCalls = %d, want 0 (second step must be skipped after fail-fast)", connZ.QueryCalls())
+	}
+
+	// ...and NEVER built by the runner: with nothing built there is nothing to leak.
+	// The build-per-step factory's count is unchanged from after planning, proving
+	// the fail-fast happened between steps, before the next connector was opened.
+	if grew := h.factories["mysql"].BuildCount(); grew != zBuildsAfterPlan {
+		t.Fatalf("runner built a connector for the skipped step: BuildCount = %d, want %d (unchanged)", grew, zBuildsAfterPlan)
+	}
+}
+
+func TestExecuteExtraction_ResultSizeExceededOnlyByIndentation(t *testing.T) {
+	t.Parallel()
+
+	// Layer 2 (authoritative post-marshal check): the per-step COMPACT lower bound
+	// passes, but the final INDENTED payload — larger by the whitespace indenting
+	// adds — exceeds the limit. The early guard does NOT catch this; the final
+	// post-marshal check must, proving the two layers are complementary and the
+	// post-marshal check remains the source of truth.
+	//
+	// The limit is pinned BETWEEN the compact size and the indented size of a
+	// single-step result, computed from the same shape the runner serializes.
+	rows := map[string][]map[string]any{
+		"public.users": {
+			{"id": 1, "status": "active"},
+			{"id": 2, "status": "inactive"},
+			{"id": 3, "status": "active"},
+		},
+	}
+	aggregated := map[string]map[string][]map[string]any{"pg-main": rows}
+
+	compact, err := json.Marshal(aggregated)
+	if err != nil {
+		t.Fatalf("marshal compact: %v", err)
+	}
+
+	indented, err := json.MarshalIndent(aggregated, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal indented: %v", err)
+	}
+
+	if len(indented) <= len(compact) {
+		t.Fatalf("test invariant broken: indented (%d) must exceed compact (%d)", len(indented), len(compact))
+	}
+
+	// A limit strictly between the two sizes: the per-step compact sum (== len(compact)
+	// for a single step) stays at or below it, but the indented payload overshoots.
+	limit := int64(len(compact)+len(indented)) / 2
+	if limit < int64(len(compact)) || limit >= int64(len(indented)) {
+		// Fall back to a value provably between the two when the midpoint is degenerate.
+		limit = int64(len(compact))
+	}
+
+	limits := engine.DefaultLimits()
+	limits.MaxResultBytes = limit
+
+	h := newLimitedRunnerHarness(t, limits, nil)
+	h.seedSource(t, "pg-main", "postgres",
+		map[string][]string{"public.users": {"id", "status"}}, rows)
+
+	plan := h.planFor(t, map[string]engine.FieldSelection{
+		"pg-main": {"public.users": {"id", "status"}},
+	})
+
+	result, err := h.engine.ExecuteExtraction(context.Background(), plan)
+	if err == nil {
+		t.Fatalf("a result that fits compact but exceeds indented must be rejected, got nil error")
+	}
+
+	var engErr *engine.EngineError
+	if !errors.As(err, &engErr) {
+		t.Fatalf("error is not *engine.EngineError: %T (%v)", err, err)
+	}
+
+	if engErr.Category != engine.CategoryLimitExceeded {
+		t.Fatalf("error category = %q, want %q", engErr.Category, engine.CategoryLimitExceeded)
+	}
+
+	if result.Direct != nil {
+		t.Fatalf("an over-limit (indented) result must not return inline bytes, got %+v", result.Direct)
+	}
+}
+
 func TestExecuteExtraction_ResultSizeExceededFailsBeforeSinkWrite(t *testing.T) {
 	t.Parallel()
 

@@ -504,6 +504,74 @@ func TestEngine_DiscoverSchema_DiscoveryFailure_IsSafeAndStillCloses(t *testing.
 	}
 }
 
+// TestEngine_DiscoverSchema_ConnectFailure_PassesThroughConnectCategory proves the
+// stage distinction: when the connector signals a CONNECT-stage failure by
+// returning a CategoryConnect EngineError, resolveSchema must PASS IT THROUGH
+// (not re-wrap it as CategoryUnavailable). This is what lets the Manager render
+// a connect failure as "Database Connection Error" while a discovery-read
+// failure stays "Schema Retrieval Error". The pass-through must still leak
+// nothing beyond the connector's already-safe message.
+func TestEngine_DiscoverSchema_ConnectFailure_PassesThroughConnectCategory(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	record := &schemaConnRecord{}
+	// A connect-stage failure already carries the safe connect category. The
+	// schemacompat connector merges connect into DiscoverSchema, so a connect
+	// failure surfaces as a CategoryConnect EngineError out of DiscoverSchema.
+	factory := &schemaConnFactory{
+		record:      record,
+		discoverErr: engine.NewEngineError(engine.CategoryConnect, "failed to connect to datasource"),
+	}
+	eng, store := engineForDiscoverSchema(t, factory, memory.NewSchemaCache())
+	tenant := mustTenant(t, "tenant-a")
+	seedConnection(t, store, tenant, "pg-main", "postgres")
+
+	_, err := eng.DiscoverSchema(ctx, tenant, "pg-main")
+	if err == nil {
+		t.Fatalf("DiscoverSchema: expected connect error, got nil")
+	}
+
+	var engErr *engine.EngineError
+	if !errors.As(err, &engErr) || engErr.Category != engine.CategoryConnect {
+		t.Fatalf("DiscoverSchema: expected CategoryConnect pass-through, got %v", err)
+	}
+
+	// Close must still be attempted on the connect-failure path.
+	if !record.has("close") {
+		t.Fatalf("DiscoverSchema: connector must be closed on connect failure, got %v", record.snapshot())
+	}
+}
+
+// TestEngine_DiscoverSchema_DiscoveryFailure_StaysUnavailable proves the
+// other side of the stage distinction: a plain (non-EngineError) discovery-read
+// failure is still redacted to CategoryUnavailable, NOT CategoryConnect. A bare
+// driver error from a successful connect but failed read must not be
+// misclassified as a connect failure.
+func TestEngine_DiscoverSchema_DiscoveryFailure_StaysUnavailable(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	record := &schemaConnRecord{}
+	factory := &schemaConnFactory{
+		record:      record,
+		discoverErr: errors.New("scan rows failed: relation does not exist"),
+	}
+	eng, store := engineForDiscoverSchema(t, factory, memory.NewSchemaCache())
+	tenant := mustTenant(t, "tenant-a")
+	seedConnection(t, store, tenant, "pg-main", "postgres")
+
+	_, err := eng.DiscoverSchema(ctx, tenant, "pg-main")
+	if err == nil {
+		t.Fatalf("DiscoverSchema: expected discovery error, got nil")
+	}
+
+	var engErr *engine.EngineError
+	if !errors.As(err, &engErr) || engErr.Category != engine.CategoryUnavailable {
+		t.Fatalf("DiscoverSchema: expected CategoryUnavailable for read failure, got %v", err)
+	}
+}
+
 func TestEngine_DiscoverSchema_BuildFailure_IsSafe(t *testing.T) {
 	t.Parallel()
 

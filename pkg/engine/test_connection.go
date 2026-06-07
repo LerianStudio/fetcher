@@ -49,8 +49,11 @@ type ConnectionTestResult struct {
 //  4. build the connector (I/O-free) and ALWAYS close it via defer;
 //  5. run the connector's explicit TestConnection connectivity step.
 //
-// Connector construction and connectivity errors are mapped to safe
-// CategoryUnavailable EngineErrors: the underlying error MAY embed a DSN,
+// Connector CONSTRUCTION (build) errors map to a safe CategoryUnavailable
+// EngineError; the CONNECTIVITY (connect-stage) failure maps to the
+// connect-distinct CategoryConnect — the same category the schema discovery path
+// uses for a connect failure, so both Engine connect paths classify the connect
+// stage identically. In both cases the underlying error MAY embed a DSN,
 // credential, or driver internals, so it is DELIBERATELY discarded from the
 // returned message, mirroring protectSecret and guardActiveExecutions.
 func (e *Engine) TestConnection(
@@ -108,7 +111,7 @@ func (e *Engine) TestConnection(
 	defer func() { _ = connector.Close(ctx) }()
 
 	if err := connector.TestConnection(ctx); err != nil {
-		return ConnectionTestResult{}, NewEngineError(CategoryUnavailable, "failed to connect to datasource")
+		return ConnectionTestResult{}, NewEngineError(CategoryConnect, "failed to connect to datasource")
 	}
 
 	return ConnectionTestResult{Success: true, ConfigName: descriptor.ConfigName}, nil

@@ -155,6 +155,7 @@ func TestErrorCategories_AreStableAndValid(t *testing.T) {
 		{CategoryForbidden, "forbidden"},
 		{CategoryLimitExceeded, "limit_exceeded"},
 		{CategoryUnavailable, "unavailable"},
+		{CategoryConnect, "connect"},
 		{CategoryTimeout, "timeout"},
 		{CategoryCanceled, "canceled"},
 		{CategoryInternal, "internal"},

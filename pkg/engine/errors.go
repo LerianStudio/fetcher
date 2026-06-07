@@ -32,6 +32,15 @@ const (
 	CategoryConflict ErrorCategory = "conflict"
 	// CategoryUnavailable indicates a dependency (datasource, store) is down.
 	CategoryUnavailable ErrorCategory = "unavailable"
+	// CategoryConnect indicates the connector failed to ESTABLISH connectivity to
+	// the datasource (the connect stage), as distinct from a failure while READING
+	// from an already-connected datasource (which stays CategoryUnavailable). It
+	// lets a host distinguish "could not connect" (e.g. TLS required, auth refused,
+	// host unreachable) from "connected but the read failed" without ever
+	// surfacing the raw, secret-bearing connector error. Hosts map it to the same
+	// transport family as CategoryUnavailable (a 5xx dependency failure); the
+	// distinction exists for stage attribution, not a different status class.
+	CategoryConnect ErrorCategory = "connect"
 	// CategoryTimeout indicates an operation exceeded its deadline
 	// (context.DeadlineExceeded). Hosts map it to HTTP 504 Gateway Timeout — the
 	// execution outran its own bound, distinct from a host-initiated cancel.
@@ -53,6 +62,7 @@ var validErrorCategories = map[ErrorCategory]struct{}{
 	CategoryLimitExceeded: {},
 	CategoryConflict:      {},
 	CategoryUnavailable:   {},
+	CategoryConnect:       {},
 	CategoryTimeout:       {},
 	CategoryCanceled:      {},
 	CategoryInternal:      {},
@@ -73,6 +83,14 @@ type EngineError struct {
 	// Message is a safe, human-readable description. It MUST NOT contain
 	// credentials, connection strings, or any secret material.
 	Message string
+	// cause is an OPTIONAL underlying error preserved ONLY for errors.As /
+	// errors.Is transparency (so a host can still recognize a typed error it
+	// wrapped, e.g. a host-safety pkg.ValidationError). It is DELIBERATELY
+	// unexported and NEVER rendered by Error(): the cause MAY embed a DSN,
+	// credential, or driver internals, so the public string stays the safe
+	// Message. Set it only via NewWrappedEngineError when the wrapped cause is
+	// itself something the host must inspect.
+	cause error
 }
 
 // NewEngineError constructs a safe Engine error. Callers are responsible for
@@ -83,6 +101,32 @@ func NewEngineError(category ErrorCategory, message string) *EngineError {
 		Category: category,
 		Message:  message,
 	}
+}
+
+// NewWrappedEngineError constructs a safe Engine error that PRESERVES an
+// underlying cause for errors.As / errors.Is transparency WITHOUT leaking it.
+// The rendered Error() string is still only the safe, credential-free message;
+// the cause is reachable solely through Unwrap, so a host can recognize a typed
+// error it raised (e.g. a host-safety pkg.ValidationError) while the public
+// boundary message stays redacted. Use it ONLY when the host genuinely needs to
+// see through to the cause; plain failures stay on NewEngineError.
+func NewWrappedEngineError(category ErrorCategory, message string, cause error) *EngineError {
+	return &EngineError{
+		Category: category,
+		Message:  message,
+		cause:    cause,
+	}
+}
+
+// Unwrap returns the preserved cause (or nil), making errors.As / errors.Is
+// transparent through the safe boundary error. Error() never renders the cause,
+// so unwrapping exposes the typed error for inspection without leaking its text.
+func (e *EngineError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+
+	return e.cause
 }
 
 // contextError maps a context error to a safe, category-correct EngineError,
