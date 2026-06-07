@@ -2128,6 +2128,31 @@ func TestSanitizeErrorForNotification(t *testing.T) {
 			input:    "sources: mongodb://u:p@h1 and amqp://u:p@h2",
 			expected: "sources: [redacted] and [redacted]",
 		},
+		{
+			name:     "redacts dial tcp ip:port endpoint",
+			input:    "dial tcp 10.0.0.5:5432",
+			expected: "dial tcp [redacted]",
+		},
+		{
+			name:     "redacts dial tcp host:port endpoint inline",
+			input:    "failed: dial tcp db.internal:5432 timeout",
+			expected: "failed: dial tcp [redacted] timeout",
+		},
+		{
+			name:     "redacts lookup hostname",
+			input:    "lookup mongo.internal",
+			expected: "lookup [redacted]",
+		},
+		{
+			name:     "redacts bare ipv4 address",
+			input:    "error at 192.168.1.10:8080 occurred",
+			expected: "error at [redacted] occurred",
+		},
+		{
+			name:     "preserves message without endpoints",
+			input:    "connection not found for database: postgres_db",
+			expected: "connection not found for database: postgres_db",
+		},
 	}
 
 	for _, tt := range tests {

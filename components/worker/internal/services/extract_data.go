@@ -766,14 +766,33 @@ func extractConfigNamesFromMappedFields(mappedFields map[string]map[string][]str
 	return configNames
 }
 
-// notificationURIPattern matches connection strings and URIs that may contain
-// credentials or internal infrastructure details.
-var notificationURIPattern = regexp.MustCompile(`\w+://[^\s]+`)
+var (
+	// notificationURIPattern matches scheme://... connection strings that may
+	// carry credentials or internal infrastructure details.
+	notificationURIPattern = regexp.MustCompile(`\w+://[^\s]+`)
+	// notificationNetAddrPattern matches the address operand of Go net-stack
+	// errors that embed an internal endpoint — e.g. "dial tcp 10.0.0.5:5432",
+	// "read tcp 10.0.0.5:5432->10.0.0.6:5432", "lookup mongo.internal". The
+	// operation keyword is preserved; the host/IP:port operand is redacted.
+	notificationNetAddrPattern = regexp.MustCompile(`\b(dial (?:tcp|udp)|read tcp|write tcp|lookup)\s+\S+`)
+	// notificationIPPattern catches any remaining bare IPv4 address (optionally
+	// with :port) not already covered by the patterns above.
+	notificationIPPattern = regexp.MustCompile(`\b\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?\b`)
+)
 
-// sanitizeErrorForNotification strips connection strings, hostnames, and other
-// internal infrastructure details from error messages.
+// sanitizeErrorForNotification strips connection strings, internal endpoints
+// (host:port from Go net-stack / DB-driver errors), and bare IP addresses from
+// error messages before they are published to notification consumers or
+// persisted in terminal-event metadata. It is deliberately anchored on known
+// leak shapes (URIs, net-op operands, IPv4) rather than redacting arbitrary
+// bare hostnames, to keep operator-facing errors useful while not leaking
+// internal topology.
 func sanitizeErrorForNotification(msg string) string {
-	return notificationURIPattern.ReplaceAllString(msg, "[redacted]")
+	msg = notificationURIPattern.ReplaceAllString(msg, "[redacted]")
+	msg = notificationNetAddrPattern.ReplaceAllString(msg, "$1 [redacted]")
+	msg = notificationIPPattern.ReplaceAllString(msg, "[redacted]")
+
+	return msg
 }
 
 // countTotalRows counts the total number of records in the result map.
