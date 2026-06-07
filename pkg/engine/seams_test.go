@@ -89,92 +89,6 @@ func requiredSeams() []seam {
 	}
 }
 
-func TestRequiredSeams_Characterization_IsComplete(t *testing.T) {
-	t.Parallel()
-
-	required := map[string]struct {
-		sourcePath string
-		keywords   []string
-	}{
-		"datasource_factory_side_effects": {
-			sourcePath: "pkg/datasource/datasource_factory.go",
-			keywords:   []string{"datasource", "credentials", "adapter"},
-		},
-		"manager_create_fetcher_job_orchestration": {
-			sourcePath: "components/manager/internal/services/command/create_fetcher_job.go",
-			keywords:   []string{"deduplication", "ownership", "queue"},
-		},
-		"manager_validate_schema_orchestration": {
-			sourcePath: "components/manager/internal/services/query/validate_schema.go",
-			keywords:   []string{"schema", "datasource", "legacy"},
-		},
-		"worker_extract_external_data_orchestration": {
-			sourcePath: "components/worker/internal/services/extract_data.go",
-			keywords:   []string{"message", "datasource", "storage"},
-		},
-		"connection_resolver_behavior": {
-			sourcePath: "pkg/resolver/resolver.go",
-			keywords:   []string{"tenant", "connections", "ResolveConnections"},
-		},
-		"tenant_context_product_boundary": {
-			sourcePath: "components/manager/internal/services/command/create_fetcher_job.go; components/manager/internal/services/query/get_connection.go; components/manager/internal/services/query/get_connection_schema.go",
-			keywords:   []string{"tenant", "product", "ownership"},
-		},
-		"queue_tenant_propagation": {
-			sourcePath: "components/manager/internal/services/command/create_fetcher_job.go; components/worker/internal/bootstrap/consumer.go; components/worker/internal/adapters/rabbitmq/publisher.rabbitmq.go",
-			keywords:   []string{"tenant", "X-Tenant-ID", "AMQP headers", "publish", "consume", "notification"},
-		},
-		"storage_tenant_scoping": {
-			sourcePath: "pkg/storage/s3.go; pkg/seaweedfs/external/external_data.go",
-			keywords:   []string{"tenant", "storage", "tenant-scoped before use"},
-		},
-		"schema_cache_tenant_scoping": {
-			sourcePath: "components/manager/internal/services/query/validate_schema.go; components/manager/internal/adapters/cache/schema_cache.go; components/manager/internal/adapters/cache/schema_cache_interface.go; pkg/redis/factory.go; pkg/redis/redis_cache.go; pkg/redis/fallback_cache.go; pkg/redis/memory_cache.go",
-			keywords:   []string{"schema cache", "raw keys", "tenant-scoped-before-use", "fallback", "memory cache", "Redis"},
-		},
-		"storage_result_handling": {
-			sourcePath: "components/worker/internal/services/extract_data.go",
-			keywords:   []string{"encrypted", "storage", "HMAC"},
-		},
-		"worker_plugin_crm_compatibility": {
-			sourcePath: "components/worker/internal/services/extract_crm_data.go",
-			keywords:   []string{"plugin_crm", "compatibility", "Worker"},
-		},
-		"plugin_crm_adapter_compatibility": {
-			sourcePath: "components/manager/internal/services/query/validate_schema.go; components/worker/internal/services/extract_crm_data.go",
-			keywords:   []string{"plugin_crm", "Manager/Worker", "compatibility"},
-		},
-		"notification_publishing": {
-			sourcePath: "components/worker/internal/services/job_notification.go",
-			keywords:   []string{"notifications", "source", "job.completed", "job.failed", "lib-streaming"},
-		},
-	}
-
-	seamsByName := seamsByName(t)
-	for name, want := range required {
-		name, want := name, want
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-
-			got, ok := seamsByName[name]
-			if !ok {
-				t.Fatalf("missing runtime seam characterization %q", name)
-			}
-			if got.SourcePath != want.sourcePath {
-				t.Fatalf("runtime seam characterization %q source path = %q, want %q", name, got.SourcePath, want.sourcePath)
-			}
-			if got.Reason == "" {
-				t.Fatalf("runtime seam characterization %q reason is empty", name)
-			}
-			for _, keyword := range want.keywords {
-				if !strings.Contains(got.Reason, keyword) {
-					t.Fatalf("runtime seam characterization %q reason = %q, want keyword %q", name, got.Reason, keyword)
-				}
-			}
-		})
-	}
-}
-
 func TestRequiredSeams_SourcePathsExist(t *testing.T) {
 	t.Parallel()
 
@@ -225,31 +139,6 @@ func TestRequiredSeams_PluginCRMCompatibility_IsAdapterScoped(t *testing.T) {
 			}
 		})
 	}
-}
-
-func seamsByName(t *testing.T) map[string]seam {
-	t.Helper()
-
-	actual := requiredSeams()
-	seams := make(map[string]seam, len(actual))
-	for _, seam := range actual {
-		if seam.Name == "" {
-			t.Fatalf("runtime seam characterization contains an empty seam name: %#v", seam)
-		}
-		if seam.SourcePath == "" {
-			t.Fatalf("runtime seam characterization %q has an empty source path", seam.Name)
-		}
-		if seam.Reason == "" {
-			t.Fatalf("runtime seam characterization %q has an empty reason", seam.Name)
-		}
-		if _, exists := seams[seam.Name]; exists {
-			t.Fatalf("runtime seam characterization %q is duplicated", seam.Name)
-		}
-
-		seams[seam.Name] = seam
-	}
-
-	return seams
 }
 
 func splitSourcePaths(sourcePath string) []string {

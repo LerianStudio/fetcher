@@ -37,3 +37,27 @@
 | Local adapter | `pkg/rabbitmq/security_envelope.go` keeps AMQP canonical payload construction local and marks the local signer usage as temporary until lib-commons ships a queue-envelope primitive. |
 | Expiry / removal condition | Replace local HMAC signing/verification with lib-commons once the upstream queue-envelope primitive exists and behavior-preserving tests pass. Review no later than 2026-06-30. |
 | Upstream TODO | Add lib-commons queue-envelope signing/verification APIs with freshness, versioning, constant-time comparison, and canonical metadata binding for tenant/routing/message identity. |
+
+## Behavior delta: extraction result table keys are normalized
+
+| Field | Value |
+|-------|-------|
+| Owner | Platform Engineering / Fetcher maintainers |
+| Since | Embedded-engine migration |
+| Scope | Worker generic extraction path (`pkg/enginecompat/tablenorm`); does not apply to `plugin_crm` |
+| Legacy behavior | The stored/encrypted result artifact was keyed by the verbatim requested table name. |
+| New behavior | Table keys are normalized at the engine seam: default-schema prefixes are stripped (PostgreSQL `public.users` -> `users`, SQL Server `dbo.x` -> `x`) and Oracle identifiers are uppercased. The stored/encrypted result artifact is keyed by the NORMALIZED name. |
+| Unaffected | The persisted job spec (Manager, Mongo) keeps the verbatim requested name. Non-default schemas (e.g. `accounting.invoices`), MySQL, and MongoDB names are not normalized. |
+| Decision | Accepted as the new contract. No external result-key consumers existed at decision time (2026-06-07). |
+
+## Behavior delta: job notification routing key drops the source segment
+
+| Field | Value |
+|-------|-------|
+| Owner | Platform Engineering / Fetcher maintainers |
+| Since | lib-streaming migration |
+| Scope | Job status notifications (`components/infra/rabbitmq/etc/definitions.json`) |
+| Legacy behavior | Published raw RabbitMQ routing key `job.<status>.<source>` (e.g. `job.completed.plugin_crm`). |
+| New behavior | Events are emitted with DefinitionKey `job.<status>` (exact bindings `job.completed` / `job.failed`). `source` is available ONLY in the event payload metadata. |
+| Impact | Topic subscribers using `job.<status>.<source>` or `job.<status>.*` patterns will not match the new key. Routing-level filtering by source now requires payload inspection or a future Subject/attribute change. |
+| Decision | Accepted. No consumers bind by source at decision time (2026-06-07). |

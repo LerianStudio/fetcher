@@ -134,6 +134,20 @@ The engine returns rows; the Worker owns the entire envelope around them.
 
 The order matters: HMAC over plaintext first, then encrypt, then store. This keeps the integrity check independent of the storage layer.
 
+The serialized result artifact is bounded by the engine's `MaxResultBytes` ceiling (default 256 MiB). Because the stored result JSON is indented, the effective ceiling is tighter than the raw row payload. Set `ENGINE_MAX_RESULT_BYTES` (a plain integer byte count) to override it operationally — unset, `0`, or negative keeps the 256 MiB default; a positive value overrides only `MaxResultBytes`, leaving every other engine limit at its default.
+
+## Job Event Delivery
+
+Terminal job events (`job.completed` / `job.failed`) are delivered **at-least-once** through a durable outbox plus a terminal-event repairer. If a job marks its terminal-event-pending flag and then crashes — or fails to clear the flag — the repairer re-emits the event on recovery, and lib-streaming allocates a fresh outbox row per emit. The broker therefore may see the same event more than once.
+
+The dedup anchor is the CloudEvents id, which is deterministic and stable across re-emits:
+
+```
+ce-id = fetcher.job.<status>.<jobID>
+```
+
+**Subscribers MUST be idempotent, keyed on `ce-id`.** Do not rely on the outbox row id (it changes per emit) or on exactly-once delivery at the broker. The job's `source` is carried in the event payload metadata, **not** in the RabbitMQ routing key — the routing key uses stable event keys (`job.completed` / `job.failed`).
+
 ## Readiness and Startup Gates
 
 The Worker serves `/readyz` like the Manager, and adds an **S3 `HeadBucket`** check to confirm object storage is reachable.

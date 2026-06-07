@@ -13,7 +13,7 @@ var _ log.Logger = (*MockLogger)(nil)
 // MockLogger implements log.Logger for testing.
 //
 // NOTE: This manual mock is intentionally retained because log.Logger is an external
-// interface from github.com/LerianStudio/lib-commons/v5/commons/log. Generating mockgen
+// interface from github.com/LerianStudio/lib-observability/log. Generating mockgen
 // mocks for external interfaces requires either:
 // 1. A local wrapper interface (adds unnecessary indirection)
 // 2. Reflect mode with full package path (fragile to library changes)
