@@ -234,7 +234,11 @@ func TestGetConnectionSchema_Execute_RepositoryError(t *testing.T) {
 	assert.True(t, errors.Is(err, dbError))
 }
 
-// TestGetConnectionSchema_Execute_DataSourceFactoryError tests datasource creation error.
+// TestGetConnectionSchema_Execute_DataSourceFactoryError tests datasource creation
+// (CONNECT-stage) error handling. A factory failure is a connect-stage failure, so
+// it must render the "Database Connection Error" title — the SAME title the /test
+// endpoint returns — distinct from a discovery-read failure ("Schema Retrieval
+// Error"). This is the branch-level regression this fix restores.
 func TestGetConnectionSchema_Execute_DataSourceFactoryError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
@@ -265,6 +269,8 @@ func TestGetConnectionSchema_Execute_DataSourceFactoryError(t *testing.T) {
 	var respErr pkg.ResponseError
 	if assert.True(t, errors.As(err, &respErr)) {
 		assert.Equal(t, http.StatusInternalServerError, respErr.Code)
+		assert.Equal(t, "Database Connection Error", respErr.Title,
+			"a connect-stage failure must render the Database Connection Error title, matching /test")
 	}
 }
 
@@ -305,9 +311,14 @@ func TestGetConnectionSchema_Execute_GetSchemaInfoError(t *testing.T) {
 	assert.Nil(t, result)
 	assert.Error(t, err)
 
+	// A DISCOVERY-read failure (connected, but GetSchemaInfo failed) must keep the
+	// "Schema Retrieval Error" title — distinct from a connect-stage failure. This
+	// is the other half of the two-title contract.
 	var respErr pkg.ResponseError
 	if assert.True(t, errors.As(err, &respErr)) {
 		assert.Equal(t, http.StatusInternalServerError, respErr.Code)
+		assert.Equal(t, "Schema Retrieval Error", respErr.Title,
+			"a discovery-read failure must stay the Schema Retrieval Error title")
 	}
 }
 

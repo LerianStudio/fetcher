@@ -18,22 +18,6 @@ func testContext() context.Context {
 	return testutil.TestContext()
 }
 
-// engineForJobRepo builds an Engine wired to the supplied job repository
-// through the connectioncompat ActiveExecutionChecker adapter. This is the same
-// wiring the Manager bootstrap uses, so a test that sets jobRepo expectations
-// keeps them satisfied through the Engine gate after delegation.
-func engineForJobRepo(t *testing.T, jobRepo job.Repository) *engine.Engine {
-	t.Helper()
-
-	eng, err := engine.New(
-		engine.WithConnectorRegistry(stubConnectorRegistry{}),
-		engine.WithActiveExecutionChecker(connectioncompat.NewJobActiveExecutionChecker(jobRepo)),
-	)
-	require.NoError(t, err)
-
-	return eng
-}
-
 // engineForConnRepo builds the connection-authority Engine the Manager bootstrap
 // wires: a ConnectionStore over the connection repo (so Create persistence flows
 // through the Engine) plus the active-execution checker over the job repo. Tests

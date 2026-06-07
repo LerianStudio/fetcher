@@ -142,6 +142,7 @@ func TestEngineErrorContract_RawEngineErrorIsSafe500(t *testing.T) {
 	cats := []engine.ErrorCategory{
 		engine.CategoryValidation,
 		engine.CategoryUnavailable,
+		engine.CategoryConnect,
 		engine.CategoryTimeout,
 		engine.CategoryCanceled,
 		engine.CategoryUnauthorized,

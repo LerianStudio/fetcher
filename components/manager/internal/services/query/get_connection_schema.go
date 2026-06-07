@@ -94,9 +94,31 @@ func (s *GetConnectionSchema) Execute(ctx context.Context, connectionID uuid.UUI
 
 		// Preserve typed validation errors (e.g. FET-0414 host safety) so they
 		// reach the renderer as HTTP 400 instead of being masked by a generic 500.
+		// These are checked FIRST: a host-safety rejection is wrapped as a connect
+		// error inside the Engine connector, so errors.As must still see the typed
+		// ValidationError (the wrapper preserves the cause for unwrapping) and map
+		// it to 400 before the connect-stage 500 branch below.
 		var ve pkg.ValidationError
 		if errors.As(err, &ve) {
 			return nil, err
+		}
+
+		// Split the connect STAGE from the discovery STAGE so the two-title contract
+		// the pre-Engine GET-schema endpoint exposed is preserved: a CONNECT failure
+		// (e.g. a TLS-required datasource reached without TLS) renders the SAME
+		// "Database Connection Error" the /test endpoint returns, while a
+		// discovery-read failure stays "Schema Retrieval Error". The Engine carries
+		// only the connect-vs-discover STAGE in the error category — never the raw,
+		// secret-bearing connector error — so this mapping leaks nothing the legacy
+		// path did not. The handler reuses the exact title and message strings the
+		// /test path uses so both endpoints classify a connect failure identically.
+		var engErr *engine.EngineError
+		if errors.As(err, &engErr) && engErr.Category == engine.CategoryConnect {
+			return nil, pkg.ResponseError{
+				Code:    http.StatusInternalServerError,
+				Title:   "Database Connection Error",
+				Message: "The adapter failed to connect to the target data source. Check credentials and network access.",
+			}
 		}
 
 		return nil, pkg.ResponseError{
