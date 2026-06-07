@@ -121,7 +121,8 @@ func TestExtractInto_GenericFilters_ReachDataSourceQuery_EndToEnd(t *testing.T) 
 	ctx := schemacompat.WithResolvedConnections(testContext(), []*model.Connection{conn})
 
 	result := make(map[string]map[string][]map[string]any)
-	require.NoError(t, uc.extractInto(ctx, message, []*model.Connection{conn}, result))
+	_, errExtractInto := uc.extractInto(ctx, message, []*model.Connection{conn}, result)
+	require.NoError(t, errExtractInto)
 
 	// The CRITICAL assertion: the filter survived plan->execute and reached Query.
 	require.NotNil(t, capturedFilters, "filters were DROPPED before reaching DataSource.Query (FIX-1 regression)")

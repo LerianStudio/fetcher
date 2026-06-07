@@ -1507,7 +1507,7 @@ func TestSaveExternalData_MarshalError(t *testing.T) {
 		},
 	}
 
-	_, err := uc.saveExternalData(ctx, testTracer(), message, result, nil, logger)
+	_, err := uc.saveExternalData(ctx, testTracer(), message, result, nil, nil, logger)
 	if err == nil {
 		t.Fatal("expected error when marshaling fails")
 	}
@@ -1541,7 +1541,7 @@ func TestSaveExternalData_MissingEnvVars(t *testing.T) {
 	// Ensure environment variables are not set
 	// Note: This will fail because CRYPTO_ENCRYPT_FILE_STORAGE is not set
 
-	_, err := uc.saveExternalData(ctx, testTracer(), message, result, nil, logger)
+	_, err := uc.saveExternalData(ctx, testTracer(), message, result, nil, nil, logger)
 	if err == nil {
 		t.Fatal("expected error when env vars are missing")
 	}
@@ -1581,7 +1581,7 @@ func TestSaveExternalData_StoragePutError(t *testing.T) {
 		Put(gomock.Any(), expectedObjectName, gomock.Any()).
 		Return(errors.New("storage connection failed"))
 
-	_, err := uc.saveExternalData(ctx, testTracer(), message, result, nil, logger)
+	_, err := uc.saveExternalData(ctx, testTracer(), message, result, nil, nil, logger)
 	if err == nil {
 		t.Fatal("expected error when storage put fails")
 	}
@@ -1625,7 +1625,7 @@ func TestSaveExternalData_Success(t *testing.T) {
 		Put(gomock.Any(), expectedObjectName, gomock.Any()).
 		Return(nil)
 
-	resultData, err := uc.saveExternalData(ctx, testTracer(), message, result, nil, logger)
+	resultData, err := uc.saveExternalData(ctx, testTracer(), message, result, nil, nil, logger)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -1965,7 +1965,7 @@ func TestSaveExternalData_EmptyResult(t *testing.T) {
 		Put(gomock.Any(), expectedObjectName, gomock.Any()).
 		Return(nil)
 
-	resultData, err := uc.saveExternalData(ctx, testTracer(), message, result, nil, logger)
+	resultData, err := uc.saveExternalData(ctx, testTracer(), message, result, nil, nil, logger)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}

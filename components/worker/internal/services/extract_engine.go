@@ -5,6 +5,8 @@ package services
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 
@@ -32,28 +34,102 @@ import (
 // the EXPLICIT Worker CRM compatibility path (queryPluginCRMDatabase -> QueryPluginCRM),
 // and the remaining generic datasources extract through the Engine runner. Both merge
 // into the same result. A job with no plugin_crm datasource never touches CRM code.
+//
+// extractInto returns a non-nil *directReuse ONLY for a GENERIC-ONLY job (no CRM
+// portion). In that case the engine already serialized the full result into
+// DirectResult.Data, and the engine's bytes ARE the worker's plaintext: the caller
+// reuses them verbatim for HMAC/encrypt/store, skipping the decode + re-marshal
+// round-trip. For a CRM-only or mixed job the merge into a single artifact requires
+// the in-memory result map (CRM bypasses the engine, nothing to reuse), so directReuse
+// is nil and the caller serializes the result map as before.
 func (uc *UseCase) extractInto(
 	ctx context.Context,
 	message ExtractExternalDataMessage,
 	connections []*model.Connection,
 	result map[string]map[string][]map[string]any,
-) error {
+) (*directReuse, error) {
 	crmMessage, genericMessage := splitCRMCompatibility(message, connections)
 
 	// plugin_crm portion: explicit CRM compatibility path, Worker-owned, byte-identical
 	// to the legacy extraction (reuses the unchanged QueryPluginCRM chain).
 	if crmMessage != nil {
 		if err := uc.queryPluginCRMDatabase(ctx, *crmMessage, connections, result); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
 	// Generic portion: the Engine runner. Skipped entirely for a CRM-only job so a
 	// plan-then-execute call is never made with an empty request.
-	if genericMessage != nil {
-		if err := uc.extractViaEngine(ctx, *genericMessage, connections, result); err != nil {
-			return err
-		}
+	if genericMessage == nil {
+		return nil, nil
+	}
+
+	// mergeIntoResult is true ONLY for a mixed job: the CRM rows already populated the
+	// result map and the generic rows must merge alongside them into one artifact. For
+	// a generic-only job the merge is skipped — the engine's bytes are reused directly
+	// — so the decode + per-table copy never runs on the hot path.
+	mergeIntoResult := crmMessage != nil
+
+	direct, err := uc.extractViaEngine(ctx, *genericMessage, connections, result, mergeIntoResult)
+	if err != nil {
+		return nil, err
+	}
+
+	// Fast path is available ONLY for a generic-only job: with a CRM portion the result
+	// map already mixes CRM rows the engine never saw, so the engine's bytes cannot
+	// stand in for the merged artifact. Mixed/CRM-only jobs keep the decode+merge the
+	// engine path performed into the result map (see decodeDirectResult).
+	if mergeIntoResult {
+		return nil, nil
+	}
+
+	return reusableFromDirect(direct), nil
+}
+
+// directReuse carries the engine's already-serialized direct-mode bytes plus the row
+// count and integrity digest, so a generic-only save can persist them WITHOUT a
+// worker-side re-marshal. It is nil for CRM-only and mixed jobs.
+type directReuse struct {
+	// plaintext is the engine's DirectResult.Data: the indented JSON artifact the
+	// worker would otherwise reproduce via json.MarshalIndent(result, "", "  ").
+	plaintext []byte
+	// rowCount is the engine's authoritative total row count across all sources,
+	// sourced from DirectResult.RowCount rather than re-walking the decoded map.
+	rowCount int64
+	// integrity is the engine-stamped SHA-256 over plaintext (DirectResult.Integrity),
+	// reused to verify the bytes before they are consumed. Nil when absent.
+	integrity *engine.ResultIntegrity
+}
+
+// reusableFromDirect builds a directReuse from the engine's DirectResult. A nil
+// direct, or an empty payload (a valid empty extraction), yields nil so the caller
+// falls back to serializing the (empty) result map — preserving the empty-result
+// shape the legacy save produced.
+func reusableFromDirect(direct *engine.DirectResult) *directReuse {
+	if direct == nil || len(direct.Data) == 0 {
+		return nil
+	}
+
+	return &directReuse{
+		plaintext: direct.Data,
+		rowCount:  direct.RowCount,
+		integrity: direct.Integrity,
+	}
+}
+
+// verifyIntegrity recomputes the SHA-256 of the reused bytes and compares it against
+// the engine-stamped digest, finally using the digest the decode path discarded. A
+// mismatch means the in-process bytes were corrupted between the engine and the save
+// seam — a hard failure rather than persisting a silently wrong artifact. When the
+// engine declared no SHA-256 digest there is nothing to check.
+func (r *directReuse) verifyIntegrity() error {
+	if r.integrity == nil || r.integrity.Algorithm != "SHA-256" || r.integrity.Digest == "" {
+		return nil
+	}
+
+	sum := sha256.Sum256(r.plaintext)
+	if hex.EncodeToString(sum[:]) != r.integrity.Digest {
+		return fmt.Errorf("engine direct result integrity mismatch: recomputed digest does not match engine SHA-256")
 	}
 
 	return nil
@@ -137,15 +213,21 @@ func subMessage(message ExtractExternalDataMessage, fields map[string]map[string
 // extractViaEngine maps the queued job into an engine.ExtractionRequest, bridges
 // the tenant (tenantId + requestId ONLY — owner decision B2), seeds the resolved
 // connections into the context (so the Engine never re-resolves), and invokes the
-// Engine runner in DIRECT mode. The returned inline bytes are decoded back into the
-// Worker's result map, which the UNCHANGED save path then encrypts, signs, and
-// stores (ST-02 stays Worker-owned).
+// Engine runner in DIRECT mode. It returns the engine's DirectResult so the caller
+// can reuse its already-serialized bytes on the generic-only fast path.
+//
+// When mergeIntoResult is true (mixed CRM+generic job) the inline bytes are decoded
+// and merged into the Worker's result map, which the save path then serializes
+// alongside the CRM rows. When false (generic-only) the decode is skipped entirely:
+// the caller persists the engine's bytes verbatim, so re-hydrating them into a map
+// only to re-marshal would be pure waste.
 func (uc *UseCase) extractViaEngine(
 	ctx context.Context,
 	message ExtractExternalDataMessage,
 	connections []*model.Connection,
 	result map[string]map[string][]map[string]any,
-) error {
+	mergeIntoResult bool,
+) (*engine.DirectResult, error) {
 	logger, tracer, _, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "service.extract_external_data.extract_via_engine")
@@ -154,7 +236,7 @@ func (uc *UseCase) extractViaEngine(
 	tenant, err := connectioncompat.TenantContextFromRequest(ctx)
 	if err != nil {
 		libOtel.HandleSpanError(span, "failed to bridge tenant context for engine execution", err)
-		return fmt.Errorf("bridge tenant context: %w", err)
+		return nil, fmt.Errorf("bridge tenant context: %w", err)
 	}
 
 	request := mapJobToExtractionRequest(message, connections)
@@ -166,51 +248,118 @@ func (uc *UseCase) extractViaEngine(
 	// schemacompat.NewConnectionStore() without a second divergent seed.
 	ctx = schemacompat.WithResolvedConnections(ctx, connections)
 
+	// Seed the per-config schema scope from the REQUESTED (raw, still schema-qualified)
+	// table keys, mirroring the Manager validate path (schema_engine_access.go ->
+	// WithSchemaScope). Without this the PostgreSQL/SQLServer discovery the engine
+	// drives during PlanExtraction narrows to the default schema ("public"/"dbo") and
+	// a qualified table like "accounting.invoices" is never in the snapshot, failing
+	// engine schema validation. The scope is computed BEFORE table-key normalization
+	// (tablenorm strips the default-schema prefix), so non-default schemas survive.
+	ctx = seedSchemaScope(ctx, message, connections)
+
 	extractionResult, err := uc.EngineRunner.RunExtraction(ctx, tenant, message.JobID.String(), request)
 	if err != nil {
 		libOtel.HandleSpanError(span, "engine extraction failed", err)
-		return fmt.Errorf("engine extraction: %w", err)
+		return nil, fmt.Errorf("engine extraction: %w", err)
 	}
 
-	return decodeDirectResult(ctx, extractionResult, result, logger)
+	direct, err := validateDirectResult(extractionResult)
+	if err != nil {
+		return nil, err
+	}
+
+	if mergeIntoResult {
+		if err := decodeDirectResult(ctx, direct, result, logger); err != nil {
+			return nil, err
+		}
+	}
+
+	return direct, nil
 }
 
-// decodeDirectResult unpacks a DIRECT-mode ExtractionResult into the Worker's
-// result map. It enforces the result-shape invariant established at this
-// integration: exactly one of Direct / Reference is non-nil. ST-01 wires DIRECT
-// mode only (the Worker owns encrypt/store/HMAC, ST-02), so a Reference result —
-// or a result with neither arm — is a contract violation here rather than a silent
-// empty extraction.
-func decodeDirectResult(
-	ctx context.Context,
-	res engine.ExtractionResult,
-	result map[string]map[string][]map[string]any,
-	logger libLog.Logger,
-) error {
+// validateDirectResult enforces the result-shape invariant established at this
+// integration: exactly one of Direct / Reference is non-nil. ST-01 wires DIRECT mode
+// only (the Worker owns encrypt/store/HMAC, ST-02), so a Reference result — or a
+// result with neither arm — is a contract violation rather than a silent empty
+// extraction. It returns the DirectResult (which may carry an empty payload, a valid
+// empty extraction).
+func validateDirectResult(res engine.ExtractionResult) (*engine.DirectResult, error) {
 	if res.Direct == nil && res.Reference != nil {
-		return fmt.Errorf("engine returned a store-mode reference result; worker expects direct mode")
+		return nil, fmt.Errorf("engine returned a store-mode reference result; worker expects direct mode")
 	}
 
 	if res.Direct == nil {
-		return fmt.Errorf("engine returned no direct result payload")
+		return nil, fmt.Errorf("engine returned no direct result payload")
 	}
 
-	if len(res.Direct.Data) == 0 {
+	return res.Direct, nil
+}
+
+// decodeDirectResult merges a DIRECT-mode payload into the Worker's result map. It is
+// used ONLY for the mixed CRM+generic job, where the generic rows must join the CRM
+// rows already present in result. The merge is PER-TABLE (not a whole-map assignment):
+// a config the CRM path already populated keeps its existing tables and gains the
+// generic ones, restoring the legacy merge semantics and removing the clobber footgun
+// of overwriting result[db] wholesale.
+func decodeDirectResult(
+	ctx context.Context,
+	direct *engine.DirectResult,
+	result map[string]map[string][]map[string]any,
+	logger libLog.Logger,
+) error {
+	if len(direct.Data) == 0 {
 		// An empty payload is a valid empty extraction; leave result untouched.
 		return nil
 	}
 
 	decoded := make(map[string]map[string][]map[string]any)
-	if err := json.Unmarshal(res.Direct.Data, &decoded); err != nil {
+	if err := json.Unmarshal(direct.Data, &decoded); err != nil {
 		logger.Log(ctx, libLog.LevelError, "failed to decode direct engine result", libLog.Err(err))
 		return fmt.Errorf("decode direct engine result: %w", err)
 	}
 
 	for db, tables := range decoded {
-		result[db] = tables
+		if result[db] == nil {
+			result[db] = make(map[string][]map[string]any, len(tables))
+		}
+
+		for tbl, rows := range tables {
+			result[db][tbl] = rows
+		}
 	}
 
 	return nil
+}
+
+// seedSchemaScope seeds the per-config schema-name discovery scope into the context
+// from the message's REQUESTED table keys, keyed by config name, reusing the SAME
+// scope-seed contract (schemacompat.WithSchemaScope) the Manager validate path uses.
+//
+// For each config it computes the scope from the raw (still schema-qualified) table
+// keys with that datasource's type-aware default-schema injection
+// (tablenorm.SchemaScopeForTables): qualifying schemas plus the default schema when
+// any requested table is unqualified. A config whose tables yield no scope (e.g. an
+// Oracle/MySQL/Mongo source, or an all-unqualified request whose type has no
+// strippable default) is left unseeded, so the connector falls back to the
+// descriptor schema or the adapter default — preserving existing behavior for those
+// types and for single-schema PostgreSQL.
+func seedSchemaScope(
+	ctx context.Context,
+	message ExtractExternalDataMessage,
+	connections []*model.Connection,
+) context.Context {
+	typesByConfig := datasourceTypesByConfig(connections)
+
+	for configName, tables := range message.MappedFields {
+		scope := tablenorm.SchemaScopeForTables(typesByConfig[configName], tables)
+		if len(scope) == 0 {
+			continue
+		}
+
+		ctx = schemacompat.WithSchemaScope(ctx, configName, scope)
+	}
+
+	return ctx
 }
 
 // mapJobToExtractionRequest projects the queued job message onto an

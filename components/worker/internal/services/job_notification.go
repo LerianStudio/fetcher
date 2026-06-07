@@ -162,6 +162,16 @@ func (uc *UseCase) emitJobNotificationEvent(ctx context.Context, status, subject
 	return nil
 }
 
+// deterministicJobEventID returns the stable CloudEvents id (ce-id) for a job
+// terminal event: "fetcher.job.<status>.<jobID>". This id is the consumer
+// idempotency key and the ONLY dedup anchor for the job event stream.
+//
+// Delivery is at-least-once: the terminal-event repairer re-emits when the
+// terminalEventPending flag survives a crash or a failed flag-clear, and
+// lib-streaming allocates a fresh outbox row UUID per emit. The ce-id, however,
+// is stable across every re-emit of the same (status, jobID) pair. Consumers
+// MUST dedup on ce-id; they must not rely on the outbox UUID or on
+// exactly-once delivery at the broker.
 func deterministicJobEventID(status, jobID string) string {
 	return fmt.Sprintf("fetcher.job.%s.%s", status, jobID)
 }

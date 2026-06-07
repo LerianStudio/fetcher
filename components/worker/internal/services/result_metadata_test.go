@@ -89,7 +89,7 @@ func TestSaveExternalData_DeclaresCanonicalIntegrityAndProtection(t *testing.T) 
 		Put(gomock.Any(), constant.ExternalDataKeyPrefix+"/"+jobID.String()+".json", gomock.Any()).
 		Return(nil)
 
-	resultData, err := uc.saveExternalData(ctx, testTracer(), message, result, nil, testLogger())
+	resultData, err := uc.saveExternalData(ctx, testTracer(), message, result, nil, nil, testLogger())
 	require.NoError(t, err)
 	require.NotNil(t, resultData)
 
@@ -134,7 +134,7 @@ func TestSaveExternalData_HMACSignsPlaintextByteExact(t *testing.T) {
 			return nil
 		})
 
-	resultData, err := uc.saveExternalData(testContext(), testTracer(), message, result, nil, testLogger())
+	resultData, err := uc.saveExternalData(testContext(), testTracer(), message, result, nil, nil, testLogger())
 	require.NoError(t, err)
 
 	// Independent expectation: HMAC-SHA256 over the EXACT MarshalIndent plaintext.
@@ -177,18 +177,19 @@ func TestSaveExternalData_EngineParity(t *testing.T) {
 
 	jobID := newTestJobID()
 	msg := ExtractExternalDataMessage{JobID: jobID, Metadata: map[string]any{"source": "test"}}
-	legacyResult, err := legacyUC.saveExternalData(testContext(), testTracer(), msg, rows, nil, testLogger())
+	legacyResult, err := legacyUC.saveExternalData(testContext(), testTracer(), msg, rows, nil, nil, testLogger())
 	require.NoError(t, err)
 
-	// Engine path: the SAME rows, serialized by the engine as DirectResult.Data, then
-	// decoded back through decodeDirectResult into the worker result map.
-	enginePayload, err := json.Marshal(rows)
+	// Engine path: the SAME rows, serialized by the engine as DirectResult.Data
+	// (indented, matching the engine's MarshalIndent contract), then decoded back
+	// through decodeDirectResult into the worker result map.
+	enginePayload, err := json.MarshalIndent(rows, "", "  ")
 	require.NoError(t, err)
 
 	decoded := make(map[string]map[string][]map[string]any)
 	require.NoError(t, decodeDirectResult(
 		testContext(),
-		engine.ExtractionResult{Direct: &engine.DirectResult{Data: enginePayload, Format: "json"}},
+		&engine.DirectResult{Data: enginePayload, Format: "json"},
 		decoded,
 		testLogger(),
 	))
@@ -202,7 +203,7 @@ func TestSaveExternalData_EngineParity(t *testing.T) {
 	engineMocks.seaweedFS.EXPECT().Put(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, _ string, data []byte) error { engineStored = data; return nil })
 
-	engineResult, err := engineUC.saveExternalData(testContext(), testTracer(), msg, decoded, nil, testLogger())
+	engineResult, err := engineUC.saveExternalData(testContext(), testTracer(), msg, decoded, nil, nil, testLogger())
 	require.NoError(t, err)
 
 	// HMAC byte-identical (the whole parity claim).

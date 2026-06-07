@@ -109,7 +109,8 @@ func TestExtractInto_PluginCRM_CRMCompatibility_RoutesThroughCRMPath(t *testing.
 	connections := []*model.Connection{{ConfigName: "plugin_crm", Type: model.TypeMongoDB}}
 	result := make(map[string]map[string][]map[string]any)
 
-	require.NoError(t, uc.extractInto(testContext(), message, connections, result))
+	_, errExtractInto := uc.extractInto(testContext(), message, connections, result)
+	require.NoError(t, errExtractInto)
 
 	assert.True(t, processed, "plugin_crm must extract through the CRM compatibility path")
 	assert.NotContains(t, runner.configNames, "plugin_crm",
@@ -147,7 +148,8 @@ func TestExtractInto_NonCRM_NeverExecutesCRMCompatibility(t *testing.T) {
 	connections := []*model.Connection{{ConfigName: "pg", Type: model.TypePostgreSQL}}
 	result := make(map[string]map[string][]map[string]any)
 
-	require.NoError(t, uc.extractInto(testContext(), message, connections, result))
+	_, errExtractInto := uc.extractInto(testContext(), message, connections, result)
+	require.NoError(t, errExtractInto)
 
 	assert.False(t, crmTouched, "non-CRM job must NEVER execute CRM compatibility code")
 	assert.Contains(t, runner.configNames, "pg", "non-CRM datasource must route through the Engine runner")
@@ -194,13 +196,15 @@ func TestExtractInto_PluginCRM_CRMCompatibility_ByteIdenticalToLegacy(t *testing
 	// Legacy path (EngineRunner nil).
 	legacyUC := newCRMUC()
 	legacyResult := make(map[string]map[string][]map[string]any)
-	require.NoError(t, legacyUC.extractInto(testContext(), message, connections, legacyResult))
+	_, errExtractInto := legacyUC.extractInto(testContext(), message, connections, legacyResult)
+	require.NoError(t, errExtractInto)
 
 	// Engine-enabled path (EngineRunner set -> split routes plugin_crm to CRM path).
 	engineUC := newCRMUC()
 	engineUC.EngineRunner = &crmCallTrackingRunner{}
 	engineResult := make(map[string]map[string][]map[string]any)
-	require.NoError(t, engineUC.extractInto(testContext(), message, connections, engineResult))
+	_, errExtractIntoEngine := engineUC.extractInto(testContext(), message, connections, engineResult)
+	require.NoError(t, errExtractIntoEngine)
 
 	assert.Equal(t, legacyResult, engineResult, "CRM extraction result must be byte-identical across legacy and engine-enabled paths")
 }
@@ -253,7 +257,8 @@ func TestExtractInto_MixedCRMAndGeneric_CRMCompatibilityRoutesBoth(t *testing.T)
 	}
 	result := make(map[string]map[string][]map[string]any)
 
-	require.NoError(t, uc.extractInto(testContext(), message, connections, result))
+	_, errExtractInto := uc.extractInto(testContext(), message, connections, result)
+	require.NoError(t, errExtractInto)
 
 	// Both datasources merged into one result.
 	assert.Len(t, result["plugin_crm"]["holders"], 1, "CRM datasource extracted via CRM path")

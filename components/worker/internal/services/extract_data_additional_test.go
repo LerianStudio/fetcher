@@ -219,7 +219,7 @@ func TestSaveExternalDataToSeaweedFS_DocumentSignerError(t *testing.T) {
 	signer := uc.DocumentSigner.(*workerCrypto.MockSigner)
 	signer.EXPECT().SignReader(gomock.Any()).Return("", errors.New("sign failed"))
 
-	resultData, err := uc.saveExternalData(ctx, testTracer(), message, result, nil, logger)
+	resultData, err := uc.saveExternalData(ctx, testTracer(), message, result, nil, nil, logger)
 	require.Error(t, err)
 	require.Nil(t, resultData)
 	require.ErrorContains(t, err, "computing document HMAC")

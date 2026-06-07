@@ -127,11 +127,13 @@ func (uc *UseCase) ExtractExternalData(ctx context.Context, body []byte, headers
 	}
 
 	result := make(map[string]map[string][]map[string]any)
-	if err := uc.extractInto(ctx, *message, connections, result); err != nil {
+
+	reuse, err := uc.extractInto(ctx, *message, connections, result)
+	if err != nil {
 		return uc.handleErrorWithUpdate(ctx, message.JobID, *message, span, "Error querying external data", err, logger)
 	}
 
-	resultData, err := uc.saveExternalData(ctx, tracer, *message, result, span, logger)
+	resultData, err := uc.saveExternalData(ctx, tracer, *message, result, reuse, span, logger)
 	if err != nil {
 		return uc.handleErrorWithUpdate(ctx, message.JobID, *message, span, "Error saving external data to storage", err, logger)
 	}
@@ -427,7 +429,10 @@ func (uc *UseCase) clearPendingTerminalEvent(ctx context.Context, jobID uuid.UUI
 	}
 
 	if err := clearer.ClearTerminalEventMetadata(ctx, jobID); err != nil {
-		logger.Log(ctx, libLog.LevelWarn, "failed to clear terminal event retry metadata",
+		// Error, not Warn: a failed clear leaves the pending-terminal-event marker set,
+		// so the terminal-event repairer will re-emit the (already-published) terminal
+		// event — a duplicate-event window. That operational hazard must be visible.
+		logger.Log(ctx, libLog.LevelError, "failed to clear terminal event retry metadata",
 			libLog.String("job_id", jobID.String()),
 			libLog.Err(err),
 		)
@@ -498,29 +503,73 @@ func getTableFilters(databaseFilters map[string]map[string]modelJob.FilterCondit
 	return databaseFilters[tableName]
 }
 
-// saveExternalData converts the result map to JSON, encrypts it, and saves it to storage.
-func (uc *UseCase) saveExternalData(
+// resultPlaintext returns the plaintext bytes to persist plus the total row count.
+//
+// On the generic-only fast path (reuse non-nil) it reuses the engine's already-
+// serialized indented bytes verbatim and the engine's authoritative RowCount, after
+// verifying the engine's SHA-256 digest over those bytes — the one place the engine's
+// integrity digest, previously discarded, is finally checked. This eliminates the
+// decode + re-marshal round-trip the engine path used to pay.
+//
+// Otherwise (CRM-only or mixed) it serializes the in-memory result map with the EXACT
+// json.MarshalIndent(result, "", "  ") shape the stored artifact has always used, and
+// counts rows by walking the map. The two-space indent matches the engine's serialized
+// form, so the fast path and the fallback produce byte-identical artifacts for the
+// same generic-only data.
+func resultPlaintext(
 	ctx context.Context,
-	tracer trace.Tracer,
-	message ExtractExternalDataMessage,
 	result map[string]map[string][]map[string]any,
+	reuse *directReuse,
 	span trace.Span,
 	logger libLog.Logger,
-) (*JobResultData, error) {
-	ctx, spanSave := tracer.Start(ctx, "service.extract_external_data.save_external_data")
-	defer spanSave.End()
+) ([]byte, int64, error) {
+	if reuse != nil {
+		if err := reuse.verifyIntegrity(); err != nil {
+			libOtel.HandleSpanError(span, "engine direct result integrity check failed", err)
+			logger.Log(ctx, libLog.LevelError, "engine direct result integrity check failed", libLog.Err(err))
+
+			return nil, 0, pkg.FailedPreconditionError{Code: "FET-0068", Title: "Result Integrity Mismatch", Message: err.Error(), Err: err}
+		}
+
+		return reuse.plaintext, reuse.rowCount, nil
+	}
 
 	jsonData, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
 		libOtel.HandleSpanError(span, "Error marshalling result to JSON", err)
 		logger.Log(ctx, libLog.LevelError, "error marshalling result to json", libLog.Err(err))
 
-		return nil, pkg.FailedPreconditionError{Code: "FET-0060", Title: "Data Serialization Failed", Message: fmt.Sprintf("marshalling result to JSON: %s", err.Error()), Err: err}
+		return nil, 0, pkg.FailedPreconditionError{Code: "FET-0060", Title: "Data Serialization Failed", Message: fmt.Sprintf("marshalling result to JSON: %s", err.Error()), Err: err}
+	}
+
+	return jsonData, countTotalRows(result), nil
+}
+
+// saveExternalData serializes the extraction result, encrypts it, and saves it to
+// storage. When reuse is non-nil (a generic-only job) the engine's already-serialized
+// indented bytes ARE the plaintext: the worker-side re-marshal and row recount are
+// skipped, and the engine's RowCount is authoritative. When reuse is nil (CRM-only or
+// mixed) the in-memory result map is serialized via json.MarshalIndent, exactly as
+// before — the engine bytes cannot stand in for a map the CRM path also contributed to.
+func (uc *UseCase) saveExternalData(
+	ctx context.Context,
+	tracer trace.Tracer,
+	message ExtractExternalDataMessage,
+	result map[string]map[string][]map[string]any,
+	reuse *directReuse,
+	span trace.Span,
+	logger libLog.Logger,
+) (*JobResultData, error) {
+	ctx, spanSave := tracer.Start(ctx, "service.extract_external_data.save_external_data")
+	defer spanSave.End()
+
+	jsonData, rowCount, err := resultPlaintext(ctx, result, reuse, span, logger)
+	if err != nil {
+		return nil, err
 	}
 
 	// Calculate metrics before encryption (original data size)
 	sizeBytes := int64(len(jsonData))
-	rowCount := countTotalRows(result)
 
 	// Compute HMAC of plaintext data before encryption for external verification
 	var documentHMAC string
