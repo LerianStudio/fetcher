@@ -39,8 +39,12 @@ func WithSchemaScope(ctx context.Context, configName string, schemas []string) c
 	return context.WithValue(ctx, schemaScopeKey{}, byConfig)
 }
 
-// schemaScope reads the seeded schema-name list for a config name.
-func schemaScope(ctx context.Context, configName string) []string {
+// SchemaScope reads the seeded schema-name list for a config name. It is the
+// PUBLIC reader of the same scope seeded by WithSchemaScope, so a sibling host
+// adapter (e.g. the extraction datasource connector) can honor the request-scoped
+// discovery scope WITHOUT a parallel scope-plumbing of its own. Returns nil when
+// no scope was seeded for the config name.
+func SchemaScope(ctx context.Context, configName string) []string {
 	byConfig, ok := ctx.Value(schemaScopeKey{}).(map[string][]string)
 	if !ok {
 		return nil

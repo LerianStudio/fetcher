@@ -332,7 +332,43 @@ func TestConnector_DiscoverSchema_FactoryErrorPropagatesVerbatim(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = connector.DiscoverSchema(context.Background())
-	require.ErrorIs(t, err, sentinel, "the factory error must propagate verbatim so the host can recognize typed errors")
+	require.ErrorIs(t, err, sentinel, "the factory error cause must stay reachable so the host can recognize typed errors")
+}
+
+// TestConnector_DiscoverSchema_ConnectFailure_IsConnectCategory proves the
+// stage signal: a CONNECT-stage failure (the factory failing to establish the
+// datasource) surfaces as a CategoryConnect EngineError so resolveSchema passes
+// it through and the Manager can render "Database Connection Error" — distinct
+// from a discovery-read failure (CategoryUnavailable). The raw cause MUST NOT
+// appear in the safe message, but MUST stay reachable via errors.Is.
+func TestConnector_DiscoverSchema_ConnectFailure_IsConnectCategory(t *testing.T) {
+	t.Parallel()
+
+	sentinel := errors.New("dial tcp 10.0.0.1:5432: password=s3cr3t connection refused")
+	factory := func(context.Context, *model.Connection, crypto.Cryptor) (modelDatasource.DataSource, error) {
+		return nil, sentinel
+	}
+
+	conn := &model.Connection{ConfigName: "db1", Type: model.TypePostgreSQL}
+	cf := schemacompat.NewConnectorFactory(factory, nil)
+
+	connector, err := cf.Build(context.Background(), descriptorFor(conn))
+	require.NoError(t, err)
+
+	_, err = connector.DiscoverSchema(context.Background())
+	require.Error(t, err)
+
+	var engErr *engine.EngineError
+	require.ErrorAs(t, err, &engErr)
+	require.Equal(t, engine.CategoryConnect, engErr.Category, "a connect-stage failure must carry CategoryConnect")
+
+	// The cause stays reachable for typed-error recognition, but the safe
+	// boundary message must NOT leak the raw connect error.
+	require.ErrorIs(t, err, sentinel)
+
+	for _, leak := range []string{"s3cr3t", "10.0.0.1", "password=", "dial tcp"} {
+		require.NotContains(t, engErr.Error(), leak, "connect error must not leak %q", leak)
+	}
 }
 
 func TestConnectorFactory_Build_UnknownTypeFails(t *testing.T) {

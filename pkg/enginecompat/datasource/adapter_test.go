@@ -6,6 +6,8 @@ package enginecompatdatasource_test
 import (
 	"context"
 	"errors"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -34,9 +36,10 @@ type fakeDataSource struct {
 	schemaErr    error
 	closeErr     error
 
-	closed       bool
-	queryTables  map[string][]string
-	queryFilters map[string]map[string]job.FilterCondition
+	closed        bool
+	queryTables   map[string][]string
+	queryFilters  map[string]map[string]job.FilterCondition
+	schemaScopeIn []string
 }
 
 func (f *fakeDataSource) GetConfig() datasource.DataSourceConfig { return f.config }
@@ -65,7 +68,9 @@ func (f *fakeDataSource) Query(
 	return f.queryResult, nil
 }
 
-func (f *fakeDataSource) GetSchemaInfo(_ context.Context, _ []string) (*model.DataSourceSchema, error) {
+func (f *fakeDataSource) GetSchemaInfo(_ context.Context, schemas []string) (*model.DataSourceSchema, error) {
+	f.schemaScopeIn = schemas
+
 	if f.schemaErr != nil {
 		return nil, f.schemaErr
 	}
@@ -399,6 +404,87 @@ func TestConnector_DiscoverSchemaDelegatesAndMapsSnapshot(t *testing.T) {
 	}
 	if len(fields) != 2 {
 		t.Errorf("snapshot field count = %d, want 2 (got %#v)", len(fields), fields)
+	}
+}
+
+// TestConnector_DiscoverSchemaHonorsSeededScope is the regression guard for the
+// non-default-schema extraction defect: when the host seeds a per-request schema
+// scope (schemacompat.WithSchemaScope) carrying the schemas the requested tables
+// reference, DiscoverSchema MUST pass that scope to the underlying datasource so
+// PostgreSQL/SQLServer discovery does not narrow to the default schema and drop
+// qualified tables like "accounting.invoices".
+func TestConnector_DiscoverSchemaHonorsSeededScope(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		descriptor engine.ConnectionDescriptor
+		seedScope  []string
+		wantScope  []string
+	}{
+		{
+			name:       "seeded scope takes precedence over descriptor schema",
+			descriptor: sampleDescriptor(), // Schema: "public"
+			seedScope:  []string{"accounting", "reporting", "public"},
+			wantScope:  []string{"accounting", "public", "reporting"},
+		},
+		{
+			name:       "falls back to descriptor schema when no scope seeded",
+			descriptor: sampleDescriptor(), // Schema: "public"
+			seedScope:  nil,
+			wantScope:  []string{"public"},
+		},
+		{
+			name: "nil when neither scope nor descriptor schema is set",
+			descriptor: engine.ConnectionDescriptor{
+				ID:         "11111111-1111-1111-1111-111111111111",
+				ConfigName: "pg-main",
+				Type:       "POSTGRESQL",
+				Host:       "db.internal",
+				Port:       5432,
+			},
+			seedScope: nil,
+			wantScope: nil,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			captured := &capturedFactoryCall{}
+			ds := &fakeDataSource{
+				config:       datasource.DataSourceConfig{Type: "POSTGRESQL"},
+				schemaResult: model.NewDataSourceSchema("pg-main"),
+			}
+			factory := newFakeFactory(ds, nil, captured)
+
+			adapter := enginecompatdatasource.NewConnectorFactory(factory, constResolver("p", nil), nil)
+
+			conn, err := adapter.Build(context.Background(), tc.descriptor)
+			if err != nil {
+				t.Fatalf("Build: unexpected error: %v", err)
+			}
+
+			ctx := context.Background()
+			if tc.seedScope != nil {
+				ctx = schemacompat.WithSchemaScope(ctx, tc.descriptor.ConfigName, tc.seedScope)
+			}
+
+			if _, err := conn.DiscoverSchema(ctx); err != nil {
+				t.Fatalf("DiscoverSchema: unexpected error: %v", err)
+			}
+
+			got := append([]string(nil), ds.schemaScopeIn...)
+			sort.Strings(got)
+			want := append([]string(nil), tc.wantScope...)
+			sort.Strings(want)
+
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("GetSchemaInfo scope = %#v, want %#v", got, want)
+			}
+		})
 	}
 }
 

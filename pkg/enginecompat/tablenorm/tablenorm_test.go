@@ -4,11 +4,100 @@
 package tablenorm_test
 
 import (
+	"sort"
 	"testing"
 
 	"github.com/LerianStudio/fetcher/pkg/enginecompat/tablenorm"
 	"github.com/LerianStudio/fetcher/pkg/model"
 )
+
+func TestSchemaScopeForTables(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		dbType model.DBType
+		tables map[string][]string
+		want   []string
+	}{
+		{
+			name:   "PostgreSQL qualified tables yield their schemas",
+			dbType: model.TypePostgreSQL,
+			tables: map[string][]string{"accounting.invoices": nil, "reporting.daily_summary": nil},
+			want:   []string{"accounting", "reporting"},
+		},
+		{
+			name:   "PostgreSQL mixed qualified + unqualified injects public default",
+			dbType: model.TypePostgreSQL,
+			tables: map[string][]string{"accounting.invoices": nil, "users": nil},
+			want:   []string{"accounting", "public"},
+		},
+		{
+			name:   "PostgreSQL only unqualified yields just public",
+			dbType: model.TypePostgreSQL,
+			tables: map[string][]string{"users": nil},
+			want:   []string{"public"},
+		},
+		{
+			name:   "PostgreSQL qualified public is not duplicated",
+			dbType: model.TypePostgreSQL,
+			tables: map[string][]string{"public.users": nil, "orders": nil},
+			want:   []string{"public"},
+		},
+		{
+			name:   "SQLServer mixed qualified + unqualified injects dbo default",
+			dbType: model.TypeSQLServer,
+			tables: map[string][]string{"sales.orders": nil, "users": nil},
+			want:   []string{"dbo", "sales"},
+		},
+		{
+			name:   "Oracle has no default injection (qualified schemas only)",
+			dbType: model.TypeOracle,
+			tables: map[string][]string{"HR.EMPLOYEES": nil, "DUAL": nil},
+			want:   []string{"HR"},
+		},
+		{
+			name:   "Oracle all-unqualified yields nil (adapter default applies)",
+			dbType: model.TypeOracle,
+			tables: map[string][]string{"DUAL": nil},
+			want:   nil,
+		},
+		{
+			name:   "MySQL no default injection",
+			dbType: model.TypeMySQL,
+			tables: map[string][]string{"app.users": nil, "orders": nil},
+			want:   []string{"app"},
+		},
+		{
+			name:   "empty tables yields nil",
+			dbType: model.TypePostgreSQL,
+			tables: map[string][]string{},
+			want:   nil,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := tablenorm.SchemaScopeForTables(tc.dbType, tc.tables)
+			sort.Strings(got)
+			want := append([]string(nil), tc.want...)
+			sort.Strings(want)
+
+			if len(got) != len(want) {
+				t.Fatalf("SchemaScopeForTables = %#v, want %#v", got, want)
+			}
+
+			for i := range got {
+				if got[i] != want[i] {
+					t.Fatalf("SchemaScopeForTables = %#v, want %#v", got, want)
+				}
+			}
+		})
+	}
+}
 
 func TestDefaultSchemaForType(t *testing.T) {
 	t.Parallel()

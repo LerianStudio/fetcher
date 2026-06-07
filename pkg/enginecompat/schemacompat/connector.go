@@ -119,27 +119,36 @@ func (c *Connector) Close(ctx context.Context) error {
 }
 
 // ensureConnected lazily creates the underlying datasource through the host
-// factory. A factory error is preserved VERBATIM (not redacted) so the host can
-// still recognize a typed pkg.ValidationError (e.g. FET-0414 host-safety
-// rejection) and map it to HTTP 400 — the schema discovery path's existing
-// contract. A nil datasource with no error is a factory misconfiguration mapped
-// to a safe unavailable error.
+// factory. This is the CONNECT stage of the schema discovery path: the Engine's
+// discovery lifecycle is build -> discover -> close without a separate
+// TestConnection, so the connect happens here on first use.
+//
+// A factory failure is wrapped as a CategoryConnect EngineError so the Engine's
+// resolveSchema passes the STAGE through unchanged (a connect failure is told
+// apart from a discovery-read failure, which stays CategoryUnavailable) and the
+// Manager can render it as "Database Connection Error" — the legacy two-title
+// contract. The wrapper keeps the underlying cause REACHABLE for errors.As /
+// errors.Is so the host still recognizes a typed pkg.ValidationError (e.g.
+// FET-0414 host-safety rejection) and maps it to HTTP 400, while the wrapper's
+// rendered message stays redacted: the raw cause MAY embed a DSN or credential,
+// so it never appears in the safe boundary message. A nil datasource with no
+// error is a factory misconfiguration mapped to the same connect category.
 func (c *Connector) ensureConnected(ctx context.Context) error {
 	if c.ds != nil {
 		return nil
 	}
 
 	if c.factory == nil {
-		return engine.NewEngineError(engine.CategoryUnavailable, "datasource factory is not configured")
+		return engine.NewEngineError(engine.CategoryConnect, "datasource factory is not configured")
 	}
 
 	ds, err := c.factory(ctx, c.conn, c.cryptor)
 	if err != nil {
-		return err
+		return engine.NewWrappedEngineError(engine.CategoryConnect, "failed to connect to datasource", err)
 	}
 
 	if ds == nil {
-		return engine.NewEngineError(engine.CategoryUnavailable, "datasource factory returned nil datasource")
+		return engine.NewEngineError(engine.CategoryConnect, "datasource factory returned nil datasource")
 	}
 
 	c.ds = ds
@@ -152,7 +161,7 @@ func (c *Connector) ensureConnected(ctx context.Context) error {
 // legacy multi-schema discovery) > an explicit connection Schema > nil (the
 // adapter applies its default, e.g. PostgreSQL "public").
 func (c *Connector) schemaArg(ctx context.Context) []string {
-	if scope := schemaScope(ctx, c.conn.ConfigName); len(scope) > 0 {
+	if scope := SchemaScope(ctx, c.conn.ConfigName); len(scope) > 0 {
 		return scope
 	}
 

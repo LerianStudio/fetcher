@@ -157,7 +157,7 @@ func (c *Connector) DiscoverSchema(ctx context.Context) (engine.SchemaSnapshot, 
 		return engine.SchemaSnapshot{}, err
 	}
 
-	schemaArg := c.schemaArg()
+	schemaArg := c.schemaArg(ctx)
 
 	schema, err := c.ds.GetSchemaInfo(ctx, schemaArg)
 	if err != nil {
@@ -265,10 +265,26 @@ func (c *Connector) buildConnection(ctx context.Context) (*model.Connection, err
 	return conn, nil
 }
 
-// schemaArg derives the schema-name argument the underlying DataSource expects
-// from the descriptor. An empty schema yields a nil slice, matching the legacy
-// "all schemas" behavior.
-func (c *Connector) schemaArg() []string {
+// schemaArg derives the schema-name argument the underlying DataSource expects for
+// DISCOVERY. Priority mirrors the schemacompat connector so the extraction and the
+// schema-discovery paths resolve scope identically:
+//
+//  1. the per-request schema scope the host seeded (schemacompat.WithSchemaScope) —
+//     this carries the schemas the requested tables reference (e.g. "accounting",
+//     "reporting"), which the PostgreSQL/SQLServer discovery would otherwise narrow
+//     to the default "public"/"dbo" and never surface the qualified tables;
+//  2. the connection-level descriptor.Schema, when set;
+//  3. nil — the underlying adapter applies its own default ("public"/"dbo").
+//
+// Reusing the schemacompat scope reader keeps ONE scope plumbing across the Manager
+// validate path and the Worker extraction path. The extraction Query path is NOT
+// affected: the PostgreSQL/SQLServer Query derives its own schemas from the
+// qualified table keys, so only discovery needed the seeded scope.
+func (c *Connector) schemaArg(ctx context.Context) []string {
+	if scope := schemacompat.SchemaScope(ctx, c.descriptor.ConfigName); len(scope) > 0 {
+		return scope
+	}
+
 	if strings.TrimSpace(c.descriptor.Schema) == "" {
 		return nil
 	}

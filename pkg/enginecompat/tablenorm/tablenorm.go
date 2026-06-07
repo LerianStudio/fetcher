@@ -35,6 +35,7 @@ import (
 	"strings"
 
 	"github.com/LerianStudio/fetcher/pkg/model"
+	datasourceModel "github.com/LerianStudio/fetcher/pkg/model/datasource"
 	"github.com/LerianStudio/fetcher/pkg/schemautil"
 )
 
@@ -79,6 +80,59 @@ func NormalizeTable(dbType model.DBType, tableName string) string {
 	}
 
 	return normalized
+}
+
+// SchemaScopeForTables computes the schema-name scope live discovery should fetch
+// for a datasource of the given type from the requested table keys. It is the
+// host-seam equivalent of the Manager's schemaScopeForConfig and the legacy
+// per-adapter ensureDefaultSchemaIncluded: the unique qualifying schemas are taken
+// from the table keys (reusing datasource.GetUniqueSchemas — the single source of
+// truth for schema parsing), and the type's default schema is appended when any
+// requested table is unqualified, so a mixed qualified+unqualified request (e.g.
+// "accounting.invoices" + "users") discovers BOTH "accounting" and "public".
+//
+// Types without a strippable default schema (Oracle/MySQL/MongoDB) get DefaultSchemaForType == ""
+// and so receive no injected default, preserving their existing discovery behavior:
+// only the explicitly-qualified schemas (if any) scope discovery. A request with no
+// qualified tables and no default schema yields nil, which the connector treats as
+// "no explicit scope" so the underlying adapter applies its own default.
+func SchemaScopeForTables(dbType model.DBType, tables map[string][]string) []string {
+	schemas := datasourceModel.GetUniqueSchemas(tables)
+
+	defaultSchema := DefaultSchemaForType(dbType)
+	if defaultSchema == "" {
+		return schemas
+	}
+
+	if !hasUnqualifiedTable(tables) || containsSchema(schemas, defaultSchema) {
+		return schemas
+	}
+
+	return append(schemas, defaultSchema)
+}
+
+// hasUnqualifiedTable reports whether any requested table key lacks a "schema."
+// prefix, mirroring the legacy ensureDefaultSchema unqualified check.
+func hasUnqualifiedTable(tables map[string][]string) bool {
+	for tableName := range tables {
+		if !strings.Contains(tableName, ".") {
+			return true
+		}
+	}
+
+	return false
+}
+
+// containsSchema reports whether schemas already includes target, so the default
+// schema is never appended twice.
+func containsSchema(schemas []string, target string) bool {
+	for _, s := range schemas {
+		if s == target {
+			return true
+		}
+	}
+
+	return false
 }
 
 // NormalizeField canonicalizes a single field/column name for the datasource type.
