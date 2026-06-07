@@ -147,6 +147,45 @@ func (pr *PublisherRoutes) PublishStreamingTarget(ctx context.Context, exchange,
 	return nil
 }
 
+// Ping reports whether the broker is reachable for streaming publishes. It is
+// the cheapest meaningful probe for the current publish mode and backs
+// lib-streaming's Adapter.Healthy via the streaming RabbitMQ target.
+//
+//   - Multi-tenant mode resolves a fresh channel per tenant at publish time and
+//     has no ambient tenant to probe, so the manager owns per-tenant lifecycle
+//     and Ping reports healthy here.
+//   - Single-tenant mode ensures the shared channel against the live connection
+//     (a real broker round-trip on reconnect).
+//   - The adapter-only path (no connection) falls back to the adapter's own
+//     health signal.
+func (pr *PublisherRoutes) Ping(ctx context.Context) error {
+	if pr.multiTenantMode {
+		if pr.rabbitMQManager == nil {
+			return fmt.Errorf("multi-tenant RabbitMQ manager is not configured")
+		}
+
+		return nil
+	}
+
+	if pr.conn != nil {
+		if err := pr.conn.EnsureChannelContext(ctx); err != nil {
+			return fmt.Errorf("rabbitmq ensure streaming health channel: %w", err)
+		}
+
+		return nil
+	}
+
+	if pr.adapter == nil {
+		return fmt.Errorf("no RabbitMQ adapter configured; cannot probe broker health")
+	}
+
+	if !pr.adapter.IsHealthy() {
+		return fmt.Errorf("rabbitmq adapter reports unhealthy broker connection")
+	}
+
+	return nil
+}
+
 // NewPublisherRoutesMultiTenant creates a new instance of PublisherRoutes configured for
 // multi-tenant mode using tmrabbitmq.Manager for per-tenant vhost isolation.
 func NewPublisherRoutesMultiTenant(manager RabbitMQManagerInterface, logger libLog.Logger, telemetry *opentelemetry.Telemetry, signer crypto.Signer) *PublisherRoutes {

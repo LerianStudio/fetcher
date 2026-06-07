@@ -823,6 +823,11 @@ func TestInitPlatformDependencies_MultiTenant_CreatesTMPublisher(t *testing.T) {
 	}
 
 	cfg := &Config{
+		// DeploymentMode=local skips fail-closed license enforcement, which would
+		// otherwise build a real license client (nil without LICENSE_KEY/ORGANIZATION_IDS)
+		// and fail this test on machines with no license env. This test asserts TM
+		// publisher wiring, not licensing.
+		DeploymentMode:           "local",
 		MultiTenantEnabled:       true,
 		MultiTenantURL:           "http://tenant-manager:8080",
 		MultiTenantServiceAPIKey: "test-key",

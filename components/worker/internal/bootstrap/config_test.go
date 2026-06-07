@@ -146,6 +146,47 @@ func TestStreamingRabbitMQPublisher_UsesConfiguredRouteDestination(t *testing.T)
 	require.NoError(t, err)
 }
 
+func TestStreamingRabbitMQPublisher_PingReportsBrokerHealth(t *testing.T) {
+	t.Parallel()
+
+	t.Run("healthy broker propagates success", func(t *testing.T) {
+		t.Parallel()
+
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		adapter := pkgRabbitMQ.NewMockAdapter(ctrl)
+		adapter.EXPECT().IsHealthy().Return(true)
+
+		publisher := workerRabbitMQ.NewPublisherRoutesWithAdapter(adapter, testBootstrapLogger(), &libOtel.Telemetry{})
+		target := streamingRabbitMQPublisher{publisher: publisher}
+
+		require.NoError(t, target.Ping(context.Background()))
+	})
+
+	t.Run("unhealthy broker propagates failure", func(t *testing.T) {
+		t.Parallel()
+
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		adapter := pkgRabbitMQ.NewMockAdapter(ctrl)
+		adapter.EXPECT().IsHealthy().Return(false)
+
+		publisher := workerRabbitMQ.NewPublisherRoutesWithAdapter(adapter, testBootstrapLogger(), &libOtel.Telemetry{})
+		target := streamingRabbitMQPublisher{publisher: publisher}
+
+		require.Error(t, target.Ping(context.Background()))
+	})
+
+	t.Run("nil publisher reports error", func(t *testing.T) {
+		t.Parallel()
+
+		target := streamingRabbitMQPublisher{}
+		require.Error(t, target.Ping(context.Background()))
+	})
+}
+
 func TestInitJobEventEmitter_DisabledFailsStartup(t *testing.T) {
 	t.Setenv("STREAMING_ENABLED", "false")
 	t.Setenv("STREAMING_BROKERS", "")

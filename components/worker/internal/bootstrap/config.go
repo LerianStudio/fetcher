@@ -133,6 +133,11 @@ type Config struct {
 	DeploymentMode      string `env:"DEPLOYMENT_MODE" default:"local"`
 	HealthPort          int    `env:"HEALTH_PORT" default:"4007"`
 	ReadyzDrainDelaySec int    `env:"READYZ_DRAIN_DELAY_SEC" default:"12"`
+	// EngineMaxResultBytes overrides the embedded engine's MaxResultBytes ceiling
+	// (the serialized — now indented — result artifact size). A plain integer byte
+	// count. Unset, zero, or negative leaves the engine default (256 MiB) in force;
+	// only a positive value overrides it. See newExtractionEngine.
+	EngineMaxResultBytes int64 `env:"ENGINE_MAX_RESULT_BYTES"`
 }
 
 var (
@@ -225,7 +230,7 @@ func InitWorker() (*Service, error) {
 	dsFactory := datasource.NewDataSourceFromConnectionWithLogger(logger)
 	service.SetDataSourceFactory(dsFactory)
 
-	if err := wireEngineRunner(service, dsFactory, cryptoService); err != nil {
+	if err := wireEngineRunner(service, dsFactory, cryptoService, cfg.EngineMaxResultBytes); err != nil {
 		return nil, err
 	}
 
@@ -464,6 +469,17 @@ func (p streamingRabbitMQPublisher) Publish(ctx context.Context, exchange, routi
 	return p.publisher.PublishStreamingTarget(ctx, exchange, routingKey, contentType, body, headers)
 }
 
+// Ping satisfies lib-streaming's optional RabbitMQPingClient interface so
+// streaming health (Adapter.Healthy) reflects real broker reachability instead
+// of a silent no-op. It delegates to the underlying PublisherRoutes probe.
+func (p streamingRabbitMQPublisher) Ping(ctx context.Context) error {
+	if p.publisher == nil {
+		return fmt.Errorf("streaming RabbitMQ publisher is not configured")
+	}
+
+	return p.publisher.Ping(ctx)
+}
+
 func initJobEventEmitter(ctx context.Context, cfg *Config, logger libLog.Logger, telemetry *libOtel.Telemetry, publisher *rabbitmq.PublisherRoutes, outboxRepo libOutbox.OutboxRepository) (streaming.Emitter, bool, error) {
 	streamingCfg, warnings, err := streaming.LoadConfig()
 	if err != nil {
@@ -474,6 +490,11 @@ func initJobEventEmitter(ctx context.Context, cfg *Config, logger libLog.Logger,
 		logger.Log(ctx, libLog.LevelWarn, warning)
 	}
 
+	// Deliberate deviation from the lib-streaming default pattern: we do NOT fall
+	// back to streaming.NewNoopEmitter() when the flag is off. Job terminal events
+	// (completed/failed) are a mandatory product contract, and a silent no-op
+	// emitter would swallow them. Reject startup instead so misconfiguration is
+	// loud rather than a missing-notification incident in production.
 	if !streamingCfg.Enabled {
 		return nil, false, fmt.Errorf("STREAMING_ENABLED=true is required for mandatory job event notifications")
 	}

@@ -21,8 +21,8 @@ import (
 // path is gone, so a nil runner is a wiring bug that must surface here — not
 // nil-panic during extraction. Extracting this keeps InitWorker's complexity down
 // while making the bootstrap the sole guarantor that EngineRunner is set.
-func wireEngineRunner(service *services.UseCase, dsFactory datasource.DataSourceFactory, cryptor crypto.Cryptor) error {
-	extractionEngine, err := newExtractionEngine(dsFactory, cryptor)
+func wireEngineRunner(service *services.UseCase, dsFactory datasource.DataSourceFactory, cryptor crypto.Cryptor, maxResultBytes int64) error {
+	extractionEngine, err := newExtractionEngine(dsFactory, cryptor, maxResultBytes)
 	if err != nil {
 		return fmt.Errorf("build extraction engine: %w", err)
 	}
@@ -64,7 +64,14 @@ func (r extractionConnectorRegistry) Connector(string) (engine.ConnectorFactory,
 // No ResultSink is wired: DIRECT mode returns the bytes inline and the Worker owns
 // encrypt + store + HMAC (ST-02). No ExecutionStore/EventSink: the Worker owns the
 // job lifecycle and lib-streaming events.
-func newExtractionEngine(dsFactory datasource.DataSourceFactory, cryptor crypto.Cryptor) (*engine.Engine, error) {
+//
+// maxResultBytes, when positive, overrides the engine's MaxResultBytes ceiling
+// (set via ENGINE_MAX_RESULT_BYTES). Because engine.WithLimits replaces the whole
+// Limits struct, the override is composed from engine.DefaultLimits() so every
+// other limit (MaxDatasources, MaxTablesPerDatasource, MaxConcurrency, Timeout,
+// ...) stays at its default — only MaxResultBytes changes. A non-positive value
+// leaves the engine at DefaultLimits entirely (no WithLimits call).
+func newExtractionEngine(dsFactory datasource.DataSourceFactory, cryptor crypto.Cryptor, maxResultBytes int64) (*engine.Engine, error) {
 	factory := enginecompatdatasource.NewConnectorFactory(
 		enginecompatdatasource.DataSourceFactory(dsFactory),
 		noopCredentialResolver,
@@ -73,10 +80,18 @@ func newExtractionEngine(dsFactory datasource.DataSourceFactory, cryptor crypto.
 
 	registry := extractionConnectorRegistry{factory: factory}
 
-	return engine.New(
+	opts := []engine.Option{
 		engine.WithConnectorRegistry(registry),
 		engine.WithConnectionStore(schemacompat.NewConnectionStore()),
-	)
+	}
+
+	if maxResultBytes > 0 {
+		limits := engine.DefaultLimits()
+		limits.MaxResultBytes = maxResultBytes
+		opts = append(opts, engine.WithLimits(limits))
+	}
+
+	return engine.New(opts...)
 }
 
 // noopCredentialResolver is the unreachable fallback resolver. The Worker always
