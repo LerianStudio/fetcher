@@ -29,6 +29,8 @@ import (
 var (
 	errCRMDataSourceCreate  = errors.New("failed to create plugin_crm data source")
 	errCRMDataSourceConnect = errors.New("failed to connect to plugin_crm data source")
+	errCRMListCollections   = errors.New("failed to list plugin_crm collections")
+	errCRMQueryCollection   = errors.New("failed to process plugin_crm collection")
 )
 
 var (
@@ -199,7 +201,13 @@ func (uc *UseCase) QueryPluginCRM(
 	// List all collections once for the entire plugin_crm database
 	allCollectionNames, err := dataSource.ListCollectionNames(ctx)
 	if err != nil {
-		libOtel.HandleSpanError(span, "Error listing plugin_crm collections", err)
+		// The driver's ListCollectionNames error embeds host:port (it wraps the
+		// MongoDB connection/topology error via %w). Record a STATIC, host-free
+		// message on the EXPORTED span (mirroring the create/connect sinks above);
+		// keep the verbatim %w-wrapped error only in the returned error and local log.
+		libOtel.HandleSpanError(span, "Error listing plugin_crm collections", errCRMListCollections)
+		logger.Log(ctx, libLog.LevelError, "error listing plugin_crm collections", libLog.Err(err))
+
 		return fmt.Errorf("failed to list collections in plugin_crm database: %w", err)
 	}
 
@@ -229,7 +237,13 @@ func (uc *UseCase) QueryPluginCRM(
 		logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Prefix %q matched %d collection(s): %v", prefix, len(matchingCollections), matchingCollections))
 
 		if err := processPluginCRMCollectionFn(uc, ctx, dataSource, collection, fields, collectionFilters, matchingCollections, result, logger); err != nil {
-			libOtel.HandleSpanError(span, "Error processing plugin_crm collection", err)
+			// The processing error propagates from the driver's QueryCollection*
+			// calls, which embed host:port (wrapped via %w). Record a STATIC,
+			// host-free message on the EXPORTED span (mirroring the sinks above);
+			// keep the verbatim %w-wrapped error only in the returned error and local log.
+			libOtel.HandleSpanError(span, "Error processing plugin_crm collection", errCRMQueryCollection)
+			logger.Log(ctx, libLog.LevelError, "error processing plugin_crm collection", libLog.Err(err))
+
 			return fmt.Errorf("failed to process plugin_crm collection %s: %w", collection, err)
 		}
 	}
