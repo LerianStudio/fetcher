@@ -778,6 +778,10 @@ var (
 	// notificationIPPattern catches any remaining bare IPv4 address (optionally
 	// with :port) not already covered by the patterns above.
 	notificationIPPattern = regexp.MustCompile(`\b\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?\b`)
+	// notificationMongoAddrPattern matches the "Addr: host:port" operand of Mongo
+	// driver topology errors (e.g. "Addr: mongo-crm.internal:27017"), which the
+	// net-stack/IP patterns above do not cover. The host:port is redacted.
+	notificationMongoAddrPattern = regexp.MustCompile(`Addr:\s+\S+`)
 )
 
 // sanitizeErrorForNotification strips connection strings, internal endpoints
@@ -790,6 +794,7 @@ var (
 func sanitizeErrorForNotification(msg string) string {
 	msg = notificationURIPattern.ReplaceAllString(msg, "[redacted]")
 	msg = notificationNetAddrPattern.ReplaceAllString(msg, "$1 [redacted]")
+	msg = notificationMongoAddrPattern.ReplaceAllString(msg, "Addr: [redacted]")
 	msg = notificationIPPattern.ReplaceAllString(msg, "[redacted]")
 
 	return msg

@@ -2,6 +2,7 @@ package query
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/LerianStudio/fetcher/pkg/engine"
 	"github.com/LerianStudio/fetcher/pkg/enginecompat/connectioncompat"
@@ -30,7 +31,12 @@ func listConnectionsViaEngine(ctx context.Context, eng *engine.Engine, filters n
 
 	conns := make([]*model.Connection, 0, len(page.Items))
 	for _, item := range page.Items {
-		conns = append(conns, connectioncompat.ConnectionFromDescriptor(item))
+		conn := connectioncompat.ConnectionFromDescriptor(item)
+		if conn == nil {
+			return nil, 0, fmt.Errorf("convert connection descriptor: invalid host attributes for connection %s", item.ConfigName)
+		}
+
+		conns = append(conns, conn)
 	}
 
 	return conns, page.Total, nil

@@ -122,6 +122,8 @@ func TestLoadConfig_ReturnsError(t *testing.T) {
 }
 
 func TestManagerConfigLoader_UsesLibCommonsLoaderAndLicenseDefault(t *testing.T) {
+	t.Setenv("LICENSE_ENFORCEMENT_ENABLED", "")
+
 	cfg := &Config{}
 	require.NoError(t, setConfigFromEnvVars(cfg))
 	assert.False(t, cfg.LicenseEnforcementEnabled)

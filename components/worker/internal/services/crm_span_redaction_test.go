@@ -50,6 +50,8 @@ func TestQueryPluginCRMDatabase_ConnectError_DoesNotLeakHostPortOnSpan(t *testin
 	connectErr := errors.New("server selection error: context deadline exceeded, current topology: { Type: Single, Servers: [{ Addr: " + crmHostPort + ", Type: Unknown }] }")
 	mockDS := modelDatasource.NewMockDataSource(ctrl)
 	mockDS.EXPECT().Connect(gomock.Any(), gomock.Any()).Return(connectErr)
+	// Connect failed, so the datasource must be released on the error path.
+	mockDS.EXPECT().Close(gomock.Any()).Return(nil)
 	uc.SetDataSourceFactory(func(context.Context, *model.Connection, workerCrypto.Cryptor) (modelDatasource.DataSource, error) {
 		return mockDS, nil
 	})

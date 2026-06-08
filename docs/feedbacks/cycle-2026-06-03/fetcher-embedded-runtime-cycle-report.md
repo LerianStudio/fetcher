@@ -33,7 +33,7 @@ All 10 tasks hit the scored bar (TDD RED+GREEN completed, coverage ≥ 85%, deli
 
 - **CRITICAL ×1** (T-010): generic-path filters silently dropped → full-table extraction (data-scoping defect). Caught by the parallel adversarial review; remediated (mapFilters nested-map shape + real-engine e2e guard).
 - **HIGH ×~13** (across tasks): Oracle case-folding dropped (T-010), CRM span host:port leak (T-010), config-name uniqueness divergence (T-003), IsZero-drops-ConnectorHardLimits (T-006), connector build-failure untested (T-007), nested-field matching dropped (T-005), CWE-770 unbounded probe (T-006), typed-nil guards (T-002/T-004), + the T-001 platform-compliance set. All remediated.
-- **MEDIUM/LOW ×many**: all remediated or carried-forward with rationale.
+- **MEDIUM/LOW × many**: all remediated or carried-forward with rationale.
 
 Zero unresolved Critical/High at cycle end.
 

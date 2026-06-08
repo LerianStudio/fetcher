@@ -51,6 +51,10 @@ type workerRepositories struct {
 	job                 *job.JobMongoDBRepository
 	connection          *connection.ConnectionMongoDBRepository
 	streamingOutboxRepo libOutbox.OutboxRepository
+	// streamingOutboxTMClient is the dedicated Tenant Manager client the
+	// streaming-outbox resolver owns in multi-tenant mode. Nil in single-tenant
+	// mode. Its Close is registered on the Service so it is released exactly once.
+	streamingOutboxTMClient *tmclient.Client
 }
 
 // Config holds the application's configurable parameters read from environment variables.
@@ -274,7 +278,7 @@ func InitWorker() (*Service, error) {
 	// Branch: multi-tenant mode uses the worker multi-tenant consumer with per-tenant vhosts
 	// Single-tenant mode uses existing ConsumerRoutes with static RabbitMQ connection
 	if cfg.MultiTenantEnabled && cfg.MultiTenantURL != "" {
-		return initMultiTenantWorkerService(ctx, cfg, logger, telemetry, service, mongoConnection, storageRepository, mongoManager, rabbitMQManager, repositories.streamingOutboxRepo, cryptoWithExternalHMAC, keyDeriver, licenseClient)
+		return initMultiTenantWorkerService(ctx, cfg, logger, telemetry, service, mongoConnection, storageRepository, mongoManager, rabbitMQManager, repositories.streamingOutboxRepo, repositories.streamingOutboxTMClient, cryptoWithExternalHMAC, keyDeriver, licenseClient)
 	}
 
 	multiQueueConsumer, consumerRoutes, err := initSingleTenantRabbitMQ(cfg, logger, telemetry, keyDeriver, cryptoWithExternalHMAC, service, mongoManager, repositories.streamingOutboxRepo)
@@ -300,7 +304,18 @@ func InitWorker() (*Service, error) {
 		streamingCloser:    service.JobEventEmitter.Close,
 		outboxDispatcher:   outboxDispatcher,
 		terminalRepairer:   services.NewTerminalEventRepairer(service, logger),
+		outboxTMCloser:     tmClientCloser(repositories.streamingOutboxTMClient),
 	}, nil
+}
+
+// tmClientCloser returns a nil-safe Close closure for an optional Tenant Manager
+// client, or nil when the client itself is nil (single-tenant mode).
+func tmClientCloser(client *tmclient.Client) func() error {
+	if client == nil {
+		return nil
+	}
+
+	return client.Close
 }
 
 func initMultiTenantWorkerService(
@@ -314,6 +329,7 @@ func initMultiTenantWorkerService(
 	mongoManager *tmmongo.Manager,
 	rabbitMQManager *tmrabbitmq.Manager,
 	streamingOutboxRepo libOutbox.OutboxRepository,
+	streamingOutboxTMClient *tmclient.Client,
 	cryptoWithExternalHMAC *crypto.HMACSigner,
 	keyDeriver *crypto.HKDFKeyDeriver,
 	licenseClient *libLicense.LicenseClient,
@@ -360,6 +376,7 @@ func initMultiTenantWorkerService(
 		streamingCloser:    service.JobEventEmitter.Close,
 		outboxDispatcher:   outboxDispatcher,
 		terminalRepairer:   services.NewTerminalEventRepairerWithTenantScope(service, logger, constant.ApplicationName, tmClient, mongoManager),
+		outboxTMCloser:     tmClientCloser(streamingOutboxTMClient),
 	}, nil
 }
 
@@ -374,12 +391,12 @@ func initWorkerRepositories(ctx context.Context, cfg *Config, logger libLog.Logg
 		return nil, fmt.Errorf("initialize connection repository: %w", errConnectRepo)
 	}
 
-	streamingOutboxRepo, errOutboxRepo := initStreamingOutboxRepository(ctx, cfg, logger, mongoConnection, mongoManager)
+	streamingOutboxRepo, streamingOutboxTMClient, errOutboxRepo := initStreamingOutboxRepository(ctx, cfg, logger, mongoConnection, mongoManager)
 	if errOutboxRepo != nil {
 		return nil, errOutboxRepo
 	}
 
-	return &workerRepositories{job: jobRepository, connection: connectionRepository, streamingOutboxRepo: streamingOutboxRepo}, nil
+	return &workerRepositories{job: jobRepository, connection: connectionRepository, streamingOutboxRepo: streamingOutboxRepo, streamingOutboxTMClient: streamingOutboxTMClient}, nil
 }
 
 // initSingleTenantRabbitMQ creates RabbitMQ consumer and publisher with
@@ -565,9 +582,16 @@ func initJobEventEmitter(ctx context.Context, cfg *Config, logger libLog.Logger,
 	return emitter, true, nil
 }
 
-func initStreamingOutboxRepository(ctx context.Context, cfg *Config, logger libLog.Logger, mongoConnection *mongoDB.Client, mongoManager *tmmongo.Manager) (libOutbox.OutboxRepository, error) {
+// initStreamingOutboxRepository builds the durable streaming-outbox repository.
+// In multi-tenant mode it owns a dedicated Tenant Manager client (init ordering
+// runs this before the multi-tenant stack's primary client exists, so the primary
+// client cannot be reused here). That client is RETURNED to the caller so its
+// lifecycle is registered exactly once on the Service (see Service.outboxTMCloser);
+// previously it was leaked with no Close. The returned client is nil in
+// single-tenant mode and on any error path.
+func initStreamingOutboxRepository(ctx context.Context, cfg *Config, logger libLog.Logger, mongoConnection *mongoDB.Client, mongoManager *tmmongo.Manager) (libOutbox.OutboxRepository, *tmclient.Client, error) {
 	if mongoConnection == nil {
-		return nil, fmt.Errorf("initialize streaming outbox repository: mongo client is required")
+		return nil, nil, fmt.Errorf("initialize streaming outbox repository: mongo client is required")
 	}
 
 	opts := []libOutboxMongo.Option{
@@ -575,11 +599,15 @@ func initStreamingOutboxRepository(ctx context.Context, cfg *Config, logger libL
 		libOutboxMongo.WithCollectionName("streaming_outbox_events"),
 	}
 
+	var outboxTMClient *tmclient.Client
+
 	if cfg.MultiTenantEnabled {
 		tmClient, err := initTenantManagerClient(cfg, logger)
 		if err != nil {
-			return nil, fmt.Errorf("create tenant manager client for streaming outbox: %w", err)
+			return nil, nil, fmt.Errorf("create tenant manager client for streaming outbox: %w", err)
 		}
+
+		outboxTMClient = tmClient
 
 		opts = append(opts,
 			libOutboxMongo.WithRequireTenant(),
@@ -592,10 +620,17 @@ func initStreamingOutboxRepository(ctx context.Context, cfg *Config, logger libL
 
 	repo, err := libOutboxMongo.NewRepositoryWithContext(ctx, mongoConnection, opts...)
 	if err != nil {
-		return nil, fmt.Errorf("initialize streaming outbox repository: %w", err)
+		// Release the just-created client so a repo build failure doesn't leak it.
+		if outboxTMClient != nil {
+			if closeErr := outboxTMClient.Close(); closeErr != nil {
+				logger.Log(ctx, libLog.LevelWarn, "failed to close streaming outbox tenant manager client after repository init error", libLog.Err(closeErr))
+			}
+		}
+
+		return nil, nil, fmt.Errorf("initialize streaming outbox repository: %w", err)
 	}
 
-	return repo, nil
+	return repo, outboxTMClient, nil
 }
 
 type streamingOutboxMongoResolver struct {
@@ -934,7 +969,12 @@ func initMultiTenantManagers(cfg *Config, logger libLog.Logger) (*tmmongo.Manage
 
 	rabbitManager := tmrabbitmq.NewManager(tmClient, constant.ApplicationName, rabbitOpts...)
 
-	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Multi-tenant managers initialized: url=%s, mongo_module=%s, rabbitmq_module=%s", cfg.MultiTenantURL, fetcherOperationalMongoModule(), constant.ModuleWorker))
+	mtHost := "<redacted>"
+	if u, urlErr := url.Parse(cfg.MultiTenantURL); urlErr == nil && u.Host != "" {
+		mtHost = u.Scheme + "://" + u.Hostname()
+	}
+
+	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Multi-tenant managers initialized: url=%s, mongo_module=%s, rabbitmq_module=%s", mtHost, fetcherOperationalMongoModule(), constant.ModuleWorker))
 
 	return mongoManager, rabbitManager, nil
 }

@@ -1456,8 +1456,9 @@ func TestValidateSchema_Execute_HostSafetyRejectionPropagates(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
+	prev := hostsafety.IsEnabled()
 	hostsafety.SetHostSafetyEnabled(true)
-	defer hostsafety.SetHostSafetyEnabled(false)
+	defer hostsafety.SetHostSafetyEnabled(prev)
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)

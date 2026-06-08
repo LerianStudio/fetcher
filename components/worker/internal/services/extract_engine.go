@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sort"
 
 	"github.com/LerianStudio/fetcher/pkg/engine"
 	"github.com/LerianStudio/fetcher/pkg/enginecompat/connectioncompat"
@@ -289,6 +290,10 @@ func validateDirectResult(res engine.ExtractionResult) (*engine.DirectResult, er
 		return nil, fmt.Errorf("engine returned a store-mode reference result; worker expects direct mode")
 	}
 
+	if res.Direct != nil && res.Reference != nil {
+		return nil, fmt.Errorf("engine returned both direct and reference results; expected exactly one")
+	}
+
 	if res.Direct == nil {
 		return nil, fmt.Errorf("engine returned no direct result payload")
 	}
@@ -524,9 +529,20 @@ func mapFilters(
 			normTable := tablenorm.NormalizeTable(dbType, table)
 			if existing, ok := tableMap[normTable]; ok {
 				merged := existing.(map[string]any)
-				for k, v := range fieldMap {
+
+				// Iterate fieldMap in sorted key order so the insertion sequence of
+				// missing keys is deterministic across runs (Go map iteration is
+				// randomized). The final field SET is already deterministic; this
+				// fixes insertion ORDER for reproducibility.
+				keys := make([]string, 0, len(fieldMap))
+				for k := range fieldMap {
+					keys = append(keys, k)
+				}
+				sort.Strings(keys)
+
+				for _, k := range keys {
 					if _, exists := merged[k]; !exists {
-						merged[k] = v
+						merged[k] = fieldMap[k]
 					}
 				}
 

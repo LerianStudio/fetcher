@@ -184,7 +184,9 @@ func TestQueryPluginCRMDatabase_DataSourceFactoryAndLifecycleErrors(t *testing.T
 			if !tt.noConnection && tt.factoryErr == nil {
 				mockDataSource.EXPECT().Connect(gomock.Any(), gomock.Any()).Return(tt.connectErr)
 				if tt.connectErr != nil {
-					// connect failed before the deferred Close is registered; no Close.
+					// Connect failed: the datasource is released on the error path
+					// (dispatchPluginCRMQuery's deferred Close is never reached).
+					mockDataSource.EXPECT().Close(gomock.Any()).Return(nil)
 				}
 			}
 

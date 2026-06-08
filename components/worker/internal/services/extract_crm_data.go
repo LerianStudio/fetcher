@@ -113,6 +113,15 @@ func (uc *UseCase) queryPluginCRMDatabase(
 			libOtel.HandleSpanError(span, "Error connecting to data source", errCRMDataSourceConnect)
 			logger.Log(ctx, libLog.LevelError, "error connecting to plugin_crm data source", libLog.Err(err))
 
+			// Connect failed, so dispatchPluginCRMQuery's deferred Close is never
+			// reached; release the datasource here to avoid leaking the connection.
+			if closeErr := dataSource.Close(ctx); closeErr != nil {
+				logger.Log(ctx, libLog.LevelWarn, "error closing connection after failed connect",
+					libLog.String("database_name", databaseName),
+					libLog.Err(closeErr),
+				)
+			}
+
 			return fmt.Errorf("failed to query database %s: failed to connect: %w", databaseName, err)
 		}
 

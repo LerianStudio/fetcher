@@ -57,6 +57,9 @@ type Service struct {
 	outboxDispatcher *libOutbox.Dispatcher
 	// terminalRepairer retries terminal metadata left pending before outbox persistence.
 	terminalRepairer *services.TerminalEventRepairer
+	// outboxTMCloser releases the dedicated Tenant Manager client owned by the
+	// streaming-outbox resolver (multi-tenant mode only). Nil-safe; closed once.
+	outboxTMCloser func() error
 }
 
 // Run starts the application.
@@ -84,6 +87,13 @@ func (app *Service) Run() {
 	if app.streamingCloser != nil {
 		if err := app.streamingCloser(); err != nil {
 			app.Log(context.Background(), libLog.LevelError, "failed to close lib-streaming producer", libLog.Err(err))
+		}
+	}
+
+	// Close the streaming-outbox resolver's dedicated Tenant Manager client.
+	if app.outboxTMCloser != nil {
+		if err := app.outboxTMCloser(); err != nil {
+			app.Log(context.Background(), libLog.LevelError, "failed to close streaming outbox tenant manager client", libLog.Err(err))
 		}
 	}
 
