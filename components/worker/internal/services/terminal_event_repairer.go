@@ -118,6 +118,10 @@ func (r *TerminalEventRepairer) Run(launcher *commons.Launcher) error {
 }
 
 func (r *TerminalEventRepairer) RepairOnce(ctx context.Context) error {
+	if r == nil || r.useCase == nil {
+		return nil
+	}
+
 	logger, tracer, _, _ := observability.NewTrackingFromContext(ctx)
 	if logger == nil {
 		logger = r.logger
