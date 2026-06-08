@@ -206,11 +206,9 @@ func (c *workerMultiTenantConsumer) Close() error {
 	c.retryCounts = make(map[string]int)
 	c.mu.Unlock()
 
-	if c.tenantClient != nil {
-		if err := c.tenantClient.Close(); err != nil {
-			c.logger.Log(context.Background(), libLog.LevelWarn, "failed to close tenant-manager client", libLog.Err(err))
-		}
-	}
+	// The Tenant Manager client is the single shared client owned by the Service;
+	// the consumer only borrows it and must not close it here (the Service closes
+	// it exactly once during graceful shutdown).
 
 	return nil
 }

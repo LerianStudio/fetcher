@@ -57,9 +57,11 @@ type Service struct {
 	outboxDispatcher *libOutbox.Dispatcher
 	// terminalRepairer retries terminal metadata left pending before outbox persistence.
 	terminalRepairer *services.TerminalEventRepairer
-	// outboxTMCloser releases the dedicated Tenant Manager client owned by the
-	// streaming-outbox resolver (multi-tenant mode only). Nil-safe; closed once.
-	outboxTMCloser func() error
+	// tmClientCloser releases the single shared Tenant Manager client used by all
+	// tenant-aware components in multi-tenant mode (managers, resolver,
+	// streaming-outbox resolver, tenant cache/consumer). The Service is the sole
+	// owner of this client's lifecycle. Nil-safe; closed exactly once.
+	tmClientCloser func() error
 }
 
 // Run starts the application.
@@ -90,10 +92,11 @@ func (app *Service) Run() {
 		}
 	}
 
-	// Close the streaming-outbox resolver's dedicated Tenant Manager client.
-	if app.outboxTMCloser != nil {
-		if err := app.outboxTMCloser(); err != nil {
-			app.Log(context.Background(), libLog.LevelError, "failed to close streaming outbox tenant manager client", libLog.Err(err))
+	// Close the single shared Tenant Manager client. The Service is its sole
+	// owner; no other component (managers, consumer, resolver) closes it.
+	if app.tmClientCloser != nil {
+		if err := app.tmClientCloser(); err != nil {
+			app.Log(context.Background(), libLog.LevelError, "failed to close shared tenant manager client", libLog.Err(err))
 		}
 	}
 
