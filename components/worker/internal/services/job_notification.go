@@ -4,21 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"regexp"
-	"strings"
 	"time"
 
-	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
-	libOtel "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
+	"github.com/LerianStudio/fetcher/pkg"
+	"github.com/LerianStudio/fetcher/pkg/engine"
+	libOutbox "github.com/LerianStudio/lib-commons/v5/commons/outbox"
+	"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
+	observability "github.com/LerianStudio/lib-observability"
+	streaming "github.com/LerianStudio/lib-streaming"
+
+	libLog "github.com/LerianStudio/lib-observability/log"
 
 	"github.com/google/uuid"
-	"go.opentelemetry.io/otel/trace"
 )
-
-var invalidRoutingSourceChars = regexp.MustCompile(`[^a-z0-9_-]+`)
-
-const maxRoutingSourceSegmentLength = 64
 
 // JobResultData contains information about the extraction result.
 // All fields use omitempty to only include data when provided.
@@ -38,6 +36,17 @@ type JobResultData struct {
 	// HMAC is the HMAC-SHA256 signature of the result data (before encryption).
 	// Consumers can use this to verify data integrity using the external HMAC key.
 	HMAC string `json:"hmac,omitempty"`
+
+	// Integrity is the canonical T-007 integrity declaration over the stored result.
+	// It makes the tacit "what does the HMAC sign" convention EXPLICIT: the signature
+	// is the keyed HMAC-SHA256 over the PLAINTEXT extraction JSON (the same value as
+	// HMAC above). It is a keyed signature, never an unkeyed Digest.
+	Integrity *engine.ResultIntegrity `json:"integrity,omitempty"`
+
+	// Protection is the canonical T-007 confidentiality declaration over the stored
+	// result bytes. It describes the STORED EXTRACTION RESULT only — never connection
+	// credentials (T-007 invariant: result-protection != credential-protection).
+	Protection *engine.ResultProtection `json:"protection,omitempty"`
 }
 
 // JobNotificationOptions contains optional data for job notifications.
@@ -75,42 +84,19 @@ type JobNotificationMessage struct {
 	CompletedAt *time.Time `json:"completedAt,omitempty"`
 }
 
-// publishJobNotification publishes a job event notification to RabbitMQ topic exchange.
-func (uc *UseCase) publishJobNotification(
-	ctx context.Context,
-	tracer trace.Tracer,
-	message ExtractExternalDataMessage,
-	status string,
-	errorMetadata map[string]any,
-	opts *JobNotificationOptions,
-	logger libLog.Logger,
-) error {
-	logger = normalizeJobNotificationLogger(ctx, logger)
+const (
+	terminalEventPendingMetadataKey = "terminalEventPending"
+	terminalEventStatusMetadataKey  = "terminalEventStatus"
+	terminalEventPayloadMetadataKey = "terminalEventPayload"
+)
 
-	// Skip if publisher is not configured
-	if uc.RabbitMQPublisher == nil || uc.JobEventsExchange == "" {
-		logger.Log(ctx, libLog.LevelDebug, "rabbitmq publisher not configured, skipping job notification")
-
-		return nil
-	}
-
-	var notificationTracer trace.Tracer
-	if tracer != nil {
-		notificationTracer = tracer
-	} else {
-		_, notificationTracer, _, _ = libCommons.NewTrackingFromContext(ctx)
-	}
-
-	ctx, notifySpan := notificationTracer.Start(ctx, "service.publish_job_notification")
-	defer notifySpan.End()
-
+func buildJobNotificationPayload(message ExtractExternalDataMessage, status string, errorMetadata map[string]any, opts *JobNotificationOptions) ([]byte, error) {
 	notification := JobNotificationMessage{
 		JobID:    message.JobID,
 		Status:   status,
 		Metadata: make(map[string]any),
 	}
 
-	// Add optional result and execution data
 	if opts != nil {
 		notification.Result = opts.Result
 		notification.ExecutionTimeMs = opts.ExecutionTimeMs
@@ -127,45 +113,67 @@ func (uc *UseCase) publishJobNotification(
 		notification.Metadata["error"] = errorMetadata
 	}
 
-	source := "unknown"
-
-	if notification.Metadata != nil {
-		if src, ok := notification.Metadata["source"].(string); ok && src != "" {
-			source = sanitizeRoutingSourceSegment(src)
-		}
-	}
-
-	routingKey := fmt.Sprintf("job.%s.%s", status, source)
-
 	notificationJSON, err := json.Marshal(notification)
 	if err != nil {
-		libOtel.HandleSpanError(notifySpan, "Error marshalling job notification", err)
-		logger.Log(ctx, libLog.LevelError, "error marshalling job notification", libLog.Err(err))
-
-		return fmt.Errorf("marshalling job notification: %w", err)
+		return nil, fmt.Errorf("marshalling job notification: %w", err)
 	}
 
-	logger.Log(ctx, libLog.LevelInfo, "publishing job notification",
-		libLog.String("job_id", message.JobID.String()),
-		libLog.String("status", status),
-		libLog.String("routing_key", routingKey),
-		libLog.String("exchange", uc.JobEventsExchange),
-	)
+	return notificationJSON, nil
+}
 
-	if err := uc.RabbitMQPublisher.Publish(ctx, uc.JobEventsExchange, routingKey, notificationJSON); err != nil {
-		libOtel.HandleSpanError(notifySpan, "Error publishing job notification to RabbitMQ", err)
-		logger.Log(ctx, libLog.LevelError, "error publishing job notification to RabbitMQ", libLog.Err(err))
-
-		return fmt.Errorf("publishing job notification: %w", err)
+func (uc *UseCase) emitJobNotificationEvent(ctx context.Context, status, subject string, payload []byte) error {
+	if uc.JobEventEmitter == nil {
+		return fmt.Errorf("mandatory lib-streaming job event emitter is not configured")
 	}
 
-	logger.Log(ctx, libLog.LevelInfo, "published job notification successfully",
-		libLog.String("job_id", message.JobID.String()),
-		libLog.String("status", status),
-		libLog.String("routing_key", routingKey),
-	)
+	tenantID := core.GetTenantIDContext(ctx)
+	if tenantID == "" {
+		if uc.JobEventStreamingRequireTenant {
+			return streaming.ErrMissingTenantID
+		}
+
+		tenantID = "single-tenant"
+	}
+
+	outboxCtx, err := libOutbox.ContextWithTenantIDStrict(ctx, tenantID)
+	if err != nil {
+		return err
+	}
+
+	if err := uc.JobEventEmitter.Emit(outboxCtx, streaming.EmitRequest{
+		DefinitionKey: fmt.Sprintf("job.%s", status),
+		EventID:       deterministicJobEventID(status, subject),
+		TenantID:      tenantID,
+		Subject:       subject,
+		Payload:       payload,
+	}); err != nil {
+		if streaming.IsCallerError(err) {
+			return pkg.FailedPreconditionError{
+				Code:    "FET-0060",
+				Title:   "Job Event Configuration Error",
+				Message: fmt.Sprintf("non-retryable lib-streaming job event configuration error: %s", err.Error()),
+				Err:     err,
+			}
+		}
+
+		return err
+	}
 
 	return nil
+}
+
+// deterministicJobEventID returns the stable CloudEvents id (ce-id) for a job
+// terminal event: "fetcher.job.<status>.<jobID>". This id is the consumer
+// idempotency key and the ONLY dedup anchor for the job event stream.
+//
+// Delivery is at-least-once: the terminal-event repairer re-emits when the
+// terminalEventPending flag survives a crash or a failed flag-clear, and
+// lib-streaming allocates a fresh outbox row UUID per emit. The ce-id, however,
+// is stable across every re-emit of the same (status, jobID) pair. Consumers
+// MUST dedup on ce-id; they must not rely on the outbox UUID or on
+// exactly-once delivery at the broker.
+func deterministicJobEventID(status, jobID string) string {
+	return fmt.Sprintf("fetcher.job.%s.%s", status, jobID)
 }
 
 func normalizeJobNotificationLogger(ctx context.Context, logger libLog.Logger) libLog.Logger {
@@ -173,27 +181,10 @@ func normalizeJobNotificationLogger(ctx context.Context, logger libLog.Logger) l
 		return logger
 	}
 
-	ctxLogger := libCommons.NewLoggerFromContext(ctx)
+	ctxLogger := observability.NewLoggerFromContext(ctx)
 	if ctxLogger != nil {
 		return ctxLogger
 	}
 
 	return &libLog.GoLogger{Level: libLog.LevelError}
-}
-
-func sanitizeRoutingSourceSegment(source string) string {
-	normalized := strings.ToLower(strings.TrimSpace(source))
-	normalized = invalidRoutingSourceChars.ReplaceAllString(normalized, "-")
-
-	normalized = strings.Trim(normalized, "-_")
-	if len(normalized) > maxRoutingSourceSegmentLength {
-		normalized = normalized[:maxRoutingSourceSegmentLength]
-		normalized = strings.Trim(normalized, "-_")
-	}
-
-	if normalized == "" {
-		return "unknown"
-	}
-
-	return normalized
 }

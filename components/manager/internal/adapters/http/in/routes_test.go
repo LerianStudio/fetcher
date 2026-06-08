@@ -1,12 +1,15 @@
 package in
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	middlewareAuth "github.com/LerianStudio/lib-auth/v2/auth/middleware"
-	"github.com/LerianStudio/lib-commons/v5/commons/log"
-	"github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
 	libLicense "github.com/LerianStudio/lib-license-go/v2/middleware"
+	"github.com/LerianStudio/lib-license-go/v2/test/helper/testlogger"
+	"github.com/LerianStudio/lib-observability/log"
+	opentelemetry "github.com/LerianStudio/lib-observability/tracing"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -41,6 +44,7 @@ func TestNewRoutes_SignatureAcceptsTenantMiddleware(t *testing.T) {
 		tl *opentelemetry.Telemetry,
 		auth *middlewareAuth.AuthClient,
 		licenseClient *libLicense.LicenseClient,
+		licenseEnforcementEnabled bool,
 		connectionHandler *ConnectionHandler,
 		migrationHandler *MigrationHandler,
 		fetcherHandler *FetcherHandler,
@@ -55,6 +59,98 @@ func TestNewRoutes_SignatureAcceptsTenantMiddleware(t *testing.T) {
 	// Also verify nil is a valid value for tenantMiddleware (single-tenant mode)
 	var nilHandler fiber.Handler
 	assert.Nil(t, nilHandler, "nil fiber.Handler should be valid for single-tenant mode")
+}
 
-	_ = require.NoError // suppress unused import
+func TestLicenseWhenEnabled_DefaultDoesNotApplyClientMiddleware(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		client  *libLicense.LicenseClient
+		enforce bool
+		want    int
+	}{
+		{
+			name:    "client_exists_but_enforcement_disabled_allows_business_route",
+			client:  newTestLicenseClient(t),
+			enforce: false,
+			want:    fiber.StatusNoContent,
+		},
+		{
+			name:    "nil_client_with_enforcement_disabled_allows_business_route",
+			client:  nil,
+			enforce: false,
+			want:    fiber.StatusNoContent,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			app := fiber.New()
+			app.Get("/v1/fetcher", LicenseWhenEnabled(tt.client, tt.enforce), func(c *fiber.Ctx) error {
+				return c.SendStatus(fiber.StatusNoContent)
+			})
+
+			resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/v1/fetcher", nil))
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, resp.StatusCode)
+			require.NoError(t, resp.Body.Close())
+		})
+	}
+}
+
+func TestLicenseWhenEnabled_ExplicitEnableAppliesClientMiddleware(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		enforce   bool
+		wantPanic bool
+	}{
+		{
+			name:      "disabled_does_not_construct_license_middleware",
+			enforce:   false,
+			wantPanic: false,
+		},
+		{
+			name:      "enabled_constructs_license_middleware",
+			enforce:   true,
+			wantPanic: true,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			registerRoute := func() {
+				app := fiber.New()
+				app.Get("/v1/fetcher", LicenseWhenEnabled(&libLicense.LicenseClient{}, tt.enforce), func(c *fiber.Ctx) error {
+					return c.SendStatus(fiber.StatusNoContent)
+				})
+			}
+
+			if tt.wantPanic {
+				require.Panics(t, registerRoute)
+				return
+			}
+
+			require.NotPanics(t, registerRoute)
+		})
+	}
+}
+
+func newTestLicenseClient(t *testing.T) *libLicense.LicenseClient {
+	t.Helper()
+
+	testLogger := testlogger.New()
+	var logger log.Logger = testLogger
+	client := libLicense.NewLicenseClient(applicationName, "", "test-org", &logger)
+	require.NotNil(t, client)
+
+	return client
 }

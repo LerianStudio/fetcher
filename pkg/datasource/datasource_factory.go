@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/LerianStudio/lib-observability"
+
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/datasource/hostsafety"
@@ -24,9 +26,8 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/oracle"
 	"github.com/LerianStudio/fetcher/pkg/postgres"
 	"github.com/LerianStudio/fetcher/pkg/sqlserver"
-	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
+	libLog "github.com/LerianStudio/lib-observability/log"
+	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
 
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -38,7 +39,7 @@ import (
 // into the appropriate DataSourceConfig implementation (MongoDB, PostgreSQL, Oracle, MySQL, or SQL Server).
 // The cryptor is required to decrypt the connection password before creating the data source.
 func NewDataSourceFromConnection(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor, logger libLog.Logger) (datasource.DataSource, error) {
-	ctxLogger, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
+	ctxLogger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 	if logger == nil {
 		logger = ctxLogger
 	}

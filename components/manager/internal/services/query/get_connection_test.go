@@ -9,9 +9,11 @@ import (
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
+	"github.com/LerianStudio/fetcher/pkg/resolver"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
 
@@ -39,7 +41,7 @@ func TestGetConnection_Execute_Success(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewGetConnection(mockConnRepo, nil, nil)
+	svc := NewGetConnection(nil, nil, scopeAuthorityEngine(t, mockConnRepo))
 
 	ctx := testContext()
 	connID := uuid.New()
@@ -87,7 +89,7 @@ func TestGetConnection_Execute_NotFoundError(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewGetConnection(mockConnRepo, nil, nil)
+	svc := NewGetConnection(nil, nil, scopeAuthorityEngine(t, mockConnRepo))
 
 	ctx := testContext()
 	connID := uuid.New()
@@ -121,7 +123,7 @@ func TestGetConnection_Execute_RepositoryError(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewGetConnection(mockConnRepo, nil, nil)
+	svc := NewGetConnection(nil, nil, scopeAuthorityEngine(t, mockConnRepo))
 
 	ctx := testContext()
 	connID := uuid.New()
@@ -155,7 +157,7 @@ func TestGetConnection_Execute_OrganizationIsolation(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewGetConnection(mockConnRepo, nil, nil)
+	svc := NewGetConnection(nil, nil, scopeAuthorityEngine(t, mockConnRepo))
 
 	ctx := testContext()
 	differentOrgID := uuid.New()
@@ -239,7 +241,7 @@ func TestGetConnection_Execute_TableDriven(t *testing.T) {
 
 			tt.setupMocks(mockConnRepo, connID, existingConn)
 
-			svc := NewGetConnection(mockConnRepo, nil, nil)
+			svc := NewGetConnection(nil, nil, scopeAuthorityEngine(t, mockConnRepo))
 
 			result, err := svc.Execute(ctx, connID)
 
@@ -276,7 +278,7 @@ func TestGetConnection_Execute_ConnectionWithSSL(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewGetConnection(mockConnRepo, nil, nil)
+	svc := NewGetConnection(nil, nil, scopeAuthorityEngine(t, mockConnRepo))
 
 	ctx := testContext()
 	connID := uuid.New()
@@ -347,7 +349,7 @@ func TestGetConnection_Execute_AllDatabaseTypes(t *testing.T) {
 
 			mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-			svc := NewGetConnection(mockConnRepo, nil, nil)
+			svc := NewGetConnection(nil, nil, scopeAuthorityEngine(t, mockConnRepo))
 
 			ctx := testContext()
 			connID := uuid.New()
@@ -383,14 +385,107 @@ func TestNewGetConnection(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewGetConnection(mockConnRepo, nil, nil)
+	svc := NewGetConnection(nil, nil, scopeAuthorityEngine(t, mockConnRepo))
 
 	if svc == nil {
 		t.Fatal("expected non-nil service")
 	}
 
-	if svc.connRepo == nil {
-		t.Fatal("expected connRepo to be set")
+	if svc.engine == nil {
+		t.Fatal("expected engine to be set")
+	}
+}
+
+// internalConnID is the deterministic per-tenant UUID for an internal datasource
+// config in single-tenant mode (empty tenant id), matching the registry's UUID v5
+// derivation. It is the key the internal-datasource branch matches on.
+func internalConnID(configName string) uuid.UUID {
+	return uuid.NewSHA1(resolver.InternalDatasourceNamespace, []byte("/"+configName))
+}
+
+// TestGetConnection_Execute_InternalDatasource_Resolved proves the internal
+// branch: when the registry maps the UUID to an internal config, the resolver
+// resolves it on the host hot path and the resolved connection is returned WITHOUT
+// any Engine connection-store read (the external getConnectionByID is never hit).
+func TestGetConnection_Execute_InternalDatasource_Resolved(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConnRepo := connRepo.NewMockRepository(ctrl) // no FindByID expectation: internal never reads the store
+	mockResolver := resolver.NewMockConnectionResolver(ctrl)
+	registry := resolver.NewInternalDatasourceRegistry()
+
+	connID := internalConnID("midaz_onboarding")
+	internalConn := &model.Connection{
+		ConfigName:   "midaz_onboarding",
+		Type:         model.TypePostgreSQL,
+		Host:         "internal-db",
+		DatabaseName: "ledger",
+	}
+
+	mockResolver.EXPECT().
+		ResolveInternalByConfigName(gomock.Any(), "midaz_onboarding").
+		Return(internalConn, nil)
+
+	svc := NewGetConnection(mockResolver, registry, scopeAuthorityEngine(t, mockConnRepo))
+
+	got, err := svc.Execute(testContext(), connID)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, "midaz_onboarding", got.ConfigName)
+}
+
+// TestGetConnection_Execute_InternalDatasource_ResolveError proves a resolver
+// error on the internal branch is wrapped and propagated (NOT swallowed, NOT
+// mapped to not-found).
+func TestGetConnection_Execute_InternalDatasource_ResolveError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockResolver := resolver.NewMockConnectionResolver(ctrl)
+	registry := resolver.NewInternalDatasourceRegistry()
+
+	connID := internalConnID("midaz_onboarding")
+
+	mockResolver.EXPECT().
+		ResolveInternalByConfigName(gomock.Any(), "midaz_onboarding").
+		Return(nil, errors.New("tenant-manager unavailable"))
+
+	svc := NewGetConnection(mockResolver, registry, scopeAuthorityEngine(t, mockConnRepo))
+
+	got, err := svc.Execute(testContext(), connID)
+	require.Error(t, err)
+	assert.Nil(t, got)
+	assert.Contains(t, err.Error(), "failed to resolve internal datasource")
+}
+
+// TestGetConnection_Execute_InternalDatasource_NilResolvedIsNotFound proves a
+// nil-resolved internal connection (registry knows the id but the resolver returns
+// no connection) maps to the Manager's not-found business error.
+func TestGetConnection_Execute_InternalDatasource_NilResolvedIsNotFound(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockResolver := resolver.NewMockConnectionResolver(ctrl)
+	registry := resolver.NewInternalDatasourceRegistry()
+
+	connID := internalConnID("midaz_onboarding")
+
+	mockResolver.EXPECT().
+		ResolveInternalByConfigName(gomock.Any(), "midaz_onboarding").
+		Return(nil, nil)
+
+	svc := NewGetConnection(mockResolver, registry, scopeAuthorityEngine(t, mockConnRepo))
+
+	got, err := svc.Execute(testContext(), connID)
+	require.Error(t, err)
+	assert.Nil(t, got)
+
+	var respErr pkg.ResponseErrorWithStatusCode
+	if assert.True(t, errors.As(err, &respErr)) {
+		assert.Equal(t, http.StatusNotFound, respErr.StatusCode)
 	}
 }
 
@@ -401,7 +496,7 @@ func TestGetConnection_Execute_ConnectionWithAllFields(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewGetConnection(mockConnRepo, nil, nil)
+	svc := NewGetConnection(nil, nil, scopeAuthorityEngine(t, mockConnRepo))
 
 	ctx := testContext()
 	connID := uuid.New()
@@ -511,7 +606,7 @@ func TestGetConnection_Execute_MultipleRepositoryErrors(t *testing.T) {
 
 			mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-			svc := NewGetConnection(mockConnRepo, nil, nil)
+			svc := NewGetConnection(nil, nil, scopeAuthorityEngine(t, mockConnRepo))
 
 			ctx := testContext()
 			connID := uuid.New()
@@ -545,7 +640,7 @@ func TestGetConnection_Execute_EmptyUUIDs(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewGetConnection(mockConnRepo, nil, nil)
+	svc := NewGetConnection(nil, nil, scopeAuthorityEngine(t, mockConnRepo))
 
 	ctx := testContext()
 	connID := uuid.Nil

@@ -3,32 +3,32 @@ package query
 import (
 	"context"
 	"fmt"
-
 	"strings"
 
+	"github.com/LerianStudio/fetcher/pkg/engine"
+	"github.com/LerianStudio/fetcher/pkg/enginecompat/connectioncompat"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/net/http"
-	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
 	"github.com/LerianStudio/fetcher/pkg/resolver"
+	observability "github.com/LerianStudio/lib-observability"
 
-	"github.com/LerianStudio/lib-commons/v5/commons"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
+	libLog "github.com/LerianStudio/lib-observability/log"
+	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
 
 	"go.opentelemetry.io/otel/attribute"
 )
 
 type ListConnections struct {
-	connRepo connRepo.Repository
 	resolver resolver.ConnectionResolver // nil-safe: if nil, no internal datasources
+	engine   *engine.Engine              // scope authority + paginated read persistence
 }
 
-func NewListConnections(connectionRepo connRepo.Repository, connResolver resolver.ConnectionResolver) *ListConnections {
-	return &ListConnections{connRepo: connectionRepo, resolver: connResolver}
+func NewListConnections(connResolver resolver.ConnectionResolver, eng *engine.Engine) *ListConnections {
+	return &ListConnections{resolver: connResolver, engine: eng}
 }
 
 func (s *ListConnections) Execute(ctx context.Context, productName string, filters http.QueryHeader) (*model.Pagination, error) {
-	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "service.list_connections")
 	defer span.End()
@@ -36,6 +36,15 @@ func (s *ListConnections) Execute(ctx context.Context, productName string, filte
 	span.SetAttributes(
 		attribute.String("app.request.request_id", reqID),
 	)
+
+	// Route the per-request tenant-scope authority through the Engine before the
+	// read. The Manager keeps its paginated, resolver-merged list (a host
+	// presentation concern the Engine's flat list does not model); the Engine
+	// owns only the scope rule — the single authority for which tenant may read.
+	if err := connectioncompat.AuthorizeAccess(ctx, s.engine); err != nil {
+		libOpentelemetry.HandleSpanError(span, "Failed to authorize tenant scope", err)
+		return nil, err
+	}
 
 	if productName != "" {
 		span.SetAttributes(attribute.String("app.request.product_name", productName))
@@ -48,7 +57,13 @@ func (s *ListConnections) Execute(ctx context.Context, productName string, filte
 		libOpentelemetry.HandleSpanError(span, "Failed to convert fetcher input to JSON string", err)
 	}
 
-	list, totalCount, err := s.connRepo.List(ctx, filters)
+	// Route the paginated, filtered external list through the Engine's
+	// ID-addressed ListConnectionsPaged op: the Engine validates the tenant scope
+	// and delegates to ConnectionStore.ListPaged -> repo.List, carrying the host's
+	// QueryHeader as OPAQUE params. The adapter reproduces the Manager's exact
+	// pagination; the resolver-merge + total math below stays Manager-side and
+	// byte-identical.
+	list, totalCount, err := listConnectionsViaEngine(ctx, s.engine, filters)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to list connections", err)
 		return nil, fmt.Errorf("failed to list connections: %w", err)

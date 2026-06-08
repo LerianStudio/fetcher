@@ -9,6 +9,10 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
+type multiTenantChecker interface {
+	IsMultiTenant() bool
+}
+
 // ResolveDatabase returns the tenant-scoped Mongo database when present.
 // If a tenant ID exists in context but no tenant database has been injected,
 // it fails closed with ErrTenantContextRequired instead of silently falling
@@ -25,8 +29,14 @@ func ResolveDatabase(ctx context.Context, conn MongoClientProvider, dbName strin
 		return db, nil
 	}
 
-	// If a tenant ID exists in context but no tenant DB was injected,
-	// fail closed rather than silently falling back to the shared database.
+	// Multi-tenant mode must never fall back to the shared database. The
+	// provider-level flag catches both missing tenant IDs and missing tenant DBs.
+	if checker, ok := conn.(multiTenantChecker); ok && checker.IsMultiTenant() {
+		return nil, tmcore.ErrTenantContextRequired
+	}
+
+	// If a tenant ID exists in context but no tenant DB was injected, fail closed
+	// even when the provider does not expose an explicit multi-tenant flag.
 	if tmcore.GetTenantIDContext(ctx) != "" {
 		return nil, tmcore.ErrTenantContextRequired
 	}

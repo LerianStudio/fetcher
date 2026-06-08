@@ -14,9 +14,9 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/mongodb"
 
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
 	libMongo "github.com/LerianStudio/lib-commons/v5/commons/mongo"
 	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
+	libLog "github.com/LerianStudio/lib-observability/log"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -585,6 +585,29 @@ func TestJobMongoDBRepository_UpdateStatus(t *testing.T) {
 		require.NoError(t, err, "failed to find job")
 		require.Equal(t, resultHMAC, found.ResultHMAC, "expected result_hmac to be set")
 	})
+}
+
+func TestJobMongoDBRepository_ClearTerminalEventMetadata(t *testing.T) {
+	repo := newJobRepository(t)
+	created := createJob(t, repo, jobFixture())
+
+	metadata := map[string]any{
+		"source":               "api",
+		"terminalEventPending": true,
+		"terminalEventStatus":  "completed",
+		"terminalEventPayload": `{"jobId":"internal"}`,
+	}
+	require.NoError(t, repo.UpdateStatus(context.Background(), created.ID, model.JobStatusCompleted, "", "", metadata))
+
+	require.NoError(t, repo.ClearTerminalEventMetadata(context.Background(), created.ID))
+
+	found, err := repo.FindByID(context.Background(), created.ID)
+	require.NoError(t, err)
+	require.NotNil(t, found)
+	assert.Equal(t, "api", found.Metadata["source"])
+	assert.NotContains(t, found.Metadata, "terminalEventPending")
+	assert.NotContains(t, found.Metadata, "terminalEventStatus")
+	assert.NotContains(t, found.Metadata, "terminalEventPayload")
 }
 
 func TestJobMongoDBRepository_FindByRequestHashWithinWindow(t *testing.T) {
@@ -1177,6 +1200,82 @@ func TestJobMongoDBRepository_getDatabase(t *testing.T) {
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "db down")
 	})
+}
+
+func TestJobMongoDBRepository_ListPendingTerminalEvents(t *testing.T) {
+	repo := newJobRepository(t)
+	now := time.Now().UTC()
+	olderCompleted := now.Add(-2 * time.Hour)
+	newerCompleted := now.Add(-1 * time.Hour)
+
+	completedOlder := jobFixture()
+	completedOlder.Status = model.JobStatusCompleted
+	completedOlder.CreatedAt = now.Add(-4 * time.Hour)
+	completedOlder.CompletedAt = &olderCompleted
+	completedOlder.Metadata["terminalEventPending"] = true
+
+	failedNewer := jobFixture()
+	failedNewer.Status = model.JobStatusFailed
+	failedNewer.CreatedAt = now.Add(-3 * time.Hour)
+	failedNewer.CompletedAt = &newerCompleted
+	failedNewer.Metadata["terminalEventPending"] = true
+
+	processingPending := jobFixture()
+	processingPending.Status = model.JobStatusProcessing
+	processingPending.CreatedAt = now.Add(-5 * time.Hour)
+	processingPending.Metadata["terminalEventPending"] = true
+
+	completedNotPending := jobFixture()
+	completedNotPending.Status = model.JobStatusCompleted
+	completedNotPending.CreatedAt = now.Add(-6 * time.Hour)
+	completedNotPending.CompletedAt = &olderCompleted
+
+	createdOlder := createJob(t, repo, completedOlder)
+	createdFailed := createJob(t, repo, failedNewer)
+	createJob(t, repo, processingPending)
+	createJob(t, repo, completedNotPending)
+
+	jobs, err := repo.ListPendingTerminalEvents(context.Background(), 10)
+	require.NoError(t, err)
+	require.Len(t, jobs, 2)
+	assert.Equal(t, createdOlder.ID, jobs[0].ID)
+	assert.Equal(t, createdFailed.ID, jobs[1].ID)
+
+	limited, err := repo.ListPendingTerminalEvents(context.Background(), 1)
+	require.NoError(t, err)
+	require.Len(t, limited, 1)
+	assert.Equal(t, createdOlder.ID, limited[0].ID)
+
+	normalized, err := repo.ListPendingTerminalEvents(context.Background(), -1)
+	require.NoError(t, err)
+	require.Len(t, normalized, 2)
+}
+
+func TestJobMongoDBRepository_ListPendingTerminalEvents_Empty(t *testing.T) {
+	repo := newJobRepository(t)
+
+	jobs, err := repo.ListPendingTerminalEvents(context.Background(), 10)
+	require.NoError(t, err)
+	assert.Empty(t, jobs)
+}
+
+func TestJobMongoDBRepository_ListPendingTerminalEvents_DatabaseError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConn := NewMockmongoDatabaseProvider(ctrl)
+	mockConn.EXPECT().
+		Client(gomock.Any()).
+		Return(nil, errors.New("db down"))
+
+	repo := &JobMongoDBRepository{
+		connection: mockConn,
+		Database:   jobTestDatabaseName,
+	}
+
+	_, err := repo.ListPendingTerminalEvents(context.Background(), 10)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "db down")
 }
 
 // -----------------------------------------------------------------------------

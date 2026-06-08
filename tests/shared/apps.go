@@ -189,8 +189,8 @@ func (e *AppEnv) ManagerEnv() map[string]string {
 		// SERVER_PORT (4006). DEPLOYMENT_MODE=local skips the bootstrap SaaS
 		// TLS validation; READYZ_DRAIN_DELAY_SEC is shortened to keep the
 		// drain e2e tests under suite-level timeouts.
-		"DEPLOYMENT_MODE":          "local",
-		"READYZ_DRAIN_DELAY_SEC":   "2",
+		"DEPLOYMENT_MODE":        "local",
+		"READYZ_DRAIN_DELAY_SEC": "2",
 	}
 }
 
@@ -221,6 +221,9 @@ func (e *AppEnv) WorkerEnv() map[string]string {
 		"RABBITMQ_FETCHER_WORK_QUEUE":          "fetcher.extract-external-data.queue",
 		"RABBITMQ_JOB_EVENTS_EXCHANGE":         "fetcher.job.events",
 		"RABBITMQ_NUMBERS_OF_WORKERS":          "1",
+		"STREAMING_ENABLED":                    "true",
+		"STREAMING_BROKERS":                    "localhost:9092",
+		"STREAMING_CLOUDEVENTS_SOURCE":         "//lerian.fetcher/worker",
 		"LOG_LEVEL":                            "debug",
 		"ENABLE_TELEMETRY":                     "true",
 		"OTEL_RESOURCE_SERVICE_NAME":           "fetcher",

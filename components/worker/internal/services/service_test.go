@@ -6,11 +6,60 @@ import (
 	"testing"
 
 	"github.com/LerianStudio/fetcher/pkg/crypto"
+	"github.com/LerianStudio/fetcher/pkg/engine"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/model/datasource"
 	"github.com/google/uuid"
 	"go.uber.org/mock/gomock"
 )
+
+// stubEngineRunner is a no-op EngineRunner used to satisfy the mandatory-runner
+// wiring guard in tests that only need a non-nil runner.
+type stubEngineRunner struct{}
+
+func (stubEngineRunner) RunExtraction(context.Context, engine.TenantContext, string, engine.ExtractionRequest) (engine.ExtractionResult, error) {
+	return engine.ExtractionResult{}, nil
+}
+
+// stubDataSourceFactory is a no-op datasource factory used to satisfy the
+// mandatory-factory wiring guard in tests that only need a non-nil factory.
+func stubDataSourceFactory(context.Context, *model.Connection, crypto.Cryptor) (datasource.DataSource, error) {
+	return nil, nil
+}
+
+// TestUseCase_Validate_RequiresEngineRunner locks the strangler completion plus
+// the plugin_crm wiring guard: the legacy generic extraction path is gone, so the
+// Engine runner is MANDATORY; and CreateDataSource (still used by plugin_crm)
+// dereferences dataSourceFactory unconditionally, so that factory is MANDATORY
+// too. Validate must reject either nil dependency at wiring time (fail fast at
+// construction) rather than nil-panicking deep in extraction.
+func TestUseCase_Validate_RequiresEngineRunner(t *testing.T) {
+	t.Run("nil engine runner is rejected", func(t *testing.T) {
+		uc := &UseCase{dataSourceFactory: stubDataSourceFactory}
+
+		err := uc.Validate()
+		if err == nil {
+			t.Fatal("expected Validate to reject a nil EngineRunner, got nil")
+		}
+	})
+
+	t.Run("nil dataSourceFactory is rejected", func(t *testing.T) {
+		uc := &UseCase{EngineRunner: stubEngineRunner{}}
+
+		err := uc.Validate()
+		if err == nil {
+			t.Fatal("expected Validate to reject a nil dataSourceFactory, got nil")
+		}
+	})
+
+	t.Run("both dependencies wired passes", func(t *testing.T) {
+		uc := &UseCase{EngineRunner: stubEngineRunner{}, dataSourceFactory: stubDataSourceFactory}
+
+		if err := uc.Validate(); err != nil {
+			t.Fatalf("expected Validate to pass with EngineRunner and dataSourceFactory, got %v", err)
+		}
+	})
+}
 
 func TestSetStorageEncryptDerivedKey(t *testing.T) {
 	t.Run("sets derived key", func(t *testing.T) {

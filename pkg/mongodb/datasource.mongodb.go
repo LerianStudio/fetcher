@@ -7,13 +7,14 @@ import (
 	"maps"
 	"strings"
 
+	"github.com/LerianStudio/lib-observability"
+
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/model/job"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
 	libMongo "github.com/LerianStudio/lib-commons/v5/commons/mongo"
+	libLog "github.com/LerianStudio/lib-observability/log"
 
-	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
+	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
 	"github.com/google/uuid"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -99,7 +100,7 @@ func (ds *ExternalDataSource) CloseConnection(ctx context.Context) error {
 
 // Query executes a query on the specified collection with the given fields and filter criteria.
 func (ds *ExternalDataSource) Query(ctx context.Context, collection string, fields []string, filter map[string][]any) ([]map[string]any, error) {
-	logger, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Querying %s collection with fields %v", collection, fields))
 
@@ -284,7 +285,7 @@ func (ds *ExternalDataSource) ListCollectionNames(ctx context.Context) ([]string
 
 // GetDatabaseSchema retrieves all collections and infers their schema from sample documents
 func (ds *ExternalDataSource) GetDatabaseSchema(ctx context.Context) ([]CollectionSchema, error) {
-	logger, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	_, span := tracer.Start(ctx, "mongodb.data_source.get_database_schema")
 	defer span.End()
@@ -607,7 +608,7 @@ func (ds *ExternalDataSource) isMoreSpecificType(newType, currentType string) bo
 
 // QueryWithAdvancedFilters executes a query with advanced FilterCondition support
 func (ds *ExternalDataSource) QueryWithAdvancedFilters(ctx context.Context, collection string, fields []string, filter map[string]job.FilterCondition) ([]map[string]any, error) {
-	logger, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Querying %s collection with advanced filters on fields %v", collection, fields))
 

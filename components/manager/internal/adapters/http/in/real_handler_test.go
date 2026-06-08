@@ -41,7 +41,7 @@ func TestConnectionHandler_CreateConnection_RealHandlerSuccess(t *testing.T) {
 	})
 
 	handler := &ConnectionHandler{
-		CreateCmd: commandSvc.NewCreateConnection(mockConnRepo, mockCryptor),
+		CreateCmd: commandSvc.NewCreateConnection(mockCryptor, connectionEngineForConnRepo(t, mockConnRepo, nil)),
 	}
 	app.Post("/v1/management/connections", handler.CreateConnection)
 
@@ -86,7 +86,7 @@ func TestConnectionHandler_ListConnections_RealHandlerSuccess(t *testing.T) {
 	})
 
 	handler := &ConnectionHandler{
-		ListQuery: querySvc.NewListConnections(mockConnRepo, nil),
+		ListQuery: querySvc.NewListConnections(nil, scopeAuthorityEngine(t, mockConnRepo)),
 	}
 	app.Get("/v1/management/connections", handler.ListConnections)
 
@@ -126,7 +126,7 @@ func TestConnectionHandler_UpdateConnection_RealHandlerSuccess(t *testing.T) {
 	})
 
 	handler := &ConnectionHandler{
-		UpdateCmd: commandSvc.NewUpdateConnection(mockConnRepo, mockJobRepo, nil),
+		UpdateCmd: commandSvc.NewUpdateConnection(nil, connectionEngineForJobRepo(t, mockConnRepo, mockJobRepo)),
 	}
 	app.Patch("/v1/management/connections/:id", handler.UpdateConnection)
 
@@ -163,7 +163,7 @@ func TestConnectionHandler_ValidateSchema_RealHandlerFailureResponse(t *testing.
 	mockSchemaCache.EXPECT().Get(gomock.Any(), "db1").Return(model.NewDataSourceSchema("db1"), nil)
 
 	handler := &ConnectionHandler{
-		ValidateSchemaQuery: querySvc.NewValidateSchema(mockConnRepo, nil, mockSchemaCache, nil, nil),
+		ValidateSchemaQuery: querySvc.NewValidateSchema(mockConnRepo, newSchemaEngineForTest(t, nil, mockSchemaCache), nil),
 	}
 	app.Post("/v1/management/connections/validate-schema", handler.ValidateSchema)
 
@@ -201,9 +201,15 @@ func TestConnectionHandler_GetConnectionSchema_RealHandlerSuccess(t *testing.T) 
 	mockDataSource.EXPECT().Close(gomock.Any()).Return(nil)
 
 	handler := &ConnectionHandler{
-		GetSchemaQuery: querySvc.NewGetConnectionSchema(mockConnRepo, nil, func(_ context.Context, _ *model.Connection, _ crypto.Cryptor) (datasourceModel.DataSource, error) {
-			return mockDataSource, nil
-		}, nil, nil, false),
+		GetSchemaQuery: querySvc.NewGetConnectionSchema(
+			nil,
+			nil,
+			connectionEngineForConnRepo(t, mockConnRepo, nil),
+			newSchemaEngineForTest(t, func(_ context.Context, _ *model.Connection, _ crypto.Cryptor) (datasourceModel.DataSource, error) {
+				return mockDataSource, nil
+			}, nil),
+			false,
+		),
 	}
 	app.Get("/v1/management/connections/:id/schema", handler.GetConnectionSchema)
 

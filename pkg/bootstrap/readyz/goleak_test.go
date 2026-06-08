@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
 	tmclient "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/client"
+	libLog "github.com/LerianStudio/lib-observability/log"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"

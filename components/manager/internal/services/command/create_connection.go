@@ -4,32 +4,32 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/LerianStudio/fetcher/pkg"
-	"github.com/LerianStudio/fetcher/pkg/constant"
+	"github.com/LerianStudio/lib-observability"
+
 	"github.com/LerianStudio/fetcher/pkg/crypto"
+	"github.com/LerianStudio/fetcher/pkg/engine"
+	"github.com/LerianStudio/fetcher/pkg/enginecompat/connectioncompat"
 	"github.com/LerianStudio/fetcher/pkg/model"
 
-	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
-	"github.com/LerianStudio/lib-commons/v5/commons"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
+	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
 
 	"go.opentelemetry.io/otel/attribute"
 )
 
 type CreateConnection struct {
-	connRepo connRepo.Repository
-	cryptor  crypto.Cryptor
+	cryptor crypto.Cryptor
+	engine  *engine.Engine
 }
 
-func NewCreateConnection(connectionRepo connRepo.Repository, cryptor crypto.Cryptor) *CreateConnection {
+func NewCreateConnection(cryptor crypto.Cryptor, eng *engine.Engine) *CreateConnection {
 	return &CreateConnection{
-		connRepo: connectionRepo,
-		cryptor:  cryptor,
+		cryptor: cryptor,
+		engine:  eng,
 	}
 }
 
 func (s *CreateConnection) Execute(ctx context.Context, connInput model.ConnectionInput, productName string) (*model.Connection, error) {
-	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	_, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "service.create_connection")
 	defer span.End()
@@ -73,24 +73,37 @@ func (s *CreateConnection) Execute(ctx context.Context, connInput model.Connecti
 		return nil, fmt.Errorf("failed to create connection model: %w", err)
 	}
 
-	existing, errRepo := s.connRepo.FindByName(ctx, connection.ConfigName)
-	if errRepo != nil {
-		libOpentelemetry.HandleSpanError(span, "Failed to check existing connection", errRepo)
-		return nil, fmt.Errorf("failed to check for existing connection: %w", errRepo)
-	}
-
-	if existing != nil {
-		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Connection config name conflict", nil)
-
-		return nil, pkg.ValidateBusinessError(
-			constant.ErrEntityConflict,
-			"connection",
-		)
-	}
-
-	created, err := s.connRepo.Create(ctx, connection)
+	// The Engine is the AUTHORITY for the connection-create rules: it validates
+	// the per-request tenant scope and enforces (tenantID, configName)
+	// uniqueness, then persists the rich record through the connectioncompat
+	// ConnectionStore adapter. The Manager keeps the rich model, credential
+	// encryption, ProductName, and response mapping; the rich record rides to
+	// persistence inside the Engine descriptor's opaque host payload, so no
+	// field is dropped and ProductName never becomes an Engine scope dimension.
+	tenant, err := connectioncompat.TenantContextFromRequest(ctx)
 	if err != nil {
+		libOpentelemetry.HandleSpanError(span, "Failed to derive tenant scope", err)
+		return nil, fmt.Errorf("failed to derive tenant scope: %w", err)
+	}
+
+	descriptor, err := s.engine.CreateConnection(ctx, tenant, engineInputFromConnection(connection))
+	if err != nil {
+		if conflict := mapEngineCreateError(err); conflict != err {
+			libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Connection config name conflict", nil)
+			return nil, conflict
+		}
+
+		libOpentelemetry.HandleSpanError(span, "Failed to create connection", err)
+
 		return nil, fmt.Errorf("failed to create connection: %w", err)
+	}
+
+	// The Engine returns the secret-free descriptor carrying the rich record it
+	// persisted in the opaque payload. Unpack it so the response is byte-identical
+	// to the pre-delegation create result.
+	created := connectioncompat.ConnectionFromDescriptor(descriptor)
+	if created == nil {
+		created = connection
 	}
 
 	return created, nil

@@ -6,10 +6,11 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/LerianStudio/lib-observability"
+
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/LerianStudio/fetcher/pkg/model/job"
-	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
+	libLog "github.com/LerianStudio/lib-observability/log"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
@@ -18,12 +19,10 @@ import (
 // testContext creates a context with proper tracking values for testing
 func testContext() context.Context {
 	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
-	values := &libCommons.CustomContextKeyValue{
-		HeaderID: "test-request-id",
-		Logger:   logger,
-		Tracer:   otel.Tracer("test"),
-	}
-	return context.WithValue(context.Background(), libCommons.CustomContextKey, values)
+	ctx := observability.ContextWithHeaderID(context.Background(), "test-request-id")
+	ctx = observability.ContextWithLogger(ctx, logger)
+
+	return observability.ContextWithTracer(ctx, otel.Tracer("test"))
 }
 
 // testLogger creates a logger for testing

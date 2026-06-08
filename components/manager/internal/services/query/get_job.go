@@ -5,13 +5,14 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/LerianStudio/lib-observability"
+
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	jobRepo "github.com/LerianStudio/fetcher/pkg/ports/job"
 
-	"github.com/LerianStudio/lib-commons/v5/commons"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
+	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
@@ -26,7 +27,7 @@ func NewGetJob(jobRepository jobRepo.Repository) *GetJob {
 }
 
 func (s *GetJob) Execute(ctx context.Context, jobID uuid.UUID) (*model.Job, error) {
-	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	_, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "service.get_job")
 	defer span.End()

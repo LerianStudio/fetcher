@@ -7,17 +7,24 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"math/rand"
+	"math"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	observability "github.com/LerianStudio/lib-observability"
+
 	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
+	libBackoff "github.com/LerianStudio/lib-commons/v5/commons/backoff"
+	libCircuitBreaker "github.com/LerianStudio/lib-commons/v5/commons/circuitbreaker"
 	libConstants "github.com/LerianStudio/lib-commons/v5/commons/constants"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
 	libRabbitmq "github.com/LerianStudio/lib-commons/v5/commons/rabbitmq"
+	obsConstants "github.com/LerianStudio/lib-observability/constants"
+	libLog "github.com/LerianStudio/lib-observability/log"
+	obsMetrics "github.com/LerianStudio/lib-observability/metrics"
+	obsRuntime "github.com/LerianStudio/lib-observability/runtime"
+	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
 
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 
@@ -66,9 +73,17 @@ const (
 	// DefaultShutdownTimeout is the default timeout for graceful shutdown.
 	DefaultShutdownTimeout = 30 * time.Second
 
+	// DefaultPublishConfirmTimeout is the default timeout for broker publisher confirmations.
+	DefaultPublishConfirmTimeout = libRabbitmq.DefaultConfirmTimeout
+
 	// DefaultSignatureTimestampTolerance is the maximum age of a message signature.
 	// Messages older than this will be rejected to prevent replay attacks.
 	DefaultSignatureTimestampTolerance = 5 * time.Minute
+
+	// DefaultSignatureFutureSkew is the maximum producer/consumer clock skew
+	// accepted for signed RabbitMQ messages. Larger future timestamps are rejected
+	// because they can extend the replay window.
+	DefaultSignatureFutureSkew = 30 * time.Second
 
 	// HeaderMessageSignature contains the HMAC-SHA256 signature of the message payload
 	HeaderMessageSignature = "x-message-signature"
@@ -91,15 +106,17 @@ const (
 )
 
 // CircuitState represents the state of the circuit breaker.
-type CircuitState int32
+type CircuitState string
 
 const (
 	// CircuitClosed indicates the circuit is closed and requests flow normally.
-	CircuitClosed CircuitState = iota
+	CircuitClosed CircuitState = "closed"
 	// CircuitOpen indicates the circuit is open and requests are rejected.
-	CircuitOpen
+	CircuitOpen CircuitState = "open"
 	// CircuitHalfOpen indicates the circuit is half-open and testing recovery.
-	CircuitHalfOpen
+	CircuitHalfOpen CircuitState = "half-open"
+	// CircuitUnknown indicates lib-commons could not map the breaker state.
+	CircuitUnknown CircuitState = "unknown"
 )
 
 // String returns the string representation of the circuit state.
@@ -111,10 +128,38 @@ func (s CircuitState) String() string {
 		return "open"
 	case CircuitHalfOpen:
 		return "half-open"
+	case CircuitUnknown:
+		return "unknown"
 	default:
 		return "unknown"
 	}
 }
+
+const (
+	rabbitMQCircuitBreakerName = "fetcher.rabbitmq.adapter"
+
+	attrExchange                       = "exchange"
+	attrRoutingKey                     = "routing_key"
+	attrReason                         = "reason"
+	attrAttempt                        = "attempt"
+	attrQueue                          = "queue"
+	attrAppRequestRequestID            = obsConstants.AttrPrefixAppRequest + "request_id"
+	attrAppRequestExchange             = obsConstants.AttrPrefixAppRequest + "exchange"
+	attrAppRequestKey                  = obsConstants.AttrPrefixAppRequest + "key"
+	attrAppRequestQueue                = obsConstants.AttrPrefixAppRequest + "queue"
+	attrMessagingSystem                = "messaging.system"
+	attrMessagingDestinationName       = "messaging.destination.name"
+	attrMessagingOperation             = "messaging.operation"
+	attrMessagingMessageBodySize       = "messaging.message.body.size"
+	attrMessagingSignatureVersion      = "messaging.signature.version"
+	attrMessagingSignatureTimestamp    = "messaging.signature.timestamp"
+	attrReasonCircuitBreakerOpen       = "circuit_breaker_open"
+	attrReasonMaxRetriesExceeded       = "max_retries_exceeded"
+	attrReasonSignatureVerifierMissing = "signature_verifier_not_configured"
+	attrReasonSignatureFailed          = "signature_verification_failed"
+	attrReasonPanic                    = "panic"
+	attrReasonHandlerError             = "handler_error"
+)
 
 // AdapterOptions contains configuration options for the RabbitMQ adapter.
 type AdapterOptions struct {
@@ -153,6 +198,9 @@ type AdapterOptions struct {
 	// ShutdownTimeout is the timeout for graceful shutdown.
 	ShutdownTimeout time.Duration
 
+	// PublishConfirmTimeout is the upper bound for waiting on broker publish confirms.
+	PublishConfirmTimeout time.Duration
+
 	// MeterProvider is the OpenTelemetry meter provider for metrics.
 	MeterProvider metric.MeterProvider
 
@@ -172,6 +220,10 @@ type AdapterOptions struct {
 	// Messages with timestamps older than this will be rejected to prevent replay attacks.
 	// Default: 5 minutes
 	SignatureTimestampTolerance time.Duration
+
+	// AllowLegacyBodyOnlySignatureFallback gates the rolling-drain compatibility
+	// path for body-only signatures. Default: false.
+	AllowLegacyBodyOnlySignatureFallback bool
 }
 
 // DefaultOptions returns the default adapter options.
@@ -188,6 +240,7 @@ func DefaultOptions() AdapterOptions {
 		CircuitBreakerThreshold:     DefaultCircuitBreakerThreshold,
 		CircuitBreakerCooldown:      DefaultCircuitBreakerCooldown,
 		ShutdownTimeout:             DefaultShutdownTimeout,
+		PublishConfirmTimeout:       DefaultPublishConfirmTimeout,
 		EnableMessageSigning:        true,
 		EnableSignatureVerification: true,
 		SignatureTimestampTolerance: DefaultSignatureTimestampTolerance,
@@ -202,12 +255,20 @@ type rabbitConnection interface {
 // amqpChannel defines the methods required from a RabbitMQ channel.
 type amqpChannel interface {
 	Publish(exchange, key string, mandatory, immediate bool, msg amqp.Publishing) error
+	PublishWithContext(ctx context.Context, exchange, key string, mandatory, immediate bool, msg amqp.Publishing) error
+	Confirm(noWait bool) error
+	NotifyPublish(receiver chan amqp.Confirmation) chan amqp.Confirmation
 	Consume(queue, consumer string, autoAck, exclusive, noLocal, noWait bool, args amqp.Table) (<-chan amqp.Delivery, error)
 	Cancel(consumer string, noWait bool) error
 	Close() error
 	NotifyClose(receiver chan *amqp.Error) chan *amqp.Error
 	IsClosed() bool
 	Qos(prefetchCount, prefetchSize int, global bool) error
+}
+
+type confirmablePublisher interface {
+	Publish(ctx context.Context, exchange, key string, mandatory, immediate bool, msg amqp.Publishing) error
+	Close() error
 }
 
 // rabbitmqConnectionAdapter adapts the RabbitMQConnection to the rabbitConnection interface.
@@ -249,84 +310,12 @@ func (a *rabbitmqConnectionAdapter) Close() error {
 	return nil
 }
 
-// circuitBreaker implements a circuit breaker pattern for RabbitMQ operations.
-type circuitBreaker struct {
-	state             atomic.Int32
-	consecutiveErrors atomic.Int32
-	lastErrorTime     atomic.Int64
-	threshold         int
-	cooldown          time.Duration
-}
-
-// newCircuitBreaker creates a new circuit breaker with the specified threshold and cooldown.
-func newCircuitBreaker(threshold int, cooldown time.Duration) *circuitBreaker {
-	cb := &circuitBreaker{
-		threshold: threshold,
-		cooldown:  cooldown,
-	}
-	cb.state.Store(int32(CircuitClosed))
-
-	return cb
-}
-
-// State returns the current state of the circuit breaker.
-func (cb *circuitBreaker) State() CircuitState {
-	return CircuitState(cb.state.Load())
-}
-
-// canExecute checks if the circuit breaker allows execution.
-func (cb *circuitBreaker) canExecute() bool {
-	state := CircuitState(cb.state.Load())
-
-	switch state {
-	case CircuitClosed:
-		return true
-	case CircuitOpen:
-		// Check if cooldown has passed
-		lastError := time.Unix(0, cb.lastErrorTime.Load())
-		if time.Since(lastError) > cb.cooldown {
-			// Transition to half-open
-			cb.state.CompareAndSwap(int32(CircuitOpen), int32(CircuitHalfOpen))
-
-			return true
-		}
-
-		return false
-	case CircuitHalfOpen:
-		return true
-	default:
-		return false
-	}
-}
-
-// recordSuccess records a successful operation and potentially closes the circuit.
-func (cb *circuitBreaker) recordSuccess() {
-	cb.consecutiveErrors.Store(0)
-	cb.state.Store(int32(CircuitClosed))
-}
-
-// recordFailure records a failed operation and potentially opens the circuit.
-func (cb *circuitBreaker) recordFailure() {
-	cb.lastErrorTime.Store(time.Now().UTC().UnixNano())
-	newCount := cb.consecutiveErrors.Add(1)
-
-	if int(newCount) >= cb.threshold {
-		cb.state.Store(int32(CircuitOpen))
-	}
-}
-
 // metrics holds operational metrics for the RabbitMQ adapter.
 // Adapter defines the interface for RabbitMQ operations.
 //
 //go:generate mockgen --destination=rabbitmq.mock.go --package=rabbitmq . Adapter
 type metrics struct {
-	publishAttempts     metric.Int64Counter
-	publishSuccesses    metric.Int64Counter
-	publishFailures     metric.Int64Counter
-	publishLatency      metric.Float64Histogram
-	consumeProcessed    metric.Int64Counter
-	consumeFailed       metric.Int64Counter
-	circuitBreakerGauge metric.Int64ObservableGauge
+	factory *obsMetrics.MetricsFactory
 }
 
 // Adapter defines the interface for RabbitMQ operations.
@@ -355,6 +344,9 @@ var ErrSignatureVerifierNotConfigured = errors.New("signature verification enabl
 // ErrSignatureExpired is returned when the message signature timestamp is too old.
 var ErrSignatureExpired = errors.New("message signature has expired")
 
+// ErrSignatureFromFuture is returned when the message signature timestamp is in the future.
+var ErrSignatureFromFuture = errors.New("message signature timestamp is in the future")
+
 // isPermanentAMQPError returns true if the error is a non-recoverable AMQP error
 // such as queue not found (404) or access refused (403). These errors indicate
 // configuration or permission issues that will not resolve by retrying.
@@ -377,6 +369,9 @@ type RabbitMQAdapter struct {
 	conn    rabbitConnection
 	channel amqpChannel
 
+	confirmPublisher        confirmablePublisher
+	confirmPublisherChannel amqpChannel
+
 	// options contains the adapter configuration.
 	options AdapterOptions
 
@@ -392,8 +387,9 @@ type RabbitMQAdapter struct {
 	// consumerWg tracks active consumer goroutines to ensure graceful shutdown.
 	consumerWg sync.WaitGroup
 
-	// circuitBreaker prevents cascading failures.
-	circuitBreaker *circuitBreaker
+	// circuitBreaker delegates failure accounting and state transitions to
+	// lib-commons. Fetcher keeps only RabbitMQ-specific retry/ACK semantics here.
+	circuitBreaker libCircuitBreaker.Manager
 
 	// metrics holds operational metrics.
 	metrics *metrics
@@ -408,11 +404,12 @@ func NewRabbitMQAdapter(c *libRabbitmq.RabbitMQConnection) *RabbitMQAdapter {
 // NewRabbitMQAdapterWithOptions initializes a new RabbitMQAdapter with the provided RabbitMQ connection and options.
 func NewRabbitMQAdapterWithOptions(c *libRabbitmq.RabbitMQConnection, opts AdapterOptions) *RabbitMQAdapter {
 	adapter := &rabbitmqConnectionAdapter{conn: c}
+	breakerManager := newRabbitMQCircuitBreakerManager(c.Logger, opts)
 
 	prmq := &RabbitMQAdapter{
 		conn:           adapter,
 		options:        opts,
-		circuitBreaker: newCircuitBreaker(opts.CircuitBreakerThreshold, opts.CircuitBreakerCooldown),
+		circuitBreaker: breakerManager,
 	}
 
 	// Initialize metrics if meter provider is available
@@ -433,127 +430,136 @@ func NewRabbitMQAdapterWithOptions(c *libRabbitmq.RabbitMQConnection, opts Adapt
 	return prmq
 }
 
+func newRabbitMQCircuitBreakerManager(logger libLog.Logger, opts AdapterOptions) libCircuitBreaker.Manager {
+	if logger == nil {
+		logger = libLog.NewNop()
+	}
+
+	manager, err := libCircuitBreaker.NewManager(logger)
+	if err != nil {
+		return nil
+	}
+
+	threshold := opts.CircuitBreakerThreshold
+	if threshold <= 0 {
+		threshold = DefaultCircuitBreakerThreshold
+	}
+
+	if threshold > math.MaxUint32 {
+		logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("RabbitMQ circuit breaker threshold %d exceeds uint32 max; using default %d", threshold, DefaultCircuitBreakerThreshold))
+		threshold = DefaultCircuitBreakerThreshold
+	}
+
+	cooldown := opts.CircuitBreakerCooldown
+	if cooldown <= 0 {
+		cooldown = DefaultCircuitBreakerCooldown
+	}
+
+	_, err = manager.GetOrCreate(rabbitMQCircuitBreakerName, libCircuitBreaker.Config{
+		MaxRequests:         1,
+		Timeout:             cooldown,
+		ConsecutiveFailures: uint32(threshold), // #nosec G115 -- threshold is validated above.
+	})
+	if err != nil {
+		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("failed to initialize RabbitMQ circuit breaker: %v", err))
+
+		return nil
+	}
+
+	return manager
+}
+
+func mapCircuitState(state libCircuitBreaker.State) CircuitState {
+	switch state {
+	case libCircuitBreaker.StateClosed:
+		return CircuitClosed
+	case libCircuitBreaker.StateOpen:
+		return CircuitOpen
+	case libCircuitBreaker.StateHalfOpen:
+		return CircuitHalfOpen
+	default:
+		return CircuitUnknown
+	}
+}
+
+func (prmq *RabbitMQAdapter) executeWithCircuitBreaker(fn func() error) error {
+	if prmq.circuitBreaker == nil {
+		return fn()
+	}
+
+	_, err := prmq.circuitBreaker.Execute(rabbitMQCircuitBreakerName, func() (any, error) {
+		return nil, fn()
+	})
+	if errors.Is(err, libCircuitBreaker.ErrBreakerOpen) || errors.Is(err, libCircuitBreaker.ErrBreakerHalfOpenFull) {
+		return ErrCircuitOpen
+	}
+
+	return err
+}
+
 // initMetrics initializes OpenTelemetry metrics for the adapter.
 func (prmq *RabbitMQAdapter) initMetrics(provider metric.MeterProvider, Logger libLog.Logger) {
 	meter := provider.Meter("github.com/LerianStudio/fetcher/pkg/rabbitmq")
 
-	m := &metrics{}
-
-	var err error
-
-	m.publishAttempts, err = meter.Int64Counter(
-		"rabbitmq.publish.attempts",
-		metric.WithDescription("Number of publish attempts"),
-		metric.WithUnit("{attempt}"),
-	)
+	factory, err := obsMetrics.NewMetricsFactory(meter, Logger)
 	if err != nil {
-		Logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to initialize RabbitMQ publish attempts metric: %v", err))
+		Logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to initialize RabbitMQ metrics factory: %v", err))
 		return
 	}
 
-	m.publishSuccesses, err = meter.Int64Counter(
-		"rabbitmq.publish.successes",
-		metric.WithDescription("Number of successful publishes"),
-		metric.WithUnit("{message}"),
-	)
-	if err != nil {
-		Logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to initialize RabbitMQ publish successes metric: %v", err))
-		return
-	}
-
-	m.publishFailures, err = meter.Int64Counter(
-		"rabbitmq.publish.failures",
-		metric.WithDescription("Number of failed publishes"),
-		metric.WithUnit("{message}"),
-	)
-	if err != nil {
-		Logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to initialize RabbitMQ publish failures metric: %v", err))
-		return
-	}
-
-	m.publishLatency, err = meter.Float64Histogram(
-		"rabbitmq.publish.latency",
-		metric.WithDescription("Publish latency in milliseconds"),
-		metric.WithUnit("ms"),
-	)
-	if err != nil {
-		Logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to initialize RabbitMQ publish latency metric: %v", err))
-		return
-	}
-
-	m.consumeProcessed, err = meter.Int64Counter(
-		"rabbitmq.consume.processed",
-		metric.WithDescription("Number of successfully processed messages"),
-		metric.WithUnit("{message}"),
-	)
-	if err != nil {
-		Logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to initialize RabbitMQ consume processed metric: %v", err))
-		return
-	}
-
-	m.consumeFailed, err = meter.Int64Counter(
-		"rabbitmq.consume.failed",
-		metric.WithDescription("Number of failed message processings"),
-		metric.WithUnit("{message}"),
-	)
-	if err != nil {
-		Logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to initialize RabbitMQ consume failed metric: %v", err))
-		return
-	}
-
-	// Register circuit breaker state as an observable gauge
-	m.circuitBreakerGauge, _ = meter.Int64ObservableGauge(
-		"rabbitmq.circuit_breaker.state",
-		metric.WithDescription("Circuit breaker state (0=closed, 1=open, 2=half-open)"),
-		metric.WithInt64Callback(func(ctx context.Context, o metric.Int64Observer) error {
-			o.Observe(int64(prmq.circuitBreaker.State()))
-			return nil
-		}),
-	)
-
-	prmq.metrics = m
+	prmq.metrics = &metrics{factory: factory}
 }
 
 // recordPublishAttempt safely records a publish attempt metric if metrics are initialized.
 func (prmq *RabbitMQAdapter) recordPublishAttempt(ctx context.Context, attrs ...attribute.KeyValue) {
-	if prmq.metrics != nil && prmq.metrics.publishAttempts != nil {
-		prmq.metrics.publishAttempts.Add(ctx, 1, metric.WithAttributes(attrs...))
-	}
+	prmq.recordCounter(ctx, "rabbitmq.publish.attempts", "Number of publish attempts", "{attempt}", attrs...)
 }
 
 // recordPublishSuccess safely records a publish success metric if metrics are initialized.
 func (prmq *RabbitMQAdapter) recordPublishSuccess(ctx context.Context, attrs ...attribute.KeyValue) {
-	if prmq.metrics != nil && prmq.metrics.publishSuccesses != nil {
-		prmq.metrics.publishSuccesses.Add(ctx, 1, metric.WithAttributes(attrs...))
-	}
+	prmq.recordCounter(ctx, "rabbitmq.publish.successes", "Number of successful publishes", "{message}", attrs...)
 }
 
 // recordPublishFailure safely records a publish failure metric if metrics are initialized.
 func (prmq *RabbitMQAdapter) recordPublishFailure(ctx context.Context, attrs ...attribute.KeyValue) {
-	if prmq.metrics != nil && prmq.metrics.publishFailures != nil {
-		prmq.metrics.publishFailures.Add(ctx, 1, metric.WithAttributes(attrs...))
-	}
+	prmq.recordCounter(ctx, "rabbitmq.publish.failures", "Number of failed publishes", "{message}", attrs...)
 }
 
 // recordConsumeProcessed safely records a consume processed metric if metrics are initialized.
 func (prmq *RabbitMQAdapter) recordConsumeProcessed(ctx context.Context, attrs ...attribute.KeyValue) {
-	if prmq.metrics != nil && prmq.metrics.consumeProcessed != nil {
-		prmq.metrics.consumeProcessed.Add(ctx, 1, metric.WithAttributes(attrs...))
-	}
+	prmq.recordCounter(ctx, "rabbitmq.consume.processed", "Number of successfully processed messages", "{message}", attrs...)
 }
 
 // recordConsumeFailed safely records a consume failed metric if metrics are initialized.
 func (prmq *RabbitMQAdapter) recordConsumeFailed(ctx context.Context, attrs ...attribute.KeyValue) {
-	if prmq.metrics != nil && prmq.metrics.consumeFailed != nil {
-		prmq.metrics.consumeFailed.Add(ctx, 1, metric.WithAttributes(attrs...))
-	}
+	prmq.recordCounter(ctx, "rabbitmq.consume.failed", "Number of failed message processings", "{message}", attrs...)
 }
 
 // recordPublishLatency safely records a publish latency metric if metrics are initialized.
 func (prmq *RabbitMQAdapter) recordPublishLatency(ctx context.Context, latencyMs float64, attrs ...attribute.KeyValue) {
-	if prmq.metrics != nil && prmq.metrics.publishLatency != nil {
-		prmq.metrics.publishLatency.Record(ctx, latencyMs, metric.WithAttributes(attrs...))
+	if prmq.metrics == nil || prmq.metrics.factory == nil {
+		return
 	}
+
+	histogram, err := prmq.metrics.factory.Histogram(obsMetrics.Metric{Name: "rabbitmq.publish.latency", Description: "Publish latency in milliseconds", Unit: "ms"})
+	if err != nil {
+		return
+	}
+
+	_ = histogram.WithAttributes(attrs...).Record(ctx, int64(latencyMs))
+}
+
+func (prmq *RabbitMQAdapter) recordCounter(ctx context.Context, name, description, unit string, attrs ...attribute.KeyValue) {
+	if prmq.metrics == nil || prmq.metrics.factory == nil {
+		return
+	}
+
+	counter, err := prmq.metrics.factory.Counter(obsMetrics.Metric{Name: name, Description: description, Unit: unit})
+	if err != nil {
+		return
+	}
+
+	_ = counter.WithAttributes(attrs...).AddOne(ctx)
 }
 
 // IsHealthy returns true if the RabbitMQ connection is healthy.
@@ -567,7 +573,11 @@ func (prmq *RabbitMQAdapter) IsHealthy() bool {
 
 // CircuitBreakerState returns the current state of the circuit breaker.
 func (prmq *RabbitMQAdapter) CircuitBreakerState() CircuitState {
-	return prmq.circuitBreaker.State()
+	if prmq.circuitBreaker == nil {
+		return CircuitUnknown
+	}
+
+	return mapCircuitState(prmq.circuitBreaker.GetState(rabbitMQCircuitBreakerName))
 }
 
 // invalidateChannel safely closes and nullifies the current RabbitMQ channel.
@@ -575,7 +585,16 @@ func (prmq *RabbitMQAdapter) invalidateChannel(logger libLog.Logger) {
 	prmq.mu.Lock()
 	channel := prmq.channel
 	prmq.channel = nil
+	confirmPublisher := prmq.confirmPublisher
+	prmq.confirmPublisher = nil
+	prmq.confirmPublisherChannel = nil
 	prmq.mu.Unlock()
+
+	if confirmPublisher != nil {
+		if err := confirmPublisher.Close(); err != nil && logger != nil {
+			logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("Failed to close RabbitMQ confirmable publisher: %v", err))
+		}
+	}
 
 	if channel != nil && !channel.IsClosed() {
 		if err := channel.Close(); err != nil && logger != nil {
@@ -592,7 +611,7 @@ func (prmq *RabbitMQAdapter) startChannelWatcher(logger libLog.Logger, channel a
 
 	notifications := channel.NotifyClose(make(chan *amqp.Error, 1))
 
-	go func() {
+	obsRuntime.SafeGo(logger, "rabbitmq-channel-watcher", obsRuntime.KeepRunning, func() {
 		if err, ok := <-notifications; ok && err != nil {
 			logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("RabbitMQ channel closed: %v", err))
 		} else {
@@ -602,35 +621,42 @@ func (prmq *RabbitMQAdapter) startChannelWatcher(logger libLog.Logger, channel a
 		prmq.mu.Lock()
 		defer prmq.mu.Unlock()
 
-		prmq.channel = nil
-	}()
+		if prmq.channel == channel {
+			prmq.channel = nil
+			confirmPublisher := prmq.confirmPublisher
+			prmq.confirmPublisher = nil
+			prmq.confirmPublisherChannel = nil
+
+			if confirmPublisher != nil {
+				if closeErr := confirmPublisher.Close(); closeErr != nil {
+					logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("Failed to close RabbitMQ confirmable publisher after channel close: %v", closeErr))
+				}
+			}
+		}
+	})
 }
 
-// calculateBackoff calculates exponential backoff with jitter.
-// It returns a delay based on the attempt number, bounded by maxDelay,
-// with random jitter (0-25%) added to prevent thundering herd.
+// calculateBackoff adapts Fetcher's historical 1-based attempt API to
+// lib-commons/backoff. Keeping this tiny wrapper avoids churn in public tests
+// while removing the previous service-local exponential/jitter implementation.
 func calculateBackoff(attempt int, baseDelay, maxDelay time.Duration) time.Duration {
-	// Ensure non-negative shift amount (attempt starts at 1 in practice)
-	shiftAmount := max(attempt-1, 0)
-	// Calculate exponential backoff: baseDelay * 2^(attempt-1)
-	delay := min(baseDelay*time.Duration(1<<uint(shiftAmount)), maxDelay) // #nosec G115 -- shiftAmount is clamped to >= 0
+	if maxDelay <= 0 {
+		return 0
+	}
 
-	// Add jitter (0-25%) to prevent thundering herd
-	// Using math/rand is acceptable here as jitter is not security-sensitive
-	jitter := time.Duration(rand.Int63n(int64(delay / 4))) // #nosec G404 -- jitter for backoff timing is not security-sensitive
+	delay := libBackoff.Exponential(baseDelay, max(attempt-1, 0))
+	if delay > maxDelay {
+		delay = maxDelay
+	}
 
-	return delay + jitter
+	return libBackoff.FullJitter(delay)
 }
 
 // FullJitter returns a random duration in [0, baseDelay) for use as a retry delay.
 // This implements the "full jitter" strategy from the AWS Architecture Blog,
 // which provides the best spread across retrying clients.
 func FullJitter(baseDelay time.Duration) time.Duration {
-	if baseDelay <= 0 {
-		return 0
-	}
-
-	return time.Duration(rand.Int63n(int64(baseDelay))) // #nosec G404 -- jitter for backoff timing is not security-sensitive
+	return libBackoff.FullJitter(baseDelay)
 }
 
 // NextBackoff doubles the given delay, capping at DefaultMaxRetryDelay.
@@ -674,7 +700,6 @@ func (prmq *RabbitMQAdapter) ensureChannel(span trace.Span, logger libLog.Logger
 		if err == nil {
 			prmq.channel = ch
 			prmq.startChannelWatcher(logger, ch)
-			prmq.circuitBreaker.recordSuccess()
 
 			lastErr = nil
 
@@ -682,8 +707,6 @@ func (prmq *RabbitMQAdapter) ensureChannel(span trace.Span, logger libLog.Logger
 		}
 
 		lastErr = err
-
-		prmq.circuitBreaker.recordFailure()
 
 		backoff := calculateBackoff(attempt, prmq.options.BaseRetryDelay, prmq.options.MaxRetryDelay)
 		time.Sleep(backoff)
@@ -704,9 +727,63 @@ func (prmq *RabbitMQAdapter) ensureChannel(span trace.Span, logger libLog.Logger
 	return prmq.channel, nil
 }
 
+func (prmq *RabbitMQAdapter) publishConfirmed(ctx context.Context, ch amqpChannel, exchange, key string, msg amqp.Publishing) error {
+	publisher, err := prmq.confirmablePublisherForChannel(ch)
+	if err != nil {
+		return err
+	}
+
+	if err := publisher.Publish(ctx, exchange, key, true, false, msg); err != nil {
+		return fmt.Errorf("rabbitmq publish confirmed message: %w", err)
+	}
+
+	return nil
+}
+
+func (prmq *RabbitMQAdapter) confirmablePublisherForChannel(ch amqpChannel) (confirmablePublisher, error) {
+	confirmTimeout := prmq.options.PublishConfirmTimeout
+	if confirmTimeout <= 0 {
+		confirmTimeout = DefaultPublishConfirmTimeout
+	}
+
+	prmq.mu.Lock()
+	defer prmq.mu.Unlock()
+
+	if prmq.confirmPublisher != nil && prmq.confirmPublisherChannel == ch {
+		return prmq.confirmPublisher, nil
+	}
+
+	if prmq.confirmPublisher != nil {
+		_ = prmq.confirmPublisher.Close()
+		prmq.confirmPublisher = nil
+		prmq.confirmPublisherChannel = nil
+	}
+
+	publisher, err := libRabbitmq.NewConfirmablePublisherFromChannel(ch,
+		libRabbitmq.WithLogger(prmq.optionsLogger()),
+		libRabbitmq.WithConfirmTimeout(confirmTimeout),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create rabbitmq confirmable publisher: %w", err)
+	}
+
+	prmq.confirmPublisher = publisher
+	prmq.confirmPublisherChannel = ch
+
+	return publisher, nil
+}
+
+func (prmq *RabbitMQAdapter) optionsLogger() libLog.Logger {
+	if adapter, ok := prmq.conn.(*rabbitmqConnectionAdapter); ok && adapter.conn != nil && adapter.conn.Logger != nil {
+		return adapter.conn.Logger
+	}
+
+	return libLog.NewNop()
+}
+
 // ProducerDefault sends a message to the specified exchange and routing key in RabbitMQ.
 func (prmq *RabbitMQAdapter) ProducerDefault(ctx context.Context, exchange, key string, queueMessage []byte, header *map[string]any) error {
-	logger, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	logger.Log(context.Background(), libLog.LevelInfo, "Init sent message")
 
@@ -715,13 +792,12 @@ func (prmq *RabbitMQAdapter) ProducerDefault(ctx context.Context, exchange, key 
 		return errors.New("rabbitmq adapter is shut down")
 	}
 
-	// Check circuit breaker state
-	if !prmq.circuitBreaker.canExecute() {
+	if prmq.CircuitBreakerState() == CircuitOpen {
 		logger.Log(context.Background(), libLog.LevelWarn, "Circuit breaker is open, rejecting publish request")
 		prmq.recordPublishFailure(ctx,
-			attribute.String("exchange", exchange),
-			attribute.String("routing_key", key),
-			attribute.String("reason", "circuit_breaker_open"),
+			attribute.String(attrExchange, exchange),
+			attribute.String(attrRoutingKey, key),
+			attribute.String(attrReason, attrReasonCircuitBreakerOpen),
 		)
 
 		return ErrCircuitOpen
@@ -731,64 +807,34 @@ func (prmq *RabbitMQAdapter) ProducerDefault(ctx context.Context, exchange, key 
 	defer spanProducer.End()
 
 	spanProducer.SetAttributes(
-		attribute.String("app.request.request_id", reqID),
-		attribute.String("app.request.exchange", exchange),
-		attribute.String("app.request.key", key),
-		attribute.String("messaging.system", "rabbitmq"),
-		attribute.String("messaging.destination.name", exchange),
-		attribute.String("messaging.operation", "publish"),
-		attribute.Int64("messaging.message.body.size", int64(len(queueMessage))),
+		attribute.String(attrAppRequestRequestID, reqID),
+		attribute.String(attrAppRequestExchange, exchange),
+		attribute.String(attrAppRequestKey, key),
+		attribute.String(attrMessagingSystem, obsConstants.DBSystemRabbitMQ),
+		attribute.String(attrMessagingDestinationName, exchange),
+		attribute.String(attrMessagingOperation, "publish"),
+		attribute.Int64(attrMessagingMessageBodySize, int64(len(queueMessage))),
 	)
 
-	err := libOpentelemetry.SetSpanAttributesFromValue(spanProducer, "app.request.rabbitmq.message", string(queueMessage), nil)
-	if err != nil {
-		libOpentelemetry.HandleSpanError(spanProducer, "Failed to convert queue message to JSON string", err)
-	}
-
-	headers := amqp.Table{
-		libConstants.HeaderID: reqID,
-		"x-retry-count":       0,
-	}
+	headers := map[string]any(nil)
 
 	if header != nil {
-		maps.Copy(headers, *header)
-
-		err := libOpentelemetry.SetSpanAttributesFromValue(spanProducer, "app.request.rabbitmq.headers", *header, nil)
-		if err != nil {
-			libOpentelemetry.HandleSpanError(spanProducer, "Failed to convert headers to JSON string", err)
-		}
+		headers = *header
 	}
 
-	libOpentelemetry.InjectTraceHeadersIntoQueue(ctx, (*map[string]any)(&headers))
-
-	// Sign message if signer is configured and signing is enabled
-	if prmq.options.Signer != nil && prmq.options.EnableMessageSigning {
+	if !isNilSigner(prmq.options.Signer) && prmq.options.EnableMessageSigning {
 		timestamp := time.Now().UTC().Unix()
-		payload := crypto.BuildSignaturePayload(timestamp, queueMessage)
-		signature := prmq.options.Signer.Sign(payload)
-
-		headers[HeaderMessageSignature] = signature
-		headers[HeaderSignatureTimestamp] = strconv.FormatInt(timestamp, 10)
-		headers[HeaderSignatureVersion] = prmq.options.Signer.SignatureVersion()
 
 		spanProducer.SetAttributes(
-			attribute.String("messaging.signature.version", prmq.options.Signer.SignatureVersion()),
-			attribute.Int64("messaging.signature.timestamp", timestamp),
+			attribute.String(attrMessagingSignatureVersion, prmq.options.Signer.SignatureVersion()),
+			attribute.Int64(attrMessagingSignatureTimestamp, timestamp),
 		)
 	}
 
 	publish := func(ch amqpChannel) error {
-		return ch.Publish(
-			exchange,
-			key,
-			false,
-			false,
-			amqp.Publishing{
-				ContentType:  "application/json",
-				DeliveryMode: amqp.Persistent,
-				Headers:      headers,
-				Body:         queueMessage,
-			})
+		msg := BuildSecurePublishing(ctx, reqID, exchange, key, queueMessage, headers, prmq.options.Signer, prmq.options.EnableMessageSigning)
+
+		return prmq.publishConfirmed(ctx, ch, exchange, key, msg)
 	}
 
 	var lastErr error
@@ -800,37 +846,35 @@ func (prmq *RabbitMQAdapter) ProducerDefault(ctx context.Context, exchange, key 
 
 	for attempt := 1; attempt <= prmq.options.MaxPublishAttempts; attempt++ {
 		prmq.recordPublishAttempt(ctx,
-			attribute.String("exchange", exchange),
-			attribute.String("routing_key", key),
-			attribute.Int("attempt", attempt),
+			attribute.String(attrExchange, exchange),
+			attribute.String(attrRoutingKey, key),
+			attribute.Int(attrAttempt, attempt),
 		)
 
-		channel, err := prmq.ensureChannel(spanProducer, logger)
-		if err != nil {
-			prmq.circuitBreaker.recordFailure()
+		err := prmq.executeWithCircuitBreaker(func() error {
+			channel, err := prmq.ensureChannel(spanProducer, logger)
+			if err != nil {
+				return fmt.Errorf("rabbitmq ensure channel for publish: %w", err)
+			}
 
-			return fmt.Errorf("rabbitmq ensure channel for publish: %w", err)
-		}
-
-		if err = publish(channel); err == nil {
+			return publish(channel)
+		})
+		if err == nil {
 			latencyMs := float64(time.Since(startTime).Milliseconds())
 			prmq.recordPublishLatency(ctx, latencyMs,
-				attribute.String("exchange", exchange),
-				attribute.String("routing_key", key),
+				attribute.String(attrExchange, exchange),
+				attribute.String(attrRoutingKey, key),
 			)
 			prmq.recordPublishSuccess(ctx,
-				attribute.String("exchange", exchange),
-				attribute.String("routing_key", key),
+				attribute.String(attrExchange, exchange),
+				attribute.String(attrRoutingKey, key),
 			)
-			prmq.circuitBreaker.recordSuccess()
 			logger.Log(context.Background(), libLog.LevelInfo, "Messages sent successfully")
 
 			return nil
 		}
 
 		lastErr = err
-
-		prmq.circuitBreaker.recordFailure()
 
 		prmq.invalidateChannel(logger)
 
@@ -840,9 +884,9 @@ func (prmq *RabbitMQAdapter) ProducerDefault(ctx context.Context, exchange, key 
 	}
 
 	prmq.recordPublishFailure(ctx,
-		attribute.String("exchange", exchange),
-		attribute.String("routing_key", key),
-		attribute.String("reason", "max_retries_exceeded"),
+		attribute.String(attrExchange, exchange),
+		attribute.String(attrRoutingKey, key),
+		attribute.String(attrReason, attrReasonMaxRetriesExceeded),
 	)
 
 	libOpentelemetry.HandleSpanError(spanProducer, "Failed to publish message to queue", lastErr)
@@ -854,7 +898,7 @@ func (prmq *RabbitMQAdapter) ProducerDefault(ctx context.Context, exchange, key 
 // ConsumerLoop fetches messages from the queue, delegates processing to handler, and applies ACK/NACK.
 // The handler always receives headers (may be empty map if message has no headers).
 func (prmq *RabbitMQAdapter) ConsumerLoop(ctx context.Context, queue string, concurrency int, handler func(ctx context.Context, body []byte, headers map[string]any) error) error {
-	logger, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Starting consumer loop for queue=%s", queue))
 
 	if concurrency < 1 {
@@ -928,52 +972,54 @@ func (prmq *RabbitMQAdapter) runConsumerCycle(
 	ctxSpan, span := tracer.Start(ctx, "adapter.rabbitmq.consumer_connection_cycle")
 
 	span.SetAttributes(
-		attribute.String("app.request.request_id", reqID),
-		attribute.String("app.request.queue", queue),
+		attribute.String(attrAppRequestRequestID, reqID),
+		attribute.String(attrAppRequestQueue, queue),
 	)
 	defer span.End()
 
-	// Check circuit breaker before attempting to connect
-	if !prmq.circuitBreaker.canExecute() {
+	if prmq.CircuitBreakerState() == CircuitOpen {
 		logger.Log(context.Background(), libLog.LevelWarn, "Circuit breaker is open, skipping consumer cycle")
 		return ErrCircuitOpen
 	}
 
-	channel, err := prmq.ensureChannel(span, logger)
-	if err != nil {
-		libOpentelemetry.HandleSpanError(span, "Failed to ensure RabbitMQ channel", err)
-
-		return fmt.Errorf("rabbitmq consumer ensure channel: %w", err)
-	}
-
-	// Set QoS for fair dispatch of messages among consumers based on concurrency
-	if errCh := channel.Qos(concurrency, 0, false); errCh != nil {
-		libOpentelemetry.HandleSpanError(span, "Failed to set RabbitMQ QoS", errCh)
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to set RabbitMQ QoS: %v", errCh))
-		prmq.circuitBreaker.recordFailure()
-		prmq.invalidateChannel(logger)
-
-		return fmt.Errorf("rabbitmq set qos: %w", errCh)
-	}
+	var (
+		channel    amqpChannel
+		deliveries <-chan amqp.Delivery
+	)
 
 	consumerTag := fmt.Sprintf("%s-%s", queue, reqID)
 
-	deliveries, err := channel.Consume(
-		queue,
-		consumerTag,
-		false,
-		false,
-		false,
-		false,
-		nil,
-	)
+	err := prmq.executeWithCircuitBreaker(func() error {
+		var err error
+
+		channel, err = prmq.ensureChannel(span, logger)
+		if err != nil {
+			return err
+		}
+
+		// Set QoS for fair dispatch of messages among consumers based on concurrency.
+		if errCh := channel.Qos(concurrency, 0, false); errCh != nil {
+			return fmt.Errorf("rabbitmq set qos: %w", errCh)
+		}
+
+		deliveries, err = channel.Consume(
+			queue,
+			consumerTag,
+			false,
+			false,
+			false,
+			false,
+			nil,
+		)
+
+		return err
+	})
 	if err != nil {
-		libOpentelemetry.HandleSpanError(span, "Failed to start RabbitMQ consumer", err)
-		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to start RabbitMQ consumer: %v", err))
-		prmq.circuitBreaker.recordFailure()
+		libOpentelemetry.HandleSpanError(span, "Failed to establish RabbitMQ consumer", err)
+		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to establish RabbitMQ consumer: %v", err))
 		prmq.invalidateChannel(logger)
 
-		return fmt.Errorf("rabbitmq start consumer: %w", err)
+		return fmt.Errorf("rabbitmq consumer setup: %w", err)
 	}
 
 	sessionErr := prmq.dispatchDeliveries(ctxSpan, logger, consumerTag, queue, channel, deliveries, concurrency, handler)
@@ -1088,8 +1134,8 @@ func (prmq *RabbitMQAdapter) processDelivery(
 	// Create context with request ID and logger
 	logWithFields := logger.With(libLog.Field{Key: libConstants.HeaderID, Value: requestIDStr})
 
-	msgCtx := libCommons.ContextWithLogger(
-		libCommons.ContextWithHeaderID(context.Background(), requestIDStr),
+	msgCtx := observability.ContextWithLogger(
+		observability.ContextWithHeaderID(context.Background(), requestIDStr),
 		logWithFields,
 	)
 
@@ -1097,27 +1143,22 @@ func (prmq *RabbitMQAdapter) processDelivery(
 	msgCtx = libOpentelemetry.ExtractTraceContextFromQueueHeaders(msgCtx, d.Headers)
 
 	// Create tracer from context and start span
-	_, msgTracer, _, _ := libCommons.NewTrackingFromContext(msgCtx) //nolint:dogsled // NewTrackingFromContext returns 4 values, only tracer needed here
+	_, msgTracer, _, _ := observability.NewTrackingFromContext(msgCtx) //nolint:dogsled // NewTrackingFromContext returns 4 values, only tracer needed here
 
 	hctx, hspan := msgTracer.Start(msgCtx, "rabbitmq.consumer.handle_message")
 	defer hspan.End()
 
 	// Add messaging semantic conventions (M12)
 	hspan.SetAttributes(
-		attribute.String("app.request.request_id", requestIDStr),
-		attribute.String("messaging.system", "rabbitmq"),
-		attribute.String("messaging.destination.name", queue),
-		attribute.String("messaging.operation", "process"),
-		attribute.Int64("messaging.message.body.size", int64(len(d.Body))),
+		attribute.String(attrAppRequestRequestID, requestIDStr),
+		attribute.String(attrMessagingSystem, obsConstants.DBSystemRabbitMQ),
+		attribute.String(attrMessagingDestinationName, queue),
+		attribute.String(attrMessagingOperation, "process"),
+		attribute.Int64(attrMessagingMessageBodySize, int64(len(d.Body))),
 	)
 
-	err := libOpentelemetry.SetSpanAttributesFromValue(hspan, "app.request.rabbitmq.consumer.message", d, nil)
-	if err != nil {
-		libOpentelemetry.HandleSpanError(hspan, "Failed to convert message to JSON string", err)
-	}
-
 	if prmq.options.EnableSignatureVerification {
-		if prmq.options.Signer == nil {
+		if isNilSigner(prmq.options.Signer) {
 			if nackErr := d.Nack(false, false); nackErr != nil {
 				logWithFields.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("Failed to Nack message when signer is not configured: %v", nackErr))
 			}
@@ -1125,14 +1166,14 @@ func (prmq *RabbitMQAdapter) processDelivery(
 			libOpentelemetry.HandleSpanError(hspan, "Signature verification is enabled but signer is not configured", ErrSignatureVerifierNotConfigured)
 			logWithFields.Log(context.Background(), libLog.LevelError, "Signature verification is enabled but signer is not configured")
 			prmq.recordConsumeFailed(ctx,
-				attribute.String("queue", queue),
-				attribute.String("reason", "signature_verifier_not_configured"),
+				attribute.String(attrQueue, queue),
+				attribute.String(attrReason, attrReasonSignatureVerifierMissing),
 			)
 
 			return
 		}
 
-		if err := prmq.verifyMessageSignature(d.Body, headers, logWithFields, hspan); err != nil {
+		if err := VerifyMessageSignature(d.Body, headers, d.Exchange, d.RoutingKey, prmq.options.Signer, prmq.options.SignatureTimestampTolerance, logWithFields, hspan, prmq.options.AllowLegacyBodyOnlySignatureFallback); err != nil {
 			if nackErr := d.Nack(false, false); nackErr != nil {
 				logWithFields.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("Failed to Nack message after signature verification failure: %v", nackErr))
 			}
@@ -1140,16 +1181,17 @@ func (prmq *RabbitMQAdapter) processDelivery(
 			libOpentelemetry.HandleSpanError(hspan, "Message signature verification failed", err)
 			logWithFields.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Message signature verification failed: %v", err))
 			prmq.recordConsumeFailed(ctx,
-				attribute.String("queue", queue),
-				attribute.String("reason", "signature_verification_failed"),
+				attribute.String(attrQueue, queue),
+				attribute.String(attrReason, attrReasonSignatureFailed),
 			)
 
 			return
 		}
 	}
 
-	// Use the logger with fields created above (logWithFields) for all logging
-	// Recover from panics during message processing
+	// Use the logger with fields created above (logWithFields) for all logging.
+	// Nack on panic, then re-panic for lib-observability/runtime to recover and report.
+	defer obsRuntime.RecoverWithPolicyAndContext(hctx, logWithFields, "rabbitmq", "rabbitmq-consumer-handle-message", obsRuntime.KeepRunning)
 	defer func() {
 		if r := recover(); r != nil {
 			if nackErr := d.Nack(false, false); nackErr != nil {
@@ -1160,9 +1202,11 @@ func (prmq *RabbitMQAdapter) processDelivery(
 			logWithFields.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Panic while processing message: %v", r))
 			libOpentelemetry.HandleSpanError(hspan, "Panic while processing message", err)
 			prmq.recordConsumeFailed(ctx,
-				attribute.String("queue", queue),
-				attribute.String("reason", "panic"),
+				attribute.String(attrQueue, queue),
+				attribute.String(attrReason, attrReasonPanic),
 			)
+
+			panic(r)
 		}
 	}()
 
@@ -1174,8 +1218,8 @@ func (prmq *RabbitMQAdapter) processDelivery(
 		libOpentelemetry.HandleSpanError(hspan, "Handler failed to process consumed message", err)
 		logWithFields.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Handler failed to process consumed message: %v", err))
 		prmq.recordConsumeFailed(ctx,
-			attribute.String("queue", queue),
-			attribute.String("reason", "handler_error"),
+			attribute.String(attrQueue, queue),
+			attribute.String(attrReason, attrReasonHandlerError),
 		)
 
 		return
@@ -1187,14 +1231,14 @@ func (prmq *RabbitMQAdapter) processDelivery(
 	}
 
 	prmq.recordConsumeProcessed(ctx,
-		attribute.String("queue", queue),
+		attribute.String(attrQueue, queue),
 	)
 }
 
 // Shutdown gracefully closes open channels and the underlying connection.
 // It respects the context deadline or uses the configured shutdown timeout.
 func (prmq *RabbitMQAdapter) Shutdown(ctx context.Context) error {
-	logger := libCommons.NewLoggerFromContext(ctx)
+	logger := observability.NewLoggerFromContext(ctx)
 
 	// Indicate shutdown in progress
 	prmq.shutdown.Store(true)
@@ -1208,10 +1252,10 @@ func (prmq *RabbitMQAdapter) Shutdown(ctx context.Context) error {
 	// Use a done channel to implement timeout on WaitGroup
 	done := make(chan struct{})
 
-	go func() {
+	obsRuntime.SafeGoWithContext(ctx, logger, "rabbitmq-shutdown-wait", obsRuntime.KeepRunning, func(context.Context) {
 		prmq.consumerWg.Wait()
 		close(done)
-	}()
+	})
 
 	// Create a timeout context for the wait operation
 	timeoutCtx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -1241,15 +1285,26 @@ func (prmq *RabbitMQAdapter) Shutdown(ctx context.Context) error {
 	return nil
 }
 
-// verifyMessageSignature verifies the HMAC signature of a message.
-// It checks for required signature headers, validates the signature version,
-// and verifies the signature against the message body.
-func (prmq *RabbitMQAdapter) verifyMessageSignature(
+// VerifyMessageSignature verifies the canonical Fetcher RabbitMQ security envelope.
+// It accepts the current route/tenant-bound payload and a rolling body-only legacy
+// payload so already-queued messages can drain without being dropped.
+//
+//nolint:gocyclo // header parsing plus rolling legacy compatibility are deliberately kept in one verifier.
+func VerifyMessageSignature(
 	body []byte,
 	headers map[string]any,
+	exchange string,
+	routingKey string,
+	signer crypto.Signer,
+	tolerance time.Duration,
 	logger libLog.Logger,
 	span trace.Span,
+	allowLegacyBodyOnlyFallback ...bool,
 ) error {
+	if isNilSigner(signer) {
+		return ErrSignatureVerifierNotConfigured
+	}
+
 	// Extract signature from headers
 	signatureRaw, ok := headers[HeaderMessageSignature]
 	if !ok {
@@ -1285,14 +1340,21 @@ func (prmq *RabbitMQAdapter) verifyMessageSignature(
 		return fmt.Errorf("%w: %s must be a string or int64", ErrMissingSignatureHeaders, HeaderSignatureTimestamp)
 	}
 
-	// Check timestamp freshness to prevent replay attacks
-	if prmq.options.SignatureTimestampTolerance > 0 {
-		messageTime := time.Unix(timestamp, 0)
+	// Check timestamp freshness to prevent replay attacks. Stale messages use the
+	// configured replay tolerance; future messages get only a small explicit clock
+	// skew window so minor producer/consumer drift does not break rolling deploys.
+	messageTime := time.Unix(timestamp, 0)
 
-		age := time.Since(messageTime)
-		if age > prmq.options.SignatureTimestampTolerance {
+	age := time.Since(messageTime)
+	if age < -DefaultSignatureFutureSkew {
+		return fmt.Errorf("%w: message timestamp is %v in the future",
+			ErrSignatureFromFuture, (-age).Round(time.Second))
+	}
+
+	if tolerance > 0 {
+		if age > tolerance {
 			return fmt.Errorf("%w: message is %v old, tolerance is %v",
-				ErrSignatureExpired, age.Round(time.Second), prmq.options.SignatureTimestampTolerance)
+				ErrSignatureExpired, age.Round(time.Second), tolerance)
 		}
 	}
 
@@ -1308,10 +1370,10 @@ func (prmq *RabbitMQAdapter) verifyMessageSignature(
 	}
 
 	// Check if the signature version matches the signer's version
-	if version != prmq.options.Signer.SignatureVersion() {
+	if version != signer.SignatureVersion() {
 		return fmt.Errorf("%w: expected %s, got %s",
 			crypto.ErrUnsupportedSignatureVersion,
-			prmq.options.Signer.SignatureVersion(),
+			signer.SignatureVersion(),
 			version,
 		)
 	}
@@ -1319,18 +1381,41 @@ func (prmq *RabbitMQAdapter) verifyMessageSignature(
 	// Add signature attributes to span
 	if span != nil {
 		span.SetAttributes(
-			attribute.String("messaging.signature.version", version),
-			attribute.Int64("messaging.signature.timestamp", timestamp),
+			attribute.String(attrMessagingSignatureVersion, version),
+			attribute.Int64(attrMessagingSignatureTimestamp, timestamp),
 		)
 	}
 
-	// Build the signature payload and verify
-	payload := crypto.BuildSignaturePayload(timestamp, body)
-	if err := prmq.options.Signer.Verify(payload, signature); err != nil {
+	tenantID, _ := headers[HeaderTenantID].(string)
+	jobID := extractJobID(body)
+
+	// Build the signature payload and verify.
+	payload := BuildMessageSignaturePayload(timestamp, version, tenantID, jobID, exchange, routingKey, body)
+	if err := signer.Verify(payload, signature); err != nil {
+		allowLegacy := len(allowLegacyBodyOnlyFallback) > 0 && allowLegacyBodyOnlyFallback[0]
+		if !allowLegacy {
+			return fmt.Errorf("%w: %v", ErrSignatureVerificationFailed, err)
+		}
+
+		legacyPayload := crypto.BuildSignaturePayload(timestamp, body)
+		if legacyErr := signer.Verify(legacyPayload, signature); legacyErr == nil {
+			if span != nil {
+				span.SetAttributes(attribute.Bool("app.request.signature_legacy_fallback", true))
+			}
+
+			if logger != nil {
+				logger.Log(context.Background(), libLog.LevelWarn, "accepted legacy body-only RabbitMQ message signature during rolling drain")
+			}
+
+			return nil
+		}
+
 		return fmt.Errorf("%w: %v", ErrSignatureVerificationFailed, err)
 	}
 
-	logger.Log(context.Background(), libLog.LevelDebug, "Message signature verified successfully")
+	if logger != nil {
+		logger.Log(context.Background(), libLog.LevelDebug, "Message signature verified successfully")
+	}
 
 	return nil
 }

@@ -4,14 +4,31 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"strings"
+	"fmt"
 	"testing"
 	"time"
 
+	libOutbox "github.com/LerianStudio/lib-commons/v5/commons/outbox"
+	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
+	libLog "github.com/LerianStudio/lib-observability/log"
+	streaming "github.com/LerianStudio/lib-streaming"
+	"github.com/LerianStudio/lib-streaming/streamingtest"
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
+
+func publishJobNotificationForTest(t *testing.T, uc *UseCase, ctx context.Context, message ExtractExternalDataMessage, status string, errorMetadata map[string]any, opts *JobNotificationOptions, logger libLog.Logger) error {
+	t.Helper()
+
+	payload, err := buildJobNotificationPayload(message, status, errorMetadata, opts)
+	if err != nil {
+		return fmt.Errorf("marshalling job notification: %w", err)
+	}
+
+	return uc.publishJobNotificationPayload(ctx, status, message.JobID.String(), payload, logger)
+}
 
 // TestPublishJobNotification_Success tests successful job notification publishing.
 func TestPublishJobNotification_Success(t *testing.T) {
@@ -32,7 +49,7 @@ func TestPublishJobNotification_Success(t *testing.T) {
 
 	// Expect Publish to be called with correct parameters
 	mocks.rabbitPublisher.EXPECT().
-		Publish(gomock.Any(), "test-exchange", "job.completed.test-service", gomock.Any()).
+		Publish(gomock.Any(), "test-exchange", "job.completed", gomock.Any()).
 		DoAndReturn(func(_ context.Context, exchange, routingKey string, body []byte) error {
 			// Verify the message body
 			var notification JobNotificationMessage
@@ -48,11 +65,49 @@ func TestPublishJobNotification_Success(t *testing.T) {
 			return nil
 		})
 
-	err := uc.publishJobNotification(ctx, nil, message, "completed", nil, nil, logger)
+	err := publishJobNotificationForTest(t, uc, ctx, message, "completed", nil, nil, logger)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
 }
+
+func TestEmitJobNotificationEvent_WithTenantContext_SetsOutboxTenantContext(t *testing.T) {
+	t.Parallel()
+
+	tenantID := "tenant-123"
+	emitter := &capturingEmitter{}
+	uc := &UseCase{
+		JobEventEmitter:                emitter,
+		JobEventStreamingEnabled:       true,
+		JobEventStreamingRequireTenant: true,
+	}
+
+	ctx := tmcore.ContextWithTenantID(testContext(), tenantID)
+	err := uc.emitJobNotificationEvent(ctx, "completed", uuid.NewString(), []byte(`{"ok":true}`))
+	require.NoError(t, err)
+	require.Equal(t, tenantID, emitter.outboxTenantID)
+	require.Equal(t, tenantID, emitter.requestTenantID)
+	require.NotEmpty(t, emitter.requestEventID)
+}
+
+type capturingEmitter struct {
+	outboxTenantID  string
+	requestTenantID string
+	requestEventID  string
+}
+
+func (e *capturingEmitter) Emit(ctx context.Context, request streaming.EmitRequest) error {
+	tenantID, _ := libOutbox.TenantIDFromContext(ctx)
+	e.outboxTenantID = tenantID
+	e.requestTenantID = request.TenantID
+	e.requestEventID = request.EventID
+
+	return nil
+}
+
+func (e *capturingEmitter) Close() error { return nil }
+
+func (e *capturingEmitter) Healthy(context.Context) error { return nil }
 
 // TestPublishJobNotification_WithErrorMetadata tests publishing failed job notifications.
 func TestPublishJobNotification_WithErrorMetadata(t *testing.T) {
@@ -78,7 +133,7 @@ func TestPublishJobNotification_WithErrorMetadata(t *testing.T) {
 
 	// Expect Publish to be called with error routing key
 	mocks.rabbitPublisher.EXPECT().
-		Publish(gomock.Any(), "test-exchange", "job.failed.test-service", gomock.Any()).
+		Publish(gomock.Any(), "test-exchange", "job.failed", gomock.Any()).
 		DoAndReturn(func(_ context.Context, exchange, routingKey string, body []byte) error {
 			// Verify the message includes error metadata
 			var notification JobNotificationMessage
@@ -94,10 +149,196 @@ func TestPublishJobNotification_WithErrorMetadata(t *testing.T) {
 			return nil
 		})
 
-	err := uc.publishJobNotification(ctx, nil, message, "failed", errorMetadata, nil, logger)
+	err := publishJobNotificationForTest(t, uc, ctx, message, "failed", errorMetadata, nil, logger)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
+}
+
+func TestPublishJobNotification_EmitsLibStreamingEventWhenTenantPresent(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+	emitter := streamingtest.NewMockEmitter()
+	uc.JobEventEmitter = emitter
+
+	ctx := tmcore.ContextWithTenantID(testContext(), "tenant-job-events")
+	jobID := newTestJobID()
+	message := ExtractExternalDataMessage{
+		JobID:    jobID,
+		Metadata: map[string]any{"source": "test-service"},
+	}
+
+	err := publishJobNotificationForTest(t, uc, ctx, message, "completed", nil, nil, testLogger())
+	require.NoError(t, err)
+
+	streamingtest.AssertEventEmitted(t, emitter, "job.completed")
+	streamingtest.AssertTenantID(t, emitter, "tenant-job-events")
+	requests := emitter.Requests()
+	require.Len(t, requests, 1)
+	assert.Equal(t, "fetcher.job.completed."+jobID.String(), requests[0].EventID)
+	assert.Equal(t, jobID.String(), requests[0].Subject)
+	var notification JobNotificationMessage
+	require.NoError(t, json.Unmarshal(requests[0].Payload, &notification))
+	assert.Equal(t, "completed", notification.Status)
+}
+
+func TestPublishJobNotification_EmitsDeterministicEventIDForTerminalStatus(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		status string
+	}{
+		{name: "completed terminal event", status: "completed"},
+		{name: "failed terminal event", status: "failed"},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			mocks := newTestMocks(ctrl)
+			uc := newTestUseCase(mocks)
+			emitter := streamingtest.NewMockEmitter()
+			uc.JobEventEmitter = emitter
+
+			ctx := tmcore.ContextWithTenantID(testContext(), "tenant-job-events")
+			jobID := newTestJobID()
+			message := ExtractExternalDataMessage{
+				JobID:    jobID,
+				Metadata: map[string]any{"source": "test-service"},
+			}
+
+			err := publishJobNotificationForTest(t, uc, ctx, message, tt.status, nil, nil, testLogger())
+			require.NoError(t, err)
+
+			requests := emitter.Requests()
+			require.Len(t, requests, 1)
+			assert.Equal(t, "fetcher.job."+tt.status+"."+jobID.String(), requests[0].EventID)
+		})
+	}
+}
+
+func TestPublishJobNotification_StreamingFailureFailsWithoutLegacyPublish(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+	emitter := streamingtest.NewMockEmitter()
+	emitter.SetError(errors.New("streaming broker unavailable"))
+	uc.JobEventEmitter = emitter
+
+	ctx := tmcore.ContextWithTenantID(testContext(), "tenant-job-events")
+	message := ExtractExternalDataMessage{
+		JobID:    newTestJobID(),
+		Metadata: map[string]any{"source": "test-service"},
+	}
+
+	err := publishJobNotificationForTest(t, uc, ctx, message, "completed", nil, nil, testLogger())
+	require.Error(t, err)
+	assert.Empty(t, emitter.Requests())
+}
+
+func TestPublishJobNotification_StreamingOnlyInfraFailureFails(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+	emitter := streamingtest.NewMockEmitter()
+	emitter.SetError(errors.New("streaming route unavailable"))
+	uc.JobEventEmitter = emitter
+	uc.JobEventStreamingEnabled = true
+
+	ctx := tmcore.ContextWithTenantID(testContext(), "tenant-job-events")
+	message := ExtractExternalDataMessage{
+		JobID:    newTestJobID(),
+		Metadata: map[string]any{"source": "test-service"},
+	}
+
+	err := publishJobNotificationForTest(t, uc, ctx, message, "completed", nil, nil, testLogger())
+	require.Error(t, err)
+}
+
+func TestPublishJobNotification_StreamingCallerErrorStillFails(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+	emitter := streamingtest.NewMockEmitter()
+	emitter.SetError(streaming.ErrMissingTenantID)
+	uc.JobEventEmitter = emitter
+	uc.JobEventStreamingEnabled = true
+
+	ctx := tmcore.ContextWithTenantID(testContext(), "tenant-job-events")
+	message := ExtractExternalDataMessage{
+		JobID:    newTestJobID(),
+		Metadata: map[string]any{"source": "test-service"},
+	}
+
+	err := publishJobNotificationForTest(t, uc, ctx, message, "completed", nil, nil, testLogger())
+	require.Error(t, err)
+	assert.ErrorIs(t, err, streaming.ErrMissingTenantID)
+}
+
+func TestPublishJobNotification_StreamingRequireTenantRejectsMissingContext(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+	emitter := streamingtest.NewMockEmitter()
+	uc.JobEventEmitter = emitter
+	uc.JobEventStreamingRequireTenant = true
+
+	message := ExtractExternalDataMessage{
+		JobID:    newTestJobID(),
+		Metadata: map[string]any{"source": "test-service"},
+	}
+
+	err := publishJobNotificationForTest(t, uc, testContext(), message, "completed", nil, nil, testLogger())
+	require.Error(t, err)
+	assert.ErrorIs(t, err, streaming.ErrMissingTenantID)
+	assert.Empty(t, emitter.Requests())
+}
+
+func TestPublishJobNotification_SingleTenantUsesStableFallbackTenant(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+	emitter := streamingtest.NewMockEmitter()
+	uc.JobEventEmitter = emitter
+
+	message := ExtractExternalDataMessage{
+		JobID:    newTestJobID(),
+		Metadata: map[string]any{"source": "test-service"},
+	}
+
+	require.NoError(t, publishJobNotificationForTest(t, uc, testContext(), message, "completed", nil, nil, testLogger()))
+	streamingtest.AssertTenantID(t, emitter, "single-tenant")
 }
 
 // TestPublishJobNotification_PublisherNotConfigured tests that no error is returned when publisher is nil.
@@ -108,13 +349,13 @@ func TestPublishJobNotification_PublisherNotConfigured(t *testing.T) {
 	mocks := newTestMocks(ctrl)
 	// Create UseCase without publisher
 	uc := &UseCase{
-		ExternalDataStorage:  mocks.seaweedFS,
-		JobRepository:        mocks.jobRepo,
-		ConnectionRepository: mocks.connRepo,
-		Cryptor:              mocks.cryptor,
-		FileTTL:              "1h",
-		RabbitMQPublisher:    nil, // No publisher
-		JobEventsExchange:    "",
+		ExternalDataStorage:      mocks.seaweedFS,
+		JobRepository:            mocks.jobRepo,
+		ConnectionRepository:     mocks.connRepo,
+		Cryptor:                  mocks.cryptor,
+		FileTTL:                  "1h",
+		JobEventEmitter:          nil,
+		JobEventStreamingEnabled: true,
 	}
 
 	ctx := testContext()
@@ -125,10 +366,10 @@ func TestPublishJobNotification_PublisherNotConfigured(t *testing.T) {
 		Metadata: map[string]any{"source": "test"},
 	}
 
-	// Should return nil without calling publish
-	err := uc.publishJobNotification(ctx, nil, message, "completed", nil, nil, logger)
-	if err != nil {
-		t.Fatalf("expected no error when publisher not configured, got: %v", err)
+	// Mandatory streaming must fail closed when no emitter is configured.
+	err := publishJobNotificationForTest(t, uc, ctx, message, "completed", nil, nil, logger)
+	if err == nil {
+		t.Fatal("expected error when mandatory job event emitter is not configured")
 	}
 }
 
@@ -146,11 +387,11 @@ func TestPublishJobNotification_NilLoggerFallsBackSafely(t *testing.T) {
 	}
 
 	mocks.rabbitPublisher.EXPECT().
-		Publish(gomock.Any(), "test-exchange", "job.completed.test-service", gomock.Any()).
+		Publish(gomock.Any(), "test-exchange", "job.completed", gomock.Any()).
 		Return(nil)
 
 	require.NotPanics(t, func() {
-		err := uc.publishJobNotification(ctx, nil, message, "completed", nil, nil, nil)
+		err := publishJobNotificationForTest(t, uc, ctx, message, "completed", nil, nil, nil)
 		require.NoError(t, err)
 	})
 }
@@ -174,10 +415,9 @@ func TestPublishJobNotification_PublishError(t *testing.T) {
 	expectedErr := errors.New("connection refused")
 
 	mocks.rabbitPublisher.EXPECT().
-		Publish(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(expectedErr)
+		Publish(gomock.Any(), "test-exchange", "job.completed", gomock.Any()).Return(expectedErr)
 
-	err := uc.publishJobNotification(ctx, nil, message, "completed", nil, nil, logger)
+	err := publishJobNotificationForTest(t, uc, ctx, message, "completed", nil, nil, logger)
 	if err == nil {
 		t.Fatal("expected error when publish fails, got nil")
 	}
@@ -187,7 +427,7 @@ func TestPublishJobNotification_PublishError(t *testing.T) {
 	}
 }
 
-// TestPublishJobNotification_UnknownSource tests routing key generation with unknown source.
+// TestPublishJobNotification_UnknownSource keeps source in payload metadata without changing the event key.
 func TestPublishJobNotification_UnknownSource(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
@@ -206,10 +446,10 @@ func TestPublishJobNotification_UnknownSource(t *testing.T) {
 
 	// Expect routing key with "unknown" source
 	mocks.rabbitPublisher.EXPECT().
-		Publish(gomock.Any(), "test-exchange", "job.completed.unknown", gomock.Any()).
+		Publish(gomock.Any(), "test-exchange", "job.completed", gomock.Any()).
 		Return(nil)
 
-	err := uc.publishJobNotification(ctx, nil, message, "completed", nil, nil, logger)
+	err := publishJobNotificationForTest(t, uc, ctx, message, "completed", nil, nil, logger)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -274,7 +514,7 @@ func TestPublishJobNotification_WithResultData(t *testing.T) {
 	}
 
 	mocks.rabbitPublisher.EXPECT().
-		Publish(gomock.Any(), "test-exchange", "job.completed.test-service", gomock.Any()).
+		Publish(gomock.Any(), "test-exchange", "job.completed", gomock.Any()).
 		DoAndReturn(func(_ context.Context, exchange, routingKey string, body []byte) error {
 			var notification JobNotificationMessage
 			if err := json.Unmarshal(body, &notification); err != nil {
@@ -292,7 +532,7 @@ func TestPublishJobNotification_WithResultData(t *testing.T) {
 			return nil
 		})
 
-	err := uc.publishJobNotification(ctx, nil, message, "completed", nil, opts, logger)
+	err := publishJobNotificationForTest(t, uc, ctx, message, "completed", nil, opts, logger)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -306,13 +546,13 @@ func TestPublishJobNotification_EmptyExchange(t *testing.T) {
 	mocks := newTestMocks(ctrl)
 	// Create UseCase with empty exchange
 	uc := &UseCase{
-		ExternalDataStorage:  mocks.seaweedFS,
-		JobRepository:        mocks.jobRepo,
-		ConnectionRepository: mocks.connRepo,
-		Cryptor:              mocks.cryptor,
-		FileTTL:              "1h",
-		RabbitMQPublisher:    mocks.rabbitPublisher,
-		JobEventsExchange:    "", // Empty exchange
+		ExternalDataStorage:      mocks.seaweedFS,
+		JobRepository:            mocks.jobRepo,
+		ConnectionRepository:     mocks.connRepo,
+		Cryptor:                  mocks.cryptor,
+		FileTTL:                  "1h",
+		JobEventEmitter:          nil,
+		JobEventStreamingEnabled: true,
 	}
 
 	ctx := testContext()
@@ -323,10 +563,10 @@ func TestPublishJobNotification_EmptyExchange(t *testing.T) {
 		Metadata: map[string]any{"source": "test"},
 	}
 
-	// Should return nil without calling publish
-	err := uc.publishJobNotification(ctx, nil, message, "completed", nil, nil, logger)
-	if err != nil {
-		t.Fatalf("expected no error when exchange not configured, got: %v", err)
+	// Mandatory streaming must fail closed when no emitter is configured.
+	err := publishJobNotificationForTest(t, uc, ctx, message, "completed", nil, nil, logger)
+	if err == nil {
+		t.Fatal("expected error when mandatory job event emitter is not configured")
 	}
 }
 
@@ -351,7 +591,7 @@ func TestPublishJobNotification_MetadataPreservation(t *testing.T) {
 	}
 
 	mocks.rabbitPublisher.EXPECT().
-		Publish(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Publish(gomock.Any(), "test-exchange", "job.completed", gomock.Any()).
 		DoAndReturn(func(_ context.Context, exchange, routingKey string, body []byte) error {
 			var notification JobNotificationMessage
 			if err := json.Unmarshal(body, &notification); err != nil {
@@ -369,73 +609,31 @@ func TestPublishJobNotification_MetadataPreservation(t *testing.T) {
 			return nil
 		})
 
-	err := uc.publishJobNotification(ctx, nil, message, "completed", nil, nil, logger)
+	err := publishJobNotificationForTest(t, uc, ctx, message, "completed", nil, nil, logger)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
 }
 
-// TestPublishJobNotification_RoutingKeyGeneration tests routing key generation logic.
-func TestPublishJobNotification_RoutingKeyGeneration(t *testing.T) {
+// TestPublishJobNotification_EventKeyGeneration tests stable lib-streaming event key selection.
+func TestPublishJobNotification_EventKeyGeneration(t *testing.T) {
 	tests := []struct {
-		name               string
-		status             string
-		metadata           map[string]any
-		expectedRoutingKey string
+		name             string
+		status           string
+		metadata         map[string]any
+		expectedEventKey string
 	}{
 		{
-			name:               "completed with known source",
-			status:             "completed",
-			metadata:           map[string]any{"source": "api-gateway"},
-			expectedRoutingKey: "job.completed.api-gateway",
+			name:             "completed with known source",
+			status:           "completed",
+			metadata:         map[string]any{"source": "api-gateway"},
+			expectedEventKey: "job.completed",
 		},
 		{
-			name:               "failed with known source",
-			status:             "failed",
-			metadata:           map[string]any{"source": "scheduler"},
-			expectedRoutingKey: "job.failed.scheduler",
-		},
-		{
-			name:               "completed without source",
-			status:             "completed",
-			metadata:           nil,
-			expectedRoutingKey: "job.completed.unknown",
-		},
-		{
-			name:               "completed with empty source",
-			status:             "completed",
-			metadata:           map[string]any{"source": ""},
-			expectedRoutingKey: "job.completed.unknown",
-		},
-		{
-			name:               "failed without metadata",
-			status:             "failed",
-			metadata:           map[string]any{},
-			expectedRoutingKey: "job.failed.unknown",
-		},
-		{
-			name:               "completed with unsafe source chars",
-			status:             "completed",
-			metadata:           map[string]any{"source": "..Tenant/Prod@EU "},
-			expectedRoutingKey: "job.completed.tenant-prod-eu",
-		},
-		{
-			name:               "completed with oversized source",
-			status:             "completed",
-			metadata:           map[string]any{"source": strings.Repeat("A", 80)},
-			expectedRoutingKey: "job.completed." + strings.Repeat("a", 64),
-		},
-		{
-			name:               "source with only invalid characters",
-			status:             "completed",
-			metadata:           map[string]any{"source": "!@#$%^&*()"},
-			expectedRoutingKey: "job.completed.unknown",
-		},
-		{
-			name:               "source exactly at max length",
-			status:             "completed",
-			metadata:           map[string]any{"source": strings.Repeat("a", 64)},
-			expectedRoutingKey: "job.completed." + strings.Repeat("a", 64),
+			name:             "failed with known source",
+			status:           "failed",
+			metadata:         map[string]any{"source": "scheduler"},
+			expectedEventKey: "job.failed",
 		},
 	}
 
@@ -456,10 +654,10 @@ func TestPublishJobNotification_RoutingKeyGeneration(t *testing.T) {
 			}
 
 			mocks.rabbitPublisher.EXPECT().
-				Publish(gomock.Any(), "test-exchange", tt.expectedRoutingKey, gomock.Any()).
+				Publish(gomock.Any(), "test-exchange", tt.expectedEventKey, gomock.Any()).
 				Return(nil)
 
-			err := uc.publishJobNotification(ctx, nil, message, tt.status, nil, nil, logger)
+			err := publishJobNotificationForTest(t, uc, ctx, message, tt.status, nil, nil, logger)
 			if err != nil {
 				t.Fatalf("expected no error, got: %v", err)
 			}
@@ -489,7 +687,7 @@ func TestPublishJobNotification_WithCompletedAt(t *testing.T) {
 	}
 
 	mocks.rabbitPublisher.EXPECT().
-		Publish(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Publish(gomock.Any(), "test-exchange", "job.completed", gomock.Any()).
 		DoAndReturn(func(_ context.Context, exchange, routingKey string, body []byte) error {
 			var notification JobNotificationMessage
 			if err := json.Unmarshal(body, &notification); err != nil {
@@ -501,7 +699,7 @@ func TestPublishJobNotification_WithCompletedAt(t *testing.T) {
 			return nil
 		})
 
-	err := uc.publishJobNotification(ctx, nil, message, "completed", nil, opts, logger)
+	err := publishJobNotificationForTest(t, uc, ctx, message, "completed", nil, opts, logger)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -536,7 +734,7 @@ func TestPublishJobNotification_WithAllOptions(t *testing.T) {
 	}
 
 	mocks.rabbitPublisher.EXPECT().
-		Publish(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Publish(gomock.Any(), "test-exchange", "job.completed", gomock.Any()).
 		DoAndReturn(func(_ context.Context, exchange, routingKey string, body []byte) error {
 			var notification JobNotificationMessage
 			if err := json.Unmarshal(body, &notification); err != nil {
@@ -557,7 +755,7 @@ func TestPublishJobNotification_WithAllOptions(t *testing.T) {
 			return nil
 		})
 
-	err := uc.publishJobNotification(ctx, nil, message, "completed", nil, opts, logger)
+	err := publishJobNotificationForTest(t, uc, ctx, message, "completed", nil, opts, logger)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}

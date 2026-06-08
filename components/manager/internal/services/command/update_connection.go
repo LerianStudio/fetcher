@@ -7,33 +7,31 @@ import (
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
+	"github.com/LerianStudio/fetcher/pkg/engine"
+	"github.com/LerianStudio/fetcher/pkg/enginecompat/connectioncompat"
 	"github.com/LerianStudio/fetcher/pkg/model"
-	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
-	"github.com/LerianStudio/fetcher/pkg/ports/job"
+	observability "github.com/LerianStudio/lib-observability"
 
-	"github.com/LerianStudio/lib-commons/v5/commons"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
+	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
 )
 
 type UpdateConnection struct {
-	connRepo connRepo.Repository
-	jobRepo  job.Repository
-	cryptor  crypto.Cryptor
+	cryptor crypto.Cryptor
+	engine  *engine.Engine
 }
 
-func NewUpdateConnection(connectionRepo connRepo.Repository, jobRepo job.Repository, cryptor crypto.Cryptor) *UpdateConnection {
+func NewUpdateConnection(cryptor crypto.Cryptor, eng *engine.Engine) *UpdateConnection {
 	return &UpdateConnection{
-		connRepo: connectionRepo,
-		jobRepo:  jobRepo,
-		cryptor:  cryptor,
+		cryptor: cryptor,
+		engine:  eng,
 	}
 }
 
 func (s *UpdateConnection) Execute(ctx context.Context, connectionID uuid.UUID, connInput model.ConnectionUpdateInput) (*model.Connection, error) {
-	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	_, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "service.update_connection")
 	defer span.End()
@@ -48,7 +46,18 @@ func (s *UpdateConnection) Execute(ctx context.Context, connectionID uuid.UUID, 
 		libOpentelemetry.HandleSpanError(span, "Failed to convert fetcher input to JSON string", err)
 	}
 
-	current, err := s.connRepo.FindByID(ctx, connectionID)
+	// The Engine is the AUTHORITY for the per-request tenant scope AND the
+	// connection persistence. Update routes its read and write through the
+	// Engine's ID-addressed ops (FindByID/UpdateByID via the connectioncompat
+	// adapter over the Manager's UUID-keyed repo); the Manager keeps its rich
+	// model, domain patch, cryptor re-encryption, and HTTP response mapping. The
+	// active-execution conflict gate also flows through the Engine.
+	if err := connectioncompat.AuthorizeAccess(ctx, s.engine); err != nil {
+		libOpentelemetry.HandleSpanError(span, "Failed to authorize tenant scope", err)
+		return nil, err
+	}
+
+	current, err := connectioncompat.FindByID(ctx, s.engine, connectionID.String())
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to find connection by ID", err)
 		return nil, fmt.Errorf("failed to find connection by id: %w", err)
@@ -63,20 +72,16 @@ func (s *UpdateConnection) Execute(ctx context.Context, connectionID uuid.UUID, 
 		)
 	}
 
-	active, err := s.jobRepo.ExistsRunningByMappedFieldKey(ctx, current.ConfigName)
-	if err != nil {
+	if err := checkActiveJobsViaEngine(ctx, s.engine, current.ConfigName); err != nil {
+		if conflict := asActiveJobConflict(err, "cannot update connection with active jobs"); conflict != nil {
+			libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Connection has active jobs", constant.ErrJobInProgress)
+
+			return nil, conflict
+		}
+
 		libOpentelemetry.HandleSpanError(span, "Failed to check for active jobs", err)
+
 		return nil, fmt.Errorf("failed to check for active jobs: %w", err)
-	}
-
-	if active {
-		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Connection has active jobs", constant.ErrJobInProgress)
-
-		return nil, pkg.ValidateBusinessError(
-			constant.ErrJobInProgress,
-			"connection",
-			"cannot update connection with active jobs",
-		)
 	}
 
 	if errPatch := current.ApplyPatch(
@@ -124,7 +129,7 @@ func (s *UpdateConnection) Execute(ctx context.Context, connectionID uuid.UUID, 
 		return nil, fmt.Errorf("failed to apply connection patch: %w", errPatch)
 	}
 
-	updated, err := s.connRepo.Update(ctx, current)
+	updated, err := updateConnectionByIDViaEngine(ctx, s.engine, connectionID, current)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to update connection", err)
 		return nil, fmt.Errorf("failed to update connection: %w", err)

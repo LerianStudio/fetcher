@@ -7,7 +7,6 @@ import (
 	"time"
 
 	toxiclient "github.com/Shopify/toxiproxy/v2/client"
-	"github.com/docker/go-connections/nat"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -116,7 +115,7 @@ func (t *toxiproxyChaos) CreateProxy(ctx context.Context, name string, upstream 
 	}
 
 	// Always resolve the mapped host port for public helpers.
-	mappedPort, err := t.container.MappedPort(ctx, nat.Port(fmt.Sprintf("%d/tcp", internalPort)))
+	mappedPort, err := t.container.MappedPort(ctx, fmt.Sprintf("%d/tcp", internalPort))
 	if err != nil {
 		_ = p.Delete()
 		return ProxyRef{}, fmt.Errorf("get mapped port for proxy %s: %w", name, err)

@@ -7,13 +7,14 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/LerianStudio/lib-observability"
+
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	portStorage "github.com/LerianStudio/fetcher/pkg/ports/storage"
-	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
 	tms3 "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/s3"
+	libLog "github.com/LerianStudio/lib-observability/log"
+	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsConfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -136,7 +137,7 @@ func (r *S3Repository) Endpoint() string {
 
 // Get downloads the object identified by objectName from the S3 bucket.
 func (r *S3Repository) Get(ctx context.Context, objectName string) ([]byte, error) {
-	_, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
+	_, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "s3.external_data.get")
 	defer span.End()
@@ -187,7 +188,7 @@ func (r *S3Repository) Get(ctx context.Context, objectName string) ([]byte, erro
 
 // Put uploads data to the S3 bucket under the given objectName.
 func (r *S3Repository) Put(ctx context.Context, objectName string, data []byte) error {
-	logger, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "s3.external_data.put")
 	defer span.End()

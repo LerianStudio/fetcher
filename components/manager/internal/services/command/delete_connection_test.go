@@ -49,7 +49,7 @@ func TestDeleteConnection_Execute_Success(t *testing.T) {
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 
-	svc := NewDeleteConnection(mockConnRepo, mockJobRepo)
+	svc := NewDeleteConnection(engineForConnRepo(t, mockConnRepo, mockJobRepo))
 
 	ctx := testContext()
 	connID := uuid.New()
@@ -84,7 +84,7 @@ func TestDeleteConnection_Execute_NotFoundError(t *testing.T) {
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 
-	svc := NewDeleteConnection(mockConnRepo, mockJobRepo)
+	svc := NewDeleteConnection(engineForConnRepo(t, mockConnRepo, mockJobRepo))
 
 	ctx := testContext()
 	connID := uuid.New()
@@ -115,7 +115,7 @@ func TestDeleteConnection_Execute_ActiveJobError(t *testing.T) {
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 
-	svc := NewDeleteConnection(mockConnRepo, mockJobRepo)
+	svc := NewDeleteConnection(engineForConnRepo(t, mockConnRepo, mockJobRepo))
 
 	ctx := testContext()
 	connID := uuid.New()
@@ -152,7 +152,7 @@ func TestDeleteConnection_Execute_FindByIDError(t *testing.T) {
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 
-	svc := NewDeleteConnection(mockConnRepo, mockJobRepo)
+	svc := NewDeleteConnection(engineForConnRepo(t, mockConnRepo, mockJobRepo))
 
 	ctx := testContext()
 	connID := uuid.New()
@@ -183,7 +183,7 @@ func TestDeleteConnection_Execute_ExistsRunningJobError(t *testing.T) {
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 
-	svc := NewDeleteConnection(mockConnRepo, mockJobRepo)
+	svc := NewDeleteConnection(engineForConnRepo(t, mockConnRepo, mockJobRepo))
 
 	ctx := testContext()
 	connID := uuid.New()
@@ -220,7 +220,7 @@ func TestDeleteConnection_Execute_DeleteError(t *testing.T) {
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 
-	svc := NewDeleteConnection(mockConnRepo, mockJobRepo)
+	svc := NewDeleteConnection(engineForConnRepo(t, mockConnRepo, mockJobRepo))
 
 	ctx := testContext()
 	connID := uuid.New()
@@ -262,18 +262,14 @@ func TestNewDeleteConnection(t *testing.T) {
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 
-	svc := NewDeleteConnection(mockConnRepo, mockJobRepo)
+	svc := NewDeleteConnection(engineForConnRepo(t, mockConnRepo, mockJobRepo))
 
 	if svc == nil {
 		t.Fatal("expected non-nil service")
 	}
 
-	if svc.connRepo == nil {
-		t.Fatal("expected connRepo to be set")
-	}
-
-	if svc.jobRepo == nil {
-		t.Fatal("expected jobRepo to be set")
+	if svc.engine == nil {
+		t.Fatal("expected engine to be set")
 	}
 }
 
@@ -378,7 +374,7 @@ func TestDeleteConnection_Execute_TableDriven(t *testing.T) {
 
 			tt.setupMocks(mockConnRepo, mockJobRepo, connID, existingConn)
 
-			svc := NewDeleteConnection(mockConnRepo, mockJobRepo)
+			svc := NewDeleteConnection(engineForConnRepo(t, mockConnRepo, mockJobRepo))
 
 			err := svc.Execute(ctx, connID)
 
@@ -412,7 +408,7 @@ func TestDeleteConnection_Execute_DifferentOrganizations(t *testing.T) {
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 
-	svc := NewDeleteConnection(mockConnRepo, mockJobRepo)
+	svc := NewDeleteConnection(engineForConnRepo(t, mockConnRepo, mockJobRepo))
 
 	ctx := testContext()
 	differentOrgID := uuid.New()
@@ -453,7 +449,7 @@ func TestDeleteConnection_Execute_DeletePassesCorrectTimestamp(t *testing.T) {
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 
-	svc := NewDeleteConnection(mockConnRepo, mockJobRepo)
+	svc := NewDeleteConnection(engineForConnRepo(t, mockConnRepo, mockJobRepo))
 
 	ctx := testContext()
 	connID := uuid.New()
@@ -515,7 +511,7 @@ func TestDeleteConnection_Execute_MultipleJobsCheck(t *testing.T) {
 			mockConnRepo := connRepo.NewMockRepository(ctrl)
 			mockJobRepo := jobRepo.NewMockRepository(ctrl)
 
-			svc := NewDeleteConnection(mockConnRepo, mockJobRepo)
+			svc := NewDeleteConnection(engineForConnRepo(t, mockConnRepo, mockJobRepo))
 
 			ctx := testContext()
 			connID := uuid.New()
@@ -594,7 +590,7 @@ func TestDeleteConnection_Execute_ConnectionWithDifferentTypes(t *testing.T) {
 			mockConnRepo := connRepo.NewMockRepository(ctrl)
 			mockJobRepo := jobRepo.NewMockRepository(ctrl)
 
-			svc := NewDeleteConnection(mockConnRepo, mockJobRepo)
+			svc := NewDeleteConnection(engineForConnRepo(t, mockConnRepo, mockJobRepo))
 
 			ctx := testContext()
 			connID := uuid.New()
@@ -633,7 +629,7 @@ func TestDeleteConnection_Execute_ConnectionWithSSL(t *testing.T) {
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 	mockJobRepo := jobRepo.NewMockRepository(ctrl)
 
-	svc := NewDeleteConnection(mockConnRepo, mockJobRepo)
+	svc := NewDeleteConnection(engineForConnRepo(t, mockConnRepo, mockJobRepo))
 
 	ctx := testContext()
 	connID := uuid.New()

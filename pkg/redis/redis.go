@@ -2,14 +2,14 @@ package redis
 
 import (
 	"context"
-	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
 	"fmt"
 	"net"
 	"time"
 
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
+	libRedis "github.com/LerianStudio/lib-commons/v5/commons/redis"
+	libLog "github.com/LerianStudio/lib-observability/log"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -70,9 +70,10 @@ func (c RedisConfig) WithDefaults() RedisConfig {
 
 // RedisConnection manages the Redis client connection.
 type RedisConnection struct {
-	Client    *redis.Client
-	Logger    libLog.Logger
-	Connected bool
+	Client          *redis.Client
+	CanonicalClient *libRedis.Client
+	Logger          libLog.Logger
+	Connected       bool
 }
 
 // NewRedisConnection creates a new Redis connection.
@@ -82,20 +83,23 @@ func NewRedisConnection(cfg RedisConfig, logger libLog.Logger) (*RedisConnection
 	cfg = cfg.WithDefaults()
 	addr := buildRedisAddr(cfg.Host, cfg.Port)
 
-	opts := &redis.Options{
-		Addr:         addr,
-		Password:     cfg.Password,
-		DB:           cfg.DB,
-		DialTimeout:  cfg.DialTimeout,
-		ReadTimeout:  cfg.ReadTimeout,
-		WriteTimeout: cfg.WriteTimeout,
-		PoolSize:     cfg.PoolSize,
-		MinIdleConns: cfg.MinIdleConns,
+	canonicalCfg := libRedis.Config{
+		Topology: libRedis.Topology{Standalone: &libRedis.StandaloneTopology{Address: addr}},
+		Auth:     libRedis.Auth{StaticPassword: &libRedis.StaticPasswordAuth{Password: cfg.Password}},
+		Options: libRedis.ConnectionOptions{
+			DB:              cfg.DB,
+			PoolSize:        cfg.PoolSize,
+			MinIdleConns:    cfg.MinIdleConns,
+			DialTimeout:     cfg.DialTimeout,
+			ReadTimeout:     cfg.ReadTimeout,
+			WriteTimeout:    cfg.WriteTimeout,
+			MinRetryBackoff: 8 * time.Millisecond,
+			MaxRetryBackoff: 512 * time.Millisecond,
+		},
+		Logger: logger,
 	}
 
 	if cfg.UseTLS {
-		tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
-
 		if cfg.CACert != "" {
 			caBytes, err := base64.StdEncoding.DecodeString(cfg.CACert)
 			if err != nil {
@@ -106,39 +110,47 @@ func NewRedisConnection(cfg RedisConfig, logger libLog.Logger) (*RedisConnection
 			if !pool.AppendCertsFromPEM(caBytes) {
 				return nil, fmt.Errorf("failed to parse Redis CA certificate")
 			}
-
-			tlsCfg.RootCAs = pool
 		}
 
-		opts.TLSConfig = tlsCfg
+		canonicalCfg.TLS = &libRedis.TLSConfig{CACertBase64: cfg.CACert}
 	}
 
-	client := redis.NewClient(opts)
-
-	// Test connection
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := client.Ping(ctx).Err(); err != nil {
+	canonicalClient, err := libRedis.New(ctx, canonicalCfg)
+	if err != nil {
 		logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to connect to Redis at %s: %v", addr, err))
 		return nil, fmt.Errorf("failed to connect to Redis: %w", err)
+	}
+
+	universalClient, err := canonicalClient.GetClient(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get Redis client: %w", err)
+	}
+
+	client, ok := universalClient.(*redis.Client)
+	if !ok {
+		_ = canonicalClient.Close()
+		return nil, fmt.Errorf("unexpected Redis client type %T for standalone cache connection", universalClient)
 	}
 
 	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Successfully connected to Redis at %s", addr))
 
 	return &RedisConnection{
-		Client:    client,
-		Logger:    logger,
-		Connected: true,
+		Client:          client,
+		CanonicalClient: canonicalClient,
+		Logger:          logger,
+		Connected:       true,
 	}, nil
 }
 
 // Close closes the Redis connection.
 func (r *RedisConnection) Close() error {
-	if r.Client != nil {
+	if r.CanonicalClient != nil {
 		r.Logger.Log(context.Background(), libLog.LevelInfo, "Closing Redis connection...")
 
-		err := r.Client.Close()
+		err := r.CanonicalClient.Close()
 		if err != nil {
 			r.Logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Error closing Redis connection: %v", err))
 			return err
@@ -146,6 +158,16 @@ func (r *RedisConnection) Close() error {
 
 		r.Connected = false
 		r.Logger.Log(context.Background(), libLog.LevelInfo, "Redis connection closed successfully.")
+
+		return nil
+	}
+
+	if r.Client != nil {
+		if err := r.Client.Close(); err != nil {
+			return err
+		}
+
+		r.Connected = false
 	}
 
 	return nil

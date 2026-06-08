@@ -15,12 +15,12 @@ import (
 	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
 	"github.com/go-playground/locales/en"
 	ut "github.com/go-playground/universal-translator"
+	"github.com/go-playground/validator/v10"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
-	"gopkg.in/go-playground/validator.v9"
 
 	cn "github.com/LerianStudio/fetcher/pkg/constant"
-	en2 "github.com/go-playground/validator/translations/en"
+	en2 "github.com/go-playground/validator/v10/translations/en"
 )
 
 var UUIDPathParameters = []string{
@@ -230,7 +230,7 @@ func ValidateStruct(s any) error {
 	}
 
 	k := reflect.ValueOf(s).Kind()
-	if k == reflect.Ptr {
+	if k == reflect.Pointer {
 		k = reflect.ValueOf(s).Elem().Kind()
 	}
 
@@ -464,7 +464,7 @@ func formatErrorFieldName(text string) string {
 // parseMetadata For compliance with RFC7396 JSON Merge Patch
 func parseMetadata(s any, originalMap map[string]any) {
 	val := reflect.ValueOf(s)
-	if val.Kind() != reflect.Ptr || val.Elem().Kind() != reflect.Struct {
+	if val.Kind() != reflect.Pointer || val.Elem().Kind() != reflect.Struct {
 		return
 	}
 

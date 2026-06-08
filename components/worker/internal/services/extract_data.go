@@ -16,13 +16,13 @@ import (
 
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
+	"github.com/LerianStudio/fetcher/pkg/engine"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	modelJob "github.com/LerianStudio/fetcher/pkg/model/job"
-	portDS "github.com/LerianStudio/fetcher/pkg/ports/datasource"
-	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
-	libOtel "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
 	tms3 "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/s3"
+	observability "github.com/LerianStudio/lib-observability"
+	libLog "github.com/LerianStudio/lib-observability/log"
+	libOtel "github.com/LerianStudio/lib-observability/tracing"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
@@ -52,7 +52,7 @@ type ExtractExternalDataMessage struct {
 func (uc *UseCase) ExtractExternalData(ctx context.Context, body []byte, headers map[string]any) error {
 	startTime := time.Now() // Track execution start time
 
-	logger, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "service.extract_external_data")
 	defer span.End()
@@ -63,23 +63,26 @@ func (uc *UseCase) ExtractExternalData(ctx context.Context, body []byte, headers
 	if err != nil {
 		jobID := uc.extractJobIDFromMultipleSources(body, headers, logger)
 		if jobID != uuid.Nil {
-			notificationMessage := ExtractExternalDataMessage{
+			failedMessage := ExtractExternalDataMessage{
 				JobID:    jobID,
-				Metadata: make(map[string]any),
+				Metadata: map[string]any{},
 			}
 
-			errorMetadata := map[string]any{
-				"message": err.Error(),
+			if terminalErr := uc.handleErrorWithUpdate(ctx, jobID, failedMessage, span, "Invalid extraction message", err, logger); terminalErr != nil {
+				return terminalErr
 			}
-			if errNotify := uc.publishJobNotification(ctx, tracer, notificationMessage, "failed", errorMetadata, nil, logger); errNotify != nil {
-				logger.Log(ctx, libLog.LevelWarn, "failed to publish job failure notification after parse error", libLog.Err(errNotify))
-			}
+		} else {
+			logger.Log(ctx, libLog.LevelWarn, "dropping invalid extraction message without terminal job event: no usable job id found")
 		}
 
 		return err
 	}
 
-	if skip := uc.shouldSkipProcessing(ctx, message.JobID, logger); skip {
+	if skip, retryErr := uc.shouldSkipProcessing(ctx, message.JobID, logger); skip {
+		if retryErr != nil {
+			return retryErr
+		}
+
 		return nil
 	}
 
@@ -124,22 +127,23 @@ func (uc *UseCase) ExtractExternalData(ctx context.Context, body []byte, headers
 	}
 
 	result := make(map[string]map[string][]map[string]any)
-	if err := uc.queryExternalData(ctx, *message, connections, result); err != nil {
+
+	reuse, err := uc.extractInto(ctx, *message, connections, result)
+	if err != nil {
 		return uc.handleErrorWithUpdate(ctx, message.JobID, *message, span, "Error querying external data", err, logger)
 	}
 
-	resultData, err := uc.saveExternalData(ctx, tracer, *message, result, span, logger)
+	resultData, err := uc.saveExternalData(ctx, tracer, *message, result, reuse, span, logger)
 	if err != nil {
 		return uc.handleErrorWithUpdate(ctx, message.JobID, *message, span, "Error saving external data to storage", err, logger)
 	}
 
-	return uc.completeJob(ctx, tracer, *message, resultData, startTime, span, logger)
+	return uc.completeJob(ctx, *message, resultData, startTime, span, logger)
 }
 
 // completeJob persists the completed status and publishes a completion notification.
 func (uc *UseCase) completeJob(
 	ctx context.Context,
-	tracer trace.Tracer,
 	message ExtractExternalDataMessage,
 	resultData *JobResultData,
 	startTime time.Time,
@@ -151,10 +155,6 @@ func (uc *UseCase) completeJob(
 			"Cannot complete job: result data is nil", nil, logger)
 	}
 
-	if err := uc.JobRepository.UpdateStatus(ctx, message.JobID, model.JobStatusCompleted, resultData.Path, resultData.HMAC, nil); err != nil {
-		return uc.handleErrorWithUpdate(ctx, message.JobID, message, span, "Error updating job status to completed", err, logger)
-	}
-
 	completedAt := time.Now()
 	executionTimeMs := completedAt.Sub(startTime).Milliseconds()
 
@@ -164,13 +164,28 @@ func (uc *UseCase) completeJob(
 		CompletedAt:     &completedAt,
 	}
 
-	if err := uc.publishJobNotification(ctx, tracer, message, "completed", nil, notificationOpts, logger); err != nil {
+	notificationPayload, err := buildJobNotificationPayload(message, "completed", nil, notificationOpts)
+	if err != nil {
+		libOtel.HandleSpanError(span, "Error marshalling job completion notification", err)
+		return fmt.Errorf("build required job completion notification: %w", err)
+	}
+
+	metadata := terminalEventPendingMetadata("completed", notificationPayload)
+	if err := uc.JobRepository.UpdateStatus(ctx, message.JobID, model.JobStatusCompleted, resultData.Path, resultData.HMAC, metadata); err != nil {
+		return uc.handleErrorWithUpdate(ctx, message.JobID, message, span, "Error updating job status to completed", err, logger)
+	}
+
+	if err := uc.publishJobNotificationPayload(ctx, "completed", message.JobID.String(), notificationPayload, logger); err != nil {
 		libOtel.HandleSpanError(span, "Error publishing job completion notification", err)
-		logger.Log(ctx, libLog.LevelWarn, "failed to publish job completion notification",
+		logger.Log(ctx, libLog.LevelError, "failed to publish required job completion notification",
 			libLog.String("job_id", message.JobID.String()),
 			libLog.Err(err),
 		)
+
+		return fmt.Errorf("publish required job completion notification: %w", err)
 	}
+
+	uc.clearPendingTerminalEvent(ctx, message.JobID, logger)
 
 	return nil
 }
@@ -187,23 +202,6 @@ func (uc *UseCase) parseMessage(ctx context.Context, body []byte, headers map[st
 	if err != nil {
 		libOtel.HandleSpanError(span, "Error unmarshalling message.", err)
 		logger.Log(ctx, libLog.LevelError, "error unmarshalling message", libLog.Err(err))
-
-		jobID := uc.extractJobIDFromMultipleSources(body, headers, logger)
-		if jobID != uuid.Nil {
-			updateErr := uc.updateJobWithErrors(ctx, jobID, fmt.Sprintf("Failed to parse message: %v", err))
-			if updateErr != nil {
-				logger.Log(ctx, libLog.LevelError, "failed to update job status after parse error",
-					libLog.String("job_id", jobID.String()),
-					libLog.Err(updateErr),
-				)
-			} else {
-				logger.Log(ctx, libLog.LevelInfo, "updated job to failed status due to parse error",
-					libLog.String("job_id", jobID.String()),
-				)
-			}
-		} else {
-			logger.Log(ctx, libLog.LevelWarn, "could not extract job id from headers or partial json; job status will not be updated")
-		}
 
 		return nil, fmt.Errorf("failed to parse message: %w", err)
 	}
@@ -224,12 +222,7 @@ func (uc *UseCase) parseMessage(ctx context.Context, body []byte, headers map[st
 			jobID = extractedJobID
 		}
 
-		if jobID != uuid.Nil {
-			updateErr := uc.updateJobWithErrors(ctx, jobID, wrappedErr.Error())
-			if updateErr != nil {
-				logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to update job status after payload validation error: %v", updateErr))
-			}
-		} else {
+		if jobID == uuid.Nil {
 			logger.Log(ctx, libLog.LevelWarn, "Could not extract job ID from payload, job status will not be updated")
 		}
 
@@ -331,7 +324,23 @@ func (uc *UseCase) handleErrorWithUpdate(
 		err = fmt.Errorf("operation failed: %s", errorMsg)
 	}
 
-	if errUpdate := uc.updateJobWithErrors(ctx, jobID, err.Error()); errUpdate != nil {
+	errorMetadata := map[string]any{
+		"message": sanitizeErrorForNotification(err.Error()),
+	}
+
+	// Ensure message has correct IDs (in case it was partially parsed)
+	message.JobID = jobID
+
+	notificationPayload, payloadErr := buildJobNotificationPayload(message, "failed", errorMetadata, nil)
+	if payloadErr != nil {
+		libOtel.HandleSpanError(span, "Error marshalling job failure notification", payloadErr)
+		return fmt.Errorf("build required job failure notification: %w", payloadErr)
+	}
+
+	metadata := terminalEventPendingMetadata("failed", notificationPayload)
+	metadata["error"] = sanitizeErrorForNotification(err.Error())
+
+	if errUpdate := uc.JobRepository.UpdateStatus(ctx, jobID, model.JobStatusFailed, "", "", metadata); errUpdate != nil {
 		libOtel.HandleSpanError(span, "Error to update report status with error.", errUpdate)
 		logger.Log(ctx, libLog.LevelError, "error updating report status with error",
 			libLog.String("job_id", jobID.String()),
@@ -347,137 +356,139 @@ func (uc *UseCase) handleErrorWithUpdate(
 		libLog.Err(err),
 	)
 
-	// Publish job failure notification to RabbitMQ topic exchange.
-	// Sanitize the error message to avoid leaking internal details.
-	errorMetadata := map[string]any{
-		"message": sanitizeErrorForNotification(err.Error()),
-	}
-
-	// Ensure message has correct IDs (in case it was partially parsed)
-	message.JobID = jobID
-
-	if errNotify := uc.publishJobNotification(ctx, nil, message, "failed", errorMetadata, nil, logger); errNotify != nil {
-		logger.Log(ctx, libLog.LevelWarn, "failed to publish job failure notification",
+	if errNotify := uc.publishJobNotificationPayload(ctx, "failed", jobID.String(), notificationPayload, logger); errNotify != nil {
+		logger.Log(ctx, libLog.LevelError, "failed to publish required job failure notification",
 			libLog.String("job_id", jobID.String()),
 			libLog.Err(errNotify),
 		)
+
+		return fmt.Errorf("publish required job failure notification: %w", errNotify)
 	}
+
+	uc.clearPendingTerminalEvent(ctx, jobID, logger)
 
 	return err
 }
 
-// updateJobWithErrors updates the status of a job to "Error" with the provided error message.
-func (uc *UseCase) updateJobWithErrors(ctx context.Context, jobID uuid.UUID, errorMessage string) error {
-	metadata := map[string]any{
-		"error": errorMessage,
+func terminalEventPendingMetadata(status string, payload []byte) map[string]any {
+	return map[string]any{
+		terminalEventPendingMetadataKey: true,
+		terminalEventStatusMetadataKey:  status,
+		terminalEventPayloadMetadataKey: string(payload),
 	}
-
-	errUpdate := uc.JobRepository.UpdateStatus(ctx, jobID, model.JobStatusFailed, "", "", metadata)
-	if errUpdate != nil {
-		return fmt.Errorf("failed to update job status to failed: %w", errUpdate)
-	}
-
-	return nil
 }
 
-// queryExternalData retrieves data from external data sources specified in the message and populates the result map.
-func (uc *UseCase) queryExternalData(ctx context.Context, message ExtractExternalDataMessage, connections []*model.Connection, result map[string]map[string][]map[string]any) error {
-	logger, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
-
-	ctx, span := tracer.Start(ctx, "service.extract_external_data.query_external_data")
-	defer span.End()
-
-	span.SetAttributes(attribute.String("app.request.request_id", reqID))
-
-	for databaseName, tables := range message.MappedFields {
-		if err := uc.queryDatabase(ctx, databaseName, tables, connections, message.Filters, result, logger, tracer); err != nil {
-			return fmt.Errorf("failed to query database %s: %w", databaseName, err)
-		}
-	}
-
-	return nil
-}
-
-// queryDatabase handles data retrieval for a specific database.
-func (uc *UseCase) queryDatabase(
-	ctx context.Context,
-	databaseName string,
-	tables map[string][]string,
-	connections []*model.Connection,
-	allFilters map[string]map[string]map[string]modelJob.FilterCondition,
-	result map[string]map[string][]map[string]any,
-	logger libLog.Logger,
-	tracer trace.Tracer,
-) error {
-	ctx, dbSpan := tracer.Start(ctx, "service.extract_external_data.query_external_data.database")
-	defer dbSpan.End()
-
-	logger.Log(ctx, libLog.LevelInfo, "querying database", libLog.String("database_name", databaseName))
-
-	var foundConnection *model.Connection
-
-	for _, conn := range connections {
-		if conn != nil && conn.ConfigName == databaseName {
-			foundConnection = conn
-			break
-		}
-	}
-
-	if foundConnection == nil {
-		err := pkg.ValidationError{Code: "FET-0054", Title: "Connection Not Found", Message: fmt.Sprintf("connection not found for database: %s", databaseName)}
-		libOtel.HandleSpanBusinessErrorEvent(dbSpan, "Connection not found", err)
-
-		return err
-	}
-
-	// Create DataSource using injected factory
-	dataSource, err := uc.CreateDataSource(ctx, foundConnection)
+func (uc *UseCase) retryPendingTerminalEventForJob(ctx context.Context, job *model.Job, logger libLog.Logger) (bool, error) {
+	status, payload, err := pendingTerminalEvent(job)
 	if err != nil {
-		libOtel.HandleSpanError(dbSpan, "Error creating data source", err)
-		return fmt.Errorf("failed to create data source for %s: %w", databaseName, err)
+		return true, err
 	}
 
-	// Establish connection
-	if err := dataSource.Connect(ctx, logger); err != nil {
-		libOtel.HandleSpanError(dbSpan, "Error connecting to data source", err)
-		return fmt.Errorf("failed to connect to %s: %w", databaseName, err)
+	if !isTerminalStatus(job.Status) {
+		err := fmt.Errorf("job %s has pending terminal event %q but non-terminal status %q", job.ID, status, job.Status)
+		logger.Log(ctx, libLog.LevelError, "refusing to outbox terminal event without committed terminal state",
+			libLog.String("job_id", job.ID.String()),
+			libLog.Err(err),
+		)
+
+		return true, err
 	}
 
-	// Ensure connection is closed after query
-	defer func() {
-		if closeErr := dataSource.Close(ctx); closeErr != nil {
-			logger.Log(ctx, libLog.LevelWarn, "error closing connection",
-				libLog.String("database_name", databaseName),
-				libLog.Err(closeErr),
-			)
-		}
-	}()
+	if terminalStatusForEvent(status) != job.Status {
+		err := fmt.Errorf("job %s terminal event %q does not match committed status %q", job.ID, status, job.Status)
+		logger.Log(ctx, libLog.LevelError, "refusing to outbox contradictory terminal event",
+			libLog.String("job_id", job.ID.String()),
+			libLog.Err(err),
+		)
 
-	// Prepare a result map for this database
-	if _, databaseExists := result[databaseName]; !databaseExists {
-		result[databaseName] = make(map[string][]map[string]any)
+		return true, err
 	}
 
-	databaseFilters := allFilters[databaseName]
-
-	if foundConnection.Type == model.TypeMongoDB && databaseName == "plugin_crm" {
-		crmDS, ok := dataSource.(portDS.CRMQueryable)
-		if !ok {
-			return pkg.ValidationError{Code: "FET-0055", Title: "Unsupported Operation", Message: "data source for plugin_crm does not support CRM queries"}
-		}
-
-		return uc.QueryPluginCRM(ctx, crmDS, databaseName, tables, databaseFilters, result, logger)
+	if err := uc.publishJobNotificationPayload(ctx, status, job.ID.String(), []byte(payload), logger); err != nil {
+		return true, fmt.Errorf("publish required job %s notification: %w", status, err)
 	}
 
-	queryResult, errQuery := dataSource.Query(ctx, tables, databaseFilters, logger)
-	if errQuery != nil {
-		libOtel.HandleSpanError(dbSpan, "Error querying data source", errQuery)
-		return fmt.Errorf("failed to query %s: %w", databaseName, errQuery)
+	uc.clearPendingTerminalEvent(ctx, job.ID, logger)
+
+	logger.Log(ctx, libLog.LevelInfo, "retried pending terminal job event",
+		libLog.String("job_id", job.ID.String()),
+		libLog.String("status", status),
+	)
+
+	return true, nil
+}
+
+type terminalEventMetadataClearer interface {
+	ClearTerminalEventMetadata(ctx context.Context, id uuid.UUID) error
+}
+
+func (uc *UseCase) clearPendingTerminalEvent(ctx context.Context, jobID uuid.UUID, logger libLog.Logger) {
+	clearer, ok := uc.JobRepository.(terminalEventMetadataClearer)
+	if !ok {
+		return
 	}
 
-	// Merge query results into the result map
-	for tableOrCollection, tableResult := range queryResult {
-		result[databaseName][tableOrCollection] = tableResult
+	if err := clearer.ClearTerminalEventMetadata(ctx, jobID); err != nil {
+		// Error, not Warn: a failed clear leaves the pending-terminal-event marker set,
+		// so the terminal-event repairer will re-emit the (already-published) terminal
+		// event — a duplicate-event window. That operational hazard must be visible.
+		logger.Log(ctx, libLog.LevelError, "failed to clear terminal event retry metadata",
+			libLog.String("job_id", jobID.String()),
+			libLog.Err(err),
+		)
+	}
+}
+
+func hasPendingTerminalEvent(metadata map[string]any) bool {
+	pending, _ := metadata[terminalEventPendingMetadataKey].(bool)
+	return pending
+}
+
+func pendingTerminalEvent(job *model.Job) (string, string, error) {
+	status, ok := job.Metadata[terminalEventStatusMetadataKey].(string)
+	if !ok || status == "" {
+		return "", "", fmt.Errorf("job %s missing terminal event status metadata", job.ID)
+	}
+
+	payload, ok := job.Metadata[terminalEventPayloadMetadataKey].(string)
+	if !ok || payload == "" {
+		return "", "", fmt.Errorf("job %s missing terminal event payload metadata", job.ID)
+	}
+
+	return status, payload, nil
+}
+
+func isTerminalStatus(status model.JobStatus) bool {
+	return status == model.JobStatusCompleted || status == model.JobStatusFailed
+}
+
+func terminalStatusForEvent(status string) model.JobStatus {
+	switch status {
+	case "completed":
+		return model.JobStatusCompleted
+	case "failed":
+		return model.JobStatusFailed
+	default:
+		return ""
+	}
+}
+
+func (uc *UseCase) publishJobNotificationPayload(ctx context.Context, status, jobID string, payload []byte, logger libLog.Logger) error {
+	logger = normalizeJobNotificationLogger(ctx, logger)
+
+	if !uc.JobEventStreamingEnabled {
+		return fmt.Errorf("mandatory lib-streaming job event emission is disabled")
+	}
+
+	logger.Log(ctx, libLog.LevelInfo, "publishing job notification",
+		libLog.String("job_id", jobID),
+		libLog.String("status", status),
+		libLog.String("event_key", fmt.Sprintf("job.%s", status)),
+	)
+
+	if err := uc.emitJobNotificationEvent(ctx, status, jobID, payload); err != nil {
+		logger.Log(ctx, libLog.LevelError, "error emitting job notification with lib-streaming", libLog.Err(err))
+		return fmt.Errorf("emitting job notification event: %w", err)
 	}
 
 	return nil
@@ -492,29 +503,73 @@ func getTableFilters(databaseFilters map[string]map[string]modelJob.FilterCondit
 	return databaseFilters[tableName]
 }
 
-// saveExternalData converts the result map to JSON, encrypts it, and saves it to storage.
-func (uc *UseCase) saveExternalData(
+// resultPlaintext returns the plaintext bytes to persist plus the total row count.
+//
+// On the generic-only fast path (reuse non-nil) it reuses the engine's already-
+// serialized indented bytes verbatim and the engine's authoritative RowCount, after
+// verifying the engine's SHA-256 digest over those bytes — the one place the engine's
+// integrity digest, previously discarded, is finally checked. This eliminates the
+// decode + re-marshal round-trip the engine path used to pay.
+//
+// Otherwise (CRM-only or mixed) it serializes the in-memory result map with the EXACT
+// json.MarshalIndent(result, "", "  ") shape the stored artifact has always used, and
+// counts rows by walking the map. The two-space indent matches the engine's serialized
+// form, so the fast path and the fallback produce byte-identical artifacts for the
+// same generic-only data.
+func resultPlaintext(
 	ctx context.Context,
-	tracer trace.Tracer,
-	message ExtractExternalDataMessage,
 	result map[string]map[string][]map[string]any,
+	reuse *directReuse,
 	span trace.Span,
 	logger libLog.Logger,
-) (*JobResultData, error) {
-	ctx, spanSave := tracer.Start(ctx, "service.extract_external_data.save_external_data")
-	defer spanSave.End()
+) ([]byte, int64, error) {
+	if reuse != nil {
+		if err := reuse.verifyIntegrity(); err != nil {
+			libOtel.HandleSpanError(span, "engine direct result integrity check failed", err)
+			logger.Log(ctx, libLog.LevelError, "engine direct result integrity check failed", libLog.Err(err))
+
+			return nil, 0, pkg.FailedPreconditionError{Code: "FET-0068", Title: "Result Integrity Mismatch", Message: err.Error(), Err: err}
+		}
+
+		return reuse.plaintext, reuse.rowCount, nil
+	}
 
 	jsonData, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
 		libOtel.HandleSpanError(span, "Error marshalling result to JSON", err)
 		logger.Log(ctx, libLog.LevelError, "error marshalling result to json", libLog.Err(err))
 
-		return nil, pkg.FailedPreconditionError{Code: "FET-0060", Title: "Data Serialization Failed", Message: fmt.Sprintf("marshalling result to JSON: %s", err.Error()), Err: err}
+		return nil, 0, pkg.FailedPreconditionError{Code: "FET-0060", Title: "Data Serialization Failed", Message: fmt.Sprintf("marshalling result to JSON: %s", err.Error()), Err: err}
+	}
+
+	return jsonData, countTotalRows(result), nil
+}
+
+// saveExternalData serializes the extraction result, encrypts it, and saves it to
+// storage. When reuse is non-nil (a generic-only job) the engine's already-serialized
+// indented bytes ARE the plaintext: the worker-side re-marshal and row recount are
+// skipped, and the engine's RowCount is authoritative. When reuse is nil (CRM-only or
+// mixed) the in-memory result map is serialized via json.MarshalIndent, exactly as
+// before — the engine bytes cannot stand in for a map the CRM path also contributed to.
+func (uc *UseCase) saveExternalData(
+	ctx context.Context,
+	tracer trace.Tracer,
+	message ExtractExternalDataMessage,
+	result map[string]map[string][]map[string]any,
+	reuse *directReuse,
+	span trace.Span,
+	logger libLog.Logger,
+) (*JobResultData, error) {
+	ctx, spanSave := tracer.Start(ctx, "service.extract_external_data.save_external_data")
+	defer spanSave.End()
+
+	jsonData, rowCount, err := resultPlaintext(ctx, result, reuse, span, logger)
+	if err != nil {
+		return nil, err
 	}
 
 	// Calculate metrics before encryption (original data size)
 	sizeBytes := int64(len(jsonData))
-	rowCount := countTotalRows(result)
 
 	// Compute HMAC of plaintext data before encryption for external verification
 	var documentHMAC string
@@ -566,12 +621,54 @@ func (uc *UseCase) saveExternalData(
 	)
 
 	return &JobResultData{
-		Path:      resultPath,
-		SizeBytes: sizeBytes,
-		RowCount:  rowCount,
-		Format:    "json",
-		HMAC:      documentHMAC,
+		Path:       resultPath,
+		SizeBytes:  sizeBytes,
+		RowCount:   rowCount,
+		Format:     "json",
+		HMAC:       documentHMAC,
+		Integrity:  resultIntegrity(documentHMAC),
+		Protection: resultProtection(),
 	}, nil
+}
+
+// resultStorageProtectionMode names the protection mode for the stored extraction
+// result. The Worker storage adapter manages encryption (AES-256-GCM via the
+// HKDF-derived storage key), so the canonical mode is "adapter-managed" rather than
+// a specific cipher string — the Engine never sees or names the cipher.
+const resultStorageProtectionMode = "adapter-managed"
+
+// resultIntegrity declares the canonical T-007 integrity over the stored result.
+// It turns the tacit HMAC convention into an explicit field: the signature is the
+// EXACT documentHMAC the Worker already computed — HMAC-SHA256 over the PLAINTEXT
+// extraction JSON (before encryption). When no signer is configured (documentHMAC
+// empty), no integrity is declared rather than an empty, misleading one.
+//
+// It is a keyed signature (Signature), never an unkeyed content hash (Digest):
+// HMAC is one possible integrity SIGNATURE in the T-007 model.
+func resultIntegrity(documentHMAC string) *engine.ResultIntegrity {
+	if documentHMAC == "" {
+		return nil
+	}
+
+	return &engine.ResultIntegrity{
+		Algorithm: "HMAC-SHA256",
+		Signature: documentHMAC,
+	}
+}
+
+// resultProtection declares the canonical T-007 confidentiality over the stored
+// result bytes. The bytes are ALWAYS encrypted on the store path (encryptData
+// errors otherwise), the Worker storage layer applied it (AppliedBy = adapter), and
+// it is adapter-managed. KeyVersion is intentionally omitted: the HKDF-derived
+// storage key the Worker uses carries no version label today (see Gate-8 seam), and
+// the field is omitempty so an unset version is honestly absent rather than a
+// fabricated zero. This describes the STORED RESULT only, never credentials.
+func resultProtection() *engine.ResultProtection {
+	return &engine.ResultProtection{
+		Encrypted: true,
+		AppliedBy: engine.ProtectionAppliedByAdapter,
+		Mode:      resultStorageProtectionMode,
+	}
 }
 
 // encryptData encrypts extracted data using AES-GCM with the HKDF-derived storage key.
@@ -607,20 +704,31 @@ func (uc *UseCase) encryptData(data []byte, _ libLog.Logger) ([]byte, error) {
 }
 
 // shouldSkipProcessing checks if job should be skipped due to idempotency.
-func (uc *UseCase) shouldSkipProcessing(ctx context.Context, jobID uuid.UUID, logger libLog.Logger) bool {
-	jobStatus, err := uc.checkReportStatus(ctx, jobID, logger)
-	if err == nil {
-		if jobStatus == model.JobStatusCompleted || jobStatus == model.JobStatusProcessing {
-			logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Job %s is already %s, skipping reprocessing", jobID, jobStatus))
-			return true
-		}
+func (uc *UseCase) shouldSkipProcessing(ctx context.Context, jobID uuid.UUID, logger libLog.Logger) (bool, error) {
+	jobData, err := uc.getJobForStatusCheck(ctx, jobID, logger)
+	if err != nil || jobData == nil {
+		//nolint:nilerr // status preflight failure falls through to the main repository load, which marks the job failed with full context.
+		return false, nil
 	}
 
-	return false
+	if hasPendingTerminalEvent(jobData.Metadata) {
+		return uc.retryPendingTerminalEventForJob(ctx, jobData, logger)
+	}
+
+	if jobData.Status == model.JobStatusCompleted {
+		logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Job %s is already %s, skipping reprocessing", jobID, jobData.Status))
+		return true, nil
+	}
+
+	if jobData.Status == model.JobStatusProcessing {
+		logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Job %s is already processing; skipping extraction replay until terminal event marker is present", jobID))
+		return true, nil
+	}
+
+	return false, nil
 }
 
-// checkReportStatus checks the current status of a report to implement idempotency.
-func (uc *UseCase) checkReportStatus(ctx context.Context, jobID uuid.UUID, logger libLog.Logger) (model.JobStatus, error) {
+func (uc *UseCase) getJobForStatusCheck(ctx context.Context, jobID uuid.UUID, logger libLog.Logger) (*model.Job, error) {
 	jobData, err := uc.JobRepository.FindByID(ctx, jobID)
 	if err != nil {
 		logger.Log(ctx, libLog.LevelDebug, "could not check job status; may be first attempt",
@@ -628,12 +736,12 @@ func (uc *UseCase) checkReportStatus(ctx context.Context, jobID uuid.UUID, logge
 			libLog.Err(err),
 		)
 
-		return "", fmt.Errorf("failed to check job status: %w", err)
+		return nil, fmt.Errorf("failed to check job status: %w", err)
 	}
 
 	if jobData == nil {
 		logger.Log(ctx, libLog.LevelDebug, "no job data found", libLog.String("job_id", jobID.String()))
-		return "", pkg.ValidationError{Code: "FET-0067", Title: "Job Not Found", Message: fmt.Sprintf("no job data found for %s", jobID)}
+		return nil, pkg.ValidationError{Code: "FET-0067", Title: "Job Not Found", Message: fmt.Sprintf("no job data found for %s", jobID)}
 	}
 
 	logger.Log(ctx, libLog.LevelDebug, "current job status",
@@ -641,7 +749,7 @@ func (uc *UseCase) checkReportStatus(ctx context.Context, jobID uuid.UUID, logge
 		libLog.String("status", string(jobData.Status)),
 	)
 
-	return jobData.Status, nil
+	return jobData, nil
 }
 
 // extractConfigNamesFromMappedFields extracts the first-level keys from mappedFields.
@@ -658,14 +766,33 @@ func extractConfigNamesFromMappedFields(mappedFields map[string]map[string][]str
 	return configNames
 }
 
-// notificationURIPattern matches connection strings and URIs that may contain
-// credentials or internal infrastructure details.
-var notificationURIPattern = regexp.MustCompile(`\w+://[^\s]+`)
+var (
+	// notificationURIPattern matches scheme://... connection strings that may
+	// carry credentials or internal infrastructure details.
+	notificationURIPattern = regexp.MustCompile(`\w+://[^\s]+`)
+	// notificationNetAddrPattern matches the address operand of Go net-stack
+	// errors that embed an internal endpoint — e.g. "dial tcp 10.0.0.5:5432",
+	// "read tcp 10.0.0.5:5432->10.0.0.6:5432", "lookup mongo.internal". The
+	// operation keyword is preserved; the host/IP:port operand is redacted.
+	notificationNetAddrPattern = regexp.MustCompile(`\b(dial (?:tcp|udp)|read tcp|write tcp|lookup)\s+\S+`)
+	// notificationIPPattern catches any remaining bare IPv4 address (optionally
+	// with :port) not already covered by the patterns above.
+	notificationIPPattern = regexp.MustCompile(`\b\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?\b`)
+)
 
-// sanitizeErrorForNotification strips connection strings, hostnames, and other
-// internal infrastructure details from error messages.
+// sanitizeErrorForNotification strips connection strings, internal endpoints
+// (host:port from Go net-stack / DB-driver errors), and bare IP addresses from
+// error messages before they are published to notification consumers or
+// persisted in terminal-event metadata. It is deliberately anchored on known
+// leak shapes (URIs, net-op operands, IPv4) rather than redacting arbitrary
+// bare hostnames, to keep operator-facing errors useful while not leaking
+// internal topology.
 func sanitizeErrorForNotification(msg string) string {
-	return notificationURIPattern.ReplaceAllString(msg, "[redacted]")
+	msg = notificationURIPattern.ReplaceAllString(msg, "[redacted]")
+	msg = notificationNetAddrPattern.ReplaceAllString(msg, "$1 [redacted]")
+	msg = notificationIPPattern.ReplaceAllString(msg, "[redacted]")
+
+	return msg
 }
 
 // countTotalRows counts the total number of records in the result map.

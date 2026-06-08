@@ -2,12 +2,14 @@ package redis
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
 
-	"github.com/LerianStudio/lib-commons/v5/commons"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
+	observability "github.com/LerianStudio/lib-observability"
+	libLog "github.com/LerianStudio/lib-observability/log"
+	obsRuntime "github.com/LerianStudio/lib-observability/runtime"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -49,14 +51,14 @@ func NewFallbackCache[T any](redisCache *RedisCache[T], logger libLog.Logger, tt
 		stopCh:   make(chan struct{}),
 	}
 
-	go fc.monitorRedisHealth()
+	obsRuntime.SafeGo(logger, "redis-fallback-health-monitor", obsRuntime.KeepRunning, fc.monitorRedisHealth)
 
 	return fc
 }
 
 // Get retrieves a cached value, trying Redis first then in-memory.
 func (c *FallbackCache[T]) Get(ctx context.Context, key string) (T, bool, error) {
-	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "cache.fallback.get")
 	defer span.End()
@@ -88,7 +90,7 @@ func (c *FallbackCache[T]) Get(ctx context.Context, key string) (T, bool, error)
 
 // Set stores a value in both Redis (if available) and in-memory.
 func (c *FallbackCache[T]) Set(ctx context.Context, key string, value T, ttl time.Duration) error {
-	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "cache.fallback.set")
 	defer span.End()
@@ -122,7 +124,7 @@ func (c *FallbackCache[T]) Set(ctx context.Context, key string, value T, ttl tim
 
 // Delete removes a value from both caches.
 func (c *FallbackCache[T]) Delete(ctx context.Context, key string) error {
-	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "cache.fallback.delete")
 	defer span.End()
@@ -132,7 +134,12 @@ func (c *FallbackCache[T]) Delete(ctx context.Context, key string) error {
 		attribute.String("app.request.request_id", reqID),
 	)
 
-	_ = c.inMemory.Delete(ctx, key)
+	var deleteErrors []error
+
+	if err := c.inMemory.Delete(ctx, key); err != nil {
+		logger.Log(ctx, libLog.LevelWarn, fmt.Sprintf("failed to delete from in-memory cache: %v", err))
+		deleteErrors = append(deleteErrors, fmt.Errorf("in-memory delete: %w", err))
+	}
 
 	c.mu.RLock()
 	useRedis := c.useRedis
@@ -143,9 +150,14 @@ func (c *FallbackCache[T]) Delete(ctx context.Context, key string) error {
 
 		if err := c.redis.Delete(ctx, key); err != nil {
 			logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("failed to delete from redis: %v", err))
+			deleteErrors = append(deleteErrors, fmt.Errorf("redis delete: %w", err))
 		}
 	} else {
 		span.SetAttributes(attribute.String("app.cache.backend", "memory"))
+	}
+
+	if len(deleteErrors) > 0 {
+		return fmt.Errorf("failed to delete from fallback cache: %w", errors.Join(deleteErrors...))
 	}
 
 	return nil
@@ -153,14 +165,19 @@ func (c *FallbackCache[T]) Delete(ctx context.Context, key string) error {
 
 // Clear removes all cached entries from both caches.
 func (c *FallbackCache[T]) Clear(ctx context.Context) error {
-	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "cache.fallback.clear")
 	defer span.End()
 
 	span.SetAttributes(attribute.String("app.request.request_id", reqID))
 
-	_ = c.inMemory.Clear(ctx)
+	var clearErrors []error
+
+	if err := c.inMemory.Clear(ctx); err != nil {
+		logger.Log(ctx, libLog.LevelWarn, fmt.Sprintf("failed to clear in-memory cache: %v", err))
+		clearErrors = append(clearErrors, fmt.Errorf("in-memory clear: %w", err))
+	}
 
 	c.mu.RLock()
 	useRedis := c.useRedis
@@ -171,9 +188,14 @@ func (c *FallbackCache[T]) Clear(ctx context.Context) error {
 
 		if err := c.redis.Clear(ctx); err != nil {
 			logger.Log(context.Background(), libLog.LevelWarn, fmt.Sprintf("failed to clear redis cache: %v", err))
+			clearErrors = append(clearErrors, fmt.Errorf("redis clear: %w", err))
 		}
 	} else {
 		span.SetAttributes(attribute.String("app.cache.backend", "memory"))
+	}
+
+	if len(clearErrors) > 0 {
+		return fmt.Errorf("failed to clear fallback cache: %w", errors.Join(clearErrors...))
 	}
 
 	return nil

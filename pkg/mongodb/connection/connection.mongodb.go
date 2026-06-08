@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/LerianStudio/lib-observability"
+
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/model"
@@ -14,8 +16,7 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/net/http"
 	portsConnection "github.com/LerianStudio/fetcher/pkg/ports/connection"
 
-	"github.com/LerianStudio/lib-commons/v5/commons"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
+	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
 
 	"github.com/google/uuid"
 	"go.mongodb.org/mongo-driver/bson"
@@ -104,7 +105,7 @@ func (cr *ConnectionMongoDBRepository) getDatabase(ctx context.Context) (*mongo.
 
 // Create inserts a new connection respecting the unique constraint per organization.
 func (cr *ConnectionMongoDBRepository) Create(ctx context.Context, conn *model.Connection) (*model.Connection, error) {
-	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	_, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "mongodb.create_connection")
 	defer span.End()
@@ -161,7 +162,7 @@ func (cr *ConnectionMongoDBRepository) Create(ctx context.Context, conn *model.C
 
 // Update overwrites mutable fields of an existing connection and returns the saved entity.
 func (cr *ConnectionMongoDBRepository) Update(ctx context.Context, conn *model.Connection) (*model.Connection, error) {
-	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	_, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "mongodb.update_connection")
 	defer span.End()
@@ -254,7 +255,7 @@ func (cr *ConnectionMongoDBRepository) Update(ctx context.Context, conn *model.C
 
 // Delete performs a soft delete by stamping deleted_at and updated_at fields.
 func (cr *ConnectionMongoDBRepository) Delete(ctx context.Context, connectionID uuid.UUID, deletedAt time.Time) error {
-	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	_, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "mongodb.delete_connection")
 	defer span.End()
@@ -304,7 +305,7 @@ func (cr *ConnectionMongoDBRepository) Delete(ctx context.Context, connectionID 
 
 // FindByID fetches a connection by its ID scoped to an organization.
 func (cr *ConnectionMongoDBRepository) FindByID(ctx context.Context, connectionID uuid.UUID) (*model.Connection, error) {
-	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	_, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "mongodb.find_connection_by_id")
 	defer span.End()
@@ -350,7 +351,7 @@ func (cr *ConnectionMongoDBRepository) FindByID(ctx context.Context, connectionI
 
 // FindByName retrieves a connection by configName.
 func (cr *ConnectionMongoDBRepository) FindByName(ctx context.Context, configName string) (*model.Connection, error) {
-	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	_, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "mongodb.find_connection_by_name")
 	defer span.End()
@@ -400,7 +401,7 @@ func (cr *ConnectionMongoDBRepository) FindByName(ctx context.Context, configNam
 
 // FindByDatabaseName retrieves a connection by databaseName.
 func (cr *ConnectionMongoDBRepository) FindByDatabaseName(ctx context.Context, databaseName string) (*model.Connection, error) {
-	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	_, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "mongodb.find_connection_by_database")
 	defer span.End()
@@ -454,7 +455,7 @@ func (cr *ConnectionMongoDBRepository) FindByDatabaseName(ctx context.Context, d
 
 // FindByConfigNames retrieves connections that match any of the provided config names for the given organization.
 func (cr *ConnectionMongoDBRepository) FindByConfigNames(ctx context.Context, configNames []string) ([]*model.Connection, error) {
-	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	_, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "mongodb.find_connections_by_config_names")
 	defer span.End()
@@ -535,7 +536,7 @@ func (cr *ConnectionMongoDBRepository) FindByConfigNames(ctx context.Context, co
 
 // List returns a paginated set of connections for the given organization.
 func (rm *ConnectionMongoDBRepository) List(ctx context.Context, filters http.QueryHeader) ([]*model.Connection, int64, error) {
-	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	_, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "mongodb.list_connections")
 	defer span.End()
@@ -611,7 +612,7 @@ func (rm *ConnectionMongoDBRepository) List(ctx context.Context, filters http.Qu
 
 // ListUnassigned returns a paginated set of connections that have no product assigned for the given organization.
 func (rm *ConnectionMongoDBRepository) ListUnassigned(ctx context.Context, filters http.QueryHeader) ([]*model.Connection, int64, error) {
-	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	_, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "mongodb.list_unassigned_connections")
 	defer span.End()
@@ -696,7 +697,7 @@ func (rm *ConnectionMongoDBRepository) ListUnassigned(ctx context.Context, filte
 
 // AssignProductName associates a legacy (unassigned) connection to a product by name. Returns the updated connection.
 func (cr *ConnectionMongoDBRepository) AssignProductName(ctx context.Context, connectionID uuid.UUID, productName string) (*model.Connection, error) {
-	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	_, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "mongodb.assign_connection_product")
 	defer span.End()

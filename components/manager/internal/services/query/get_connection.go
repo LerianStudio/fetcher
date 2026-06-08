@@ -4,32 +4,34 @@ import (
 	"context"
 	"fmt"
 
+	observability "github.com/LerianStudio/lib-observability"
+
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
+	"github.com/LerianStudio/fetcher/pkg/engine"
+	"github.com/LerianStudio/fetcher/pkg/enginecompat/connectioncompat"
 	"github.com/LerianStudio/fetcher/pkg/model"
-	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
 	"github.com/LerianStudio/fetcher/pkg/resolver"
 
-	"github.com/LerianStudio/lib-commons/v5/commons"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
 	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
+	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
 )
 
 type GetConnection struct {
-	connRepo connRepo.Repository
 	resolver resolver.ConnectionResolver          // nil-safe
 	registry *resolver.InternalDatasourceRegistry // nil-safe
+	engine   *engine.Engine                       // scope authority + ID-addressed read persistence
 }
 
-func NewGetConnection(connectionRepo connRepo.Repository, connResolver resolver.ConnectionResolver, dsRegistry *resolver.InternalDatasourceRegistry) *GetConnection {
-	return &GetConnection{connRepo: connectionRepo, resolver: connResolver, registry: dsRegistry}
+func NewGetConnection(connResolver resolver.ConnectionResolver, dsRegistry *resolver.InternalDatasourceRegistry, eng *engine.Engine) *GetConnection {
+	return &GetConnection{resolver: connResolver, registry: dsRegistry, engine: eng}
 }
 
 func (s *GetConnection) Execute(ctx context.Context, connectionID uuid.UUID) (*model.Connection, error) {
-	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	_, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "service.get_connection")
 	defer span.End()
@@ -38,6 +40,16 @@ func (s *GetConnection) Execute(ctx context.Context, connectionID uuid.UUID) (*m
 		attribute.String("app.request.request_id", reqID),
 		attribute.String("app.request.connection_id", connectionID.String()),
 	)
+
+	// Route the per-request tenant-scope authority through the Engine before any
+	// read. This is the single scope gate for the internal-datasource branch
+	// (which is a resolver concern, never persisted); the external read below
+	// routes its PERSISTENCE through the Engine's ID-addressed op, which also
+	// re-validates the scope as part of resolving through the store.
+	if err := connectioncompat.AuthorizeAccess(ctx, s.engine); err != nil {
+		libOpentelemetry.HandleSpanError(span, "Failed to authorize tenant scope", err)
+		return nil, err
+	}
 
 	// Check if this is an internal datasource (deterministic UUID per tenant)
 	if s.registry != nil && s.resolver != nil {
@@ -61,8 +73,10 @@ func (s *GetConnection) Execute(ctx context.Context, connectionID uuid.UUID) (*m
 		}
 	}
 
-	// Fallback to MongoDB lookup for external connections
-	current, err := s.connRepo.FindByID(ctx, connectionID)
+	// Fallback to the external connection read, routed through the Engine's
+	// ID-addressed op (Engine tenant-scope + ConnectionStore.FindByID ->
+	// repo.FindByID). The rich record round-trips through the opaque host payload.
+	current, err := connectioncompat.FindByID(ctx, s.engine, connectionID.String())
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to find connection by ID", err)
 		return nil, fmt.Errorf("failed to find connection by id: %w", err)

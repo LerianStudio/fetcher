@@ -8,9 +8,9 @@ import (
 	"time"
 
 	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
+	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/assert"
 	"go.mongodb.org/mongo-driver/mongo"
-	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 // fakeMongoResolver returns a static (db, err) pair without any driver state.

@@ -35,7 +35,6 @@ import (
 	"time"
 
 	e2eshared "github.com/LerianStudio/fetcher/tests/shared"
-	"github.com/docker/go-connections/nat"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -95,7 +94,7 @@ func workerHealthURL(t *testing.T) string {
 
 	mappedPort, err := workerApp.Container.MappedPort(
 		context.Background(),
-		nat.Port(strconv.Itoa(e2eshared.WorkerHealthPort)+"/tcp"),
+		fmt.Sprintf("%d/tcp", e2eshared.WorkerHealthPort),
 	)
 	require.NoError(t, err, "resolve worker mapped HEALTH_PORT")
 

@@ -158,119 +158,44 @@ func TestNewReadyzRedisClient_NoTLS_NilTLSConfig(t *testing.T) {
 	assert.Nil(t, opts.TLSConfig, "TLSConfig must be nil when RedisTLS=false")
 }
 
-// TestBuildManagerReadyzCheckers_MultiTenant_RegistersMTRedisChecker is a
-// regression for the CodeRabbit PR #223 finding (#5): when MT is enabled
-// and MULTI_TENANT_REDIS_HOST is set, the global /readyz must include a
-// `multi_tenant_redis` dep so the event-discovery Redis is observable.
-// Previously this function only emitted the schema-cache `redis` and
-// `tenant_manager` deps, leaving MT-Redis silently absent.
-func TestBuildManagerReadyzCheckers_MultiTenant_RegistersMTRedisChecker(t *testing.T) {
-	cfg := &Config{
+func TestBuildManagerReadyzCheckers_MultiTenantRedisRegistration(t *testing.T) {
+	client := newReadyzMultiTenantRedisClient(&Config{
 		MultiTenantEnabled:   true,
-		MultiTenantURL:       "http://tenant-manager:8080",
-		MultiTenantRedisHost: "mt-redis.local",
-		MultiTenantRedisPort: "6379",
-	}
-
-	plat := &managerPlatformDependencies{
-		multiTenantReadyzRedisClient: newReadyzMultiTenantRedisClient(cfg),
-	}
-	require.NotNil(t, plat.multiTenantReadyzRedisClient,
-		"newReadyzMultiTenantRedisClient must return a non-nil client when MT enabled with a host")
-
-	t.Cleanup(func() { _ = plat.multiTenantReadyzRedisClient.Close() })
-
-	got := buildManagerReadyzCheckers(cfg, nil, plat)
-
-	mt := findCheckerByName(t, got, "multi_tenant_redis")
-	require.NotNil(t, mt,
-		"multi_tenant_redis checker must be registered when MT enabled with a host")
-}
-
-// TestBuildManagerReadyzCheckers_MultiTenant_NoMTRedisHost_OmitsMTChecker
-// verifies the inverse: MT enabled but MULTI_TENANT_REDIS_HOST empty must
-// NOT emit a multi_tenant_redis checker (a dep that was never configured
-// shouldn't show up as a /readyz line).
-func TestBuildManagerReadyzCheckers_MultiTenant_NoMTRedisHost_OmitsMTChecker(t *testing.T) {
-	cfg := &Config{
-		MultiTenantEnabled:   true,
-		MultiTenantURL:       "http://tenant-manager:8080",
-		MultiTenantRedisHost: "",
-	}
-
-	plat := &managerPlatformDependencies{
-		multiTenantReadyzRedisClient: newReadyzMultiTenantRedisClient(cfg),
-	}
-	assert.Nil(t, plat.multiTenantReadyzRedisClient,
-		"newReadyzMultiTenantRedisClient must return nil when MULTI_TENANT_REDIS_HOST is empty")
-
-	got := buildManagerReadyzCheckers(cfg, nil, plat)
-
-	mt := findCheckerByName(t, got, "multi_tenant_redis")
-	assert.Nil(t, mt,
-		"multi_tenant_redis checker must NOT be registered when MULTI_TENANT_REDIS_HOST is empty")
-}
-
-// TestBuildManagerReadyzCheckers_SingleTenant_OmitsMTRedisChecker covers
-// the third corner: MT disabled — even if a host is somehow configured on
-// the cfg, the checker stays out of the registry to avoid misleading
-// operators about a dep the manager won't actually probe.
-func TestBuildManagerReadyzCheckers_SingleTenant_OmitsMTRedisChecker(t *testing.T) {
-	cfg := &Config{
-		MultiTenantEnabled:   false,
-		MultiTenantRedisHost: "mt-redis.local", // intentionally set; should still be ignored
-	}
-
-	plat := &managerPlatformDependencies{
-		multiTenantReadyzRedisClient: newReadyzMultiTenantRedisClient(cfg),
-	}
-	assert.Nil(t, plat.multiTenantReadyzRedisClient,
-		"newReadyzMultiTenantRedisClient must return nil when MT is disabled, regardless of host")
-
-	got := buildManagerReadyzCheckers(cfg, nil, plat)
-
-	mt := findCheckerByName(t, got, "multi_tenant_redis")
-	assert.Nil(t, mt,
-		"multi_tenant_redis checker must NOT be registered when MultiTenantEnabled=false")
-}
-
-// TestNewReadyzMultiTenantRedisClient_TLS_EnablesTLSConfig verifies the
-// TLS branch on the manager's MT-Redis readyz client mirrors the worker
-// side: TLSConfig is populated with TLS 1.2 as the floor when
-// MULTI_TENANT_REDIS_TLS=true.
-func TestNewReadyzMultiTenantRedisClient_TLS_EnablesTLSConfig(t *testing.T) {
-	cfg := &Config{
-		MultiTenantEnabled:   true,
-		MultiTenantRedisHost: "mt-redis.local",
+		MultiTenantRedisHost: "localhost",
+		MultiTenantRedisPort: "6380",
 		MultiTenantRedisTLS:  true,
-	}
-
-	client := newReadyzMultiTenantRedisClient(cfg)
-	require.NotNil(t, client, "client must be returned for MT-enabled config with non-empty host")
-
+	})
+	require.NotNil(t, client)
 	t.Cleanup(func() { _ = client.Close() })
 
-	opts := client.Options()
-	require.NotNil(t, opts.TLSConfig, "TLSConfig must be non-nil when MultiTenantRedisTLS=true")
-	assert.Equal(t, uint16(tls.VersionTLS12), opts.TLSConfig.MinVersion,
-		"TLS minimum version must be 1.2 to match the event-listener Redis client")
+	checkers := buildManagerReadyzCheckers(&Config{
+		MultiTenantEnabled:   true,
+		MultiTenantRedisHost: "localhost",
+		MultiTenantRedisPort: "6380",
+		MultiTenantRedisTLS:  true,
+	}, nil, &managerPlatformDependencies{readyzMultiTenantRedisClient: client})
+
+	checker := findCheckerByName(t, checkers, "multi_tenant_redis")
+	require.NotNil(t, checker, "multi-tenant Redis checker must be registered when MT is enabled and host is configured")
+	result := checker.Check(context.Background())
+	require.NotNil(t, result.TLS)
+	assert.True(t, *result.TLS)
 }
 
-// TestNewReadyzMultiTenantRedisClient_NoTLS_NilTLSConfig is the inverse —
-// MultiTenantRedisTLS=false leaves TLSConfig nil so the client speaks
-// plaintext on the local-dev path.
+func TestBuildManagerReadyzCheckers_MultiTenantRedisOmittedWhenNotConfigured(t *testing.T) {
+	checkers := buildManagerReadyzCheckers(&Config{MultiTenantEnabled: true}, nil, &managerPlatformDependencies{})
+
+	assert.Nil(t, findCheckerByName(t, checkers, "multi_tenant_redis"))
+}
+
 func TestNewReadyzMultiTenantRedisClient_NoTLS_NilTLSConfig(t *testing.T) {
-	cfg := &Config{
+	client := newReadyzMultiTenantRedisClient(&Config{
 		MultiTenantEnabled:   true,
-		MultiTenantRedisHost: "mt-redis.local",
+		MultiTenantRedisHost: "localhost",
 		MultiTenantRedisTLS:  false,
-	}
-
-	client := newReadyzMultiTenantRedisClient(cfg)
+	})
 	require.NotNil(t, client)
-
 	t.Cleanup(func() { _ = client.Close() })
 
-	opts := client.Options()
-	assert.Nil(t, opts.TLSConfig, "TLSConfig must be nil when MultiTenantRedisTLS=false")
+	assert.Nil(t, client.Options().TLSConfig)
 }

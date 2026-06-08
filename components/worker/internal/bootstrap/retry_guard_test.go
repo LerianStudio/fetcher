@@ -57,9 +57,9 @@ func TestIsNonRetryableHandlerError(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:     "ErrManagerClosed is non-retryable",
+			name:     "ErrManagerClosed is retryable",
 			err:      tmcore.ErrManagerClosed,
-			expected: true,
+			expected: false,
 		},
 		{
 			name: "TenantSuspendedError is non-retryable",

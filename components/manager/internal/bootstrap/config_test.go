@@ -7,17 +7,19 @@ import (
 	"time"
 
 	cacheRepo "github.com/LerianStudio/fetcher/components/manager/internal/adapters/cache"
-	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/bootstrap/readyz"
+	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/crypto"
 	"github.com/LerianStudio/fetcher/pkg/model"
+	portCache "github.com/LerianStudio/fetcher/pkg/ports/cache"
 	redisCache "github.com/LerianStudio/fetcher/pkg/redis"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
+	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
 	libMongo "github.com/LerianStudio/lib-commons/v5/commons/mongo"
-	libOtel "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
 	tmclient "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/client"
 	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
-	"github.com/LerianStudio/lib-commons/v5/commons/zap"
+	libLog "github.com/LerianStudio/lib-observability/log"
+	libOtel "github.com/LerianStudio/lib-observability/tracing"
+	"github.com/LerianStudio/lib-observability/zap"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -47,6 +49,40 @@ func (stubSchemaCacheStore) Clear(context.Context) error {
 
 func (stubSchemaCacheStore) IsHealthy(context.Context) bool {
 	return true
+}
+
+type closableSchemaCache struct {
+	closed bool
+}
+
+var _ portCache.SchemaCacheRepository = (*closableSchemaCache)(nil)
+
+func (*closableSchemaCache) Get(context.Context, string) (*model.DataSourceSchema, error) {
+	return nil, nil
+}
+
+func (*closableSchemaCache) Set(context.Context, string, *model.DataSourceSchema, time.Duration) error {
+	return nil
+}
+func (*closableSchemaCache) Delete(context.Context, string) error { return nil }
+func (*closableSchemaCache) Clear(context.Context) error          { return nil }
+func (*closableSchemaCache) IsHealthy(context.Context) bool       { return true }
+func (c *closableSchemaCache) Close() error {
+	c.closed = true
+	return nil
+}
+
+func TestRegisterSchemaCacheCloseHook_ClosesCache(t *testing.T) {
+	t.Parallel()
+
+	cache := &closableSchemaCache{}
+	hooks := []func(context.Context) error{}
+
+	registerSchemaCacheCloseHook(&hooks, cache)
+
+	require.Len(t, hooks, 1)
+	require.NoError(t, hooks[0](context.Background()))
+	assert.True(t, cache.closed)
 }
 
 func TestConfigStruct(t *testing.T) {
@@ -83,6 +119,15 @@ func TestLoadConfig_ReturnsError(t *testing.T) {
 	assert.Nil(t, cfg)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "config load failed")
+}
+
+func TestManagerConfigLoader_UsesLibCommonsLoaderAndLicenseDefault(t *testing.T) {
+	cfg := &Config{}
+	require.NoError(t, setConfigFromEnvVars(cfg))
+	assert.False(t, cfg.LicenseEnforcementEnabled)
+
+	err := setConfigFromEnvVars(nil)
+	require.ErrorIs(t, err, libCommons.ErrNilConfig)
 }
 
 func TestInitLoggerAndTelemetry_ReturnsApplyGlobalsError(t *testing.T) {
@@ -365,8 +410,9 @@ func TestConfig_LoadFromEnvVars(t *testing.T) {
 		{
 			name: "loads boolean fields",
 			envVars: map[string]string{
-				"ENABLE_TELEMETRY":    "true",
-				"PLUGIN_AUTH_ENABLED": "true",
+				"ENABLE_TELEMETRY":            "true",
+				"PLUGIN_AUTH_ENABLED":         "true",
+				"LICENSE_ENFORCEMENT_ENABLED": "true",
 			},
 			validate: func(t *testing.T, cfg *Config) {
 				t.Helper()
@@ -375,6 +421,9 @@ func TestConfig_LoadFromEnvVars(t *testing.T) {
 				}
 				if !cfg.AuthEnabled {
 					t.Error("AuthEnabled should be true")
+				}
+				if !cfg.LicenseEnforcementEnabled {
+					t.Error("LicenseEnforcementEnabled should be true")
 				}
 			},
 		},
@@ -472,6 +521,9 @@ func TestConfig_LoadFromEnvVars(t *testing.T) {
 				if cfg.AuthEnabled {
 					t.Error("AuthEnabled should default to false")
 				}
+				if cfg.LicenseEnforcementEnabled {
+					t.Error("LicenseEnforcementEnabled should default to false")
+				}
 			},
 		},
 		{
@@ -562,7 +614,7 @@ func TestConfig_LoadFromEnvVars(t *testing.T) {
 			}
 
 			cfg := &Config{}
-			if err := pkg.SetConfigFromEnvVars(cfg); err != nil {
+			if err := setConfigFromEnvVars(cfg); err != nil {
 				t.Fatalf("SetConfigFromEnvVars() error: %v", err)
 			}
 
@@ -683,6 +735,13 @@ func TestResolvedMaxTenantPools(t *testing.T) {
 	}
 }
 
+func TestFetcherOperationalMongoModule_UsesSharedFetcherModule(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, constant.ModuleFetcherOperationalState, fetcherOperationalMongoModule())
+	assert.NotEqual(t, constant.ModuleManager, fetcherOperationalMongoModule())
+}
+
 func TestMultiTenantPublisher_ProducerDefault_RequiresTenantID(t *testing.T) {
 	publisher := &multiTenantPublisher{
 		manager: &stubRabbitMQManager{},
@@ -721,7 +780,8 @@ func TestMultiTenantPublisher_ProducerDefault_PublishesMessage(t *testing.T) {
 	err := publisher.ProducerDefault(ctx, "exchange", "routing-key", []byte(`{"job":"1"}`), &headers)
 	require.NoError(t, err)
 	assert.True(t, ch.published, "expected message to be published")
-	assert.True(t, ch.closed, "expected channel to be closed")
+	assert.True(t, ch.closed, "tenant channel returned by tenant manager must be closed by the publisher after confirmed publish")
+	assert.Equal(t, 1, ch.closeCalls)
 	assert.Equal(t, "exchange", ch.lastExchange)
 	assert.Equal(t, "routing-key", ch.lastKey)
 }
@@ -763,6 +823,11 @@ func TestInitPlatformDependencies_MultiTenant_CreatesTMPublisher(t *testing.T) {
 	}
 
 	cfg := &Config{
+		// DeploymentMode=local skips fail-closed license enforcement, which would
+		// otherwise build a real license client (nil without LICENSE_KEY/ORGANIZATION_IDS)
+		// and fail this test on machines with no license env. This test asserts TM
+		// publisher wiring, not licensing.
+		DeploymentMode:           "local",
 		MultiTenantEnabled:       true,
 		MultiTenantURL:           "http://tenant-manager:8080",
 		MultiTenantServiceAPIKey: "test-key",
@@ -809,33 +874,106 @@ func TestInitPlatformDependencies_MultiTenant_TMClientError(t *testing.T) {
 // --- test stubs for multiTenantPublisher ---
 
 type stubRabbitMQManager struct {
-	channel managerRabbitMQChannel
-	err     error
+	channel  managerRabbitMQChannel
+	channels []managerRabbitMQChannel
+	err      error
+	getCalls int
 }
 
 func (s *stubRabbitMQManager) GetChannel(_ context.Context, _ string) (managerRabbitMQChannel, error) {
+	s.getCalls++
+	if len(s.channels) > 0 {
+		ch := s.channels[0]
+		s.channels = s.channels[1:]
+		return ch, s.err
+	}
+
 	return s.channel, s.err
 }
 
 type stubRabbitMQChannel struct {
-	published    bool
-	closed       bool
-	lastExchange string
-	lastKey      string
-	publishErr   error
+	published          bool
+	closed             bool
+	lastExchange       string
+	lastKey            string
+	publishErr         error
+	confirmErr         error
+	confirmation       amqp.Confirmation
+	publishConfirmCh   chan amqp.Confirmation
+	publishCount       int
+	confirmCalls       int
+	notifyPublishCalls int
+	closeCalls         int
 }
 
 func (s *stubRabbitMQChannel) PublishWithContext(_ context.Context, exchange, key string, _, _ bool, _ amqp.Publishing) error {
+	s.publishCount++
 	s.published = true
 	s.lastExchange = exchange
 	s.lastKey = key
 
-	return s.publishErr
+	if s.publishErr != nil {
+		return s.publishErr
+	}
+
+	if s.publishConfirmCh != nil {
+		confirmation := s.confirmation
+		if confirmation.DeliveryTag == 0 {
+			confirmation = amqp.Confirmation{DeliveryTag: uint64(s.publishCount), Ack: true}
+		}
+		s.publishConfirmCh <- confirmation
+	}
+
+	return nil
+}
+
+func (s *stubRabbitMQChannel) Confirm(bool) error {
+	s.confirmCalls++
+	return s.confirmErr
+}
+
+func (s *stubRabbitMQChannel) NotifyPublish(receiver chan amqp.Confirmation) chan amqp.Confirmation {
+	s.notifyPublishCalls++
+	s.publishConfirmCh = receiver
+	return receiver
+}
+
+func (s *stubRabbitMQChannel) NotifyClose(receiver chan *amqp.Error) chan *amqp.Error {
+	return receiver
 }
 
 func (s *stubRabbitMQChannel) Close() error {
+	s.closeCalls++
 	s.closed = true
 	return nil
+}
+
+func TestMultiTenantPublisher_ProducerDefault_ClosesTenantChannelAfterEachPublish(t *testing.T) {
+	t.Parallel()
+
+	firstChannel := &stubRabbitMQChannel{}
+	secondChannel := &stubRabbitMQChannel{}
+	manager := &stubRabbitMQManager{channels: []managerRabbitMQChannel{firstChannel, secondChannel}}
+	publisher := &multiTenantPublisher{
+		manager: manager,
+		logger:  testManagerBootstrapLogger(),
+	}
+	ctx := stubTenantContext("tenant-123")
+
+	require.NoError(t, publisher.ProducerDefault(ctx, "exchange", "job.created", []byte(`{"n":1}`), nil))
+	require.NoError(t, publisher.ProducerDefault(ctx, "exchange", "job.created", []byte(`{"n":2}`), nil))
+
+	assert.Equal(t, 2, manager.getCalls)
+	assert.Equal(t, 1, firstChannel.publishCount)
+	assert.Equal(t, 1, secondChannel.publishCount)
+	assert.Equal(t, 1, firstChannel.confirmCalls)
+	assert.Equal(t, 1, secondChannel.confirmCalls)
+	assert.Equal(t, 1, firstChannel.notifyPublishCalls)
+	assert.Equal(t, 1, secondChannel.notifyPublishCalls)
+	assert.Equal(t, 1, firstChannel.closeCalls)
+	assert.Equal(t, 1, secondChannel.closeCalls)
+	assert.True(t, firstChannel.closed)
+	assert.True(t, secondChannel.closed)
 }
 
 // stubTenantContext creates a context with tenant ID set via tmcore.

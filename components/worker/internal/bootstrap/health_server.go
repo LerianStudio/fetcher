@@ -7,9 +7,9 @@ import (
 
 	"github.com/LerianStudio/fetcher/pkg/bootstrap/readyz"
 	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
-	libOtel "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
 	libCommonsServer "github.com/LerianStudio/lib-commons/v5/commons/server"
+	libLog "github.com/LerianStudio/lib-observability/log"
+	libOtel "github.com/LerianStudio/lib-observability/tracing"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -37,6 +37,12 @@ func defaultDrain(sec int) time.Duration {
 // readiness endpoint to schedule tenant events and reap dead pods.
 // It runs under the same Launcher lifecycle as the consumer, so a single
 // SIGTERM tears both down via the shared drain flag.
+//
+// Deliberately not mounted here: lib-streaming's manifest handler. This server
+// is unauthenticated kube-health surface, not a public/admin API; exposing the
+// manifest here would leak event topology through a probe port. The follow-up is
+// to add an authenticated worker admin surface and mount streaming.NewStreamingHandler
+// there, not to bolt it onto /health by stealth. Subtle difference, large blast radius.
 type HealthServer struct {
 	app       *fiber.App
 	addr      string

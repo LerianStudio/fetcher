@@ -2,21 +2,18 @@ package bootstrap
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
-	"encoding/base64"
-	"net"
 
 	workerRabbitAdapters "github.com/LerianStudio/fetcher/components/worker/internal/adapters/rabbitmq"
 	"github.com/LerianStudio/fetcher/pkg/bootstrap/readyz"
 	"github.com/LerianStudio/fetcher/pkg/constant"
-	pkgRabbitmq "github.com/LerianStudio/fetcher/pkg/rabbitmq"
 	portStorage "github.com/LerianStudio/fetcher/pkg/ports/storage"
+	pkgRabbitmq "github.com/LerianStudio/fetcher/pkg/rabbitmq"
 	pkgStorage "github.com/LerianStudio/fetcher/pkg/storage"
 	libMongo "github.com/LerianStudio/lib-commons/v5/commons/mongo"
 	tmclient "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/client"
 	tmmongo "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/mongo"
 	tmrabbitmq "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/rabbitmq"
+	tmredis "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/redis"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gofiber/fiber/v2"
 	"github.com/redis/go-redis/v9"
@@ -31,10 +28,10 @@ type workerReadyzDeps struct {
 	mongoClient    *libMongo.Client
 	rabbitAdapter  pkgRabbitmq.Adapter
 	s3Client       *s3.Client
-	mtRedisClient  *redis.Client
 	tmClient       readyz.TMClient
 	tmMongoManager *tmmongo.Manager
 	tmRabbitMgr    *tmrabbitmq.Manager
+	mtRedisClient  *redis.Client
 
 	closers []func() error
 }
@@ -59,6 +56,27 @@ func newWorkerReadyzDepsST(
 	}
 
 	return deps
+}
+
+func newWorkerReadyzMultiTenantRedisClient(cfg *Config) *redis.Client {
+	if cfg == nil || !cfg.MultiTenantEnabled || cfg.MultiTenantRedisHost == "" {
+		return nil
+	}
+
+	// Use the tenant-manager Redis option builder instead of hand-rolled Redis
+	// options. The full NewTenantPubSubRedisClient helper pings immediately;
+	// /readyz must construct even when Redis is down so the checker can report it.
+	opts, err := tmredis.BuildOptions(tmredis.TenantPubSubRedisConfig{
+		Host:     cfg.MultiTenantRedisHost,
+		Port:     cfg.MultiTenantRedisPort,
+		Password: cfg.MultiTenantRedisPassword,
+		TLS:      cfg.MultiTenantRedisTLS,
+	})
+	if err != nil {
+		return nil
+	}
+
+	return redis.NewClient(opts)
 }
 
 // newWorkerReadyzDepsMT builds deps for the multi-tenant path. The
@@ -86,10 +104,9 @@ func newWorkerReadyzDepsMT(
 		deps.s3Client = s3Repo.Client()
 	}
 
-	rdb := newReadyzMTRedis(cfg)
-	if rdb != nil {
-		deps.mtRedisClient = rdb
-		deps.closers = append(deps.closers, func() error { return rdb.Close() })
+	if redisClient := newWorkerReadyzMultiTenantRedisClient(cfg); redisClient != nil {
+		deps.mtRedisClient = redisClient
+		deps.closers = append(deps.closers, redisClient.Close)
 	}
 
 	return deps
@@ -107,54 +124,6 @@ func (d *workerReadyzDeps) close() {
 			_ = fn()
 		}
 	}
-}
-
-// newReadyzMTRedis builds the standalone MT-Redis client used by /readyz.
-// Returns nil when MT-Redis is not configured.
-//
-// When cfg.MultiTenantRedisTLS is true, opts.TLSConfig is populated with
-// TLS 1.2 as the floor and the optional base64-encoded
-// MULTI_TENANT_REDIS_CA_CERT bundle. This mirrors the manager-side
-// newReadyzMultiTenantRedisClient and the worker's main MT-Redis client in
-// initMultiTenantStack — without it, the readyz Ping speaks plaintext on a
-// TLS-only Redis and reports multi_tenant_redis=down even when Redis is
-// healthy. CA-cert decode failures intentionally fall back to a system-
-// trust-store TLS config: the bootstrap caller does not propagate errors
-// from the readyz client, so erroring out would crash the worker. The
-// downstream Ping will still surface a TLS handshake failure as
-// multi_tenant_redis=down if the system trust store cannot validate the
-// broker.
-func newReadyzMTRedis(cfg *Config) *redis.Client {
-	if cfg == nil || cfg.MultiTenantRedisHost == "" {
-		return nil
-	}
-
-	port := cfg.MultiTenantRedisPort
-	if port == "" {
-		port = "6379"
-	}
-
-	opts := &redis.Options{
-		Addr:     net.JoinHostPort(cfg.MultiTenantRedisHost, port),
-		Password: cfg.MultiTenantRedisPassword,
-	}
-
-	if cfg.MultiTenantRedisTLS {
-		tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
-
-		if cfg.MultiTenantRedisCACert != "" {
-			if caCert, err := base64.StdEncoding.DecodeString(cfg.MultiTenantRedisCACert); err == nil {
-				pool := x509.NewCertPool()
-				if pool.AppendCertsFromPEM(caCert) {
-					tlsCfg.RootCAs = pool
-				}
-			}
-		}
-
-		opts.TLSConfig = tlsCfg
-	}
-
-	return redis.NewClient(opts)
 }
 
 // workerRabbitMQAdapterProbe duplicates the manager-side adapter so each
@@ -271,16 +240,6 @@ func buildWorkerReadyzCheckers(deps *workerReadyzDeps) []readyz.DependencyChecke
 		))
 	}
 
-	if deps.mtRedisClient != nil {
-		client := deps.mtRedisClient
-
-		checkers = append(checkers, readyz.NewRedisClientCheckerFromFn(
-			"multi_tenant_redis",
-			func(ctx context.Context) error { return client.Ping(ctx).Err() },
-			readyz.ComposeRedisURL(deps.cfg.MultiTenantRedisHost, deps.cfg.MultiTenantRedisPort, deps.cfg.MultiTenantRedisTLS),
-		))
-	}
-
 	if deps.s3Client != nil {
 		checkers = append(checkers, readyz.NewS3BucketChecker(
 			&s3HeadBucketShim{client: deps.s3Client},
@@ -290,6 +249,16 @@ func buildWorkerReadyzCheckers(deps *workerReadyzDeps) []readyz.DependencyChecke
 	}
 
 	if deps.cfg.MultiTenantEnabled {
+		if deps.mtRedisClient != nil {
+			client := deps.mtRedisClient
+
+			checkers = append(checkers, readyz.NewRedisClientCheckerFromFn(
+				"multi_tenant_redis",
+				func(ctx context.Context) error { return client.Ping(ctx).Err() },
+				readyz.ComposeRedisURL(deps.cfg.MultiTenantRedisHost, deps.cfg.MultiTenantRedisPort, deps.cfg.MultiTenantRedisTLS),
+			))
+		}
+
 		checkers = append(checkers, readyz.NewTenantManagerClientChecker(
 			deps.tmClient,
 			workerApplicationServiceName(),
