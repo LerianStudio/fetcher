@@ -10,6 +10,6 @@ permissions:
 
 jobs:
   fuzz:
-    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/go-fuzz.yml@v1.32.0
+    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/go-fuzz.yml@v1.33.0
     with:
       go_version: '1.26.4'
