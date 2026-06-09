@@ -3,7 +3,6 @@ package query
 import (
 	"context"
 	"errors"
-	"strings"
 
 	observability "github.com/LerianStudio/lib-observability"
 
@@ -11,11 +10,11 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/LerianStudio/fetcher/pkg/engine"
 	plugincrm "github.com/LerianStudio/fetcher/pkg/enginecompat/plugincrm"
+	"github.com/LerianStudio/fetcher/pkg/enginecompat/schemacompat"
+	"github.com/LerianStudio/fetcher/pkg/enginecompat/tablenorm"
 	"github.com/LerianStudio/fetcher/pkg/model"
-	datasourceModel "github.com/LerianStudio/fetcher/pkg/model/datasource"
 	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
 	"github.com/LerianStudio/fetcher/pkg/resolver"
-	"github.com/LerianStudio/fetcher/pkg/schemautil"
 
 	libLog "github.com/LerianStudio/lib-observability/log"
 	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
@@ -261,44 +260,20 @@ func (s *ValidateSchema) validateConfigs(
 
 // schemaScopeForConfig computes the schema-name list discovery should fetch for
 // a connection, injecting the default schema for unqualified table names per
-// database type. This preserves the legacy ensureDefaultSchemaForPostgreSQL /
-// ensureDefaultSchemaForSQLServer behavior on the discovery path.
+// database type. It delegates to the SINGLE type-aware helper
+// tablenorm.SchemaScopeForTables (also used by the Worker extraction path) so the
+// unqualified-table + default-schema rule has one implementation across both seams.
 func schemaScopeForConfig(conn *model.Connection, tables map[string][]string) []string {
-	schemas := datasourceModel.GetUniqueSchemas(tables)
-
-	switch conn.Type {
-	case model.TypePostgreSQL:
-		return ensureDefaultSchemaForPostgreSQL(tables, schemas)
-	case model.TypeSQLServer:
-		return ensureDefaultSchemaForSQLServer(tables, schemas)
-	default:
-		return schemas
-	}
+	return tablenorm.SchemaScopeForTables(conn.Type, tables)
 }
 
 // snapshotForCRM projects the discovered host schema into the Engine snapshot
 // shape the plugin_crm compatibility adapter consumes. It is a thin, host-side
-// projection — the adapter performs CRM collection auto-discovery against it.
+// projection over the single forward builder with NO filtering and NO
+// normalization — the CRM adapter performs collection auto-discovery against the
+// literal collection names.
 func snapshotForCRM(configName string, schema *model.DataSourceSchema) engine.SchemaSnapshot {
-	snapshot := engine.SchemaSnapshot{ConfigName: configName}
-
-	for name, table := range schema.Tables {
-		tableName := name
-
-		var fields []string
-
-		if table != nil {
-			if table.TableName != "" {
-				tableName = table.TableName
-			}
-
-			fields = table.GetColumnsList()
-		}
-
-		snapshot.Tables = append(snapshot.Tables, engine.TableSnapshot{Name: tableName, Fields: fields})
-	}
-
-	return snapshot
+	return schemacompat.BuildSnapshot(configName, "", schema, schemacompat.SnapshotOptions{})
 }
 
 // validateTablesAgainstSchema validates tables against a DataSourceSchema.
@@ -353,82 +328,22 @@ func validateTablesAgainstSchema(
 	return validationErrors
 }
 
-// normalizeTableNameForValidation normalizes a table name for schema lookup
-// based on the database type. This handles cases where users request
-// "dbo.users" but schema stores "users", or "SYSTEM.table" vs "table".
+// normalizeTableNameForValidation normalizes a table name for schema lookup based on
+// the database type, delegating to the SINGLE canonicalizer tablenorm.NormalizeTable
+// (also used by the Manager discovery snapshot and the Worker extraction path). This
+// strips default-schema prefixes (public./dbo.) for PostgreSQL/SQLServer and folds
+// Oracle identifiers to UPPERCASE — matching the UPPERCASE Manager snapshot, the
+// physical Oracle catalog, and the extracted result keys. One source of truth keeps
+// the validation lookup and the snapshot it queries from ever diverging.
 func normalizeTableNameForValidation(tableName string, dbType model.DBType) string {
-	switch dbType {
-	case model.TypeSQLServer:
-		return schemautil.NormalizeTableNameForLookup(tableName, schemautil.DefaultSchemaSQLServer)
-	case model.TypeOracle:
-		// Oracle stores table names in lowercase after normalization
-		// and uses the current user as default schema.
-		return strings.ToLower(tableName)
-	case model.TypePostgreSQL:
-		return schemautil.NormalizeTableNameForLookup(tableName, schemautil.DefaultSchemaPostgreSQL)
-	default:
-		return tableName
-	}
+	return tablenorm.NormalizeTable(dbType, tableName)
 }
 
-// normalizeFieldNameForValidation normalizes a field name for schema lookup
-// based on the database type. Oracle stores column names in UPPERCASE in its
-// data dictionary (ALL_TAB_COLUMNS), but the Oracle datasource's GetSchemaInfo
-// normalizes them to lowercase for case-insensitive matching.
+// normalizeFieldNameForValidation normalizes a field name for schema lookup based on
+// the database type, delegating to the SINGLE canonicalizer tablenorm.NormalizeField.
+// Oracle folds to UPPERCASE (matching the physical ALL_TAB_COLUMNS catalog, the
+// UPPERCASE snapshot, and the extracted result column keys); PostgreSQL, SQL Server,
+// and MySQL are left in their original case (case-sensitive lookup, no fold).
 func normalizeFieldNameForValidation(fieldName string, dbType model.DBType) string {
-	switch dbType {
-	case model.TypeOracle:
-		// Oracle's GetSchemaInfo normalizes column names to lowercase.
-		// User input like "ID" must be converted to "id" for lookup.
-		return strings.ToLower(fieldName)
-	default:
-		// PostgreSQL, SQL Server, MySQL are case-insensitive for unquoted identifiers
-		// but we store them in their original case, so no normalization needed.
-		return fieldName
-	}
-}
-
-// ensureDefaultSchema adds the default schema to the schemas list
-// if any table name is unqualified (has no schema prefix with a dot).
-// This ensures tables in the default schema are discoverable when mixed with schema-qualified tables.
-func ensureDefaultSchema(tables map[string][]string, schemas []string, defaultSchema string) []string {
-	// Check if any table has no dot (unqualified name).
-	hasUnqualifiedTable := false
-
-	for tableName := range tables {
-		if !strings.Contains(tableName, ".") {
-			hasUnqualifiedTable = true
-			break
-		}
-	}
-
-	// If there are unqualified tables, ensure default schema is included.
-	if hasUnqualifiedTable {
-		defaultIncluded := false
-
-		for _, s := range schemas {
-			if s == defaultSchema {
-				defaultIncluded = true
-				break
-			}
-		}
-
-		if !defaultIncluded {
-			schemas = append(schemas, defaultSchema)
-		}
-	}
-
-	return schemas
-}
-
-// ensureDefaultSchemaForPostgreSQL adds the default "public" schema to the schemas list
-// if any table name is unqualified (has no schema prefix with a dot).
-func ensureDefaultSchemaForPostgreSQL(tables map[string][]string, schemas []string) []string {
-	return ensureDefaultSchema(tables, schemas, schemautil.DefaultSchemaPostgreSQL)
-}
-
-// ensureDefaultSchemaForSQLServer adds the default "dbo" schema to the schemas list
-// if any table name is unqualified (has no schema prefix with a dot).
-func ensureDefaultSchemaForSQLServer(tables map[string][]string, schemas []string) []string {
-	return ensureDefaultSchema(tables, schemas, schemautil.DefaultSchemaSQLServer)
+	return tablenorm.NormalizeField(dbType, fieldName)
 }

@@ -73,3 +73,16 @@
 | Exchange | `RABBITMQ_JOB_EVENTS_EXCHANGE` (default `fetcher.job.events`) is the job-events exchange used by the streaming RabbitMQ route target. |
 | Behavioral impact if unset | Worker startup fails fast (fail-closed wiring). There is no silent degradation and no legacy fallback — a missing or `false` `STREAMING_ENABLED` blocks the Worker from starting. |
 | Decision | Accepted as the new v2.0.0 contract. Operators must set `STREAMING_ENABLED=true` and provision the `fetcher.job.events` exchange before upgrade. |
+
+## Behavior delta: Manager schema discovery + validation use UPPERCASE-canonical Oracle identifiers
+
+| Field | Value |
+|-------|-------|
+| Owner | Platform Engineering / Fetcher maintainers |
+| Since | Embedded-runtime GA (v2.0.0) |
+| Scope | Manager `GET .../schema` response and schema validation for Oracle datasources only. Does not affect PostgreSQL/MySQL/SQL Server/MongoDB. |
+| Legacy behavior | The Manager surfaced Oracle table/field identifiers in lowercase (from `oracle.GetSchemaInfo`), while the Worker extraction path normalized to UPPERCASE — the two services disagreed, and the Manager's lowercase identity diverged from the physical UPPERCASE column keys the extracted rows actually carry (`pkg/oracle.createRowMap` keys verbatim by the physical catalog). |
+| New behavior | Oracle is UPPERCASE-canonical end-to-end: discovery snapshot, `/schema` response, validation identity, the normalized result table keys, and the physical data-key casing all agree (UPPERCASE). The Manager now aligns UP to the already-correct Worker. Pinned by the cross-path parity test (`components/manager/internal/services/query/oracle_casing_parity_test.go`). |
+| Unaffected | The result-key normalization contract above ("Oracle identifiers are uppercased") is preserved byte-for-byte. `oracle.GetSchemaInfo` still lowercases internally; the canonical fold (`ToUpper`, idempotent) re-normalizes before any user-visible surface. The persisted job spec keeps the verbatim requested name; request matching stays case-insensitive at `pkg/oracle.ValidateTableAndFields`. |
+| Deploy note | The Redis schema cache may hold pre-upgrade lowercase Oracle snapshots. During the cache TTL drain window after upgrade, an Oracle schema validation could compare an UPPERCASE-normalized request against a stale lowercase cached snapshot and fail. The window is transient (TTL-bounded) and Oracle-only; operators can flush the schema cache on upgrade to avoid it. |
+| Decision | Accepted as the v2.0.0 contract. The pre-GA Manager-vs-Worker casing disagreement was the latent bug; this closes it by making every Oracle identity surface match the physical data. |

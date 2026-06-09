@@ -35,7 +35,6 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/engine"
 	"github.com/LerianStudio/fetcher/pkg/enginecompat/connectioncompat"
 	"github.com/LerianStudio/fetcher/pkg/enginecompat/schemacompat"
-	"github.com/LerianStudio/fetcher/pkg/enginecompat/tablenorm"
 	"github.com/LerianStudio/fetcher/pkg/model"
 	"github.com/LerianStudio/fetcher/pkg/model/datasource"
 	"github.com/LerianStudio/fetcher/pkg/model/job"
@@ -410,61 +409,12 @@ func filtersForConfig(configName string, request engine.ExtractionRequest) map[s
 //     Engine's exact match succeeds exactly where the legacy normalization did.
 //
 // Both reconciliations live HERE, at the enginecompat seam, never in the Engine
-// core — the Engine stays literal and free of datasource-naming knowledge.
+// core — the Engine stays literal and free of datasource-naming knowledge. The
+// actual filter + normalize implementation is the single forward builder
+// schemacompat.BuildSnapshot; this is a thin wrapper that selects both flags.
 func snapshotFromSchema(configName string, dbType model.DBType, schema *model.DataSourceSchema) engine.SchemaSnapshot {
-	snapshot := engine.SchemaSnapshot{ConfigName: configName}
-	if schema == nil {
-		return snapshot
-	}
-
-	if schema.ConfigName != "" {
-		snapshot.ConfigName = schema.ConfigName
-	}
-
-	snapshot.CapturedAt = schema.CachedAt
-
-	if len(schema.Tables) == 0 {
-		return snapshot
-	}
-
-	tables := make([]engine.TableSnapshot, 0, len(schema.Tables))
-	for name, table := range schema.Tables {
-		tableName := name
-		if table != nil && table.TableName != "" {
-			tableName = table.TableName
-		}
-
-		if schemacompat.IsSystemTable(dbType, tableName) {
-			continue
-		}
-
-		var fields []string
-		if table != nil {
-			fields = normalizeSnapshotFields(dbType, table.GetColumnsList())
-		}
-
-		tables = append(tables, engine.TableSnapshot{Name: tablenorm.NormalizeTable(dbType, tableName), Fields: fields})
-	}
-
-	snapshot.Tables = tables
-
-	return snapshot
-}
-
-// normalizeSnapshotFields canonicalizes a snapshot's field names for the datasource
-// type so the snapshot side and the request side (worker mapper) reconcile to the
-// SAME identity before the Engine's literal field match. It is the IDENTITY for
-// case-sensitive types (PG/MySQL/SQLServer) and folds to UPPERCASE for Oracle,
-// mirroring tablenorm.NormalizeField on the request side. A nil input yields nil.
-func normalizeSnapshotFields(dbType model.DBType, fields []string) []string {
-	if !tablenorm.FoldsFieldCase(dbType) || fields == nil {
-		return fields
-	}
-
-	out := make([]string, len(fields))
-	for i, field := range fields {
-		out[i] = tablenorm.NormalizeField(dbType, field)
-	}
-
-	return out
+	return schemacompat.BuildSnapshot(configName, dbType, schema, schemacompat.SnapshotOptions{
+		FilterSystemTables: true,
+		Normalize:          true,
+	})
 }

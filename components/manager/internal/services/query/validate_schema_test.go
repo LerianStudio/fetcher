@@ -526,7 +526,10 @@ func TestValidateSchema_MultipleDatasources_AllValid(t *testing.T) {
 	assert.Empty(t, resp.Errors)
 }
 
-// TestEnsureDefaultSchemaForPostgreSQL tests the helper function for adding default schema.
+// TestEnsureDefaultSchemaForPostgreSQL tests the Manager's schemaScopeForConfig
+// (now delegating to tablenorm.SchemaScopeForTables) for adding the default schema.
+// The scope is derived from the table keys, so inputSchemas is no longer an input —
+// it is retained only to document the expected unique schemas.
 func TestEnsureDefaultSchemaForPostgreSQL(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -573,10 +576,10 @@ func TestEnsureDefaultSchemaForPostgreSQL(t *testing.T) {
 			expectPublic:  true,
 		},
 		{
-			name:          "empty tables returns original schemas",
+			name:          "empty tables yields empty scope",
 			tables:        map[string][]string{},
-			inputSchemas:  []string{"custom"},
-			expectSchemas: []string{"custom"},
+			inputSchemas:  []string{},
+			expectSchemas: []string{},
 			expectPublic:  false,
 		},
 		{
@@ -593,7 +596,7 @@ func TestEnsureDefaultSchemaForPostgreSQL(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := ensureDefaultSchemaForPostgreSQL(tt.tables, tt.inputSchemas)
+			result := schemaScopeForConfig(&model.Connection{Type: model.TypePostgreSQL}, tt.tables)
 
 			// Check if public is in result when expected
 			hasPublic := false
@@ -732,8 +735,9 @@ func TestValidateSchema_NonPostgreSQLDoesNotAddPublicSchema(t *testing.T) {
 	}{
 		{name: "MySQL", dbType: model.TypeMySQL, schemaTableKey: "users", requestFields: []string{"id"}, schemaColumnKey: "id"},
 		{name: "MongoDB", dbType: model.TypeMongoDB, schemaTableKey: "users", requestFields: []string{"id"}, schemaColumnKey: "id"},
-		// Oracle's GetSchemaInfo normalizes table/column names to lowercase; validation normalizes to lowercase
-		{name: "Oracle", dbType: model.TypeOracle, schemaTableKey: "users", requestFields: []string{"id"}, schemaColumnKey: "id"},
+		// Oracle is UPPERCASE-canonical: the snapshot the connector writes (and thus the
+		// cache holds) is UPPERCASE, and validation normalizes the request to UPPERCASE.
+		{name: "Oracle", dbType: model.TypeOracle, schemaTableKey: "USERS", requestFields: []string{"id"}, schemaColumnKey: "ID"},
 		{name: "SQLServer", dbType: model.TypeSQLServer, schemaTableKey: "users", requestFields: []string{"id"}, schemaColumnKey: "id"},
 	}
 
@@ -1098,7 +1102,9 @@ func TestValidateTablesAgainstSchema_SQLServerQualifiedNames(t *testing.T) {
 
 // TestValidateTablesAgainstSchema_OracleQualifiedNames tests that Oracle
 // table name normalization handles uppercase storage and schema prefixes.
-// Oracle's GetSchemaInfo normalizes table names to lowercase for case-insensitive matching.
+// Oracle is UPPERCASE-canonical: the snapshot (and thus the schema the validator
+// queries) is UPPERCASE — matching the physical Oracle catalog and the extracted
+// result keys — and the request is normalized to UPPERCASE for the lookup.
 func TestValidateTablesAgainstSchema_OracleQualifiedNames(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -1108,42 +1114,42 @@ func TestValidateTablesAgainstSchema_OracleQualifiedNames(t *testing.T) {
 		errorType      string
 	}{
 		{
-			name: "lowercase users matches users in schema",
-			requestTables: map[string][]string{
-				"users": {"id", "name"},
-			},
-			schemaTables: map[string]*model.TableSchema{
-				"users": {TableName: "users", Columns: map[string]bool{"id": true, "name": true}},
-			},
-			expectedErrors: 0,
-		},
-		{
-			name: "USERS matches users in schema (converted to lowercase)",
+			name: "uppercase users matches USERS in schema",
 			requestTables: map[string][]string{
 				"USERS": {"ID", "NAME"},
 			},
 			schemaTables: map[string]*model.TableSchema{
-				"users": {TableName: "users", Columns: map[string]bool{"id": true, "name": true}},
+				"USERS": {TableName: "USERS", Columns: map[string]bool{"ID": true, "NAME": true}},
 			},
 			expectedErrors: 0,
 		},
 		{
-			name: "hr.employees matches hr.employees in schema (converted to lowercase)",
+			name: "lowercase users matches USERS in schema (converted to UPPERCASE)",
 			requestTables: map[string][]string{
-				"HR.EMPLOYEES": {"ID", "NAME"},
+				"users": {"id", "name"},
 			},
 			schemaTables: map[string]*model.TableSchema{
-				"hr.employees": {TableName: "hr.employees", Columns: map[string]bool{"id": true, "name": true}},
+				"USERS": {TableName: "USERS", Columns: map[string]bool{"ID": true, "NAME": true}},
 			},
 			expectedErrors: 0,
 		},
 		{
-			name: "mixed case Sales.Orders matches sales.orders in schema",
+			name: "hr.employees matches HR.EMPLOYEES in schema (converted to UPPERCASE)",
+			requestTables: map[string][]string{
+				"hr.employees": {"id", "name"},
+			},
+			schemaTables: map[string]*model.TableSchema{
+				"HR.EMPLOYEES": {TableName: "HR.EMPLOYEES", Columns: map[string]bool{"ID": true, "NAME": true}},
+			},
+			expectedErrors: 0,
+		},
+		{
+			name: "mixed case Sales.Orders matches SALES.ORDERS in schema",
 			requestTables: map[string][]string{
 				"Sales.Orders": {"ID"},
 			},
 			schemaTables: map[string]*model.TableSchema{
-				"sales.orders": {TableName: "sales.orders", Columns: map[string]bool{"id": true}},
+				"SALES.ORDERS": {TableName: "SALES.ORDERS", Columns: map[string]bool{"ID": true}},
 			},
 			expectedErrors: 0,
 		},
@@ -1153,7 +1159,7 @@ func TestValidateTablesAgainstSchema_OracleQualifiedNames(t *testing.T) {
 				"nonexistent": {"id"},
 			},
 			schemaTables: map[string]*model.TableSchema{
-				"users": {TableName: "users", Columns: map[string]bool{"id": true}},
+				"USERS": {TableName: "USERS", Columns: map[string]bool{"ID": true}},
 			},
 			expectedErrors: 1,
 			errorType:      model.ErrTypeTableNotFound,
@@ -1164,7 +1170,7 @@ func TestValidateTablesAgainstSchema_OracleQualifiedNames(t *testing.T) {
 				"users": {"id", "nonexistent"},
 			},
 			schemaTables: map[string]*model.TableSchema{
-				"users": {TableName: "users", Columns: map[string]bool{"id": true, "name": true}},
+				"USERS": {TableName: "USERS", Columns: map[string]bool{"ID": true, "NAME": true}},
 			},
 			expectedErrors: 1,
 			errorType:      model.ErrTypeFieldNotFound,
@@ -1188,89 +1194,9 @@ func TestValidateTablesAgainstSchema_OracleQualifiedNames(t *testing.T) {
 	}
 }
 
-// TestEnsureDefaultSchema tests the generic ensureDefaultSchema function
-// that works for both PostgreSQL and SQL Server.
-func TestEnsureDefaultSchema(t *testing.T) {
-	tests := []struct {
-		name          string
-		tables        map[string][]string
-		inputSchemas  []string
-		defaultSchema string
-		expectDefault bool
-	}{
-		{
-			name: "unqualified table adds default schema",
-			tables: map[string][]string{
-				"users": {"id", "name"},
-			},
-			inputSchemas:  []string{},
-			defaultSchema: "public",
-			expectDefault: true,
-		},
-		{
-			name: "qualified table does not add default schema",
-			tables: map[string][]string{
-				"custom.users": {"id", "name"},
-			},
-			inputSchemas:  []string{"custom"},
-			defaultSchema: "public",
-			expectDefault: false,
-		},
-		{
-			name: "mixed tables adds default schema",
-			tables: map[string][]string{
-				"users":         {"id", "name"},
-				"custom.orders": {"id", "total"},
-			},
-			inputSchemas:  []string{"custom"},
-			defaultSchema: "dbo",
-			expectDefault: true,
-		},
-		{
-			name: "default already included is not duplicated",
-			tables: map[string][]string{
-				"users": {"id", "name"},
-			},
-			inputSchemas:  []string{"dbo"},
-			defaultSchema: "dbo",
-			expectDefault: true,
-		},
-		{
-			name:          "empty tables returns original schemas",
-			tables:        map[string][]string{},
-			inputSchemas:  []string{"custom"},
-			defaultSchema: "public",
-			expectDefault: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := ensureDefaultSchema(tt.tables, tt.inputSchemas, tt.defaultSchema)
-
-			hasDefault := false
-			for _, s := range result {
-				if s == tt.defaultSchema {
-					hasDefault = true
-					break
-				}
-			}
-
-			if hasDefault != tt.expectDefault {
-				t.Errorf("expected default=%v, got default=%v in result %v", tt.expectDefault, hasDefault, result)
-			}
-
-			// Verify no duplicates
-			seen := make(map[string]bool)
-			for _, s := range result {
-				if seen[s] {
-					t.Errorf("duplicate schema %s in result %v", s, result)
-				}
-				seen[s] = true
-			}
-		})
-	}
-}
+// The generic ensureDefaultSchema helper was consolidated into
+// tablenorm.SchemaScopeForTables; its behavior is covered by
+// tablenorm.TestSchemaScopeForTables and TestEnsureDefaultSchemaForPostgreSQL above.
 
 // TestNormalizeTableNameForValidation tests the normalizeTableNameForValidation function
 // for all supported database types.
@@ -1281,30 +1207,30 @@ func TestNormalizeTableNameForValidation(t *testing.T) {
 		dbType    model.DBType
 		expected  string
 	}{
-		// Oracle tests - converts to lowercase (to match GetSchemaInfo normalization)
+		// Oracle tests - converts to UPPERCASE (matches physical catalog + result keys)
 		{
-			name:      "Oracle: lowercase stays lowercase",
-			tableName: "users",
+			name:      "Oracle: uppercase stays uppercase",
+			tableName: "USERS",
 			dbType:    model.TypeOracle,
-			expected:  "users",
+			expected:  "USERS",
 		},
 		{
-			name:      "Oracle: mixed case converts to lowercase",
+			name:      "Oracle: mixed case converts to uppercase",
 			tableName: "UserAccounts",
 			dbType:    model.TypeOracle,
-			expected:  "useraccounts",
+			expected:  "USERACCOUNTS",
 		},
 		{
-			name:      "Oracle: qualified name converts to lowercase",
-			tableName: "HR.EMPLOYEES",
+			name:      "Oracle: qualified name converts to uppercase",
+			tableName: "hr.employees",
 			dbType:    model.TypeOracle,
-			expected:  "hr.employees",
+			expected:  "HR.EMPLOYEES",
 		},
 		{
-			name:      "Oracle: uppercase converts to lowercase",
-			tableName: "TRANSACTIONS",
+			name:      "Oracle: lowercase converts to uppercase",
+			tableName: "transactions",
 			dbType:    model.TypeOracle,
-			expected:  "transactions",
+			expected:  "TRANSACTIONS",
 		},
 
 		// SQL Server tests - strips dbo prefix
@@ -1387,24 +1313,24 @@ func TestNormalizeFieldNameForValidation(t *testing.T) {
 		dbType    model.DBType
 		expected  string
 	}{
-		// Oracle tests - converts to lowercase (to match GetSchemaInfo normalization)
+		// Oracle tests - converts to UPPERCASE (matches physical catalog + result keys)
 		{
-			name:      "Oracle: lowercase stays lowercase",
-			fieldName: "id",
+			name:      "Oracle: uppercase stays uppercase",
+			fieldName: "ID",
 			dbType:    model.TypeOracle,
-			expected:  "id",
+			expected:  "ID",
 		},
 		{
-			name:      "Oracle: mixed case converts to lowercase",
+			name:      "Oracle: mixed case converts to uppercase",
 			fieldName: "firstName",
 			dbType:    model.TypeOracle,
-			expected:  "firstname",
+			expected:  "FIRSTNAME",
 		},
 		{
-			name:      "Oracle: uppercase converts to lowercase",
-			fieldName: "CREATED_AT",
+			name:      "Oracle: lowercase converts to uppercase",
+			fieldName: "created_at",
 			dbType:    model.TypeOracle,
-			expected:  "created_at",
+			expected:  "CREATED_AT",
 		},
 
 		// Other databases - no transformation (case preserved as stored)

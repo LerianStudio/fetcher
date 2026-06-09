@@ -7,28 +7,46 @@
 //
 // It is the load-bearing half of owner decision Option 2 (T-010): the Engine core
 // matches requested tables/fields against the discovered schema snapshot by LITERAL
-// equality and carries no datasource-naming knowledge. The legacy Worker, by
-// contrast, normalized identifiers per datasource type at query time:
+// equality and carries no datasource-naming knowledge. The host normalizes
+// identifiers per datasource type at the seam:
 //
 //   - PostgreSQL: strip the "public." default-schema prefix (case-sensitive names).
 //   - SQL Server: strip the "dbo." default-schema prefix (case-sensitive names).
-//   - Oracle: fold table AND field identifiers to UPPERCASE — Oracle stores schema
-//     identifiers uppercased and the legacy adapter matched them with EqualFold /
-//     ToUpper (pkg/oracle: case-insensitive table+field matching). A lowercase or
-//     mixed-case Oracle request must therefore match the uppercased snapshot.
+//   - Oracle: fold table AND field identifiers to UPPERCASE. This is the
+//     UPPERCASE-CANONICAL contract, and it is the one that aligns the SCHEMA identity
+//     to the physical DATA identity for free. Oracle's data dictionary stores
+//     identifiers UPPERCASED; the extracted result rows are keyed verbatim by
+//     rows.Columns() (pkg/oracle.createRowMap), i.e. by the physical UPPERCASE column
+//     names, and nothing normalizes those data keys. Uppercasing the snapshot and the
+//     request keys therefore makes snapshot == validation == result table keys ==
+//     result column keys == physical catalog, all UPPERCASE. It also preserves the
+//     signed-off result-key compatibility waiver ("Oracle identifiers are uppercased",
+//     docs/compatibility-waivers.md). GetSchemaInfo internally lowercases what it
+//     returns, but ToUpper is idempotent so the canonical fold re-uppercases it; the
+//     adapter's ToLower is harmless and left untouched.
 //   - MySQL / MongoDB: no normalization (case-sensitive, no strippable default
 //     schema).
 //
-// To preserve that byte-identical behavior WITHOUT teaching the Engine core about
+// PHYSICAL-CASE MAPPING DOES NOT HAPPEN HERE. The Oracle query path emits UNQUOTED
+// identifiers (squirrel writes column/table names verbatim with no quoting), and
+// pkg/oracle.ValidateTableAndFields resolves the requested (case-insensitive) field
+// names back to the PHYSICAL column case taken from the freshly-discovered schema
+// before building the SELECT. Oracle then folds the unquoted identifiers to uppercase
+// itself. So an UPPERCASE canonical identity at this seam matches the physical data
+// directly, and request-vs-physical reconciliation lives at the SQL-building seam in
+// pkg/oracle, untouched by this package.
+//
+// To preserve case-insensitive matching WITHOUT teaching the Engine core about
 // schema names or case rules, the host normalizes BOTH the discovered snapshot
 // identifiers AND the requested identifiers to the SAME canonical form here, at the
-// enginecompat seam. The Engine's literal match then behaves exactly like the legacy
-// per-adapter normalization: prefix/case variants the legacy Worker accepted still
-// pass, while genuinely-missing identifiers still fail validation.
+// enginecompat seam. The Engine's literal match then behaves like the legacy
+// per-adapter case-insensitive matching: prefix/case variants still pass, while
+// genuinely-missing identifiers still fail validation.
 //
 // The default-schema prefix rule REUSES pkg/schemautil.NormalizeTableNameForLookup —
 // the SAME function the legacy adapters call — so there is a single source of truth
-// for it. Oracle case-folding mirrors the legacy oracle adapter's ToUpper.
+// for it. Oracle case-folding uppercases to match the physical Oracle catalog and the
+// result-key waiver.
 package tablenorm
 
 import (
@@ -61,17 +79,19 @@ func DefaultSchemaForType(dbType model.DBType) string {
 }
 
 // FoldsFieldCase reports whether the datasource type folds identifier case during
-// matching. Only Oracle does (it stores identifiers uppercased and the legacy
-// adapter matched case-insensitively); PostgreSQL, MySQL, and SQL Server matched
-// field names case-SENSITIVELY in the legacy path, so they must NOT be folded.
+// matching. Only Oracle does (its physical catalog is UPPERCASE and it matches
+// case-insensitively); PostgreSQL, MySQL, and SQL Server match field names
+// case-SENSITIVELY, so they must NOT be folded.
 func FoldsFieldCase(dbType model.DBType) bool {
 	return dbType == model.TypeOracle
 }
 
 // NormalizeTable canonicalizes a single table name for the given datasource type.
 // It applies the legacy default-schema prefix rule (schemautil) and, for Oracle,
-// folds the result to UPPERCASE — so a snapshot table and a requested table the
-// legacy Worker treated as equal canonicalize to the same string here.
+// folds the result to UPPERCASE — matching the physical Oracle catalog AND the
+// extracted result keys — so a snapshot table and a requested table that differ only
+// in case canonicalize to the same string here. The physical-case request resolution
+// stays in pkg/oracle.ValidateTableAndFields.
 func NormalizeTable(dbType model.DBType, tableName string) string {
 	normalized := schemautil.NormalizeTableNameForLookup(tableName, DefaultSchemaForType(dbType))
 
@@ -137,8 +157,10 @@ func containsSchema(schemas []string, target string) bool {
 
 // NormalizeField canonicalizes a single field/column name for the datasource type.
 // It is the IDENTITY for case-sensitive types (PG/MySQL/SQLServer) and folds to
-// UPPERCASE for Oracle, restoring the legacy Oracle case-insensitive field matching
-// at the seam so the Engine's literal field membership succeeds.
+// UPPERCASE for Oracle — matching the physical Oracle catalog AND the extracted
+// result column keys — so the Engine's literal field membership succeeds for any-case
+// Oracle request. The physical column case is resolved later in
+// pkg/oracle.ValidateTableAndFields, not here.
 func NormalizeField(dbType model.DBType, fieldName string) string {
 	if FoldsFieldCase(dbType) {
 		return strings.ToUpper(fieldName)

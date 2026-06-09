@@ -54,7 +54,7 @@ func TestMapJobToExtractionRequest_NormalizesTableKeysPerType(t *testing.T) {
 	message := ExtractExternalDataMessage{
 		MappedFields: map[string]map[string][]string{
 			"pg":  {"public.users": {"id"}},
-			"ora": {"accounts": {"balance"}}, // oracle: case-folded to UPPERCASE (FIX-2)
+			"ora": {"accounts": {"balance"}}, // oracle: case-folded to UPPERCASE-canonical
 		},
 		Filters: map[string]map[string]map[string]modelJob.FilterCondition{
 			"pg": {"public.users": {"status": {Equals: []any{"a"}}}},
@@ -73,7 +73,9 @@ func TestMapJobToExtractionRequest_NormalizesTableKeysPerType(t *testing.T) {
 	if _, ok := req.MappedFields["pg"]["users"]; !ok {
 		t.Fatalf("expected pg public.users to normalize to users, got %#v", req.MappedFields["pg"])
 	}
-	// Oracle table AND fields fold to UPPERCASE (FIX-2: legacy case-insensitive parity).
+	// Oracle table AND fields fold to UPPERCASE (matches the physical Oracle catalog
+	// AND the extracted result keys; physical-case request resolution happens later in
+	// pkg/oracle.ValidateTableAndFields).
 	oraFields, ok := req.MappedFields["ora"]["ACCOUNTS"]
 	if !ok {
 		t.Fatalf("expected oracle accounts to fold to ACCOUNTS, got %#v", req.MappedFields["ora"])

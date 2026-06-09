@@ -97,41 +97,16 @@ func (c *SchemaCache) PutSchema(
 }
 
 // SnapshotFromDataSourceSchema converts a host *model.DataSourceSchema into a
-// secret-free Engine SchemaSnapshot. A nil schema yields an empty snapshot.
+// secret-free Engine SchemaSnapshot with NO filtering and NO normalization (the
+// cache round-trip preserves identifiers verbatim). It is a thin wrapper over the
+// single forward builder. A nil schema yields an empty snapshot.
 func SnapshotFromDataSourceSchema(schema *model.DataSourceSchema) engine.SchemaSnapshot {
-	if schema == nil {
-		return engine.SchemaSnapshot{}
+	configName := ""
+	if schema != nil {
+		configName = schema.ConfigName
 	}
 
-	snapshot := engine.SchemaSnapshot{
-		ConfigName: schema.ConfigName,
-		CapturedAt: schema.CachedAt,
-	}
-
-	if len(schema.Tables) == 0 {
-		return snapshot
-	}
-
-	tables := make([]engine.TableSnapshot, 0, len(schema.Tables))
-	for name, table := range schema.Tables {
-		tableName := name
-
-		var fields []string
-
-		if table != nil {
-			if table.TableName != "" {
-				tableName = table.TableName
-			}
-
-			fields = table.GetColumnsList()
-		}
-
-		tables = append(tables, engine.TableSnapshot{Name: tableName, Fields: fields})
-	}
-
-	snapshot.Tables = tables
-
-	return snapshot
+	return BuildSnapshot(configName, "", schema, SnapshotOptions{})
 }
 
 // DataSourceSchemaFromSnapshot converts an Engine SchemaSnapshot back into the
