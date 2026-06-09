@@ -7,9 +7,9 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/LerianStudio/fetcher/pkg/engine"
-	"github.com/LerianStudio/fetcher/pkg/enginecompat/schemacompat"
-	"github.com/LerianStudio/fetcher/pkg/model"
+	"github.com/LerianStudio/fetcher/v2/pkg/engine"
+	"github.com/LerianStudio/fetcher/v2/pkg/enginecompat/schemacompat"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
 )
 
 // tableNames returns the snapshot table names sorted for order-independent assertions.

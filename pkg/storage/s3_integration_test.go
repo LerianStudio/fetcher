@@ -7,9 +7,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/LerianStudio/fetcher/pkg/itestkit"
-	"github.com/LerianStudio/fetcher/pkg/itestkit/infra/minio"
-	"github.com/LerianStudio/fetcher/pkg/storage"
+	"github.com/LerianStudio/fetcher/v2/pkg/itestkit"
+	"github.com/LerianStudio/fetcher/v2/pkg/itestkit/infra/minio"
+	"github.com/LerianStudio/fetcher/v2/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

@@ -8,9 +8,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/LerianStudio/fetcher/pkg/engine"
-	"github.com/LerianStudio/fetcher/pkg/enginecompat/connectioncompat"
-	jobRepo "github.com/LerianStudio/fetcher/pkg/mongodb/job"
+	"github.com/LerianStudio/fetcher/v2/pkg/engine"
+	"github.com/LerianStudio/fetcher/v2/pkg/enginecompat/connectioncompat"
+	jobRepo "github.com/LerianStudio/fetcher/v2/pkg/mongodb/job"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

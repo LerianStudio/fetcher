@@ -11,15 +11,15 @@ import (
 
 	"github.com/LerianStudio/lib-observability"
 
-	"github.com/LerianStudio/fetcher/components/manager/internal/services/command"
-	"github.com/LerianStudio/fetcher/components/manager/internal/services/query"
-	"github.com/LerianStudio/fetcher/pkg/model"
-	jobRepo "github.com/LerianStudio/fetcher/pkg/mongodb/job"
-	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
+	"github.com/LerianStudio/fetcher/v2/components/manager/internal/services/command"
+	"github.com/LerianStudio/fetcher/v2/components/manager/internal/services/query"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	jobRepo "github.com/LerianStudio/fetcher/v2/pkg/mongodb/job"
+	connRepo "github.com/LerianStudio/fetcher/v2/pkg/ports/connection"
 
-	"github.com/LerianStudio/fetcher/pkg/crypto"
-	"github.com/LerianStudio/fetcher/pkg/ports/messaging"
-	"github.com/LerianStudio/fetcher/pkg/testutil"
+	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
+	"github.com/LerianStudio/fetcher/v2/pkg/ports/messaging"
+	"github.com/LerianStudio/fetcher/v2/pkg/testutil"
 
 	libLog "github.com/LerianStudio/lib-observability/log"
 	"github.com/gofiber/fiber/v2"

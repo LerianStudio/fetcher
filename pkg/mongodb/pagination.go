@@ -1,7 +1,7 @@
 package mongodb
 
 import (
-	http "github.com/LerianStudio/fetcher/pkg/net/http"
+	http "github.com/LerianStudio/fetcher/v2/pkg/net/http"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )

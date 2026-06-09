@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/LerianStudio/fetcher/pkg/constant"
-	"github.com/LerianStudio/fetcher/pkg/model"
-	sharedMongo "github.com/LerianStudio/fetcher/pkg/mongodb"
+	"github.com/LerianStudio/fetcher/v2/pkg/constant"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	sharedMongo "github.com/LerianStudio/fetcher/v2/pkg/mongodb"
 	observability "github.com/LerianStudio/lib-observability"
 	libLog "github.com/LerianStudio/lib-observability/log"
 	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"

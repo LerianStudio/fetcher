@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/LerianStudio/fetcher/pkg/crypto"
+	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

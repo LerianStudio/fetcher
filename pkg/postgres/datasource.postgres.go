@@ -9,9 +9,9 @@ import (
 
 	"github.com/LerianStudio/lib-observability"
 
-	"github.com/LerianStudio/fetcher/pkg/constant"
-	"github.com/LerianStudio/fetcher/pkg/model/job"
-	"github.com/LerianStudio/fetcher/pkg/schemautil"
+	"github.com/LerianStudio/fetcher/v2/pkg/constant"
+	"github.com/LerianStudio/fetcher/v2/pkg/model/job"
+	"github.com/LerianStudio/fetcher/v2/pkg/schemautil"
 	"github.com/lib/pq"
 
 	libLog "github.com/LerianStudio/lib-observability/log"

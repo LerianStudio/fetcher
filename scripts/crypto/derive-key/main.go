@@ -21,7 +21,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/LerianStudio/fetcher/pkg/crypto"
+	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
 )
 
 func main() {

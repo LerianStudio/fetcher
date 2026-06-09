@@ -5,10 +5,10 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/LerianStudio/fetcher/pkg/crypto"
-	"github.com/LerianStudio/fetcher/pkg/engine"
-	"github.com/LerianStudio/fetcher/pkg/model"
-	"github.com/LerianStudio/fetcher/pkg/model/datasource"
+	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
+	"github.com/LerianStudio/fetcher/v2/pkg/engine"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	"github.com/LerianStudio/fetcher/v2/pkg/model/datasource"
 	"github.com/google/uuid"
 	"go.uber.org/mock/gomock"
 )

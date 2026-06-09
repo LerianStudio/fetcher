@@ -9,10 +9,10 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/LerianStudio/fetcher/pkg/engine"
-	"github.com/LerianStudio/fetcher/pkg/enginecompat/schemacompat"
-	"github.com/LerianStudio/fetcher/pkg/model"
-	modelJob "github.com/LerianStudio/fetcher/pkg/model/job"
+	"github.com/LerianStudio/fetcher/v2/pkg/engine"
+	"github.com/LerianStudio/fetcher/v2/pkg/enginecompat/schemacompat"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	modelJob "github.com/LerianStudio/fetcher/v2/pkg/model/job"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

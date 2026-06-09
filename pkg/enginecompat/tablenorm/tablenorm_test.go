@@ -7,8 +7,8 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/LerianStudio/fetcher/pkg/enginecompat/tablenorm"
-	"github.com/LerianStudio/fetcher/pkg/model"
+	"github.com/LerianStudio/fetcher/v2/pkg/enginecompat/tablenorm"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
 )
 
 func TestSchemaScopeForTables(t *testing.T) {

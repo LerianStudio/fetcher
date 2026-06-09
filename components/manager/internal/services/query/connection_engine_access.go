@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/LerianStudio/fetcher/pkg/engine"
-	"github.com/LerianStudio/fetcher/pkg/enginecompat/connectioncompat"
-	"github.com/LerianStudio/fetcher/pkg/model"
-	netHTTP "github.com/LerianStudio/fetcher/pkg/net/http"
+	"github.com/LerianStudio/fetcher/v2/pkg/engine"
+	"github.com/LerianStudio/fetcher/v2/pkg/enginecompat/connectioncompat"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	netHTTP "github.com/LerianStudio/fetcher/v2/pkg/net/http"
 )
 
 // listConnectionsViaEngine routes the paginated, filtered connection list through

@@ -31,13 +31,13 @@ import (
 	"context"
 	"strings"
 
-	"github.com/LerianStudio/fetcher/pkg/crypto"
-	"github.com/LerianStudio/fetcher/pkg/engine"
-	"github.com/LerianStudio/fetcher/pkg/enginecompat/connectioncompat"
-	"github.com/LerianStudio/fetcher/pkg/enginecompat/schemacompat"
-	"github.com/LerianStudio/fetcher/pkg/model"
-	"github.com/LerianStudio/fetcher/pkg/model/datasource"
-	"github.com/LerianStudio/fetcher/pkg/model/job"
+	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
+	"github.com/LerianStudio/fetcher/v2/pkg/engine"
+	"github.com/LerianStudio/fetcher/v2/pkg/enginecompat/connectioncompat"
+	"github.com/LerianStudio/fetcher/v2/pkg/enginecompat/schemacompat"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	"github.com/LerianStudio/fetcher/v2/pkg/model/datasource"
+	"github.com/LerianStudio/fetcher/v2/pkg/model/job"
 
 	"github.com/google/uuid"
 )

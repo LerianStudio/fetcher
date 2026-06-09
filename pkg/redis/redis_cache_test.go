@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/LerianStudio/fetcher/pkg/testutil"
+	"github.com/LerianStudio/fetcher/v2/pkg/testutil"
 	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"

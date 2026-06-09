@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/LerianStudio/fetcher/pkg/engine"
-	"github.com/LerianStudio/fetcher/pkg/enginecompat/connectioncompat"
-	"github.com/LerianStudio/fetcher/pkg/model"
-	"github.com/LerianStudio/fetcher/pkg/net/http"
-	"github.com/LerianStudio/fetcher/pkg/resolver"
+	"github.com/LerianStudio/fetcher/v2/pkg/engine"
+	"github.com/LerianStudio/fetcher/v2/pkg/enginecompat/connectioncompat"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	"github.com/LerianStudio/fetcher/v2/pkg/net/http"
+	"github.com/LerianStudio/fetcher/v2/pkg/resolver"
 	observability "github.com/LerianStudio/lib-observability"
 
 	libLog "github.com/LerianStudio/lib-observability/log"

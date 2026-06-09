@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/LerianStudio/fetcher/pkg/model"
-	jobPort "github.com/LerianStudio/fetcher/pkg/ports/job"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	jobPort "github.com/LerianStudio/fetcher/v2/pkg/ports/job"
 	tmclient "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/client"
 	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
 	streaming "github.com/LerianStudio/lib-streaming"

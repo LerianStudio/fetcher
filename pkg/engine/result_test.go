@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/LerianStudio/fetcher/pkg/engine"
+	"github.com/LerianStudio/fetcher/v2/pkg/engine"
 )
 
 // completedAt is a stable timestamp the result tests share.

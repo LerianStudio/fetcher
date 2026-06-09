@@ -6,7 +6,7 @@ package schemacompat
 import (
 	"strings"
 
-	"github.com/LerianStudio/fetcher/pkg/model"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
 )
 
 // IsSystemTable reports whether a table/collection is a system object that the

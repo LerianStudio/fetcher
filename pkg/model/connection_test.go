@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/LerianStudio/fetcher/pkg"
-	"github.com/LerianStudio/fetcher/pkg/crypto"
+	"github.com/LerianStudio/fetcher/v2/pkg"
+	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
 
 	"github.com/google/uuid"
 	"go.uber.org/mock/gomock"

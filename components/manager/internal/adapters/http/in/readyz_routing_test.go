@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/LerianStudio/fetcher/pkg/bootstrap/readyz"
+	"github.com/LerianStudio/fetcher/v2/pkg/bootstrap/readyz"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

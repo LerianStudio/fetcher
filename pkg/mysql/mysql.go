@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/LerianStudio/fetcher/pkg/constant"
+	"github.com/LerianStudio/fetcher/v2/pkg/constant"
 	libLog "github.com/LerianStudio/lib-observability/log"
 	_ "github.com/go-sql-driver/mysql" // MySQL driver
 )

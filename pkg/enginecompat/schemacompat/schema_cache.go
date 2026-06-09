@@ -29,9 +29,9 @@ import (
 	"context"
 	"time"
 
-	"github.com/LerianStudio/fetcher/pkg/engine"
-	"github.com/LerianStudio/fetcher/pkg/model"
-	cachePort "github.com/LerianStudio/fetcher/pkg/ports/cache"
+	"github.com/LerianStudio/fetcher/v2/pkg/engine"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	cachePort "github.com/LerianStudio/fetcher/v2/pkg/ports/cache"
 )
 
 // SchemaCache adapts the Manager's configName-keyed schema cache port to the

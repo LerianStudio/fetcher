@@ -3,12 +3,12 @@ package bootstrap
 import (
 	"context"
 
-	workerRabbitAdapters "github.com/LerianStudio/fetcher/components/worker/internal/adapters/rabbitmq"
-	"github.com/LerianStudio/fetcher/pkg/bootstrap/readyz"
-	"github.com/LerianStudio/fetcher/pkg/constant"
-	portStorage "github.com/LerianStudio/fetcher/pkg/ports/storage"
-	pkgRabbitmq "github.com/LerianStudio/fetcher/pkg/rabbitmq"
-	pkgStorage "github.com/LerianStudio/fetcher/pkg/storage"
+	workerRabbitAdapters "github.com/LerianStudio/fetcher/v2/components/worker/internal/adapters/rabbitmq"
+	"github.com/LerianStudio/fetcher/v2/pkg/bootstrap/readyz"
+	"github.com/LerianStudio/fetcher/v2/pkg/constant"
+	portStorage "github.com/LerianStudio/fetcher/v2/pkg/ports/storage"
+	pkgRabbitmq "github.com/LerianStudio/fetcher/v2/pkg/rabbitmq"
+	pkgStorage "github.com/LerianStudio/fetcher/v2/pkg/storage"
 	libMongo "github.com/LerianStudio/lib-commons/v5/commons/mongo"
 	tmclient "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/client"
 	tmmongo "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/mongo"

@@ -6,7 +6,7 @@ package connectioncompat
 import (
 	"context"
 
-	"github.com/LerianStudio/fetcher/pkg/engine"
+	"github.com/LerianStudio/fetcher/v2/pkg/engine"
 
 	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
 	"github.com/LerianStudio/lib-observability"

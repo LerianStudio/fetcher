@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/LerianStudio/fetcher/pkg"
-	"github.com/LerianStudio/fetcher/pkg/constant"
+	"github.com/LerianStudio/fetcher/v2/pkg"
+	"github.com/LerianStudio/fetcher/v2/pkg/constant"
 	"github.com/stretchr/testify/assert"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"

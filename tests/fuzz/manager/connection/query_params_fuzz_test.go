@@ -6,7 +6,7 @@ package connection
 import (
 	"testing"
 
-	httpUtils "github.com/LerianStudio/fetcher/pkg/net/http"
+	httpUtils "github.com/LerianStudio/fetcher/v2/pkg/net/http"
 )
 
 func FuzzQueryParameterValidation(f *testing.F) {

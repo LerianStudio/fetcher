@@ -5,13 +5,13 @@ import (
 
 	"github.com/LerianStudio/lib-observability"
 
-	"github.com/LerianStudio/fetcher/components/manager/internal/services/command"
-	"github.com/LerianStudio/fetcher/components/manager/internal/services/query"
+	"github.com/LerianStudio/fetcher/v2/components/manager/internal/services/command"
+	"github.com/LerianStudio/fetcher/v2/components/manager/internal/services/query"
 
-	"github.com/LerianStudio/fetcher/pkg"
-	"github.com/LerianStudio/fetcher/pkg/constant"
-	"github.com/LerianStudio/fetcher/pkg/model"
-	httpUtils "github.com/LerianStudio/fetcher/pkg/net/http"
+	"github.com/LerianStudio/fetcher/v2/pkg"
+	"github.com/LerianStudio/fetcher/v2/pkg/constant"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	httpUtils "github.com/LerianStudio/fetcher/v2/pkg/net/http"
 
 	libLog "github.com/LerianStudio/lib-observability/log"
 	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"

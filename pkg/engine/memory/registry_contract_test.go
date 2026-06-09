@@ -8,8 +8,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/LerianStudio/fetcher/pkg/engine"
-	"github.com/LerianStudio/fetcher/pkg/engine/memory"
+	"github.com/LerianStudio/fetcher/v2/pkg/engine"
+	"github.com/LerianStudio/fetcher/v2/pkg/engine/memory"
 )
 
 // stubFactory is a host-side ConnectorFactory double for registry tests. Build

@@ -5,7 +5,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/LerianStudio/fetcher/pkg/model"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
 )
 
 // DefaultSchemaCacheTTL is the default TTL for cached schemas (5 minutes).

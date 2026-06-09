@@ -4,7 +4,7 @@ package datasource
 import (
 	"context"
 
-	"github.com/LerianStudio/fetcher/pkg/model/job"
+	"github.com/LerianStudio/fetcher/v2/pkg/model/job"
 )
 
 // CRMQueryable defines the interface for data sources that support CRM-specific

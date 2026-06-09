@@ -52,9 +52,9 @@ package tablenorm
 import (
 	"strings"
 
-	"github.com/LerianStudio/fetcher/pkg/model"
-	datasourceModel "github.com/LerianStudio/fetcher/pkg/model/datasource"
-	"github.com/LerianStudio/fetcher/pkg/schemautil"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	datasourceModel "github.com/LerianStudio/fetcher/v2/pkg/model/datasource"
+	"github.com/LerianStudio/fetcher/v2/pkg/schemautil"
 )
 
 // DefaultSchemaForType returns the default schema name used to normalize table

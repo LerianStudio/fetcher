@@ -9,14 +9,14 @@ import (
 
 	"github.com/LerianStudio/lib-observability"
 
-	"github.com/LerianStudio/fetcher/pkg"
-	"github.com/LerianStudio/fetcher/pkg/constant"
-	"github.com/LerianStudio/fetcher/pkg/crypto"
-	ds "github.com/LerianStudio/fetcher/pkg/datasource"
-	"github.com/LerianStudio/fetcher/pkg/model"
-	"github.com/LerianStudio/fetcher/pkg/model/datasource"
-	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
-	"github.com/LerianStudio/fetcher/pkg/resolver"
+	"github.com/LerianStudio/fetcher/v2/pkg"
+	"github.com/LerianStudio/fetcher/v2/pkg/constant"
+	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
+	ds "github.com/LerianStudio/fetcher/v2/pkg/datasource"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	"github.com/LerianStudio/fetcher/v2/pkg/model/datasource"
+	connRepo "github.com/LerianStudio/fetcher/v2/pkg/ports/connection"
+	"github.com/LerianStudio/fetcher/v2/pkg/resolver"
 
 	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
 	valkey "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/valkey"

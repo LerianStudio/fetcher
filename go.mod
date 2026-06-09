@@ -1,4 +1,4 @@
-module github.com/LerianStudio/fetcher
+module github.com/LerianStudio/fetcher/v2
 
 go 1.26.4
 

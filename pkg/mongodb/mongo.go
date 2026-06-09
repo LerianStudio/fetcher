@@ -9,8 +9,8 @@ import (
 
 	"github.com/LerianStudio/lib-observability"
 
-	"github.com/LerianStudio/fetcher/pkg"
-	"github.com/LerianStudio/fetcher/pkg/constant"
+	"github.com/LerianStudio/fetcher/v2/pkg"
+	"github.com/LerianStudio/fetcher/v2/pkg/constant"
 	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
 	libLog "github.com/LerianStudio/lib-observability/log"
 	"go.mongodb.org/mongo-driver/v2/bson"

@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/LerianStudio/fetcher/pkg/engine"
-	"github.com/LerianStudio/fetcher/pkg/engine/memory"
+	"github.com/LerianStudio/fetcher/v2/pkg/engine"
+	"github.com/LerianStudio/fetcher/v2/pkg/engine/memory"
 )
 
 func TestEngine_GetConnectionByID_FoundScopedAndNotFound(t *testing.T) {

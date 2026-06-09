@@ -4,9 +4,9 @@
 package schemacompat
 
 import (
-	"github.com/LerianStudio/fetcher/pkg/engine"
-	"github.com/LerianStudio/fetcher/pkg/enginecompat/tablenorm"
-	"github.com/LerianStudio/fetcher/pkg/model"
+	"github.com/LerianStudio/fetcher/v2/pkg/engine"
+	"github.com/LerianStudio/fetcher/v2/pkg/enginecompat/tablenorm"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
 )
 
 // SnapshotOptions parameterizes the single forward DataSourceSchema -> SchemaSnapshot

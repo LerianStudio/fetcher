@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/LerianStudio/fetcher/pkg/itestkit"
+	"github.com/LerianStudio/fetcher/v2/pkg/itestkit"
 	"github.com/moby/moby/api/types/container"
 	mobyNetwork "github.com/moby/moby/api/types/network"
 )

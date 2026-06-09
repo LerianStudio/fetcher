@@ -49,7 +49,7 @@ Embedding the Engine is three steps: **import it, provide the ports it needs, co
 #### 1. Install
 
 ```bash
-go get github.com/LerianStudio/fetcher/pkg/engine
+go get github.com/LerianStudio/fetcher/v2/pkg/engine
 ```
 
 #### 2. Provide the ports
@@ -81,8 +81,8 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/LerianStudio/fetcher/pkg/engine"
-	"github.com/LerianStudio/fetcher/pkg/engine/memory"
+	"github.com/LerianStudio/fetcher/v2/pkg/engine"
+	"github.com/LerianStudio/fetcher/v2/pkg/engine/memory"
 )
 
 func main() {

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/LerianStudio/fetcher/pkg/engine"
+	"github.com/LerianStudio/fetcher/v2/pkg/engine"
 )
 
 // hostAttrInput builds a ConnectionInput carrying an opaque host payload. The

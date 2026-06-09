@@ -9,12 +9,12 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/LerianStudio/fetcher/pkg/crypto"
-	jobRepo "github.com/LerianStudio/fetcher/pkg/mongodb/job"
-	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
-	publisherPort "github.com/LerianStudio/fetcher/pkg/ports/publisher"
-	storagePort "github.com/LerianStudio/fetcher/pkg/ports/storage"
-	"github.com/LerianStudio/fetcher/pkg/testutil"
+	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
+	jobRepo "github.com/LerianStudio/fetcher/v2/pkg/mongodb/job"
+	connRepo "github.com/LerianStudio/fetcher/v2/pkg/ports/connection"
+	publisherPort "github.com/LerianStudio/fetcher/v2/pkg/ports/publisher"
+	storagePort "github.com/LerianStudio/fetcher/v2/pkg/ports/storage"
+	"github.com/LerianStudio/fetcher/v2/pkg/testutil"
 	"github.com/google/uuid"
 	"go.uber.org/mock/gomock"
 )

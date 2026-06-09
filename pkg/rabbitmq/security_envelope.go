@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/LerianStudio/fetcher/pkg/crypto"
+	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
 	libConstants "github.com/LerianStudio/lib-commons/v5/commons/constants"
 	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
 	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"

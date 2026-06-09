@@ -9,8 +9,8 @@ import (
 
 	"github.com/LerianStudio/lib-observability"
 
-	"github.com/LerianStudio/fetcher/pkg/constant"
-	sharedMongo "github.com/LerianStudio/fetcher/pkg/mongodb"
+	"github.com/LerianStudio/fetcher/v2/pkg/constant"
+	sharedMongo "github.com/LerianStudio/fetcher/v2/pkg/mongodb"
 	libLog "github.com/LerianStudio/lib-observability/log"
 	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
 

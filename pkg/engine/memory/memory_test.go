@@ -10,8 +10,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/LerianStudio/fetcher/pkg/engine"
-	"github.com/LerianStudio/fetcher/pkg/engine/memory"
+	"github.com/LerianStudio/fetcher/v2/pkg/engine"
+	"github.com/LerianStudio/fetcher/v2/pkg/engine/memory"
 )
 
 // Compile-time assertions that the in-memory harness types satisfy the exact

@@ -7,10 +7,10 @@ import (
 
 	"github.com/LerianStudio/lib-observability"
 
-	"github.com/LerianStudio/fetcher/pkg"
-	"github.com/LerianStudio/fetcher/pkg/constant"
-	"github.com/LerianStudio/fetcher/pkg/model"
-	jobRepo "github.com/LerianStudio/fetcher/pkg/ports/job"
+	"github.com/LerianStudio/fetcher/v2/pkg"
+	"github.com/LerianStudio/fetcher/v2/pkg/constant"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	jobRepo "github.com/LerianStudio/fetcher/v2/pkg/ports/job"
 
 	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
 

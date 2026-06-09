@@ -7,12 +7,12 @@ import (
 	"context"
 	"strings"
 
-	"github.com/LerianStudio/fetcher/pkg/crypto"
-	"github.com/LerianStudio/fetcher/pkg/datasource"
-	"github.com/LerianStudio/fetcher/pkg/engine"
-	"github.com/LerianStudio/fetcher/pkg/enginecompat/connectioncompat"
-	"github.com/LerianStudio/fetcher/pkg/model"
-	datasourceModel "github.com/LerianStudio/fetcher/pkg/model/datasource"
+	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
+	"github.com/LerianStudio/fetcher/v2/pkg/datasource"
+	"github.com/LerianStudio/fetcher/v2/pkg/engine"
+	"github.com/LerianStudio/fetcher/v2/pkg/enginecompat/connectioncompat"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	datasourceModel "github.com/LerianStudio/fetcher/v2/pkg/model/datasource"
 )
 
 // ConnectorFactory is the schema Engine's engine.ConnectorFactory. It rebuilds

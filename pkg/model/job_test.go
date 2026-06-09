@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/LerianStudio/fetcher/pkg/model/job"
+	"github.com/LerianStudio/fetcher/v2/pkg/model/job"
 	"github.com/google/uuid"
 )
 

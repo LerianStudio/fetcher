@@ -13,9 +13,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/LerianStudio/fetcher/pkg/datasource/hostsafety"
-	"github.com/LerianStudio/fetcher/pkg/model"
-	fetcherhttp "github.com/LerianStudio/fetcher/pkg/net/http"
+	"github.com/LerianStudio/fetcher/v2/pkg/datasource/hostsafety"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	fetcherhttp "github.com/LerianStudio/fetcher/v2/pkg/net/http"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

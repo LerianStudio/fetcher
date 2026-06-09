@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	cryptoPkg "github.com/LerianStudio/fetcher/pkg/crypto"
-	"github.com/LerianStudio/fetcher/pkg/model"
-	modeldatasource "github.com/LerianStudio/fetcher/pkg/model/datasource"
+	cryptoPkg "github.com/LerianStudio/fetcher/v2/pkg/crypto"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	modeldatasource "github.com/LerianStudio/fetcher/v2/pkg/model/datasource"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

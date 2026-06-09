@@ -5,7 +5,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/LerianStudio/fetcher/pkg/testutil"
+	"github.com/LerianStudio/fetcher/v2/pkg/testutil"
 	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
 	tms3 "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/s3"
 	"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/valkey"

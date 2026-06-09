@@ -3,7 +3,7 @@ package bootstrap
 import (
 	"context"
 
-	"github.com/LerianStudio/fetcher/components/worker/internal/services"
+	"github.com/LerianStudio/fetcher/v2/components/worker/internal/services"
 	"github.com/LerianStudio/lib-commons/v5/commons"
 	libOutbox "github.com/LerianStudio/lib-commons/v5/commons/outbox"
 	libLog "github.com/LerianStudio/lib-observability/log"

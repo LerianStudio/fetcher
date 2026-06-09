@@ -6,7 +6,7 @@ import (
 	"runtime"
 	"sync"
 
-	"github.com/LerianStudio/fetcher/pkg/itestkit"
+	"github.com/LerianStudio/fetcher/v2/pkg/itestkit"
 )
 
 var (

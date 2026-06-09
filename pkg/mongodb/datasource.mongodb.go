@@ -9,8 +9,8 @@ import (
 
 	"github.com/LerianStudio/lib-observability"
 
-	"github.com/LerianStudio/fetcher/pkg/constant"
-	"github.com/LerianStudio/fetcher/pkg/model/job"
+	"github.com/LerianStudio/fetcher/v2/pkg/constant"
+	"github.com/LerianStudio/fetcher/v2/pkg/model/job"
 	libMongo "github.com/LerianStudio/lib-commons/v5/commons/mongo"
 	libLog "github.com/LerianStudio/lib-observability/log"
 

@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/LerianStudio/fetcher/pkg/enginecompat/schemacompat"
-	"github.com/LerianStudio/fetcher/pkg/enginecompat/tablenorm"
-	"github.com/LerianStudio/fetcher/pkg/model"
+	"github.com/LerianStudio/fetcher/v2/pkg/enginecompat/schemacompat"
+	"github.com/LerianStudio/fetcher/v2/pkg/enginecompat/tablenorm"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
 )
 
 // TestOracleCrossPathCasingParity is the load-bearing cross-path guard for the

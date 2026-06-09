@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/LerianStudio/fetcher/pkg"
-	"github.com/LerianStudio/fetcher/pkg/constant"
+	"github.com/LerianStudio/fetcher/v2/pkg"
+	"github.com/LerianStudio/fetcher/v2/pkg/constant"
 	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
 	"github.com/gofiber/fiber/v2"
 )

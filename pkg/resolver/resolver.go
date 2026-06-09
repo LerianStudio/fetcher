@@ -3,7 +3,7 @@ package resolver
 import (
 	"context"
 
-	"github.com/LerianStudio/fetcher/pkg/model"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
 )
 
 // ConnectionResolver resolves datasource connections for a job.

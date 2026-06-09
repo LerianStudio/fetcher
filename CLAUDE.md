@@ -2,7 +2,7 @@
 
 Lerian Fetcher is an enterprise data extraction platform that unifies access to PostgreSQL, MySQL, Oracle, SQL Server, and MongoDB. It ships in two forms: as standalone Manager + Worker services, and as an **embedded runtime engine** (`pkg/engine`) that other Lerian products (Matcher, Reporter) import in-process.
 
-- **Module:** `github.com/LerianStudio/fetcher`
+- **Module:** `github.com/LerianStudio/fetcher/v2`
 - **Go version:** Source of truth is `go.mod`; do not rely on stale toolchain guidance elsewhere.
 - **Architecture:** Embedded runtime engine (`pkg/engine`) + Hexagonal Architecture + CQRS. The Manager and Worker now run *over* the engine — the engine owns the extraction rules, the services own the operational shell.
 - **Services:** Manager (HTTP API, Fiber, port 4006) and Worker (RabbitMQ consumer)
@@ -204,7 +204,7 @@ Async RabbitMQ consumer. Does NOT follow CQRS - uses a single `UseCase` struct i
 
 ### Embedding the engine in a host application
 
-1. Import `github.com/LerianStudio/fetcher/pkg/engine` (no infrastructure comes with it).
+1. Import `github.com/LerianStudio/fetcher/v2/pkg/engine` (no infrastructure comes with it).
 2. Implement the required ports (`ConnectorRegistry`, and `CredentialProtector` if using encrypted persistence) and any optional ports your host needs (`ConnectionStore`, `ResultSink`, `SchemaCache`, etc.).
 3. Construct with `engine.New(engine.WithConnectorRegistry(...), ...)`; check the returned error.
 4. For a working reference, read how the Manager (`components/manager/internal/bootstrap/connection_engine.go`, `schema_engine.go`) and Worker (`components/worker/internal/bootstrap/extraction_engine.go`) wire it via `pkg/enginecompat/*`. For tests, the `pkg/engine/memory/` harness satisfies every port in-memory.

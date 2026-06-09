@@ -14,8 +14,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/LerianStudio/fetcher/pkg/engine"
-	plugincrm "github.com/LerianStudio/fetcher/pkg/enginecompat/plugincrm"
+	"github.com/LerianStudio/fetcher/v2/pkg/engine"
+	plugincrm "github.com/LerianStudio/fetcher/v2/pkg/enginecompat/plugincrm"
 )
 
 // snapshot is a tiny helper that builds an engine.SchemaSnapshot from a set of
@@ -208,7 +208,7 @@ func TestPluginCRMCompatibility_IsAdapterScoped_NotImportedByEngineCore(t *testi
 
 	deps, listErr := exec.Command(
 		"go", "list", "-mod=readonly", "-deps",
-		"github.com/LerianStudio/fetcher/pkg/engine/...",
+		"github.com/LerianStudio/fetcher/v2/pkg/engine/...",
 	).CombinedOutput()
 	if listErr != nil {
 		t.Fatalf("go list -deps pkg/engine failed: %v\n%s", listErr, deps)

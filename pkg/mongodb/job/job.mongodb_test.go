@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/LerianStudio/fetcher/pkg/constant"
-	"github.com/LerianStudio/fetcher/pkg/model"
-	"github.com/LerianStudio/fetcher/pkg/mongodb"
+	"github.com/LerianStudio/fetcher/v2/pkg/constant"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	"github.com/LerianStudio/fetcher/v2/pkg/mongodb"
 
 	libMongo "github.com/LerianStudio/lib-commons/v5/commons/mongo"
 	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"

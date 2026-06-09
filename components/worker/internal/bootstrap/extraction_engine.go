@@ -7,12 +7,12 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/LerianStudio/fetcher/components/worker/internal/services"
-	"github.com/LerianStudio/fetcher/pkg/crypto"
-	"github.com/LerianStudio/fetcher/pkg/datasource"
-	"github.com/LerianStudio/fetcher/pkg/engine"
-	enginecompatdatasource "github.com/LerianStudio/fetcher/pkg/enginecompat/datasource"
-	"github.com/LerianStudio/fetcher/pkg/enginecompat/schemacompat"
+	"github.com/LerianStudio/fetcher/v2/components/worker/internal/services"
+	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
+	"github.com/LerianStudio/fetcher/v2/pkg/datasource"
+	"github.com/LerianStudio/fetcher/v2/pkg/engine"
+	enginecompatdatasource "github.com/LerianStudio/fetcher/v2/pkg/enginecompat/datasource"
+	"github.com/LerianStudio/fetcher/v2/pkg/enginecompat/schemacompat"
 )
 
 // wireEngineRunner builds the embedded extraction Engine, sets it as the Worker

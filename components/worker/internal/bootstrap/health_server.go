@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/LerianStudio/fetcher/pkg/bootstrap/readyz"
+	"github.com/LerianStudio/fetcher/v2/pkg/bootstrap/readyz"
 	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
 	libCommonsServer "github.com/LerianStudio/lib-commons/v5/commons/server"
 	libLog "github.com/LerianStudio/lib-observability/log"

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/LerianStudio/fetcher/pkg/crypto"
+	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
 	libCircuitBreaker "github.com/LerianStudio/lib-commons/v5/commons/circuitbreaker"
 	libConstants "github.com/LerianStudio/lib-commons/v5/commons/constants"
 	observability "github.com/LerianStudio/lib-observability"

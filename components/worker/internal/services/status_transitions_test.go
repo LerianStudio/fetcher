@@ -8,10 +8,10 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/LerianStudio/fetcher/pkg/constant"
-	workerCrypto "github.com/LerianStudio/fetcher/pkg/crypto"
-	"github.com/LerianStudio/fetcher/pkg/engine"
-	"github.com/LerianStudio/fetcher/pkg/model"
+	"github.com/LerianStudio/fetcher/v2/pkg/constant"
+	workerCrypto "github.com/LerianStudio/fetcher/v2/pkg/crypto"
+	"github.com/LerianStudio/fetcher/v2/pkg/engine"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

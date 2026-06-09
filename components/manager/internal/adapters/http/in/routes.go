@@ -1,8 +1,8 @@
 package in
 
 import (
-	"github.com/LerianStudio/fetcher/pkg/bootstrap/readyz"
-	"github.com/LerianStudio/fetcher/pkg/net/http"
+	"github.com/LerianStudio/fetcher/v2/pkg/bootstrap/readyz"
+	"github.com/LerianStudio/fetcher/v2/pkg/net/http"
 	middlewareAuth "github.com/LerianStudio/lib-auth/v2/auth/middleware"
 	commonsHttp "github.com/LerianStudio/lib-commons/v5/commons/net/http"
 	libLicense "github.com/LerianStudio/lib-license-go/v2/middleware"

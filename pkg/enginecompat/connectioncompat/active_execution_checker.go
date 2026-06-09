@@ -13,8 +13,8 @@ package connectioncompat
 import (
 	"context"
 
-	"github.com/LerianStudio/fetcher/pkg/engine"
-	"github.com/LerianStudio/fetcher/pkg/ports/job"
+	"github.com/LerianStudio/fetcher/v2/pkg/engine"
+	"github.com/LerianStudio/fetcher/v2/pkg/ports/job"
 )
 
 // JobActiveExecutionChecker adapts the Manager's job repository to the Engine's

@@ -7,12 +7,12 @@ import (
 	"context"
 	"testing"
 
-	workerCrypto "github.com/LerianStudio/fetcher/pkg/crypto"
-	"github.com/LerianStudio/fetcher/pkg/engine"
-	"github.com/LerianStudio/fetcher/pkg/model"
-	modelDatasource "github.com/LerianStudio/fetcher/pkg/model/datasource"
-	modelJob "github.com/LerianStudio/fetcher/pkg/model/job"
-	portDS "github.com/LerianStudio/fetcher/pkg/ports/datasource"
+	workerCrypto "github.com/LerianStudio/fetcher/v2/pkg/crypto"
+	"github.com/LerianStudio/fetcher/v2/pkg/engine"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	modelDatasource "github.com/LerianStudio/fetcher/v2/pkg/model/datasource"
+	modelJob "github.com/LerianStudio/fetcher/v2/pkg/model/job"
+	portDS "github.com/LerianStudio/fetcher/v2/pkg/ports/datasource"
 	libLog "github.com/LerianStudio/lib-observability/log"
 
 	"github.com/stretchr/testify/assert"
