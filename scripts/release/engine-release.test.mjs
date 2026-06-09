@@ -6,7 +6,15 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { computeNextVersion, compareSemver, parseSemver } from './engine-release.mjs';
+import {
+  computeNextVersion,
+  compareSemver,
+  parseSemver,
+  engineReplaces,
+  assertEngineWiring,
+} from './engine-release.mjs';
+
+const ENGINE = 'github.com/LerianStudio/fetcher/pkg/engine';
 
 test('first engine release starts the v1 line per channel', () => {
   assert.equal(computeNextVersion(null, 'none', 'beta'), '1.0.0-beta.1');
@@ -49,6 +57,40 @@ test('stable channel from a stable tag applies the bump', () => {
 test('rc channel ticks its own counter mid-series like beta', () => {
   assert.equal(computeNextVersion('v1.0.0-rc.1', 'none', 'rc'), '1.0.0-rc.2');
   assert.equal(computeNextVersion('v1.0.0-rc.1', 'minor', 'rc'), '1.0.0-rc.2');
+});
+
+test('engineReplaces finds a local engine replace and ignores unrelated ones', () => {
+  assert.equal(engineReplaces({}).length, 0);
+  assert.equal(engineReplaces({ Replace: [] }).length, 0);
+  const mod = {
+    Replace: [
+      { Old: { Path: ENGINE }, New: { Path: './pkg/engine' } },
+      { Old: { Path: 'example.com/other' }, New: { Path: './other' } },
+    ],
+  };
+  assert.equal(engineReplaces(mod).length, 1);
+});
+
+test('assertEngineWiring passes when require is pinned to the cut tag and no replace', () => {
+  const mod = { Require: [{ Path: ENGINE, Version: 'v1.2.3' }] };
+  assert.doesNotThrow(() => assertEngineWiring(mod, '1.2.3'));
+});
+
+test('assertEngineWiring rejects a committed engine replace (the masking bug)', () => {
+  const mod = {
+    Require: [{ Path: ENGINE, Version: 'v1.2.3' }],
+    Replace: [{ Old: { Path: ENGINE }, New: { Path: './pkg/engine' } }],
+  };
+  assert.throws(() => assertEngineWiring(mod, '1.2.3'), /must carry NO replace/);
+});
+
+test('assertEngineWiring rejects a require that does not match the cut tag (the stale-require bug)', () => {
+  const mod = { Require: [{ Path: ENGINE, Version: 'v1.0.0-beta.1' }] };
+  assert.throws(() => assertEngineWiring(mod, '1.0.0'), /does not match the cut engine tag/);
+});
+
+test('assertEngineWiring rejects a missing engine require', () => {
+  assert.throws(() => assertEngineWiring({ Require: [] }, '1.0.0'), /missing a require/);
 });
 
 test('compareSemver orders prerelease below stable and by counter', () => {

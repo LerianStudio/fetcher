@@ -102,3 +102,26 @@ jobs:
           node-version: '20'
       - name: Unit-test the engine version computation
         run: node --test scripts/release/engine-release.test.mjs
+
+  parent-gomod-hygiene:
+    name: Parent go.mod hygiene (no engine replace)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The committed parent go.mod must never carry a replace for the engine module.
+      # Local/in-repo dev resolves the engine via go.work; external consumers resolve it
+      # via the require + the published pkg/engine tag. A committed `=> ./pkg/engine`
+      # replace masks the require: GOWORK=off resolves locally and the require pin is
+      # never exercised — exactly how a dangling require shipped undetected. Fail at PR
+      # time, independent of whether the release prepare hook ever runs.
+      #
+      # The regex matches any replace line whose left side is the engine module,
+      # covering single-line and block form, with or without a version constraint
+      # (`pkg/engine => ...` and `pkg/engine v1.2.3 => ...`); `[^=]*` stops at the `=>`.
+      - name: Reject a committed replace pointing at the local engine
+        run: |
+          if grep -nE 'LerianStudio/fetcher/pkg/engine[^=]*=>' go.mod; then
+            echo "::error file=go.mod::Root go.mod must not carry a replace for pkg/engine. Local dev uses go.work; external resolution uses the require + published tag. Remove the replace (shown above)."
+            exit 1
+          fi
+          echo "root go.mod carries no engine replace — OK"

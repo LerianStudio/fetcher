@@ -202,7 +202,42 @@ function engineBumpSinceTag(lastTag) {
   return level;
 }
 
+// --- go.mod wiring assertions ----------------------------------------------------
+// Pure checks over `go mod edit -json` output. These make the GOWORK=off gate real:
+// a committed `replace => ./pkg/engine` resolves the engine locally and the require
+// pin is never exercised — the masking bug this guards against.
+
+// Replace directives in `mod` that retarget the engine module (e.g. the transient
+// `=> ./pkg/engine` bootstrap). The committed parent go.mod MUST have none once the
+// engine ships its own tag; local/in-repo dev resolves the engine via go.work instead.
+function engineReplaces(mod) {
+  return (mod.Replace || []).filter((r) => r.Old && r.Old.Path === ENGINE_MODULE);
+}
+
+// Throws unless the parent go.mod requires the engine at exactly v${version} and
+// carries no engine replace. Run on the final, about-to-be-committed go.mod.
+function assertEngineWiring(mod, version) {
+  const replaces = engineReplaces(mod);
+  if (replaces.length > 0) {
+    throw new Error(
+      `parent go.mod must carry NO replace for ${ENGINE_MODULE} (local dev uses go.work); found: ` +
+        replaces.map((r) => `${r.Old.Path} => ${r.New ? r.New.Path : '?'}`).join(', '),
+    );
+  }
+  const req = (mod.Require || []).find((r) => r.Path === ENGINE_MODULE);
+  if (!req) throw new Error(`parent go.mod is missing a require for ${ENGINE_MODULE}`);
+  if (req.Version !== `v${version}`) {
+    throw new Error(
+      `parent require ${ENGINE_MODULE}@${req.Version} does not match the cut engine tag v${version}`,
+    );
+  }
+}
+
 // --- prepare side effects --------------------------------------------------------
+
+function parsedGoMod() {
+  return JSON.parse(sh('go', ['mod', 'edit', '-json']));
+}
 
 function run(cmd, args, env = {}) {
   process.stderr.write(`+ ${cmd} ${args.join(' ')}\n`);
@@ -241,6 +276,19 @@ function doPrepare(opts) {
       `→ engine ${version} (${engineTag}); parent=${parentVersion}\n`,
   );
 
+  // 0. Pre-flight: the committed parent go.mod must NOT bootstrap-replace the engine.
+  //    A committed `replace => ./pkg/engine` resolves the engine locally under
+  //    GOWORK=off, making the require-resolution gate below vacuous. Fail before we
+  //    push any tag, so a reintroduced bootstrap replace can never ship.
+  const preReplaces = engineReplaces(parsedGoMod());
+  if (preReplaces.length > 0) {
+    throw new Error(
+      `committed parent go.mod carries a replace for ${ENGINE_MODULE} ` +
+        `(${preReplaces.map((r) => `=> ${r.New ? r.New.Path : '?'}`).join(', ')}); ` +
+        `remove it — local dev uses go.work, external resolution uses the require.`,
+    );
+  }
+
   // 1. Engine-first: tag + push the engine module BEFORE the parent commit/tag so a
   //    `go get` of the parent can never observe an unresolvable engine require.
   run('git', ['tag', engineTag]);
@@ -259,6 +307,10 @@ function doPrepare(opts) {
   if (process.env.ENGINE_RELEASE_SKIP_TESTS !== 'true') {
     run('go', ['test', './...'], { GOWORK: 'off' });
   }
+
+  // 3b. Final wiring assertion on the exact go.mod that @semantic-release/git will
+  //     commit: engine require pinned to the just-cut tag, and no replace masking it.
+  assertEngineWiring(parsedGoMod(), version);
 
   // 4. Engine changelog entry (parent CHANGELOG is handled by @semantic-release/git).
   prependChangelog(version, channel, parentVersion);
@@ -294,7 +346,7 @@ function main() {
 }
 
 // Pure helpers are exported for unit testing; main() runs only when executed directly.
-export { parseSemver, compareSemver, applyBump, computeNextVersion };
+export { parseSemver, compareSemver, applyBump, computeNextVersion, engineReplaces, assertEngineWiring };
 
 if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
   main();
