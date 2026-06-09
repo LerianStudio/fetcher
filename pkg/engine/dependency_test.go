@@ -49,6 +49,76 @@ func TestEngineDependencyBoundary_BlocksForbiddenImports(t *testing.T) {
 	}
 }
 
+// TestEngineDependencyBoundary_AllowlistStdlibAndModuleLocalOnly is the
+// strictly-stronger complement to the enumerated denylist above: every
+// transitive dependency of pkg/engine must be EITHER a Go stdlib package OR a
+// module-local package. Any third-party import family — even one no denylist
+// class names — fails here, so a new infra family can no longer slip in until
+// someone remembers to add a denylist entry. The denylist still runs alongside
+// it to forbid the module-local infrastructure shells (pkg/datasource,
+// pkg/rabbitmq, ...) that this allowlist would otherwise admit.
+func TestEngineDependencyBoundary_AllowlistStdlibAndModuleLocalOnly(t *testing.T) {
+	t.Parallel()
+
+	repoRoot := mustRepositoryRoot(t)
+	modulePath := mustModulePathFromGoMod(t, repoRoot)
+
+	for _, dependency := range collectEngineDependencyGraph(t, repoRoot) {
+		if isStdlibImportPath(dependency) || isModuleLocalImportPath(dependency, modulePath) {
+			continue
+		}
+
+		t.Fatalf(
+			"pkg/engine allowlist violation: dependency %q is neither stdlib nor module-local (%s). "+
+				"The engine core must stay infrastructure-free; put the concrete dependency behind a port and an adapter in pkg/enginecompat or the host.",
+			dependency, modulePath,
+		)
+	}
+}
+
+// TestEngineDependencyBoundary_AllowlistPolicyClassification pins the allowlist
+// predicates so the strictly-stronger guarantee can't silently rot: a brand-new
+// third-party family (with no denylist entry) MUST be rejected, while stdlib and
+// module-local paths pass. It also guards the trailing-slash check that keeps a
+// prefix lookalike (the pre-/v2 path, or a hypothetical /v3) from masquerading
+// as module-local.
+func TestEngineDependencyBoundary_AllowlistPolicyClassification(t *testing.T) {
+	t.Parallel()
+
+	const modulePath = "github.com/LerianStudio/fetcher/v2"
+
+	tests := []struct {
+		name       string
+		importPath string
+		allowed    bool
+	}{
+		{"stdlib single segment", "context", true},
+		{"stdlib nested", "crypto/sha256", true},
+		{"stdlib internal", "internal/abi", true},
+		{"stdlib vendored x package", "vendor/golang.org/x/net/dns/dnsmessage", true},
+		{"module root", modulePath, true},
+		{"module-local engine subpackage", modulePath + "/pkg/engine/memory", true},
+		{"module-local non-engine package", modulePath + "/pkg/model", true},
+		{"unknown third-party family with no denylist entry", "github.com/some/brand-new-thing", false},
+		{"golang.org x package pulled directly", "golang.org/x/sync/errgroup", false},
+		{"non-github vcs host", "go.mongodb.org/mongo-driver/v2/mongo", false},
+		{"pre-/v2 path is not module-local", "github.com/LerianStudio/fetcher", false},
+		{"hypothetical /v3 prefix lookalike", "github.com/LerianStudio/fetcher/v3/pkg/x", false},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := isStdlibImportPath(tt.importPath) || isModuleLocalImportPath(tt.importPath, modulePath)
+			if got != tt.allowed {
+				t.Fatalf("allowlist classification of %q = %v, want %v", tt.importPath, got, tt.allowed)
+			}
+		})
+	}
+}
+
 func TestEngineDependencyBoundary_ReadsModulePathFromGoMod(t *testing.T) {
 	t.Parallel()
 
@@ -670,6 +740,26 @@ func mustModulePathFromGoMod(t *testing.T, repoRoot string) string {
 	}
 
 	return string(match[1])
+}
+
+// isStdlibImportPath reports whether an import path is a Go standard-library
+// package. The canonical heuristic: stdlib import paths have no dot in their
+// first path segment (context, crypto/sha256, internal/abi, runtime), whereas
+// third-party paths begin with a domain (github.com/..., golang.org/x/...,
+// go.mongodb.org/...). Stdlib-vendored crypto/net deps surface as
+// vendor/golang.org/... — first segment "vendor", no dot — and are correctly
+// treated as stdlib build inputs.
+func isStdlibImportPath(importPath string) bool {
+	firstSegment, _, _ := strings.Cut(importPath, "/")
+	return !strings.Contains(firstSegment, ".")
+}
+
+// isModuleLocalImportPath reports whether an import path belongs to this module
+// (the module root itself or any subpackage). The trailing-slash guard prevents
+// a different module that merely shares the path prefix (the pre-/v2 path, or a
+// hypothetical /v3) from being mistaken for module-local.
+func isModuleLocalImportPath(importPath, modulePath string) bool {
+	return importPath == modulePath || strings.HasPrefix(importPath, modulePath+"/")
 }
 
 func (dependencyClass forbiddenDependencyClass) matches(importPath string) bool {
