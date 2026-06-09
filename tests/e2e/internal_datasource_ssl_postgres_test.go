@@ -10,11 +10,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/LerianStudio/fetcher/pkg/itestkit"
-	"github.com/LerianStudio/fetcher/pkg/itestkit/infra/postgres"
-	"github.com/LerianStudio/fetcher/pkg/resolver"
-	e2eshared "github.com/LerianStudio/fetcher/tests/shared"
-	"github.com/LerianStudio/fetcher/tests/shared/fixtures/ssl"
+	"github.com/LerianStudio/fetcher/v2/pkg/itestkit"
+	"github.com/LerianStudio/fetcher/v2/pkg/itestkit/infra/postgres"
+	"github.com/LerianStudio/fetcher/v2/pkg/resolver"
+	e2eshared "github.com/LerianStudio/fetcher/v2/tests/shared"
+	"github.com/LerianStudio/fetcher/v2/tests/shared/fixtures/ssl"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

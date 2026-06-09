@@ -7,8 +7,8 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/LerianStudio/fetcher/pkg/enginecompat/tablenorm"
-	"github.com/LerianStudio/fetcher/pkg/model"
+	"github.com/LerianStudio/fetcher/v2/pkg/enginecompat/tablenorm"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
 )
 
 func TestSchemaScopeForTables(t *testing.T) {
@@ -141,9 +141,10 @@ func TestNormalizeTable(t *testing.T) {
 		{name: "sqlserver dbo prefix stripped", dbType: model.TypeSQLServer, input: "dbo.users", want: "users"},
 		{name: "sqlserver custom schema preserved", dbType: model.TypeSQLServer, input: "sales.orders", want: "sales.orders"},
 		{name: "sqlserver case preserved", dbType: model.TypeSQLServer, input: "dbo.Users", want: "Users"},
-		// Oracle folds to UPPERCASE (FIX-2: legacy case-insensitive parity); no public-prefix concept.
+		// Oracle is UPPERCASE-CANONICAL (matches the physical Oracle catalog + result keys); no public-prefix concept.
 		{name: "oracle lowercase folds upper", dbType: model.TypeOracle, input: "accounts", want: "ACCOUNTS"},
 		{name: "oracle mixed-case folds upper", dbType: model.TypeOracle, input: "Accounts", want: "ACCOUNTS"},
+		{name: "oracle uppercase stays upper", dbType: model.TypeOracle, input: "ACCOUNTS", want: "ACCOUNTS"},
 		{name: "oracle owner-qualified folds upper", dbType: model.TypeOracle, input: "hr.employees", want: "HR.EMPLOYEES"},
 		{name: "mongodb no stripping, case preserved", dbType: model.TypeMongoDB, input: "db.Collection", want: "db.Collection"},
 		{name: "pg case preserved", dbType: model.TypePostgreSQL, input: "public.Users", want: "Users"},
@@ -174,7 +175,7 @@ func TestNormalizeField(t *testing.T) {
 		{name: "mysql field case preserved", dbType: model.TypeMySQL, input: "userName", want: "userName"},
 		{name: "sqlserver field case preserved", dbType: model.TypeSQLServer, input: "OrderId", want: "OrderId"},
 		{name: "mongodb field case preserved", dbType: model.TypeMongoDB, input: "primaryEmail", want: "primaryEmail"},
-		// Oracle folds to UPPERCASE.
+		// Oracle is UPPERCASE-CANONICAL (matches the physical ALL_TAB_COLUMNS catalog + result column keys).
 		{name: "oracle field lowercase folds upper", dbType: model.TypeOracle, input: "balance", want: "BALANCE"},
 		{name: "oracle field mixed folds upper", dbType: model.TypeOracle, input: "AccountId", want: "ACCOUNTID"},
 	}

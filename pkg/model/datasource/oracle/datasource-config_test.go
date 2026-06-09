@@ -5,10 +5,12 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/LerianStudio/fetcher/pkg/model/datasource"
-	"github.com/LerianStudio/fetcher/pkg/model/job"
-	"github.com/LerianStudio/fetcher/pkg/oracle"
-	"github.com/LerianStudio/fetcher/pkg/testutil"
+	"github.com/LerianStudio/fetcher/v2/pkg/enginecompat/tablenorm"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	"github.com/LerianStudio/fetcher/v2/pkg/model/datasource"
+	"github.com/LerianStudio/fetcher/v2/pkg/model/job"
+	"github.com/LerianStudio/fetcher/v2/pkg/oracle"
+	"github.com/LerianStudio/fetcher/v2/pkg/testutil"
 	libConstant "github.com/LerianStudio/lib-commons/v5/commons/constants"
 	"github.com/LerianStudio/lib-observability/log"
 	"github.com/stretchr/testify/assert"
@@ -207,6 +209,65 @@ func TestDataSourceConfigOracle_GetSchemaInfo(t *testing.T) {
 		schema, err := ds.GetSchemaInfo(ctx, nil)
 		assert.NoError(t, err)
 		assert.Equal(t, "test-oracle", schema.ConfigName)
+	})
+
+	// TestDataSourceConfigOracle_GetSchemaInfo / "canonical normalization yields physical
+	// UPPERCASE" PINS THE UPPERCASE-CANONICAL CONTRACT. This is the exact divergence the
+	// contract closes: GetSchemaInfo INTERNALLY lowercases the physical UPPERCASE catalog
+	// names (all_tab_columns) it reads — but the extracted result rows are keyed by the
+	// PHYSICAL UPPERCASE columns (pkg/oracle.createRowMap). A lowercase schema against
+	// UPPERCASE data is the mismatch. The canonical normalizer (tablenorm, used by the
+	// Manager snapshot/validation AND the Worker extraction) RE-FOLDS GetSchemaInfo's
+	// lowercase output back to UPPERCASE, realigning schema == data.
+	//
+	// !!! IF THIS TEST FAILS, DO NOT "FIX" IT BY LOOSENING THE ASSERTION. The
+	// !!! UPPERCASE-canonical contract (tablenorm Oracle fold = ToUpper, the Manager
+	// !!! normalize*ForValidation delegating to tablenorm, the Oracle-gated snapshot
+	// !!! normalize=true, and the result-key waiver "Oracle identifiers are uppercased")
+	// !!! must be re-evaluated TOGETHER — otherwise the Manager will validate one
+	// !!! identity and the Worker/data will carry another.
+	t.Run("canonical normalization yields physical UPPERCASE", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		mockRepo := oracle.NewMockRepository(ctrl)
+
+		// The adapter reports physical Oracle identifiers UPPERCASED, as the data
+		// dictionary does.
+		schemaResult := []oracle.TableSchema{
+			{
+				TableName: "ACCOUNTS",
+				Columns: []oracle.ColumnInformation{
+					{Name: "ID"},
+					{Name: "BALANCE"},
+				},
+			},
+		}
+
+		mockRepo.EXPECT().GetDatabaseSchema(gomock.Any(), gomock.Any()).Return(schemaResult, nil)
+
+		ds := &DataSourceConfigOracle{
+			DataSourceConfig: datasource.DataSourceConfig{ConfigName: "ora-pin"},
+			OracleRepository: mockRepo,
+		}
+
+		schema, err := ds.GetSchemaInfo(context.Background(), nil)
+		assert.NoError(t, err)
+
+		// FACT (unchanged, documented): GetSchemaInfo lowercases its output.
+		assert.True(t, schema.HasTable("accounts"),
+			"GetSchemaInfo lowercases the table name (this is WHY the canonical fold must re-uppercase)")
+		assert.True(t, schema.HasField("accounts", "id"),
+			"GetSchemaInfo lowercases column names (this is WHY the canonical fold must re-uppercase)")
+
+		// CONTRACT: the canonical normalizer re-folds GetSchemaInfo's lowercase output to
+		// the PHYSICAL UPPERCASE identity, realigning the schema identity with the
+		// UPPERCASE data keys createRowMap emits.
+		assert.Equal(t, "ACCOUNTS", tablenorm.NormalizeTable(model.TypeOracle, "accounts"),
+			"canonical Oracle table identity must be physical UPPERCASE")
+		assert.Equal(t, "ID", tablenorm.NormalizeField(model.TypeOracle, "id"),
+			"canonical Oracle field identity must be physical UPPERCASE")
+		assert.Equal(t, "BALANCE", tablenorm.NormalizeField(model.TypeOracle, "balance"),
+			"canonical Oracle field identity must be physical UPPERCASE")
 	})
 
 	t.Run("schema retrieval error", func(t *testing.T) {

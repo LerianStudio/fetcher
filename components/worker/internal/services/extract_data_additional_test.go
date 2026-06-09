@@ -6,11 +6,11 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/LerianStudio/fetcher/pkg/constant"
-	workerCrypto "github.com/LerianStudio/fetcher/pkg/crypto"
-	"github.com/LerianStudio/fetcher/pkg/engine"
-	"github.com/LerianStudio/fetcher/pkg/model"
-	modelDatasource "github.com/LerianStudio/fetcher/pkg/model/datasource"
+	"github.com/LerianStudio/fetcher/v2/pkg/constant"
+	workerCrypto "github.com/LerianStudio/fetcher/v2/pkg/crypto"
+	"github.com/LerianStudio/fetcher/v2/pkg/engine"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	modelDatasource "github.com/LerianStudio/fetcher/v2/pkg/model/datasource"
 
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"

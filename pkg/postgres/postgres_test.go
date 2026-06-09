@@ -3,8 +3,8 @@ package postgres
 import (
 	"testing"
 
-	"github.com/LerianStudio/fetcher/pkg/model/job"
-	"github.com/LerianStudio/fetcher/pkg/testutil"
+	"github.com/LerianStudio/fetcher/v2/pkg/model/job"
+	"github.com/LerianStudio/fetcher/v2/pkg/testutil"
 	"github.com/Masterminds/squirrel"
 	"github.com/google/uuid"
 )

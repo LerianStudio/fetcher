@@ -12,11 +12,11 @@ import (
 
 	observability "github.com/LerianStudio/lib-observability"
 
-	"github.com/LerianStudio/fetcher/components/worker/internal/adapters/rabbitmq"
-	"github.com/LerianStudio/fetcher/components/worker/internal/services"
-	"github.com/LerianStudio/fetcher/pkg/bootstrap/readyz"
-	"github.com/LerianStudio/fetcher/pkg/crypto"
-	pkgRabbitmq "github.com/LerianStudio/fetcher/pkg/rabbitmq"
+	"github.com/LerianStudio/fetcher/v2/components/worker/internal/adapters/rabbitmq"
+	"github.com/LerianStudio/fetcher/v2/components/worker/internal/services"
+	"github.com/LerianStudio/fetcher/v2/pkg/bootstrap/readyz"
+	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
+	pkgRabbitmq "github.com/LerianStudio/fetcher/v2/pkg/rabbitmq"
 	tmconsumer "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/consumer"
 	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
 	tmmongo "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/mongo"

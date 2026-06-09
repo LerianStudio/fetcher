@@ -31,14 +31,13 @@ import (
 	"context"
 	"strings"
 
-	"github.com/LerianStudio/fetcher/pkg/crypto"
-	"github.com/LerianStudio/fetcher/pkg/engine"
-	"github.com/LerianStudio/fetcher/pkg/enginecompat/connectioncompat"
-	"github.com/LerianStudio/fetcher/pkg/enginecompat/schemacompat"
-	"github.com/LerianStudio/fetcher/pkg/enginecompat/tablenorm"
-	"github.com/LerianStudio/fetcher/pkg/model"
-	"github.com/LerianStudio/fetcher/pkg/model/datasource"
-	"github.com/LerianStudio/fetcher/pkg/model/job"
+	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
+	"github.com/LerianStudio/fetcher/v2/pkg/engine"
+	"github.com/LerianStudio/fetcher/v2/pkg/enginecompat/connectioncompat"
+	"github.com/LerianStudio/fetcher/v2/pkg/enginecompat/schemacompat"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	"github.com/LerianStudio/fetcher/v2/pkg/model/datasource"
+	"github.com/LerianStudio/fetcher/v2/pkg/model/job"
 
 	"github.com/google/uuid"
 )
@@ -171,10 +170,16 @@ func (c *Connector) DiscoverSchema(ctx context.Context) (engine.SchemaSnapshot, 
 	return snapshotFromSchema(c.descriptor.ConfigName, dbType, schema), nil
 }
 
-// Query executes the extraction request through the underlying DataSource. It
-// maps the Engine ExtractionRequest into the (tables, filters) inputs the
-// DataSource expects, keyed by this connector's config name.
-func (c *Connector) Query(ctx context.Context, request engine.ExtractionRequest) (map[string][]map[string]any, error) {
+// QueryStream executes the extraction request through the underlying DataSource
+// and returns a RowCursor over the result. It maps the Engine ExtractionRequest
+// into the (tables, filters) inputs the DataSource expects, keyed by this
+// connector's config name.
+//
+// TODO(streaming): back this with real DB cursors. The underlying pkg/datasource
+// Query fetches the whole result eagerly, so this materializes it and wraps it
+// with engine.NewEagerCursor to satisfy the streaming contract. True DB-side
+// streaming is a later optimization that does not change this seam's signature.
+func (c *Connector) QueryStream(ctx context.Context, request engine.ExtractionRequest) (engine.RowCursor, error) {
 	if c.ds == nil {
 		return nil, engine.NewEngineError(engine.CategoryUnavailable, "datasource is not connected")
 	}
@@ -187,7 +192,7 @@ func (c *Connector) Query(ctx context.Context, request engine.ExtractionRequest)
 		return nil, engine.NewEngineError(engine.CategoryUnavailable, "failed to query datasource")
 	}
 
-	return rows, nil
+	return engine.NewEagerCursor(rows), nil
 }
 
 // Close releases the underlying connection. It is safe before TestConnection
@@ -404,61 +409,12 @@ func filtersForConfig(configName string, request engine.ExtractionRequest) map[s
 //     Engine's exact match succeeds exactly where the legacy normalization did.
 //
 // Both reconciliations live HERE, at the enginecompat seam, never in the Engine
-// core — the Engine stays literal and free of datasource-naming knowledge.
+// core — the Engine stays literal and free of datasource-naming knowledge. The
+// actual filter + normalize implementation is the single forward builder
+// schemacompat.BuildSnapshot; this is a thin wrapper that selects both flags.
 func snapshotFromSchema(configName string, dbType model.DBType, schema *model.DataSourceSchema) engine.SchemaSnapshot {
-	snapshot := engine.SchemaSnapshot{ConfigName: configName}
-	if schema == nil {
-		return snapshot
-	}
-
-	if schema.ConfigName != "" {
-		snapshot.ConfigName = schema.ConfigName
-	}
-
-	snapshot.CapturedAt = schema.CachedAt
-
-	if len(schema.Tables) == 0 {
-		return snapshot
-	}
-
-	tables := make([]engine.TableSnapshot, 0, len(schema.Tables))
-	for name, table := range schema.Tables {
-		tableName := name
-		if table != nil && table.TableName != "" {
-			tableName = table.TableName
-		}
-
-		if schemacompat.IsSystemTable(dbType, tableName) {
-			continue
-		}
-
-		var fields []string
-		if table != nil {
-			fields = normalizeSnapshotFields(dbType, table.GetColumnsList())
-		}
-
-		tables = append(tables, engine.TableSnapshot{Name: tablenorm.NormalizeTable(dbType, tableName), Fields: fields})
-	}
-
-	snapshot.Tables = tables
-
-	return snapshot
-}
-
-// normalizeSnapshotFields canonicalizes a snapshot's field names for the datasource
-// type so the snapshot side and the request side (worker mapper) reconcile to the
-// SAME identity before the Engine's literal field match. It is the IDENTITY for
-// case-sensitive types (PG/MySQL/SQLServer) and folds to UPPERCASE for Oracle,
-// mirroring tablenorm.NormalizeField on the request side. A nil input yields nil.
-func normalizeSnapshotFields(dbType model.DBType, fields []string) []string {
-	if !tablenorm.FoldsFieldCase(dbType) || fields == nil {
-		return fields
-	}
-
-	out := make([]string, len(fields))
-	for i, field := range fields {
-		out[i] = tablenorm.NormalizeField(dbType, field)
-	}
-
-	return out
+	return schemacompat.BuildSnapshot(configName, dbType, schema, schemacompat.SnapshotOptions{
+		FilterSystemTables: true,
+		Normalize:          true,
+	})
 }

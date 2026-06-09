@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/LerianStudio/fetcher/components/manager/internal/services/command"
-	"github.com/LerianStudio/fetcher/components/manager/internal/services/query"
-	"github.com/LerianStudio/fetcher/pkg/model"
-	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
+	"github.com/LerianStudio/fetcher/v2/components/manager/internal/services/command"
+	"github.com/LerianStudio/fetcher/v2/components/manager/internal/services/query"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	connRepo "github.com/LerianStudio/fetcher/v2/pkg/ports/connection"
 	observability "github.com/LerianStudio/lib-observability"
 
 	libLog "github.com/LerianStudio/lib-observability/log"

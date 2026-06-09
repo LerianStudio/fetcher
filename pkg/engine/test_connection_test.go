@@ -10,8 +10,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/LerianStudio/fetcher/pkg/engine"
-	"github.com/LerianStudio/fetcher/pkg/engine/memory"
+	"github.com/LerianStudio/fetcher/v2/pkg/engine"
+	"github.com/LerianStudio/fetcher/v2/pkg/engine/memory"
 )
 
 // testConnRecord captures connector lifecycle calls for the TestConnection
@@ -64,9 +64,9 @@ func (c *testConnConnector) DiscoverSchema(_ context.Context) (engine.SchemaSnap
 	return engine.SchemaSnapshot{}, nil
 }
 
-func (c *testConnConnector) Query(_ context.Context, _ engine.ExtractionRequest) (map[string][]map[string]any, error) {
+func (c *testConnConnector) QueryStream(_ context.Context, _ engine.ExtractionRequest) (engine.RowCursor, error) {
 	c.record.note("query")
-	return nil, nil
+	return engine.NewEagerCursor(nil), nil
 }
 
 func (c *testConnConnector) Close(_ context.Context) error {

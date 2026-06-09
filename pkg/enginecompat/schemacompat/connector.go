@@ -7,12 +7,12 @@ import (
 	"context"
 	"strings"
 
-	"github.com/LerianStudio/fetcher/pkg/crypto"
-	"github.com/LerianStudio/fetcher/pkg/datasource"
-	"github.com/LerianStudio/fetcher/pkg/engine"
-	"github.com/LerianStudio/fetcher/pkg/enginecompat/connectioncompat"
-	"github.com/LerianStudio/fetcher/pkg/model"
-	datasourceModel "github.com/LerianStudio/fetcher/pkg/model/datasource"
+	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
+	"github.com/LerianStudio/fetcher/v2/pkg/datasource"
+	"github.com/LerianStudio/fetcher/v2/pkg/engine"
+	"github.com/LerianStudio/fetcher/v2/pkg/enginecompat/connectioncompat"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	datasourceModel "github.com/LerianStudio/fetcher/v2/pkg/model/datasource"
 )
 
 // ConnectorFactory is the schema Engine's engine.ConnectorFactory. It rebuilds
@@ -95,9 +95,10 @@ func (c *Connector) DiscoverSchema(ctx context.Context) (engine.SchemaSnapshot, 
 	return c.snapshot(schema), nil
 }
 
-// Query is unsupported on the schema path; the schema Engine performs discovery
-// only. Extraction runs through the dedicated enginecompat/datasource connector.
-func (c *Connector) Query(context.Context, engine.ExtractionRequest) (map[string][]map[string]any, error) {
+// QueryStream is unsupported on the schema path; the schema Engine performs
+// discovery only. Extraction runs through the dedicated enginecompat/datasource
+// connector.
+func (c *Connector) QueryStream(context.Context, engine.ExtractionRequest) (engine.RowCursor, error) {
 	return nil, engine.NewEngineError(engine.CategoryValidation, "schema connector supports discovery only")
 }
 
@@ -173,42 +174,24 @@ func (c *Connector) schemaArg(ctx context.Context) []string {
 }
 
 // snapshot maps the host *model.DataSourceSchema into a secret-free Engine
-// snapshot, EXCLUDING system tables by datasource type. This is the host layer
-// that keeps system-table conventions (pg_*, Oracle SYS, db_*, Mongo system.*)
-// out of the Engine core: the snapshot that crosses the boundary is already
-// filtered, so the Engine never sees a system table as a valid one.
+// snapshot, EXCLUDING system tables by datasource type. This is the host layer that
+// keeps system-table conventions (pg_*, Oracle SYS, db_*, Mongo system.*) out of the
+// Engine core: the snapshot that crosses the boundary is already filtered. It is a
+// thin wrapper over the single forward builder.
+//
+// CASE NORMALIZATION IS APPLIED FOR ORACLE ONLY. The Manager schema snapshot feeds
+// BOTH schema validation AND the user-visible GET .../schema response. For Oracle we
+// uppercase identifiers so the Manager identity matches the Worker extraction identity,
+// the physical Oracle catalog, and the extracted result keys (all UPPERCASE) — and so
+// the /schema response surfaces the same UPPERCASE names the data is keyed by. The
+// Normalize flag also strips default-schema prefixes (public./dbo.), which we do NOT
+// want to apply to the PG/SQLServer /schema response (it would change a non-Oracle,
+// out-of-scope surface). Gating Normalize on Oracle keeps the prefix-strip off the
+// case-sensitive types whose default schema is empty anyway, so the fold is the only
+// effect.
 func (c *Connector) snapshot(schema *model.DataSourceSchema) engine.SchemaSnapshot {
-	snapshot := engine.SchemaSnapshot{ConfigName: c.conn.ConfigName}
-	if schema == nil || schema.Tables == nil {
-		return snapshot
-	}
-
-	if schema.ConfigName != "" {
-		snapshot.ConfigName = schema.ConfigName
-	}
-
-	snapshot.CapturedAt = schema.CachedAt
-
-	tables := make([]engine.TableSnapshot, 0, len(schema.Tables))
-	for name, table := range schema.Tables {
-		tableName := name
-		if table != nil && table.TableName != "" {
-			tableName = table.TableName
-		}
-
-		if IsSystemTable(c.conn.Type, tableName) {
-			continue
-		}
-
-		var fields []string
-		if table != nil {
-			fields = table.GetColumnsList()
-		}
-
-		tables = append(tables, engine.TableSnapshot{Name: tableName, Fields: fields})
-	}
-
-	snapshot.Tables = tables
-
-	return snapshot
+	return BuildSnapshot(c.conn.ConfigName, c.conn.Type, schema, SnapshotOptions{
+		FilterSystemTables: true,
+		Normalize:          c.conn.Type == model.TypeOracle,
+	})
 }

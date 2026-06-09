@@ -75,15 +75,21 @@ func (fakeExecutionStore) SaveExecution(context.Context, TenantContext, Executio
 	return nil
 }
 
-func (fakeExecutionStore) FindExecution(context.Context, TenantContext, string) (ExecutionState, bool, error) {
-	return ExecutionState{}, false, nil
-}
-
 type fakeResultSink struct{}
 
 func (fakeResultSink) PersistResult(context.Context, TenantContext, []byte) (ResultReference, error) {
 	return ResultReference{}, nil
 }
+
+func (fakeResultSink) OpenResultStream(context.Context, TenantContext) (ResultStreamWriter, error) {
+	return fakeResultStreamWriter{}, nil
+}
+
+type fakeResultStreamWriter struct{}
+
+func (fakeResultStreamWriter) Write(p []byte) (int, error) { return len(p), nil }
+
+func (fakeResultStreamWriter) Close() (ResultReference, error) { return ResultReference{}, nil }
 
 type fakeSchemaCache struct{}
 
@@ -93,16 +99,6 @@ func (fakeSchemaCache) GetSchema(context.Context, TenantContext, string) (Schema
 
 func (fakeSchemaCache) PutSchema(context.Context, TenantContext, SchemaSnapshot) error {
 	return nil
-}
-
-type fakeEventSink struct{}
-
-func (fakeEventSink) Emit(context.Context, TenantContext, ExecutionState) error { return nil }
-
-type fakeTenantResolver struct{}
-
-func (fakeTenantResolver) Resolve(context.Context, TenantContext) (TenantContext, error) {
-	return TenantContext{}, nil
 }
 
 type fakeObservability struct{}
@@ -407,14 +403,6 @@ func TestNew_OptionalPortsAreOptional(t *testing.T) {
 			opts: append(validBaseOptions(), WithSchemaCache(fakeSchemaCache{})),
 		},
 		{
-			name: "with event sink",
-			opts: append(validBaseOptions(), WithEventSink(fakeEventSink{})),
-		},
-		{
-			name: "with tenant resolver",
-			opts: append(validBaseOptions(), WithTenantResolver(fakeTenantResolver{})),
-		},
-		{
 			name: "with observability",
 			opts: append(validBaseOptions(), WithObservability(fakeObservability{})),
 		},
@@ -425,8 +413,6 @@ func TestNew_OptionalPortsAreOptional(t *testing.T) {
 				WithExecutionStore(fakeExecutionStore{}),
 				WithConnectionStore(fakeConnectionStore{}),
 				WithSchemaCache(fakeSchemaCache{}),
-				WithEventSink(fakeEventSink{}),
-				WithTenantResolver(fakeTenantResolver{}),
 				WithObservability(fakeObservability{}),
 			),
 		},
@@ -459,8 +445,6 @@ func TestNew_ValidFakeCollaboratorsProduceUsableEngine(t *testing.T) {
 		WithExecutionStore(fakeExecutionStore{}),
 		WithResultSink(fakeResultSink{}),
 		WithSchemaCache(fakeSchemaCache{}),
-		WithEventSink(fakeEventSink{}),
-		WithTenantResolver(fakeTenantResolver{}),
 		WithObservability(fakeObservability{}),
 		WithLimits(DefaultLimits()),
 	)

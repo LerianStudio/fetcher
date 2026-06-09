@@ -3,7 +3,7 @@ package mongodb
 import (
 	"errors"
 
-	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo"
 )
 
 // IsIndexConflictError checks if the error is a MongoDB index conflict error.

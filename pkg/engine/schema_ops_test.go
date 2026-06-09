@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/LerianStudio/fetcher/pkg/engine"
-	"github.com/LerianStudio/fetcher/pkg/engine/memory"
+	"github.com/LerianStudio/fetcher/v2/pkg/engine"
+	"github.com/LerianStudio/fetcher/v2/pkg/engine/memory"
 )
 
 // schemaConnRecord records connector lifecycle calls for the DiscoverSchema
@@ -70,9 +70,9 @@ func (c *schemaConnConnector) DiscoverSchema(_ context.Context) (engine.SchemaSn
 	return c.snapshot, nil
 }
 
-func (c *schemaConnConnector) Query(_ context.Context, _ engine.ExtractionRequest) (map[string][]map[string]any, error) {
+func (c *schemaConnConnector) QueryStream(_ context.Context, _ engine.ExtractionRequest) (engine.RowCursor, error) {
 	c.record.note("query")
-	return nil, nil
+	return engine.NewEagerCursor(nil), nil
 }
 
 func (c *schemaConnConnector) Close(_ context.Context) error {

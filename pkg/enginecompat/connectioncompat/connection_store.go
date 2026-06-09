@@ -7,10 +7,10 @@ import (
 	"context"
 	"time"
 
-	"github.com/LerianStudio/fetcher/pkg/engine"
-	"github.com/LerianStudio/fetcher/pkg/model"
-	netHTTP "github.com/LerianStudio/fetcher/pkg/net/http"
-	connPort "github.com/LerianStudio/fetcher/pkg/ports/connection"
+	"github.com/LerianStudio/fetcher/v2/pkg/engine"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	netHTTP "github.com/LerianStudio/fetcher/v2/pkg/net/http"
+	connPort "github.com/LerianStudio/fetcher/v2/pkg/ports/connection"
 
 	"github.com/google/uuid"
 )

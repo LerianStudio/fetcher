@@ -7,7 +7,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/LerianStudio/fetcher/pkg/enginecompat/connectioncompat"
+	"github.com/LerianStudio/fetcher/v2/pkg/enginecompat/connectioncompat"
 
 	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
 

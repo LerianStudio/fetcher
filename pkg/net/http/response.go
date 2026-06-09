@@ -3,7 +3,7 @@ package http
 import (
 	"net/http"
 
-	"github.com/LerianStudio/fetcher/pkg"
+	"github.com/LerianStudio/fetcher/v2/pkg"
 
 	"github.com/gofiber/fiber/v2"
 )

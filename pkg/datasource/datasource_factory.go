@@ -10,27 +10,27 @@ import (
 
 	"github.com/LerianStudio/lib-observability"
 
-	"github.com/LerianStudio/fetcher/pkg/constant"
-	"github.com/LerianStudio/fetcher/pkg/crypto"
-	"github.com/LerianStudio/fetcher/pkg/datasource/hostsafety"
-	"github.com/LerianStudio/fetcher/pkg/datasource/sslmode"
-	"github.com/LerianStudio/fetcher/pkg/model"
-	"github.com/LerianStudio/fetcher/pkg/model/datasource"
-	datasourceMongoConfig "github.com/LerianStudio/fetcher/pkg/model/datasource/mongodb"
-	datasourceMySQLConfig "github.com/LerianStudio/fetcher/pkg/model/datasource/mysql"
-	datasourceOracleConfig "github.com/LerianStudio/fetcher/pkg/model/datasource/oracle"
-	datasourcePostgresConfig "github.com/LerianStudio/fetcher/pkg/model/datasource/postgres"
-	datasourceSQLServerConfig "github.com/LerianStudio/fetcher/pkg/model/datasource/sqlserver"
-	"github.com/LerianStudio/fetcher/pkg/mongodb"
-	"github.com/LerianStudio/fetcher/pkg/mysql"
-	"github.com/LerianStudio/fetcher/pkg/oracle"
-	"github.com/LerianStudio/fetcher/pkg/postgres"
-	"github.com/LerianStudio/fetcher/pkg/sqlserver"
+	"github.com/LerianStudio/fetcher/v2/pkg/constant"
+	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
+	"github.com/LerianStudio/fetcher/v2/pkg/datasource/hostsafety"
+	"github.com/LerianStudio/fetcher/v2/pkg/datasource/sslmode"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	"github.com/LerianStudio/fetcher/v2/pkg/model/datasource"
+	datasourceMongoConfig "github.com/LerianStudio/fetcher/v2/pkg/model/datasource/mongodb"
+	datasourceMySQLConfig "github.com/LerianStudio/fetcher/v2/pkg/model/datasource/mysql"
+	datasourceOracleConfig "github.com/LerianStudio/fetcher/v2/pkg/model/datasource/oracle"
+	datasourcePostgresConfig "github.com/LerianStudio/fetcher/v2/pkg/model/datasource/postgres"
+	datasourceSQLServerConfig "github.com/LerianStudio/fetcher/v2/pkg/model/datasource/sqlserver"
+	"github.com/LerianStudio/fetcher/v2/pkg/mongodb"
+	"github.com/LerianStudio/fetcher/v2/pkg/mysql"
+	"github.com/LerianStudio/fetcher/v2/pkg/oracle"
+	"github.com/LerianStudio/fetcher/v2/pkg/postgres"
+	"github.com/LerianStudio/fetcher/v2/pkg/sqlserver"
 	libLog "github.com/LerianStudio/lib-observability/log"
 	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
 
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -256,7 +256,7 @@ func testMongoDBConnection(ctx context.Context, mongoURI, configName string, log
 		SetConnectTimeout(constant.ConnectionTimeout).
 		SetServerSelectionTimeout(constant.ConnectionTimeout)
 
-	client, errConnect := mongo.Connect(testCtx, clientOpts)
+	client, errConnect := mongo.Connect(clientOpts)
 	if errConnect != nil {
 		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to connect to MongoDB [%s]: %v", configName, errConnect))
 		return fmt.Errorf("failed to connect to MongoDB: %w", errConnect)

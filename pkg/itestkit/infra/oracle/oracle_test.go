@@ -12,8 +12,8 @@ import (
 
 	_ "github.com/sijms/go-ora/v2"
 
-	"github.com/LerianStudio/fetcher/pkg/itestkit"
-	"github.com/LerianStudio/fetcher/pkg/itestkit/infra/oracle"
+	"github.com/LerianStudio/fetcher/v2/pkg/itestkit"
+	"github.com/LerianStudio/fetcher/v2/pkg/itestkit/infra/oracle"
 )
 
 func TestOracleInfra(t *testing.T) {

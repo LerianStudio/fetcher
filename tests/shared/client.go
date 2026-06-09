@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/LerianStudio/fetcher/pkg/model"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
 	"github.com/go-resty/resty/v2"
 )
 

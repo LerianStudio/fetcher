@@ -26,9 +26,9 @@ import (
 
 	libSSRF "github.com/LerianStudio/lib-commons/v5/commons/security/ssrf"
 
-	"github.com/LerianStudio/fetcher/pkg"
-	"github.com/LerianStudio/fetcher/pkg/constant"
-	"github.com/LerianStudio/fetcher/pkg/model"
+	"github.com/LerianStudio/fetcher/v2/pkg"
+	"github.com/LerianStudio/fetcher/v2/pkg/constant"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
 )
 
 // lookupFunc is the resolver indirection point. Tests inject a deterministic

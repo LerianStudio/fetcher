@@ -9,10 +9,10 @@ import (
 	"strings"
 	"testing"
 
-	workerCrypto "github.com/LerianStudio/fetcher/pkg/crypto"
-	"github.com/LerianStudio/fetcher/pkg/model"
-	modelDatasource "github.com/LerianStudio/fetcher/pkg/model/datasource"
-	portDS "github.com/LerianStudio/fetcher/pkg/ports/datasource"
+	workerCrypto "github.com/LerianStudio/fetcher/v2/pkg/crypto"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	modelDatasource "github.com/LerianStudio/fetcher/v2/pkg/model/datasource"
+	portDS "github.com/LerianStudio/fetcher/v2/pkg/ports/datasource"
 	observability "github.com/LerianStudio/lib-observability"
 
 	"github.com/stretchr/testify/assert"

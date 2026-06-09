@@ -4,14 +4,14 @@ import (
 	"context"
 	"errors"
 
-	"github.com/LerianStudio/fetcher/pkg/crypto"
-	"github.com/LerianStudio/fetcher/pkg/engine"
-	"github.com/LerianStudio/fetcher/pkg/model"
-	"github.com/LerianStudio/fetcher/pkg/model/datasource"
-	"github.com/LerianStudio/fetcher/pkg/ports/connection"
-	"github.com/LerianStudio/fetcher/pkg/ports/job"
-	"github.com/LerianStudio/fetcher/pkg/ports/storage"
-	"github.com/LerianStudio/fetcher/pkg/resolver"
+	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
+	"github.com/LerianStudio/fetcher/v2/pkg/engine"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	"github.com/LerianStudio/fetcher/v2/pkg/model/datasource"
+	"github.com/LerianStudio/fetcher/v2/pkg/ports/connection"
+	"github.com/LerianStudio/fetcher/v2/pkg/ports/job"
+	"github.com/LerianStudio/fetcher/v2/pkg/ports/storage"
+	"github.com/LerianStudio/fetcher/v2/pkg/resolver"
 	streaming "github.com/LerianStudio/lib-streaming"
 )
 

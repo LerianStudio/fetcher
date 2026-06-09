@@ -39,7 +39,7 @@ The Worker's engine instance is deliberately minimal. It is wired with only:
 - a **connector registry** (the `enginecompat/datasource` connector factory), and
 - a **connection store** (the request-scoped `schemacompat` store).
 
-There is **no** `ResultSink`, `ExecutionStore`, or `EventSink`. Extraction runs in **DIRECT mode**: the engine returns the result bytes inline and the Worker owns everything after that.
+There is **no** `ResultSink` or `ExecutionStore`. Extraction runs in **DIRECT mode**: the engine returns the result bytes inline and the Worker owns everything after that.
 
 ```mermaid
 graph TB

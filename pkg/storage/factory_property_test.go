@@ -7,7 +7,7 @@ import (
 	"testing"
 	"testing/quick"
 
-	"github.com/LerianStudio/fetcher/pkg/storage"
+	"github.com/LerianStudio/fetcher/v2/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 

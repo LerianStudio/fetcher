@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/LerianStudio/fetcher/pkg/model"
-	rediscache "github.com/LerianStudio/fetcher/pkg/redis"
-	"github.com/LerianStudio/fetcher/pkg/testutil"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	rediscache "github.com/LerianStudio/fetcher/v2/pkg/redis"
+	"github.com/LerianStudio/fetcher/v2/pkg/testutil"
 	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
 	libLog "github.com/LerianStudio/lib-observability/log"
 	"github.com/stretchr/testify/assert"

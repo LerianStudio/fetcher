@@ -1,8 +1,8 @@
 package command
 
 import (
-	"github.com/LerianStudio/fetcher/pkg/engine"
-	"github.com/LerianStudio/fetcher/pkg/model"
+	"github.com/LerianStudio/fetcher/v2/pkg/engine"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
 )
 
 // extraction_request_mapper bridges the Manager's public FetcherRequest onto the

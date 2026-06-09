@@ -7,8 +7,8 @@ import (
 	"context"
 	"errors"
 
-	"github.com/LerianStudio/fetcher/pkg/engine"
-	"github.com/LerianStudio/fetcher/pkg/model"
+	"github.com/LerianStudio/fetcher/v2/pkg/engine"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
 )
 
 // AuthorizeAccess routes the per-request tenant-scope authority decision through

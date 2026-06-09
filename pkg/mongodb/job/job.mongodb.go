@@ -10,18 +10,18 @@ import (
 
 	observability "github.com/LerianStudio/lib-observability"
 
-	"github.com/LerianStudio/fetcher/pkg"
-	"github.com/LerianStudio/fetcher/pkg/constant"
-	"github.com/LerianStudio/fetcher/pkg/model"
-	"github.com/LerianStudio/fetcher/pkg/mongodb"
-	portsJob "github.com/LerianStudio/fetcher/pkg/ports/job"
+	"github.com/LerianStudio/fetcher/v2/pkg"
+	"github.com/LerianStudio/fetcher/v2/pkg/constant"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	"github.com/LerianStudio/fetcher/v2/pkg/mongodb"
+	portsJob "github.com/LerianStudio/fetcher/v2/pkg/ports/job"
 
 	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
 
 	"github.com/google/uuid"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -677,20 +677,20 @@ func (jr *JobMongoDBRepository) List(ctx context.Context, filters *ListFilter) (
 	coll := db.Collection(strings.ToLower(constant.MongoCollectionJob))
 
 	queryFilter := jr.buildQueryFilter(filters)
-	opts := jr.buildPaginationOptions(filters)
+	opts, limit := jr.buildPaginationOptions(filters)
 
 	if err := setSpanAttributesFromValue(span, "app.request.repository_filter", queryFilter); err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to convert list filter to JSON", err)
 	}
 
-	cur, err := coll.Find(ctx, queryFilter, &opts)
+	cur, err := coll.Find(ctx, queryFilter, opts)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to list jobs", err)
 		return nil, fmt.Errorf("failed to list jobs: %w", err)
 	}
 	defer cur.Close(ctx)
 
-	jobs, err := jr.scanJobs(ctx, cur, span, int(*opts.Limit))
+	jobs, err := jr.scanJobs(ctx, cur, span, int(limit))
 	if err != nil {
 		return nil, err
 	}
@@ -746,18 +746,19 @@ func (jr *JobMongoDBRepository) buildDateRange(from, to *time.Time) bson.M {
 }
 
 // buildPaginationOptions builds MongoDB pagination options
-func (jr *JobMongoDBRepository) buildPaginationOptions(filters *ListFilter) options.FindOptions {
+func (jr *JobMongoDBRepository) buildPaginationOptions(filters *ListFilter) (*options.FindOptionsBuilder, int64) {
 	limit := jr.calculateLimit(filters.Limit)
 	page := jr.calculatePage(filters.Page)
 	skip := int64((page - 1) * limit)
 	limit64 := int64(limit)
 	sortDirection := jr.calculateSortDirection(filters.SortOrder)
 
-	return options.FindOptions{
-		Limit: &limit64,
-		Skip:  &skip,
-		Sort:  bson.D{{Key: "created_at", Value: sortDirection}},
-	}
+	opts := options.Find().
+		SetLimit(limit64).
+		SetSkip(skip).
+		SetSort(bson.D{{Key: "created_at", Value: sortDirection}})
+
+	return opts, limit64
 }
 
 // calculateLimit calculates and validates the limit

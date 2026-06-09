@@ -7,7 +7,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/LerianStudio/fetcher/pkg/engine"
+	"github.com/LerianStudio/fetcher/v2/pkg/engine"
 )
 
 // schemaKey identifies a cached schema snapshot within its tenant scope.

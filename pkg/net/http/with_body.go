@@ -10,8 +10,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/LerianStudio/fetcher/pkg"
-	"github.com/LerianStudio/fetcher/pkg/datasource/hostsafety"
+	"github.com/LerianStudio/fetcher/v2/pkg"
+	"github.com/LerianStudio/fetcher/v2/pkg/datasource/hostsafety"
 	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
 	"github.com/go-playground/locales/en"
 	ut "github.com/go-playground/universal-translator"
@@ -19,7 +19,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 
-	cn "github.com/LerianStudio/fetcher/pkg/constant"
+	cn "github.com/LerianStudio/fetcher/v2/pkg/constant"
 	en2 "github.com/go-playground/validator/v10/translations/en"
 )
 

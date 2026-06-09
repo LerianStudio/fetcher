@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	modelJob "github.com/LerianStudio/fetcher/pkg/model/job"
+	modelJob "github.com/LerianStudio/fetcher/v2/pkg/model/job"
 )
 
 func FuzzFilterConditionParsing(f *testing.F) {

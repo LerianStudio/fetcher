@@ -7,12 +7,12 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/LerianStudio/fetcher/components/worker/internal/services"
-	"github.com/LerianStudio/fetcher/pkg/crypto"
-	"github.com/LerianStudio/fetcher/pkg/datasource"
-	"github.com/LerianStudio/fetcher/pkg/engine"
-	enginecompatdatasource "github.com/LerianStudio/fetcher/pkg/enginecompat/datasource"
-	"github.com/LerianStudio/fetcher/pkg/enginecompat/schemacompat"
+	"github.com/LerianStudio/fetcher/v2/components/worker/internal/services"
+	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
+	"github.com/LerianStudio/fetcher/v2/pkg/datasource"
+	"github.com/LerianStudio/fetcher/v2/pkg/engine"
+	enginecompatdatasource "github.com/LerianStudio/fetcher/v2/pkg/enginecompat/datasource"
+	"github.com/LerianStudio/fetcher/v2/pkg/enginecompat/schemacompat"
 )
 
 // wireEngineRunner builds the embedded extraction Engine, sets it as the Worker
@@ -62,7 +62,7 @@ func (r extractionConnectorRegistry) Connector(string) (engine.ConnectorFactory,
 //     so the Engine never re-resolves and tenant-manager stays out of Engine core.
 //
 // No ResultSink is wired: DIRECT mode returns the bytes inline and the Worker owns
-// encrypt + store + HMAC (ST-02). No ExecutionStore/EventSink: the Worker owns the
+// encrypt + store + HMAC (ST-02). No ExecutionStore is wired: the Worker owns the
 // job lifecycle and lib-streaming events.
 //
 // maxResultBytes, when positive, overrides the engine's MaxResultBytes ceiling

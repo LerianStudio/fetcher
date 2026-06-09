@@ -3,11 +3,11 @@ package bootstrap
 import (
 	"time"
 
-	"github.com/LerianStudio/fetcher/pkg/crypto"
-	"github.com/LerianStudio/fetcher/pkg/datasource"
-	"github.com/LerianStudio/fetcher/pkg/engine"
-	"github.com/LerianStudio/fetcher/pkg/enginecompat/schemacompat"
-	cachePort "github.com/LerianStudio/fetcher/pkg/ports/cache"
+	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
+	"github.com/LerianStudio/fetcher/v2/pkg/datasource"
+	"github.com/LerianStudio/fetcher/v2/pkg/engine"
+	"github.com/LerianStudio/fetcher/v2/pkg/enginecompat/schemacompat"
+	cachePort "github.com/LerianStudio/fetcher/v2/pkg/ports/cache"
 )
 
 // schemaConnectorType is the datasource type the schema connector registry

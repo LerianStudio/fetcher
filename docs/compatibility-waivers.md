@@ -1,17 +1,5 @@
 # Compatibility Waivers
 
-## lib-commons/v5 pinned at v5.2.0
-
-| Field | Value |
-|-------|-------|
-| Owner | Platform Engineering / Fetcher maintainers |
-| Dependency | `github.com/LerianStudio/lib-commons/v5` |
-| Current version | `v5.2.0` |
-| Target version | `v5.3.0` or newer |
-| Reason | `v5.3.0` currently breaks Fetcher MongoDB manager API compatibility in the tenant-manager integration path. Fetcher remains pinned until that compatibility break is resolved upstream or Fetcher receives the matching adapter migration. |
-| Expiry / removal condition | Remove this waiver and upgrade once Fetcher compiles and passes worker/manager bootstrap, multi-tenant MongoDB manager, and readyz tests against `lib-commons/v5 >= v5.3.0`. Review no later than 2026-06-30. |
-| Validation evidence | Current remediation keeps `go.mod` pinned to `v5.2.0`; verification must include `go test ./...`, changed-package tests, and changed-package `golangci-lint run`. |
-
 ## Resolved: Worker no longer depends on `tmconsumer.MultiTenantConsumer` hidden Tenant Manager client
 
 | Field | Value |
@@ -73,3 +61,29 @@
 | Exchange | `RABBITMQ_JOB_EVENTS_EXCHANGE` (default `fetcher.job.events`) is the job-events exchange used by the streaming RabbitMQ route target. |
 | Behavioral impact if unset | Worker startup fails fast (fail-closed wiring). There is no silent degradation and no legacy fallback — a missing or `false` `STREAMING_ENABLED` blocks the Worker from starting. |
 | Decision | Accepted as the new v2.0.0 contract. Operators must set `STREAMING_ENABLED=true` and provision the `fetcher.job.events` exchange before upgrade. |
+
+## Behavior delta: Manager schema discovery + validation use UPPERCASE-canonical Oracle identifiers
+
+| Field | Value |
+|-------|-------|
+| Owner | Platform Engineering / Fetcher maintainers |
+| Since | Embedded-runtime GA (v2.0.0) |
+| Scope | Manager `GET .../schema` response and schema validation for Oracle datasources only. Does not affect PostgreSQL/MySQL/SQL Server/MongoDB. |
+| Legacy behavior | The Manager surfaced Oracle table/field identifiers in lowercase (from `oracle.GetSchemaInfo`), while the Worker extraction path normalized to UPPERCASE — the two services disagreed, and the Manager's lowercase identity diverged from the physical UPPERCASE column keys the extracted rows actually carry (`pkg/oracle.createRowMap` keys verbatim by the physical catalog). |
+| New behavior | Oracle is UPPERCASE-canonical end-to-end: discovery snapshot, `/schema` response, validation identity, the normalized result table keys, and the physical data-key casing all agree (UPPERCASE). The Manager now aligns UP to the already-correct Worker. Pinned by the cross-path parity test (`components/manager/internal/services/query/oracle_casing_parity_test.go`). |
+| Unaffected | The result-key normalization contract above ("Oracle identifiers are uppercased") is preserved byte-for-byte. `oracle.GetSchemaInfo` still lowercases internally; the canonical fold (`ToUpper`, idempotent) re-normalizes before any user-visible surface. The persisted job spec keeps the verbatim requested name; request matching stays case-insensitive at `pkg/oracle.ValidateTableAndFields`. |
+| Deploy note | The Redis schema cache may hold pre-upgrade lowercase Oracle snapshots. During the cache TTL drain window after upgrade, an Oracle schema validation could compare an UPPERCASE-normalized request against a stale lowercase cached snapshot and fail. The window is transient (TTL-bounded) and Oracle-only; operators can flush the schema cache on upgrade to avoid it. |
+| Decision | Accepted as the v2.0.0 contract. The pre-GA Manager-vs-Worker casing disagreement was the latent bug; this closes it by making every Oracle identity surface match the physical data. |
+
+## Breaking change: TLS required by default for Mongo/Redis/Postgres/RabbitMQ connections
+
+| Field | Value |
+|-------|-------|
+| Owner | Platform Engineering / Fetcher maintainers |
+| Since | lib-commons v5.2.0 -> v5.5.0 bump (v2.0.0 GA) |
+| Scope | All backing-store connections constructed through lib-commons helpers (Mongo, Redis, Postgres, RabbitMQ), Manager and Worker. |
+| Legacy behavior | lib-commons v5.2.0 did not enforce TLS on Mongo/Redis connection URIs; plaintext connections were accepted silently. |
+| New behavior | lib-commons v5.5.0 fails CLOSED on insecure (non-TLS) connection URIs unless `ALLOW_INSECURE_TLS=true`. A Manager/Worker pointed at a plaintext Mongo or Redis will refuse to start. |
+| Impact | Existing deployments using non-TLS Mongo/Redis (including the default local docker-compose infra) must either enable TLS or set `ALLOW_INSECURE_TLS=true`. Local development is handled: the committed `components/{manager,worker}/.env.example` set `ALLOW_INSECURE_TLS=true` with an explicit production warning, matching the relaxed local posture (`DEPLOYMENT_MODE=local` also disables license enforcement). SSRF host-safety is gated separately by `MULTI_TENANT_ENABLED`, not by `DEPLOYMENT_MODE`. |
+| Production guidance | Production MUST use TLS and MUST NOT set `ALLOW_INSECURE_TLS`. The fail-closed default is the intended secure posture for a fintech infrastructure product. |
+| Decision | Accepted as the v2.0.0 contract. Fail-closed-on-insecure is the correct default; the override exists only for throwaway local/dev instances. |

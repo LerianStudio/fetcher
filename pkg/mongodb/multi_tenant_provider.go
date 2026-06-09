@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo"
 )
 
 // MultiTenantMongoProvider wraps a MongoClientProvider and implements the

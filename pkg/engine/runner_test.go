@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/LerianStudio/fetcher/pkg/engine"
-	"github.com/LerianStudio/fetcher/pkg/engine/memory"
+	"github.com/LerianStudio/fetcher/v2/pkg/engine"
+	"github.com/LerianStudio/fetcher/v2/pkg/engine/memory"
 	"go.uber.org/goleak"
 )
 
@@ -121,6 +121,37 @@ func (h *runnerHarness) planFor(t *testing.T, mappedFields map[string]engine.Fie
 	// only the runner's connector. No lifecycle reset is needed: the planner's and
 	// the runner's connectors are different instances with independent counters.
 	return plan
+}
+
+// ndjsonStoreLine mirrors the engine's NDJSON wire envelope for store-mode
+// results: one {"config","table","row"} object per line, no enclosing array.
+type ndjsonStoreLine struct {
+	Config string         `json:"config"`
+	Table  string         `json:"table"`
+	Row    map[string]any `json:"row"`
+}
+
+// decodeNDJSON parses store-mode NDJSON bytes into one ndjsonStoreLine per
+// non-empty line, failing the test on any malformed line.
+func decodeNDJSON(t *testing.T, data []byte) []ndjsonStoreLine {
+	t.Helper()
+
+	var out []ndjsonStoreLine
+
+	for _, raw := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
+		if strings.TrimSpace(raw) == "" {
+			continue
+		}
+
+		var line ndjsonStoreLine
+		if err := json.Unmarshal([]byte(raw), &line); err != nil {
+			t.Fatalf("NDJSON line is not valid JSON: %q: %v", raw, err)
+		}
+
+		out = append(out, line)
+	}
+
+	return out
 }
 
 func TestExecuteExtraction_SingleSource(t *testing.T) {
@@ -471,13 +502,16 @@ func TestExecuteExtraction_StoreModeReturnsReference(t *testing.T) {
 		t.Fatalf("sink has no payload at reference path %q", result.Reference.Path)
 	}
 
-	var decoded map[string]map[string][]map[string]any
-	if err := json.Unmarshal(stored, &decoded); err != nil {
-		t.Fatalf("stored payload is not valid JSON: %v", err)
+	// Store mode writes NDJSON: one {"config","table","row"} object per line.
+	lines := decodeNDJSON(t, stored)
+	if len(lines) != 2 {
+		t.Fatalf("stored NDJSON lines = %d, want 2", len(lines))
 	}
 
-	if len(decoded["pg-main"]["public.users"]) != 2 {
-		t.Fatalf("stored pg-main rows = %d, want 2", len(decoded["pg-main"]["public.users"]))
+	for _, line := range lines {
+		if line.Config != "pg-main" || line.Table != "public.users" {
+			t.Fatalf("unexpected NDJSON line config/table: %+v", line)
+		}
 	}
 
 	if result.Reference.RowCount != 2 {
@@ -758,7 +792,9 @@ func TestExecuteExtraction_SinkWriteErrorMarksExecutionFailed(t *testing.T) {
 	t.Parallel()
 
 	sink := memory.NewResultSink()
-	sink.PutErr = errors.New("sink down")
+	// Store mode streams to the sink: a failing streaming WRITE (not the legacy
+	// whole-payload PersistResult) must fail the execution.
+	sink.WriteErr = errors.New("sink down")
 	execStore := memory.NewRecordingExecutionStore()
 	h := newStoreRunnerHarness(t, sink, execStore)
 	h.seedSource(t, "pg-main", "postgres",
@@ -1240,9 +1276,17 @@ func TestExecuteExtraction_CancelledDuringAssemblyAfterQuery(t *testing.T) {
 func TestExecuteExtraction_CancelledBetweenStepsSkipsRemaining(t *testing.T) {
 	t.Parallel()
 
-	// Two steps: the first cancels the context as it finishes; the second step's
-	// per-step pre-query guard must fire, so the second connector is never queried.
-	h := newRunnerHarness(t)
+	// Two steps, MaxConcurrency 1: exactly ONE step holds the single slot, runs,
+	// and cancels the context as it finishes; the OTHER step's top-of-function
+	// cancel guard then fires, so it is never queried or built. The Direct pool
+	// (forEachStep) is UNORDERED, so the test does not pin WHICH step wins the slot
+	// — it asserts the order-independent invariant: exactly one step queried, the
+	// other was skipped (never queried, never built by the runner), and the run
+	// failed canceled with no inline bytes.
+	limits := engine.DefaultLimits()
+	limits.MaxConcurrency = 1
+
+	h := newLimitedRunnerHarness(t, limits, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -1253,14 +1297,16 @@ func TestExecuteExtraction_CancelledBetweenStepsSkipsRemaining(t *testing.T) {
 	connZ := h.seedSource(t, "pg-z", "mysql",
 		map[string][]string{"public.z": {"id"}},
 		map[string][]map[string]any{"public.z": {{"id": 2}}})
+	connZ.AfterQuery = cancel
 
 	plan := h.planFor(t, map[string]engine.FieldSelection{
 		"pg-a": {"public.a": {"id"}},
 		"pg-z": {"public.z": {"id"}},
 	})
 
-	// Record pg-z's build count after planning (the planner built one connector for
-	// schema discovery). If the runner never opens pg-z, this count must not grow.
+	// Build counts after planning (the planner built one connector per datasource
+	// for schema discovery). The SKIPPED step's count must not grow.
+	pgBuildsAfterPlan := h.factories["postgres"].BuildCount()
 	zBuildsAfterPlan := h.factories["mysql"].BuildCount()
 
 	_, err := h.engine.ExecuteExtraction(ctx, plan)
@@ -1273,26 +1319,32 @@ func TestExecuteExtraction_CancelledBetweenStepsSkipsRemaining(t *testing.T) {
 		t.Fatalf("error = %v, want canceled-category EngineError", err)
 	}
 
-	// Step "pg-a" (sorted first) ran and closed; step "pg-z" was never queried
-	// because the per-step guard fired, but it was also never opened.
-	if connA.QueryCalls() != 1 {
-		t.Fatalf("connA QueryCalls = %d, want 1", connA.QueryCalls())
+	// Exactly one step queried (whichever won the single slot); the other was
+	// skipped by the cancel guard. Their roles are interchangeable under the
+	// unordered pool, so assert the invariant symmetrically.
+	totalQueries := connA.QueryCalls() + connZ.QueryCalls()
+	if totalQueries != 1 {
+		t.Fatalf("total QueryCalls = %d (connA=%d connZ=%d), want exactly 1 (one ran, one skipped after cancel)",
+			totalQueries, connA.QueryCalls(), connZ.QueryCalls())
 	}
 
-	if connZ.QueryCalls() != 0 {
-		t.Fatalf("connZ QueryCalls = %d, want 0 (second step must be skipped after cancel)", connZ.QueryCalls())
-	}
+	// The step that ran closed its connector; the skipped step built nothing new.
+	if connA.QueryCalls() == 1 {
+		if connA.CloseCount() != 1 {
+			t.Fatalf("the running step's connector must close: connA CloseCount = %d, want 1", connA.CloseCount())
+		}
 
-	if connA.CloseCount() != 1 {
-		t.Fatalf("connA CloseCount = %d, want 1 (first step's connector must close)", connA.CloseCount())
-	}
+		if grew := h.factories["mysql"].BuildCount(); grew != zBuildsAfterPlan {
+			t.Fatalf("skipped step pg-z was built: BuildCount = %d, want %d (unchanged)", grew, zBuildsAfterPlan)
+		}
+	} else {
+		if connZ.CloseCount() != 1 {
+			t.Fatalf("the running step's connector must close: connZ CloseCount = %d, want 1", connZ.CloseCount())
+		}
 
-	// The skipped step was never OPENED by the runner: the runner built NO connector
-	// for pg-z (build-per-step), so the mysql factory's build count is unchanged
-	// from after planning. With nothing built there is nothing to leak — the "never
-	// opened" claim is load-bearing.
-	if grew := h.factories["mysql"].BuildCount(); grew != zBuildsAfterPlan {
-		t.Fatalf("runner built a connector for the skipped step: BuildCount = %d, want %d (unchanged)", grew, zBuildsAfterPlan)
+		if grew := h.factories["postgres"].BuildCount(); grew != pgBuildsAfterPlan {
+			t.Fatalf("skipped step pg-a was built: BuildCount = %d, want %d (unchanged)", grew, pgBuildsAfterPlan)
+		}
 	}
 }
 
@@ -1338,11 +1390,14 @@ func TestExecuteExtraction_ResultSizeExceededFailsBeforeDirectReturn(t *testing.
 func TestExecuteExtraction_ResultSizeExceededFailsFastBetweenSteps(t *testing.T) {
 	t.Parallel()
 
-	// Layer 1 (per-step lower bound): step "pg-a" (sorted first) alone produces rows
-	// whose compact size already exceeds a tiny MaxResultBytes. The runner must fail
-	// fast AFTER step "pg-a" closes its connector and BEFORE step "pg-z" is ever
-	// built or queried — the whole point of the early guard is that the second
-	// datasource is never touched.
+	// Direct-mode size guard. The Direct pool (forEachStep) is an UNORDERED
+	// semaphore: it does not guarantee which step runs first, so a fail-fast test
+	// cannot deterministically pin "step pg-a ran, pg-z skipped" to a NAMED step.
+	// This test therefore uses a SINGLE oversized source — its rows alone overflow
+	// the tiny MaxResultBytes — to deterministically prove the over-limit Direct
+	// result fails with limit_exceeded, returns NO inline bytes, and closes the
+	// connector it opened. The "skip remaining steps after fail-fast" property is
+	// covered deterministically by the cancel-skip and store-mode fail-fast tests.
 	limits := engine.DefaultLimits()
 	limits.MaxResultBytes = 8
 
@@ -1355,25 +1410,14 @@ func TestExecuteExtraction_ResultSizeExceededFailsFastBetweenSteps(t *testing.T)
 				{"id": 2, "name": "bob-also-contributes-more-than-the-tiny-limit"},
 			},
 		})
-	connZ := h.seedSource(t, "pg-z", "mysql",
-		map[string][]string{"public.z": {"id"}},
-		map[string][]map[string]any{
-			"public.z": {{"id": 99}},
-		})
 
 	plan := h.planFor(t, map[string]engine.FieldSelection{
 		"pg-a": {"public.a": {"id", "name"}},
-		"pg-z": {"public.z": {"id"}},
 	})
-
-	// Record pg-z's build count AFTER planning (the planner built one connector per
-	// datasource for schema discovery). If the runner fails fast it must never build
-	// pg-z's connector, so this count must not grow.
-	zBuildsAfterPlan := h.factories["mysql"].BuildCount()
 
 	result, err := h.engine.ExecuteExtraction(context.Background(), plan)
 	if err == nil {
-		t.Fatalf("an oversized first step must fail fast, got nil error")
+		t.Fatalf("an oversized result must fail fast, got nil error")
 	}
 
 	var engErr *engine.EngineError
@@ -1390,25 +1434,13 @@ func TestExecuteExtraction_ResultSizeExceededFailsFastBetweenSteps(t *testing.T)
 		t.Fatalf("oversized result must not return inline Direct bytes, got %+v", result.Direct)
 	}
 
-	// Step "pg-a" ran and closed its connector.
+	// The step ran and its connector was closed (no leak on the over-limit path).
 	if connA.QueryCalls() != 1 {
-		t.Fatalf("connA QueryCalls = %d, want 1 (first step must run)", connA.QueryCalls())
+		t.Fatalf("connA QueryCalls = %d, want 1 (the source must run)", connA.QueryCalls())
 	}
 
 	if connA.CloseCount() != 1 {
-		t.Fatalf("connA CloseCount = %d, want 1 (first step's connector must close)", connA.CloseCount())
-	}
-
-	// Step "pg-z" was NEVER queried...
-	if connZ.QueryCalls() != 0 {
-		t.Fatalf("connZ QueryCalls = %d, want 0 (second step must be skipped after fail-fast)", connZ.QueryCalls())
-	}
-
-	// ...and NEVER built by the runner: with nothing built there is nothing to leak.
-	// The build-per-step factory's count is unchanged from after planning, proving
-	// the fail-fast happened between steps, before the next connector was opened.
-	if grew := h.factories["mysql"].BuildCount(); grew != zBuildsAfterPlan {
-		t.Fatalf("runner built a connector for the skipped step: BuildCount = %d, want %d (unchanged)", grew, zBuildsAfterPlan)
+		t.Fatalf("connA CloseCount = %d, want 1 (the connector must close)", connA.CloseCount())
 	}
 }
 
@@ -1520,9 +1552,11 @@ func TestExecuteExtraction_ResultSizeExceededFailsBeforeSinkWrite(t *testing.T) 
 		t.Fatalf("error category = %q, want %q", engErr.Category, engine.CategoryLimitExceeded)
 	}
 
-	// The sink must be untouched: nothing was persisted before the size check.
-	if sink.PutCount() != 0 {
-		t.Fatalf("sink PutCount = %d, want 0 (over-limit result must not be persisted)", sink.PutCount())
+	// Store mode opens a streaming writer, but an over-limit run ABANDONS it
+	// without Close, so NO result is finalized: the streamed bytes never become a
+	// stored object, and no reference is returned.
+	if sink.StoredCount() != 0 {
+		t.Fatalf("sink StoredCount = %d, want 0 (over-limit result must not be finalized)", sink.StoredCount())
 	}
 }
 

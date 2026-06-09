@@ -5,7 +5,7 @@
 package resolver
 
 import (
-	"github.com/LerianStudio/fetcher/pkg/model"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
 	"github.com/google/uuid"
 )
 

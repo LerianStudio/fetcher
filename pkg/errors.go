@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/LerianStudio/fetcher/pkg/constant"
+	"github.com/LerianStudio/fetcher/v2/pkg/constant"
 )
 
 // ValidationError records an error indicating an entity was not found in any case that caused it.

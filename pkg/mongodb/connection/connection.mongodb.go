@@ -9,19 +9,19 @@ import (
 
 	"github.com/LerianStudio/lib-observability"
 
-	"github.com/LerianStudio/fetcher/pkg"
-	"github.com/LerianStudio/fetcher/pkg/constant"
-	"github.com/LerianStudio/fetcher/pkg/model"
-	"github.com/LerianStudio/fetcher/pkg/mongodb"
-	"github.com/LerianStudio/fetcher/pkg/net/http"
-	portsConnection "github.com/LerianStudio/fetcher/pkg/ports/connection"
+	"github.com/LerianStudio/fetcher/v2/pkg"
+	"github.com/LerianStudio/fetcher/v2/pkg/constant"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	"github.com/LerianStudio/fetcher/v2/pkg/mongodb"
+	"github.com/LerianStudio/fetcher/v2/pkg/net/http"
+	portsConnection "github.com/LerianStudio/fetcher/v2/pkg/ports/connection"
 
 	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
 
 	"github.com/google/uuid"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -555,7 +555,7 @@ func (rm *ConnectionMongoDBRepository) List(ctx context.Context, filters http.Qu
 	}
 
 	queryFilter := rm.buildQueryFilter(filters)
-	opts := mongodb.BuildPaginationOptions(filters)
+	opts, limit := mongodb.BuildPaginationOptions(filters)
 
 	err = libOpentelemetry.SetSpanAttributesFromValue(span, "app.request.repository_filter", queryFilter, nil)
 	if err != nil {
@@ -570,19 +570,14 @@ func (rm *ConnectionMongoDBRepository) List(ctx context.Context, filters http.Qu
 		return nil, 0, mongodb.MapMongoErrorToResponse(err, ctx)
 	}
 
-	cur, err := coll.Find(ctx, queryFilter, &opts)
+	cur, err := coll.Find(ctx, queryFilter, opts)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to list connections", err)
 		return nil, 0, mongodb.MapMongoErrorToResponse(err, ctx)
 	}
 	defer cur.Close(ctx)
 
-	if opts.Limit == nil {
-		limit := int64(50)
-		opts.Limit = &limit
-	}
-
-	connections := make([]*model.Connection, 0, int(*opts.Limit))
+	connections := make([]*model.Connection, 0, int(limit))
 
 	for cur.Next(ctx) {
 		var record ConnectionMongoDBModel
@@ -640,7 +635,7 @@ func (rm *ConnectionMongoDBRepository) ListUnassigned(ctx context.Context, filte
 	}
 
 	mongodb.AddDateRangeFilter(queryFilter, filters)
-	opts := mongodb.BuildPaginationOptions(filters)
+	opts, limit := mongodb.BuildPaginationOptions(filters)
 
 	err = libOpentelemetry.SetSpanAttributesFromValue(span, "app.request.repository_filter", queryFilter, nil)
 	if err != nil {
@@ -655,19 +650,14 @@ func (rm *ConnectionMongoDBRepository) ListUnassigned(ctx context.Context, filte
 		return nil, 0, mongodb.MapMongoErrorToResponse(err, ctx)
 	}
 
-	cur, err := coll.Find(ctx, queryFilter, &opts)
+	cur, err := coll.Find(ctx, queryFilter, opts)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to list unassigned connections", err)
 		return nil, 0, mongodb.MapMongoErrorToResponse(err, ctx)
 	}
 	defer cur.Close(ctx)
 
-	if opts.Limit == nil {
-		limit := int64(50)
-		opts.Limit = &limit
-	}
-
-	connections := make([]*model.Connection, 0, int(*opts.Limit))
+	connections := make([]*model.Connection, 0, int(limit))
 
 	for cur.Next(ctx) {
 		var record ConnectionMongoDBModel

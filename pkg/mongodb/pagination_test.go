@@ -4,8 +4,9 @@ import (
 	"testing"
 	"time"
 
-	http "github.com/LerianStudio/fetcher/pkg/net/http"
-	"go.mongodb.org/mongo-driver/bson"
+	http "github.com/LerianStudio/fetcher/v2/pkg/net/http"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
 
 func TestBuildPaginationOptions(t *testing.T) {
@@ -119,13 +120,26 @@ func TestBuildPaginationOptions(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			opts := BuildPaginationOptions(tt.filters)
+			builder, limit := BuildPaginationOptions(tt.filters)
+
+			if limit != tt.wantLimit {
+				t.Errorf("Limit = %d, want %d", limit, tt.wantLimit)
+			}
+
+			// mongo-driver v2 options are builders; materialize the FindOptions
+			// by applying the builder's List() to inspect the accumulated values.
+			opts := &options.FindOptions{}
+			for _, set := range builder.List() {
+				if err := set(opts); err != nil {
+					t.Fatalf("failed to apply find option: %v", err)
+				}
+			}
 
 			if opts.Limit == nil {
 				t.Fatal("expected Limit to be set")
 			}
 			if *opts.Limit != tt.wantLimit {
-				t.Errorf("Limit = %d, want %d", *opts.Limit, tt.wantLimit)
+				t.Errorf("materialized Limit = %d, want %d", *opts.Limit, tt.wantLimit)
 			}
 
 			if opts.Skip == nil {

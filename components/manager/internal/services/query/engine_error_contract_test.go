@@ -5,10 +5,10 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/LerianStudio/fetcher/pkg"
-	"github.com/LerianStudio/fetcher/pkg/constant"
-	"github.com/LerianStudio/fetcher/pkg/engine"
-	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
+	"github.com/LerianStudio/fetcher/v2/pkg"
+	"github.com/LerianStudio/fetcher/v2/pkg/constant"
+	"github.com/LerianStudio/fetcher/v2/pkg/engine"
+	connRepo "github.com/LerianStudio/fetcher/v2/pkg/ports/connection"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"

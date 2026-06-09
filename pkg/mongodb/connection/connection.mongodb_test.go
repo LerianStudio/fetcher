@@ -10,19 +10,19 @@ import (
 	"testing"
 	"time"
 
-	"github.com/LerianStudio/fetcher/pkg"
-	"github.com/LerianStudio/fetcher/pkg/constant"
-	"github.com/LerianStudio/fetcher/pkg/model"
-	"github.com/LerianStudio/fetcher/pkg/mongodb"
-	http "github.com/LerianStudio/fetcher/pkg/net/http"
+	"github.com/LerianStudio/fetcher/v2/pkg"
+	"github.com/LerianStudio/fetcher/v2/pkg/constant"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	"github.com/LerianStudio/fetcher/v2/pkg/mongodb"
+	http "github.com/LerianStudio/fetcher/v2/pkg/net/http"
 	libMongo "github.com/LerianStudio/lib-commons/v5/commons/mongo"
 	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
 	libLog "github.com/LerianStudio/lib-observability/log"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/tryvium-travels/memongo"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/mock/gomock"
 )
@@ -35,6 +35,13 @@ var (
 const connectionTestDatabaseName = "fetcher_connection_test"
 
 func TestMain(m *testing.M) {
+	// memongo serves a throwaway plaintext MongoDB on localhost. lib-commons v5.5.0
+	// fail-closes on non-TLS Mongo URIs unless ALLOW_INSECURE_TLS=true, so opt in
+	// here for the in-memory test instance.
+	if err := os.Setenv("ALLOW_INSECURE_TLS", "true"); err != nil {
+		log.Fatalf("failed to set ALLOW_INSECURE_TLS: %v", err)
+	}
+
 	server, err := memongo.Start("6.0.6")
 	if err != nil {
 		// memongo doesn't support all platforms (e.g., Fedora 42)

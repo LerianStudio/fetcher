@@ -7,8 +7,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/LerianStudio/fetcher/pkg/model"
-	"github.com/LerianStudio/fetcher/tests/fuzz/shared/mocks"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	"github.com/LerianStudio/fetcher/v2/tests/fuzz/shared/mocks"
 )
 
 func FuzzConnectionValidation(f *testing.F) {

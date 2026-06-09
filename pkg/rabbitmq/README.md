@@ -78,7 +78,7 @@ import (
     "encoding/json"
 
     libRabbitmq "github.com/LerianStudio/lib-commons/v2/commons/rabbitmq"
-    "github.com/LerianStudio/fetcher/pkg/rabbitmq"
+    "github.com/LerianStudio/fetcher/v2/pkg/rabbitmq"
 )
 
 func main() {
@@ -119,7 +119,7 @@ import (
     "sync"
 
     libRabbitmq "github.com/LerianStudio/lib-commons/v2/commons/rabbitmq"
-    "github.com/LerianStudio/fetcher/pkg/rabbitmq"
+    "github.com/LerianStudio/fetcher/v2/pkg/rabbitmq"
 )
 
 func main() {
@@ -463,7 +463,7 @@ A mock is auto-generated via `mockgen`:
 import (
     "testing"
     "go.uber.org/mock/gomock"
-    "github.com/LerianStudio/fetcher/pkg/rabbitmq"
+    "github.com/LerianStudio/fetcher/v2/pkg/rabbitmq"
 )
 
 func TestMyService(t *testing.T) {

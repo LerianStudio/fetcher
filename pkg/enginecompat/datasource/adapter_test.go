@@ -11,18 +11,45 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/LerianStudio/fetcher/pkg/crypto"
-	"github.com/LerianStudio/fetcher/pkg/engine"
-	enginecompatdatasource "github.com/LerianStudio/fetcher/pkg/enginecompat/datasource"
-	"github.com/LerianStudio/fetcher/pkg/enginecompat/schemacompat"
-	"github.com/LerianStudio/fetcher/pkg/enginecompat/tablenorm"
-	"github.com/LerianStudio/fetcher/pkg/model"
-	"github.com/LerianStudio/fetcher/pkg/model/datasource"
-	"github.com/LerianStudio/fetcher/pkg/model/job"
+	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
+	"github.com/LerianStudio/fetcher/v2/pkg/engine"
+	enginecompatdatasource "github.com/LerianStudio/fetcher/v2/pkg/enginecompat/datasource"
+	"github.com/LerianStudio/fetcher/v2/pkg/enginecompat/schemacompat"
+	"github.com/LerianStudio/fetcher/v2/pkg/enginecompat/tablenorm"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	"github.com/LerianStudio/fetcher/v2/pkg/model/datasource"
+	"github.com/LerianStudio/fetcher/v2/pkg/model/job"
 	"github.com/LerianStudio/lib-observability/log"
 
 	"github.com/google/uuid"
 )
+
+// queryStreamRows opens the connector's QueryStream and materializes the cursor
+// back into the legacy map[table][]rows shape so the existing row-shape
+// assertions stay meaningful after the eager Query was replaced by a streaming
+// cursor. It fails the test on an open or iteration error.
+func queryStreamRows(t *testing.T, conn engine.Connector, req engine.ExtractionRequest) map[string][]map[string]any {
+	t.Helper()
+
+	cursor, err := conn.QueryStream(context.Background(), req)
+	if err != nil {
+		t.Fatalf("QueryStream: unexpected error: %v", err)
+	}
+
+	defer func() { _ = cursor.Close(context.Background()) }()
+
+	rows := make(map[string][]map[string]any)
+	for cursor.Next(context.Background()) {
+		table, row := cursor.Row()
+		rows[table] = append(rows[table], row)
+	}
+
+	if err := cursor.Err(); err != nil {
+		t.Fatalf("cursor.Err: unexpected error: %v", err)
+	}
+
+	return rows
+}
 
 // fakeDataSource is a host-side datasource.DataSource double. It records the
 // lifecycle calls the adapter drives through it and returns canned data so a
@@ -320,13 +347,10 @@ func TestConnector_QueryDelegatesToUnderlyingDataSource(t *testing.T) {
 		},
 	}
 
-	rows, err := conn.Query(context.Background(), req)
-	if err != nil {
-		t.Fatalf("Query: unexpected error: %v", err)
-	}
+	rows := queryStreamRows(t, conn, req)
 
 	if len(rows["public.accounts"]) != 1 {
-		t.Fatalf("Query did not return underlying rows; got %#v", rows)
+		t.Fatalf("QueryStream did not return underlying rows; got %#v", rows)
 	}
 	if ds.queryTables == nil {
 		t.Fatalf("Query must delegate the table selection to the underlying DataSource")
@@ -349,7 +373,7 @@ func TestConnector_QueryBeforeTestConnectionFails(t *testing.T) {
 		t.Fatalf("Build: unexpected error: %v", err)
 	}
 
-	_, err = conn.Query(context.Background(), engine.ExtractionRequest{})
+	_, err = conn.QueryStream(context.Background(), engine.ExtractionRequest{})
 	assertEngineError(t, err, engine.CategoryUnavailable)
 }
 
@@ -553,9 +577,7 @@ func TestConnector_QueryMapsTypedFiltersForConfig(t *testing.T) {
 		},
 	}
 
-	if _, err := conn.Query(context.Background(), req); err != nil {
-		t.Fatalf("Query: unexpected error: %v", err)
-	}
+	queryStreamRows(t, conn, req)
 
 	if ds.queryFilters == nil {
 		t.Fatalf("typed filters for config were not mapped into the DataSource")
@@ -607,9 +629,7 @@ func TestConnector_QueryReconstructsNestedAnyFilters(t *testing.T) {
 		},
 	}
 
-	if _, err := conn.Query(context.Background(), req); err != nil {
-		t.Fatalf("Query: unexpected error: %v", err)
-	}
+	queryStreamRows(t, conn, req)
 
 	if ds.queryFilters == nil {
 		t.Fatalf("nested any filters were not reconstructed for the DataSource")
@@ -650,9 +670,7 @@ func TestConnector_QueryMismatchedFilterShapeYieldsNoFilters(t *testing.T) {
 		Filters: map[string]any{"pg-main": 42}, // wrong type for this config
 	}
 
-	if _, err := conn.Query(context.Background(), req); err != nil {
-		t.Fatalf("Query: unexpected error: %v", err)
-	}
+	queryStreamRows(t, conn, req)
 	if ds.queryFilters != nil {
 		t.Fatalf("mismatched filter shape must yield nil filters; got %#v", ds.queryFilters)
 	}
@@ -678,7 +696,7 @@ func TestConnector_QueryErrorMapsToUnavailable(t *testing.T) {
 		t.Fatalf("TestConnection: unexpected error: %v", err)
 	}
 
-	_, err = conn.Query(context.Background(), engine.ExtractionRequest{})
+	_, err = conn.QueryStream(context.Background(), engine.ExtractionRequest{})
 	assertEngineError(t, err, engine.CategoryUnavailable)
 	if strings.Contains(err.Error(), "reader") {
 		t.Fatalf("query error leaked driver internals: %q", err.Error())
@@ -1051,20 +1069,26 @@ func oracleConnection() *model.Connection {
 	return conn
 }
 
-// TestNormalizationSeam_OracleCaseInsensitiveMatching is the FIX-2 (HIGH) regression
-// guard. Oracle stores identifiers UPPERCASED and the legacy adapter matched table
-// AND field names case-insensitively (EqualFold / ToUpper). The engine matches
-// literally, so the host seam must fold Oracle identifiers to UPPERCASE on BOTH the
-// request side (tablenorm.NormalizeTable / NormalizeField, mirrored here) and the
-// snapshot side (adapter DiscoverSchema). A lowercase/mixed-case Oracle request must
-// therefore execute against the uppercased snapshot — restoring legacy parity.
+// TestNormalizationSeam_OracleCaseInsensitiveMatching is the case-insensitivity
+// regression guard under the UPPERCASE-CANONICAL contract. The Oracle adapter's
+// GetSchemaInfo lowercases what it returns, but the seam re-folds to UPPERCASE so the
+// snapshot matches the physical Oracle catalog AND the extracted result keys (which
+// pkg/oracle.createRowMap keys verbatim by the physical UPPERCASE columns). The engine
+// matches literally, so the host folds Oracle request identifiers to UPPERCASE
+// (tablenorm.NormalizeTable / NormalizeField) on both the request and snapshot sides.
+// A mixed/lower-case Oracle request must therefore execute against the UPPERCASE
+// snapshot. The physical-case request resolution happens later in pkg/oracle
+// (ValidateTableAndFields), not at this seam.
 func TestNormalizationSeam_OracleCaseInsensitiveMatching(t *testing.T) {
 	t.Parallel()
 
-	// The DISCOVERED Oracle schema reports identifiers uppercased, as Oracle does.
+	// The DISCOVERED Oracle schema reports identifiers LOWERCASED, as GetSchemaInfo does;
+	// the seam (snapshotFromSchema, normalize=true) re-folds them to UPPERCASE.
 	schema := model.NewDataSourceSchema("ora-main")
-	schema.AddTable("ACCOUNTS", []string{"ID", "BALANCE"})
+	schema.AddTable("accounts", []string{"id", "balance"})
 
+	// The extracted DATA is keyed by the physical UPPERCASE columns (createRowMap), so
+	// the snapshot identity (UPPERCASE) equals the data-key identity (UPPERCASE).
 	ds := &fakeDataSource{
 		config:       datasource.DataSourceConfig{Type: string(model.TypeOracle)},
 		schemaResult: schema,
@@ -1079,9 +1103,9 @@ func TestNormalizationSeam_OracleCaseInsensitiveMatching(t *testing.T) {
 		t.Fatalf("NewTenantContext: %v", err)
 	}
 
-	// The caller addresses the table and fields in LOWERCASE. The worker mapper folds
-	// them to UPPERCASE via tablenorm; we mirror that canonical form, which must match
-	// the uppercased snapshot. An identity-no-op for Oracle would leave "accounts" /
+	// The caller addresses the table and fields in mixed/lower case. The worker mapper
+	// folds them to UPPERCASE via tablenorm; we mirror that canonical form, which must
+	// match the UPPERCASE snapshot. An identity-no-op for Oracle would leave "accounts" /
 	// "id" lowercase and FAIL the literal match — so this proves the fold is real.
 	canonTable := tablenorm.NormalizeTable(model.TypeOracle, "accounts")
 	if canonTable != "ACCOUNTS" {
@@ -1107,8 +1131,9 @@ func TestNormalizationSeam_OracleCaseInsensitiveMatching(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExecuteExtraction: %v", err)
 	}
+	// The extracted data carries the physical UPPERCASE keys (snapshot == data identity).
 	if result.Direct == nil || !strings.Contains(string(result.Direct.Data), "BALANCE") {
-		t.Fatalf("expected extracted Oracle rows, got %#v", result)
+		t.Fatalf("expected extracted Oracle rows keyed UPPERCASE, got %#v", result)
 	}
 }
 
@@ -1119,7 +1144,7 @@ func TestNormalizationSeam_OracleGenuinelyMissingTableStillFails(t *testing.T) {
 	t.Parallel()
 
 	schema := model.NewDataSourceSchema("ora-main")
-	schema.AddTable("ACCOUNTS", []string{"ID"})
+	schema.AddTable("accounts", []string{"id"})
 
 	ds := &fakeDataSource{config: datasource.DataSourceConfig{Type: string(model.TypeOracle)}, schemaResult: schema}
 	eng := newNormalizationEngine(t, ds)

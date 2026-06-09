@@ -6,8 +6,8 @@ import (
 
 	"github.com/LerianStudio/lib-observability"
 
-	portStorage "github.com/LerianStudio/fetcher/pkg/ports/storage"
-	"github.com/LerianStudio/fetcher/pkg/seaweedfs"
+	portStorage "github.com/LerianStudio/fetcher/v2/pkg/ports/storage"
+	"github.com/LerianStudio/fetcher/v2/pkg/seaweedfs"
 	tms3 "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/s3"
 	libLog "github.com/LerianStudio/lib-observability/log"
 	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"

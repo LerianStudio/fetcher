@@ -4,8 +4,8 @@ import (
 	"errors"
 	"time"
 
-	"github.com/LerianStudio/fetcher/pkg/model"
-	portsJob "github.com/LerianStudio/fetcher/pkg/ports/job"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	portsJob "github.com/LerianStudio/fetcher/v2/pkg/ports/job"
 
 	"github.com/google/uuid"
 )

@@ -94,6 +94,14 @@ type ExtractionRequest struct {
 // their owning table path. It carries NO credential material — the host resolves
 // credentials at execute time behind the connector seam.
 type PlanStep struct {
+	// Ordinal is the step's stable position in the plan's sorted Steps slice. It
+	// is the deterministic ORDER KEY the runner uses to assemble streamed output:
+	// extraction goroutines complete in arbitrary order, but the single writer
+	// drains and writes steps strictly by ascending Ordinal, so the result bytes
+	// (and their integrity digest) are identical regardless of completion order.
+	// It is assigned by buildExtractionPlan; ConfigName uniqueness across steps is
+	// asserted there so the ordinal is a total order.
+	Ordinal int `json:"ordinal"`
 	// ConfigName identifies the target datasource.
 	ConfigName string `json:"configName"`
 	// Tables lists the qualified tables the step will read, in sorted order. The

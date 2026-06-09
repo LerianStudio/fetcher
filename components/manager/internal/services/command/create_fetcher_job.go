@@ -11,21 +11,21 @@ import (
 
 	"github.com/LerianStudio/lib-observability"
 
-	"github.com/LerianStudio/fetcher/pkg"
-	"github.com/LerianStudio/fetcher/pkg/constant"
-	"github.com/LerianStudio/fetcher/pkg/crypto"
-	"github.com/LerianStudio/fetcher/pkg/datasource"
-	"github.com/LerianStudio/fetcher/pkg/model"
-	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
-	jobRepo "github.com/LerianStudio/fetcher/pkg/ports/job"
-	"github.com/LerianStudio/fetcher/pkg/ports/messaging"
-	"github.com/LerianStudio/fetcher/pkg/resolver"
+	"github.com/LerianStudio/fetcher/v2/pkg"
+	"github.com/LerianStudio/fetcher/v2/pkg/constant"
+	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
+	"github.com/LerianStudio/fetcher/v2/pkg/datasource"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	connRepo "github.com/LerianStudio/fetcher/v2/pkg/ports/connection"
+	jobRepo "github.com/LerianStudio/fetcher/v2/pkg/ports/job"
+	"github.com/LerianStudio/fetcher/v2/pkg/ports/messaging"
+	"github.com/LerianStudio/fetcher/v2/pkg/resolver"
 
 	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
 	libLog "github.com/LerianStudio/lib-observability/log"
 	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
 
-	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )

@@ -8,9 +8,9 @@ import (
 
 	observability "github.com/LerianStudio/lib-observability"
 
-	"github.com/LerianStudio/fetcher/pkg/crypto"
-	portPublisher "github.com/LerianStudio/fetcher/pkg/ports/publisher"
-	"github.com/LerianStudio/fetcher/pkg/rabbitmq"
+	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
+	portPublisher "github.com/LerianStudio/fetcher/v2/pkg/ports/publisher"
+	"github.com/LerianStudio/fetcher/v2/pkg/rabbitmq"
 	libRabbitmq "github.com/LerianStudio/lib-commons/v5/commons/rabbitmq"
 	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
 	obsConstants "github.com/LerianStudio/lib-observability/constants"

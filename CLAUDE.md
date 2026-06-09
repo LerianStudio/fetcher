@@ -2,7 +2,7 @@
 
 Lerian Fetcher is an enterprise data extraction platform that unifies access to PostgreSQL, MySQL, Oracle, SQL Server, and MongoDB. It ships in two forms: as standalone Manager + Worker services, and as an **embedded runtime engine** (`pkg/engine`) that other Lerian products (Matcher, Reporter) import in-process.
 
-- **Module:** `github.com/LerianStudio/fetcher`
+- **Module:** `github.com/LerianStudio/fetcher/v2`
 - **Go version:** Source of truth is `go.mod`; do not rely on stale toolchain guidance elsewhere.
 - **Architecture:** Embedded runtime engine (`pkg/engine`) + Hexagonal Architecture + CQRS. The Manager and Worker now run *over* the engine — the engine owns the extraction rules, the services own the operational shell.
 - **Services:** Manager (HTTP API, Fiber, port 4006) and Worker (RabbitMQ consumer)
@@ -56,7 +56,7 @@ The codebase is a three-layer model: the **engine core** owns the rules, **compa
 The embedded runtime — an importable, **infrastructure-free** core that owns the canonical *rules* of extraction: connection lifecycle, schema discovery/validation, query planning, extraction execution, result/error contracts, limits, and tenant-safety. It depends only on host-provided port interfaces, never on concrete infrastructure.
 
 - Facade: `engine.New(opts ...Option) (*Engine, error)` in `pkg/engine/engine.go`. Construction validates required ports and applies `DefaultLimits()`.
-- Ports (`pkg/engine/ports.go`): **required** — `ConnectorRegistry`, plus `CredentialProtector` when encrypted persistence is enabled; **optional** (graceful degradation) — `ConnectionStore`, `ExecutionStore`, `ResultSink`, `SchemaCache`, `EventSink`, `TenantResolver`, `ActiveExecutionChecker`, `Observability`.
+- Ports (`pkg/engine/ports.go`): **required** — `ConnectorRegistry`, plus `CredentialProtector` when encrypted persistence is enabled; **optional** (graceful degradation) — `ConnectionStore`, `ExecutionStore`, `ResultSink`, `SchemaCache`, `ActiveExecutionChecker`, `Observability`.
 - Operations: connection CRUD (`CreateConnection`, `GetConnection`/`GetConnectionByID`, `ListConnections`/`ListConnectionsPaged`, `Update*`, `Delete*`, `CheckActiveExecutions`), `TestConnection`, `DiscoverSchema`/`DiscoverSchemaFresh`/`ValidateSchema`, `PlanExtraction`, `ExecuteExtraction`.
 - Execution modes: **Direct** (inline bytes + SHA-256 integrity), **Store** (via `ResultSink`, returns a reference), **Auto** (store if a sink is wired, else direct). `TenantID` is the *sole* isolation dimension — there is no organization or product concept in engine core.
 - `pkg/engine/memory/` holds in-memory port implementations for tests and embedded examples only — **not** production persistence.
@@ -204,7 +204,7 @@ Async RabbitMQ consumer. Does NOT follow CQRS - uses a single `UseCase` struct i
 
 ### Embedding the engine in a host application
 
-1. Import `github.com/LerianStudio/fetcher/pkg/engine` (no infrastructure comes with it).
+1. Import `github.com/LerianStudio/fetcher/v2/pkg/engine` (no infrastructure comes with it).
 2. Implement the required ports (`ConnectorRegistry`, and `CredentialProtector` if using encrypted persistence) and any optional ports your host needs (`ConnectionStore`, `ResultSink`, `SchemaCache`, etc.).
 3. Construct with `engine.New(engine.WithConnectorRegistry(...), ...)`; check the returned error.
 4. For a working reference, read how the Manager (`components/manager/internal/bootstrap/connection_engine.go`, `schema_engine.go`) and Worker (`components/worker/internal/bootstrap/extraction_engine.go`) wire it via `pkg/enginecompat/*`. For tests, the `pkg/engine/memory/` harness satisfies every port in-memory.

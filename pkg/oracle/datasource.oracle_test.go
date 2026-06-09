@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/LerianStudio/fetcher/pkg/model/job"
-	"github.com/LerianStudio/fetcher/pkg/testutil"
+	"github.com/LerianStudio/fetcher/v2/pkg/model/job"
+	"github.com/LerianStudio/fetcher/v2/pkg/testutil"
 	observability "github.com/LerianStudio/lib-observability"
 	"github.com/Masterminds/squirrel"
 	"github.com/google/uuid"

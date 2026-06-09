@@ -26,7 +26,7 @@ import (
 	obsRuntime "github.com/LerianStudio/lib-observability/runtime"
 	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
 
-	"github.com/LerianStudio/fetcher/pkg/crypto"
+	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	errgroup "golang.org/x/sync/errgroup"
@@ -499,7 +499,7 @@ func (prmq *RabbitMQAdapter) executeWithCircuitBreaker(fn func() error) error {
 
 // initMetrics initializes OpenTelemetry metrics for the adapter.
 func (prmq *RabbitMQAdapter) initMetrics(provider metric.MeterProvider, Logger libLog.Logger) {
-	meter := provider.Meter("github.com/LerianStudio/fetcher/pkg/rabbitmq")
+	meter := provider.Meter("github.com/LerianStudio/fetcher/v2/pkg/rabbitmq")
 
 	factory, err := obsMetrics.NewMetricsFactory(meter, Logger)
 	if err != nil {

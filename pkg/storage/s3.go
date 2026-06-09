@@ -9,9 +9,9 @@ import (
 
 	"github.com/LerianStudio/lib-observability"
 
-	"github.com/LerianStudio/fetcher/pkg"
-	"github.com/LerianStudio/fetcher/pkg/constant"
-	portStorage "github.com/LerianStudio/fetcher/pkg/ports/storage"
+	"github.com/LerianStudio/fetcher/v2/pkg"
+	"github.com/LerianStudio/fetcher/v2/pkg/constant"
+	portStorage "github.com/LerianStudio/fetcher/v2/pkg/ports/storage"
 	tms3 "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/s3"
 	libLog "github.com/LerianStudio/lib-observability/log"
 	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"

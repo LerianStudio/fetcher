@@ -12,7 +12,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/network"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	"github.com/LerianStudio/fetcher/pkg/itestkit"
+	"github.com/LerianStudio/fetcher/v2/pkg/itestkit"
 )
 
 const (

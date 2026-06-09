@@ -3,9 +3,9 @@ package main
 import (
 	"log"
 
-	"github.com/LerianStudio/fetcher/components/manager/internal/bootstrap"
-	"github.com/LerianStudio/fetcher/pkg"
-	"github.com/LerianStudio/fetcher/pkg/startup"
+	"github.com/LerianStudio/fetcher/v2/components/manager/internal/bootstrap"
+	"github.com/LerianStudio/fetcher/v2/pkg"
+	"github.com/LerianStudio/fetcher/v2/pkg/startup"
 )
 
 // @title					Fetcher Manager API

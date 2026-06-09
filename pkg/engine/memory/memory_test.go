@@ -10,8 +10,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/LerianStudio/fetcher/pkg/engine"
-	"github.com/LerianStudio/fetcher/pkg/engine/memory"
+	"github.com/LerianStudio/fetcher/v2/pkg/engine"
+	"github.com/LerianStudio/fetcher/v2/pkg/engine/memory"
 )
 
 // Compile-time assertions that the in-memory harness types satisfy the exact
@@ -22,7 +22,6 @@ var (
 	_ engine.ExecutionStore    = (*memory.ExecutionStore)(nil)
 	_ engine.ResultSink        = (*memory.ResultSink)(nil)
 	_ engine.SchemaCache       = (*memory.SchemaCache)(nil)
-	_ engine.EventSink         = (*memory.EventSink)(nil)
 	_ engine.ConnectorRegistry = (*memory.ConnectorRegistry)(nil)
 )
 
@@ -226,30 +225,6 @@ func TestResultSink_PutGet(t *testing.T) {
 	}
 }
 
-func TestEventSink_Emit(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	tenant := testTenant(t)
-	sink := memory.NewEventSink()
-
-	state := engine.ExecutionState{JobID: "job-1", Status: engine.StatusCompleted}
-	if err := sink.Emit(ctx, tenant, state); err != nil {
-		t.Fatalf("Emit: unexpected error: %v", err)
-	}
-
-	events := sink.Events()
-	if len(events) != 1 {
-		t.Fatalf("Events: len = %d, want 1", len(events))
-	}
-	if events[0].State.JobID != "job-1" || events[0].State.Status != engine.StatusCompleted {
-		t.Fatalf("Events: unexpected event payload: %+v", events[0])
-	}
-	if events[0].Tenant.TenantID != "tenant-a" {
-		t.Fatalf("Events: tenant not captured: %+v", events[0].Tenant)
-	}
-}
-
 func TestExecutionStore_StatusTransitions(t *testing.T) {
 	t.Parallel()
 
@@ -258,8 +233,8 @@ func TestExecutionStore_StatusTransitions(t *testing.T) {
 	store := memory.NewExecutionStore()
 
 	// Miss before any save.
-	if _, found, err := store.FindExecution(ctx, tenant, "job-1"); err != nil || found {
-		t.Fatalf("FindExecution miss: found=%v err=%v", found, err)
+	if _, found := store.Find(tenant, "job-1"); found {
+		t.Fatalf("Find miss: found=%v", found)
 	}
 
 	transitions := []engine.ExecutionStatus{
@@ -271,12 +246,12 @@ func TestExecutionStore_StatusTransitions(t *testing.T) {
 		if err := store.SaveExecution(ctx, tenant, engine.ExecutionState{JobID: "job-1", Status: status}); err != nil {
 			t.Fatalf("SaveExecution %s: unexpected error: %v", status, err)
 		}
-		got, found, err := store.FindExecution(ctx, tenant, "job-1")
-		if err != nil || !found {
-			t.Fatalf("FindExecution after %s: found=%v err=%v", status, found, err)
+		got, found := store.Find(tenant, "job-1")
+		if !found {
+			t.Fatalf("Find after %s: found=%v", status, found)
 		}
 		if got.Status != status {
-			t.Fatalf("FindExecution: status = %q, want %q", got.Status, status)
+			t.Fatalf("Find: status = %q, want %q", got.Status, status)
 		}
 	}
 }
@@ -339,7 +314,6 @@ func TestConcurrentAccess(t *testing.T) {
 	execStore := memory.NewExecutionStore()
 	cache := memory.NewSchemaCache()
 	sink := memory.NewResultSink()
-	events := memory.NewEventSink()
 	registry := memory.NewConnectorRegistry()
 
 	const workers = 32
@@ -360,15 +334,13 @@ func TestConcurrentAccess(t *testing.T) {
 				_ = connStore.Delete(ctx, tenant, name)
 
 				_ = execStore.SaveExecution(ctx, tenant, engine.ExecutionState{JobID: name, Status: engine.StatusRunning})
-				_, _, _ = execStore.FindExecution(ctx, tenant, name)
+				_, _ = execStore.Find(tenant, name)
 
 				_ = cache.PutSchema(ctx, tenant, engine.SchemaSnapshot{ConfigName: name})
 				_, _, _ = cache.GetSchema(ctx, tenant, name)
 
 				ref, _ := sink.PersistResult(ctx, tenant, []byte(name))
 				_, _ = sink.Get(ref.Path)
-
-				_ = events.Emit(ctx, tenant, engine.ExecutionState{JobID: name, Status: engine.StatusCompleted})
 
 				registry.Register(name, &stubFactory{typeName: name})
 				_, _ = registry.Connector(name)

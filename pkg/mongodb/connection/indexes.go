@@ -9,14 +9,14 @@ import (
 
 	"github.com/LerianStudio/lib-observability"
 
-	"github.com/LerianStudio/fetcher/pkg/constant"
-	sharedMongo "github.com/LerianStudio/fetcher/pkg/mongodb"
+	"github.com/LerianStudio/fetcher/v2/pkg/constant"
+	sharedMongo "github.com/LerianStudio/fetcher/v2/pkg/mongodb"
 	libLog "github.com/LerianStudio/lib-observability/log"
 	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
 
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -135,15 +135,14 @@ func (cr *ConnectionMongoDBRepository) DropIndexes(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, indexDropTimeout)
 	defer cancel()
 
-	droppedIndexes, err := coll.Indexes().DropAll(ctx)
-	if err != nil {
+	// mongo-driver v2 DropAll returns only an error (v1 returned the server's bson.Raw reply).
+	if err := coll.Indexes().DropAll(ctx); err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to drop connection indexes", err)
 		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to drop indexes for %s: %v", constant.MongoCollectionConnection, err))
 
 		return err
 	}
 
-	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Dropped indexes: %v", droppedIndexes))
 	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Successfully dropped all custom indexes for %s collection", constant.MongoCollectionConnection))
 
 	return nil
@@ -171,7 +170,7 @@ var orphanProductIndexes = []string{
 // tolerated and treated as already-cleaned.
 func dropOrphanProductIndexes(ctx context.Context, coll *mongo.Collection, logger libLog.Logger) error {
 	for _, name := range orphanProductIndexes {
-		if _, err := coll.Indexes().DropOne(ctx, name); err != nil {
+		if err := coll.Indexes().DropOne(ctx, name); err != nil {
 			if isIgnorableDropIndexError(err) {
 				continue
 			}

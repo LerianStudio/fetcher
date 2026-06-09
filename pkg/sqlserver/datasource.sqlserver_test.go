@@ -9,8 +9,8 @@ import (
 	"github.com/LerianStudio/lib-observability"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/LerianStudio/fetcher/pkg/model/job"
-	"github.com/LerianStudio/fetcher/pkg/testutil"
+	"github.com/LerianStudio/fetcher/v2/pkg/model/job"
+	"github.com/LerianStudio/fetcher/v2/pkg/testutil"
 	libLog "github.com/LerianStudio/lib-observability/log"
 	"github.com/Masterminds/squirrel"
 	"github.com/google/uuid"

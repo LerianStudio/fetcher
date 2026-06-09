@@ -9,7 +9,7 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	rmq "github.com/testcontainers/testcontainers-go/modules/rabbitmq"
 
-	"github.com/LerianStudio/fetcher/pkg/itestkit"
+	"github.com/LerianStudio/fetcher/v2/pkg/itestkit"
 )
 
 type RabbitConfig struct {

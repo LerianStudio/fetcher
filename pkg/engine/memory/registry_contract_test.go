@@ -8,8 +8,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/LerianStudio/fetcher/pkg/engine"
-	"github.com/LerianStudio/fetcher/pkg/engine/memory"
+	"github.com/LerianStudio/fetcher/v2/pkg/engine"
+	"github.com/LerianStudio/fetcher/v2/pkg/engine/memory"
 )
 
 // stubFactory is a host-side ConnectorFactory double for registry tests. Build
@@ -31,8 +31,8 @@ func (c *stubConnector) DiscoverSchema(_ context.Context) (engine.SchemaSnapshot
 	return engine.SchemaSnapshot{}, nil
 }
 
-func (c *stubConnector) Query(_ context.Context, _ engine.ExtractionRequest) (map[string][]map[string]any, error) {
-	return nil, nil
+func (c *stubConnector) QueryStream(_ context.Context, _ engine.ExtractionRequest) (engine.RowCursor, error) {
+	return engine.NewEagerCursor(nil), nil
 }
 func (c *stubConnector) Close(_ context.Context) error { c.connected = false; return nil }
 

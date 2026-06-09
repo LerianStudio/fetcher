@@ -11,7 +11,7 @@ import (
 	"net/http"
 	"testing"
 
-	fetcherCrypto "github.com/LerianStudio/fetcher/pkg/crypto"
+	fetcherCrypto "github.com/LerianStudio/fetcher/v2/pkg/crypto"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )

@@ -7,12 +7,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/LerianStudio/fetcher/pkg/itestkit/addons/e2ekit"
-	"github.com/LerianStudio/fetcher/pkg/itestkit/infra/minio"
-	"github.com/LerianStudio/fetcher/pkg/itestkit/infra/mongodb"
-	"github.com/LerianStudio/fetcher/pkg/itestkit/infra/rabbitmq"
-	"github.com/LerianStudio/fetcher/pkg/itestkit/infra/redis"
-	"github.com/LerianStudio/fetcher/pkg/itestkit/infra/seaweedfs"
+	"github.com/LerianStudio/fetcher/v2/pkg/itestkit/addons/e2ekit"
+	"github.com/LerianStudio/fetcher/v2/pkg/itestkit/infra/minio"
+	"github.com/LerianStudio/fetcher/v2/pkg/itestkit/infra/mongodb"
+	"github.com/LerianStudio/fetcher/v2/pkg/itestkit/infra/rabbitmq"
+	"github.com/LerianStudio/fetcher/v2/pkg/itestkit/infra/redis"
+	"github.com/LerianStudio/fetcher/v2/pkg/itestkit/infra/seaweedfs"
 )
 
 // TestOrganizationID is the default organization UUID used in all E2E test requests.
@@ -179,7 +179,7 @@ func (e *AppEnv) ManagerEnv() map[string]string {
 		"LOG_LEVEL":                            "debug",
 		"ENABLE_TELEMETRY":                     "true",
 		"OTEL_RESOURCE_SERVICE_NAME":           "fetcher",
-		"OTEL_LIBRARY_NAME":                    "github.com/LerianStudio/fetcher",
+		"OTEL_LIBRARY_NAME":                    "github.com/LerianStudio/fetcher/v2",
 		"OTEL_RESOURCE_SERVICE_VERSION":        "v1.0.0",
 		"OTEL_RESOURCE_DEPLOYMENT_ENVIRONMENT": "development",
 		"OTEL_EXPORTER_OTLP_ENDPOINT_PORT":     "4317",
@@ -227,7 +227,7 @@ func (e *AppEnv) WorkerEnv() map[string]string {
 		"LOG_LEVEL":                            "debug",
 		"ENABLE_TELEMETRY":                     "true",
 		"OTEL_RESOURCE_SERVICE_NAME":           "fetcher",
-		"OTEL_LIBRARY_NAME":                    "github.com/LerianStudio/fetcher",
+		"OTEL_LIBRARY_NAME":                    "github.com/LerianStudio/fetcher/v2",
 		"OTEL_RESOURCE_SERVICE_VERSION":        "v1.0.0",
 		"OTEL_RESOURCE_DEPLOYMENT_ENVIRONMENT": "development",
 		"OTEL_EXPORTER_OTLP_ENDPOINT_PORT":     "4317",
