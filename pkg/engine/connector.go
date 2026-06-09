@@ -14,11 +14,11 @@ import "context"
 // inspect connectors deterministically before deciding to connect.
 //
 // Lifecycle, in order:
-//  1. ConnectorFactory.Build   — construct a Connector from a descriptor (no I/O).
-//  2. Connector.TestConnection — explicit connectivity check (the only connect step).
-//  3. Connector.DiscoverSchema — read the datasource schema snapshot.
-//  4. Connector.Query          — execute an extraction request.
-//  5. Connector.Close          — release the connection.
+//  1. ConnectorFactory.Build    — construct a Connector from a descriptor (no I/O).
+//  2. Connector.TestConnection  — explicit connectivity check (the only connect step).
+//  3. Connector.DiscoverSchema  — read the datasource schema snapshot.
+//  4. Connector.QueryStream     — open a streaming cursor over the extraction rows.
+//  5. Connector.Close           — release the connection.
 //
 // All scope is tenant scope. The connector contracts carry no organization or
 // product concept: the host supplies an already tenant-scoped descriptor, and
@@ -56,11 +56,31 @@ type Connector interface {
 	// DiscoverSchema reads the datasource's schema and returns a secret-free
 	// snapshot of tables and fields.
 	DiscoverSchema(ctx context.Context) (SchemaSnapshot, error)
-	// Query executes the extraction request and returns rows keyed by qualified
-	// table name. The result carries data only — no secrets.
-	Query(ctx context.Context, request ExtractionRequest) (map[string][]map[string]any, error)
+	// QueryStream executes the extraction request and returns a RowCursor the
+	// Engine drives row-by-row. Streaming the result keeps the Engine's peak
+	// memory bounded to roughly one in-flight batch per worker instead of the
+	// whole result set. The cursor carries data only — no secrets. An adapter that
+	// still fetches all rows up front wraps its materialized map with
+	// NewEagerCursor (true DB-side streaming is a later optimization behind the
+	// same contract).
+	QueryStream(ctx context.Context, request ExtractionRequest) (RowCursor, error)
 	// Close releases the underlying connection. It is safe to call after a failed
 	// TestConnection and idempotent enough that a double Close does not panic.
+	Close(ctx context.Context) error
+}
+
+// RowCursor iterates extraction rows for one datasource step. Single-flight,
+// not concurrency-safe; the engine drives one cursor per goroutine.
+type RowCursor interface {
+	// Next advances to the next row. Returns false at end-of-stream or on error
+	// (check Err). The engine MAY call Next until it returns false.
+	Next(ctx context.Context) bool
+	// Row returns the current row: the qualified table it belongs to and its
+	// column->value map. Valid only after Next returned true.
+	Row() (table string, row map[string]any)
+	// Err returns the first non-EOF error encountered, if any.
+	Err() error
+	// Close releases resources. Idempotent, double-close safe.
 	Close(ctx context.Context) error
 }
 

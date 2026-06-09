@@ -104,6 +104,14 @@ type ConnectorBehavior struct {
 	// step completes, so the runner's BETWEEN-steps / DURING-assembly context
 	// guards fire deterministically rather than racily.
 	AfterQuery func()
+
+	// StreamRowErr, when non-nil, makes the returned cursor stop and report this
+	// error from Err() after StreamFailAfter rows, modelling a mid-stream read
+	// failure on the streaming (store) path. It is inert (nil) by default.
+	StreamRowErr error
+	// StreamFailAfter is the number of rows the erroring cursor yields before it
+	// trips StreamRowErr. Zero means the cursor fails before yielding any row.
+	StreamFailAfter int
 }
 
 // Connector is an in-memory engine.Connector with deterministic, injectable
@@ -172,12 +180,17 @@ func (c *Connector) DiscoverSchema(_ context.Context) (engine.SchemaSnapshot, er
 	return c.Schema, nil
 }
 
-// Query implements engine.Connector. It records the call, returns the injected
-// QueryErr when set, optionally blocks on ctx (BlockOnContext) to model a slow
-// datasource so a timeout/cancel test is deterministic, and otherwise returns a
-// defensive copy of the canned Rows (or the LargeRowFactory output). The runner
-// drives the BUILT connector, so the call is recorded on its own counter.
-func (c *Connector) Query(ctx context.Context, _ engine.ExtractionRequest) (map[string][]map[string]any, error) {
+// QueryStream implements engine.Connector. It records the call, returns the
+// injected QueryErr when set, optionally blocks on ctx (BlockOnContext) to model
+// a slow datasource so a timeout/cancel test is deterministic, and otherwise
+// returns a cursor over a defensive copy of the canned Rows (or the
+// LargeRowFactory output). The runner drives the BUILT connector, so the call is
+// recorded on its own counter.
+//
+// The cursor is materialized eagerly here via engine.NewEagerCursor so the fake
+// preserves the exact deterministic ordering (sorted tables, slice-order rows)
+// the streaming contract requires — the same path real fetch-all adapters take.
+func (c *Connector) QueryStream(ctx context.Context, _ engine.ExtractionRequest) (engine.RowCursor, error) {
 	c.mu.Lock()
 	c.queryCalls++
 	queryErr := c.QueryErr
@@ -185,6 +198,7 @@ func (c *Connector) Query(ctx context.Context, _ engine.ExtractionRequest) (map[
 	rowFactory := c.LargeRowFactory
 	canned := c.Rows
 	afterQuery := c.AfterQuery
+	streamRowErr := c.StreamRowErr
 	c.mu.Unlock()
 
 	if queryErr != nil {
@@ -220,13 +234,64 @@ func (c *Connector) Query(ctx context.Context, _ engine.ExtractionRequest) (map[
 	}
 
 	// Run the post-query hook AFTER the rows are produced so a test can cancel the
-	// context the instant a step succeeds, exercising the runner's between-steps
-	// and during-assembly context guards deterministically.
+	// context the instant a step's query succeeds, exercising the runner's
+	// between-steps and during-assembly context guards deterministically.
 	if afterQuery != nil {
 		afterQuery()
 	}
 
-	return out, nil
+	// StreamRowErr models a cursor that OPENS successfully but fails PART-WAY
+	// through iteration (a mid-stream read error). The error is DELIBERATELY
+	// carried on the cursor (surfaced later via Err()), not returned from
+	// QueryStream — QueryStream opening succeeds, so returning nil here is correct.
+	if streamRowErr != nil {
+		//nolint:nilerr // the row error is carried on the cursor's Err(), not an open error
+		return &erroringCursor{
+			RowCursor: engine.NewEagerCursor(out),
+			failAfter: c.StreamFailAfter,
+			err:       streamRowErr,
+		}, nil
+	}
+
+	return engine.NewEagerCursor(out), nil
+}
+
+// erroringCursor wraps an eager cursor and forces Err() to return a seeded error
+// after failAfter rows, so a test can drive the runner's mid-stream cursor-error
+// path on the streaming sink.
+type erroringCursor struct {
+	engine.RowCursor
+
+	failAfter int
+	seen      int
+	err       error
+	tripped   bool
+}
+
+func (c *erroringCursor) Next(ctx context.Context) bool {
+	if c.tripped {
+		return false
+	}
+
+	if c.seen >= c.failAfter {
+		c.tripped = true
+		return false
+	}
+
+	if c.RowCursor.Next(ctx) {
+		c.seen++
+		return true
+	}
+
+	return false
+}
+
+func (c *erroringCursor) Err() error {
+	if c.tripped {
+		return c.err
+	}
+
+	return c.RowCursor.Err()
 }
 
 // Close implements engine.Connector. It ALWAYS records the call before
@@ -383,6 +448,20 @@ func (f *ConnectorFactory) BuildCount() int {
 	defer f.mu.Unlock()
 
 	return len(f.built)
+}
+
+// Built returns a snapshot of every connector this factory produced, in build
+// order. It lets a test assert the close-every-built-connector invariant across
+// ALL built connectors (planner's and runner's), not just the most recent. It is
+// a harness affordance, not part of the port.
+func (f *ConnectorFactory) Built() []*Connector {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	out := make([]*Connector, len(f.built))
+	copy(out, f.built)
+
+	return out
 }
 
 // LastBuilt returns the most-recently-built connector, or nil when none built.

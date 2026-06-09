@@ -218,8 +218,8 @@ func TestConnector_TestConnectionAndQuery(t *testing.T) {
 	// TestConnection connects (lazy) without error.
 	require.NoError(t, connector.TestConnection(context.Background()))
 
-	// Query is unsupported on the schema path.
-	_, queryErr := connector.Query(context.Background(), engine.ExtractionRequest{})
+	// QueryStream is unsupported on the schema path.
+	_, queryErr := connector.QueryStream(context.Background(), engine.ExtractionRequest{})
 	require.Error(t, queryErr)
 }
 

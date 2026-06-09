@@ -265,7 +265,14 @@ func schemaValidationRequestFromExtraction(request ExtractionRequest) SchemaVali
 func (e *Engine) buildExtractionPlan(tenant TenantContext, request ExtractionRequest, limits Limits) ExtractionPlan {
 	steps := make([]PlanStep, 0, len(request.MappedFields))
 
-	for _, configName := range sortedKeys(request.MappedFields) {
+	// Steps are appended in sorted ConfigName order, so the slice index is a
+	// stable total order. The runner relies on Ordinal — not the implicit slice
+	// position — to assemble streamed output deterministically once goroutines run
+	// out of order, so the ordinal is stamped here, at the single place the order
+	// is established. ConfigNames are the keys of request.MappedFields and are
+	// therefore unique by construction; the ordinal makes that uniqueness a usable
+	// total order.
+	for ordinal, configName := range sortedKeys(request.MappedFields) {
 		selection := request.MappedFields[configName]
 
 		tables := sortedKeys(selection)
@@ -276,6 +283,7 @@ func (e *Engine) buildExtractionPlan(tenant TenantContext, request ExtractionReq
 		}
 
 		step := PlanStep{
+			Ordinal:    ordinal,
 			ConfigName: configName,
 			Tables:     tables,
 			Fields:     fields,

@@ -3,7 +3,10 @@
 
 package engine
 
-import "context"
+import (
+	"context"
+	"io"
+)
 
 // The interfaces in this file are the host-provided capability ports of the
 // embedded Engine. The Engine core depends only on these abstractions; concrete
@@ -153,10 +156,39 @@ type ExecutionStore interface {
 // ResultSink is an OPTIONAL port for persisting extraction result payloads to
 // host-managed storage. When absent, the Engine returns results inline and does
 // not persist them.
+//
+// Store-mode extraction uses OpenResultStream so the Engine can write the result
+// INCREMENTALLY in constant memory; PersistResult remains for whole-payload
+// writes (small direct-to-store payloads and non-streaming hosts).
 type ResultSink interface {
 	// PersistResult stores the serialized result for the tenant and returns a
 	// secret-free reference (path, integrity, size).
 	PersistResult(ctx context.Context, tenant TenantContext, payload []byte) (ResultReference, error)
+	// OpenResultStream begins an incremental result write. The engine writes NDJSON
+	// bytes via the returned writer in deterministic order and calls Close exactly
+	// once.
+	//
+	// WIRE SHAPE — NDJSON: one JSON object per line (newline-terminated), no
+	// enclosing array. Each line is:
+	//   {"config":"<configName>","table":"<qualifiedTable>","row":{<col>:<val>,...}}
+	// Lines are emitted in deterministic order: steps by ascending PlanStep.Ordinal,
+	// rows within a step in cursor order. The same input therefore produces
+	// byte-identical NDJSON (and the same SHA-256 digest) on every run.
+	OpenResultStream(ctx context.Context, tenant TenantContext) (ResultStreamWriter, error)
+}
+
+// ResultStreamWriter is the incremental sink writer returned by
+// ResultSink.OpenResultStream. The Engine writes NDJSON batches through the
+// embedded io.Writer in deterministic order, then calls Close exactly once to
+// finalize the stored object and obtain its reference.
+//
+// On an aborted extraction (a write error, an exceeded size limit, or a
+// cancelled context) the Engine ABANDONS the writer WITHOUT calling Close, so a
+// partial result is never finalized into a returned reference. Implementations
+// SHOULD treat an unclosed writer as a discarded write.
+type ResultStreamWriter interface {
+	io.Writer                        // engine writes NDJSON batches
+	Close() (ResultReference, error) // finalize; returns the stored reference
 }
 
 // SchemaCache is an OPTIONAL port for caching datasource schema snapshots.

@@ -24,6 +24,33 @@ import (
 	"github.com/google/uuid"
 )
 
+// queryStreamRows opens the connector's QueryStream and materializes the cursor
+// back into the legacy map[table][]rows shape so the existing row-shape
+// assertions stay meaningful after the eager Query was replaced by a streaming
+// cursor. It fails the test on an open or iteration error.
+func queryStreamRows(t *testing.T, conn engine.Connector, req engine.ExtractionRequest) map[string][]map[string]any {
+	t.Helper()
+
+	cursor, err := conn.QueryStream(context.Background(), req)
+	if err != nil {
+		t.Fatalf("QueryStream: unexpected error: %v", err)
+	}
+
+	defer func() { _ = cursor.Close(context.Background()) }()
+
+	rows := make(map[string][]map[string]any)
+	for cursor.Next(context.Background()) {
+		table, row := cursor.Row()
+		rows[table] = append(rows[table], row)
+	}
+
+	if err := cursor.Err(); err != nil {
+		t.Fatalf("cursor.Err: unexpected error: %v", err)
+	}
+
+	return rows
+}
+
 // fakeDataSource is a host-side datasource.DataSource double. It records the
 // lifecycle calls the adapter drives through it and returns canned data so a
 // test can prove the Engine Connector delegates to the underlying DataSource
@@ -320,13 +347,10 @@ func TestConnector_QueryDelegatesToUnderlyingDataSource(t *testing.T) {
 		},
 	}
 
-	rows, err := conn.Query(context.Background(), req)
-	if err != nil {
-		t.Fatalf("Query: unexpected error: %v", err)
-	}
+	rows := queryStreamRows(t, conn, req)
 
 	if len(rows["public.accounts"]) != 1 {
-		t.Fatalf("Query did not return underlying rows; got %#v", rows)
+		t.Fatalf("QueryStream did not return underlying rows; got %#v", rows)
 	}
 	if ds.queryTables == nil {
 		t.Fatalf("Query must delegate the table selection to the underlying DataSource")
@@ -349,7 +373,7 @@ func TestConnector_QueryBeforeTestConnectionFails(t *testing.T) {
 		t.Fatalf("Build: unexpected error: %v", err)
 	}
 
-	_, err = conn.Query(context.Background(), engine.ExtractionRequest{})
+	_, err = conn.QueryStream(context.Background(), engine.ExtractionRequest{})
 	assertEngineError(t, err, engine.CategoryUnavailable)
 }
 
@@ -553,9 +577,7 @@ func TestConnector_QueryMapsTypedFiltersForConfig(t *testing.T) {
 		},
 	}
 
-	if _, err := conn.Query(context.Background(), req); err != nil {
-		t.Fatalf("Query: unexpected error: %v", err)
-	}
+	queryStreamRows(t, conn, req)
 
 	if ds.queryFilters == nil {
 		t.Fatalf("typed filters for config were not mapped into the DataSource")
@@ -607,9 +629,7 @@ func TestConnector_QueryReconstructsNestedAnyFilters(t *testing.T) {
 		},
 	}
 
-	if _, err := conn.Query(context.Background(), req); err != nil {
-		t.Fatalf("Query: unexpected error: %v", err)
-	}
+	queryStreamRows(t, conn, req)
 
 	if ds.queryFilters == nil {
 		t.Fatalf("nested any filters were not reconstructed for the DataSource")
@@ -650,9 +670,7 @@ func TestConnector_QueryMismatchedFilterShapeYieldsNoFilters(t *testing.T) {
 		Filters: map[string]any{"pg-main": 42}, // wrong type for this config
 	}
 
-	if _, err := conn.Query(context.Background(), req); err != nil {
-		t.Fatalf("Query: unexpected error: %v", err)
-	}
+	queryStreamRows(t, conn, req)
 	if ds.queryFilters != nil {
 		t.Fatalf("mismatched filter shape must yield nil filters; got %#v", ds.queryFilters)
 	}
@@ -678,7 +696,7 @@ func TestConnector_QueryErrorMapsToUnavailable(t *testing.T) {
 		t.Fatalf("TestConnection: unexpected error: %v", err)
 	}
 
-	_, err = conn.Query(context.Background(), engine.ExtractionRequest{})
+	_, err = conn.QueryStream(context.Background(), engine.ExtractionRequest{})
 	assertEngineError(t, err, engine.CategoryUnavailable)
 	if strings.Contains(err.Error(), "reader") {
 		t.Fatalf("query error leaked driver internals: %q", err.Error())

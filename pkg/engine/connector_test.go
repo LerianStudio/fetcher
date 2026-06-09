@@ -45,13 +45,13 @@ func (c *fakeConnector) DiscoverSchema(_ context.Context) (engine.SchemaSnapshot
 	return engine.SchemaSnapshot{ConfigName: "fake", Tables: []engine.TableSnapshot{{Name: "public.t"}}}, nil
 }
 
-func (c *fakeConnector) Query(_ context.Context, _ engine.ExtractionRequest) (map[string][]map[string]any, error) {
+func (c *fakeConnector) QueryStream(_ context.Context, _ engine.ExtractionRequest) (engine.RowCursor, error) {
 	c.record.note("query")
 	if !c.connected {
 		return nil, errors.New("query before connect")
 	}
 
-	return map[string][]map[string]any{"public.t": {{"id": 1}}}, nil
+	return engine.NewEagerCursor(map[string][]map[string]any{"public.t": {{"id": 1}}}), nil
 }
 
 func (c *fakeConnector) Close(_ context.Context) error {
@@ -114,8 +114,8 @@ func TestConnectorLifecycle_BuildIsSeparableFromConnect(t *testing.T) {
 	if _, err := conn.DiscoverSchema(ctx); err != nil {
 		t.Fatalf("DiscoverSchema: unexpected error: %v", err)
 	}
-	if _, err := conn.Query(ctx, engine.ExtractionRequest{}); err != nil {
-		t.Fatalf("Query: unexpected error: %v", err)
+	if _, err := conn.QueryStream(ctx, engine.ExtractionRequest{}); err != nil {
+		t.Fatalf("QueryStream: unexpected error: %v", err)
 	}
 	if err := conn.Close(ctx); err != nil {
 		t.Fatalf("Close: unexpected error: %v", err)
@@ -149,7 +149,7 @@ func TestConnectorContract_DiscoverAndQueryRequireConnect(t *testing.T) {
 	if _, err := conn.DiscoverSchema(ctx); err == nil {
 		t.Fatalf("DiscoverSchema before connect: expected error, got nil")
 	}
-	if _, err := conn.Query(ctx, engine.ExtractionRequest{}); err == nil {
-		t.Fatalf("Query before connect: expected error, got nil")
+	if _, err := conn.QueryStream(ctx, engine.ExtractionRequest{}); err == nil {
+		t.Fatalf("QueryStream before connect: expected error, got nil")
 	}
 }

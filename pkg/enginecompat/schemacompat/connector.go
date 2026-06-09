@@ -95,9 +95,10 @@ func (c *Connector) DiscoverSchema(ctx context.Context) (engine.SchemaSnapshot, 
 	return c.snapshot(schema), nil
 }
 
-// Query is unsupported on the schema path; the schema Engine performs discovery
-// only. Extraction runs through the dedicated enginecompat/datasource connector.
-func (c *Connector) Query(context.Context, engine.ExtractionRequest) (map[string][]map[string]any, error) {
+// QueryStream is unsupported on the schema path; the schema Engine performs
+// discovery only. Extraction runs through the dedicated enginecompat/datasource
+// connector.
+func (c *Connector) QueryStream(context.Context, engine.ExtractionRequest) (engine.RowCursor, error) {
 	return nil, engine.NewEngineError(engine.CategoryValidation, "schema connector supports discovery only")
 }
 

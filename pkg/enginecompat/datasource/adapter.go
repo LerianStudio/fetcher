@@ -171,10 +171,16 @@ func (c *Connector) DiscoverSchema(ctx context.Context) (engine.SchemaSnapshot, 
 	return snapshotFromSchema(c.descriptor.ConfigName, dbType, schema), nil
 }
 
-// Query executes the extraction request through the underlying DataSource. It
-// maps the Engine ExtractionRequest into the (tables, filters) inputs the
-// DataSource expects, keyed by this connector's config name.
-func (c *Connector) Query(ctx context.Context, request engine.ExtractionRequest) (map[string][]map[string]any, error) {
+// QueryStream executes the extraction request through the underlying DataSource
+// and returns a RowCursor over the result. It maps the Engine ExtractionRequest
+// into the (tables, filters) inputs the DataSource expects, keyed by this
+// connector's config name.
+//
+// TODO(streaming): back this with real DB cursors. The underlying pkg/datasource
+// Query fetches the whole result eagerly, so this materializes it and wraps it
+// with engine.NewEagerCursor to satisfy the streaming contract. True DB-side
+// streaming is a later optimization that does not change this seam's signature.
+func (c *Connector) QueryStream(ctx context.Context, request engine.ExtractionRequest) (engine.RowCursor, error) {
 	if c.ds == nil {
 		return nil, engine.NewEngineError(engine.CategoryUnavailable, "datasource is not connected")
 	}
@@ -187,7 +193,7 @@ func (c *Connector) Query(ctx context.Context, request engine.ExtractionRequest)
 		return nil, engine.NewEngineError(engine.CategoryUnavailable, "failed to query datasource")
 	}
 
-	return rows, nil
+	return engine.NewEagerCursor(rows), nil
 }
 
 // Close releases the underlying connection. It is safe before TestConnection

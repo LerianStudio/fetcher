@@ -85,6 +85,16 @@ func (fakeResultSink) PersistResult(context.Context, TenantContext, []byte) (Res
 	return ResultReference{}, nil
 }
 
+func (fakeResultSink) OpenResultStream(context.Context, TenantContext) (ResultStreamWriter, error) {
+	return fakeResultStreamWriter{}, nil
+}
+
+type fakeResultStreamWriter struct{}
+
+func (fakeResultStreamWriter) Write(p []byte) (int, error) { return len(p), nil }
+
+func (fakeResultStreamWriter) Close() (ResultReference, error) { return ResultReference{}, nil }
+
 type fakeSchemaCache struct{}
 
 func (fakeSchemaCache) GetSchema(context.Context, TenantContext, string) (SchemaSnapshot, bool, error) {

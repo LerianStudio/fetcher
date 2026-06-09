@@ -160,6 +160,18 @@ func (e *Engine) ExecuteExtraction(ctx context.Context, plan ExtractionPlan) (Ex
 	// host-owned, and a status-write failure must never corrupt the result.
 	e.recordExecutionStatus(ctx, tenant, plan.RequestID, StatusRunning, "")
 
+	// STORE mode streams the result to the sink incrementally in constant memory:
+	// extraction goroutines encode rows to NDJSON batches, a single writer drains
+	// them in deterministic Ordinal order, and the integrity digest is computed
+	// over exactly the bytes written. The whole result is never held in memory.
+	if mode == ModeStore {
+		return e.runStoreExtraction(ctx, tenant, connStore, plan)
+	}
+
+	// DIRECT mode aggregates every row into the canonical map and emits a single
+	// indented payload, byte-identical to the historical shape. Extraction across
+	// steps may run in parallel, but the output is order-independent because
+	// json.MarshalIndent sorts map keys.
 	result, err := e.runDirectExtraction(ctx, tenant, connStore, plan)
 	if err != nil {
 		// Distinguish a cancelled context from a genuine failure for the recorded
@@ -170,11 +182,19 @@ func (e *Engine) ExecuteExtraction(ctx context.Context, plan ExtractionPlan) (Ex
 		return ExtractionResult{}, err
 	}
 
-	if mode == ModeStore {
-		return e.completeStoreMode(ctx, tenant, plan.RequestID, result)
+	return e.completeDirectMode(ctx, tenant, plan.RequestID, result), nil
+}
+
+// effectiveConcurrency resolves the worker-pool size from the plan's limits,
+// honoring DefaultMaxConcurrency when unset and never returning less than one so
+// a degenerate (zero/negative) configured concurrency still makes forward
+// progress serially rather than dispatching zero workers.
+func effectiveConcurrency(limits Limits) int {
+	if limits.MaxConcurrency > 0 {
+		return limits.MaxConcurrency
 	}
 
-	return e.completeDirectMode(ctx, tenant, plan.RequestID, result), nil
+	return 1
 }
 
 // extractionOutcome is the in-flight, mode-agnostic product of a successful run:
@@ -187,10 +207,13 @@ type extractionOutcome struct {
 	completedAt time.Time
 }
 
-// runDirectExtraction performs the synchronous per-step extraction (build, test,
-// query, close every connector) and serializes the aggregated rows. It is the
-// shared core of both delivery modes; it is named "direct" because it returns the
-// plaintext bytes in-process, regardless of whether the caller then stores them.
+// runDirectExtraction performs the per-step extraction (build, test, query,
+// close every connector) and serializes the aggregated rows. It is the DIRECT
+// delivery path: it returns the plaintext bytes in-process. Steps may run
+// CONCURRENTLY through a bounded worker pool, each producing its own per-config
+// submap; the submaps are merged after the pool joins. The merged map is
+// serialized with json.MarshalIndent, which sorts map keys, so the output bytes
+// are IDENTICAL regardless of the order steps completed in.
 func (e *Engine) runDirectExtraction(
 	ctx context.Context,
 	tenant TenantContext,
@@ -206,64 +229,25 @@ func (e *Engine) runDirectExtraction(
 		return extractionOutcome{}, engErr
 	}
 
+	results, err := e.runStepsParallel(ctx, tenant, connStore, plan)
+	if err != nil {
+		return extractionOutcome{}, err
+	}
+
 	// Aggregate rows keyed by config name then qualified table, mirroring the
 	// Worker's result shape (map[database]map[table][]rows) so the serialized
-	// payload is byte-compatible during the strangler migration. Steps run in the
-	// plan's already-sorted order, so iteration order is deterministic.
+	// payload is byte-compatible during the strangler migration. The submaps are
+	// merged in Ordinal order; map-key sorting in MarshalIndent makes the final
+	// bytes order-independent regardless.
 	aggregated := make(map[string]map[string][]map[string]any, len(plan.Steps))
-
-	// rowCounts records the per-datasource (per-config) aggregate row count, so the
-	// host can attribute the total back to each source without re-walking the
-	// payload. The key is the plan step's ConfigName; the value is the sum of rows
-	// across all of that config's tables. The grand total is the sum of the values
-	// and equals rowCount below.
 	rowCounts := make(map[string]int64, len(plan.Steps))
 
 	var rowCount int64
 
-	// runningSize accumulates a SOUND LOWER BOUND of the final serialized size: the
-	// sum of each step's COMPACT-marshaled byte length. Compact <= indented always,
-	// so once this sum exceeds MaxResultBytes the final indented payload is
-	// guaranteed to exceed it too — letting the run fail fast before the next step
-	// does any connector work. See the file header's TWO-LAYER limit note.
-	var runningSize int64
-
-	for _, step := range plan.Steps {
-		// Per-step context check BEFORE the step opens or queries its connector. A
-		// cancel or deadline between steps stops execution without doing the next
-		// step's connector work, mapped to the correct category.
-		if engErr := contextError(ctx.Err()); engErr != nil {
-			return extractionOutcome{}, engErr
-		}
-
-		stepRows, stepCount, err := e.executeStep(ctx, tenant, connStore, step)
-		if err != nil {
-			// Fail-fast: the first failing step aborts execution. Its connector is
-			// already closed by executeStep's deferred Close, and every earlier
-			// step's connector closed when its executeStep call returned.
-			return extractionOutcome{}, err
-		}
-
-		aggregated[step.ConfigName] = stepRows
-		rowCounts[step.ConfigName] = stepCount
-		rowCount += stepCount
-
-		// Fail-fast result-size guard. Measure this step's compact size and add it to
-		// the running lower bound. The early exit happens BETWEEN steps, AFTER the
-		// current step's connector is already closed (executeStep's deferred Close
-		// ran on return) and BEFORE the next step is built or queried — preserving the
-		// connector-close-per-step invariant. The terminal-state and connector
-		// invariants are identical to the post-marshal check: this returns the same
-		// CategoryLimitExceeded error, which runDirectExtraction's caller routes
-		// through recordTerminalFailure exactly like the authoritative check below.
-		exceeded, err := exceedsRunningSize(&runningSize, stepRows, plan.Limits.MaxResultBytes)
-		if err != nil {
-			return extractionOutcome{}, err
-		}
-
-		if exceeded {
-			return extractionOutcome{}, NewEngineError(CategoryLimitExceeded, "extraction result exceeds the configured size limit")
-		}
+	for _, res := range results {
+		aggregated[res.configName] = res.rows
+		rowCounts[res.configName] = res.count
+		rowCount += res.count
 	}
 
 	// Context check DURING result assembly: after the row batches are gathered but
@@ -316,35 +300,6 @@ func (e *Engine) runDirectExtraction(
 	}, nil
 }
 
-// exceedsRunningSize advances the running lower-bound size by the COMPACT
-// serialized length of one step's rows and reports whether the accumulated bound
-// has crossed the limit. It is the per-step half of the two-layer result-size
-// guard: compact bytes are a sound lower bound of the final INDENTED payload
-// (indenting only adds whitespace), so a crossing here proves the final payload is
-// over-limit too.
-//
-// The compact bytes are measured and discarded immediately — only the int64 sum is
-// retained — so the guard bounds peak memory rather than holding a second buffer.
-// A nil/empty rows map contributes the length of compact-empty JSON, never an
-// error. A zero or negative limit means unbounded: the function never reports a
-// crossing, mirroring the post-marshal check's gating.
-func exceedsRunningSize(runningSize *int64, stepRows map[string][]map[string]any, maxResultBytes int64) (bool, error) {
-	encoded, err := json.Marshal(stepRows)
-	if err != nil {
-		// stepRows holds only extracted data; a marshal failure is an unexpected
-		// internal condition. The error is not echoed, matching the post-marshal path.
-		return false, NewEngineError(CategoryInternal, "failed to serialize extraction result")
-	}
-
-	*runningSize += int64(len(encoded))
-
-	if maxResultBytes <= 0 {
-		return false, nil
-	}
-
-	return *runningSize > maxResultBytes, nil
-}
-
 // completeDirectMode finalizes an inline (direct) result: it stamps canonical
 // integrity (an unkeyed SHA-256 content digest) and protection (not encrypted,
 // applied by the engine) over the plaintext bytes, records the completed state,
@@ -374,60 +329,6 @@ func (e *Engine) completeDirectMode(
 		},
 		RowCounts: outcome.rowCounts,
 	}
-}
-
-// completeStoreMode persists the payload to the host ResultSink and returns a
-// ResultReference carrying the metadata the sink reported. It PRESERVES the
-// sink's integrity + protection (validating protection.appliedBy against the
-// closed enumeration) and fills in canonical fields the sink left empty. A sink
-// WRITE failure marks the execution failed and returns the error — distinct from
-// a best-effort status-write failure.
-func (e *Engine) completeStoreMode(
-	ctx context.Context,
-	tenant TenantContext,
-	requestID string,
-	outcome extractionOutcome,
-) (ExtractionResult, error) {
-	reference, err := e.options.resultSink.PersistResult(ctx, tenant, outcome.payload)
-	if err != nil {
-		e.recordExecutionStatus(ctx, tenant, requestID, StatusFailed, "failed to persist extraction result")
-		return ExtractionResult{}, NewEngineError(CategoryUnavailable, "failed to persist extraction result")
-	}
-
-	// The sink's protection metadata must name an accountable layer. An
-	// out-of-enum appliedBy is a contract violation we refuse to propagate.
-	if reference.Protection != nil && !reference.Protection.AppliedBy.IsValid() {
-		e.recordExecutionStatus(ctx, tenant, requestID, StatusFailed, "invalid result protection metadata")
-		return ExtractionResult{}, NewEngineError(CategoryValidation, "result protection appliedBy is invalid")
-	}
-
-	// Preserve the sink's metadata; fill canonical fields it left unset. When the
-	// sink reports no integrity, the Engine stamps an unkeyed content digest so a
-	// stored result always carries verifiable integrity.
-	if reference.Integrity == nil {
-		reference.Integrity = engineContentIntegrity(outcome.payload)
-	}
-
-	reference.Format = directResultFormat
-	reference.RowCount = outcome.rowCount
-
-	if reference.SizeBytes == 0 {
-		reference.SizeBytes = int64(len(outcome.payload))
-	}
-
-	reference.CompletedAt = outcome.completedAt
-
-	e.recordExecutionStatus(ctx, tenant, requestID, StatusCompleted, "")
-
-	return ExtractionResult{
-		State: ExecutionState{
-			JobID:       requestID,
-			Status:      StatusCompleted,
-			CompletedAt: &outcome.completedAt,
-		},
-		Reference: &reference,
-		RowCounts: outcome.rowCounts,
-	}, nil
 }
 
 // resolveExecutionMode maps the requested mode onto an effective mode. ModeAuto
@@ -559,85 +460,126 @@ func enginePlaintextProtection() *ResultProtection {
 	}
 }
 
-// executeStep runs a single planned datasource step: resolve the scoped
-// connection, build a connector (I/O-free), connect, query, and ALWAYS close.
+// openStepConnector resolves the scoped connection, builds a connector
+// (I/O-free), and runs the single explicit connect step (TestConnection),
+// returning the connected connector. The CALLER owns the connector's Close —
+// openStepConnector does NOT close on success, because the cursor it opens lives
+// past this call. On EVERY failure path after a successful build, openStepConnector
+// closes the connector itself, so a connector is never leaked even when connect
+// fails. A build failure (or a buggy (nil,nil) build) returns before any Close is
+// owed, so the failure path never dereferences a nil connector.
+func (e *Engine) openStepConnector(
+	ctx context.Context,
+	tenant TenantContext,
+	store ConnectionStore,
+	step PlanStep,
+) (Connector, error) {
+	// Resolve the connection within the tenant scope. A missing connection — or
+	// one owned by another tenant, invisible under this scope — fails as not-found
+	// BEFORE any connector construction.
+	descriptor, found, err := store.FindConnection(ctx, tenant, step.ConfigName)
+	if err != nil {
+		return nil, err
+	}
+
+	if !found {
+		return nil, NewEngineError(CategoryNotFound, "extraction references an unknown datasource connection")
+	}
+
+	factory, err := e.requireConnectorFactory(descriptor.Type)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build is I/O-free per the connector contract. A build failure is a safe,
+	// redacted error: the factory's raw error may embed driver internals. A buggy
+	// host Build may also return (nil, nil); treat that as a build failure too, so
+	// the success path never returns a nil connector to drive.
+	connector, err := factory.Build(ctx, descriptor)
+	if err != nil || isNilPort(connector) {
+		return nil, NewEngineError(CategoryUnavailable, "failed to build connector for connection")
+	}
+
+	// TestConnection is the single connect step. On failure the connector this
+	// function built is closed HERE (the caller never receives it, so it cannot
+	// close it), preserving the close-every-built-connector invariant. A context
+	// error (cancel/deadline) takes precedence so the host sees the real cause.
+	if err := connector.TestConnection(ctx); err != nil {
+		_ = connector.Close(ctx)
+		return nil, safeConnectorError(ctx, err, "failed to connect to datasource")
+	}
+
+	return connector, nil
+}
+
+// executeStep runs a single planned datasource step for the DIRECT path: open
+// the connector, drive its cursor to completion, and ALWAYS close the connector.
 // It returns the step's rows keyed by qualified table and the step's row count.
 //
 // The deferred Close is the per-step half of the close-every-opened-connector
-// invariant: it runs on EVERY return path — connectivity failure, query failure,
-// or success — so a connector built here is never leaked. Close is registered
-// only AFTER the connector is successfully built, so the build-failure path never
-// dereferences a nil connector. A Close error is swallowed: it must not mask the
-// step's primary outcome.
+// invariant: once openStepConnector returns a connected connector, this function
+// owns and always closes it, on the cursor-error path and the success path alike.
+// A Close error is swallowed: it must not mask the step's primary outcome.
 func (e *Engine) executeStep(
 	ctx context.Context,
 	tenant TenantContext,
 	store ConnectionStore,
 	step PlanStep,
 ) (map[string][]map[string]any, int64, error) {
-	// Resolve the connection within the tenant scope. A missing connection — or
-	// one owned by another tenant, invisible under this scope — fails as not-found
-	// BEFORE any connector construction.
-	descriptor, found, err := store.FindConnection(ctx, tenant, step.ConfigName)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	if !found {
-		return nil, 0, NewEngineError(CategoryNotFound, "extraction references an unknown datasource connection")
-	}
-
-	factory, err := e.requireConnectorFactory(descriptor.Type)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	// Build is I/O-free per the connector contract. A build failure is a safe,
-	// redacted error: the factory's raw error may embed driver internals. A buggy
-	// host Build may also return (nil, nil); treat that as a build failure too,
-	// BEFORE registering the deferred Close, so the success path never closes a
-	// nil connector.
-	connector, err := factory.Build(ctx, descriptor)
-	if err != nil || isNilPort(connector) {
-		return nil, 0, NewEngineError(CategoryUnavailable, "failed to build connector for connection")
-	}
-
-	// ALWAYS close the connector, on every return path below. Close is
-	// contractually safe and idempotent enough that a double close does not panic;
-	// a close failure must not mask the step's primary outcome, so its error is
-	// not surfaced.
-	defer func() { _ = connector.Close(ctx) }()
-
-	// TestConnection is the single connect step. A connectivity failure is mapped
-	// to a safe error; the connector is still closed by the deferred Close above.
-	// A context error (cancel/deadline) takes precedence so the host sees the real
-	// cause rather than a generic unavailable.
-	if err := connector.TestConnection(ctx); err != nil {
-		return nil, 0, safeConnectorError(ctx, err, "failed to connect to datasource")
-	}
-
-	// Context check immediately BEFORE the query call: a cancel/deadline between
-	// connect and query stops the step without issuing the query.
+	// Top-of-function cancel guard: forEachStep now invokes the step fn for EVERY
+	// step (so each goroutine — and, on the store path, each per-step channel — is
+	// accounted for exactly once). A step whose run was already cancelled returns
+	// HERE, before building any connector, preserving the "don't build connectors
+	// after cancel" optimization the old dispatch-time skip provided.
 	if engErr := contextError(ctx.Err()); engErr != nil {
 		return nil, 0, engErr
 	}
 
-	// Query executes the extraction. A context error (the connector observed the
-	// cancel/deadline and returned it, or the context is done) is mapped to its
-	// canonical category; any other query failure is mapped to a safe unavailable
-	// error: the connector's raw error may embed a DSN, credential, or driver
-	// internals, so it is DELIBERATELY discarded from the returned message.
-	queryResult, err := connector.Query(ctx, extractionRequestForStep(step))
+	connector, err := e.openStepConnector(ctx, tenant, store, step)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	// ALWAYS close the connector now that we own it. Close is contractually safe
+	// and idempotent enough that a double close does not panic; a close failure
+	// must not mask the step's primary outcome, so its error is not surfaced.
+	defer func() { _ = connector.Close(ctx) }()
+
+	// Context check immediately BEFORE opening the cursor: a cancel/deadline
+	// between connect and query stops the step without issuing the query.
+	if engErr := contextError(ctx.Err()); engErr != nil {
+		return nil, 0, engErr
+	}
+
+	cursor, err := connector.QueryStream(ctx, extractionRequestForStep(step))
 	if err != nil {
 		return nil, 0, safeConnectorError(ctx, err, "failed to query datasource")
 	}
 
+	defer func() { _ = cursor.Close(ctx) }()
+
+	rows := make(map[string][]map[string]any)
+
 	var count int64
-	for _, rows := range queryResult {
-		count += int64(len(rows))
+
+	for cursor.Next(ctx) {
+		table, row := cursor.Row()
+		rows[table] = append(rows[table], row)
+		count++
 	}
 
-	return queryResult, count, nil
+	if err := cursor.Err(); err != nil {
+		return nil, 0, safeConnectorError(ctx, err, "failed to query datasource")
+	}
+
+	// A context error observed AFTER the cursor drained (a cursor that swallowed
+	// the cancel and reported no Err, but the context is now done) still aborts the
+	// step so a half-read result is never aggregated.
+	if engErr := contextError(ctx.Err()); engErr != nil {
+		return nil, 0, engErr
+	}
+
+	return rows, count, nil
 }
 
 // extractionRequestForStep projects a PlanStep back onto the connector's
