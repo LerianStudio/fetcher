@@ -7,7 +7,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/LerianStudio/fetcher/v2/pkg/engine"
+	"github.com/LerianStudio/fetcher/pkg/engine"
 )
 
 // ConnectorRegistry is an in-memory engine.ConnectorRegistry. It resolves

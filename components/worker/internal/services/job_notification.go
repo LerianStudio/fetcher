@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/LerianStudio/fetcher/pkg/engine"
 	"github.com/LerianStudio/fetcher/v2/pkg"
-	"github.com/LerianStudio/fetcher/v2/pkg/engine"
 	libOutbox "github.com/LerianStudio/lib-commons/v5/commons/outbox"
 	"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
 	observability "github.com/LerianStudio/lib-observability"

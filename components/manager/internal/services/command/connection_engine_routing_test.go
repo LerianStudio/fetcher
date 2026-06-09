@@ -9,9 +9,9 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/LerianStudio/fetcher/pkg/engine"
 	"github.com/LerianStudio/fetcher/v2/pkg"
 	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
-	"github.com/LerianStudio/fetcher/v2/pkg/engine"
 	"github.com/LerianStudio/fetcher/v2/pkg/enginecompat/connectioncompat"
 	"github.com/LerianStudio/fetcher/v2/pkg/model"
 	connRepo "github.com/LerianStudio/fetcher/v2/pkg/ports/connection"

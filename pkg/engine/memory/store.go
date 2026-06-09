@@ -19,7 +19,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/LerianStudio/fetcher/v2/pkg/engine"
+	"github.com/LerianStudio/fetcher/pkg/engine"
 )
 
 // tenantScope is the isolation key for stored records. The in-memory harness

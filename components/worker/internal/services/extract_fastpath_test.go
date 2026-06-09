@@ -11,8 +11,8 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/LerianStudio/fetcher/pkg/engine"
 	workerCrypto "github.com/LerianStudio/fetcher/v2/pkg/crypto"
-	"github.com/LerianStudio/fetcher/v2/pkg/engine"
 	"github.com/LerianStudio/fetcher/v2/pkg/model"
 
 	"github.com/stretchr/testify/assert"

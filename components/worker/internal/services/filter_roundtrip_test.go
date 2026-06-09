@@ -7,8 +7,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/LerianStudio/fetcher/pkg/engine"
 	workerCrypto "github.com/LerianStudio/fetcher/v2/pkg/crypto"
-	"github.com/LerianStudio/fetcher/v2/pkg/engine"
 	enginecompatdatasource "github.com/LerianStudio/fetcher/v2/pkg/enginecompat/datasource"
 	"github.com/LerianStudio/fetcher/v2/pkg/enginecompat/schemacompat"
 	"github.com/LerianStudio/fetcher/v2/pkg/model"

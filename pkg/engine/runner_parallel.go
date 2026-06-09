@@ -95,8 +95,10 @@ func (e *Engine) runStepsParallel(
 			}
 
 			sizeMu.Lock()
+
 			runningSize += int64(len(compact))
 			exceeded := runningSize > plan.Limits.MaxResultBytes
+
 			sizeMu.Unlock()
 
 			if exceeded {
@@ -168,7 +170,9 @@ func (e *Engine) forEachStep(
 
 		once.Do(func() {
 			firstWg.Lock()
+
 			first = err
+
 			firstWg.Unlock()
 
 			// Cancel in-flight steps so the rest fail fast and unwind their
@@ -283,7 +287,9 @@ func (e *Engine) streamSteps(
 
 		once.Do(func() {
 			firstWg.Lock()
+
 			first = err
+
 			firstWg.Unlock()
 
 			cancel()

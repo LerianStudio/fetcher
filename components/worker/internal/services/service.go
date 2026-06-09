@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 
+	"github.com/LerianStudio/fetcher/pkg/engine"
 	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
-	"github.com/LerianStudio/fetcher/v2/pkg/engine"
 	"github.com/LerianStudio/fetcher/v2/pkg/model"
 	"github.com/LerianStudio/fetcher/v2/pkg/model/datasource"
 	"github.com/LerianStudio/fetcher/v2/pkg/ports/connection"

@@ -85,7 +85,7 @@ func TestEngineDependencyBoundary_AllowlistStdlibAndModuleLocalOnly(t *testing.T
 func TestEngineDependencyBoundary_AllowlistPolicyClassification(t *testing.T) {
 	t.Parallel()
 
-	const modulePath = "github.com/LerianStudio/fetcher/v2"
+	const modulePath = "github.com/LerianStudio/fetcher/pkg/engine"
 
 	tests := []struct {
 		name       string
@@ -97,13 +97,13 @@ func TestEngineDependencyBoundary_AllowlistPolicyClassification(t *testing.T) {
 		{"stdlib internal", "internal/abi", true},
 		{"stdlib vendored x package", "vendor/golang.org/x/net/dns/dnsmessage", true},
 		{"module root", modulePath, true},
-		{"module-local engine subpackage", modulePath + "/pkg/engine/memory", true},
-		{"module-local non-engine package", modulePath + "/pkg/model", true},
+		{"module-local engine subpackage", modulePath + "/memory", true},
 		{"unknown third-party family with no denylist entry", "github.com/some/brand-new-thing", false},
 		{"golang.org x package pulled directly", "golang.org/x/sync/errgroup", false},
 		{"non-github vcs host", "go.mongodb.org/mongo-driver/v2/mongo", false},
+		{"parent module root is not engine-module-local", "github.com/LerianStudio/fetcher/v2", false},
 		{"pre-/v2 path is not module-local", "github.com/LerianStudio/fetcher", false},
-		{"hypothetical /v3 prefix lookalike", "github.com/LerianStudio/fetcher/v3/pkg/x", false},
+		{"parent enginecompat is not engine-module-local", "github.com/LerianStudio/fetcher/v2/pkg/enginecompat", false},
 	}
 
 	for _, tt := range tests {
@@ -268,8 +268,8 @@ func TestEngineDependencyBoundary_GoListRunsReadonly(t *testing.T) {
 	t.Parallel()
 
 	cmd := newEngineDependencyGraphCommand(context.Background(), mustRepositoryRoot(t))
-	if !slices.Contains(cmd.Args, "./pkg/engine/...") {
-		t.Fatalf("go list command must enumerate every pkg/engine subpackage, got args: %#v", cmd.Args)
+	if !slices.Contains(cmd.Args, "./...") {
+		t.Fatalf("go list command must enumerate every engine module subpackage, got args: %#v", cmd.Args)
 	}
 
 	goFlagsCount, goFlagsValue := goFlagsEnvStatus(cmd.Env)
@@ -303,54 +303,13 @@ func TestEngineDependencyBoundary_GoListEnvReplacesInheritedGoFlags(t *testing.T
 	}
 }
 
-func TestClaudeGoVersionGuidance_UsesGoModAsSourceOfTruth(t *testing.T) {
-	t.Parallel()
-
-	claudePath := filepath.Join(mustRepositoryRoot(t), "CLAUDE.md")
-	claude, err := os.ReadFile(claudePath)
-	if err != nil {
-		t.Fatalf("read CLAUDE.md: %v", err)
-	}
-
-	content := string(claude)
-	if !strings.Contains(content, "Go version:** Source of truth is `go.mod`") {
-		t.Fatalf("CLAUDE.md must direct agents to use go.mod as the Go version source of truth")
-	}
-
-	staleGoVersionPattern := regexp.MustCompile(`(?im)go\s+(version|toolchain|minimum|required|recommended)[^\n]*\b1\.[0-9]+(?:\.[0-9]+)?\b|\bgo\s*1\.[0-9]+(?:\.[0-9]+)?\b`)
-	if match := staleGoVersionPattern.FindString(content); match != "" {
-		t.Fatalf("CLAUDE.md must not reintroduce stale literal Go/toolchain guidance; found %q", match)
-	}
-}
-
-func TestActiveGoVersionGuidance_UsesGoModAsSourceOfTruth(t *testing.T) {
-	t.Parallel()
-
-	repoRoot := mustRepositoryRoot(t)
-	activeDocs := []string{"CLAUDE.md", "README.md", filepath.Join("docs", "PROJECT_RULES.md")}
-	staleGoVersionPattern := regexp.MustCompile(`(?im)go\s+(version|toolchain|minimum|required|recommended)[^\n]*\b1\.[0-9]+(?:\.[0-9]+)?\b|\bgo\s*1\.[0-9]+(?:\.[0-9]+)?\b`)
-
-	for _, activeDoc := range activeDocs {
-		activeDoc := activeDoc
-		t.Run(activeDoc, func(t *testing.T) {
-			t.Parallel()
-
-			contentBytes, err := os.ReadFile(filepath.Join(repoRoot, activeDoc))
-			if err != nil {
-				t.Fatalf("read active Go guidance %s: %v", activeDoc, err)
-			}
-
-			content := string(contentBytes)
-			if !strings.Contains(content, "go.mod") {
-				t.Fatalf("%s must defer Go toolchain guidance to go.mod", activeDoc)
-			}
-
-			if match := staleGoVersionPattern.FindString(content); match != "" {
-				t.Fatalf("%s must not contain stale literal Go/toolchain guidance; found %q", activeDoc, match)
-			}
-		})
-	}
-}
+// NOTE: The repo-root documentation guards that used to live here
+// (TestClaudeGoVersionGuidance / TestActiveGoVersionGuidance) moved to the parent
+// module's pkg/buildguard package. Once pkg/engine became its own module, this
+// file's mustRepositoryRoot walk resolves to the engine module directory, so guards
+// that assert on root-level docs (CLAUDE.md, README.md, docs/PROJECT_RULES.md) can
+// no longer run from here. The dependency-boundary tests below stay in the engine
+// module, where they belong.
 
 func configuredForbiddenDependencyClasses(modulePath string) []forbiddenDependencyClass {
 	return []forbiddenDependencyClass{
@@ -673,7 +632,7 @@ func collectEngineDependencyGraph(t *testing.T, repoRoot string) []string {
 }
 
 func newEngineDependencyGraphCommand(ctx context.Context, repoRoot string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, "go", "list", "-deps", "-f", "{{.ImportPath}}", "./pkg/engine/...")
+	cmd := exec.CommandContext(ctx, "go", "list", "-deps", "-f", "{{.ImportPath}}", "./...")
 	cmd.Dir = repoRoot
 	cmd.Env = goListReadonlyEnv(os.Environ())
 

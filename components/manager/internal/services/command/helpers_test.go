@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/LerianStudio/fetcher/v2/pkg/engine"
+	"github.com/LerianStudio/fetcher/pkg/engine"
 	"github.com/LerianStudio/fetcher/v2/pkg/enginecompat/connectioncompat"
 	connPort "github.com/LerianStudio/fetcher/v2/pkg/ports/connection"
 	"github.com/LerianStudio/fetcher/v2/pkg/ports/job"

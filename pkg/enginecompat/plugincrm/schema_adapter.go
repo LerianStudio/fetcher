@@ -31,7 +31,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/LerianStudio/fetcher/v2/pkg/engine"
+	"github.com/LerianStudio/fetcher/pkg/engine"
 )
 
 // ConfigName is the literal datasource config name that selects CRM

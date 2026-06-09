@@ -9,10 +9,8 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/LerianStudio/fetcher/v2/pkg/engine"
-	"github.com/LerianStudio/fetcher/v2/pkg/engine/memory"
-
-	"go.uber.org/goleak"
+	"github.com/LerianStudio/fetcher/pkg/engine"
+	"github.com/LerianStudio/fetcher/pkg/engine/memory"
 )
 
 // multiBatchRows builds a row slice large enough that the engine's store-path
@@ -148,10 +146,10 @@ func TestExecuteExtraction_StoreModeMultiStepMultiBatch(t *testing.T) {
 
 // TestExecuteExtraction_StoreModeMultiStepMultiBatchNoLeak proves the multi-step
 // multi-batch store path leaks no goroutine: the writer and every producer exit
-// cleanly once the result is finalized. NOT parallel so goleak observes a quiet
+// cleanly once the result is finalized. NOT parallel so the goroutine-leak guard observes a quiet
 // baseline.
 func TestExecuteExtraction_StoreModeMultiStepMultiBatchNoLeak(t *testing.T) {
-	defer goleak.VerifyNone(t)
+	defer verifyNoGoroutineLeak(t)()
 
 	const (
 		nSteps  = 3
@@ -187,7 +185,7 @@ func TestExecuteExtraction_StoreModeMultiStepMultiBatchNoLeak(t *testing.T) {
 // CategoryLimitExceeded, returns no reference, finalizes nothing, and leaks no
 // goroutine (all producers unwind on the writer's cancel, every channel closes).
 func TestExecuteExtraction_StoreModeMultiBatchBudgetFailFast(t *testing.T) {
-	defer goleak.VerifyNone(t)
+	defer verifyNoGoroutineLeak(t)()
 
 	const (
 		nSteps  = 3
@@ -240,7 +238,7 @@ func TestExecuteExtraction_StoreModeMultiBatchBudgetFailFast(t *testing.T) {
 // error PARTWAY through a multi-step multi-batch run fails fast with
 // CategoryUnavailable, returns no reference, and leaks no goroutine.
 func TestExecuteExtraction_StoreModeMultiBatchWriteErrorFailFast(t *testing.T) {
-	defer goleak.VerifyNone(t)
+	defer verifyNoGoroutineLeak(t)()
 
 	const (
 		nSteps  = 3

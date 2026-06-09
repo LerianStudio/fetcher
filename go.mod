@@ -68,6 +68,7 @@ require (
 	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c // indirect
 	github.com/KyleBanks/depth v1.2.1 // indirect
+	github.com/LerianStudio/fetcher/pkg/engine v1.0.0-beta.1
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/acobaugh/osrelease v0.1.0 // indirect
 	github.com/andybalholm/brotli v1.2.1 // indirect
@@ -209,3 +210,9 @@ require (
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+// TRANSIENT BOOTSTRAP — removed by the release prepare hook (scripts/release/engine-release.mjs).
+// Lets GOWORK=off builds resolve the engine module locally before the first pkg/engine/v* tag
+// exists. Local/CI dev resolves the engine via go.work; this replace covers GOWORK=off only.
+// The committed go.mod on main/develop after the first engine release MUST carry no replace.
+replace github.com/LerianStudio/fetcher/pkg/engine => ./pkg/engine

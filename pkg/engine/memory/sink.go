@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/LerianStudio/fetcher/v2/pkg/engine"
+	"github.com/LerianStudio/fetcher/pkg/engine"
 )
 
 // compile-time proof the in-memory sink satisfies the streaming contract.

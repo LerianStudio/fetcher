@@ -12,7 +12,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/LerianStudio/fetcher/v2/pkg/engine"
+	"github.com/LerianStudio/fetcher/pkg/engine"
 	"github.com/LerianStudio/fetcher/v2/pkg/enginecompat/connectioncompat"
 	plugincrm "github.com/LerianStudio/fetcher/v2/pkg/enginecompat/plugincrm"
 	"github.com/LerianStudio/fetcher/v2/pkg/enginecompat/schemacompat"

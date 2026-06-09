@@ -8,7 +8,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/LerianStudio/fetcher/v2/pkg/engine"
+	"github.com/LerianStudio/fetcher/pkg/engine"
 )
 
 // TestEagerCursor_CleanDrain_ReportsNoError verifies the baseline contract: a

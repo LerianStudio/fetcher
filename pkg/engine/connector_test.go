@@ -8,7 +8,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/LerianStudio/fetcher/v2/pkg/engine"
+	"github.com/LerianStudio/fetcher/pkg/engine"
 )
 
 // lifecycleRecord captures which Connector lifecycle methods a fake connector
