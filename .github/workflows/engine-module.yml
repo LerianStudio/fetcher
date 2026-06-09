@@ -70,6 +70,9 @@ jobs:
       - uses: golangci/golangci-lint-action@v7
         with:
           version: v2.6.2
+          # Build golangci-lint from source with the runner's Go 1.26.4 toolchain. The
+          # prebuilt v2.6.2 binary is built with go1.25 and refuses a go.mod targeting 1.26.4.
+          install-mode: goinstall
           working-directory: pkg/engine
           args: --timeout=5m
 
