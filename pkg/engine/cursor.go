@@ -31,6 +31,10 @@ type eagerCursor struct {
 	// exhausted is set once Next has returned false, so Row reverts to the zero
 	// value at end-of-stream rather than echoing the final row.
 	exhausted bool
+	// err holds a context cancellation observed in Next, surfaced via Err so a
+	// caller can distinguish a cancelled stream from a clean end-of-stream. An
+	// eager cursor has no streaming I/O, so this is the only error it can carry.
+	err error
 }
 
 // eagerRow is one flattened (table, row) pair.
@@ -69,13 +73,20 @@ func NewEagerCursor(data map[string][]map[string]any) RowCursor {
 	return &eagerCursor{pairs: pairs}
 }
 
-// Next advances to the next (table, row) pair. It never reports an error: an
-// eager cursor has already materialized its rows, so there is no streaming I/O
-// left to fail. It honors context cancellation defensively so a driving loop
-// that cancels mid-iteration stops promptly.
+// Next advances to the next (table, row) pair. The only error it can report is
+// context cancellation: an eager cursor has already materialized its rows, so
+// there is no streaming I/O left to fail. It honors cancellation by stopping AND
+// recording ctx.Err() so Err can surface it — a driving loop that cancels
+// mid-iteration stops promptly and can tell the abort apart from a clean EOF.
 func (c *eagerCursor) Next(ctx context.Context) bool {
+	if c.err != nil {
+		return false
+	}
+
 	if ctx.Err() != nil {
+		c.err = ctx.Err()
 		c.exhausted = true
+
 		return false
 	}
 
@@ -102,16 +113,19 @@ func (c *eagerCursor) Row() (string, map[string]any) {
 	return pair.table, pair.row
 }
 
-// Err always returns nil: the eager cursor performs no streaming I/O after
-// construction, so there is no deferred error to surface.
+// Err returns the context cancellation observed by Next, if any. It is nil for a
+// cursor that drained to a clean end-of-stream, so a caller can distinguish a
+// completed extraction from one aborted mid-iteration.
 func (c *eagerCursor) Err() error {
-	return nil
+	return c.err
 }
 
 // Close releases the held rows. It is idempotent and double-close safe.
 func (c *eagerCursor) Close(_ context.Context) error {
 	c.pairs = nil
 	c.pos = 0
+	c.exhausted = true
+	c.err = nil
 
 	return nil
 }

@@ -7,6 +7,7 @@ import (
 	"github.com/LerianStudio/fetcher/v2/pkg/enginecompat/schemacompat"
 	"github.com/LerianStudio/fetcher/v2/pkg/enginecompat/tablenorm"
 	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	"github.com/stretchr/testify/require"
 )
 
 // TestOracleCrossPathCasingParity is the load-bearing cross-path guard for the
@@ -48,26 +49,20 @@ func TestOracleCrossPathCasingParity(t *testing.T) {
 
 			managerTable := normalizeTableNameForValidation(tc.table, model.TypeOracle)
 			workerTable := tablenorm.NormalizeTable(model.TypeOracle, tc.table)
-			if managerTable != workerTable {
-				t.Fatalf("Oracle table identity diverged: Manager %q != Worker %q (input %q)",
-					managerTable, workerTable, tc.table)
-			}
+			require.Equalf(t, workerTable, managerTable,
+				"Oracle table identity diverged: Manager != Worker (input %q)", tc.table)
 
 			managerField := normalizeFieldNameForValidation(tc.field, model.TypeOracle)
 			workerField := tablenorm.NormalizeField(model.TypeOracle, tc.field)
-			if managerField != workerField {
-				t.Fatalf("Oracle field identity diverged: Manager %q != Worker %q (input %q)",
-					managerField, workerField, tc.field)
-			}
+			require.Equalf(t, workerField, managerField,
+				"Oracle field identity diverged: Manager != Worker (input %q)", tc.field)
 
 			// The canonical identity MUST equal the physical UPPERCASE data key, so the
 			// snapshot/validation identity matches what the extracted rows are keyed by.
-			if managerTable != tc.physicalTable {
-				t.Fatalf("Manager Oracle table identity %q != physical data key %q", managerTable, tc.physicalTable)
-			}
-			if managerField != tc.physicalField {
-				t.Fatalf("Manager Oracle field identity %q != physical data key %q", managerField, tc.physicalField)
-			}
+			require.Equalf(t, tc.physicalTable, managerTable,
+				"Manager Oracle table identity != physical data key (input %q)", tc.table)
+			require.Equalf(t, tc.physicalField, managerField,
+				"Manager Oracle field identity != physical data key (input %q)", tc.field)
 		})
 	}
 }
@@ -94,28 +89,22 @@ func TestOracleParityResolvesAgainstUppercaseSnapshot(t *testing.T) {
 
 	// The snapshot MUST be UPPERCASE (== physical data keys).
 	roundTrip := schemacompat.DataSourceSchemaFromSnapshot(snapshot)
-	if !roundTrip.HasTable("ACCOUNTS") {
-		t.Fatalf("snapshot table is not UPPERCASE; tables=%v", roundTrip.Tables)
-	}
-	if roundTrip.HasTable("accounts") {
-		t.Fatalf("snapshot must NOT carry the lowercase table key")
-	}
+	require.Truef(t, roundTrip.HasTable("ACCOUNTS"),
+		"snapshot table is not UPPERCASE; tables=%v", roundTrip.Tables)
+	require.False(t, roundTrip.HasTable("accounts"),
+		"snapshot must NOT carry the lowercase table key")
 
 	// A mixed-case request must resolve once normalized by EITHER path (they are equal,
 	// per the parity test above), and resolve to the UPPERCASE physical identity.
 	reqTable := tablenorm.NormalizeTable(model.TypeOracle, "Accounts")
 	reqField := tablenorm.NormalizeField(model.TypeOracle, "Balance")
 
-	if reqTable != "ACCOUNTS" || reqField != "BALANCE" {
-		t.Fatalf("normalized request not UPPERCASE: table=%q field=%q", reqTable, reqField)
-	}
-	if !roundTrip.HasTable(reqTable) {
-		t.Fatalf("normalized Oracle table %q did not resolve against UPPERCASE snapshot %v", reqTable, roundTrip.Tables)
-	}
-	if !roundTrip.HasField(reqTable, reqField) {
-		t.Fatalf("normalized Oracle field %q did not resolve in table %q", reqField, reqTable)
-	}
-	if !strings.EqualFold(reqTable, "accounts") { // sanity: same logical table, UPPER form
-		t.Fatalf("unexpected table identity %q", reqTable)
-	}
+	require.Equal(t, "ACCOUNTS", reqTable, "normalized request table not UPPERCASE")
+	require.Equal(t, "BALANCE", reqField, "normalized request field not UPPERCASE")
+	require.Truef(t, roundTrip.HasTable(reqTable),
+		"normalized Oracle table %q did not resolve against UPPERCASE snapshot %v", reqTable, roundTrip.Tables)
+	require.Truef(t, roundTrip.HasField(reqTable, reqField),
+		"normalized Oracle field %q did not resolve in table %q", reqField, reqTable)
+	require.Truef(t, strings.EqualFold(reqTable, "accounts"), // sanity: same logical table, UPPER form
+		"unexpected table identity %q", reqTable)
 }
