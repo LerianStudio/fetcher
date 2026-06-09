@@ -49,8 +49,13 @@ Embedding the Engine is three steps: **import it, provide the ports it needs, co
 #### 1. Install
 
 ```bash
-go get github.com/LerianStudio/fetcher/v2/pkg/engine
+go get github.com/LerianStudio/fetcher/pkg/engine
 ```
+
+> The engine is a **distinct Go module** from the Fetcher services (`github.com/LerianStudio/fetcher/v2`).
+> It carries **zero third-party dependencies** and is versioned on its own `v1` line with
+> path-prefixed tags (`pkg/engine/vX.Y.Z`). Importing it inherits none of Fetcher's service
+> dependencies. See [`docs/RELEASING.md`](docs/RELEASING.md) for the dual-module release scheme.
 
 #### 2. Provide the ports
 
@@ -80,8 +85,8 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/LerianStudio/fetcher/v2/pkg/engine"
-	"github.com/LerianStudio/fetcher/v2/pkg/engine/memory"
+	"github.com/LerianStudio/fetcher/pkg/engine"
+	"github.com/LerianStudio/fetcher/pkg/engine/memory"
 )
 
 func main() {

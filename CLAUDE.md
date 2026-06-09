@@ -204,7 +204,7 @@ Async RabbitMQ consumer. Does NOT follow CQRS - uses a single `UseCase` struct i
 
 ### Embedding the engine in a host application
 
-1. Import `github.com/LerianStudio/fetcher/v2/pkg/engine` (no infrastructure comes with it).
+1. Import `github.com/LerianStudio/fetcher/pkg/engine` — a **distinct module** from the `/v2` services, with a **zero third-party** dependency footprint and its own `v1` tag line (`pkg/engine/vX.Y.Z`). No infrastructure comes with it.
 2. Implement the required ports (`ConnectorRegistry`, and `CredentialProtector` if using encrypted persistence) and any optional ports your host needs (`ConnectionStore`, `ResultSink`, `SchemaCache`, etc.).
 3. Construct with `engine.New(engine.WithConnectorRegistry(...), ...)`; check the returned error.
 4. For a working reference, read how the Manager (`components/manager/internal/bootstrap/connection_engine.go`, `schema_engine.go`) and Worker (`components/worker/internal/bootstrap/extraction_engine.go`) wire it via `pkg/enginecompat/*`. For tests, the `pkg/engine/memory/` harness satisfies every port in-memory.
