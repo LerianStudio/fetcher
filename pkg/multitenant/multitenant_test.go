@@ -12,7 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo"
 )
 
 // ---------------------------------------------------------------------------
@@ -97,11 +97,11 @@ func TestTenantIsolation_MongoDBDatabaseRouting(t *testing.T) {
 				"GetMongoFromContext must return nil when no mongo connection in context (tenant B)")
 
 			// Positive path: inject tenant-specific databases and verify routing
-			clientA, _ := mongo.NewClient() //nolint:staticcheck // test-only disconnected client
+			clientA, _ := mongo.Connect() // test-only disconnected client
 			tenantDBa := clientA.Database(tt.tenantADB)
 			ctxWithDBA := tmcore.ContextWithMB(ctxA, tenantDBa)
 
-			clientB, _ := mongo.NewClient() //nolint:staticcheck // test-only disconnected client
+			clientB, _ := mongo.Connect() // test-only disconnected client
 			tenantDBb := clientB.Database(tt.tenantBDB)
 			ctxWithDBB := tmcore.ContextWithMB(ctxB, tenantDBb)
 

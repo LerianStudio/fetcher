@@ -12,9 +12,9 @@ import (
 	observability "github.com/LerianStudio/lib-observability"
 	libLog "github.com/LerianStudio/lib-observability/log"
 	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -162,7 +162,7 @@ func ensureUniqueActiveHashIndex(ctx context.Context, coll *mongo.Collection, lo
 	if state == uniqIndexLegacy {
 		logger.Log(ctx, libLog.LevelInfo, "Dropping legacy uniq_job_hash_active index for migration to dedup_active filter")
 
-		if _, dropErr := coll.Indexes().DropOne(ctx, "uniq_job_hash_active"); dropErr != nil {
+		if dropErr := coll.Indexes().DropOne(ctx, "uniq_job_hash_active"); dropErr != nil {
 			return fmt.Errorf("drop legacy uniq_job_hash_active: %w", dropErr)
 		}
 	}
@@ -357,15 +357,14 @@ func (jr *JobMongoDBRepository) DropIndexes(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, indexDropTimeout)
 	defer cancel()
 
-	droppedIndexes, err := coll.Indexes().DropAll(ctx)
-	if err != nil {
+	// mongo-driver v2 DropAll returns only an error (v1 returned the server's bson.Raw reply).
+	if err := coll.Indexes().DropAll(ctx); err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to drop job indexes", err)
 		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to drop indexes for %s: %v", constant.MongoCollectionJob, err))
 
 		return err
 	}
 
-	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Dropped indexes: %v", droppedIndexes))
 	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Successfully dropped all custom indexes for %s collection", constant.MongoCollectionJob))
 
 	return nil

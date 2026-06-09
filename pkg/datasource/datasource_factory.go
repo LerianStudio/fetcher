@@ -29,8 +29,8 @@ import (
 	libLog "github.com/LerianStudio/lib-observability/log"
 	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
 
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -256,7 +256,7 @@ func testMongoDBConnection(ctx context.Context, mongoURI, configName string, log
 		SetConnectTimeout(constant.ConnectionTimeout).
 		SetServerSelectionTimeout(constant.ConnectionTimeout)
 
-	client, errConnect := mongo.Connect(testCtx, clientOpts)
+	client, errConnect := mongo.Connect(clientOpts)
 	if errConnect != nil {
 		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to connect to MongoDB [%s]: %v", configName, errConnect))
 		return fmt.Errorf("failed to connect to MongoDB: %w", errConnect)

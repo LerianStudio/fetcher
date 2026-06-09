@@ -13,7 +13,7 @@ import (
 	context "context"
 	reflect "reflect"
 
-	mongo "go.mongodb.org/mongo-driver/mongo"
+	mongo "go.mongodb.org/mongo-driver/v2/mongo"
 	gomock "go.uber.org/mock/gomock"
 )
 

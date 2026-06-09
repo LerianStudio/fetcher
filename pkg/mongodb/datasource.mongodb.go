@@ -16,10 +16,9 @@ import (
 
 	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
 	"github.com/google/uuid"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -228,15 +227,15 @@ func convertBsonValue(value any) any {
 
 		return doc
 
-	case primitive.DateTime:
+	case bson.DateTime:
 		// Convert to time.Time for easier template usage
 		return v.Time()
 
-	case primitive.ObjectID:
+	case bson.ObjectID:
 		// Convert ObjectID to string
 		return v.Hex()
 
-	case primitive.Binary:
+	case bson.Binary:
 		// Check if Binary is a UUID
 		if len(v.Data) == 16 {
 			u, err := uuid.FromBytes(v.Data)
@@ -563,19 +562,19 @@ func (ds *ExternalDataSource) inferDataType(value any) string {
 		return "array"
 	case bson.M, bson.D:
 		return "object"
-	case primitive.DateTime:
+	case bson.DateTime:
 		return "date"
-	case primitive.ObjectID:
+	case bson.ObjectID:
 		return "objectId"
-	case primitive.Binary:
+	case bson.Binary:
 		return "binData"
-	case primitive.Regex:
+	case bson.Regex:
 		return "regex"
-	case primitive.Timestamp:
+	case bson.Timestamp:
 		return "timestamp"
-	case primitive.Decimal128:
+	case bson.Decimal128:
 		return "decimal"
-	case primitive.MinKey, primitive.MaxKey:
+	case bson.MinKey, bson.MaxKey:
 		return "minKey/maxKey"
 	default:
 		return "unknown"
@@ -671,7 +670,7 @@ func (ds *ExternalDataSource) buildMongoFilter(filter map[string]job.FilterCondi
 }
 
 // buildFindOptions creates MongoDB find options with field projection
-func (ds *ExternalDataSource) buildFindOptions(fields []string) *options.FindOptions {
+func (ds *ExternalDataSource) buildFindOptions(fields []string) *options.FindOptionsBuilder {
 	projection := bson.M{}
 
 	if len(fields) > 0 && fields[0] != "*" {
@@ -694,7 +693,7 @@ func (ds *ExternalDataSource) executeFindQuery(
 	client *mongo.Client,
 	collection string,
 	mongoFilter bson.M,
-	findOptions *options.FindOptions,
+	findOptions *options.FindOptionsBuilder,
 ) (*mongo.Cursor, context.Context, context.CancelFunc, error) {
 	queryCtx, cancel := context.WithTimeout(ctx, constant.QueryTimeoutSlow)
 

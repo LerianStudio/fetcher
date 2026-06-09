@@ -6,10 +6,9 @@ import (
 	"fmt"
 	"time"
 
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
 
 //go:embed *.sql
@@ -70,7 +69,7 @@ func GetOracleInitSQL() (string, error) {
 
 // MongoDBTransaction represents a transaction document.
 type MongoDBTransaction struct {
-	ID          primitive.ObjectID `bson:"_id,omitempty"`
+	ID          bson.ObjectID `bson:"_id,omitempty"`
 	AccountID   string             `bson:"account_id"`
 	Amount      float64            `bson:"amount"`
 	Currency    string             `bson:"currency"`
@@ -98,7 +97,7 @@ func InitMongoDBExternal(ctx context.Context, connectionString, database string)
 
 	maxRetries := 10
 	for i := 0; i < maxRetries; i++ {
-		client, err = mongo.Connect(ctx, clientOpts)
+		client, err = mongo.Connect(clientOpts)
 		if err != nil {
 			time.Sleep(time.Duration(i+1) * 500 * time.Millisecond)
 			continue

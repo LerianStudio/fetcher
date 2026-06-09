@@ -8,7 +8,7 @@ import (
 	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.uber.org/mock/gomock"
 )
 
@@ -131,9 +131,9 @@ func TestResolveDatabase(t *testing.T) {
 				// Inject a real-ish tenant DB into context.
 				// We use mongo.Database obtained from a disconnected client.
 				// This tests context extraction; actual DB operations are integration-tested.
-				client, err := mongo.NewClient() //nolint:staticcheck // test-only disconnected client
+				client, err := mongo.Connect() // test-only disconnected client
 				if err != nil {
-					panic("mongo.NewClient() failed: " + err.Error())
+					panic("mongo.Connect() failed: " + err.Error())
 				}
 				db := client.Database("tenant_abc")
 				return tmcore.ContextWithMB(context.Background(), db)
@@ -152,9 +152,9 @@ func TestResolveDatabase(t *testing.T) {
 		{
 			name: "single-tenant with tenant DB in context still uses tenant DB",
 			setupCtx: func() context.Context {
-				client, err := mongo.NewClient() //nolint:staticcheck // test-only disconnected client
+				client, err := mongo.Connect() // test-only disconnected client
 				if err != nil {
-					panic("mongo.NewClient() failed: " + err.Error())
+					panic("mongo.Connect() failed: " + err.Error())
 				}
 				db := client.Database("tenant_xyz")
 				return tmcore.ContextWithMB(context.Background(), db)

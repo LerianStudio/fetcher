@@ -13,10 +13,10 @@ import (
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
 	libLog "github.com/LerianStudio/lib-observability/log"
-	"go.mongodb.org/mongo-driver/bson/bsoncodec"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/readpref"
-	"go.mongodb.org/mongo-driver/x/mongo/driver/topology"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/readpref"
+	"go.mongodb.org/mongo-driver/v2/x/mongo/driver/topology"
 )
 
 const (
@@ -59,12 +59,10 @@ func MapMongoErrorToResponse(err error, ctx context.Context) error {
 		return pkg.ValidateInternalError(constant.ErrServiceUnavailable, "")
 	}
 
-	// Server selection / network
-	if errors.Is(err, topology.ErrServerSelectionTimeout) {
-		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("MongoDB server selection timeout: %v", err))
-		return pkg.ValidateInternalError(constant.ErrServiceUnavailable, "")
-	}
-
+	// Server selection / network.
+	// Note: mongo-driver v2 removed the topology.ErrServerSelectionTimeout sentinel.
+	// Server-selection timeouts now surface as context.DeadlineExceeded (handled above
+	// under the timeout branch) or as a topology.ServerSelectionError (handled below).
 	var sse topology.ServerSelectionError
 	if errors.As(err, &sse) {
 		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("MongoDB server selection error: %v", err))
@@ -126,7 +124,7 @@ func MapMongoErrorToResponse(err error, ctx context.Context) error {
 	}
 
 	// Decode / BSON issues
-	var decodeErr bsoncodec.ValueDecoderError
+	var decodeErr bson.ValueDecoderError
 	if errors.As(err, &decodeErr) {
 		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("MongoDB decode error: %v", err))
 		return pkg.ValidateInternalError(constant.ErrInternalServer, "")

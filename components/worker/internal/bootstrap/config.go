@@ -39,7 +39,7 @@ import (
 	libOtel "github.com/LerianStudio/lib-observability/tracing"
 	libZap "github.com/LerianStudio/lib-observability/zap"
 	streaming "github.com/LerianStudio/lib-streaming"
-	mongoDriver "go.mongodb.org/mongo-driver/mongo"
+	mongoDriver "go.mongodb.org/mongo-driver/v2/mongo"
 )
 
 // defaultMaxTenantPools is the fallback soft limit for tenant connection pools

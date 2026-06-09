@@ -12,8 +12,8 @@ import (
 	streaming "github.com/LerianStudio/lib-streaming"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
 
 func TestTerminalEventRepairer_RepairOnce_WithPendingTerminalEvent_RetriesWithoutMessageRedelivery(t *testing.T) {
@@ -346,7 +346,7 @@ func (r *tenantMongoResolver) GetDatabaseForTenant(_ context.Context, tenantID s
 		return nil, err
 	}
 
-	client, err := mongo.NewClient(options.Client().ApplyURI("mongodb://localhost:27017"))
+	client, err := mongo.Connect(options.Client().ApplyURI("mongodb://localhost:27017"))
 	if err != nil {
 		return nil, err
 	}

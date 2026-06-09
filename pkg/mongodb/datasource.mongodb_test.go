@@ -12,8 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/v2/bson"
 )
 
 func TestConvertBsonToMap(t *testing.T) {
@@ -84,15 +83,15 @@ func TestConvertBsonToMap(t *testing.T) {
 }
 
 func TestConvertBsonValue(t *testing.T) {
-	t.Run("converts primitive.ObjectID to hex string", func(t *testing.T) {
-		oid := primitive.NewObjectID()
+	t.Run("converts bson.ObjectID to hex string", func(t *testing.T) {
+		oid := bson.NewObjectID()
 		result := convertBsonValue(oid)
 		assert.Equal(t, oid.Hex(), result)
 	})
 
-	t.Run("converts primitive.DateTime to time.Time", func(t *testing.T) {
+	t.Run("converts bson.DateTime to time.Time", func(t *testing.T) {
 		now := time.Now().UTC()
-		dt := primitive.NewDateTimeFromTime(now)
+		dt := bson.NewDateTimeFromTime(now)
 		result := convertBsonValue(dt)
 
 		resultTime, ok := result.(time.Time)
@@ -102,7 +101,7 @@ func TestConvertBsonValue(t *testing.T) {
 
 	t.Run("converts 16-byte binary to UUID string", func(t *testing.T) {
 		id := uuid.New()
-		binary := primitive.Binary{
+		binary := bson.Binary{
 			Subtype: 4, // UUID subtype
 			Data:    id[:],
 		}
@@ -113,7 +112,7 @@ func TestConvertBsonValue(t *testing.T) {
 
 	t.Run("converts non-UUID binary to hex", func(t *testing.T) {
 		data := []byte{0x01, 0x02, 0x03}
-		binary := primitive.Binary{
+		binary := bson.Binary{
 			Subtype: 0,
 			Data:    data,
 		}
@@ -178,14 +177,14 @@ func TestInferDataType(t *testing.T) {
 		{"bson.A", bson.A{"a", "b"}, "array"},
 		{"bson.M", bson.M{"key": "value"}, "object"},
 		{"bson.D", bson.D{{Key: "k", Value: "v"}}, "object"},
-		{"datetime", primitive.NewDateTimeFromTime(time.Now()), "date"},
-		{"objectId", primitive.NewObjectID(), "objectId"},
-		{"binary", primitive.Binary{Data: []byte{1, 2, 3}}, "binData"},
-		{"regex", primitive.Regex{Pattern: ".*"}, "regex"},
-		{"timestamp", primitive.Timestamp{T: 1234567890}, "timestamp"},
-		{"decimal128", primitive.NewDecimal128(123, 456), "decimal"},
-		{"minKey", primitive.MinKey{}, "minKey/maxKey"},
-		{"maxKey", primitive.MaxKey{}, "minKey/maxKey"},
+		{"datetime", bson.NewDateTimeFromTime(time.Now()), "date"},
+		{"objectId", bson.NewObjectID(), "objectId"},
+		{"binary", bson.Binary{Data: []byte{1, 2, 3}}, "binData"},
+		{"regex", bson.Regex{Pattern: ".*"}, "regex"},
+		{"timestamp", bson.Timestamp{T: 1234567890}, "timestamp"},
+		{"decimal128", bson.NewDecimal128(123, 456), "decimal"},
+		{"minKey", bson.MinKey{}, "minKey/maxKey"},
+		{"maxKey", bson.MaxKey{}, "minKey/maxKey"},
 		{"unknown", struct{}{}, "unknown"},
 		{"nil", nil, "unknown"},
 	}
@@ -558,7 +557,7 @@ func TestCloseConnection(t *testing.T) {
 func TestConvertBsonValue_AdditionalCases(t *testing.T) {
 	t.Run("converts UUID with error", func(t *testing.T) {
 		// Test binary data that is 16 bytes but not a valid UUID
-		binary := primitive.Binary{
+		binary := bson.Binary{
 			Subtype: 4,
 			Data:    []byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF},
 		}
@@ -569,7 +568,7 @@ func TestConvertBsonValue_AdditionalCases(t *testing.T) {
 	})
 
 	t.Run("converts empty binary", func(t *testing.T) {
-		binary := primitive.Binary{
+		binary := bson.Binary{
 			Subtype: 0,
 			Data:    []byte{},
 		}

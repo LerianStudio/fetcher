@@ -16,7 +16,7 @@ import (
 	observability "github.com/LerianStudio/lib-observability"
 	libLog "github.com/LerianStudio/lib-observability/log"
 	obsRuntime "github.com/LerianStudio/lib-observability/runtime"
-	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo"
 )
 
 const (

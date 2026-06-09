@@ -22,8 +22,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tryvium-travels/memongo"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/mock/gomock"
 )
@@ -36,6 +36,13 @@ var (
 const jobTestDatabaseName = "fetcher_job_test"
 
 func TestMain(m *testing.M) {
+	// memongo serves a throwaway plaintext MongoDB on localhost. lib-commons v5.5.0
+	// fail-closes on non-TLS Mongo URIs unless ALLOW_INSECURE_TLS=true, so opt in
+	// here for the in-memory test instance.
+	if err := os.Setenv("ALLOW_INSECURE_TLS", "true"); err != nil {
+		log.Fatalf("failed to set ALLOW_INSECURE_TLS: %v", err)
+	}
+
 	server, err := memongo.Start("6.0.6")
 	if err != nil {
 		// memongo doesn't support all platforms (e.g., Fedora 42)

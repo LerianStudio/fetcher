@@ -10,10 +10,10 @@ import (
 	"github.com/LerianStudio/fetcher/pkg"
 	"github.com/LerianStudio/fetcher/pkg/constant"
 	"github.com/stretchr/testify/assert"
-	"go.mongodb.org/mongo-driver/bson/bsoncodec"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/x/mongo/driver"
-	"go.mongodb.org/mongo-driver/x/mongo/driver/topology"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/x/mongo/driver"
+	"go.mongodb.org/mongo-driver/v2/x/mongo/driver/topology"
 	"go.uber.org/mock/gomock"
 )
 
@@ -130,8 +130,11 @@ func TestMapMongoErrorToResponse(t *testing.T) {
 			wantNotNil: true,
 		},
 		{
+			// mongo-driver v2 removed topology.ErrServerSelectionTimeout; a
+			// server-selection timeout now surfaces as a ServerSelectionError
+			// wrapping context.DeadlineExceeded.
 			name:       "server selection timeout",
-			err:        topology.ErrServerSelectionTimeout,
+			err:        topology.ServerSelectionError{Wrapped: context.DeadlineExceeded},
 			wantCode:   constant.ErrServiceUnavailable.Error(),
 			wantNotNil: true,
 		},
@@ -239,7 +242,7 @@ func TestMapMongoErrorToResponse(t *testing.T) {
 		},
 		{
 			name:       "decode error",
-			err:        bsoncodec.ValueDecoderError{},
+			err:        bson.ValueDecoderError{},
 			wantCode:   constant.ErrInternalServer.Error(),
 			wantNotNil: true,
 		},

@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
-	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo"
 )
 
 type multiTenantChecker interface {
