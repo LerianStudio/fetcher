@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/LerianStudio/fetcher/pkg/engine"
 	"github.com/LerianStudio/fetcher/v2/pkg"
 	"github.com/LerianStudio/fetcher/v2/pkg/constant"
 	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
-	"github.com/LerianStudio/fetcher/v2/pkg/engine"
 	"github.com/LerianStudio/fetcher/v2/pkg/enginecompat/connectioncompat"
 	"github.com/LerianStudio/fetcher/v2/pkg/model"
 	observability "github.com/LerianStudio/lib-observability"

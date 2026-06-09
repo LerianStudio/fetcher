@@ -8,8 +8,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/LerianStudio/fetcher/v2/pkg/engine"
-	"github.com/LerianStudio/fetcher/v2/pkg/engine/memory"
+	"github.com/LerianStudio/fetcher/pkg/engine"
+	"github.com/LerianStudio/fetcher/pkg/engine/memory"
 )
 
 func TestResultSink_RoundTripsExactBytesByLogicalReference(t *testing.T) {

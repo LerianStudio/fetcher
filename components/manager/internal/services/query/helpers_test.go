@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
+	"github.com/LerianStudio/fetcher/pkg/engine"
 	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
 	"github.com/LerianStudio/fetcher/v2/pkg/datasource"
-	"github.com/LerianStudio/fetcher/v2/pkg/engine"
 	"github.com/LerianStudio/fetcher/v2/pkg/enginecompat/connectioncompat"
 	"github.com/LerianStudio/fetcher/v2/pkg/enginecompat/schemacompat"
 	cacheRepo "github.com/LerianStudio/fetcher/v2/pkg/ports/cache"

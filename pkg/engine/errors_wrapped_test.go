@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/LerianStudio/fetcher/v2/pkg/engine"
+	"github.com/LerianStudio/fetcher/pkg/engine"
 )
 
 // These tests pin the SECRET-HIDING contract of NewWrappedEngineError / Unwrap:

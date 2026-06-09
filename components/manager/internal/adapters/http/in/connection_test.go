@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/LerianStudio/fetcher/pkg/engine"
 	"github.com/LerianStudio/fetcher/v2/components/manager/internal/services/command"
 	"github.com/LerianStudio/fetcher/v2/components/manager/internal/services/query"
 	pkgdatasource "github.com/LerianStudio/fetcher/v2/pkg/datasource"
-	"github.com/LerianStudio/fetcher/v2/pkg/engine"
 	"github.com/LerianStudio/fetcher/v2/pkg/enginecompat/schemacompat"
 	"github.com/LerianStudio/fetcher/v2/pkg/model"
 	"github.com/LerianStudio/fetcher/v2/pkg/model/datasource"

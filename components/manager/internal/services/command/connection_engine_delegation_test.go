@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/LerianStudio/fetcher/pkg/engine"
 	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
-	"github.com/LerianStudio/fetcher/v2/pkg/engine"
 	"github.com/LerianStudio/fetcher/v2/pkg/enginecompat/connectioncompat"
 	"github.com/LerianStudio/fetcher/v2/pkg/model"
 	jobRepo "github.com/LerianStudio/fetcher/v2/pkg/mongodb/job"

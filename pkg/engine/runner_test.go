@@ -13,9 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/LerianStudio/fetcher/v2/pkg/engine"
-	"github.com/LerianStudio/fetcher/v2/pkg/engine/memory"
-	"go.uber.org/goleak"
+	"github.com/LerianStudio/fetcher/pkg/engine"
+	"github.com/LerianStudio/fetcher/pkg/engine/memory"
 )
 
 // runnerHarness wires an Engine over the in-memory doubles for the runner tests.
@@ -1014,11 +1013,11 @@ func newLimitedRunnerHarness(t *testing.T, limits engine.Limits, sink engine.Res
 }
 
 func TestExecuteExtraction_CancelledBeforeQuerySkipsConnectorWork(t *testing.T) {
-	// NOT t.Parallel(): goleak.VerifyNone must observe a quiet goroutine baseline.
+	// NOT t.Parallel(): verifyNoGoroutineLeak must observe a quiet goroutine baseline.
 	// Under t.Parallel() it would see sibling parallel tests' goroutines and the
 	// test runner's own parked goroutine, producing false positives. Running
-	// serially lets goleak prove THIS test leaks nothing.
-	defer goleak.VerifyNone(t)
+	// serially lets the goroutine-leak guard prove THIS test leaks nothing.
+	defer verifyNoGoroutineLeak(t)()
 
 	h := newRunnerHarness(t)
 	conn := h.seedSource(t, "pg-main", "postgres",
@@ -1057,9 +1056,9 @@ func TestExecuteExtraction_CancelledBeforeQuerySkipsConnectorWork(t *testing.T) 
 }
 
 func TestExecuteExtraction_CancelledDuringQueryClosesConnector(t *testing.T) {
-	// NOT t.Parallel(): goleak needs a quiet baseline (see the cancel-before-query
+	// NOT t.Parallel(): the goroutine-leak guard needs a quiet baseline (see the cancel-before-query
 	// test). The cancel goroutine this test spawns joins before VerifyNone runs.
-	defer goleak.VerifyNone(t)
+	defer verifyNoGoroutineLeak(t)()
 
 	h := newRunnerHarness(t)
 	conn := h.seedSource(t, "pg-main", "postgres",
@@ -1105,10 +1104,10 @@ func TestExecuteExtraction_CancelledDuringQueryClosesConnector(t *testing.T) {
 }
 
 func TestExecuteExtraction_TimeoutDuringQueryReturnsTimeoutError(t *testing.T) {
-	// NOT t.Parallel(): goleak needs a quiet baseline. The runner blocks the
+	// NOT t.Parallel(): the goroutine-leak guard needs a quiet baseline. The runner blocks the
 	// query SYNCHRONOUSLY on ctx (no spawned goroutine), so a clean VerifyNone
 	// here proves the timeout path parks nothing.
-	defer goleak.VerifyNone(t)
+	defer verifyNoGoroutineLeak(t)()
 
 	// A short Engine timeout limit derives an execution deadline. The fake query
 	// blocks on ctx, so the deadline fires deterministically and the runner maps
@@ -1561,9 +1560,9 @@ func TestExecuteExtraction_ResultSizeExceededFailsBeforeSinkWrite(t *testing.T) 
 }
 
 func TestExecuteExtraction_TimeoutMarksExecutionFailed(t *testing.T) {
-	// NOT t.Parallel(): goleak needs a quiet baseline (synchronous blocking query,
+	// NOT t.Parallel(): the goroutine-leak guard needs a quiet baseline (synchronous blocking query,
 	// no spawned goroutine).
-	defer goleak.VerifyNone(t)
+	defer verifyNoGoroutineLeak(t)()
 
 	// A timeout records a terminal FAILED transition (deadline exceeded is a
 	// failure, not a host-initiated cancel) through the execution store.

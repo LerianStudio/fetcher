@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/LerianStudio/fetcher/pkg/engine"
 	"github.com/LerianStudio/fetcher/v2/pkg/constant"
-	"github.com/LerianStudio/fetcher/v2/pkg/engine"
 	"github.com/LerianStudio/fetcher/v2/pkg/model"
 	modelJob "github.com/LerianStudio/fetcher/v2/pkg/model/job"
 	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"

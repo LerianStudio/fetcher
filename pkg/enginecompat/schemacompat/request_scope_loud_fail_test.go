@@ -8,8 +8,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/LerianStudio/fetcher/pkg/engine"
 	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
-	"github.com/LerianStudio/fetcher/v2/pkg/engine"
 	"github.com/LerianStudio/fetcher/v2/pkg/enginecompat/schemacompat"
 	"github.com/LerianStudio/fetcher/v2/pkg/model"
 	modelDatasource "github.com/LerianStudio/fetcher/v2/pkg/model/datasource"

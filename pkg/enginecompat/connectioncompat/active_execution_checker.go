@@ -13,7 +13,7 @@ package connectioncompat
 import (
 	"context"
 
-	"github.com/LerianStudio/fetcher/v2/pkg/engine"
+	"github.com/LerianStudio/fetcher/pkg/engine"
 	"github.com/LerianStudio/fetcher/v2/pkg/ports/job"
 )
 

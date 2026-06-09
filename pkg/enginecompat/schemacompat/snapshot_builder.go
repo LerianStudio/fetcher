@@ -4,7 +4,7 @@
 package schemacompat
 
 import (
-	"github.com/LerianStudio/fetcher/v2/pkg/engine"
+	"github.com/LerianStudio/fetcher/pkg/engine"
 	"github.com/LerianStudio/fetcher/v2/pkg/enginecompat/tablenorm"
 	"github.com/LerianStudio/fetcher/v2/pkg/model"
 )

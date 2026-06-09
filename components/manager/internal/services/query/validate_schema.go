@@ -6,9 +6,9 @@ import (
 
 	observability "github.com/LerianStudio/lib-observability"
 
+	"github.com/LerianStudio/fetcher/pkg/engine"
 	"github.com/LerianStudio/fetcher/v2/pkg"
 	"github.com/LerianStudio/fetcher/v2/pkg/constant"
-	"github.com/LerianStudio/fetcher/v2/pkg/engine"
 	plugincrm "github.com/LerianStudio/fetcher/v2/pkg/enginecompat/plugincrm"
 	"github.com/LerianStudio/fetcher/v2/pkg/enginecompat/schemacompat"
 	"github.com/LerianStudio/fetcher/v2/pkg/enginecompat/tablenorm"

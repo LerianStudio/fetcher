@@ -3,9 +3,9 @@ package bootstrap
 import (
 	"testing"
 
+	"github.com/LerianStudio/fetcher/pkg/engine"
 	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
 	"github.com/LerianStudio/fetcher/v2/pkg/datasource"
-	"github.com/LerianStudio/fetcher/v2/pkg/engine"
 	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

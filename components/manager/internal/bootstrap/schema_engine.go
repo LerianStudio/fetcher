@@ -3,9 +3,9 @@ package bootstrap
 import (
 	"time"
 
+	"github.com/LerianStudio/fetcher/pkg/engine"
 	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
 	"github.com/LerianStudio/fetcher/v2/pkg/datasource"
-	"github.com/LerianStudio/fetcher/v2/pkg/engine"
 	"github.com/LerianStudio/fetcher/v2/pkg/enginecompat/schemacompat"
 	cachePort "github.com/LerianStudio/fetcher/v2/pkg/ports/cache"
 )
