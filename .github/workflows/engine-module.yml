@@ -1,0 +1,96 @@
+name: "Engine Module"
+
+# Verifies the standalone engine module (github.com/LerianStudio/fetcher/pkg/engine).
+# The shared go-pr-analysis workflow filters to components/* only, so the engine module
+# would otherwise be uncovered. Everything here is self-contained (the engine has zero
+# third-party deps), so no private-module token is required. The parent GOWORK=off
+# require-resolution gate runs in the release prepare hook (scripts/release/engine-release.mjs),
+# which executes with org secrets — see docs/RELEASING.md.
+
+on:
+  pull_request:
+    branches:
+      - develop
+      - release-candidate
+      - main
+    paths:
+      - 'pkg/engine/**'
+      - 'go.mod'
+      - 'go.work'
+      - 'scripts/release/**'
+      - '.releaserc.yml'
+      - '.github/workflows/engine-module.yml'
+  push:
+    branches:
+      - develop
+      - main
+
+env:
+  GO_VERSION: "1.26.4"
+
+jobs:
+  engine-tests:
+    name: Engine module build + test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: pkg/engine/go.mod
+      - name: Build engine module
+        working-directory: pkg/engine
+        env:
+          GOWORK: "off"
+        run: go build ./...
+      - name: Test engine module (incl. dependency boundary + leak guard)
+        working-directory: pkg/engine
+        env:
+          GOWORK: "off"
+        run: go test ./...
+      - name: Assert engine require block is empty (zero third-party)
+        working-directory: pkg/engine
+        run: |
+          if grep -qE '^\s*require' go.mod; then
+            echo "::error::pkg/engine/go.mod has a require block — the engine must stay third-party-free."
+            grep -nE 'require' go.mod
+            exit 1
+          fi
+          echo "engine go.mod require block is empty — OK"
+
+  engine-lint:
+    name: Engine module lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: pkg/engine/go.mod
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          version: v2.6.2
+          working-directory: pkg/engine
+          args: --timeout=5m
+
+  consumer-smoke:
+    name: Consumer smoke (zero third-party proof)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: Build a scratch consumer and assert zero third-party deps
+        run: bash scripts/release/smoke-consumer.sh --local
+
+  release-logic:
+    name: Release version logic tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Unit-test the engine version computation
+        run: node --test scripts/release/engine-release.test.mjs
