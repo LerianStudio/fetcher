@@ -34,8 +34,7 @@ type Engine struct {
 //     substitutes DefaultLimits so the Engine never runs unbounded.
 //
 // Optional ports (connection store, execution store, result sink, schema cache,
-// event sink, tenant resolver, observability) are genuinely optional: New
-// succeeds without them.
+// observability) are genuinely optional: New succeeds without them.
 func New(opts ...Option) (*Engine, error) {
 	options := Options{}
 

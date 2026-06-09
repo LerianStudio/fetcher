@@ -148,9 +148,6 @@ type ConnectionStore interface {
 type ExecutionStore interface {
 	// SaveExecution upserts the execution state for the tenant.
 	SaveExecution(ctx context.Context, tenant TenantContext, state ExecutionState) error
-	// FindExecution returns the execution state for the given job and whether it
-	// exists for the tenant.
-	FindExecution(ctx context.Context, tenant TenantContext, jobID string) (ExecutionState, bool, error)
 }
 
 // ResultSink is an OPTIONAL port for persisting extraction result payloads to
@@ -199,24 +196,6 @@ type SchemaCache interface {
 	GetSchema(ctx context.Context, tenant TenantContext, configName string) (SchemaSnapshot, bool, error)
 	// PutSchema stores the snapshot for the tenant.
 	PutSchema(ctx context.Context, tenant TenantContext, snapshot SchemaSnapshot) error
-}
-
-// EventSink is an OPTIONAL port for emitting past-tense execution lifecycle
-// events to the host (e.g. job completed/failed). When absent, the Engine emits
-// nothing.
-type EventSink interface {
-	// Emit delivers a lifecycle event derived from execution state for the
-	// tenant.
-	Emit(ctx context.Context, tenant TenantContext, state ExecutionState) error
-}
-
-// TenantResolver is an OPTIONAL port that lets the host enrich or validate the
-// tenant context before the Engine resolves connections, reads schema, or
-// extracts data. When absent, the Engine uses the caller-supplied tenant
-// context as-is.
-type TenantResolver interface {
-	// Resolve returns the effective tenant context for the request.
-	Resolve(ctx context.Context, tenant TenantContext) (TenantContext, error)
 }
 
 // ActiveExecutionChecker is an OPTIONAL, LOGICAL port that reports whether a

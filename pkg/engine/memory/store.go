@@ -365,19 +365,16 @@ func (s *ExecutionStore) SaveExecution(
 	return nil
 }
 
-// FindExecution implements engine.ExecutionStore. It returns the execution
-// state for the job within the tenant scope and whether it exists.
-func (s *ExecutionStore) FindExecution(
-	_ context.Context,
-	tenant engine.TenantContext,
-	jobID string,
-) (engine.ExecutionState, bool, error) {
+// Find returns the saved execution state for the job within the tenant scope
+// and whether it exists. It is a harness affordance for tests to assert that
+// SaveExecution landed, not part of the Engine port.
+func (s *ExecutionStore) Find(tenant engine.TenantContext, jobID string) (engine.ExecutionState, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	state, ok := s.executions[executionKey{scope: scopeOf(tenant), jobID: jobID}]
 
-	return state, ok, nil
+	return state, ok
 }
 
 // RecordingExecutionStore is an in-memory engine.ExecutionStore that records the
@@ -420,16 +417,6 @@ func (s *RecordingExecutionStore) SaveExecution(
 	}
 
 	return nil
-}
-
-// FindExecution implements engine.ExecutionStore. The recording double does not
-// retain full state, so it always reports the execution as absent.
-func (s *RecordingExecutionStore) FindExecution(
-	_ context.Context,
-	_ engine.TenantContext,
-	_ string,
-) (engine.ExecutionState, bool, error) {
-	return engine.ExecutionState{}, false, nil
 }
 
 // Statuses returns a copy of the recorded status transitions in order. It is a

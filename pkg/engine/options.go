@@ -15,8 +15,6 @@ type Options struct {
 	executionStore         ExecutionStore
 	resultSink             ResultSink
 	schemaCache            SchemaCache
-	eventSink              EventSink
-	tenantResolver         TenantResolver
 	activeExecutionChecker ActiveExecutionChecker
 	observability          Observability
 
@@ -77,20 +75,6 @@ func WithResultSink(sink ResultSink) Option {
 func WithSchemaCache(cache SchemaCache) Option {
 	return func(o *Options) {
 		o.schemaCache = cache
-	}
-}
-
-// WithEventSink sets the optional event sink.
-func WithEventSink(sink EventSink) Option {
-	return func(o *Options) {
-		o.eventSink = sink
-	}
-}
-
-// WithTenantResolver sets the optional tenant resolver.
-func WithTenantResolver(resolver TenantResolver) Option {
-	return func(o *Options) {
-		o.tenantResolver = resolver
 	}
 }
 

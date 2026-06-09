@@ -62,7 +62,7 @@ func (r extractionConnectorRegistry) Connector(string) (engine.ConnectorFactory,
 //     so the Engine never re-resolves and tenant-manager stays out of Engine core.
 //
 // No ResultSink is wired: DIRECT mode returns the bytes inline and the Worker owns
-// encrypt + store + HMAC (ST-02). No ExecutionStore/EventSink: the Worker owns the
+// encrypt + store + HMAC (ST-02). No ExecutionStore is wired: the Worker owns the
 // job lifecycle and lib-streaming events.
 //
 // maxResultBytes, when positive, overrides the engine's MaxResultBytes ceiling
