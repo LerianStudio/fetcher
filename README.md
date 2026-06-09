@@ -64,8 +64,7 @@ The Engine depends only on host-provided interfaces. Only one is always required
 | `SchemaCache` | Optional | Schema is always discovered live |
 | `ResultSink` | Optional | Store mode unavailable; extraction runs in Direct mode |
 | `ExecutionStore` | Optional | No durable execution-state tracking |
-| `EventSink` | Optional | No lifecycle events emitted |
-| `TenantResolver`, `ActiveExecutionChecker`, `Observability` | Optional | Resolution/conflict-gating/tracing become no-ops |
+| `ActiveExecutionChecker`, `Observability` | Optional | Conflict-gating/tracing become no-ops |
 
 For tests and quick starts, the **`pkg/engine/memory`** harness satisfies every port in-memory — no MongoDB, Redis, RabbitMQ, or storage required.
 
