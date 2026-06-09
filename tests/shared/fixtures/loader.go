@@ -70,15 +70,15 @@ func GetOracleInitSQL() (string, error) {
 // MongoDBTransaction represents a transaction document.
 type MongoDBTransaction struct {
 	ID          bson.ObjectID `bson:"_id,omitempty"`
-	AccountID   string             `bson:"account_id"`
-	Amount      float64            `bson:"amount"`
-	Currency    string             `bson:"currency"`
-	Type        string             `bson:"type"`
-	Description string             `bson:"description"`
-	Category    string             `bson:"category"`
-	Status      string             `bson:"status"`
-	CreatedAt   time.Time          `bson:"created_at"`
-	UpdatedAt   time.Time          `bson:"updated_at"`
+	AccountID   string        `bson:"account_id"`
+	Amount      float64       `bson:"amount"`
+	Currency    string        `bson:"currency"`
+	Type        string        `bson:"type"`
+	Description string        `bson:"description"`
+	Category    string        `bson:"category"`
+	Status      string        `bson:"status"`
+	CreatedAt   time.Time     `bson:"created_at"`
+	UpdatedAt   time.Time     `bson:"updated_at"`
 }
 
 // InitMongoDBExternal initializes MongoDB with Q4 2024 test data.

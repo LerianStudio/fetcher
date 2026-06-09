@@ -13,15 +13,15 @@
 //
 // The four scenarios mirror the plan §5.4:
 //
-//   1. POST loopback IP literal → 400 + FET-0414 (DTO `safe_host` rejects).
-//   2. POST cloud-metadata IP literal → 400 + FET-0414.
-//   3. POST connection with a non-resolvable hostname → 201 (guard defers
-//      DNS errors to the driver per Marco 1 design — the create persists,
-//      only a later /test would fail at dial). This proves the guard does
-//      NOT block hostnames that fail DNS.
-//   4. POST connection with a real PostgreSQL fixture + /test → 200 with
-//      status=success. Proves the guard does NOT break the happy path
-//      when the host is legitimate.
+//  1. POST loopback IP literal → 400 + FET-0414 (DTO `safe_host` rejects).
+//  2. POST cloud-metadata IP literal → 400 + FET-0414.
+//  3. POST connection with a non-resolvable hostname → 201 (guard defers
+//     DNS errors to the driver per Marco 1 design — the create persists,
+//     only a later /test would fail at dial). This proves the guard does
+//     NOT block hostnames that fail DNS.
+//  4. POST connection with a real PostgreSQL fixture + /test → 200 with
+//     status=success. Proves the guard does NOT break the happy path
+//     when the host is legitimate.
 //
 // ## Activation
 //
@@ -32,12 +32,12 @@
 // (see apps.go:183), which is the correct default for the rest of the
 // suite. Activating these tests requires a follow-up that either:
 //
-//   (a) Adds an EnvOverride field to e2eshared.AppStartConfig so the
-//       Manager can be spawned per-test with MT=true plus the required
-//       MULTI_TENANT_URL / MULTI_TENANT_SERVICE_API_KEY fixtures, or
-//   (b) Toggles MT on suite-wide behind an env var like
-//       `E2E_ENABLE_MULTI_TENANT=true` and wires a tenant-manager mock
-//       fixture into CoreInfra.
+//	(a) Adds an EnvOverride field to e2eshared.AppStartConfig so the
+//	    Manager can be spawned per-test with MT=true plus the required
+//	    MULTI_TENANT_URL / MULTI_TENANT_SERVICE_API_KEY fixtures, or
+//	(b) Toggles MT on suite-wide behind an env var like
+//	    `E2E_ENABLE_MULTI_TENANT=true` and wires a tenant-manager mock
+//	    fixture into CoreInfra.
 //
 // Either path is outside Marco 4's scope (Manager-only, no shared infra
 // changes). The tests below are kept as a runnable spec so a future MT

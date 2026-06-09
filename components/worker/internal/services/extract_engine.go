@@ -538,6 +538,7 @@ func mapFilters(
 				for k := range fieldMap {
 					keys = append(keys, k)
 				}
+
 				sort.Strings(keys)
 
 				for _, k := range keys {
