@@ -25,6 +25,11 @@ on:
       - develop
       - main
 
+# Auto-cancel superseded runs when rapid pushes land on the same PR/branch.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   GO_VERSION: "1.26.4"
 

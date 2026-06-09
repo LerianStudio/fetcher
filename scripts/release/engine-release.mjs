@@ -33,8 +33,12 @@ const ENGINE_MODULE = 'github.com/LerianStudio/fetcher/pkg/engine';
 const ENGINE_TAG_PREFIX = 'pkg/engine/';
 const ENGINE_CHANGELOG = 'pkg/engine/CHANGELOG.md';
 
-// Bump rules MUST mirror .releaserc.yml releaseRules so the engine line follows the
-// same conventional-commit policy as the parent.
+// Bump rules mirror .releaserc.yml releaseRules for the standard types. The engine's
+// "cut both always" policy is intentionally more liberal: 'style' and unrecognized
+// types map to patch so every release event yields a fresh tag. This only affects the
+// stable->prerelease transition and stable cuts; mid-beta the counter ticks regardless
+// (computeNextVersion also coerces 'none' -> patch on a stable cut), so the divergence
+// from the parent's skip-on-unknown behavior is functionally moot.
 const MINOR_TYPES = new Set(['feat', 'perf', 'build', 'refactor']);
 const PATCH_TYPES = new Set(['fix', 'chore', 'ci', 'test', 'docs', 'style']);
 
