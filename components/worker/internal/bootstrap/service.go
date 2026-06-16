@@ -12,7 +12,7 @@ import (
 // runLauncher launches the consumer and (when present) the health-port
 // micro-server under a single Launcher so one SIGTERM tears both down.
 // healthServer is nil under narrow unit tests that opt out of the server.
-var runLauncher = func(logger libLog.Logger, consumer *MultiQueueConsumer, healthServer *HealthServer, outboxDispatcher *libOutbox.Dispatcher, terminalRepairer *services.TerminalEventRepairer) {
+var runLauncher = func(logger libLog.Logger, consumer *MultiQueueConsumer, healthServer *HealthServer, outboxDispatcher *libOutbox.Dispatcher, terminalRepairer *services.TerminalEventRepairer, reconciler *services.TenantConsumerReconciler) {
 	opts := []commons.LauncherOption{
 		commons.WithLogger(logger),
 		commons.RunApp("RabbitMQ Consumer", consumer),
@@ -28,6 +28,12 @@ var runLauncher = func(logger libLog.Logger, consumer *MultiQueueConsumer, healt
 
 	if terminalRepairer != nil {
 		opts = append(opts, commons.RunApp("Terminal Event Repairer", terminalRepairer))
+	}
+
+	// Registered only in multi-tenant mode (nil in single-tenant mode), mirroring
+	// the conditional registration of terminalRepairer above.
+	if reconciler != nil {
+		opts = append(opts, commons.RunApp("Tenant Consumer Reconciler", reconciler))
 	}
 
 	commons.NewLauncher(opts...).Run()
@@ -57,6 +63,10 @@ type Service struct {
 	outboxDispatcher *libOutbox.Dispatcher
 	// terminalRepairer retries terminal metadata left pending before outbox persistence.
 	terminalRepairer *services.TerminalEventRepairer
+	// reconciler periodically reconciles materialized per-tenant consumers against
+	// the active tenants reported by the Tenant Manager. Non-nil only in
+	// multi-tenant mode; nil (and so unregistered) in single-tenant mode.
+	reconciler *services.TenantConsumerReconciler
 	// tmClientCloser releases the single shared Tenant Manager client used by all
 	// tenant-aware components in multi-tenant mode (managers, resolver,
 	// streaming-outbox resolver, tenant cache/consumer). The Service is the sole
@@ -67,7 +77,7 @@ type Service struct {
 // Run starts the application.
 // This is the only necessary code to run an app in main.go
 func (app *Service) Run() {
-	runLauncher(app.Logger, app.MultiQueueConsumer, app.healthServer, app.outboxDispatcher, app.terminalRepairer)
+	runLauncher(app.Logger, app.MultiQueueConsumer, app.healthServer, app.outboxDispatcher, app.terminalRepairer, app.reconciler)
 
 	// Graceful shutdown
 	app.Log(context.Background(), libLog.LevelInfo, "Starting graceful shutdown...")
