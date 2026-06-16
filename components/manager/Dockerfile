@@ -35,7 +35,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -tags netgo \
   -o /manager ./components/manager/cmd/app/main.go
 
 # Stage 2: Final image using minimal runtime dependencies
-FROM alpine:3.23
+FROM alpine:3.24
 
 WORKDIR /app
 

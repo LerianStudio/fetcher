@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/LerianStudio/fetcher/v2/pkg/testutil"
 	tmconsumer "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/consumer"
 	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
 	"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/tenantcache"
@@ -447,6 +448,58 @@ func TestWorkerMultiTenantConsumer_ProcessMessages_HandlesDeliveriesWithBoundedC
 	case <-time.After(time.Second):
 		t.Fatal("processMessages did not drain bounded workers")
 	}
+}
+
+func TestWorkerMultiTenantConsumer_KnownTenants(t *testing.T) {
+	t.Parallel()
+
+	t.Run("returns tenants after ensure and drops them after stop", func(t *testing.T) {
+		t.Parallel()
+
+		cache := tenantcache.NewTenantCache()
+		channel := newFakeWorkerRabbitMQChannel()
+		manager := &fakeWorkerRabbitMQManager{channel: channel, started: make(chan string, 4)}
+		consumer := newWorkerMultiTenantConsumer(workerMultiTenantConsumerConfig{
+			TenantCache: cache,
+			RabbitMQ:    manager,
+			Logger:      testBootstrapLogger(),
+		})
+		consumer.loader = &fakeWorkerTenantLoader{cache: cache}
+		require.NoError(t, consumer.Register("jobs", func(context.Context, amqp.Delivery) error { return nil }))
+
+		assert.Empty(t, consumer.KnownTenants(), "no tenants should be known before any ensure")
+
+		for _, tenantID := range []string{"tenant-a", "tenant-b", "tenant-c"} {
+			consumer.EnsureConsumerStarted(testutil.TestContext(), tenantID)
+		}
+
+		assert.ElementsMatch(t, []string{"tenant-a", "tenant-b", "tenant-c"}, consumer.KnownTenants())
+
+		consumer.StopConsumer("tenant-b")
+
+		assert.ElementsMatch(t, []string{"tenant-a", "tenant-c"}, consumer.KnownTenants(),
+			"stopped tenant must disappear from the known set")
+
+		require.NoError(t, consumer.Close())
+	})
+
+	t.Run("returns a defensive copy", func(t *testing.T) {
+		t.Parallel()
+
+		consumer := newWorkerMultiTenantConsumer(workerMultiTenantConsumerConfig{Logger: testBootstrapLogger()})
+		consumer.markTenantKnown("tenant-x")
+
+		snapshot := consumer.KnownTenants()
+		require.Equal(t, []string{"tenant-x"}, snapshot)
+
+		// Mutating the returned slice must not affect internal state.
+		snapshot[0] = "mutated"
+
+		assert.Equal(t, []string{"tenant-x"}, consumer.KnownTenants(),
+			"mutating the returned slice must not corrupt internal state")
+		assert.True(t, consumer.OwnsTenant("tenant-x"))
+		assert.False(t, consumer.OwnsTenant("mutated"))
+	})
 }
 
 var _ tmconsumer.HandlerFunc = func(context.Context, amqp.Delivery) error { return nil }

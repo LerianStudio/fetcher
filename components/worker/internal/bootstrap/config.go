@@ -126,8 +126,14 @@ type Config struct {
 	MultiTenantCircuitBreakerTimeoutSec int    `env:"MULTI_TENANT_CIRCUIT_BREAKER_TIMEOUT_SEC" default:"30"`
 	MultiTenantServiceAPIKey            string `env:"MULTI_TENANT_SERVICE_API_KEY"`
 	MultiTenantCacheTTLSec              int    `env:"MULTI_TENANT_CACHE_TTL_SEC" default:"120"`
-	MultiTenantTimeout                  int    `env:"MULTI_TENANT_TIMEOUT" default:"30"`
-	MultiTenantAllowInsecureHTTP        bool   `env:"MULTI_TENANT_ALLOW_INSECURE_HTTP" default:"false"`
+	// MultiTenantReconcileIntervalSec is the steady-state interval (seconds) at
+	// which the Tenant Consumer Reconciler reconciles materialized per-tenant
+	// consumers against the active tenants reported by the Tenant Manager.
+	// Unset, zero, or invalid (non-positive) safely yields the reconciler's own
+	// 60s default (WithReconcileInterval ignores non-positive values).
+	MultiTenantReconcileIntervalSec int  `env:"MULTI_TENANT_RECONCILE_INTERVAL_SEC" default:"60"`
+	MultiTenantTimeout              int  `env:"MULTI_TENANT_TIMEOUT" default:"30"`
+	MultiTenantAllowInsecureHTTP    bool `env:"MULTI_TENANT_ALLOW_INSECURE_HTTP" default:"false"`
 	// The worker has no primary HTTP server; a dedicated micro-server
 	// exposes /health, /readyz and /metrics on HEALTH_PORT.
 	DeploymentMode      string `env:"DEPLOYMENT_MODE" default:"local"`
@@ -425,6 +431,20 @@ func initMultiTenantWorkerService(
 		return nil, err
 	}
 
+	// Tenant Consumer Reconciler is constructed ONLY in multi-tenant mode. The
+	// mtConsumer (*workerMultiTenantConsumer) satisfies the reconciler's
+	// tenantConsumerMaterializer interface; sharedTMClient (*tmclient.Client)
+	// satisfies the active-tenant lister. It is registered in runLauncher when
+	// non-nil; single-tenant mode leaves it nil.
+	reconciler := services.NewTenantConsumerReconciler(
+		mtConsumer,
+		sharedTMClient,
+		constant.ApplicationName,
+		logger,
+		services.WithReconcileInterval(time.Duration(cfg.MultiTenantReconcileIntervalSec)*time.Second),
+		services.WithMeterProvider(telemetry.MeterProvider),
+	)
+
 	return &Service{
 		MultiQueueConsumer: multiQueueConsumer,
 		Logger:             logger,
@@ -435,6 +455,7 @@ func initMultiTenantWorkerService(
 		streamingCloser:    service.JobEventEmitter.Close,
 		outboxDispatcher:   outboxDispatcher,
 		terminalRepairer:   services.NewTerminalEventRepairerWithTenantScope(service, logger, constant.ApplicationName, sharedTMClient, mongoManager),
+		reconciler:         reconciler,
 		// The Service is the single owner of the shared Tenant Manager client.
 		tmClientCloser: newTMClientCloser(sharedTMClient),
 	}, nil

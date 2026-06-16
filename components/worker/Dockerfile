@@ -36,7 +36,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -tags netgo \
   -o /worker ./components/worker/cmd/app/main.go
 
 # Stage 2: Final minimal image with only the binary
-FROM alpine:3.23
+FROM alpine:3.24
 
 WORKDIR /app
 

@@ -322,6 +322,23 @@ func (c *workerMultiTenantConsumer) OwnsTenant(tenantID string) bool {
 	return c.knownTenants[tenantID]
 }
 
+// KnownTenants returns the set of tenant IDs the consumer currently tracks as
+// known. It reads under the same RLock pattern as OwnsTenant and returns a
+// fresh, defensive copy of the keys: callers may mutate the returned slice
+// without affecting internal state. The order of the returned IDs is
+// unspecified.
+func (c *workerMultiTenantConsumer) KnownTenants() []string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	tenants := make([]string, 0, len(c.knownTenants))
+	for tenantID := range c.knownTenants {
+		tenants = append(tenants, tenantID)
+	}
+
+	return tenants
+}
+
 func (c *workerMultiTenantConsumer) consumerActiveOrClosed(tenantID string) bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
