@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/LerianStudio/fetcher/v2/pkg/testutil"
 	tmconsumer "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/consumer"
 	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
 	"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/tenantcache"
@@ -469,7 +470,7 @@ func TestWorkerMultiTenantConsumer_KnownTenants(t *testing.T) {
 		assert.Empty(t, consumer.KnownTenants(), "no tenants should be known before any ensure")
 
 		for _, tenantID := range []string{"tenant-a", "tenant-b", "tenant-c"} {
-			consumer.EnsureConsumerStarted(context.Background(), tenantID)
+			consumer.EnsureConsumerStarted(testutil.TestContext(), tenantID)
 		}
 
 		assert.ElementsMatch(t, []string{"tenant-a", "tenant-b", "tenant-c"}, consumer.KnownTenants())
