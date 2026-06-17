@@ -5,9 +5,9 @@ go 1.26.4
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/LerianStudio/lib-auth/v2 v2.8.0
-	github.com/LerianStudio/lib-commons/v5 v5.5.0
+	github.com/LerianStudio/lib-commons/v5 v5.7.0
 	github.com/LerianStudio/lib-license-go/v2 v2.3.5
-	github.com/LerianStudio/lib-observability v1.0.1
+	github.com/LerianStudio/lib-observability v1.1.0
 	github.com/LerianStudio/lib-streaming v1.3.1
 	github.com/Masterminds/squirrel v1.5.4
 	github.com/Shopify/toxiproxy/v2 v2.12.0
@@ -183,7 +183,7 @@ require (
 	github.com/yuin/gopher-lua v1.1.2 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
-	go.opentelemetry.io/contrib/bridges/otelzap v0.18.0 // indirect
+	go.opentelemetry.io/contrib/bridges/otelzap v0.19.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.69.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.69.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc v0.20.0 // indirect
