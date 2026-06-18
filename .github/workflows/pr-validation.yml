@@ -3,7 +3,7 @@ name: PR Validation
 on:
   pull_request:
     branches: [develop, release-candidate, main]
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, edited, synchronize, reopened, ready_for_review]
 
 permissions:
   contents: read
@@ -12,34 +12,18 @@ permissions:
 
 jobs:
   validate:
-    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/pr-validation.yml@v1.28.7
+    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/pr-validation.yml@v1.35.0
     with:
-      runner_type: "blacksmith-4vcpu-ubuntu-2404"
-      pr_title_types: |
-        feat
-        fix
-        docs
-        style
-        refactor
-        perf
-        test
-        chore
-        ci
-        build
-        revert
       pr_title_scopes: |
-        api
-        cmd
-        internal
+        manager
+        worker
+        infra
         pkg
-        adapters
-        bootstrap
-        services
-        migrations
         scripts
         deps
-        workflows
-      require_scope: false
-      enable_auto_labeler: true
-      labeler_config_path: '.github/labeler.yml'
+        ci
+        docs
+        tests
+        migrations
+      enforce_source_branches: true
     secrets: inherit

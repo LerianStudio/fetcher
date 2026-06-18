@@ -1,55 +1,46 @@
 version: 2
 updates:
-  # Go modules (single go.mod at root)
   - package-ecosystem: "gomod"
     directory: "/"
     schedule:
       interval: "weekly"
       day: "monday"
+      timezone: "America/Sao_Paulo"
     target-branch: "develop"
     open-pull-requests-limit: 10
     labels:
       - "area: dependencies"
     commit-message:
-      prefix: "chore(deps)"
-
-  # GitHub Actions
+      prefix: "chore"
+      include: "scope"
+    groups:
+      go-dependencies:
+        patterns:
+          - "*"
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
       day: "monday"
+      timezone: "America/Sao_Paulo"
     target-branch: "develop"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 10
     labels:
       - "area: ci/cd"
     commit-message:
-      prefix: "ci(deps)"
-
-  # Docker - manager
-  - package-ecosystem: "docker"
-    directory: "/components/manager"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-    target-branch: "develop"
-    open-pull-requests-limit: 5
-    labels:
-      - "area: build"
-      - "component: manager"
-    commit-message:
-      prefix: "build(deps)"
-
-  # Docker - worker
-  - package-ecosystem: "docker"
-    directory: "/components/worker"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-    target-branch: "develop"
-    open-pull-requests-limit: 5
-    labels:
-      - "area: build"
-      - "component: worker"
-    commit-message:
-      prefix: "build(deps)"
+      prefix: "chore"
+      include: "scope"
+    ignore:
+      - dependency-name: "LerianStudio/*"
+    groups:
+      actions-core:
+        patterns:
+          - "actions/*"
+      docker-actions:
+        patterns:
+          - "docker/*"
+      security-actions:
+        patterns:
+          - "github/codeql-action*"
+          - "aquasecurity/trivy-action"
+          - "securego/gosec"
