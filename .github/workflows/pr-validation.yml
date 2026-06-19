@@ -33,8 +33,6 @@ jobs:
       golangci_lint_version: "v2.6.2"
       golangci_lint_args: "--timeout=5m"
       app_name_prefix: "fetcher"
-      coverage_threshold: 85
-      fail_on_coverage_threshold: false
       go_private_modules: "github.com/LerianStudio/*"
       ignore_file: ".trivyignore"
       shared_paths: |
