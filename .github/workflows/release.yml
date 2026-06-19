@@ -2,28 +2,8 @@ name: Release
 
 on:
   push:
-    branches:
-      - develop
-      - release-candidate
-      - main
-    tags-ignore:
-      - '**'
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - '.github/**'
-      - 'LICENSE'
-      - 'CODEOWNERS'
-      - '.gitignore'
-      - '.editorconfig'
-      - '*.png'
-      - '*.jpg'
-      - '*.svg'
-      - 'images/**'
-      - '*.txt'
-      - '.golangci.yml'
-      - '.golangci.yaml'
-      - '.releaserc.yml'
+    branches: [develop, release-candidate, main]
+    tags: ['**']
 
 permissions:
   id-token: write
@@ -33,9 +13,29 @@ permissions:
   packages: write
 
 jobs:
-  release:
-    name: Create Release
-    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/release.yml@v1.35.0
+  pipeline:
+    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/go-release.yml@v1.35.0
     with:
       enable_changelog: ${{ github.ref == 'refs/heads/main' }}
+      app_name_prefix: "fetcher"
+      enable_dockerhub: true
+      enable_ghcr: true
+      enable_gitops_artifacts: true
+      filter_paths: |
+        components/manager
+        components/worker
+      shared_paths: |
+        go.mod
+        go.sum
+        pkg/
+        Makefile
+      path_level: '2'
+      enable_helm_dispatch: true
+      helm_chart: "fetcher"
+      helm_detect_env_changes: true
+      helm_values_key_mappings: '{"fetcher-manager": "manager", "fetcher-worker": "worker"}'
+      gitops_artifact_pattern: "gitops-tags-fetcher-*"
+      gitops_yaml_key_mappings: '{"fetcher-manager.tag": ".manager.image.tag", "fetcher-worker.tag": ".worker.image.tag"}'
+      deploy_in_firmino: true
+      deploy_in_clotilde: true
     secrets: inherit
