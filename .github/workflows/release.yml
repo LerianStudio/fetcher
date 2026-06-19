@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   pipeline:
-    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/go-release.yml@v1.35.0
+    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/go-release.yml@v1.36.0
     with:
       enable_changelog: ${{ github.ref == 'refs/heads/main' }}
       app_name_prefix: "fetcher"
@@ -30,6 +30,5 @@ jobs:
       enable_helm_dispatch: true
       helm_chart: "fetcher"
       helm_values_key_mappings: '{"fetcher-manager": "manager", "fetcher-worker": "worker"}'
-      gitops_artifact_pattern: "gitops-tags-fetcher-*"
       gitops_yaml_key_mappings: '{"fetcher-manager.tag": ".manager.image.tag", "fetcher-worker.tag": ".worker.image.tag"}'
     secrets: inherit
