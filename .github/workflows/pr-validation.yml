@@ -28,10 +28,8 @@ jobs:
         docs
         tests
         migrations
-      enforce_source_branches: true
       go_version: "1.26.4"
       golangci_lint_version: "v2.6.2"
-      golangci_lint_args: "--timeout=5m"
       app_name_prefix: "fetcher"
       go_private_modules: "github.com/LerianStudio/*"
       ignore_file: ".trivyignore"

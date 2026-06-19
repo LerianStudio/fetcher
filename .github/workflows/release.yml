@@ -18,8 +18,6 @@ jobs:
     with:
       enable_changelog: ${{ github.ref == 'refs/heads/main' }}
       app_name_prefix: "fetcher"
-      enable_dockerhub: true
-      enable_ghcr: true
       enable_gitops_artifacts: true
       filter_paths: |
         components/manager
@@ -29,13 +27,9 @@ jobs:
         go.sum
         pkg/
         Makefile
-      path_level: '2'
       enable_helm_dispatch: true
       helm_chart: "fetcher"
-      helm_detect_env_changes: true
       helm_values_key_mappings: '{"fetcher-manager": "manager", "fetcher-worker": "worker"}'
       gitops_artifact_pattern: "gitops-tags-fetcher-*"
       gitops_yaml_key_mappings: '{"fetcher-manager.tag": ".manager.image.tag", "fetcher-worker.tag": ".worker.image.tag"}'
-      deploy_in_firmino: true
-      deploy_in_clotilde: true
     secrets: inherit
