@@ -61,3 +61,10 @@ plugins:
     successComment: false
     failComment: false
     labels: []
+
+branches:
+  - name: main
+  - name: develop
+    prerelease: beta
+  - name: release-candidate
+    prerelease: rc
