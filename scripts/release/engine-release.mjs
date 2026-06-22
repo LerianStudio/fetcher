@@ -300,6 +300,19 @@ function doPrepare(opts) {
 
   // 3. GOWORK=off gate: prove the parent resolves the engine via the proxy/tag, not
   //    via go.work. A stale/missing require fails the release here.
+  //
+  // Configure git globally so `go mod tidy` can resolve private LerianStudio modules
+  // via git ls-remote. actions/checkout only sets credentials locally for the current
+  // repo — other org repos (e.g. lib-license-go) need a global url.insteadOf override.
+  const token = process.env.GITHUB_TOKEN;
+  if (token) {
+    execFileSync('git', [
+      'config', '--global',
+      `url.https://x-access-token:${token}@github.com/.insteadOf`,
+      'https://github.com/',
+    ], { stdio: 'inherit', env: process.env });
+  }
+
   const off = { GOWORK: 'off', GOFLAGS: '-mod=mod' };
   run('go', ['mod', 'download', `${ENGINE_MODULE}@v${version}`], off);
   run('go', ['mod', 'tidy'], { GOWORK: 'off' });
