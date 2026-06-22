@@ -300,12 +300,27 @@ function doPrepare(opts) {
 
   // 3. GOWORK=off gate: prove the parent resolves the engine via the proxy/tag, not
   //    via go.work. A stale/missing require fails the release here.
+  //
+  // Pass a process-scoped git url.insteadOf override via GIT_CONFIG_* env vars so
+  // `go mod tidy` can resolve private LerianStudio modules (e.g. lib-license-go) via
+  // git ls-remote. actions/checkout only sets credentials in the local repo .git/config
+  // — other org repos need the override too. Using env vars avoids writing the token to
+  // ~/.gitconfig, which would persist it on non-ephemeral runners.
+  const token = process.env.GITHUB_TOKEN;
+  const gitPrivateEnv = token
+    ? {
+        GIT_CONFIG_COUNT: '1',
+        GIT_CONFIG_KEY_0: `url.https://x-access-token:${token}@github.com/.insteadOf`,
+        GIT_CONFIG_VALUE_0: 'https://github.com/',
+      }
+    : {};
+
   const off = { GOWORK: 'off', GOFLAGS: '-mod=mod' };
-  run('go', ['mod', 'download', `${ENGINE_MODULE}@v${version}`], off);
-  run('go', ['mod', 'tidy'], { GOWORK: 'off' });
-  run('go', ['build', './...'], { GOWORK: 'off' });
+  run('go', ['mod', 'download', `${ENGINE_MODULE}@v${version}`], { ...off, ...gitPrivateEnv });
+  run('go', ['mod', 'tidy'], { GOWORK: 'off', ...gitPrivateEnv });
+  run('go', ['build', './...'], { GOWORK: 'off', ...gitPrivateEnv });
   if (process.env.ENGINE_RELEASE_SKIP_TESTS !== 'true') {
-    run('go', ['test', './...'], { GOWORK: 'off' });
+    run('go', ['test', './...'], { GOWORK: 'off', ...gitPrivateEnv });
   }
 
   // 3b. Final wiring assertion on the exact go.mod that @semantic-release/git will
