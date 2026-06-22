@@ -73,9 +73,6 @@ type UseCase struct {
 	// JobEventStreamingEnabled indicates STREAMING_ENABLED=true produced a real emitter.
 	JobEventStreamingEnabled bool
 
-	// JobEventStreamingRequireTenant makes missing tenant IDs fail loudly in multi-tenant mode.
-	JobEventStreamingRequireTenant bool
-
 	// dataSourceFactory creates DataSource instances from connections.
 	dataSourceFactory func(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor) (datasource.DataSource, error)
 
