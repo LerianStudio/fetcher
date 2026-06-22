@@ -550,7 +550,6 @@ func configureJobEventEmitter(ctx context.Context, cfg *Config, logger libLog.Lo
 
 	service.JobEventEmitter = jobEmitter
 	service.JobEventStreamingEnabled = streamingEnabled
-	service.JobEventStreamingRequireTenant = cfg.MultiTenantEnabled
 
 	return nil
 }

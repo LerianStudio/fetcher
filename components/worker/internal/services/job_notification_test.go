@@ -77,9 +77,8 @@ func TestEmitJobNotificationEvent_WithTenantContext_SetsOutboxTenantContext(t *t
 	tenantID := "tenant-123"
 	emitter := &capturingEmitter{}
 	uc := &UseCase{
-		JobEventEmitter:                emitter,
-		JobEventStreamingEnabled:       true,
-		JobEventStreamingRequireTenant: true,
+		JobEventEmitter:          emitter,
+		JobEventStreamingEnabled: true,
 	}
 
 	ctx := tmcore.ContextWithTenantID(testContext(), tenantID)
@@ -283,7 +282,7 @@ func TestPublishJobNotification_StreamingCallerErrorStillFails(t *testing.T) {
 	mocks := newTestMocks(ctrl)
 	uc := newTestUseCase(mocks)
 	emitter := streamingtest.NewMockEmitter()
-	emitter.SetError(streaming.ErrMissingTenantID)
+	emitter.SetError(streaming.ErrInvalidTenantID)
 	uc.JobEventEmitter = emitter
 	uc.JobEventStreamingEnabled = true
 
@@ -295,30 +294,7 @@ func TestPublishJobNotification_StreamingCallerErrorStillFails(t *testing.T) {
 
 	err := publishJobNotificationForTest(t, uc, ctx, message, "completed", nil, nil, testLogger())
 	require.Error(t, err)
-	assert.ErrorIs(t, err, streaming.ErrMissingTenantID)
-}
-
-func TestPublishJobNotification_StreamingRequireTenantRejectsMissingContext(t *testing.T) {
-	t.Parallel()
-
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mocks := newTestMocks(ctrl)
-	uc := newTestUseCase(mocks)
-	emitter := streamingtest.NewMockEmitter()
-	uc.JobEventEmitter = emitter
-	uc.JobEventStreamingRequireTenant = true
-
-	message := ExtractExternalDataMessage{
-		JobID:    newTestJobID(),
-		Metadata: map[string]any{"source": "test-service"},
-	}
-
-	err := publishJobNotificationForTest(t, uc, testContext(), message, "completed", nil, nil, testLogger())
-	require.Error(t, err)
-	assert.ErrorIs(t, err, streaming.ErrMissingTenantID)
-	assert.Empty(t, emitter.Requests())
+	assert.ErrorIs(t, err, streaming.ErrInvalidTenantID)
 }
 
 func TestPublishJobNotification_SingleTenantUsesStableFallbackTenant(t *testing.T) {

@@ -62,7 +62,7 @@ func TestTerminalEventRepairer_RepairOnce_WithTenantScope_InjectsTenantContext(t
 		}},
 	}
 	emitter := &countingEmitter{}
-	uc := &UseCase{JobRepository: repo, JobEventEmitter: emitter, JobEventStreamingEnabled: true, JobEventStreamingRequireTenant: true}
+	uc := &UseCase{JobRepository: repo, JobEventEmitter: emitter, JobEventStreamingEnabled: true}
 	repairer := NewTerminalEventRepairerWithTenantScope(
 		uc,
 		testLogger(),
@@ -96,7 +96,7 @@ func TestTerminalEventRepairer_RepairOnce_WithTenantScope_ContinuesAfterTenantFa
 		}},
 	}
 	emitter := &countingEmitter{}
-	uc := &UseCase{JobRepository: repo, JobEventEmitter: emitter, JobEventStreamingEnabled: true, JobEventStreamingRequireTenant: true}
+	uc := &UseCase{JobRepository: repo, JobEventEmitter: emitter, JobEventStreamingEnabled: true}
 	repairer := NewTerminalEventRepairerWithTenantScope(
 		uc,
 		testLogger(),

@@ -128,10 +128,6 @@ func (uc *UseCase) emitJobNotificationEvent(ctx context.Context, status, subject
 
 	tenantID := core.GetTenantIDContext(ctx)
 	if tenantID == "" {
-		if uc.JobEventStreamingRequireTenant {
-			return streaming.ErrMissingTenantID
-		}
-
 		tenantID = "single-tenant"
 	}
 

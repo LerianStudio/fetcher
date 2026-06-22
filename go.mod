@@ -8,7 +8,7 @@ require (
 	github.com/LerianStudio/lib-commons/v5 v5.8.0
 	github.com/LerianStudio/lib-license-go/v2 v2.3.6
 	github.com/LerianStudio/lib-observability v1.1.0
-	github.com/LerianStudio/lib-streaming v1.3.1
+	github.com/LerianStudio/lib-streaming v1.6.2
 	github.com/Masterminds/squirrel v1.5.4
 	github.com/Shopify/toxiproxy/v2 v2.12.0
 	github.com/alicebob/miniredis/v2 v2.38.0
