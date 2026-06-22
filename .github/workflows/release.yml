@@ -1,25 +1,35 @@
-name: "Release"
+name: Release
 
 on:
   push:
-    branches:
-      - develop
-      - release-candidate
-      - main
-    tags-ignore:
-      - '**'
+    branches: [develop, release-candidate, main]
+    tags: ['**']
 
 permissions:
   id-token: write
   contents: write
   issues: write
   pull-requests: write
-  packages: read
+  packages: write
 
 jobs:
-  release:
-    name: Create Release
-    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/release.yml@v1.32.0
+  pipeline:
+    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/go-release.yml@v1.36.5
     with:
-      runner_type: "blacksmith-4vcpu-ubuntu-2404"
+      enable_changelog: ${{ github.ref == 'refs/heads/main' }}
+      release_single_app: true
+      app_name_prefix: "fetcher"
+      enable_gitops_artifacts: true
+      filter_paths: |
+        components/manager
+        components/worker
+      shared_paths: |
+        go.mod
+        go.sum
+        pkg/
+        Makefile
+      enable_helm_dispatch: true
+      helm_chart: "fetcher"
+      helm_values_key_mappings: '{"fetcher-manager": "manager", "fetcher-worker": "worker"}'
+      gitops_yaml_key_mappings: '{"fetcher-manager.tag": ".manager.image.tag", "fetcher-worker.tag": ".worker.image.tag"}'
     secrets: inherit
