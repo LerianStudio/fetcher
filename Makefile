@@ -1022,3 +1022,4 @@ generate-master-key: ## Generate a new cryptographically secure master key
 	echo "Add to your environment as APP_ENC_KEY."
 
 
+
