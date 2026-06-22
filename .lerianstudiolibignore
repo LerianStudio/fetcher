@@ -1,0 +1,10 @@
+# Lerian library version-check ignore rules.
+# Entry = short module path (github.com/LerianStudio/ stripped). A bare path skips
+# the up-to-date check for that dependency.
+
+# fetcher/pkg/engine is THIS repo's own Go submodule, with an independent tag
+# scheme (pkg/engine/vX.Y.Z); v1.0.4 is genuinely its latest. The version check
+# resolves "latest" from the repo's top-level releases (v1.4.2, the ROOT module —
+# a different Go module), so it reports a false "Outdated". Skip it until the check
+# distinguishes submodule tags from root-module releases.
+fetcher/pkg/engine
