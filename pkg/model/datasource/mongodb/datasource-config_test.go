@@ -3,8 +3,8 @@ package mongodb
 import (
 	"testing"
 
-	"github.com/LerianStudio/fetcher/pkg/model/datasource"
-	"github.com/LerianStudio/fetcher/pkg/model/job"
+	"github.com/LerianStudio/fetcher/v2/pkg/model/datasource"
+	"github.com/LerianStudio/fetcher/v2/pkg/model/job"
 	"github.com/stretchr/testify/assert"
 )
 

@@ -2,9 +2,6 @@ package bootstrap
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
-	"encoding/base64"
 	"fmt"
 	"net"
 	"net/url"
@@ -12,32 +9,30 @@ import (
 	"strings"
 	"time"
 
-	in2 "github.com/LerianStudio/fetcher/components/manager/internal/adapters/http/in"
-	connectionCommand "github.com/LerianStudio/fetcher/components/manager/internal/services/command"
-	connectionQuery "github.com/LerianStudio/fetcher/components/manager/internal/services/query"
-	"github.com/LerianStudio/fetcher/pkg/bootstrap/readyz"
+	in2 "github.com/LerianStudio/fetcher/v2/components/manager/internal/adapters/http/in"
+	connectionCommand "github.com/LerianStudio/fetcher/v2/components/manager/internal/services/command"
+	connectionQuery "github.com/LerianStudio/fetcher/v2/components/manager/internal/services/query"
+	"github.com/LerianStudio/fetcher/v2/pkg/bootstrap/readyz"
 
-	cacheAdapter "github.com/LerianStudio/fetcher/components/manager/internal/adapters/cache"
-	"github.com/LerianStudio/fetcher/pkg"
-	"github.com/LerianStudio/fetcher/pkg/constant"
-	"github.com/LerianStudio/fetcher/pkg/crypto"
-	datasourceFactory "github.com/LerianStudio/fetcher/pkg/datasource"
-	"github.com/LerianStudio/fetcher/pkg/datasource/hostsafety"
-	"github.com/LerianStudio/fetcher/pkg/model"
-	"github.com/LerianStudio/fetcher/pkg/mongodb"
-	"github.com/LerianStudio/fetcher/pkg/mongodb/connection"
-	"github.com/LerianStudio/fetcher/pkg/mongodb/job"
-	cacheRepo "github.com/LerianStudio/fetcher/pkg/ports/cache"
-	"github.com/LerianStudio/fetcher/pkg/ports/messaging"
-	"github.com/LerianStudio/fetcher/pkg/rabbitmq"
-	"github.com/LerianStudio/fetcher/pkg/ratelimit"
-	redisCache "github.com/LerianStudio/fetcher/pkg/redis"
-	"github.com/LerianStudio/fetcher/pkg/resolver"
+	cacheAdapter "github.com/LerianStudio/fetcher/v2/components/manager/internal/adapters/cache"
+	"github.com/LerianStudio/fetcher/v2/pkg/constant"
+	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
+	datasourceFactory "github.com/LerianStudio/fetcher/v2/pkg/datasource"
+	"github.com/LerianStudio/fetcher/v2/pkg/datasource/hostsafety"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	"github.com/LerianStudio/fetcher/v2/pkg/mongodb"
+	"github.com/LerianStudio/fetcher/v2/pkg/mongodb/connection"
+	"github.com/LerianStudio/fetcher/v2/pkg/mongodb/job"
+	cacheRepo "github.com/LerianStudio/fetcher/v2/pkg/ports/cache"
+	"github.com/LerianStudio/fetcher/v2/pkg/ports/messaging"
+	"github.com/LerianStudio/fetcher/v2/pkg/rabbitmq"
+	"github.com/LerianStudio/fetcher/v2/pkg/ratelimit"
+	redisCache "github.com/LerianStudio/fetcher/v2/pkg/redis"
+	"github.com/LerianStudio/fetcher/v2/pkg/resolver"
 
 	"github.com/LerianStudio/lib-auth/v2/auth/middleware"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
+	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
 	libMongo "github.com/LerianStudio/lib-commons/v5/commons/mongo"
-	libOtel "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
 	libRabbitmq "github.com/LerianStudio/lib-commons/v5/commons/rabbitmq"
 	tmclient "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/client"
 	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
@@ -45,9 +40,13 @@ import (
 	tmmiddleware "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/middleware"
 	tmmongo "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/mongo"
 	tmrabbitmq "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/rabbitmq"
+	tmredis "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/redis"
 	"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/tenantcache"
-	"github.com/LerianStudio/lib-commons/v5/commons/zap"
-	libLicense "github.com/LerianStudio/lib-license-go/v2/middleware"
+	observability "github.com/LerianStudio/lib-observability"
+	libLog "github.com/LerianStudio/lib-observability/log"
+	obsRuntime "github.com/LerianStudio/lib-observability/runtime"
+	libOtel "github.com/LerianStudio/lib-observability/tracing"
+	"github.com/LerianStudio/lib-observability/zap"
 	"github.com/gofiber/fiber/v2"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/redis/go-redis/v9"
@@ -94,9 +93,6 @@ type Config struct {
 	// Auth envs
 	AuthAddress string `env:"PLUGIN_AUTH_ADDRESS"`
 	AuthEnabled bool   `env:"PLUGIN_AUTH_ENABLED"`
-	// License configuration envs
-	LicenseKey      string `env:"LICENSE_KEY"`
-	OrganizationIDs string `env:"ORGANIZATION_IDS"`
 	// Encryption
 	AppEncryptionKey        string `env:"APP_ENC_KEY"`
 	AppEncryptionKeyVersion string `env:"APP_ENC_KEY_VERSION"`
@@ -110,12 +106,14 @@ type Config struct {
 	// Schema cache TTL
 	SchemaCacheTTLSeconds string `env:"SCHEMA_CACHE_TTL_SECONDS"`
 	// Multi-Tenant configuration
-	MultiTenantEnabled                  bool   `env:"MULTI_TENANT_ENABLED"`
-	MultiTenantURL                      string `env:"MULTI_TENANT_URL"`
-	MultiTenantRedisHost                string `env:"MULTI_TENANT_REDIS_HOST"`
-	MultiTenantRedisPort                string `env:"MULTI_TENANT_REDIS_PORT" default:"6379"`
-	MultiTenantRedisPassword            string `env:"MULTI_TENANT_REDIS_PASSWORD"`
-	MultiTenantRedisTLS                 bool   `env:"MULTI_TENANT_REDIS_TLS" default:"false"`
+	MultiTenantEnabled       bool   `env:"MULTI_TENANT_ENABLED"`
+	MultiTenantURL           string `env:"MULTI_TENANT_URL"`
+	MultiTenantRedisHost     string `env:"MULTI_TENANT_REDIS_HOST"`
+	MultiTenantRedisPort     string `env:"MULTI_TENANT_REDIS_PORT" default:"6379"`
+	MultiTenantRedisPassword string `env:"MULTI_TENANT_REDIS_PASSWORD"`
+	MultiTenantRedisTLS      bool   `env:"MULTI_TENANT_REDIS_TLS" default:"false"`
+	// Deprecated: unsupported for tenant Pub/Sub Redis until lib-commons exposes
+	// canonical CA bundle support. Non-empty values fail startup.
 	MultiTenantRedisCACert              string `env:"MULTI_TENANT_REDIS_CA_CERT"`
 	MultiTenantMaxTenantPools           int    `env:"MULTI_TENANT_MAX_TENANT_POOLS" default:"100"`
 	MultiTenantIdleTimeoutSec           int    `env:"MULTI_TENANT_IDLE_TIMEOUT_SEC" default:"300"`
@@ -148,7 +146,6 @@ type managerPlatformDependencies struct {
 	rabbitPublisher     messaging.MessagePublisher
 	rabbitMQCleanup     func()
 	authClient          *middleware.AuthClient
-	licenseClient       *libLicense.LicenseClient
 	connectionTestStore *ratelimit.RateLimiter
 	schemaCache         cacheRepo.SchemaCacheRepository
 	// rabbitMQAdapter exposes the concrete adapter to /readyz so it can
@@ -164,16 +161,13 @@ type managerPlatformDependencies struct {
 	// short-circuited by the schema cache's in-memory fallback. Nil when
 	// REDIS_HOST is unset.
 	readyzRedisClient *redis.Client
-	// multiTenantReadyzRedisClient is dedicated to /readyz on the
-	// multi-tenant event-discovery Redis. It is independent of the
-	// initManagerEventDiscovery client so its lifecycle does not race the
-	// event listener's Start/Stop. Nil when MT is disabled or
-	// MULTI_TENANT_REDIS_HOST is unset.
-	multiTenantReadyzRedisClient *redis.Client
+	// readyzMultiTenantRedisClient probes the dispatch-layer Redis Pub/Sub dependency.
+	// Nil unless MULTI_TENANT_ENABLED=true and MULTI_TENANT_REDIS_HOST is configured.
+	readyzMultiTenantRedisClient *redis.Client
 }
 
 var (
-	setConfigFromEnvVars  = pkg.SetConfigFromEnvVars
+	setConfigFromEnvVars  = libCommons.SetConfigFromEnvVars
 	newManagerLogger      = func(cfg zap.Config) (libLog.Logger, error) { return zap.New(cfg) }
 	newManagerTelemetry   = libOtel.NewTelemetry
 	applyTelemetryGlobals = func(telemetry *libOtel.Telemetry) error {
@@ -220,6 +214,14 @@ func InitServers() (*Service, error) {
 
 		if cfg.MultiTenantServiceAPIKey == "" {
 			return nil, fmt.Errorf("MULTI_TENANT_SERVICE_API_KEY is required when MULTI_TENANT_ENABLED=true")
+		}
+
+		if cfg.MultiTenantRedisHost == "" {
+			return nil, fmt.Errorf("MULTI_TENANT_REDIS_HOST is required when MULTI_TENANT_ENABLED=true")
+		}
+
+		if cfg.MultiTenantRedisCACert != "" {
+			return nil, fmt.Errorf("MULTI_TENANT_REDIS_CA_CERT is deprecated and unsupported: tenant Pub/Sub Redis must use lib-commons canonical NewTenantPubSubRedisClient with system trust; install the CA in the runtime trust store or update lib-commons to support CA bundles")
 		}
 	} else {
 		logger.Log(ctx, libLog.LevelInfo, "Running in SINGLE-TENANT MODE")
@@ -299,6 +301,8 @@ func initLoggerAndTelemetry(cfg *Config) (libLog.Logger, *libOtel.Telemetry, err
 	if err := applyTelemetryGlobals(telemetry); err != nil {
 		return nil, nil, err
 	}
+
+	obsRuntime.InitPanicMetrics(telemetry.MetricsFactory, logger)
 
 	return logger, telemetry, nil
 }
@@ -436,14 +440,16 @@ func initPlatformDependencies(cfg *Config, logger libLog.Logger, messageSigner c
 
 		rabbitMQManager := tmrabbitmq.NewManager(tmClient, constant.ApplicationName, rabbitOpts...)
 
-		rabbitPublisher = &multiTenantPublisher{
+		mtPublisher := &multiTenantPublisher{
 			manager: newManagerRabbitMQAdapter(rabbitMQManager),
 			signer:  messageSigner,
 			logger:  logger,
 		}
+		rabbitPublisher = mtPublisher
 
 		rabbitMQCleanup = func() {
 			logger.Log(context.Background(), libLog.LevelInfo, "Cleanup: closing multi-tenant RabbitMQ manager")
+			mtPublisher.closeConfirmablePublishers()
 
 			if closeErr := rabbitMQManager.Close(context.Background()); closeErr != nil {
 				logger.Log(context.Background(), libLog.LevelError, "Cleanup: failed to close RabbitMQ manager", libLog.Err(closeErr))
@@ -456,7 +462,7 @@ func initPlatformDependencies(cfg *Config, logger libLog.Logger, messageSigner c
 		var readyzMongoOpts []tmmongo.Option
 
 		readyzMongoOpts = append(readyzMongoOpts,
-			tmmongo.WithModule(constant.ModuleManager),
+			tmmongo.WithModule(fetcherOperationalMongoModule()),
 			tmmongo.WithLogger(logger),
 			tmmongo.WithMaxTenantPools(maxPools),
 		)
@@ -504,17 +510,6 @@ func initPlatformDependencies(cfg *Config, logger libLog.Logger, messageSigner c
 
 	var authLogger libLog.Logger = authLoggerV4
 
-	licenseLoggerV4, licenseLogErr := zap.New(zap.Config{
-		Environment:     resolveZapEnvironment(cfg.EnvName),
-		Level:           cfg.LogLevel,
-		OTelLibraryName: constant.ApplicationName + "-license",
-	})
-	if licenseLogErr != nil {
-		return nil, wrapBootstrapError("initialize license logger", licenseLogErr)
-	}
-
-	var licenseLogger libLog.Logger = licenseLoggerV4
-
 	schemaCacheTTL := getSchemaCacheTTL(cfg.SchemaCacheTTLSeconds)
 
 	genericCache, errCache := newSchemaCacheStore(
@@ -535,15 +530,9 @@ func initPlatformDependencies(cfg *Config, logger libLog.Logger, messageSigner c
 	}
 
 	return &managerPlatformDependencies{
-		rabbitPublisher: rabbitPublisher,
-		rabbitMQCleanup: rabbitMQCleanup,
-		authClient:      middleware.NewAuthClient(cfg.AuthAddress, cfg.AuthEnabled, &authLogger),
-		licenseClient: libLicense.NewLicenseClient(
-			constant.ApplicationName,
-			cfg.LicenseKey,
-			cfg.OrganizationIDs,
-			&licenseLogger,
-		),
+		rabbitPublisher:              rabbitPublisher,
+		rabbitMQCleanup:              rabbitMQCleanup,
+		authClient:                   middleware.NewAuthClient(cfg.AuthAddress, cfg.AuthEnabled, &authLogger),
 		connectionTestStore:          ratelimit.New(10, time.Minute),
 		schemaCache:                  cacheAdapter.NewSchemaCache(genericCache, schemaCacheTTL),
 		rabbitMQAdapter:              rabbitAdapter,
@@ -551,7 +540,7 @@ func initPlatformDependencies(cfg *Config, logger libLog.Logger, messageSigner c
 		tmMongoManager:               tmMongoMgrForReadyz,
 		tmRabbitMQManager:            tmRabbitMgrForReadyz,
 		readyzRedisClient:            newReadyzRedisClient(cfg),
-		multiTenantReadyzRedisClient: newReadyzMultiTenantRedisClient(cfg),
+		readyzMultiTenantRedisClient: newReadyzMultiTenantRedisClient(cfg),
 	}, nil
 }
 
@@ -584,14 +573,31 @@ func assembleService(
 
 	dsFactory := datasourceFactory.NewDataSourceFromConnectionWithLogger(logger)
 
-	createConnectionCmd := connectionCommand.NewCreateConnection(repositories.connection, cryptoService)
-	updateConnectionCmd := connectionCommand.NewUpdateConnection(repositories.connection, repositories.job, cryptoService)
-	deleteConnectionCmd := connectionCommand.NewDeleteConnection(repositories.connection, repositories.job)
-	getConnectionQuery := connectionQuery.NewGetConnection(repositories.connection, connResolver, registry)
-	listConnectionsQuery := connectionQuery.NewListConnections(repositories.connection, connResolver)
+	// Build the embedded Engine that the connection command services delegate
+	// their shared, tenant-scoped active-execution conflict gate to. The Engine
+	// consults the Manager's job repository through the connectioncompat
+	// ActiveExecutionChecker adapter; connection persistence and HTTP mapping
+	// stay in the Manager. A construction failure is fatal — the gate is required
+	// for update/delete safety.
+	connEngine, engErr := connectionEngine(repositories.connection, repositories.job)
+	if engErr != nil {
+		return nil, wrapBootstrapError("build connection engine", engErr)
+	}
+
+	createConnectionCmd := connectionCommand.NewCreateConnection(cryptoService, connEngine)
+	updateConnectionCmd := connectionCommand.NewUpdateConnection(cryptoService, connEngine)
+	deleteConnectionCmd := connectionCommand.NewDeleteConnection(connEngine)
+	getConnectionQuery := connectionQuery.NewGetConnection(connResolver, registry, connEngine)
+	listConnectionsQuery := connectionQuery.NewListConnections(connResolver, connEngine)
 	testConnectionQuery := connectionQuery.NewTestConnection(repositories.connection, cryptoService, platformDependencies.connectionTestStore, dsFactory, connResolver, registry)
-	validateSchemaQuery := connectionQuery.NewValidateSchema(repositories.connection, cryptoService, platformDependencies.schemaCache, dsFactory, connResolver)
-	getConnectionSchemaQuery := connectionQuery.NewGetConnectionSchema(repositories.connection, cryptoService, dsFactory, connResolver, registry, cfg.MultiTenantEnabled)
+
+	schemaEng, schemaEngErr := schemaEngine(dsFactory, cryptoService, platformDependencies.schemaCache, getSchemaCacheTTL(cfg.SchemaCacheTTLSeconds))
+	if schemaEngErr != nil {
+		return nil, wrapBootstrapError("build schema engine", schemaEngErr)
+	}
+
+	validateSchemaQuery := connectionQuery.NewValidateSchema(repositories.connection, schemaEng, connResolver)
+	getConnectionSchemaQuery := connectionQuery.NewGetConnectionSchema(connResolver, registry, connEngine, schemaEng, cfg.MultiTenantEnabled)
 
 	connectionHandler := in2.NewConnectionHandler(
 		createConnectionCmd,
@@ -648,7 +654,6 @@ func assembleService(
 		logger,
 		telemetry,
 		platformDependencies.authClient,
-		platformDependencies.licenseClient,
 		connectionHandler,
 		migrationHandler,
 		fetcherHandler,
@@ -678,6 +683,8 @@ func assembleService(
 		})
 	}
 
+	registerSchemaCacheCloseHook(&shutdownHooks, platformDependencies.schemaCache)
+
 	// Release the readyz-dedicated Redis client and tmMongo manager.
 	if platformDependencies.readyzRedisClient != nil {
 		rdb := platformDependencies.readyzRedisClient
@@ -688,13 +695,11 @@ func assembleService(
 		})
 	}
 
-	// Release the readyz-dedicated multi-tenant Redis client. Lifecycle is
-	// independent of the event-listener client owned by initManagerEventDiscovery.
-	if platformDependencies.multiTenantReadyzRedisClient != nil {
-		mtRDB := platformDependencies.multiTenantReadyzRedisClient
+	if platformDependencies.readyzMultiTenantRedisClient != nil {
+		mtRdb := platformDependencies.readyzMultiTenantRedisClient
 
 		shutdownHooks = append(shutdownHooks, func(context.Context) error {
-			_ = mtRDB.Close()
+			_ = mtRdb.Close()
 			return nil
 		})
 	}
@@ -709,9 +714,21 @@ func assembleService(
 	}
 
 	return &Service{
-		Server: NewServer(cfg, httpApp, logger, telemetry, platformDependencies.licenseClient, shutdownHooks...),
+		Server: NewServer(cfg, httpApp, logger, telemetry, shutdownHooks...),
 		Logger: logger,
 	}, nil
+}
+
+func registerSchemaCacheCloseHook(shutdownHooks *[]func(context.Context) error, schemaCache cacheRepo.SchemaCacheRepository) {
+	if shutdownHooks == nil || schemaCache == nil {
+		return
+	}
+
+	cache := schemaCache
+
+	*shutdownHooks = append(*shutdownHooks, func(context.Context) error {
+		return cache.Close()
+	})
 }
 
 // initMultiTenantMiddleware creates a TenantMiddleware Fiber handler if multi-tenant
@@ -720,7 +737,7 @@ func assembleService(
 //
 // Per multi-tenant.md standards:
 //   - Circuit breaker is MANDATORY for the Tenant Manager client
-//   - Uses constant.ApplicationName and constant.ModuleManager for service/module identity
+//   - Uses constant.ApplicationName and constant.ModuleFetcherOperationalState for shared MongoDB operational state
 //   - WithMongoManager configures MongoDB connection pool management
 //   - WithTenantCache + WithTenantLoader for cache-first strategy
 //   - EventListener + EventDispatcher for event-driven tenant discovery via Redis Pub/Sub
@@ -779,7 +796,7 @@ func initMultiTenantMiddleware(cfg *Config, logger libLog.Logger) (fiber.Handler
 	var mongoOpts []tmmongo.Option
 
 	mongoOpts = append(mongoOpts,
-		tmmongo.WithModule(constant.ModuleManager),
+		tmmongo.WithModule(fetcherOperationalMongoModule()),
 		tmmongo.WithLogger(logger),
 	)
 
@@ -823,9 +840,13 @@ func initMultiTenantMiddleware(cfg *Config, logger libLog.Logger) (fiber.Handler
 		return nil, nil, eventErr
 	}
 
-	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Multi-tenant middleware initialized: url=%s, module=%s", cfg.MultiTenantURL, constant.ModuleManager))
+	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Multi-tenant middleware initialized: url=%s, mongo_module=%s", cfg.MultiTenantURL, fetcherOperationalMongoModule()))
 
 	return tenantMid.WithTenantDB, cleanup, nil
+}
+
+func fetcherOperationalMongoModule() string {
+	return constant.ModuleFetcherOperationalState
 }
 
 // initManagerEventDiscovery creates and starts the EventDispatcher and EventListener
@@ -839,7 +860,6 @@ func initManagerEventDiscovery(
 	mongoManager *tmmongo.Manager,
 ) (func(), error) {
 	if cfg.MultiTenantRedisHost == "" {
-		// No Redis configured for event discovery; return a no-op cleanup.
 		logger.Log(context.Background(), libLog.LevelInfo, "Multi-tenant event discovery: MULTI_TENANT_REDIS_HOST not set, skipping event listener")
 
 		return func() {}, nil
@@ -850,32 +870,15 @@ func initManagerEventDiscovery(
 		redisPort = "6379"
 	}
 
-	redisOpts := &redis.Options{
-		Addr:     net.JoinHostPort(cfg.MultiTenantRedisHost, redisPort),
+	redisClient, err := tmredis.NewTenantPubSubRedisClient(context.Background(), tmredis.TenantPubSubRedisConfig{
+		Host:     cfg.MultiTenantRedisHost,
+		Port:     redisPort,
 		Password: cfg.MultiTenantRedisPassword,
+		TLS:      cfg.MultiTenantRedisTLS,
+	})
+	if err != nil {
+		return nil, wrapBootstrapError("create manager tenant Pub/Sub Redis client", err)
 	}
-
-	if cfg.MultiTenantRedisTLS {
-		tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
-
-		if cfg.MultiTenantRedisCACert != "" {
-			caCert, err := base64.StdEncoding.DecodeString(cfg.MultiTenantRedisCACert)
-			if err != nil {
-				return nil, fmt.Errorf("failed to decode multi-tenant Redis CA certificate: %w", err)
-			}
-
-			pool := x509.NewCertPool()
-			if !pool.AppendCertsFromPEM(caCert) {
-				return nil, fmt.Errorf("failed to parse multi-tenant Redis CA certificate")
-			}
-
-			tlsCfg.RootCAs = pool
-		}
-
-		redisOpts.TLSConfig = tlsCfg
-	}
-
-	redisClient := redis.NewClient(redisOpts)
 
 	var cacheTTL time.Duration
 	if cfg.MultiTenantCacheTTLSec > 0 {
@@ -898,10 +901,18 @@ func initManagerEventDiscovery(
 		tmevent.WithService(constant.ApplicationName),
 	)
 	if err != nil {
+		if closeErr := redisClient.Close(); closeErr != nil {
+			logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to close tenant event Redis client: %v", closeErr))
+		}
+
 		return nil, wrapBootstrapError("create tenant event listener", err)
 	}
 
 	if err := listener.Start(context.Background()); err != nil {
+		if closeErr := redisClient.Close(); closeErr != nil {
+			logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to close tenant event Redis client: %v", closeErr))
+		}
+
 		return nil, wrapBootstrapError("start tenant event listener", err)
 	}
 
@@ -1094,7 +1105,15 @@ func newReadyzConfig(cfg *Config) *readyz.Config {
 
 // managerRabbitMQChannel abstracts an AMQP channel for multi-tenant publishing.
 type managerRabbitMQChannel interface {
+	Confirm(noWait bool) error
+	NotifyPublish(receiver chan amqp.Confirmation) chan amqp.Confirmation
+	NotifyClose(receiver chan *amqp.Error) chan *amqp.Error
 	PublishWithContext(ctx context.Context, exchange, key string, mandatory, immediate bool, msg amqp.Publishing) error
+	Close() error
+}
+
+type managerConfirmablePublisher interface {
+	Publish(ctx context.Context, exchange, key string, mandatory, immediate bool, msg amqp.Publishing) error
 	Close() error
 }
 
@@ -1119,7 +1138,9 @@ func (a *managerRabbitMQAdapter) GetChannel(ctx context.Context, tenantID string
 
 // multiTenantPublisher implements messaging.MessagePublisher using per-tenant RabbitMQ channels.
 // In multi-tenant mode, each ProducerDefault call resolves the tenant from context, obtains
-// a channel on the tenant-specific vhost via tmrabbitmq.Manager, publishes, and closes the channel.
+// a channel on the tenant-specific vhost via tmrabbitmq.Manager, and publishes with broker confirms.
+// The tenant manager returns caller-owned channels; this publisher closes the
+// per-publish confirm wrapper, which closes the tenant channel and its confirm goroutine.
 type multiTenantPublisher struct {
 	manager managerRabbitMQManagerInterface
 	signer  crypto.Signer
@@ -1129,6 +1150,10 @@ type multiTenantPublisher struct {
 // ProducerDefault publishes a message to a tenant-specific RabbitMQ vhost.
 // The tenant ID is extracted from context (set by the TenantMiddleware).
 func (p *multiTenantPublisher) ProducerDefault(ctx context.Context, exchange, key string, queueMessage []byte, header *map[string]any) error {
+	if p.manager == nil {
+		return fmt.Errorf("multi-tenant RabbitMQ: publisher manager is not configured")
+	}
+
 	tenantID := tmcore.GetTenantIDContext(ctx)
 	if tenantID == "" {
 		return fmt.Errorf("multi-tenant RabbitMQ: no tenant ID in context")
@@ -1139,11 +1164,9 @@ func (p *multiTenantPublisher) ProducerDefault(ctx context.Context, exchange, ke
 		return fmt.Errorf("get RabbitMQ channel for tenant %s: %w", tenantID, err)
 	}
 
-	defer func() {
-		if closeErr := ch.Close(); closeErr != nil {
-			p.logger.Log(ctx, libLog.LevelError, fmt.Sprintf("error closing RabbitMQ channel for tenant %s: %v", tenantID, closeErr))
-		}
-	}()
+	if ch == nil {
+		return fmt.Errorf("get RabbitMQ channel for tenant %s: manager returned nil channel", tenantID)
+	}
 
 	amqpHeaders := amqp.Table{}
 
@@ -1153,23 +1176,41 @@ func (p *multiTenantPublisher) ProducerDefault(ctx context.Context, exchange, ke
 		}
 	}
 
-	// Sign message if signer is configured (preserves message signing from single-tenant mode)
-	if p.signer != nil {
-		timestamp := time.Now().UTC().Unix()
-		payload := crypto.BuildSignaturePayload(timestamp, queueMessage)
-		signature := p.signer.Sign(payload)
+	ctxLogger, _, requestID, _ := observability.NewTrackingFromContext(ctx)
+	_ = ctxLogger
 
-		amqpHeaders[rabbitmq.HeaderMessageSignature] = signature
-		amqpHeaders[rabbitmq.HeaderSignatureTimestamp] = strconv.FormatInt(timestamp, 10)
-		amqpHeaders[rabbitmq.HeaderSignatureVersion] = p.signer.SignatureVersion()
+	msg := rabbitmq.BuildSecurePublishing(ctx, requestID, exchange, key, queueMessage, amqpHeaders, p.signer, true)
+
+	publisher, err := p.newTenantConfirmablePublisher(ch)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = publisher.Close() }()
+
+	if err := publisher.Publish(ctx, exchange, key, true, false, msg); err != nil {
+		return fmt.Errorf("publish confirmed RabbitMQ message for tenant %s: %w", tenantID, err)
 	}
 
-	return ch.PublishWithContext(ctx, exchange, key, false, false, amqp.Publishing{
-		ContentType: "application/json",
-		Body:        queueMessage,
-		Headers:     amqpHeaders,
-	})
+	return nil
 }
+
+func (p *multiTenantPublisher) newTenantConfirmablePublisher(ch managerRabbitMQChannel) (managerConfirmablePublisher, error) {
+	publisher, err := libRabbitmq.NewConfirmablePublisherFromChannel(ch,
+		libRabbitmq.WithLogger(p.logger),
+		libRabbitmq.WithConfirmTimeout(libRabbitmq.DefaultConfirmTimeout),
+	)
+	if err != nil {
+		if closeErr := ch.Close(); closeErr != nil {
+			return nil, fmt.Errorf("create RabbitMQ confirmable publisher: %w; close tenant channel: %v", err, closeErr)
+		}
+
+		return nil, fmt.Errorf("create RabbitMQ confirmable publisher: %w", err)
+	}
+
+	return publisher, nil
+}
+
+func (p *multiTenantPublisher) closeConfirmablePublishers() {}
 
 func wrapBootstrapError(action string, err error) error {
 	if err != nil {

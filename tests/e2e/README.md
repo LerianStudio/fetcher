@@ -307,8 +307,8 @@ import (
     "fmt"
     "testing"
 
-    "github.com/LerianStudio/fetcher/pkg/model"
-    e2eshared "github.com/LerianStudio/fetcher/tests/shared"
+    "github.com/LerianStudio/fetcher/v2/pkg/model"
+    e2eshared "github.com/LerianStudio/fetcher/v2/tests/shared"
     "github.com/google/uuid"
     "github.com/stretchr/testify/assert"
     "github.com/stretchr/testify/require"
@@ -478,7 +478,7 @@ mongodb.WithMongoDBFixedPort("27017")
 Build and run application containers:
 
 ```go
-import "github.com/LerianStudio/fetcher/pkg/itestkit/addons/e2ekit"
+import "github.com/LerianStudio/fetcher/v2/pkg/itestkit/addons/e2ekit"
 
 app, err := e2ekit.New(nil).
     WithContext(ctx).

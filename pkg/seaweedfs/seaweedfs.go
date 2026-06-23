@@ -9,9 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/LerianStudio/lib-commons/v5/commons"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
+	"github.com/LerianStudio/lib-observability"
+
+	libLog "github.com/LerianStudio/lib-observability/log"
+	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -74,7 +75,7 @@ func (c *SeaweedFSClient) UploadFile(ctx context.Context, path string, data []by
 
 // UploadFileWithTTL uploads a file to SeaweedFS with optional TTL
 func (c *SeaweedFSClient) UploadFileWithTTL(ctx context.Context, path string, data []byte, ttl string) error {
-	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "seaweedfs.file.upload")
 	defer span.End()
@@ -134,7 +135,7 @@ func (c *SeaweedFSClient) UploadFileWithTTL(ctx context.Context, path string, da
 
 // DownloadFile downloads a file from SeaweedFS
 func (c *SeaweedFSClient) DownloadFile(ctx context.Context, path string) ([]byte, error) {
-	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "seaweedfs.file.download")
 	defer span.End()
@@ -199,7 +200,7 @@ func (c *SeaweedFSClient) DownloadFile(ctx context.Context, path string) ([]byte
 
 // DownloadFileWithStream downloads a file returning a streaming reader instead of eagerly reading the body.
 func (c *SeaweedFSClient) DownloadFileWithStream(ctx context.Context, path string) (io.ReadCloser, error) {
-	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	_, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "seaweedfs.file.download_stream")
 	defer span.End()
@@ -256,7 +257,7 @@ func (c *SeaweedFSClient) DownloadFileWithStream(ctx context.Context, path strin
 
 // DeleteFile deletes a file from SeaweedFS
 func (c *SeaweedFSClient) DeleteFile(ctx context.Context, path string) error {
-	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "seaweedfs.file.delete")
 	defer span.End()
@@ -309,7 +310,7 @@ func (c *SeaweedFSClient) DeleteFile(ctx context.Context, path string) error {
 
 // HealthCheck checks if SeaweedFS is accessible
 func (c *SeaweedFSClient) HealthCheck(ctx context.Context) error {
-	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	_, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "seaweedfs.service.health_check")
 	defer span.End()

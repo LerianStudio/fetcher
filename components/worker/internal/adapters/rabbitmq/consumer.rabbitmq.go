@@ -7,11 +7,12 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/LerianStudio/fetcher/pkg/crypto"
-	"github.com/LerianStudio/fetcher/pkg/rabbitmq"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
-	"github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
+	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
+	"github.com/LerianStudio/fetcher/v2/pkg/rabbitmq"
 	libRabbitmq "github.com/LerianStudio/lib-commons/v5/commons/rabbitmq"
+	libLog "github.com/LerianStudio/lib-observability/log"
+	obsRuntime "github.com/LerianStudio/lib-observability/runtime"
+	opentelemetry "github.com/LerianStudio/lib-observability/tracing"
 )
 
 // ConsumerRepository provides an interface for Consumer related to rabbitmq.
@@ -40,9 +41,10 @@ type ConsumerRoutes struct {
 // The signer parameter is required in non-development environments.
 // In dev/local/test, nil signer disables signature verification and message signing.
 // The envName parameter should come from the bootstrap Config.EnvName field.
-func NewConsumerRoutes(conn *libRabbitmq.RabbitMQConnection, numWorkers int, logger libLog.Logger, telemetry *opentelemetry.Telemetry, signer crypto.Signer, envName string) (*ConsumerRoutes, error) {
+func NewConsumerRoutes(conn *libRabbitmq.RabbitMQConnection, numWorkers int, logger libLog.Logger, telemetry *opentelemetry.Telemetry, signer crypto.Signer, envName string, allowLegacyBodySignatureFallback ...bool) (*ConsumerRoutes, error) {
 	opts := rabbitmq.DefaultOptions()
 	opts.Signer = signer
+	opts.AllowLegacyBodyOnlySignatureFallback = len(allowLegacyBodySignatureFallback) > 0 && allowLegacyBodySignatureFallback[0]
 
 	envName = strings.TrimSpace(envName)
 
@@ -126,7 +128,7 @@ func (cr *ConsumerRoutes) RunConsumers(ctx context.Context, wg *sync.WaitGroup) 
 		wg.Add(1)
 		cr.shutdownWg.Add(1)
 
-		go func() {
+		obsRuntime.SafeGoWithContext(ctx, cr.Logger, "worker-rabbitmq-consumer-"+queueName, obsRuntime.KeepRunning, func(context.Context) {
 			defer wg.Done()
 			defer cr.shutdownWg.Done()
 
@@ -137,7 +139,7 @@ func (cr *ConsumerRoutes) RunConsumers(ctx context.Context, wg *sync.WaitGroup) 
 					libLog.Err(err),
 				)
 			}
-		}()
+		})
 	}
 
 	return nil

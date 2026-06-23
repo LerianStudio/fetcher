@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/LerianStudio/fetcher/pkg"
-	"github.com/LerianStudio/fetcher/pkg/constant"
-	"github.com/LerianStudio/fetcher/pkg/model/job"
+	"github.com/LerianStudio/fetcher/v2/pkg"
+	"github.com/LerianStudio/fetcher/v2/pkg/constant"
+	"github.com/LerianStudio/fetcher/v2/pkg/model/job"
 	"github.com/google/uuid"
 )
 
@@ -334,7 +334,7 @@ func NewJobResponseFrom(j *Job) *JobResponse {
 
 	return &JobResponse{
 		ID:           j.ID,
-		Metadata:     j.Metadata,
+		Metadata:     publicJobMetadata(j.Metadata),
 		MappedFields: j.MappedFields,
 		Filters:      j.Filters,
 		Status:       string(j.Status),
@@ -344,4 +344,26 @@ func NewJobResponseFrom(j *Job) *JobResponse {
 		CreatedAt:    j.CreatedAt,
 		CompletedAt:  j.CompletedAt,
 	}
+}
+
+func publicJobMetadata(metadata map[string]any) map[string]any {
+	if len(metadata) == 0 {
+		return nil
+	}
+
+	public := make(map[string]any, len(metadata))
+	for key, value := range metadata {
+		switch key {
+		case "terminalEventPending", "terminalEventStatus", "terminalEventPayload":
+			continue
+		default:
+			public[key] = value
+		}
+	}
+
+	if len(public) == 0 {
+		return nil
+	}
+
+	return public
 }

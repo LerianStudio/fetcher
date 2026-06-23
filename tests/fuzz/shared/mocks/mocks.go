@@ -3,9 +3,9 @@ package mocks
 import (
 	"context"
 
-	"github.com/LerianStudio/fetcher/pkg/crypto"
-	"github.com/LerianStudio/fetcher/pkg/model"
-	jobRepo "github.com/LerianStudio/fetcher/pkg/mongodb/job"
+	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	jobRepo "github.com/LerianStudio/fetcher/v2/pkg/mongodb/job"
 	"github.com/google/uuid"
 )
 

@@ -7,13 +7,14 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/LerianStudio/fetcher/pkg/constant"
-	"github.com/LerianStudio/fetcher/pkg/model/job"
-	"github.com/LerianStudio/fetcher/pkg/schemautil"
+	"github.com/LerianStudio/lib-observability"
 
-	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
+	"github.com/LerianStudio/fetcher/v2/pkg/constant"
+	"github.com/LerianStudio/fetcher/v2/pkg/model/job"
+	"github.com/LerianStudio/fetcher/v2/pkg/schemautil"
+
+	libLog "github.com/LerianStudio/lib-observability/log"
+	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
 	"github.com/Masterminds/squirrel"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
@@ -87,7 +88,7 @@ func (ds *ExternalDataSource) CloseConnection() error {
 // Query executes a SELECT SQL query on the specified table with the given fields and filter criteria.
 // It returns the query results as a slice of maps or an error in case of failure.
 func (ds *ExternalDataSource) Query(ctx context.Context, schema []TableSchema, table string, fields []string, filter map[string][]any) ([]map[string]any, error) {
-	logger, tracer, reqId, _ := libCommons.NewTrackingFromContext(ctx)
+	logger, tracer, reqId, _ := observability.NewTrackingFromContext(ctx)
 
 	_, span := tracer.Start(ctx, "oracle.data_source.query")
 	defer span.End()
@@ -147,7 +148,7 @@ func (ds *ExternalDataSource) Query(ctx context.Context, schema []TableSchema, t
 // GetDatabaseSchema retrieves all tables and their column details from the database
 // It returns a slice of TableSchema objects or an error if the operation fails
 func (ds *ExternalDataSource) GetDatabaseSchema(ctx context.Context, schemas []string) ([]TableSchema, error) {
-	logger, tracer, reqId, _ := libCommons.NewTrackingFromContext(ctx)
+	logger, tracer, reqId, _ := observability.NewTrackingFromContext(ctx)
 
 	_, span := tracer.Start(ctx, "oracle.data_source.get_database_schema")
 	defer span.End()
@@ -653,7 +654,7 @@ func parseJSONField(value any, logger libLog.Logger) any {
 // all requested fields exist in that table.
 // It returns a list of valid fields and an error if the table doesn't exist or fields are invalid.
 func (ds *ExternalDataSource) ValidateTableAndFields(ctx context.Context, tableName string, requestedFields []string, schema []TableSchema) ([]string, error) {
-	logger, tracer, reqId, _ := libCommons.NewTrackingFromContext(ctx)
+	logger, tracer, reqId, _ := observability.NewTrackingFromContext(ctx)
 
 	_, span := tracer.Start(ctx, "oracle.data_source.validate_table_and_fields")
 	defer span.End()
@@ -798,7 +799,7 @@ func applyFilter(queryBuilder squirrel.SelectBuilder, fieldName string, values [
 
 // QueryWithAdvancedFilters executes a SELECT SQL query with advanced FilterCondition support
 func (ds *ExternalDataSource) QueryWithAdvancedFilters(ctx context.Context, schema []TableSchema, table string, fields []string, filter map[string]job.FilterCondition) ([]map[string]any, error) {
-	logger, tracer, reqId, _ := libCommons.NewTrackingFromContext(ctx)
+	logger, tracer, reqId, _ := observability.NewTrackingFromContext(ctx)
 
 	_, span := tracer.Start(ctx, "oracle.data_source.query_with_advanced_filters")
 	defer span.End()

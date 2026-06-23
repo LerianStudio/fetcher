@@ -6,9 +6,9 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/LerianStudio/fetcher/pkg/model/job"
-	"github.com/LerianStudio/fetcher/pkg/testutil"
-	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
+	"github.com/LerianStudio/fetcher/v2/pkg/model/job"
+	"github.com/LerianStudio/fetcher/v2/pkg/testutil"
+	observability "github.com/LerianStudio/lib-observability"
 	"github.com/Masterminds/squirrel"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -19,13 +19,10 @@ import (
 // testContext creates a context with tracking information for testing.
 func testContext() context.Context {
 	logger := &mockLogger{}
-	values := &libCommons.CustomContextKeyValue{
-		HeaderID: "test-request-id",
-		Logger:   logger,
-		Tracer:   otel.Tracer("test"),
-	}
+	ctx := observability.ContextWithHeaderID(context.Background(), "test-request-id")
+	ctx = observability.ContextWithLogger(ctx, logger)
 
-	return context.WithValue(context.Background(), libCommons.CustomContextKey, values)
+	return observability.ContextWithTracer(ctx, otel.Tracer("test"))
 }
 
 // testLogger returns a mock logger for testing.

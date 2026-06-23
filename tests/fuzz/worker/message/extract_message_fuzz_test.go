@@ -7,8 +7,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	modelJob "github.com/LerianStudio/fetcher/pkg/model/job"
-	"github.com/LerianStudio/fetcher/tests/fuzz/shared/generators"
+	modelJob "github.com/LerianStudio/fetcher/v2/pkg/model/job"
+	"github.com/LerianStudio/fetcher/v2/tests/fuzz/shared/generators"
 	"github.com/google/uuid"
 )
 

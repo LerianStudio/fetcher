@@ -4,9 +4,9 @@ import (
 	"context"
 	"strings"
 
-	"github.com/LerianStudio/fetcher/pkg/model"
-	"github.com/LerianStudio/fetcher/pkg/model/job"
-	"github.com/LerianStudio/lib-commons/v5/commons/log"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	"github.com/LerianStudio/fetcher/v2/pkg/model/job"
+	"github.com/LerianStudio/lib-observability/log"
 )
 
 //go:generate mockgen --destination=datasource-config.mock.go --package=datasource . DataSource

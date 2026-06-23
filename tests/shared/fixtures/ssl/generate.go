@@ -228,7 +228,8 @@ func (b *CertificateBundle) WriteToDir(dir string) error {
 		return fmt.Errorf("failed to create directory %s: %w", dir, err)
 	}
 
-	if err := os.Chmod(dir, 0o700); err != nil { // #nosec G302 -- 0o700 is intentionally restrictive for SSL cert directories
+	// #nosec G302 -- 0o700 is intentionally restrictive for SSL cert directories; gosec ignores #nosec inside an if-init clause, so it must be a lead comment.
+	if err := os.Chmod(dir, 0o700); err != nil {
 		return fmt.Errorf("failed to secure directory %s: %w", dir, err)
 	}
 

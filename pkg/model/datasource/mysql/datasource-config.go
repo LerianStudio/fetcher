@@ -4,14 +4,15 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/LerianStudio/fetcher/pkg/model"
-	"github.com/LerianStudio/fetcher/pkg/model/datasource"
-	"github.com/LerianStudio/fetcher/pkg/model/job"
-	"github.com/LerianStudio/fetcher/pkg/mysql"
-	"github.com/LerianStudio/lib-commons/v5/commons"
+	"github.com/LerianStudio/lib-observability"
+
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	"github.com/LerianStudio/fetcher/v2/pkg/model/datasource"
+	"github.com/LerianStudio/fetcher/v2/pkg/model/job"
+	"github.com/LerianStudio/fetcher/v2/pkg/mysql"
 	libConstant "github.com/LerianStudio/lib-commons/v5/commons/constants"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
+	libLog "github.com/LerianStudio/lib-observability/log"
+	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -104,7 +105,7 @@ func getTableFilters(databaseFilters map[string]map[string]job.FilterCondition, 
 
 // GetSchemaInfo returns the schema information for MySQL.
 func (ds *DataSourceConfigMySQL) GetSchemaInfo(ctx context.Context, schemas []string) (*model.DataSourceSchema, error) {
-	_, tracer, _, _ := commons.NewTrackingFromContext(ctx) //nolint:dogsled // Only tracer needed for span creation
+	_, tracer, _, _ := observability.NewTrackingFromContext(ctx) //nolint:dogsled // Only tracer needed for span creation
 
 	ctx, span := tracer.Start(ctx, "datasource.mysql.get_schema_info")
 	defer span.End()

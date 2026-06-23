@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/LerianStudio/fetcher/pkg/model/job"
+	"github.com/LerianStudio/fetcher/v2/pkg/model/job"
 	"github.com/google/uuid"
 )
 
@@ -125,6 +125,79 @@ func TestFetcherRequest_ComputeRequestHash(t *testing.T) {
 		}
 	})
 
+	t.Run("equivalent requests with reordered map keys produce the same hash", func(t *testing.T) {
+		// Idempotency lock (T-009 ST-02): dedup keys on the request hash, so the
+		// hash MUST be stable across map-iteration order. Two requests that differ
+		// only in datasource/table insertion order are the SAME request and must
+		// hash identically — otherwise equivalent retries would dodge the 5-minute
+		// dedup window. encoding/json marshals map keys in sorted order, which is
+		// the property this pins; the ST-01 request->engine mapping must not perturb
+		// it (mapMappedFields/mappedFieldsFromExtraction preserve the leaf slices).
+		request1 := FetcherRequest{
+			DataRequest: DataRequest{
+				MappedFields: map[string]map[string][]string{
+					"ds_alpha": {"orders": {"id", "total"}},
+					"ds_beta":  {"customers": {"id", "name"}},
+				},
+			},
+			Metadata: map[string]any{"source": "test-product"},
+		}
+
+		request2 := FetcherRequest{
+			DataRequest: DataRequest{
+				MappedFields: map[string]map[string][]string{
+					"ds_beta":  {"customers": {"id", "name"}},
+					"ds_alpha": {"orders": {"id", "total"}},
+				},
+			},
+			Metadata: map[string]any{"source": "test-product"},
+		}
+
+		hash1, err1 := request1.ComputeRequestHash()
+		if err1 != nil {
+			t.Fatalf("unexpected error computing hash1: %v", err1)
+		}
+
+		hash2, err2 := request2.ComputeRequestHash()
+		if err2 != nil {
+			t.Fatalf("unexpected error computing hash2: %v", err2)
+		}
+
+		if hash1 != hash2 {
+			t.Fatalf("equivalent requests (reordered map keys) must hash identically for dedup, got %s and %s", hash1, hash2)
+		}
+	})
+
+	t.Run("field selection order is significant in the hash", func(t *testing.T) {
+		// The companion invariant: a field SLICE is order-sensitive (it is a JSON
+		// array, not a set), so reordering selected fields is a DISTINCT request and
+		// must hash differently. Pinning both directions documents exactly what the
+		// dedup key treats as equivalent vs distinct, so a future "normalization"
+		// that sorts field slices cannot silently change dedup semantics.
+		request1 := FetcherRequest{
+			DataRequest: DataRequest{
+				MappedFields: map[string]map[string][]string{
+					"ds": {"t": {"a", "b"}},
+				},
+			},
+		}
+
+		request2 := FetcherRequest{
+			DataRequest: DataRequest{
+				MappedFields: map[string]map[string][]string{
+					"ds": {"t": {"b", "a"}},
+				},
+			},
+		}
+
+		hash1, _ := request1.ComputeRequestHash()
+		hash2, _ := request2.ComputeRequestHash()
+
+		if hash1 == hash2 {
+			t.Fatalf("reordered field selections must hash differently (slice order is significant), both got %s", hash1)
+		}
+	})
+
 	t.Run("metadata affects hash", func(t *testing.T) {
 		request1 := FetcherRequest{
 			DataRequest: DataRequest{
@@ -152,7 +225,11 @@ func TestFetcherRequest_ComputeRequestHash(t *testing.T) {
 		}
 	})
 
-	t.Run("nil metadata produces different hash than empty metadata", func(t *testing.T) {
+	t.Run("nil and empty metadata hash identically under omitempty", func(t *testing.T) {
+		// The Metadata field is `json:",omitempty"`, so both a nil map and an empty
+		// map serialize away entirely — they MUST produce the same hash. Asserting
+		// this pins the dedup-equivalence boundary: a request that omits metadata and
+		// one that sends {} are the same request and must not dodge the dedup window.
 		request1 := FetcherRequest{
 			DataRequest: DataRequest{
 				MappedFields: map[string]map[string][]string{
@@ -174,11 +251,8 @@ func TestFetcherRequest_ComputeRequestHash(t *testing.T) {
 		hash1, _ := request1.ComputeRequestHash()
 		hash2, _ := request2.ComputeRequestHash()
 
-		// Note: nil metadata and empty metadata may produce same or different hashes
-		// depending on JSON marshaling. This test documents the behavior.
-		// With omitempty, both should produce the same hash (no metadata field)
 		if hash1 != hash2 {
-			t.Logf("nil and empty metadata produce different hashes: %s vs %s", hash1, hash2)
+			t.Fatalf("nil and empty metadata must hash identically under omitempty, got %s and %s", hash1, hash2)
 		}
 	})
 }
@@ -577,6 +651,34 @@ func TestNewJobResponseFrom(t *testing.T) {
 
 		if result.CompletedAt == nil || !result.CompletedAt.Equal(completedAt) {
 			t.Fatalf("expected CompletedAt %v, got %v", completedAt, result.CompletedAt)
+		}
+	})
+
+	t.Run("filters internal terminal event metadata", func(t *testing.T) {
+		result := NewJobResponseFrom(&Job{
+			ID: uuid.New(),
+			Metadata: map[string]any{
+				"source":               "api",
+				"terminalEventPending": true,
+				"terminalEventStatus":  "completed",
+				"terminalEventPayload": `{"jobId":"internal"}`,
+			},
+			Status:    JobStatusCompleted,
+			CreatedAt: time.Now().UTC(),
+		})
+
+		if result == nil {
+			t.Fatal("expected non-nil result")
+		}
+
+		if result.Metadata["source"] != "api" {
+			t.Fatalf("expected public metadata to be preserved, got %#v", result.Metadata)
+		}
+
+		for _, key := range []string{"terminalEventPending", "terminalEventStatus", "terminalEventPayload"} {
+			if _, ok := result.Metadata[key]; ok {
+				t.Fatalf("expected internal metadata key %q to be filtered from response: %#v", key, result.Metadata)
+			}
 		}
 	})
 }

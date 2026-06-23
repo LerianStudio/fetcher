@@ -10,14 +10,19 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/LerianStudio/fetcher/components/worker/internal/adapters/rabbitmq"
-	"github.com/LerianStudio/fetcher/components/worker/internal/services"
-	"github.com/LerianStudio/fetcher/pkg/bootstrap/readyz"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
-	"github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
+	observability "github.com/LerianStudio/lib-observability"
+
+	"github.com/LerianStudio/fetcher/v2/components/worker/internal/adapters/rabbitmq"
+	"github.com/LerianStudio/fetcher/v2/components/worker/internal/services"
+	"github.com/LerianStudio/fetcher/v2/pkg/bootstrap/readyz"
+	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
+	pkgRabbitmq "github.com/LerianStudio/fetcher/v2/pkg/rabbitmq"
 	tmconsumer "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/consumer"
 	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
 	tmmongo "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/mongo"
+	libLog "github.com/LerianStudio/lib-observability/log"
+	obsRuntime "github.com/LerianStudio/lib-observability/runtime"
+	opentelemetry "github.com/LerianStudio/lib-observability/tracing"
 
 	"github.com/LerianStudio/lib-commons/v5/commons"
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -31,7 +36,7 @@ var extractExternalData = func(uc *services.UseCase, ctx context.Context, body [
 	return uc.ExtractExternalData(ctx, body, headers)
 }
 
-// MultiTenantConsumerInterface abstracts the tmconsumer.MultiTenantConsumer for testing.
+// MultiTenantConsumerInterface abstracts the multi-tenant consumer for testing.
 type MultiTenantConsumerInterface interface {
 	Register(queueName string, handler tmconsumer.HandlerFunc) error
 	Run(ctx context.Context) error
@@ -41,15 +46,17 @@ type MultiTenantConsumerInterface interface {
 // MultiQueueConsumer represents a multi-queue consumer.
 // It supports two modes:
 //   - Single-tenant: Uses consumerRoutes with static RabbitMQ connection
-//   - Multi-tenant: Uses mtConsumer (tmconsumer.MultiTenantConsumer) with per-tenant vhost isolation
+//   - Multi-tenant: Uses mtConsumer with per-tenant vhost isolation
 type MultiQueueConsumer struct {
-	consumerRoutes *rabbitmq.ConsumerRoutes
-	mtConsumer     MultiTenantConsumerInterface // Multi-tenant consumer (nil in single-tenant mode)
-	UseCase        *services.UseCase
-	logger         libLog.Logger
-	queueName      string           // Stored for multi-tenant handler registration
-	mongoManager   *tmmongo.Manager // For per-tenant MongoDB resolution (nil in single-tenant mode)
-	initErr        error            // Deferred initialization error for multi-tenant handler registration
+	consumerRoutes                   *rabbitmq.ConsumerRoutes
+	mtConsumer                       MultiTenantConsumerInterface // Multi-tenant consumer (nil in single-tenant mode)
+	UseCase                          *services.UseCase
+	logger                           libLog.Logger
+	queueName                        string           // Stored for multi-tenant handler registration
+	mongoManager                     *tmmongo.Manager // For per-tenant MongoDB resolution (nil in single-tenant mode)
+	messageVerifier                  crypto.Signer
+	allowLegacyBodySignatureFallback bool
+	initErr                          error // Deferred initialization error for multi-tenant handler registration
 	// drainDelay is how long the consumer waits after SIGTERM before
 	// cancelling the base context. The window lets Kubernetes observe
 	// /readyz=503 and remove the pod from the Service endpoints before
@@ -83,7 +90,7 @@ func NewMultiQueueConsumer(routes *rabbitmq.ConsumerRoutes, useCase *services.Us
 }
 
 // NewMultiQueueConsumerMultiTenant creates a new instance of MultiQueueConsumer for multi-tenant mode.
-// It uses tmconsumer.MultiTenantConsumer for per-tenant vhost isolation with lazy initialization.
+// It uses a multi-tenant consumer for per-tenant vhost isolation with lazy initialization.
 // The handler is registered with the MultiTenantConsumer to process messages from per-tenant queues.
 func NewMultiQueueConsumerMultiTenant(
 	mtConsumer MultiTenantConsumerInterface,
@@ -91,6 +98,8 @@ func NewMultiQueueConsumerMultiTenant(
 	queueName string,
 	logger libLog.Logger,
 	mongoManager *tmmongo.Manager,
+	messageVerifier crypto.Signer,
+	allowLegacyBodySignatureFallback bool,
 	drainDelay time.Duration,
 ) *MultiQueueConsumer {
 	if drainDelay < 0 {
@@ -98,13 +107,15 @@ func NewMultiQueueConsumerMultiTenant(
 	}
 
 	consumer := &MultiQueueConsumer{
-		consumerRoutes: nil, // Multi-tenant mode uses mtConsumer
-		mtConsumer:     mtConsumer,
-		UseCase:        useCase,
-		logger:         logger,
-		queueName:      queueName,
-		mongoManager:   mongoManager,
-		drainDelay:     drainDelay,
+		consumerRoutes:                   nil, // Multi-tenant mode uses mtConsumer
+		mtConsumer:                       mtConsumer,
+		UseCase:                          useCase,
+		logger:                           logger,
+		queueName:                        queueName,
+		mongoManager:                     mongoManager,
+		messageVerifier:                  messageVerifier,
+		allowLegacyBodySignatureFallback: allowLegacyBodySignatureFallback,
+		drainDelay:                       drainDelay,
 	}
 
 	// Register handler with MultiTenantConsumer
@@ -141,8 +152,8 @@ func (mq *MultiQueueConsumer) Run(l *commons.Launcher) error {
 		baseLogger = mq.logger
 	}
 
-	baseCtx := commons.ContextWithLogger(
-		commons.ContextWithHeaderID(context.Background(), requestID),
+	baseCtx := observability.ContextWithLogger(
+		observability.ContextWithHeaderID(context.Background(), requestID),
 		baseLogger,
 	)
 
@@ -158,35 +169,9 @@ func (mq *MultiQueueConsumer) Run(l *commons.Launcher) error {
 		return mq.initErr
 	}
 
-	go func() {
-		<-sigs
+	mq.startShutdownSignalWatcher(ctx, baseCtx, baseLogger, sigs, cancel)
 
-		// SetDraining(true) → sleep grace period → cancel consumer ctx.
-		// Reversing the order drops in-flight messages because consumers
-		// stop ack/nack traffic before kube-proxy sees /readyz=503.
-		readyz.SetDraining(true)
-
-		if mq.logger != nil {
-			mq.logger.Log(baseCtx, libLog.LevelInfo,
-				"received shutdown signal; readyz draining flag set, sleeping drain grace period")
-		}
-
-		if mq.drainDelay > 0 {
-			select {
-			case <-time.After(mq.drainDelay):
-			case <-baseCtx.Done():
-			}
-		}
-
-		if mq.logger != nil {
-			mq.logger.Log(baseCtx, libLog.LevelInfo,
-				"drain grace period elapsed; cancelling consumer context")
-		}
-
-		cancel()
-	}()
-
-	// Multi-tenant mode: use tmconsumer.MultiTenantConsumer
+	// Multi-tenant mode: use configured multi-tenant consumer
 	if mq.mtConsumer != nil {
 		if mq.logger != nil {
 			mq.logger.Log(ctx, libLog.LevelInfo, "MultiQueueConsumer: starting multi-tenant consumer with per-tenant vhost isolation")
@@ -236,11 +221,70 @@ func (mq *MultiQueueConsumer) Run(l *commons.Launcher) error {
 	return nil
 }
 
+func (mq *MultiQueueConsumer) startShutdownSignalWatcher(ctx, logCtx context.Context, logger libLog.Logger, sigs <-chan os.Signal, cancel context.CancelFunc) {
+	obsRuntime.SafeGoWithContext(ctx, logger, "worker-shutdown-signal-watcher", obsRuntime.KeepRunning, func(signalCtx context.Context) {
+		select {
+		case <-sigs:
+		case <-signalCtx.Done():
+			return
+		}
+
+		readyz.SetDraining(true)
+		mq.logShutdownSignal(logCtx, "received shutdown signal; readyz draining flag set, sleeping drain grace period")
+		mq.waitDrainDelay(signalCtx)
+		mq.logShutdownSignal(logCtx, "drain grace period elapsed; cancelling consumer context")
+		cancel()
+	})
+}
+
+func (mq *MultiQueueConsumer) waitDrainDelay(ctx context.Context) {
+	if mq.drainDelay <= 0 {
+		return
+	}
+
+	timer := time.NewTimer(mq.drainDelay)
+	defer timer.Stop()
+
+	select {
+	case <-timer.C:
+	case <-ctx.Done():
+	}
+}
+
+func (mq *MultiQueueConsumer) logShutdownSignal(ctx context.Context, message string) {
+	if mq.logger == nil {
+		return
+	}
+
+	mq.logger.Log(ctx, libLog.LevelInfo, message)
+}
+
 // handlerGenerateReportDelivery is the tmconsumer.HandlerFunc adapter for multi-tenant mode.
 // It resolves per-tenant MongoDB if mongoManager is available, then delegates to handlerGenerateReport.
 func (mq *MultiQueueConsumer) handlerGenerateReportDelivery(ctx context.Context, delivery amqp.Delivery) error {
+	headers := headersFromDelivery(delivery)
+	ctx = opentelemetry.ExtractTraceContextFromQueueHeaders(ctx, headers)
+
+	if err := validateAuthoritativeTenantHeader(ctx, headers); err != nil {
+		if mq.logger != nil {
+			mq.logger.Log(ctx, libLog.LevelError, "multi-tenant RabbitMQ tenant header mismatch", libLog.Err(err))
+		}
+
+		return nil
+	}
+
+	if mq.messageVerifier != nil {
+		if err := pkgRabbitmq.VerifyMessageSignature(delivery.Body, headers, delivery.Exchange, delivery.RoutingKey, mq.messageVerifier, pkgRabbitmq.DefaultSignatureTimestampTolerance, mq.logger, nil, mq.allowLegacyBodySignatureFallback); err != nil {
+			if mq.logger != nil {
+				mq.logger.Log(ctx, libLog.LevelError, "multi-tenant RabbitMQ signature verification failed", libLog.Err(err))
+			}
+
+			return nil
+		}
+	}
+
 	// Resolve per-tenant MongoDB connection if mongoManager is available.
-	// The tenant ID is already in context from tmconsumer.MultiTenantConsumer.
+	// The tenant ID is already in context from the multi-tenant consumer.
 	if mq.mongoManager != nil {
 		tenantID := tmcore.GetTenantIDContext(ctx)
 		if tenantID != "" {
@@ -265,7 +309,25 @@ func (mq *MultiQueueConsumer) handlerGenerateReportDelivery(ctx context.Context,
 		}
 	}
 
-	return mq.handlerGenerateReport(ctx, delivery.Body, headersFromDelivery(delivery))
+	return mq.handlerGenerateReport(ctx, delivery.Body, headers)
+}
+
+func validateAuthoritativeTenantHeader(ctx context.Context, headers map[string]any) error {
+	authoritativeTenantID := tmcore.GetTenantIDContext(ctx)
+	if authoritativeTenantID == "" {
+		return fmt.Errorf("authoritative tenant context is required before verifying RabbitMQ message signature")
+	}
+
+	headerTenantID, ok := headers[pkgRabbitmq.HeaderTenantID].(string)
+	if !ok || headerTenantID == "" {
+		return fmt.Errorf("tenant header %s is required for authoritative tenant %s", pkgRabbitmq.HeaderTenantID, authoritativeTenantID)
+	}
+
+	if headerTenantID != authoritativeTenantID {
+		return fmt.Errorf("tenant header %s=%q does not match authoritative tenant %q", pkgRabbitmq.HeaderTenantID, headerTenantID, authoritativeTenantID)
+	}
+
+	return nil
 }
 
 // headersFromDelivery converts amqp.Delivery.Headers (amqp.Table) to map[string]any.
@@ -299,7 +361,7 @@ func (mq *MultiQueueConsumer) handlerGenerateReport(ctx context.Context, body []
 		return nil
 	}
 
-	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	spanCtx, span := tracer.Start(ctx, "consumer.handler_generate_report")
 	defer span.End()
@@ -358,7 +420,7 @@ func extractTenantIDFromHeaders(ctx context.Context, headers map[string]any) con
 		return ctx
 	}
 
-	tenantID, ok := headers["X-Tenant-ID"].(string)
+	tenantID, ok := headers[pkgRabbitmq.HeaderTenantID].(string)
 	if !ok || tenantID == "" {
 		return ctx
 	}
@@ -407,10 +469,6 @@ func isPermanentTenantError(err error) bool {
 	}
 
 	if errors.Is(err, tmcore.ErrServiceNotConfigured) {
-		return true
-	}
-
-	if errors.Is(err, tmcore.ErrManagerClosed) {
 		return true
 	}
 

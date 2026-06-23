@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/LerianStudio/fetcher/pkg/bootstrap/readyz"
+	"github.com/LerianStudio/fetcher/v2/pkg/bootstrap/readyz"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -91,6 +91,21 @@ func TestHealthServer_ServesHealthAndMetrics(t *testing.T) {
 		require.NoError(t, err, "path %s", tc.path)
 		_ = res.Body.Close()
 		assert.Equal(t, tc.want, res.StatusCode, "path %s", tc.path)
+	}
+}
+
+func TestHealthServer_DoesNotExposeUnauthenticatedStreamingManifest(t *testing.T) {
+	cfg := &Config{HealthPort: 4007}
+	srv := NewHealthServer(cfg, nil, nil, nil)
+
+	paths := []string{"/streaming", "/streaming/manifest", "/manifest"}
+	for _, path := range paths {
+		req := httptest.NewRequest("GET", path, nil)
+		res, err := srv.App().Test(req, 2000)
+		require.NoError(t, err, "path %s", path)
+		_ = res.Body.Close()
+
+		assert.Equal(t, fiber.StatusNotFound, res.StatusCode, "path %s must not become an unauthenticated manifest endpoint", path)
 	}
 }
 

@@ -2,7 +2,7 @@
 package cache
 
 import (
-	portCache "github.com/LerianStudio/fetcher/pkg/ports/cache"
+	portCache "github.com/LerianStudio/fetcher/v2/pkg/ports/cache"
 )
 
 // SchemaCacheRepository is an alias for the port interface.

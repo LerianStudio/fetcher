@@ -78,6 +78,18 @@ func TestNewMetricsHandler_RegistersAllThree(t *testing.T) {
 	assert.Contains(t, body, "selfprobe_result", "gauge missing from /metrics")
 }
 
+func TestMetricsCompatibilityBridge_IsOnlyRawPrometheusSurface(t *testing.T) {
+	bridge := newPrometheusCompatibilityBridge()
+
+	require.NotNil(t, bridge.checkDuration)
+	require.NotNil(t, bridge.checkStatus)
+	require.NotNil(t, bridge.selfProbe)
+
+	bridge.observeCheckDuration("bridge_probe", StatusUp, time.Millisecond)
+	bridge.incrementCheckStatus("bridge_probe", StatusUp)
+	bridge.setSelfProbeResult("bridge_probe", true)
+}
+
 // TestEmitCheckDuration_RecordsObservation asserts the histogram's _count
 // series for the (dep, status) tuple increments after an emit call. The
 // exposition line for a histogram count looks like:

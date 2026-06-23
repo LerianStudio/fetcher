@@ -2,29 +2,30 @@ package command
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/LerianStudio/fetcher/pkg"
-	"github.com/LerianStudio/fetcher/pkg/constant"
-	"github.com/LerianStudio/fetcher/pkg/crypto"
-	"github.com/LerianStudio/fetcher/pkg/model"
-	"github.com/LerianStudio/fetcher/pkg/model/datasource"
-	"github.com/LerianStudio/fetcher/pkg/model/job"
-	jobRepo "github.com/LerianStudio/fetcher/pkg/mongodb/job"
-	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
-	"github.com/LerianStudio/fetcher/pkg/ports/messaging"
-	pkgRabbitMQ "github.com/LerianStudio/fetcher/pkg/rabbitmq"
+	"github.com/LerianStudio/fetcher/v2/pkg"
+	"github.com/LerianStudio/fetcher/v2/pkg/constant"
+	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	"github.com/LerianStudio/fetcher/v2/pkg/model/datasource"
+	"github.com/LerianStudio/fetcher/v2/pkg/model/job"
+	jobRepo "github.com/LerianStudio/fetcher/v2/pkg/mongodb/job"
+	connRepo "github.com/LerianStudio/fetcher/v2/pkg/ports/connection"
+	"github.com/LerianStudio/fetcher/v2/pkg/ports/messaging"
+	pkgRabbitMQ "github.com/LerianStudio/fetcher/v2/pkg/rabbitmq"
 
 	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.uber.org/mock/gomock"
 )
 
@@ -1591,6 +1592,357 @@ func TestPublishToQueue_TenantIDHeaderPropagation(t *testing.T) {
 			assert.Equal(t, testJob.ID.String(), headers["jobId"])
 		})
 	}
+}
+
+// --- ST-T009-01: request -> engine.ExtractionRequest mapping (Option 2) ----
+//
+// Option 2 (owner decision): map the Manager FetcherRequest onto an
+// engine.ExtractionRequest as a pure, host-side intermediate. NO PlanExtraction
+// call, NO schema discovery, NO new validation — all current Manager validation
+// stays byte-identical. The engine.ExtractionRequest is the LIVE intermediate
+// from which the queue payload's mappedFields/metadata are built, so it is not
+// orphan code. These tests pin:
+//   (1) MappedFields, Filters, and metadata.source map correctly into the
+//       engine.ExtractionRequest (metadata.source preserved OPAQUE);
+//   (2) the queue payload built from the intermediate is byte-identical to the
+//       legacy hand-built payload.
+//
+// The engine.TenantContext bridge is intentionally NOT part of this subtask: it
+// has no non-orphan consumer on the create path until the planning/execution
+// consumer lands (ST-03 / T-010). See extraction_request_mapper.go SCOPE NOTE.
+
+// TestMapToExtractionRequest_MapsFieldsAndMetadata_DefersFilters asserts the pure
+// mapper projects MappedFields and opaque Metadata (incl. metadata.source) onto
+// engine.ExtractionRequest, and that Filters are intentionally NOT projected at
+// create (deferred to the T-010 execution consumer) even when the request carries
+// them — so the engine request never holds a filter shape unvalidated by a consumer.
+func TestMapToExtractionRequest_MapsFieldsAndMetadata_DefersFilters(t *testing.T) {
+	request := model.FetcherRequest{
+		DataRequest: model.DataRequest{
+			MappedFields: map[string]map[string][]string{
+				"postgres_db": {"transactions": {"id", "status", "amount"}},
+			},
+			Filters: model.NestedFilters{
+				"postgres_db": {
+					"transactions": {
+						"status": job.FilterCondition{Equals: []any{"completed"}},
+					},
+				},
+			},
+		},
+		Metadata: map[string]any{"source": "plugin_crm", "key": "value"},
+	}
+
+	req := mapToExtractionRequest(request)
+
+	// MappedFields map correctly (FieldSelection is the same underlying type).
+	require.Equal(t, []string{"id", "status", "amount"}, req.MappedFields["postgres_db"]["transactions"])
+
+	// Metadata is carried opaque, including metadata.source (e.g. plugin_crm).
+	require.Equal(t, "plugin_crm", req.Metadata["source"], "metadata.source must be preserved opaque")
+	require.Equal(t, "value", req.Metadata["key"], "all metadata is carried opaque")
+
+	// Filters are intentionally NOT projected at create (Option 2): they stay on the
+	// typed request.DataRequest.Filters path for the persisted job and queue payload.
+	// The engine-request filter projection is deferred to the T-010 execution
+	// consumer, which pins it against the planner's nested filter shape.
+	require.Nil(t, req.Filters, "filters are not projected into the engine request at create (deferred to T-010)")
+
+	// B2: the engine request carries NO product/org concept and the mapper must
+	// not invent Overrides (no per-request bounds in this subtask).
+	require.Nil(t, req.Overrides, "no limit overrides are introduced at mapping time")
+}
+
+// TestPublishToQueue_PayloadByteIdenticalFromIntermediate proves the queue bytes
+// built via the engine.ExtractionRequest intermediate equal the legacy hand-built
+// payload. RED: buildQueueMessage does not exist yet.
+func TestPublishToQueue_PayloadByteIdenticalFromIntermediate(t *testing.T) {
+	j := &model.Job{
+		ID: uuid.New(),
+		MappedFields: map[string]map[string][]string{
+			"postgres_db": {"transactions": {"id", "status", "amount"}},
+		},
+		Filters: model.NestedFilters{
+			"postgres_db": {"transactions": {"status": job.FilterCondition{Equals: []any{"completed"}}}},
+		},
+		Metadata:  map[string]any{"source": "plugin_crm", "key": "value"},
+		CreatedAt: time.Now().UTC(),
+	}
+
+	// Legacy hand-built payload (the exact shape publishToQueue emitted before).
+	legacy := map[string]any{
+		"jobId":        j.ID.String(),
+		"mappedFields": j.MappedFields,
+		"metadata":     j.Metadata,
+		"createdAt":    j.CreatedAt,
+		"filters":      j.Filters,
+	}
+	legacyBytes, err := json.Marshal(legacy)
+	require.NoError(t, err)
+
+	// Payload built from the engine.ExtractionRequest intermediate.
+	gotBytes, err := json.Marshal(buildQueueMessage(j))
+	require.NoError(t, err)
+
+	require.JSONEq(t, string(legacyBytes), string(gotBytes), "queue payload must be byte-identical to the legacy shape")
+}
+
+// --- ST-T009-02: idempotency & persistence LOCK tests ----------------------
+//
+// These pin the existing idempotency/persistence behavior with the DISTINCT
+// assertions the subtask asks for. Under Option 2 there is NO PlanExtraction at
+// creation and the mapper is pure/infallible, so there is no new create-time
+// failure mode — these LOCK the already-correct behavior, they do not change it.
+
+// TestCreateFetcherJob_Execute_DuplicateWithinWindow_DoesNotPublish explicitly
+// locks that a duplicate within the dedup window returns the existing job and
+// publishes NO new message — asserted against a REAL publisher mock whose
+// ProducerDefault is never expected (so any publish call fails the test). The
+// pre-existing duplicate test used a nil publisher, which only proved this
+// implicitly.
+func TestCreateFetcherJob_Execute_DuplicateWithinWindow_DoesNotPublish(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockJobRepo := jobRepo.NewMockRepository(ctrl)
+	mockRabbitMQ := messaging.NewMockMessagePublisher(ctrl)
+
+	svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, mockRabbitMQ, "fetcher.extract-external-data.queue", nil, nil)
+
+	ctx := testContext()
+	request := newValidFetcherRequest()
+
+	existingJobID := uuid.New()
+	existingJob := &model.Job{
+		ID:        existingJobID,
+		Status:    model.JobStatusPending,
+		CreatedAt: time.Now().UTC().Add(-2 * time.Minute),
+	}
+
+	mockJobRepo.EXPECT().
+		FindByRequestHashWithinWindow(gomock.Any(), gomock.Any(), DeduplicationWindowMinutes).
+		Return(existingJob, nil)
+
+	// Guard: NO mockJobRepo.Create and NO mockRabbitMQ.ProducerDefault expectations.
+	// A duplicate must neither persist a new job nor publish a message.
+
+	result, err := svc.Execute(ctx, request)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.True(t, result.IsDuplicate, "duplicate within window must be reported as a duplicate")
+	require.False(t, result.IsNewCreated, "duplicate must not be a new creation")
+	require.Equal(t, existingJobID, result.Job.ID, "the existing job must be returned unchanged")
+}
+
+// TestCreateFetcherJob_Execute_NewRequest_CreatesPendingAndPublishesExactlyOnce
+// locks that a new valid request persists a PENDING job and publishes EXACTLY
+// once (Times(1)) — pinning both the persisted status and the single-publish
+// guarantee together against real mocks.
+func TestCreateFetcherJob_Execute_NewRequest_CreatesPendingAndPublishesExactlyOnce(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockJobRepo := jobRepo.NewMockRepository(ctrl)
+	mockConnTester := NewMockConnectionTester(ctrl)
+	mockRabbitMQ := messaging.NewMockMessagePublisher(ctrl)
+
+	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, nil, mockRabbitMQ, mockConnTester, "fetcher.extract-external-data.queue", nil)
+
+	ctx := testContext()
+	conn := &model.Connection{ID: uuid.New(), ProductName: "test-product", ConfigName: "datasource1", Type: model.TypePostgreSQL}
+	request := newValidFetcherRequest()
+
+	mockJobRepo.EXPECT().
+		FindByRequestHashWithinWindow(gomock.Any(), gomock.Any(), DeduplicationWindowMinutes).
+		Return(nil, nil)
+	mockConnRepo.EXPECT().
+		FindByConfigNames(gomock.Any(), []string{"datasource1"}).
+		Return([]*model.Connection{conn}, nil)
+	mockConnTester.EXPECT().
+		TestConnection(gomock.Any(), conn).
+		Return(nil)
+
+	// Persisted job must be PENDING at creation.
+	mockJobRepo.EXPECT().
+		Create(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, j *model.Job) (*model.Job, error) {
+			assert.Equal(t, model.JobStatusPending, j.Status, "a newly created job must be persisted as PENDING")
+			return j, nil
+		}).
+		Times(1)
+
+	// Publish must happen EXACTLY once.
+	mockRabbitMQ.EXPECT().
+		ProducerDefault(gomock.Any(), "", "fetcher.extract-external-data.queue", gomock.Any(), gomock.Any()).
+		Return(nil).
+		Times(1)
+
+	result, err := svc.Execute(ctx, request)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.True(t, result.IsNewCreated, "a new valid request must create a new job")
+	require.False(t, result.IsDuplicate, "a new valid request must not be a duplicate")
+	require.Equal(t, model.JobStatusPending, result.Job.Status, "the returned job must be PENDING")
+}
+
+// TestCreateFetcherJob_Execute_ValidationFailure_CreatesNoJobAndDoesNotPublish
+// is the Option-2 replacement for the spec's STALE "Engine planning failure does
+// not create or publish a job" assertion. Under Option 2 there is no planning at
+// creation, so the equivalent guard is: a MANAGER validation failure (here, the
+// metadata.source gate) creates no job and publishes nothing. Asserted against
+// real Create/publish mocks with no expectations set.
+func TestCreateFetcherJob_Execute_ValidationFailure_CreatesNoJobAndDoesNotPublish(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockJobRepo := jobRepo.NewMockRepository(ctrl)
+	mockRabbitMQ := messaging.NewMockMessagePublisher(ctrl)
+
+	svc := NewCreateFetcherJob(mockConnRepo, mockJobRepo, nil, mockRabbitMQ, "q", nil, nil)
+
+	ctx := testContext()
+	// Valid mappedFields but missing metadata.source -> Manager validation failure
+	// BEFORE any persistence or publish.
+	request := model.FetcherRequest{
+		DataRequest: model.DataRequest{
+			MappedFields: map[string]map[string][]string{
+				"datasource1": {"table1": {"field1"}},
+			},
+		},
+		Metadata: map[string]any{"key": "value"},
+	}
+
+	// Guard: validation must short-circuit BEFORE dedup lookup, Create, or publish.
+	// No mock expectations are set, so any repository or publisher call fails.
+
+	result, err := svc.Execute(ctx, request)
+	require.Error(t, err, "a Manager validation failure must surface as an error")
+	require.Nil(t, result, "no job result when validation fails")
+
+	var ve pkg.ValidationError
+	require.True(t, errors.As(err, &ve), "expected a ValidationError, got %T", err)
+}
+
+// --- ST-T009-03: RabbitMQ dispatch boundary LOCK tests ---------------------
+//
+// ST-02 already locked: publish-exactly-once-on-success, no-publish-on-duplicate,
+// no-publish-on-validation-failure. ST-03 adds the remaining dispatch-boundary
+// invariants WITHOUT duplicating those:
+//   (a) a job PERSISTENCE failure (Create returns a non-duplicate error) emits NO
+//       message — no orphan publish ahead of a job that was never stored;
+//   (b) the dispatch routing/topology (exchange + routing key) is byte-identical:
+//       publish targets the default exchange ("") with the configured queue name
+//       as the routing key.
+// The spec's "publish after successful Engine planning" is STALE under Option 2
+// (no PlanExtraction at create); the real invariant is "publish only after
+// successful validation + persistence", which (a) locks.
+
+// TestCreateFetcherJob_Execute_PersistenceFailure_DoesNotPublish locks that when
+// the job repository's Create fails with a non-duplicate error, Execute returns an
+// internal error and NEVER publishes — so a failed persistence cannot leave an
+// orphan queue message pointing at a job that was never stored. This is a DIFFERENT
+// direction from PublishFailureMarksJobFailed (publish-attempted-then-fails): here
+// persistence fails BEFORE publish is ever reachable.
+func TestCreateFetcherJob_Execute_PersistenceFailure_DoesNotPublish(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockJobRepo := jobRepo.NewMockRepository(ctrl)
+	mockConnTester := NewMockConnectionTester(ctrl)
+	mockRabbitMQ := messaging.NewMockMessagePublisher(ctrl)
+
+	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, nil, mockRabbitMQ, mockConnTester, "fetcher.extract-external-data.queue", nil)
+
+	ctx := testContext()
+	conn := &model.Connection{ID: uuid.New(), ProductName: "test-product", ConfigName: "datasource1", Type: model.TypePostgreSQL}
+	request := newValidFetcherRequest()
+
+	mockJobRepo.EXPECT().
+		FindByRequestHashWithinWindow(gomock.Any(), gomock.Any(), DeduplicationWindowMinutes).
+		Return(nil, nil)
+	mockConnRepo.EXPECT().
+		FindByConfigNames(gomock.Any(), []string{"datasource1"}).
+		Return([]*model.Connection{conn}, nil)
+	mockConnTester.EXPECT().
+		TestConnection(gomock.Any(), conn).
+		Return(nil)
+
+	// Persistence fails with a non-duplicate error.
+	mockJobRepo.EXPECT().
+		Create(gomock.Any(), gomock.Any()).
+		Return(nil, errors.New("mongodb write failed"))
+
+	// Guard: NO mockRabbitMQ.ProducerDefault expectation — publish must never be
+	// reached when persistence fails (no orphan message). Likewise no jobRepo.Update,
+	// since there is no created job to mark FAILED.
+
+	result, err := svc.Execute(ctx, request)
+	require.Nil(t, result, "no result when persistence fails")
+	require.Error(t, err, "a persistence failure must surface as an error")
+
+	var internalErr pkg.InternalServerError
+	require.True(t, errors.As(err, &internalErr), "expected InternalServerError, got %T: %v", err, err)
+}
+
+// TestCreateFetcherJob_Execute_DispatchRoutingTopologyIsByteIdentical locks the
+// dispatch routing/topology: a successful create publishes to the DEFAULT exchange
+// ("") with the configured queue name as the routing key, capturing the exact
+// exchange/key arguments rather than matching them loosely. A change to the
+// exchange or routing key would break the un-migrated Worker's consumption and is
+// the kind of drift this test guards against.
+func TestCreateFetcherJob_Execute_DispatchRoutingTopologyIsByteIdentical(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockJobRepo := jobRepo.NewMockRepository(ctrl)
+	mockConnTester := NewMockConnectionTester(ctrl)
+	mockRabbitMQ := messaging.NewMockMessagePublisher(ctrl)
+
+	const queueName = "fetcher.extract-external-data.queue"
+
+	svc := NewCreateFetcherJobWithTester(mockConnRepo, mockJobRepo, nil, mockRabbitMQ, mockConnTester, queueName, nil)
+
+	ctx := testContext()
+	conn := &model.Connection{ID: uuid.New(), ProductName: "test-product", ConfigName: "datasource1", Type: model.TypePostgreSQL}
+	request := newValidFetcherRequest()
+
+	mockJobRepo.EXPECT().
+		FindByRequestHashWithinWindow(gomock.Any(), gomock.Any(), DeduplicationWindowMinutes).
+		Return(nil, nil)
+	mockConnRepo.EXPECT().
+		FindByConfigNames(gomock.Any(), []string{"datasource1"}).
+		Return([]*model.Connection{conn}, nil)
+	mockConnTester.EXPECT().
+		TestConnection(gomock.Any(), conn).
+		Return(nil)
+	mockJobRepo.EXPECT().
+		Create(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, j *model.Job) (*model.Job, error) { return j, nil })
+
+	var (
+		gotExchange string
+		gotKey      string
+	)
+
+	mockRabbitMQ.EXPECT().
+		ProducerDefault(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, exchange, key string, _ []byte, _ *map[string]any) error {
+			gotExchange = exchange
+			gotKey = key
+			return nil
+		}).
+		Times(1)
+
+	_, err := svc.Execute(ctx, request)
+	require.NoError(t, err)
+
+	require.Equal(t, "", gotExchange, "dispatch must target the default exchange (empty string), unchanged")
+	require.Equal(t, queueName, gotKey, "dispatch routing key must be the configured queue name, unchanged")
 }
 
 // TestCreateFetcherJob_Execute_PreservesFET0414FromConnectionTester verifies

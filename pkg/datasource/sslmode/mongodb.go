@@ -1,8 +1,8 @@
 package sslmode
 
 import (
-	"github.com/LerianStudio/fetcher/pkg"
-	"github.com/LerianStudio/fetcher/pkg/constant"
+	"github.com/LerianStudio/fetcher/v2/pkg"
+	"github.com/LerianStudio/fetcher/v2/pkg/constant"
 )
 
 // validMongoDBModes contains the allowlist of valid MongoDB TLS mode values.

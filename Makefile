@@ -224,6 +224,26 @@ set-env:
 	@echo "[ok] Environment files set up successfully"
 
 #-------------------------------------------------------
+# CI Pipeline
+#-------------------------------------------------------
+
+# Deterministic, non-live quality gate. Mirrors the Lerian CI pattern
+# (cf. plugin-br-bank-transfer) restricted to steps that need no Docker
+# daemon, no live infrastructure, and no GITHUB_TOKEN — so it runs the
+# same locally and in CI. Docker-bound steps (generate-docs, test-e2e,
+# test-chaos) stay available standalone and run in their own CI stages.
+.PHONY: ci
+ci:
+	$(call print_title,Running full CI pipeline)
+	@$(MAKE) tidy
+	@$(MAKE) format
+	@$(MAKE) vet
+	@$(MAKE) lint
+	@$(MAKE) sec
+	@$(MAKE) test-unit
+	@echo "[ok] CI pipeline passed"
+
+#-------------------------------------------------------
 # Build Commands
 #-------------------------------------------------------
 
@@ -299,6 +319,11 @@ test-unit: ## Run unit tests on all components
 	PACKAGES=$$(go list ./... | grep -v -f ./scripts/coverage_ignore.txt 2>/dev/null || go list ./...); \
 	go test -v $$PACKAGES; \
 	test_exit_code=$$?; \
+	echo ""; \
+	echo "=== Engine module (github.com/LerianStudio/fetcher/pkg/engine) ==="; \
+	( cd pkg/engine && GOWORK=off go test ./... ); \
+	engine_exit_code=$$?; \
+	if [ $$test_exit_code -eq 0 ]; then test_exit_code=$$engine_exit_code; fi; \
 	end_time=$$(date +%s); \
 	elapsed=$$((end_time - start_time)); \
 	minutes=$$((elapsed / 60)); \
@@ -533,6 +558,16 @@ check-tests:
 # Code Quality Commands
 #-------------------------------------------------------
 
+.PHONY: vet
+vet:
+	$(call print_title,Running go vet)
+	@if find . -name "*.go" -type f | grep -q .; then \
+		go vet ./...; \
+		echo "[ok] go vet completed successfully"; \
+	else \
+		echo "No Go files found, skipping go vet"; \
+	fi
+
 .PHONY: lint
 lint:
 	$(call print_title,Running linters)
@@ -542,6 +577,9 @@ lint:
 			go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest; \
 		fi; \
 		golangci-lint run --fix ./... --verbose; \
+		echo "[ok] Linting parent module completed"; \
+		echo "Linting engine module (pkg/engine)..."; \
+		( cd pkg/engine && GOWORK=off golangci-lint run --fix ./... ); \
 		echo "[ok] Linting completed successfully"; \
 	else \
 		echo "No Go files found, skipping linting"; \
@@ -551,14 +589,29 @@ lint:
 format:
 	$(call print_title,Formatting code)
 	@go fmt ./...
+	@cd pkg/engine && GOWORK=off go fmt ./...
 	@echo "[ok] Formatting completed successfully"
 
 .PHONY: tidy
 tidy:
-	$(call print_title,Cleaning dependencies in root directory)
+	$(call print_title,Cleaning dependencies in root and engine modules)
 	@echo "Tidying root go.mod..."
 	@go mod tidy
+	@echo "Tidying engine go.mod (pkg/engine)..."
+	@cd pkg/engine && GOWORK=off go mod tidy
 	@echo "[ok] Dependencies cleaned successfully"
+
+.PHONY: test-engine
+test-engine: ## Run the engine module's tests in module isolation (GOWORK=off)
+	$(call print_title,Testing engine module)
+	@cd pkg/engine && GOWORK=off go test ./...
+	@echo "[ok] Engine module tests passed"
+
+.PHONY: smoke-engine
+smoke-engine: ## Prove a consumer imports the engine with zero third-party deps
+	$(call print_title,Engine consumer smoke test)
+	@bash scripts/release/smoke-consumer.sh --local
+	@node --test scripts/release/engine-release.test.mjs
 
 #-------------------------------------------------------
 # Security Commands
@@ -573,7 +626,7 @@ sec:
 	fi
 	@if find . -name "*.go" -type f | grep -q .; then \
 		echo "Running security checks..."; \
-		gosec -quiet -exclude-dir=.docs -exclude-dir=docs ./...; \
+		gosec -quiet -exclude-dir=.docs -exclude-dir=docs ./... && \
 		echo "[ok] Security checks completed"; \
 	else \
 		echo "No Go files found, skipping security checks"; \
@@ -967,4 +1020,6 @@ generate-master-key: ## Generate a new cryptographically secure master key
 	echo "" && \
 	echo "IMPORTANT: Store this key securely. It cannot be recovered if lost." && \
 	echo "Add to your environment as APP_ENC_KEY."
+
+
 

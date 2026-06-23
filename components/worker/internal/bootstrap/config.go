@@ -2,42 +2,43 @@ package bootstrap
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
-	"encoding/base64"
 	"fmt"
 	"net"
 	"net/url"
 	"strings"
 	"time"
 
-	"github.com/LerianStudio/fetcher/components/worker/internal/adapters/rabbitmq"
-	"github.com/LerianStudio/fetcher/components/worker/internal/services"
-	"github.com/LerianStudio/fetcher/pkg/bootstrap/readyz"
-	"github.com/LerianStudio/fetcher/pkg/constant"
-	"github.com/LerianStudio/fetcher/pkg/crypto"
-	"github.com/LerianStudio/fetcher/pkg/datasource"
-	"github.com/LerianStudio/fetcher/pkg/mongodb"
-	"github.com/LerianStudio/fetcher/pkg/mongodb/connection"
-	"github.com/LerianStudio/fetcher/pkg/mongodb/job"
-	portStorage "github.com/LerianStudio/fetcher/pkg/ports/storage"
-	"github.com/LerianStudio/fetcher/pkg/resolver"
-	pkgStorage "github.com/LerianStudio/fetcher/pkg/storage"
+	"github.com/LerianStudio/fetcher/v2/components/worker/internal/adapters/rabbitmq"
+	"github.com/LerianStudio/fetcher/v2/components/worker/internal/services"
+	"github.com/LerianStudio/fetcher/v2/pkg/bootstrap/readyz"
+	"github.com/LerianStudio/fetcher/v2/pkg/constant"
+	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
+	"github.com/LerianStudio/fetcher/v2/pkg/datasource"
+	"github.com/LerianStudio/fetcher/v2/pkg/mongodb"
+	"github.com/LerianStudio/fetcher/v2/pkg/mongodb/connection"
+	"github.com/LerianStudio/fetcher/v2/pkg/mongodb/job"
+	portStorage "github.com/LerianStudio/fetcher/v2/pkg/ports/storage"
+	"github.com/LerianStudio/fetcher/v2/pkg/resolver"
+	pkgStorage "github.com/LerianStudio/fetcher/v2/pkg/storage"
 
 	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
+	libCircuitBreaker "github.com/LerianStudio/lib-commons/v5/commons/circuitbreaker"
 	mongoDB "github.com/LerianStudio/lib-commons/v5/commons/mongo"
-	libOtel "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
+	libOutbox "github.com/LerianStudio/lib-commons/v5/commons/outbox"
+	libOutboxMongo "github.com/LerianStudio/lib-commons/v5/commons/outbox/mongo"
 	libRabbitMQ "github.com/LerianStudio/lib-commons/v5/commons/rabbitmq"
 	tmclient "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/client"
-	tmconsumer "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/consumer"
 	tmevent "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/event"
 	tmmongo "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/mongo"
 	tmrabbitmq "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/rabbitmq"
+	tmredis "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/redis"
 	"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/tenantcache"
-	libZap "github.com/LerianStudio/lib-commons/v5/commons/zap"
-	libLicense "github.com/LerianStudio/lib-license-go/v2/middleware"
-	"github.com/redis/go-redis/v9"
+	libLog "github.com/LerianStudio/lib-observability/log"
+	obsRuntime "github.com/LerianStudio/lib-observability/runtime"
+	libOtel "github.com/LerianStudio/lib-observability/tracing"
+	libZap "github.com/LerianStudio/lib-observability/zap"
+	streaming "github.com/LerianStudio/lib-streaming"
+	mongoDriver "go.mongodb.org/mongo-driver/v2/mongo"
 )
 
 // defaultMaxTenantPools is the fallback soft limit for tenant connection pools
@@ -45,22 +46,29 @@ import (
 // pool growth. The value can be overridden via the environment variable.
 const defaultMaxTenantPools = 100
 
+type workerRepositories struct {
+	job                 *job.JobMongoDBRepository
+	connection          *connection.ConnectionMongoDBRepository
+	streamingOutboxRepo libOutbox.OutboxRepository
+}
+
 // Config holds the application's configurable parameters read from environment variables.
 type Config struct {
 	EnvName  string `env:"ENV_NAME"`
 	LogLevel string `env:"LOG_LEVEL"`
 	// RabbitMQ envs
-	RabbitURI                   string `env:"RABBITMQ_URI"`
-	RabbitMQHost                string `env:"RABBITMQ_HOST"`
-	RabbitMQPortHost            string `env:"RABBITMQ_PORT_HOST"`
-	RabbitMQPortAMQP            string `env:"RABBITMQ_PORT_AMQP"`
-	RabbitMQUser                string `env:"RABBITMQ_DEFAULT_USER"`
-	RabbitMQPass                string `env:"RABBITMQ_DEFAULT_PASS"`
-	RabbitMQNumWorkers          int    `env:"RABBITMQ_NUMBERS_OF_WORKERS"`
-	RabbitMQHealthCheckURL      string `env:"RABBITMQ_HEALTH_CHECK_URL"`
-	RabbitMQGenerateReportQueue string `env:"RABBITMQ_FETCHER_WORK_QUEUE"`
-	RabbitMQJobEventsExchange   string `env:"RABBITMQ_JOB_EVENTS_EXCHANGE"`
-	RabbitMQTLS                 bool   `env:"RABBITMQ_TLS" default:"false"`
+	RabbitURI                                string `env:"RABBITMQ_URI"`
+	RabbitMQHost                             string `env:"RABBITMQ_HOST"`
+	RabbitMQPortHost                         string `env:"RABBITMQ_PORT_HOST"`
+	RabbitMQPortAMQP                         string `env:"RABBITMQ_PORT_AMQP"`
+	RabbitMQUser                             string `env:"RABBITMQ_DEFAULT_USER"`
+	RabbitMQPass                             string `env:"RABBITMQ_DEFAULT_PASS"`
+	RabbitMQNumWorkers                       int    `env:"RABBITMQ_NUMBERS_OF_WORKERS"`
+	RabbitMQHealthCheckURL                   string `env:"RABBITMQ_HEALTH_CHECK_URL"`
+	RabbitMQGenerateReportQueue              string `env:"RABBITMQ_FETCHER_WORK_QUEUE"`
+	RabbitMQJobEventsExchange                string `env:"RABBITMQ_JOB_EVENTS_EXCHANGE"`
+	RabbitMQTLS                              bool   `env:"RABBITMQ_TLS" default:"false"`
+	RabbitMQAllowLegacyBodySignatureFallback bool   `env:"RABBITMQ_ALLOW_LEGACY_BODY_SIGNATURE_FALLBACK" default:"false"`
 	// Otel Collector configurations
 	OtelServiceName         string `env:"OTEL_RESOURCE_SERVICE_NAME"`
 	OtelLibraryName         string `env:"OTEL_LIBRARY_NAME"`
@@ -92,9 +100,6 @@ type Config struct {
 	MongoDBParameters string `env:"MONGO_PARAMETERS"`
 	MongoTLSCACert    string `env:"MONGO_TLS_CA_CERT"`
 	MaxPoolSize       int    `env:"MONGO_MAX_POOL_SIZE"`
-	// License configuration envs
-	LicenseKey      string `env:"LICENSE_KEY"`
-	OrganizationIDs string `env:"ORGANIZATION_IDS"`
 	// Encryption
 	AppEncryptionKey        string `env:"APP_ENC_KEY"`
 	AppEncryptionKeyVersion string `env:"APP_ENC_KEY_VERSION"`
@@ -102,12 +107,14 @@ type Config struct {
 	CryptoEncryptSecretKeyPluginCRM string `env:"CRYPTO_ENCRYPT_SECRET_KEY_PLUGIN_CRM"`
 	CryptoHashSecretKeyPluginCRM    string `env:"CRYPTO_HASH_SECRET_KEY_PLUGIN_CRM"`
 	// Multi-Tenant configuration
-	MultiTenantEnabled                  bool   `env:"MULTI_TENANT_ENABLED"`
-	MultiTenantURL                      string `env:"MULTI_TENANT_URL"`
-	MultiTenantRedisHost                string `env:"MULTI_TENANT_REDIS_HOST"`
-	MultiTenantRedisPort                string `env:"MULTI_TENANT_REDIS_PORT" default:"6379"`
-	MultiTenantRedisPassword            string `env:"MULTI_TENANT_REDIS_PASSWORD"`
-	MultiTenantRedisTLS                 bool   `env:"MULTI_TENANT_REDIS_TLS" default:"false"`
+	MultiTenantEnabled       bool   `env:"MULTI_TENANT_ENABLED"`
+	MultiTenantURL           string `env:"MULTI_TENANT_URL"`
+	MultiTenantRedisHost     string `env:"MULTI_TENANT_REDIS_HOST"`
+	MultiTenantRedisPort     string `env:"MULTI_TENANT_REDIS_PORT" default:"6379"`
+	MultiTenantRedisPassword string `env:"MULTI_TENANT_REDIS_PASSWORD"`
+	MultiTenantRedisTLS      bool   `env:"MULTI_TENANT_REDIS_TLS" default:"false"`
+	// Deprecated: unsupported for tenant Pub/Sub Redis until lib-commons exposes
+	// canonical CA bundle support. Non-empty values fail startup.
 	MultiTenantRedisCACert              string `env:"MULTI_TENANT_REDIS_CA_CERT"`
 	MultiTenantMaxTenantPools           int    `env:"MULTI_TENANT_MAX_TENANT_POOLS" default:"100"`
 	MultiTenantIdleTimeoutSec           int    `env:"MULTI_TENANT_IDLE_TIMEOUT_SEC" default:"300"`
@@ -115,13 +122,24 @@ type Config struct {
 	MultiTenantCircuitBreakerTimeoutSec int    `env:"MULTI_TENANT_CIRCUIT_BREAKER_TIMEOUT_SEC" default:"30"`
 	MultiTenantServiceAPIKey            string `env:"MULTI_TENANT_SERVICE_API_KEY"`
 	MultiTenantCacheTTLSec              int    `env:"MULTI_TENANT_CACHE_TTL_SEC" default:"120"`
-	MultiTenantTimeout                  int    `env:"MULTI_TENANT_TIMEOUT" default:"30"`
-	MultiTenantAllowInsecureHTTP        bool   `env:"MULTI_TENANT_ALLOW_INSECURE_HTTP" default:"false"`
+	// MultiTenantReconcileIntervalSec is the steady-state interval (seconds) at
+	// which the Tenant Consumer Reconciler reconciles materialized per-tenant
+	// consumers against the active tenants reported by the Tenant Manager.
+	// Unset, zero, or invalid (non-positive) safely yields the reconciler's own
+	// 60s default (WithReconcileInterval ignores non-positive values).
+	MultiTenantReconcileIntervalSec int  `env:"MULTI_TENANT_RECONCILE_INTERVAL_SEC" default:"60"`
+	MultiTenantTimeout              int  `env:"MULTI_TENANT_TIMEOUT" default:"30"`
+	MultiTenantAllowInsecureHTTP    bool `env:"MULTI_TENANT_ALLOW_INSECURE_HTTP" default:"false"`
 	// The worker has no primary HTTP server; a dedicated micro-server
 	// exposes /health, /readyz and /metrics on HEALTH_PORT.
 	DeploymentMode      string `env:"DEPLOYMENT_MODE" default:"local"`
 	HealthPort          int    `env:"HEALTH_PORT" default:"4007"`
 	ReadyzDrainDelaySec int    `env:"READYZ_DRAIN_DELAY_SEC" default:"12"`
+	// EngineMaxResultBytes overrides the embedded engine's MaxResultBytes ceiling
+	// (the serialized — now indented — result artifact size). A plain integer byte
+	// count. Unset, zero, or negative leaves the engine default (256 MiB) in force;
+	// only a positive value overrides it. See newExtractionEngine.
+	EngineMaxResultBytes int64 `env:"ENGINE_MAX_RESULT_BYTES"`
 }
 
 var (
@@ -181,11 +199,31 @@ func InitWorker() (*Service, error) {
 		return nil, fmt.Errorf("initialize MongoDB client: %w", err)
 	}
 
-	// Initialize multi-tenant managers (nil when MULTI_TENANT_ENABLED=false)
-	mongoManager, rabbitMQManager, err := initMultiTenantManagers(cfg, logger)
-	if err != nil {
-		return nil, fmt.Errorf("initialize multi-tenant managers: %w", err)
+	// In multi-tenant mode every tenant-aware component (managers, resolver,
+	// streaming-outbox resolver, tenant cache/consumer) shares ONE Tenant Manager
+	// client so cache and circuit-breaker state are not split across instances and
+	// the client is created once and closed exactly once on the Service lifecycle.
+	// Nil in single-tenant mode.
+	multiTenant := cfg.MultiTenantEnabled && cfg.MultiTenantURL != ""
+
+	var sharedTMClient *tmclient.Client
+
+	// sharedTMOwned is flipped true once the returned Service owns the shared
+	// client's Close (Service.tmClientCloser). Until then, the deferred guard below
+	// closes the client on any aborted bootstrap so startup failure cannot leak it.
+	sharedTMOwned := false
+
+	if multiTenant {
+		sharedTMClient, err = initTenantManagerClient(cfg, logger)
+		if err != nil {
+			return nil, fmt.Errorf("create shared tenant manager client: %w", err)
+		}
+
+		defer func() { closeSharedTMClientIfUnowned(ctx, logger, sharedTMClient, &sharedTMOwned) }()
 	}
+
+	// Initialize multi-tenant managers (nil when MULTI_TENANT_ENABLED=false)
+	mongoManager, rabbitMQManager := initMultiTenantManagers(cfg, logger, sharedTMClient)
 
 	// Wrap the MongoDB connection to implement tmcore.MultiTenantChecker.
 	// When multi-tenant mode is enabled, this causes tmcore.ResolveMongo to return
@@ -193,7 +231,211 @@ func InitWorker() (*Service, error) {
 	// when no tenant context is present.
 	mongoProvider := mongodb.NewMultiTenantMongoProvider(mongoConnection, cfg.MultiTenantEnabled)
 
-	// Initialize MongoDB repositories
+	repositories, err := initWorkerRepositories(ctx, cfg, logger, mongoProvider, mongoConnection, mongoManager, sharedTMClient)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create service use case (publisher set below per mode)
+	service := &services.UseCase{
+		ExternalDataStorage:  storageRepository,
+		JobRepository:        repositories.job,
+		ConnectionRepository: repositories.connection,
+		Cryptor:              cryptoService,
+		DocumentSigner:       cryptoWithExternalHMAC,
+		JobEventEmitter:      streaming.NewNoopEmitter(),
+		FileTTL:              cfg.ObjectStorageTTL,
+	}
+	service.SetStorageEncryptDerivedKey(keyDeriver.GetStorageEncryptKey())
+	service.SetCRMSecrets(cfg.CryptoEncryptSecretKeyPluginCRM, cfg.CryptoHashSecretKeyPluginCRM)
+
+	dsFactory := datasource.NewDataSourceFromConnectionWithLogger(logger)
+	service.SetDataSourceFactory(dsFactory)
+
+	if err := wireEngineRunner(service, dsFactory, cryptoService, cfg.EngineMaxResultBytes); err != nil {
+		return nil, err
+	}
+
+	// Create ConnectionResolver based on multi-tenant mode
+	dsRegistry := resolver.NewInternalDatasourceRegistry()
+
+	if multiTenant {
+		tenantAdapter := resolver.NewTenantManagerAdapter(sharedTMClient)
+		service.ConnectionResolver = resolver.NewMultiTenantResolver(repositories.connection, dsRegistry, tenantAdapter)
+	} else {
+		// Single-tenant: load internal datasource connections from DATASOURCE_* env vars.
+		envConnections := resolver.LoadInternalConnectionsFromEnv(dsRegistry, logger)
+		service.ConnectionResolver = resolver.NewSingleTenantResolver(repositories.connection, dsRegistry, envConnections)
+	}
+
+	logFileTTL(logger, cfg)
+
+	// Branch: multi-tenant mode uses the worker multi-tenant consumer with per-tenant vhosts
+	// Single-tenant mode uses existing ConsumerRoutes with static RabbitMQ connection
+	if multiTenant {
+		mtService, mtErr := initMultiTenantWorkerService(ctx, cfg, logger, telemetry, service, mongoConnection, storageRepository, mongoManager, rabbitMQManager, repositories.streamingOutboxRepo, sharedTMClient, cryptoWithExternalHMAC, keyDeriver)
+		if mtErr != nil {
+			return nil, mtErr
+		}
+
+		// The Service now owns the shared client's Close; disarm the bootstrap guard.
+		sharedTMOwned = true
+
+		return mtService, nil
+	}
+
+	return initSingleTenantWorkerService(ctx, cfg, logger, telemetry, service, mongoConnection, storageRepository, mongoManager, repositories.streamingOutboxRepo, keyDeriver, cryptoWithExternalHMAC)
+}
+
+// initSingleTenantWorkerService assembles the single-tenant worker Service:
+// static RabbitMQ consumer/publisher, readyz wiring, and the streaming-outbox
+// dispatcher. Single-tenant mode has no Tenant Manager client, so the Service's
+// tmClientCloser is nil.
+func initSingleTenantWorkerService(
+	ctx context.Context,
+	cfg *Config,
+	logger libLog.Logger,
+	telemetry *libOtel.Telemetry,
+	service *services.UseCase,
+	mongoConnection *mongoDB.Client,
+	storageRepository portStorage.Repository,
+	mongoManager *tmmongo.Manager,
+	streamingOutboxRepo libOutbox.OutboxRepository,
+	keyDeriver *crypto.HKDFKeyDeriver,
+	cryptoWithExternalHMAC *crypto.HMACSigner,
+) (*Service, error) {
+	multiQueueConsumer, consumerRoutes, err := initSingleTenantRabbitMQ(cfg, logger, telemetry, keyDeriver, cryptoWithExternalHMAC, service, mongoManager, streamingOutboxRepo)
+	if err != nil {
+		return nil, err
+	}
+
+	readyzDeps := newWorkerReadyzDepsST(cfg, mongoConnection, storageRepository, consumerRoutes)
+
+	runWorkerSelfProbe(ctx, logger, buildWorkerReadyzCheckers(readyzDeps))
+
+	outboxDispatcher, err := buildStreamingOutboxDispatcher(ctx, logger, telemetry, service.JobEventEmitter, streamingOutboxRepo)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Service{
+		MultiQueueConsumer: multiQueueConsumer,
+		Logger:             logger,
+		healthServer:       NewHealthServer(cfg, logger, telemetry, readyzDeps),
+		readyzCloser:       readyzDeps.close,
+		streamingCloser:    service.JobEventEmitter.Close,
+		outboxDispatcher:   outboxDispatcher,
+		terminalRepairer:   services.NewTerminalEventRepairer(service, logger),
+		// Single-tenant mode has no Tenant Manager client.
+		tmClientCloser: nil,
+	}, nil
+}
+
+// closeSharedTMClientIfUnowned is the deferred bootstrap leak guard for the
+// shared Tenant Manager client: it closes the client only when ownership was
+// never transferred to the Service (i.e. bootstrap aborted before returning a
+// Service). Once *owned is true, or the client is nil, it is a no-op.
+func closeSharedTMClientIfUnowned(ctx context.Context, logger libLog.Logger, client *tmclient.Client, owned *bool) {
+	if owned != nil && *owned {
+		return
+	}
+
+	if client == nil {
+		return
+	}
+
+	if closeErr := client.Close(); closeErr != nil {
+		logger.Log(ctx, libLog.LevelWarn, "failed to close shared tenant manager client after aborted bootstrap", libLog.Err(closeErr))
+	}
+}
+
+// newTMClientCloser returns a nil-safe Close closure for an optional Tenant
+// Manager client, or nil when the client itself is nil (single-tenant mode).
+func newTMClientCloser(client *tmclient.Client) func() error {
+	if client == nil {
+		return nil
+	}
+
+	return client.Close
+}
+
+func initMultiTenantWorkerService(
+	ctx context.Context,
+	cfg *Config,
+	logger libLog.Logger,
+	telemetry *libOtel.Telemetry,
+	service *services.UseCase,
+	mongoConnection *mongoDB.Client,
+	storageRepository portStorage.Repository,
+	mongoManager *tmmongo.Manager,
+	rabbitMQManager *tmrabbitmq.Manager,
+	streamingOutboxRepo libOutbox.OutboxRepository,
+	sharedTMClient *tmclient.Client,
+	cryptoWithExternalHMAC *crypto.HMACSigner,
+	keyDeriver *crypto.HKDFKeyDeriver,
+) (*Service, error) {
+	messageVerifier, err := crypto.NewHMACSigner(keyDeriver.GetInternalHMACKey(), crypto.SignatureVersion)
+	if err != nil {
+		return nil, wrapBootstrapError("initialize multi-tenant message verifier", err)
+	}
+
+	mtConsumer, mtCleanup, mtErr := initMultiTenantStack(ctx, cfg, logger, sharedTMClient, mongoManager, rabbitMQManager)
+	if mtErr != nil {
+		return nil, mtErr
+	}
+
+	publisherRoutes := rabbitmq.NewPublisherRoutesMultiTenant(
+		newRabbitMQManagerAdapter(rabbitMQManager),
+		logger,
+		telemetry,
+		cryptoWithExternalHMAC,
+	)
+
+	if err := configureJobEventEmitter(ctx, cfg, logger, telemetry, publisherRoutes, service, streamingOutboxRepo); err != nil {
+		return nil, err
+	}
+
+	multiQueueConsumer := NewMultiQueueConsumerMultiTenant(mtConsumer, service, cfg.RabbitMQGenerateReportQueue, logger, mongoManager, messageVerifier, cfg.RabbitMQAllowLegacyBodySignatureFallback, defaultDrain(cfg.ReadyzDrainDelaySec))
+	performInitialTenantSync(ctx, logger, sharedTMClient, mtConsumer)
+
+	readyzDeps := newWorkerReadyzDepsMT(cfg, mongoConnection, storageRepository, sharedTMClient, mongoManager, rabbitMQManager)
+	runWorkerSelfProbe(ctx, logger, buildWorkerReadyzCheckers(readyzDeps))
+
+	outboxDispatcher, err := buildStreamingOutboxDispatcher(ctx, logger, telemetry, service.JobEventEmitter, streamingOutboxRepo)
+	if err != nil {
+		return nil, err
+	}
+
+	// Tenant Consumer Reconciler is constructed ONLY in multi-tenant mode. The
+	// mtConsumer (*workerMultiTenantConsumer) satisfies the reconciler's
+	// tenantConsumerMaterializer interface; sharedTMClient (*tmclient.Client)
+	// satisfies the active-tenant lister. It is registered in runLauncher when
+	// non-nil; single-tenant mode leaves it nil.
+	reconciler := services.NewTenantConsumerReconciler(
+		mtConsumer,
+		sharedTMClient,
+		constant.ApplicationName,
+		logger,
+		services.WithReconcileInterval(time.Duration(cfg.MultiTenantReconcileIntervalSec)*time.Second),
+		services.WithMeterProvider(telemetry.MeterProvider),
+	)
+
+	return &Service{
+		MultiQueueConsumer: multiQueueConsumer,
+		Logger:             logger,
+		mtCleanup:          mtCleanup,
+		healthServer:       NewHealthServer(cfg, logger, telemetry, readyzDeps),
+		readyzCloser:       readyzDeps.close,
+		streamingCloser:    service.JobEventEmitter.Close,
+		outboxDispatcher:   outboxDispatcher,
+		terminalRepairer:   services.NewTerminalEventRepairerWithTenantScope(service, logger, constant.ApplicationName, sharedTMClient, mongoManager),
+		reconciler:         reconciler,
+		// The Service is the single owner of the shared Tenant Manager client.
+		tmClientCloser: newTMClientCloser(sharedTMClient),
+	}, nil
+}
+
+func initWorkerRepositories(ctx context.Context, cfg *Config, logger libLog.Logger, mongoProvider *mongodb.MultiTenantMongoProvider, mongoConnection *mongoDB.Client, mongoManager *tmmongo.Manager, sharedTMClient *tmclient.Client) (*workerRepositories, error) {
 	jobRepository, errJobRepo := job.NewJobMongoDBRepository(ctx, mongoProvider, cfg.MongoDBName)
 	if errJobRepo != nil {
 		return nil, fmt.Errorf("initialize job repository: %w", errJobRepo)
@@ -204,114 +446,12 @@ func InitWorker() (*Service, error) {
 		return nil, fmt.Errorf("initialize connection repository: %w", errConnectRepo)
 	}
 
-	// Create service use case (publisher set below per mode)
-	service := &services.UseCase{
-		ExternalDataStorage:  storageRepository,
-		JobRepository:        jobRepository,
-		ConnectionRepository: connectionRepository,
-		Cryptor:              cryptoService,
-		DocumentSigner:       cryptoWithExternalHMAC,
-		FileTTL:              cfg.ObjectStorageTTL,
-		JobEventsExchange:    cfg.RabbitMQJobEventsExchange,
-	}
-	service.SetStorageEncryptDerivedKey(keyDeriver.GetStorageEncryptKey())
-	service.SetCRMSecrets(cfg.CryptoEncryptSecretKeyPluginCRM, cfg.CryptoHashSecretKeyPluginCRM)
-	service.SetDataSourceFactory(datasource.NewDataSourceFromConnectionWithLogger(logger))
-
-	// Create ConnectionResolver based on multi-tenant mode
-	dsRegistry := resolver.NewInternalDatasourceRegistry()
-
-	if cfg.MultiTenantEnabled && cfg.MultiTenantURL != "" {
-		resolverTMClient, resolverTMErr := initTenantManagerClient(cfg, logger)
-		if resolverTMErr != nil {
-			return nil, fmt.Errorf("create tenant manager client for resolver: %w", resolverTMErr)
-		}
-
-		tenantAdapter := resolver.NewTenantManagerAdapter(resolverTMClient)
-		service.ConnectionResolver = resolver.NewMultiTenantResolver(connectionRepository, dsRegistry, tenantAdapter)
-	} else {
-		// Single-tenant: load internal datasource connections from DATASOURCE_* env vars.
-		envConnections := resolver.LoadInternalConnectionsFromEnv(dsRegistry, logger)
-		service.ConnectionResolver = resolver.NewSingleTenantResolver(connectionRepository, dsRegistry, envConnections)
+	streamingOutboxRepo, errOutboxRepo := initStreamingOutboxRepository(ctx, cfg, logger, mongoConnection, mongoManager, sharedTMClient)
+	if errOutboxRepo != nil {
+		return nil, errOutboxRepo
 	}
 
-	logFileTTL(logger, cfg)
-
-	licenseLoggerV4, licenseLogErr := libZap.New(libZap.Config{
-		Environment:     resolveZapEnvironment(cfg.EnvName),
-		Level:           cfg.LogLevel,
-		OTelLibraryName: constant.ApplicationName + "-license",
-	})
-	if licenseLogErr != nil {
-		return nil, wrapBootstrapError("initialize license logger", licenseLogErr)
-	}
-
-	var licenseLogger libLog.Logger = licenseLoggerV4
-
-	licenseClient := libLicense.NewLicenseClient(
-		constant.ApplicationName,
-		cfg.LicenseKey,
-		cfg.OrganizationIDs,
-		&licenseLogger,
-	)
-
-	// Branch: multi-tenant mode uses tmconsumer.MultiTenantConsumer with per-tenant vhosts
-	// Single-tenant mode uses existing ConsumerRoutes with static RabbitMQ connection
-	if cfg.MultiTenantEnabled && cfg.MultiTenantURL != "" {
-		mtConsumer, tmClient, mtCleanup, mtErr := initMultiTenantStack(ctx, cfg, logger, mongoManager, rabbitMQManager)
-		if mtErr != nil {
-			return nil, mtErr
-		}
-
-		// Use shared RabbitMQ manager for publisher (same pool as consumer)
-		publisherRoutes := rabbitmq.NewPublisherRoutesMultiTenant(
-			newRabbitMQManagerAdapter(rabbitMQManager),
-			logger,
-			telemetry,
-		)
-
-		service.RabbitMQPublisher = publisherRoutes
-
-		multiQueueConsumer := NewMultiQueueConsumerMultiTenant(mtConsumer, service, cfg.RabbitMQGenerateReportQueue, logger, mongoManager, defaultDrain(cfg.ReadyzDrainDelaySec))
-
-		// Discover existing tenants on startup so consumers start immediately.
-		// Called AFTER handler registration so EnsureConsumerStarted can spawn
-		// consumer goroutines for all registered queues.
-		performInitialTenantSync(ctx, logger, tmClient, mtConsumer)
-
-		readyzDeps := newWorkerReadyzDepsMT(cfg, mongoConnection, storageRepository, tmClient, mongoManager, rabbitMQManager)
-
-		// Self-probe runs after every dep is constructed and before the
-		// consumer + health server start; failure does not abort boot,
-		// /health serves 503 until the probe succeeds.
-		runWorkerSelfProbe(ctx, logger, buildWorkerReadyzCheckers(readyzDeps))
-
-		return &Service{
-			MultiQueueConsumer: multiQueueConsumer,
-			Logger:             logger,
-			licenseShutdown:    licenseClient.GetLicenseManagerShutdown(),
-			mtCleanup:          mtCleanup,
-			healthServer:       NewHealthServer(cfg, logger, telemetry, readyzDeps),
-			readyzCloser:       readyzDeps.close,
-		}, nil
-	}
-
-	multiQueueConsumer, consumerRoutes, err := initSingleTenantRabbitMQ(cfg, logger, telemetry, keyDeriver, cryptoWithExternalHMAC, service, mongoManager)
-	if err != nil {
-		return nil, err
-	}
-
-	readyzDeps := newWorkerReadyzDepsST(cfg, mongoConnection, storageRepository, consumerRoutes)
-
-	runWorkerSelfProbe(ctx, logger, buildWorkerReadyzCheckers(readyzDeps))
-
-	return &Service{
-		MultiQueueConsumer: multiQueueConsumer,
-		Logger:             logger,
-		licenseShutdown:    licenseClient.GetLicenseManagerShutdown(),
-		healthServer:       NewHealthServer(cfg, logger, telemetry, readyzDeps),
-		readyzCloser:       readyzDeps.close,
-	}, nil
+	return &workerRepositories{job: jobRepository, connection: connectionRepository, streamingOutboxRepo: streamingOutboxRepo}, nil
 }
 
 // initSingleTenantRabbitMQ creates RabbitMQ consumer and publisher with
@@ -326,6 +466,7 @@ func initSingleTenantRabbitMQ(
 	cryptoWithExternalHMAC *crypto.HMACSigner,
 	service *services.UseCase,
 	mongoManager *tmmongo.Manager,
+	streamingOutboxRepo libOutbox.OutboxRepository,
 ) (*MultiQueueConsumer, *rabbitmq.ConsumerRoutes, error) {
 	// URL-encode credentials to handle special characters (@ : / etc.)
 	escapedUserRMQ := url.PathEscape(cfg.RabbitMQUser)
@@ -361,17 +502,243 @@ func initSingleTenantRabbitMQ(
 		return nil, nil, fmt.Errorf("initialize internal message signer: %w", errSigner)
 	}
 
-	// Initialize RabbitMQ consumer and publisher with separate connections
-	consumerRoutes, errRoutes := rabbitmq.NewConsumerRoutes(consumerConnection, cfg.RabbitMQNumWorkers, logger, telemetry, cryptoWithInternalHMAC, cfg.EnvName)
+	consumerRoutes, errRoutes := rabbitmq.NewConsumerRoutes(consumerConnection, cfg.RabbitMQNumWorkers, logger, telemetry, cryptoWithInternalHMAC, cfg.EnvName, cfg.RabbitMQAllowLegacyBodySignatureFallback)
 	if errRoutes != nil {
 		return nil, nil, fmt.Errorf("initialize consumer routes: %w", errRoutes)
 	}
 
 	publisherRoutes := rabbitmq.NewPublisherRoutes(publisherConnection, logger, telemetry, cryptoWithExternalHMAC)
 
-	service.RabbitMQPublisher = publisherRoutes
+	if err := configureJobEventEmitter(context.Background(), cfg, logger, telemetry, publisherRoutes, service, streamingOutboxRepo); err != nil {
+		return nil, nil, err
+	}
 
 	return NewMultiQueueConsumer(consumerRoutes, service, cfg.RabbitMQGenerateReportQueue, logger, mongoManager, defaultDrain(cfg.ReadyzDrainDelaySec)), consumerRoutes, nil
+}
+
+func configureJobEventEmitter(ctx context.Context, cfg *Config, logger libLog.Logger, telemetry *libOtel.Telemetry, publisher *rabbitmq.PublisherRoutes, service *services.UseCase, outboxRepo libOutbox.OutboxRepository) error {
+	jobEmitter, streamingEnabled, err := initJobEventEmitter(ctx, cfg, logger, telemetry, publisher, outboxRepo)
+	if err != nil {
+		return err
+	}
+
+	service.JobEventEmitter = jobEmitter
+	service.JobEventStreamingEnabled = streamingEnabled
+
+	return nil
+}
+
+type streamingRabbitMQPublisher struct {
+	publisher *rabbitmq.PublisherRoutes
+}
+
+func (p streamingRabbitMQPublisher) Publish(ctx context.Context, exchange, routingKey, contentType string, body []byte, headers map[string]any) error {
+	if p.publisher == nil {
+		return fmt.Errorf("streaming RabbitMQ publisher is not configured")
+	}
+
+	return p.publisher.PublishStreamingTarget(ctx, exchange, routingKey, contentType, body, headers)
+}
+
+// Ping satisfies lib-streaming's optional RabbitMQPingClient interface so
+// streaming health (Adapter.Healthy) reflects real broker reachability instead
+// of a silent no-op. It delegates to the underlying PublisherRoutes probe.
+func (p streamingRabbitMQPublisher) Ping(ctx context.Context) error {
+	if p.publisher == nil {
+		return fmt.Errorf("streaming RabbitMQ publisher is not configured")
+	}
+
+	return p.publisher.Ping(ctx)
+}
+
+func initJobEventEmitter(ctx context.Context, cfg *Config, logger libLog.Logger, telemetry *libOtel.Telemetry, publisher *rabbitmq.PublisherRoutes, outboxRepo libOutbox.OutboxRepository) (streaming.Emitter, bool, error) {
+	streamingCfg, warnings, err := streaming.LoadConfig()
+	if err != nil {
+		return nil, false, fmt.Errorf("load streaming configuration: %w", err)
+	}
+
+	for _, warning := range warnings {
+		logger.Log(ctx, libLog.LevelWarn, warning)
+	}
+
+	// Deliberate deviation from the lib-streaming default pattern: we do NOT fall
+	// back to streaming.NewNoopEmitter() when the flag is off. Job terminal events
+	// (completed/failed) are a mandatory product contract, and a silent no-op
+	// emitter would swallow them. Reject startup instead so misconfiguration is
+	// loud rather than a missing-notification incident in production.
+	if !streamingCfg.Enabled {
+		return nil, false, fmt.Errorf("STREAMING_ENABLED=true is required for mandatory job event notifications")
+	}
+
+	if strings.TrimSpace(cfg.RabbitMQJobEventsExchange) == "" {
+		return nil, false, fmt.Errorf("RABBITMQ_JOB_EVENTS_EXCHANGE is required for mandatory job event notifications")
+	}
+
+	terminalPolicy := streaming.DeliveryPolicy{
+		Enabled: true,
+		Direct:  streaming.DirectModeSkip,
+		Outbox:  streaming.OutboxModeAlways,
+		DLQ:     streaming.DLQModeOnRoutableFailure,
+	}
+
+	catalog, err := streaming.NewCatalog(
+		streaming.EventDefinition{Key: "job.completed", ResourceType: "job", EventType: "completed", DefaultPolicy: terminalPolicy},
+		streaming.EventDefinition{Key: "job.failed", ResourceType: "job", EventType: "failed", DefaultPolicy: terminalPolicy},
+	)
+	if err != nil {
+		return nil, false, fmt.Errorf("create job event streaming catalog: %w", err)
+	}
+
+	targetName := "fetcher-job-events-rabbitmq"
+	// Job notifications intentionally use stable lib-streaming event keys. Source
+	// belongs to the event payload metadata, never the RabbitMQ routing key.
+	routes := []streaming.RouteDefinition{
+		{
+			Key:           "job.completed.rabbitmq",
+			DefinitionKey: "job.completed",
+			Target:        targetName,
+			Destination:   streaming.RabbitMQRoute(cfg.RabbitMQJobEventsExchange, "job.completed"),
+			Requirement:   streaming.RouteRequired,
+		},
+		{
+			Key:           "job.failed.rabbitmq",
+			DefinitionKey: "job.failed",
+			Target:        targetName,
+			Destination:   streaming.RabbitMQRoute(cfg.RabbitMQJobEventsExchange, "job.failed"),
+			Requirement:   streaming.RouteRequired,
+		},
+	}
+
+	if outboxRepo == nil {
+		return nil, false, fmt.Errorf("streaming outbox repository is required for mandatory job event notifications")
+	}
+
+	cbManager, err := libCircuitBreaker.NewManager(logger)
+	if err != nil {
+		return nil, false, fmt.Errorf("create streaming circuit breaker manager: %w", err)
+	}
+
+	emitter, err := streaming.NewBuilder().
+		Source(streamingCfg.CloudEventsSource).
+		Catalog(catalog).
+		Routes(routes...).
+		OutboxRepository(outboxRepo).
+		CircuitBreakerManager(cbManager).
+		RabbitMQTarget(targetName, streamingRabbitMQPublisher{publisher: publisher}).
+		Logger(logger).
+		MetricsFactory(telemetry.MetricsFactory).
+		Tracer(telemetry.TracerProvider.Tracer(cfg.OtelLibraryName)).
+		Build(ctx)
+	if err != nil {
+		return nil, false, fmt.Errorf("build job event streaming producer: %w", err)
+	}
+
+	return emitter, true, nil
+}
+
+// initStreamingOutboxRepository builds the durable streaming-outbox repository.
+// In multi-tenant mode its tenant database resolver borrows the single shared
+// Tenant Manager client (created once in InitWorker and owned by the Service);
+// it never creates or closes a client of its own. sharedTMClient is nil in
+// single-tenant mode.
+func initStreamingOutboxRepository(ctx context.Context, cfg *Config, logger libLog.Logger, mongoConnection *mongoDB.Client, mongoManager *tmmongo.Manager, sharedTMClient *tmclient.Client) (libOutbox.OutboxRepository, error) {
+	if mongoConnection == nil {
+		return nil, fmt.Errorf("initialize streaming outbox repository: mongo client is required")
+	}
+
+	opts := []libOutboxMongo.Option{
+		libOutboxMongo.WithLogger(logger),
+		libOutboxMongo.WithCollectionName("streaming_outbox_events"),
+	}
+
+	if cfg.MultiTenantEnabled {
+		opts = append(opts,
+			libOutboxMongo.WithRequireTenant(),
+			libOutboxMongo.WithModule(constant.ModuleWorker),
+			libOutboxMongo.WithTenantDatabaseResolver(streamingOutboxMongoResolver{manager: mongoManager, client: sharedTMClient, service: constant.ApplicationName}),
+		)
+	} else {
+		opts = append(opts, libOutboxMongo.WithAllowEmptyTenant())
+	}
+
+	repo, err := libOutboxMongo.NewRepositoryWithContext(ctx, mongoConnection, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("initialize streaming outbox repository: %w", err)
+	}
+
+	return repo, nil
+}
+
+type streamingOutboxMongoResolver struct {
+	manager *tmmongo.Manager
+	client  *tmclient.Client
+	service string
+}
+
+func (r streamingOutboxMongoResolver) ListTenants(ctx context.Context, _ string) ([]string, error) {
+	if r.client == nil {
+		return nil, fmt.Errorf("tenant manager client is required for streaming outbox tenant discovery")
+	}
+
+	tenants, err := r.client.GetActiveTenantsByService(ctx, r.service)
+	if err != nil {
+		return nil, err
+	}
+
+	ids := make([]string, 0, len(tenants))
+	for _, tenant := range tenants {
+		if tenant == nil {
+			continue
+		}
+
+		id := strings.TrimSpace(tenant.ID)
+		if id != "" {
+			ids = append(ids, id)
+		}
+	}
+
+	return ids, nil
+}
+
+func (r streamingOutboxMongoResolver) DatabaseForTenant(ctx context.Context, tenantID string, _ string) (*mongoDriver.Database, error) {
+	if r.manager == nil {
+		return nil, fmt.Errorf("tenant MongoDB manager is required for streaming outbox")
+	}
+
+	return r.manager.GetDatabaseForTenant(ctx, tenantID)
+}
+
+type streamingOutboxRelayRegistrar interface {
+	RegisterOutboxRelay(*libOutbox.HandlerRegistry) error
+}
+
+func buildStreamingOutboxDispatcher(ctx context.Context, logger libLog.Logger, telemetry *libOtel.Telemetry, emitter streaming.Emitter, repo libOutbox.OutboxRepository) (*libOutbox.Dispatcher, error) {
+	registrar, ok := emitter.(streamingOutboxRelayRegistrar)
+	if !ok {
+		return nil, fmt.Errorf("streaming outbox relay registrar is required for mandatory job event replay")
+	}
+
+	if repo == nil {
+		return nil, fmt.Errorf("streaming outbox repository is required for mandatory job event replay")
+	}
+
+	if telemetry == nil {
+		return nil, fmt.Errorf("telemetry is required for streaming outbox dispatcher")
+	}
+
+	registry := libOutbox.NewHandlerRegistry()
+	if err := registrar.RegisterOutboxRelay(registry); err != nil {
+		logger.Log(ctx, libLog.LevelError, "failed to register streaming outbox relay", libLog.Err(err))
+		return nil, fmt.Errorf("register streaming outbox relay: %w", err)
+	}
+
+	dispatcher, err := libOutbox.NewDispatcher(repo, registry, logger, telemetry.TracerProvider.Tracer("fetcher.streaming.outbox"))
+	if err != nil {
+		logger.Log(ctx, libLog.LevelError, "failed to create streaming outbox dispatcher", libLog.Err(err))
+		return nil, fmt.Errorf("create streaming outbox dispatcher: %w", err)
+	}
+
+	return dispatcher, nil
 }
 
 // initObservability initializes the logger and telemetry pipeline.
@@ -407,6 +774,8 @@ func initObservability(cfg *Config) (libLog.Logger, *libOtel.Telemetry, error) {
 		return nil, nil, err
 	}
 
+	obsRuntime.InitPanicMetrics(telemetry.MetricsFactory, logger)
+
 	return logger, telemetry, nil
 }
 
@@ -425,6 +794,10 @@ func validateMultiTenantConfig(cfg *Config, logger libLog.Logger) error {
 
 		if cfg.MultiTenantRedisHost == "" {
 			return fmt.Errorf("MULTI_TENANT_REDIS_HOST is required when MULTI_TENANT_ENABLED=true (used for tenant event-driven discovery)")
+		}
+
+		if cfg.MultiTenantRedisCACert != "" {
+			return fmt.Errorf("MULTI_TENANT_REDIS_CA_CERT is deprecated and unsupported: tenant Pub/Sub Redis must use lib-commons canonical NewTenantPubSubRedisClient with system trust; install the CA in the runtime trust store or update lib-commons to support CA bundles")
 		}
 	} else {
 		logger.Log(context.Background(), libLog.LevelInfo, "Running in SINGLE-TENANT MODE")
@@ -579,16 +952,12 @@ func resolvedMaxTenantPools(cfg *Config) int {
 	return defaultMaxTenantPools
 }
 
-// initMultiTenantManagers creates the Tenant Manager client and MongoDB manager when
-// multi-tenant mode is enabled and configured. Returns (nil, nil) when multi-tenant is disabled.
-func initMultiTenantManagers(cfg *Config, logger libLog.Logger) (*tmmongo.Manager, *tmrabbitmq.Manager, error) {
+// initMultiTenantManagers builds the per-tenant MongoDB and RabbitMQ managers
+// over the single shared Tenant Manager client when multi-tenant mode is enabled
+// and configured. Returns (nil, nil) when multi-tenant is disabled.
+func initMultiTenantManagers(cfg *Config, logger libLog.Logger, tmClient *tmclient.Client) (*tmmongo.Manager, *tmrabbitmq.Manager) {
 	if !cfg.MultiTenantEnabled || cfg.MultiTenantURL == "" {
-		return nil, nil, nil
-	}
-
-	tmClient, err := initTenantManagerClient(cfg, logger)
-	if err != nil {
-		return nil, nil, err
+		return nil, nil
 	}
 
 	maxPools := resolvedMaxTenantPools(cfg)
@@ -597,7 +966,7 @@ func initMultiTenantManagers(cfg *Config, logger libLog.Logger) (*tmmongo.Manage
 	var mongoOpts []tmmongo.Option
 
 	mongoOpts = append(mongoOpts,
-		tmmongo.WithModule(constant.ModuleWorker),
+		tmmongo.WithModule(fetcherOperationalMongoModule()),
 		tmmongo.WithLogger(logger),
 		tmmongo.WithMaxTenantPools(maxPools),
 	)
@@ -632,9 +1001,18 @@ func initMultiTenantManagers(cfg *Config, logger libLog.Logger) (*tmmongo.Manage
 
 	rabbitManager := tmrabbitmq.NewManager(tmClient, constant.ApplicationName, rabbitOpts...)
 
-	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Multi-tenant managers initialized: url=%s, module=%s", cfg.MultiTenantURL, constant.ModuleWorker))
+	mtHost := "<redacted>"
+	if u, urlErr := url.Parse(cfg.MultiTenantURL); urlErr == nil && u.Host != "" {
+		mtHost = u.Scheme + "://" + u.Hostname()
+	}
 
-	return mongoManager, rabbitManager, nil
+	logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Multi-tenant managers initialized: url=%s, mongo_module=%s, rabbitmq_module=%s", mtHost, fetcherOperationalMongoModule(), constant.ModuleWorker))
+
+	return mongoManager, rabbitManager
+}
+
+func fetcherOperationalMongoModule() string {
+	return constant.ModuleFetcherOperationalState
 }
 
 // initMultiTenantStack creates the unified multi-tenant consumer stack:
@@ -646,14 +1024,12 @@ func initMultiTenantStack(
 	ctx context.Context,
 	cfg *Config,
 	logger libLog.Logger,
+	tmClient *tmclient.Client,
 	tenantMongoManager *tmmongo.Manager,
 	rabbitMQManager *tmrabbitmq.Manager,
-) (*tmconsumer.MultiTenantConsumer, *tmclient.Client, func(), error) {
-	// 1. Create shared Tenant Manager client
-	tmClient, err := initTenantManagerClient(cfg, logger)
-	if err != nil {
-		return nil, nil, nil, wrapBootstrapError("create tenant manager client for multi-tenant stack", err)
-	}
+) (*workerMultiTenantConsumer, func(), error) {
+	// 1. Use the single shared Tenant Manager client (created in InitWorker and
+	// owned by the Service); this stack never creates or closes a client of its own.
 
 	// 2. Create shared TenantCache and TenantLoader
 	var cacheTTL time.Duration
@@ -664,62 +1040,55 @@ func initMultiTenantStack(
 	tenantCache := tenantcache.NewTenantCache()
 	tenantLoader := tenantcache.NewTenantLoader(tmClient, tenantCache, constant.ApplicationName, cacheTTL, logger)
 
-	// 3. Create ONE EventDispatcher with infrastructure managers
-	var dispatcherOpts []tmevent.DispatcherOption
+	mtConsumer := newWorkerMultiTenantConsumer(workerMultiTenantConsumerConfig{
+		TenantClient:  tmClient,
+		TenantCache:   tenantCache,
+		TenantLoader:  tenantLoader,
+		RabbitMQ:      newRealWorkerTenantRabbitMQManager(rabbitMQManager),
+		Service:       constant.ApplicationName,
+		PrefetchCount: constant.DefaultPrefetchCount,
+		Logger:        logger,
+	})
 
-	dispatcherOpts = append(dispatcherOpts,
-		tmevent.WithDispatcherLogger(logger),
-		tmevent.WithCacheTTL(cacheTTL),
-	)
-
-	if tenantMongoManager != nil {
-		dispatcherOpts = append(dispatcherOpts, tmevent.WithMongo(tenantMongoManager))
-	}
-
-	if rabbitMQManager != nil {
-		dispatcherOpts = append(dispatcherOpts, tmevent.WithRabbitMQ(rabbitMQManager))
-	}
-
+	// 3. Create ONE EventDispatcher with callbacks that preserve the Ring-required
+	// removal ordering: stop tenant consumer first, close infrastructure pools second,
+	// then invalidate the Tenant Manager client cache.
 	dispatcher := tmevent.NewEventDispatcher(
 		tenantCache,
 		tenantLoader,
 		constant.ApplicationName,
-		dispatcherOpts...,
+		tmevent.WithDispatcherLogger(logger),
+		tmevent.WithCacheTTL(cacheTTL),
+		tmevent.WithTenantOwnershipChecker(mtConsumer.OwnsTenant),
+		tmevent.WithOnTenantAdded(func(eventCtx context.Context, tenantID string) {
+			if invalidateErr := tmClient.InvalidateConfig(eventCtx, tenantID, constant.ApplicationName); invalidateErr != nil {
+				logger.Log(eventCtx, libLog.LevelWarn, "failed to invalidate tenant-manager cache before starting worker consumer", libLog.String("tenant_id", tenantID), libLog.Err(invalidateErr))
+			}
+
+			mtConsumer.markTenantKnown(tenantID)
+			mtConsumer.EnsureConsumerStarted(eventCtx, tenantID)
+		}),
+		tmevent.WithOnTenantRemoved(func(eventCtx context.Context, tenantID string) {
+			mtConsumer.StopConsumer(tenantID)
+
+			if tenantMongoManager != nil {
+				if closeErr := tenantMongoManager.CloseConnection(eventCtx, tenantID); closeErr != nil {
+					logger.Log(eventCtx, libLog.LevelWarn, "failed to close tenant MongoDB connection", libLog.String("tenant_id", tenantID), libLog.Err(closeErr))
+				}
+			}
+
+			if rabbitMQManager != nil {
+				if closeErr := rabbitMQManager.CloseConnection(eventCtx, tenantID); closeErr != nil {
+					logger.Log(eventCtx, libLog.LevelWarn, "failed to close tenant RabbitMQ connection", libLog.String("tenant_id", tenantID), libLog.Err(closeErr))
+				}
+			}
+
+			if invalidateErr := tmClient.InvalidateConfig(eventCtx, tenantID, constant.ApplicationName); invalidateErr != nil {
+				logger.Log(eventCtx, libLog.LevelWarn, "failed to invalidate tenant-manager cache after stopping worker consumer", libLog.String("tenant_id", tenantID), libLog.Err(invalidateErr))
+			}
+		}),
 	)
-
-	// 4. Create MultiTenantConsumer with the shared dispatcher injected.
-	// The consumer's constructor calls wireDispatcherCallbacks() which wires:
-	//   - onTenantAdded  -> knownTenants + EnsureConsumerStarted
-	//   - onTenantRemoved -> cancel goroutine + remove from knownTenants
-	//   - cache sync (consumer uses same cache as dispatcher)
-	mtConfig := tmconsumer.DefaultMultiTenantConfig()
-	mtConfig.Service = constant.ApplicationName
-	mtConfig.Environment = cfg.EnvName
-	mtConfig.MultiTenantURL = cfg.MultiTenantURL
-	mtConfig.ServiceAPIKey = cfg.MultiTenantServiceAPIKey
-	mtConfig.PrefetchCount = constant.DefaultPrefetchCount
-	mtConfig.AllowInsecureHTTP = cfg.MultiTenantAllowInsecureHTTP
-
-	var consumerOpts []tmconsumer.Option
-
-	if rabbitMQManager != nil {
-		consumerOpts = append(consumerOpts, tmconsumer.WithRabbitMQ(rabbitMQManager))
-	}
-
-	consumerOpts = append(consumerOpts, tmconsumer.WithEventDispatcher(dispatcher))
-
-	if tenantMongoManager != nil {
-		consumerOpts = append(consumerOpts, tmconsumer.WithMongoManager(tenantMongoManager))
-	}
-
-	mtConsumer, err := tmconsumer.NewMultiTenantConsumerWithError(
-		mtConfig,
-		logger,
-		consumerOpts...,
-	)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("create multi-tenant consumer: %w", err)
-	}
+	mtConsumer.dispatcher = dispatcher
 
 	// 5. Wire restart recovery: when TenantLoader lazy-loads a tenant from the API
 	// (e.g., on cache miss after restart), also ensure a consumer goroutine is started.
@@ -727,7 +1096,7 @@ func initMultiTenantStack(
 		mtConsumer.EnsureConsumerStarted(loadCtx, tenantID)
 	})
 
-	logger.Log(ctx, libLog.LevelInfo, "MultiTenantConsumer initialized with shared EventDispatcher and per-tenant vhost isolation")
+	logger.Log(ctx, libLog.LevelInfo, "Worker multi-tenant consumer initialized with shared EventDispatcher, per-tenant vhost isolation, and circuit-breaker Tenant Manager client")
 
 	// 6. Create TenantEventListener (Redis Pub/Sub -> dispatcher.HandleEvent)
 	var listenerCleanup func()
@@ -737,32 +1106,15 @@ func initMultiTenantStack(
 		redisPort = "6379"
 	}
 
-	redisOpts := &redis.Options{
-		Addr:     net.JoinHostPort(cfg.MultiTenantRedisHost, redisPort),
+	redisClient, err := tmredis.NewTenantPubSubRedisClient(ctx, tmredis.TenantPubSubRedisConfig{
+		Host:     cfg.MultiTenantRedisHost,
+		Port:     redisPort,
 		Password: cfg.MultiTenantRedisPassword,
+		TLS:      cfg.MultiTenantRedisTLS,
+	})
+	if err != nil {
+		return nil, nil, wrapBootstrapError("create worker tenant Pub/Sub Redis client", err)
 	}
-
-	if cfg.MultiTenantRedisTLS {
-		tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
-
-		if cfg.MultiTenantRedisCACert != "" {
-			caCert, err := base64.StdEncoding.DecodeString(cfg.MultiTenantRedisCACert)
-			if err != nil {
-				return nil, nil, nil, fmt.Errorf("failed to decode multi-tenant Redis CA certificate: %w", err)
-			}
-
-			pool := x509.NewCertPool()
-			if !pool.AppendCertsFromPEM(caCert) {
-				return nil, nil, nil, fmt.Errorf("failed to parse multi-tenant Redis CA certificate")
-			}
-
-			tlsCfg.RootCAs = pool
-		}
-
-		redisOpts.TLSConfig = tlsCfg
-	}
-
-	redisClient := redis.NewClient(redisOpts)
 
 	listener, listenerErr := tmevent.NewTenantEventListener(
 		redisClient,
@@ -771,11 +1123,11 @@ func initMultiTenantStack(
 		tmevent.WithService(constant.ApplicationName),
 	)
 	if listenerErr != nil {
-		return nil, nil, nil, wrapBootstrapError("create worker tenant event listener", listenerErr)
+		return nil, nil, wrapBootstrapError("create worker tenant event listener", listenerErr)
 	}
 
 	if startErr := listener.Start(context.Background()); startErr != nil {
-		return nil, nil, nil, wrapBootstrapError("start worker tenant event listener", startErr)
+		return nil, nil, wrapBootstrapError("start worker tenant event listener", startErr)
 	}
 
 	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Worker multi-tenant event listener started: redis=%s", net.JoinHostPort(cfg.MultiTenantRedisHost, redisPort)))
@@ -796,7 +1148,7 @@ func initMultiTenantStack(
 	// Note: mtConsumer.Close() is handled by MultiQueueConsumer.Run() on context cancellation.
 	cleanup := listenerCleanup
 
-	return mtConsumer, tmClient, cleanup, nil
+	return mtConsumer, cleanup, nil
 }
 
 // performInitialTenantSync fetches all active tenants from the Tenant Manager API
@@ -807,7 +1159,7 @@ func performInitialTenantSync(
 	ctx context.Context,
 	logger libLog.Logger,
 	tmClient *tmclient.Client,
-	mtConsumer *tmconsumer.MultiTenantConsumer,
+	mtConsumer interface{ EnsureConsumerStarted(context.Context, string) },
 ) {
 	if tmClient == nil {
 		logger.Log(ctx, libLog.LevelWarn,

@@ -6,7 +6,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/LerianStudio/fetcher/pkg/storage"
+	"github.com/LerianStudio/fetcher/v2/pkg/storage"
 )
 
 // FuzzNewRepository_Provider verifies that NewRepository never panics with

@@ -6,7 +6,7 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/LerianStudio/fetcher/pkg"
+	"github.com/LerianStudio/fetcher/v2/pkg"
 )
 
 // isNonRetryableHandlerError classifies whether a handler error is permanent

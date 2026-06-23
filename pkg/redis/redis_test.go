@@ -2,6 +2,8 @@ package redis
 
 import (
 	"encoding/base64"
+	"log"
+	"os"
 	"testing"
 	"time"
 
@@ -10,6 +12,17 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// TestMain opts into ALLOW_INSECURE_TLS for the package. These tests connect to
+// an ephemeral plaintext miniredis instance, and lib-commons v5.5.0 fail-closes
+// on non-TLS Redis URIs unless this override is set.
+func TestMain(m *testing.M) {
+	if err := os.Setenv("ALLOW_INSECURE_TLS", "true"); err != nil {
+		log.Fatalf("failed to set ALLOW_INSECURE_TLS: %v", err)
+	}
+
+	os.Exit(m.Run())
+}
 
 func TestRedisConfig_WithDefaults(t *testing.T) {
 	tests := []struct {

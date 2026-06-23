@@ -4,12 +4,13 @@ import (
 	"context"
 	"fmt"
 
-	portStorage "github.com/LerianStudio/fetcher/pkg/ports/storage"
-	"github.com/LerianStudio/fetcher/pkg/seaweedfs"
-	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
+	"github.com/LerianStudio/lib-observability"
+
+	portStorage "github.com/LerianStudio/fetcher/v2/pkg/ports/storage"
+	"github.com/LerianStudio/fetcher/v2/pkg/seaweedfs"
 	tms3 "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/s3"
+	libLog "github.com/LerianStudio/lib-observability/log"
+	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -34,7 +35,7 @@ func NewSimpleRepository(client seaweedfs.Client, bucket string) *SimpleReposito
 // Get the content of an external JSON file from the SeaweedFS storage.
 // A .json extension is appended to the objectName for retrieval.
 func (repo *SimpleRepository) Get(ctx context.Context, objectName string) ([]byte, error) {
-	_, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
+	_, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "seaweedfs.external_data.get")
 	defer span.End()
@@ -67,7 +68,7 @@ func (repo *SimpleRepository) Get(ctx context.Context, objectName string) ([]byt
 
 // Put uploads data to the SeaweedFS storage with the given object name and content type.
 func (repo *SimpleRepository) Put(ctx context.Context, objectName string, data []byte) error {
-	logger, tracer, reqID, _ := libCommons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "seaweedfs.external_data.put")
 	defer span.End()

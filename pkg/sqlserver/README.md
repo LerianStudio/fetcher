@@ -306,9 +306,15 @@ graph TD
 ```mermaid
 graph TB
     subgraph "Consumers"
-        Worker[components/worker/services/extract-data.go]
+        Worker[components/worker UseCase<br/>extractViaEngine]
         TestConn[components/manager/services/query/test_connection.go]
         ValidateSchema[components/manager/services/query/validate_schema.go]
+    end
+
+    subgraph "Runtime Engine"
+        Engine[pkg/engine<br/>PlanExtraction + ExecuteExtraction]
+        EngineCompat[pkg/enginecompat/datasource<br/>ConnectorFactory]
+        SchemaCompat[pkg/enginecompat/schemacompat]
     end
 
     subgraph "SQL Server Package"
@@ -328,9 +334,12 @@ graph TB
         Crypto[pkg/crypto]
     end
 
-    Worker -->|uses| DSFactory
+    Worker -->|RunExtraction| Engine
     TestConn -->|uses| DSFactory
-    ValidateSchema -->|uses| DSFactory
+    ValidateSchema -->|via| SchemaCompat
+    Engine -->|Connector port| EngineCompat
+    SchemaCompat -->|schema engine| Engine
+    EngineCompat -->|uses| DSFactory
 
     DSFactory -->|creates| ModelSQLSrv
     DSFactory -->|validates| SSLMode
@@ -350,9 +359,9 @@ graph TB
 ### Packages That Depend on This Datasource
 | Package | File | Usage |
 |---------|------|-------|
-| `components/worker` | `extract-data.go:354` | Data extraction jobs |
+| `pkg/engine` (via `pkg/enginecompat/datasource`) | `adapter.go` | Generic data extraction jobs (worker `UseCase.extractViaEngine` → `EngineRunner.RunExtraction` → engine `Connector` port → factory) |
 | `components/manager` | `test_connection.go:113` | Connection testing |
-| `components/manager` | `validate_schema.go:198` | Schema validation |
+| `components/manager` (via `pkg/enginecompat/schemacompat`) | `validate_schema.go:198` | Schema validation / discovery |
 
 ## Error Handling
 

@@ -25,10 +25,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/LerianStudio/fetcher/pkg/itestkit"
-	"github.com/LerianStudio/fetcher/pkg/itestkit/addons/e2ekit"
-	"github.com/LerianStudio/fetcher/pkg/itestkit/infra/postgres"
-	e2eshared "github.com/LerianStudio/fetcher/tests/shared"
+	"github.com/LerianStudio/fetcher/v2/pkg/itestkit"
+	"github.com/LerianStudio/fetcher/v2/pkg/itestkit/addons/e2ekit"
+	"github.com/LerianStudio/fetcher/v2/pkg/itestkit/infra/postgres"
+	e2eshared "github.com/LerianStudio/fetcher/v2/tests/shared"
 )
 
 // Package-level variables hold the test infrastructure.

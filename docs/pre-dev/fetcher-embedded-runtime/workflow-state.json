@@ -1,0 +1,52 @@
+{
+  "feature": "fetcher-embedded-runtime",
+  "track": "Full",
+  "executionMode": "automatic_until_gate_8",
+  "scopeCovered": "Gates 0-8 only",
+  "updatedAt": "2026-05-21",
+  "topology": {
+    "repository": "/Users/fredamaral/repos/lerianstudio/fetcher",
+    "module": "github.com/LerianStudio/fetcher",
+    "currentShape": "Manager HTTP API plus Worker RabbitMQ consumer",
+    "targetShape": "Importable Fetcher Engine with current Manager and Worker retained as optional compatibility adapters",
+    "sourceOfTruth": "go.mod for Go toolchain version; docs/PROJECT_RULES.md for architecture rules unless a dev-cycle reconciliation task updates it"
+  },
+  "inputs": {
+    "rootPrd": "PRD.md",
+    "ui": "none",
+    "authDetected": true,
+    "authBoundary": "Engine core keeps auth outside; current Manager adapter keeps lib-auth middleware",
+    "licenseDetected": true,
+    "licenseBoundary": "Engine core keeps license outside; current app adapters keep lib-license middleware",
+    "deploymentModel": "hybrid/cloud/on-prem/self-hosted",
+    "apiStandards": "camelCase embedded contracts; current API already uses JSON-style camelCase",
+    "dbNaming": "logical field names in docs; persistence adapters follow backing-store conventions"
+  },
+  "gates": {
+    "0_research": "COMPLETED",
+    "1_prd": "COMPLETED",
+    "1_5_design_validation": "SKIP",
+    "2_feature_map": "COMPLETED",
+    "2_5_design_validation": "SKIP",
+    "3_trd": "COMPLETED",
+    "4_api_design": "COMPLETED",
+    "5_data_model": "COMPLETED",
+    "6_dependency_map": "COMPLETED",
+    "7_task_breakdown": "COMPLETED",
+    "8_subtask_creation": "COMPLETED",
+    "9_delivery_planning": "NOT_REQUESTED"
+  },
+  "decisions": [
+    "Treat the work as a strangler extraction, not greenfield development.",
+    "Create an importable Engine composition root from reusable service internals.",
+    "Keep operational shell concerns in host apps and compatibility adapters.",
+    "Do not make RabbitMQ, MongoDB, Redis, Fiber, Docker Compose, KEDA, S3, or SeaweedFS mandatory Engine core dependencies.",
+    "Reference existing docs/PROJECT_RULES.md as the architecture source of truth; do not overwrite it.",
+    "Use pkg/engine as the importable Engine core package and keep optional compatibility wrappers outside core under pkg/enginecompat/*.",
+    "Use go.mod as the Go toolchain source of truth. It declares Go 1.25.9, and dev-cycle must reconcile docs or tooling before code implementation starts without this pre-dev pass modifying docs/PROJECT_RULES.md.",
+    "Preserve plugin_crm as adapter-level compatibility behavior for the first Engine release only. Do not promote plugin_crm into a generic Engine core extension yet."
+  ],
+  "openFollowUps": [
+    "Gate 9 delivery planning was not requested and remains NOT_REQUESTED."
+  ]
+}

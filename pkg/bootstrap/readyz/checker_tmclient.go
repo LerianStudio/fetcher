@@ -2,34 +2,31 @@ package readyz
 
 import (
 	"context"
-	"errors"
-	"time"
 
 	tmclient "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/client"
-	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
 )
 
-// TMClient is the narrow Tenant-Manager-client surface used both by the
-// readiness checker and the per-tenant handler's tenant-existence
-// validation. *tmclient.Client satisfies it; tests inject a fake.
-//
-// GetActiveTenantsByService is the same call used by the worker's
-// initial-tenant-sync on startup; reusing it here exercises cache warming
-// in both codepaths.
+// TMClient is the narrow Tenant-Manager-client surface used by the
+// per-tenant handler's tenant-existence validation. *tmclient.Client
+// satisfies it; tests inject a fake. The readiness checker holds a value of
+// this type only to nil-check that the client is configured — it no longer
+// calls GetActiveTenantsByService on the probe path.
 type TMClient interface {
 	GetActiveTenantsByService(ctx context.Context, service string) ([]*tmclient.TenantSummary, error)
 }
 
-// TenantManagerClientChecker probes the Tenant Manager HTTP service. The
-// underlying client's circuit breaker has no exported State(), so the
-// checker uses a probe-and-catch model: it issues the call and, if the
-// error chain contains tmcore.ErrCircuitBreakerOpen, reports breaker=open.
-// When enabled=false the checker reports "skipped" rather than being
-// omitted, so operators can distinguish "unused" from "not wired".
+// TenantManagerClientChecker reports whether the Tenant Manager client is
+// configured. It deliberately does NOT issue a live call to the Tenant
+// Manager on every probe: the underlying client already has its own circuit
+// breaker and caches active tenants on the request path, so gating pod
+// readiness on a live TM call would let a transient TM blip flap /readyz and
+// evict pods that are otherwise serving fine. /readyz therefore only answers
+// "is the client wired?" — enabled=false → skipped, nil client → down,
+// configured client → up. Liveness of TM itself is the breaker's concern.
 type TenantManagerClientChecker struct {
 	name    string
 	client  TMClient
-	service string
+	service string // retained for the stable constructor signature; not read by the nil-check probe
 	url     string
 	enabled bool
 }
@@ -49,7 +46,7 @@ func NewTenantManagerClientChecker(client TMClient, service, url string, enabled
 
 func (c *TenantManagerClientChecker) Name() string { return c.name }
 
-func (c *TenantManagerClientChecker) Check(ctx context.Context) DependencyCheck {
+func (c *TenantManagerClientChecker) Check(_ context.Context) DependencyCheck {
 	tlsOn := tlsOrFalse(detectHTTPUpstreamTLS(c.url))
 
 	if !c.enabled {
@@ -68,34 +65,8 @@ func (c *TenantManagerClientChecker) Check(ctx context.Context) DependencyCheck 
 		}
 	}
 
-	start := time.Now()
-	_, err := c.client.GetActiveTenantsByService(ctx, c.service)
-	elapsed := time.Since(start)
-
-	if err == nil {
-		return DependencyCheck{
-			Status:       StatusUp,
-			LatencyMs:    elapsed.Milliseconds(),
-			TLS:          TLSPtr(tlsOn),
-			BreakerState: BreakerClosed.String(),
-		}
-	}
-
-	if errors.Is(err, tmcore.ErrCircuitBreakerOpen) {
-		return DependencyCheck{
-			Status:       StatusDown,
-			LatencyMs:    elapsed.Milliseconds(),
-			TLS:          TLSPtr(tlsOn),
-			Error:        "circuit breaker open",
-			BreakerState: BreakerOpen.String(),
-		}
-	}
-
 	return DependencyCheck{
-		Status:       StatusDown,
-		LatencyMs:    elapsed.Milliseconds(),
-		TLS:          TLSPtr(tlsOn),
-		Error:        classifyErr(ctx, err),
-		BreakerState: BreakerClosed.String(),
+		Status: StatusUp,
+		TLS:    TLSPtr(tlsOn),
 	}
 }

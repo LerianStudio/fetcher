@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/LerianStudio/fetcher/pkg/model"
-	"github.com/LerianStudio/fetcher/pkg/net/http"
-	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	"github.com/LerianStudio/fetcher/v2/pkg/net/http"
+	connRepo "github.com/LerianStudio/fetcher/v2/pkg/ports/connection"
 
 	"github.com/google/uuid"
 	"go.uber.org/mock/gomock"

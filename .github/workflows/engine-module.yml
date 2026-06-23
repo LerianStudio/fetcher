@@ -1,0 +1,127 @@
+name: "Engine Module"
+
+# Verifies the standalone engine module (github.com/LerianStudio/fetcher/pkg/engine).
+# The shared go-pr-analysis workflow filters to components/* only, so the engine module
+# would otherwise be uncovered. Everything here is self-contained (the engine has zero
+# third-party deps), so no private-module token is required. The parent GOWORK=off
+# require-resolution gate runs in the release prepare hook (scripts/release/engine-release.mjs),
+# which executes with org secrets — see docs/RELEASING.md.
+
+on:
+  pull_request:
+    branches:
+      - develop
+      - release-candidate
+      - main
+    paths:
+      - 'pkg/engine/**'
+      - 'go.mod'
+      - 'go.work'
+      - 'scripts/release/**'
+      - '.releaserc.yml'
+      - '.github/workflows/engine-module.yml'
+  push:
+    branches:
+      - develop
+      - main
+
+# Auto-cancel superseded runs when rapid pushes land on the same PR/branch.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: "1.26.4"
+
+jobs:
+  engine-tests:
+    name: Engine module build + test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: pkg/engine/go.mod
+      - name: Build engine module
+        working-directory: pkg/engine
+        env:
+          GOWORK: "off"
+        run: go build ./...
+      - name: Test engine module (incl. dependency boundary + leak guard)
+        working-directory: pkg/engine
+        env:
+          GOWORK: "off"
+        run: go test ./...
+      - name: Assert engine require block is empty (zero third-party)
+        working-directory: pkg/engine
+        run: |
+          if grep -qE '^\s*require' go.mod; then
+            echo "::error::pkg/engine/go.mod has a require block — the engine must stay third-party-free."
+            grep -nE 'require' go.mod
+            exit 1
+          fi
+          echo "engine go.mod require block is empty — OK"
+
+  engine-lint:
+    name: Engine module lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: pkg/engine/go.mod
+      - uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.6.2
+          # Build golangci-lint from source with the runner's Go 1.26.4 toolchain. The
+          # prebuilt v2.6.2 binary is built with go1.25 and refuses a go.mod targeting 1.26.4.
+          install-mode: goinstall
+          working-directory: pkg/engine
+          args: --timeout=5m
+
+  consumer-smoke:
+    name: Consumer smoke (zero third-party proof)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: Build a scratch consumer and assert zero third-party deps
+        run: bash scripts/release/smoke-consumer.sh --local
+
+  release-logic:
+    name: Release version logic tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Unit-test the engine version computation
+        run: node --test scripts/release/engine-release.test.mjs
+
+  parent-gomod-hygiene:
+    name: Parent go.mod hygiene (no engine replace)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The committed parent go.mod must never carry a replace for the engine module.
+      # Local/in-repo dev resolves the engine via go.work; external consumers resolve it
+      # via the require + the published pkg/engine tag. A committed `=> ./pkg/engine`
+      # replace masks the require: GOWORK=off resolves locally and the require pin is
+      # never exercised — exactly how a dangling require shipped undetected. Fail at PR
+      # time, independent of whether the release prepare hook ever runs.
+      #
+      # The regex matches any replace line whose left side is the engine module,
+      # covering single-line and block form, with or without a version constraint
+      # (`pkg/engine => ...` and `pkg/engine v1.2.3 => ...`); `[^=]*` stops at the `=>`.
+      - name: Reject a committed replace pointing at the local engine
+        run: |
+          if grep -nE 'LerianStudio/fetcher/pkg/engine[^=]*=>' go.mod; then
+            echo "::error file=go.mod::Root go.mod must not carry a replace for pkg/engine. Local dev uses go.work; external resolution uses the require + published tag. Remove the replace (shown above)."
+            exit 1
+          fi
+          echo "root go.mod carries no engine replace — OK"
