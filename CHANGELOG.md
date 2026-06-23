@@ -1,5 +1,19 @@
 # Fetcher Changelog
 
+## [2.0.2](https://github.com/LerianStudio/fetcher/releases/tag/v2.0.2)
+
+- Changelog for `fetcher` `v2.0.2`:
+
+Fixes:
+- Promote engine release channel fix to stable.
+- Ensure engine release channel follows the parent prerelease.
+
+Contributors: @fredcamaral, @lerian-studio
+
+[Compare changes](https://github.com/LerianStudio/fetcher/compare/v2.0.1...v2.0.2)
+
+---
+
 ## [2.0.1](https://github.com/LerianStudio/fetcher/releases/tag/v2.0.1)
 
 - Updated `fetcher` to `v2.0.1`.
