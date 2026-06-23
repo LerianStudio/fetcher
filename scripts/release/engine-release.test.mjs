@@ -10,6 +10,7 @@ import {
   computeNextVersion,
   compareSemver,
   parseSemver,
+  resolveChannel,
   engineReplaces,
   assertEngineWiring,
 } from './engine-release.mjs';
@@ -91,6 +92,36 @@ test('assertEngineWiring rejects a require that does not match the cut tag (the 
 
 test('assertEngineWiring rejects a missing engine require', () => {
   assert.throws(() => assertEngineWiring({ Require: [] }, '1.0.0'), /missing a require/);
+});
+
+test('resolveChannel derives the channel from the parent version (the real release path)', () => {
+  assert.equal(resolveChannel({ 'parent-version': '2.0.1-beta.1' }), 'beta');
+  assert.equal(resolveChannel({ 'parent-version': '2.0.1-rc.3' }), 'rc');
+  assert.equal(resolveChannel({ 'parent-version': '2.0.1' }), '');
+});
+
+test('resolveChannel: parent version wins over --channel — ${nextRelease.channel} is ignored', () => {
+  // The exact regression this guards: on develop, semantic-release passes
+  // --channel <empty/null> (develop sets `prerelease:`, not `channel:`), while
+  // --parent-version is "2.x.x-beta.N". The engine MUST follow the parent's prerelease,
+  // not the empty dist channel — otherwise a beta parent mints a STABLE engine tag.
+  assert.equal(resolveChannel({ 'parent-version': '2.0.1-beta.1', channel: 'null' }), 'beta');
+  assert.equal(resolveChannel({ 'parent-version': '2.0.1-beta.1', channel: '' }), 'beta');
+  assert.equal(resolveChannel({ 'parent-version': '2.0.1-rc.1', channel: 'true' }), 'rc');
+});
+
+test('resolveChannel falls back to --channel for the standalone compute dry-run', () => {
+  // `compute --channel beta` (docs/RELEASING.md) is invoked WITHOUT a parent version.
+  assert.equal(resolveChannel({ channel: 'beta' }), 'beta');
+  assert.equal(resolveChannel({ channel: 'rc' }), 'rc');
+  assert.equal(resolveChannel({ channel: 'null' }), '');
+  assert.equal(resolveChannel({ channel: 'true' }), '');
+  assert.equal(resolveChannel({}), '');
+});
+
+test('resolveChannel: unparseable parent version falls back to --channel', () => {
+  assert.equal(resolveChannel({ 'parent-version': 'not-a-version', channel: 'beta' }), 'beta');
+  assert.equal(resolveChannel({ 'parent-version': 'true', channel: 'rc' }), 'rc');
 });
 
 test('compareSemver orders prerelease below stable and by counter', () => {
