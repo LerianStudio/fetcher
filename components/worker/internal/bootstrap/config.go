@@ -33,7 +33,6 @@ import (
 	tmrabbitmq "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/rabbitmq"
 	tmredis "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/redis"
 	"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/tenantcache"
-	libLicense "github.com/LerianStudio/lib-license-go/v2/middleware"
 	libLog "github.com/LerianStudio/lib-observability/log"
 	obsRuntime "github.com/LerianStudio/lib-observability/runtime"
 	libOtel "github.com/LerianStudio/lib-observability/tracing"
@@ -101,9 +100,6 @@ type Config struct {
 	MongoDBParameters string `env:"MONGO_PARAMETERS"`
 	MongoTLSCACert    string `env:"MONGO_TLS_CA_CERT"`
 	MaxPoolSize       int    `env:"MONGO_MAX_POOL_SIZE"`
-	// License configuration envs
-	LicenseKey      string `env:"LICENSE_KEY"`
-	OrganizationIDs string `env:"ORGANIZATION_IDS"`
 	// Encryption
 	AppEncryptionKey        string `env:"APP_ENC_KEY"`
 	AppEncryptionKeyVersion string `env:"APP_ENC_KEY_VERSION"`
@@ -274,28 +270,10 @@ func InitWorker() (*Service, error) {
 
 	logFileTTL(logger, cfg)
 
-	licenseLoggerV4, licenseLogErr := libZap.New(libZap.Config{
-		Environment:     resolveZapEnvironment(cfg.EnvName),
-		Level:           cfg.LogLevel,
-		OTelLibraryName: constant.ApplicationName + "-license",
-	})
-	if licenseLogErr != nil {
-		return nil, wrapBootstrapError("initialize license logger", licenseLogErr)
-	}
-
-	var licenseLogger libLog.Logger = licenseLoggerV4
-
-	licenseClient := libLicense.NewLicenseClient(
-		constant.ApplicationName,
-		cfg.LicenseKey,
-		cfg.OrganizationIDs,
-		&licenseLogger,
-	)
-
 	// Branch: multi-tenant mode uses the worker multi-tenant consumer with per-tenant vhosts
 	// Single-tenant mode uses existing ConsumerRoutes with static RabbitMQ connection
 	if multiTenant {
-		mtService, mtErr := initMultiTenantWorkerService(ctx, cfg, logger, telemetry, service, mongoConnection, storageRepository, mongoManager, rabbitMQManager, repositories.streamingOutboxRepo, sharedTMClient, cryptoWithExternalHMAC, keyDeriver, licenseClient)
+		mtService, mtErr := initMultiTenantWorkerService(ctx, cfg, logger, telemetry, service, mongoConnection, storageRepository, mongoManager, rabbitMQManager, repositories.streamingOutboxRepo, sharedTMClient, cryptoWithExternalHMAC, keyDeriver)
 		if mtErr != nil {
 			return nil, mtErr
 		}
@@ -306,7 +284,7 @@ func InitWorker() (*Service, error) {
 		return mtService, nil
 	}
 
-	return initSingleTenantWorkerService(ctx, cfg, logger, telemetry, service, mongoConnection, storageRepository, mongoManager, repositories.streamingOutboxRepo, keyDeriver, cryptoWithExternalHMAC, licenseClient)
+	return initSingleTenantWorkerService(ctx, cfg, logger, telemetry, service, mongoConnection, storageRepository, mongoManager, repositories.streamingOutboxRepo, keyDeriver, cryptoWithExternalHMAC)
 }
 
 // initSingleTenantWorkerService assembles the single-tenant worker Service:
@@ -325,7 +303,6 @@ func initSingleTenantWorkerService(
 	streamingOutboxRepo libOutbox.OutboxRepository,
 	keyDeriver *crypto.HKDFKeyDeriver,
 	cryptoWithExternalHMAC *crypto.HMACSigner,
-	licenseClient *libLicense.LicenseClient,
 ) (*Service, error) {
 	multiQueueConsumer, consumerRoutes, err := initSingleTenantRabbitMQ(cfg, logger, telemetry, keyDeriver, cryptoWithExternalHMAC, service, mongoManager, streamingOutboxRepo)
 	if err != nil {
@@ -344,7 +321,6 @@ func initSingleTenantWorkerService(
 	return &Service{
 		MultiQueueConsumer: multiQueueConsumer,
 		Logger:             logger,
-		licenseShutdown:    licenseClient.GetLicenseManagerShutdown(),
 		healthServer:       NewHealthServer(cfg, logger, telemetry, readyzDeps),
 		readyzCloser:       readyzDeps.close,
 		streamingCloser:    service.JobEventEmitter.Close,
@@ -397,7 +373,6 @@ func initMultiTenantWorkerService(
 	sharedTMClient *tmclient.Client,
 	cryptoWithExternalHMAC *crypto.HMACSigner,
 	keyDeriver *crypto.HKDFKeyDeriver,
-	licenseClient *libLicense.LicenseClient,
 ) (*Service, error) {
 	messageVerifier, err := crypto.NewHMACSigner(keyDeriver.GetInternalHMACKey(), crypto.SignatureVersion)
 	if err != nil {
@@ -448,7 +423,6 @@ func initMultiTenantWorkerService(
 	return &Service{
 		MultiQueueConsumer: multiQueueConsumer,
 		Logger:             logger,
-		licenseShutdown:    licenseClient.GetLicenseManagerShutdown(),
 		mtCleanup:          mtCleanup,
 		healthServer:       NewHealthServer(cfg, logger, telemetry, readyzDeps),
 		readyzCloser:       readyzDeps.close,

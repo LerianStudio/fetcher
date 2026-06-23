@@ -15,7 +15,7 @@ Fetcher is a **data extraction platform** built with Go following **Hexagonal Ar
 | **Primary Database** | MongoDB | Latest |
 | **File Storage** | SeaweedFS (default) / S3-compatible | SeaweedFS 3.97 / AWS SDK v2 |
 | **Observability** | OpenTelemetry | v1.39.0 |
-| **Auth / License** | lib-auth / lib-license-go | v2.8.0 / v2.3.5 (license fail-closed off `local`) |
+| **Auth** | lib-auth | v2.8.0 |
 | **API Documentation** | Swagger/Swaggo | v1.16.6 |
 
 ### Supported External Databases
