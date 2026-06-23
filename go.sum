@@ -31,8 +31,8 @@ github.com/DATA-DOG/go-sqlmock v1.5.2 h1:OcvFkGmslmlZibjAjaHm3L//6LiuBgolP7Oputl
 github.com/DATA-DOG/go-sqlmock v1.5.2/go.mod h1:88MAG/4G7SMwSE3CeA0ZKzrT5CiOU3OJ+JlNzwDqpNU=
 github.com/KyleBanks/depth v1.2.1 h1:5h8fQADFrWtarTdtDudMmGsC7GPbOAu6RVB3ffsVFHc=
 github.com/KyleBanks/depth v1.2.1/go.mod h1:jzSb9d0L43HxTQfT+oSA1EEp2q+ne2uh6XgeJcm8brE=
-github.com/LerianStudio/fetcher/pkg/engine v1.0.9 h1:CmGu50LZ4PL1Y+Xrl7Ln8RohKJsVyT2Bqn3JxCO9c74=
-github.com/LerianStudio/fetcher/pkg/engine v1.0.9/go.mod h1:oFzSnAPKvPNPckMLdiZaTVFkJlDl5zXR7RdmwuAvWw8=
+github.com/LerianStudio/fetcher/pkg/engine v1.0.10 h1:9MM8m5DofJkXxUd/7RhxubY9ak9Gwxj4X+k+AvpUCxU=
+github.com/LerianStudio/fetcher/pkg/engine v1.0.10/go.mod h1:oFzSnAPKvPNPckMLdiZaTVFkJlDl5zXR7RdmwuAvWw8=
 github.com/LerianStudio/lib-auth/v2 v2.8.1 h1:Qaq5z8DeyEgptTKF1wUA9n1t0bItqhGmAEIMlZvV9Ow=
 github.com/LerianStudio/lib-auth/v2 v2.8.1/go.mod h1:rRMBaO19OYcNLxXULTQm+uj49/lpf9BU4TAQyvgvTJk=
 github.com/LerianStudio/lib-commons/v5 v5.8.0 h1:u0AK2HbbP3l4B+MxZOBBmnEF9bk6HHDjq6JYTXKZHyE=
