@@ -10,7 +10,6 @@ import (
 	"github.com/LerianStudio/fetcher/v2/pkg/bootstrap/readyz"
 	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
 	libCommonsServer "github.com/LerianStudio/lib-commons/v5/commons/server"
-	libLicense "github.com/LerianStudio/lib-license-go/v2/middleware"
 	libCommonsLog "github.com/LerianStudio/lib-observability/log"
 	libCommonsOtel "github.com/LerianStudio/lib-observability/tracing"
 	"github.com/gofiber/fiber/v2"
@@ -20,15 +19,10 @@ import (
 // channel without racing the real signal handler.
 var serverNotifySignals = signal.Notify
 
-type licenseTerminator interface {
-	Terminate(msg string)
-}
-
 // Server represents the http server for Ledger services.
 type Server struct {
 	app           *fiber.App
 	serverAddress string
-	license       licenseTerminator
 	logger        libCommonsLog.Logger
 	telemetry     libCommonsOtel.Telemetry
 	shutdownHooks []func(context.Context) error
@@ -42,11 +36,10 @@ func (s *Server) ServerAddress() string {
 
 // NewServer creates an instance of Server.
 // Optional shutdownHooks are registered with the server manager and executed during graceful shutdown.
-func NewServer(cfg *Config, app *fiber.App, logger libCommonsLog.Logger, telemetry *libCommonsOtel.Telemetry, licenseClient *libLicense.LicenseClient, shutdownHooks ...func(context.Context) error) *Server {
+func NewServer(cfg *Config, app *fiber.App, logger libCommonsLog.Logger, telemetry *libCommonsOtel.Telemetry, shutdownHooks ...func(context.Context) error) *Server {
 	return &Server{
 		app:           app,
 		serverAddress: cfg.ServerAddress,
-		license:       licenseClient.GetLicenseManagerShutdown(),
 		logger:        logger,
 		telemetry:     *telemetry,
 		shutdownHooks: shutdownHooks,
@@ -90,14 +83,6 @@ func (s *Server) Run(l *libCommons.Launcher) error {
 	manager := libCommonsServer.NewServerManager(nil, &s.telemetry, s.logger).
 		WithHTTPServer(s.app, s.serverAddress).
 		WithShutdownChannel(shutdownCh)
-
-	if s.license != nil {
-		manager = manager.WithShutdownHook(func(context.Context) error {
-			s.license.Terminate("shutdown")
-
-			return nil
-		})
-	}
 
 	for _, hook := range s.shutdownHooks {
 		manager = manager.WithShutdownHook(hook)

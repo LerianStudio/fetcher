@@ -5,7 +5,6 @@ import (
 	"github.com/LerianStudio/fetcher/v2/pkg/net/http"
 	middlewareAuth "github.com/LerianStudio/lib-auth/v2/auth/middleware"
 	commonsHttp "github.com/LerianStudio/lib-commons/v5/commons/net/http"
-	libLicense "github.com/LerianStudio/lib-license-go/v2/middleware"
 	"github.com/LerianStudio/lib-observability/log"
 	obsMiddleware "github.com/LerianStudio/lib-observability/middleware"
 	opentelemetry "github.com/LerianStudio/lib-observability/tracing"
@@ -29,8 +28,6 @@ func NewRoutes(
 	lg log.Logger,
 	tl *opentelemetry.Telemetry,
 	auth *middlewareAuth.AuthClient,
-	licenseClient *libLicense.LicenseClient,
-	licenseEnforcementEnabled bool,
 	connectionHandler *ConnectionHandler,
 	migrationHandler *MigrationHandler,
 	fetcherHandler *FetcherHandler,
@@ -75,40 +72,27 @@ func NewRoutes(
 	// Version
 	f.Get("/version", commonsHttp.Version)
 
-	licenseMiddleware := LicenseWhenEnabled(licenseClient, licenseEnforcementEnabled)
-
 	// Connections
-	f.Post("/v1/management/connections", auth.Authorize(applicationName, connectionsResource, "post"), licenseMiddleware, WhenEnabled(ttMiddleware), connectionHandler.CreateConnection)
-	f.Get("/v1/management/connections", auth.Authorize(applicationName, connectionsResource, "get"), licenseMiddleware, WhenEnabled(ttMiddleware), connectionHandler.ListConnections)
+	f.Post("/v1/management/connections", auth.Authorize(applicationName, connectionsResource, "post"), WhenEnabled(ttMiddleware), connectionHandler.CreateConnection)
+	f.Get("/v1/management/connections", auth.Authorize(applicationName, connectionsResource, "get"), WhenEnabled(ttMiddleware), connectionHandler.ListConnections)
 	// Schema Validation - must be before :id routes to avoid conflict
-	f.Post("/v1/management/connections/validate-schema", auth.Authorize(applicationName, connectionsResource, "post"), licenseMiddleware, WhenEnabled(ttMiddleware), connectionHandler.ValidateSchema)
+	f.Post("/v1/management/connections/validate-schema", auth.Authorize(applicationName, connectionsResource, "post"), WhenEnabled(ttMiddleware), connectionHandler.ValidateSchema)
 	// Migration - must be before :id routes to avoid conflict
-	f.Get("/v1/management/connections/unassigned", auth.Authorize(applicationName, connectionsResource, "get"), licenseMiddleware, WhenEnabled(ttMiddleware), migrationHandler.ListUnassignedConnections)
-	f.Post("/v1/management/connections/:id/assign", auth.Authorize(applicationName, connectionsResource, "post"), licenseMiddleware, WhenEnabled(ttMiddleware), migrationHandler.AssignConnectionToProduct)
-	f.Get("/v1/management/connections/:id", auth.Authorize(applicationName, connectionsResource, "get"), licenseMiddleware, WhenEnabled(ttMiddleware), connectionHandler.GetConnection)
-	f.Post("/v1/management/connections/:id/test", auth.Authorize(applicationName, connectionsResource, "post"), licenseMiddleware, WhenEnabled(ttMiddleware), connectionHandler.TestConnection)
-	f.Get("/v1/management/connections/:id/schema", auth.Authorize(applicationName, connectionsResource, "get"), licenseMiddleware, WhenEnabled(ttMiddleware), connectionHandler.GetConnectionSchema)
-	f.Patch("/v1/management/connections/:id", auth.Authorize(applicationName, connectionsResource, "patch"), licenseMiddleware, WhenEnabled(ttMiddleware), connectionHandler.UpdateConnection)
-	f.Delete("/v1/management/connections/:id", auth.Authorize(applicationName, connectionsResource, "delete"), licenseMiddleware, WhenEnabled(ttMiddleware), connectionHandler.DeleteConnection)
+	f.Get("/v1/management/connections/unassigned", auth.Authorize(applicationName, connectionsResource, "get"), WhenEnabled(ttMiddleware), migrationHandler.ListUnassignedConnections)
+	f.Post("/v1/management/connections/:id/assign", auth.Authorize(applicationName, connectionsResource, "post"), WhenEnabled(ttMiddleware), migrationHandler.AssignConnectionToProduct)
+	f.Get("/v1/management/connections/:id", auth.Authorize(applicationName, connectionsResource, "get"), WhenEnabled(ttMiddleware), connectionHandler.GetConnection)
+	f.Post("/v1/management/connections/:id/test", auth.Authorize(applicationName, connectionsResource, "post"), WhenEnabled(ttMiddleware), connectionHandler.TestConnection)
+	f.Get("/v1/management/connections/:id/schema", auth.Authorize(applicationName, connectionsResource, "get"), WhenEnabled(ttMiddleware), connectionHandler.GetConnectionSchema)
+	f.Patch("/v1/management/connections/:id", auth.Authorize(applicationName, connectionsResource, "patch"), WhenEnabled(ttMiddleware), connectionHandler.UpdateConnection)
+	f.Delete("/v1/management/connections/:id", auth.Authorize(applicationName, connectionsResource, "delete"), WhenEnabled(ttMiddleware), connectionHandler.DeleteConnection)
 
 	// Fetcher
-	f.Post("/v1/fetcher", auth.Authorize(applicationName, fetcherResource, "post"), licenseMiddleware, WhenEnabled(ttMiddleware), fetcherHandler.CreateJob)
-	f.Get("/v1/fetcher/:id", auth.Authorize(applicationName, fetcherResource, "get"), licenseMiddleware, WhenEnabled(ttMiddleware), fetcherHandler.GetJob)
+	f.Post("/v1/fetcher", auth.Authorize(applicationName, fetcherResource, "post"), WhenEnabled(ttMiddleware), fetcherHandler.CreateJob)
+	f.Get("/v1/fetcher/:id", auth.Authorize(applicationName, fetcherResource, "get"), WhenEnabled(ttMiddleware), fetcherHandler.GetJob)
 
 	f.Use(tlMid.EndTracingSpans)
 
 	return f
-}
-
-// LicenseWhenEnabled applies lib-license-go middleware only when route-level
-// enforcement is explicitly enabled. Constructing a license client alone must
-// not change the Manager API contract.
-func LicenseWhenEnabled(client *libLicense.LicenseClient, enforcementEnabled bool) fiber.Handler {
-	if client == nil || !enforcementEnabled {
-		return func(c *fiber.Ctx) error { return c.Next() }
-	}
-
-	return client.Middleware()
 }
 
 // WhenEnabled is a helper that conditionally applies a middleware if it's not nil.

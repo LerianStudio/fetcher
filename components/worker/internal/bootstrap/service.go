@@ -39,16 +39,11 @@ var runLauncher = func(logger libLog.Logger, consumer *MultiQueueConsumer, healt
 	commons.NewLauncher(opts...).Run()
 }
 
-type licenseTerminator interface {
-	Terminate(msg string)
-}
-
 // Service is the application glue where we put all top level components to be used.
 type Service struct {
 	*MultiQueueConsumer
 	libLog.
 		Logger
-	licenseShutdown licenseTerminator
 	// mtCleanup is the cleanup function for multi-tenant resources (Redis, etc.)
 	mtCleanup func()
 	// healthServer exposes /health, /readyz and /metrics on HEALTH_PORT.
@@ -108,11 +103,6 @@ func (app *Service) Run() {
 		if err := app.tmClientCloser(); err != nil {
 			app.Log(context.Background(), libLog.LevelError, "failed to close shared tenant manager client", libLog.Err(err))
 		}
-	}
-
-	// After all consumers are done, shutdown license
-	if app.licenseShutdown != nil {
-		app.licenseShutdown.Terminate("Consumers are done.")
 	}
 
 	app.Log(context.Background(), libLog.LevelInfo, "Graceful shutdown complete")

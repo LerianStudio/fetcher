@@ -31,16 +31,6 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
-type fakeLicenseTerminator struct {
-	called bool
-	msg    string
-}
-
-func (f *fakeLicenseTerminator) Terminate(msg string) {
-	f.called = true
-	f.msg = msg
-}
-
 func TestNewMultiQueueConsumerRegistersQueue(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
@@ -419,8 +409,7 @@ func TestServiceRun(t *testing.T) {
 		runLauncher = originalRunLauncher
 	})
 
-	t.Run("terminates license manager after launcher", func(t *testing.T) {
-		terminator := &fakeLicenseTerminator{}
+	t.Run("invokes launcher with consumer and logger", func(t *testing.T) {
 		consumer := &MultiQueueConsumer{}
 		logger := testBootstrapLogger()
 
@@ -438,31 +427,6 @@ func TestServiceRun(t *testing.T) {
 		service := &Service{
 			MultiQueueConsumer: consumer,
 			Logger:             logger,
-			licenseShutdown:    terminator,
-		}
-
-		service.Run()
-
-		if !called {
-			t.Fatal("expected launcher to be invoked")
-		}
-		if !terminator.called {
-			t.Fatal("expected license terminator to be called")
-		}
-		if terminator.msg != "Consumers are done." {
-			t.Fatalf("unexpected terminate message: %s", terminator.msg)
-		}
-	})
-
-	t.Run("nil license terminator is allowed", func(t *testing.T) {
-		called := false
-		runLauncher = func(libLog.Logger, *MultiQueueConsumer, *HealthServer, *libOutbox.Dispatcher, *services.TerminalEventRepairer, *services.TenantConsumerReconciler) {
-			called = true
-		}
-
-		service := &Service{
-			MultiQueueConsumer: &MultiQueueConsumer{},
-			Logger:             testBootstrapLogger(),
 		}
 
 		service.Run()

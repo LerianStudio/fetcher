@@ -121,12 +121,9 @@ func TestLoadConfig_ReturnsError(t *testing.T) {
 	assert.Contains(t, err.Error(), "config load failed")
 }
 
-func TestManagerConfigLoader_UsesLibCommonsLoaderAndLicenseDefault(t *testing.T) {
-	t.Setenv("LICENSE_ENFORCEMENT_ENABLED", "")
-
+func TestManagerConfigLoader_UsesLibCommonsLoader(t *testing.T) {
 	cfg := &Config{}
 	require.NoError(t, setConfigFromEnvVars(cfg))
-	assert.False(t, cfg.LicenseEnforcementEnabled)
 
 	err := setConfigFromEnvVars(nil)
 	require.ErrorIs(t, err, libCommons.ErrNilConfig)
@@ -412,9 +409,8 @@ func TestConfig_LoadFromEnvVars(t *testing.T) {
 		{
 			name: "loads boolean fields",
 			envVars: map[string]string{
-				"ENABLE_TELEMETRY":            "true",
-				"PLUGIN_AUTH_ENABLED":         "true",
-				"LICENSE_ENFORCEMENT_ENABLED": "true",
+				"ENABLE_TELEMETRY":    "true",
+				"PLUGIN_AUTH_ENABLED": "true",
 			},
 			validate: func(t *testing.T, cfg *Config) {
 				t.Helper()
@@ -423,9 +419,6 @@ func TestConfig_LoadFromEnvVars(t *testing.T) {
 				}
 				if !cfg.AuthEnabled {
 					t.Error("AuthEnabled should be true")
-				}
-				if !cfg.LicenseEnforcementEnabled {
-					t.Error("LicenseEnforcementEnabled should be true")
 				}
 			},
 		},
@@ -522,9 +515,6 @@ func TestConfig_LoadFromEnvVars(t *testing.T) {
 				}
 				if cfg.AuthEnabled {
 					t.Error("AuthEnabled should default to false")
-				}
-				if cfg.LicenseEnforcementEnabled {
-					t.Error("LicenseEnforcementEnabled should default to false")
 				}
 			},
 		},
