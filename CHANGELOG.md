@@ -1,5 +1,17 @@
 # Fetcher Changelog
 
+## [2.0.1](https://github.com/LerianStudio/fetcher/releases/tag/v2.0.1)
+
+- Updated `fetcher` to `v2.0.1`.
+- Updated `fetcher` to `v2.0.1-beta.1`.
+- Updated CHANGELOGs for `fetcher:v2.0.0`.
+
+Contributors: @fredcamaral, @lerian-studio.
+
+[Compare changes](https://github.com/LerianStudio/fetcher/compare/v2.0.0...v2.0.1)
+
+---
+
 ## [2.0.0](https://github.com/LerianStudio/fetcher/releases/tag/v2.0.0)
 
 - Features:
