@@ -1,5 +1,10 @@
 # Changelog — github.com/LerianStudio/fetcher/pkg/engine
 
+## pkg/engine 1.0.8
+
+Released alongside parent 2.0.0-rc.1 (release-candidate).
+
+
 ## pkg/engine 1.0.7
 
 Released alongside parent 2.0.0-beta.7 (develop).
