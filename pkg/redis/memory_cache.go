@@ -3,11 +3,15 @@ package redis
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
-	"github.com/LerianStudio/lib-commons/v5/commons"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
+	observability "github.com/LerianStudio/lib-observability"
+
+	"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/valkey"
+	libLog "github.com/LerianStudio/lib-observability/log"
+	obsRuntime "github.com/LerianStudio/lib-observability/runtime"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -45,14 +49,22 @@ func NewInMemoryCache[T any](ttl time.Duration, logger libLog.Logger) *InMemoryC
 		stopCh:  make(chan struct{}),
 	}
 
-	go c.cleanupExpired()
+	obsRuntime.SafeGo(logger, "redis-in-memory-cache-cleanup", obsRuntime.KeepRunning, c.cleanupExpired)
 
 	return c
 }
 
+func (c *InMemoryCache[T]) scopedKey(ctx context.Context, key string) (string, error) {
+	return valkey.GetKeyContext(ctx, key)
+}
+
+func (c *InMemoryCache[T]) scopedPattern(ctx context.Context) (string, error) {
+	return valkey.GetPatternFromContext(ctx, "*")
+}
+
 // Get retrieves a cached value by key.
 func (c *InMemoryCache[T]) Get(ctx context.Context, key string) (T, bool, error) {
-	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	_, span := tracer.Start(ctx, "cache.in_memory.get")
 	defer span.End()
@@ -64,10 +76,15 @@ func (c *InMemoryCache[T]) Get(ctx context.Context, key string) (T, bool, error)
 
 	var zero T
 
+	scopedKey, err := c.scopedKey(ctx, key)
+	if err != nil {
+		return zero, false, fmt.Errorf("failed to resolve cache key: %w", err)
+	}
+
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	entry, exists := c.entries[key]
+	entry, exists := c.entries[scopedKey]
 	if !exists {
 		span.SetAttributes(attribute.Bool("app.cache.hit", false))
 		logger.Log(context.Background(), libLog.LevelDebug, fmt.Sprintf("in-memory cache miss for key %s", key))
@@ -90,13 +107,18 @@ func (c *InMemoryCache[T]) Get(ctx context.Context, key string) (T, bool, error)
 
 // Set stores a value in the cache.
 func (c *InMemoryCache[T]) Set(ctx context.Context, key string, value T, ttl time.Duration) error {
-	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	_, span := tracer.Start(ctx, "cache.in_memory.set")
 	defer span.End()
 
 	if ttl <= 0 {
 		ttl = c.ttl
+	}
+
+	scopedKey, err := c.scopedKey(ctx, key)
+	if err != nil {
+		return fmt.Errorf("failed to resolve cache key: %w", err)
 	}
 
 	span.SetAttributes(
@@ -108,7 +130,7 @@ func (c *InMemoryCache[T]) Set(ctx context.Context, key string, value T, ttl tim
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.entries[key] = &cacheEntry[T]{
+	c.entries[scopedKey] = &cacheEntry[T]{
 		value:     value,
 		expiresAt: time.Now().UTC().Add(ttl),
 	}
@@ -120,7 +142,7 @@ func (c *InMemoryCache[T]) Set(ctx context.Context, key string, value T, ttl tim
 
 // Delete removes a value from the cache.
 func (c *InMemoryCache[T]) Delete(ctx context.Context, key string) error {
-	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	_, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	_, span := tracer.Start(ctx, "cache.in_memory.delete")
 	defer span.End()
@@ -130,18 +152,39 @@ func (c *InMemoryCache[T]) Delete(ctx context.Context, key string) error {
 		attribute.String("app.request.request_id", reqID),
 	)
 
+	scopedKey, err := c.scopedKey(ctx, key)
+	if err != nil {
+		return fmt.Errorf("failed to resolve cache key: %w", err)
+	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	delete(c.entries, key)
+	delete(c.entries, scopedKey)
 
 	return nil
 }
 
 // Clear removes all cache entries.
 func (c *InMemoryCache[T]) Clear(ctx context.Context) error {
+	pattern, err := c.scopedPattern(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to resolve cache key pattern: %w", err)
+	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	if pattern != "*" {
+		prefix := strings.TrimSuffix(pattern, "*")
+		for key := range c.entries {
+			if key == pattern || strings.HasPrefix(key, prefix) {
+				delete(c.entries, key)
+			}
+		}
+
+		return nil
+	}
 
 	c.entries = make(map[string]*cacheEntry[T])
 

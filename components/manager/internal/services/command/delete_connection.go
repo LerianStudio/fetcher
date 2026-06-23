@@ -3,35 +3,32 @@ package command
 import (
 	"context"
 	"fmt"
-	"time"
 
-	"github.com/LerianStudio/fetcher/pkg"
-	"github.com/LerianStudio/fetcher/pkg/constant"
-	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
-	"github.com/LerianStudio/fetcher/pkg/ports/job"
+	"github.com/LerianStudio/fetcher/pkg/engine"
+	"github.com/LerianStudio/fetcher/v2/pkg"
+	"github.com/LerianStudio/fetcher/v2/pkg/constant"
+	"github.com/LerianStudio/fetcher/v2/pkg/enginecompat/connectioncompat"
+	observability "github.com/LerianStudio/lib-observability"
 
-	"github.com/LerianStudio/lib-commons/v5/commons"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
+	libLog "github.com/LerianStudio/lib-observability/log"
+	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
 )
 
 type DeleteConnection struct {
-	connRepo connRepo.Repository
-	jobRepo  job.Repository
+	engine *engine.Engine
 }
 
-func NewDeleteConnection(connectionRepo connRepo.Repository, jobRepo job.Repository) *DeleteConnection {
+func NewDeleteConnection(eng *engine.Engine) *DeleteConnection {
 	return &DeleteConnection{
-		connRepo: connectionRepo,
-		jobRepo:  jobRepo,
+		engine: eng,
 	}
 }
 
 func (s *DeleteConnection) Execute(ctx context.Context, connectionID uuid.UUID) error {
-	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "service.delete_connection")
 	defer span.End()
@@ -41,7 +38,17 @@ func (s *DeleteConnection) Execute(ctx context.Context, connectionID uuid.UUID) 
 		attribute.String("app.request.connection_id", connectionID.String()),
 	)
 
-	current, err := s.connRepo.FindByID(ctx, connectionID)
+	// Route the per-request tenant-scope authority AND persistence through the
+	// Engine, symmetric with UpdateConnection. Delete's read flows through the
+	// Engine's ID-addressed FindByID and the SOFT delete through DeleteByID (the
+	// connectioncompat adapter maps it to repo.Delete with a deleted_at stamp).
+	// The Manager keeps its conflict gate and HTTP mapping.
+	if err := connectioncompat.AuthorizeAccess(ctx, s.engine); err != nil {
+		libOpentelemetry.HandleSpanError(span, "Failed to authorize tenant scope", err)
+		return err
+	}
+
+	current, err := connectioncompat.FindByID(ctx, s.engine, connectionID.String())
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to find connection by ID", err)
 		return fmt.Errorf("failed to find connection by id: %w", err)
@@ -56,19 +63,19 @@ func (s *DeleteConnection) Execute(ctx context.Context, connectionID uuid.UUID) 
 		)
 	}
 
-	active, err := s.jobRepo.ExistsRunningByMappedFieldKey(ctx, current.ConfigName)
-	if err != nil {
+	if err := checkActiveJobsViaEngine(ctx, s.engine, current.ConfigName); err != nil {
+		if conflict := asActiveJobConflict(err, "cannot delete connection with active jobs"); conflict != nil {
+			libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Connection has active jobs", constant.ErrJobInProgress)
+
+			return conflict
+		}
+
 		libOpentelemetry.HandleSpanError(span, "Failed to check for active jobs", err)
+
 		return fmt.Errorf("failed to check for active jobs: %w", err)
 	}
 
-	if active {
-		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Connection has active jobs", constant.ErrJobInProgress)
-
-		return pkg.ValidateBusinessError(constant.ErrJobInProgress, "connection", "cannot delete connection with active jobs")
-	}
-
-	if err := s.connRepo.Delete(ctx, connectionID, time.Now().UTC()); err != nil {
+	if err := deleteConnectionByIDViaEngine(ctx, s.engine, connectionID); err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to delete connection", err)
 		return fmt.Errorf("failed to delete connection: %w", err)
 	}

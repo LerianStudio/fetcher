@@ -8,19 +8,20 @@ import (
 	"strings"
 	"time"
 
-	"github.com/LerianStudio/fetcher/pkg"
-	"github.com/LerianStudio/fetcher/pkg/constant"
-	"github.com/LerianStudio/fetcher/pkg/model"
-	"github.com/LerianStudio/fetcher/pkg/mongodb"
-	portsJob "github.com/LerianStudio/fetcher/pkg/ports/job"
+	observability "github.com/LerianStudio/lib-observability"
 
-	"github.com/LerianStudio/lib-commons/v5/commons"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
+	"github.com/LerianStudio/fetcher/v2/pkg"
+	"github.com/LerianStudio/fetcher/v2/pkg/constant"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	"github.com/LerianStudio/fetcher/v2/pkg/mongodb"
+	portsJob "github.com/LerianStudio/fetcher/v2/pkg/ports/job"
+
+	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
 
 	"github.com/google/uuid"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -104,7 +105,7 @@ func (jr *JobMongoDBRepository) getDatabase(ctx context.Context) (*mongo.Databas
 
 // Create inserts a new job document.
 func (jr *JobMongoDBRepository) Create(ctx context.Context, job *model.Job) (*model.Job, error) {
-	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	_, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "mongodb.create_job")
 	defer span.End()
@@ -170,7 +171,7 @@ func (jr *JobMongoDBRepository) Create(ctx context.Context, job *model.Job) (*mo
 
 // Update overwrites mutable fields of an existing job and returns the saved entity.
 func (jr *JobMongoDBRepository) Update(ctx context.Context, job *model.Job) (*model.Job, error) {
-	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	_, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "mongodb.update_job")
 	defer span.End()
@@ -244,7 +245,7 @@ func (jr *JobMongoDBRepository) Update(ctx context.Context, job *model.Job) (*mo
 
 // UpdateStatus updates only the status, resultPath, resultHMAC and metadata of a job, automatically managing CompletedAt.
 func (jr *JobMongoDBRepository) UpdateStatus(ctx context.Context, id uuid.UUID, status model.JobStatus, resultPath, resultHMAC string, metadata map[string]any) error {
-	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	_, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "mongodb.update_job_status")
 	defer span.End()
@@ -342,9 +343,92 @@ func (jr *JobMongoDBRepository) UpdateStatus(ctx context.Context, id uuid.UUID, 
 	return nil
 }
 
+// ClearTerminalEventMetadata removes internal terminal-event retry markers once
+// the mandatory job notification has been accepted for delivery.
+func (jr *JobMongoDBRepository) ClearTerminalEventMetadata(ctx context.Context, id uuid.UUID) error {
+	_, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
+
+	ctx, span := tracer.Start(ctx, "mongodb.clear_job_terminal_event_metadata")
+	defer span.End()
+
+	attributes := []attribute.KeyValue{
+		attribute.String("app.request.request_id", reqID),
+		attribute.String("app.request.job_id", id.String()),
+	}
+	span.SetAttributes(attributes...)
+
+	db, err := jr.getDatabase(ctx)
+	if err != nil {
+		libOpentelemetry.HandleSpanError(span, "Failed to get database", err)
+		return fmt.Errorf("failed to get database connection: %w", err)
+	}
+
+	coll := db.Collection(strings.ToLower(constant.MongoCollectionJob))
+	filter := bson.M{"_id": id}
+	update := bson.M{
+		"$unset": bson.M{
+			"metadata.terminalEventPending": "",
+			"metadata.terminalEventStatus":  "",
+			"metadata.terminalEventPayload": "",
+		},
+	}
+
+	result, err := coll.UpdateOne(ctx, filter, update)
+	if err != nil {
+		libOpentelemetry.HandleSpanError(span, "Failed to clear terminal event metadata", err)
+		return fmt.Errorf("failed to clear terminal event metadata: %w", err)
+	}
+
+	if result.MatchedCount == 0 {
+		err := errors.New("job not found")
+		libOpentelemetry.HandleSpanBusinessErrorEvent(span, "Job not found", err)
+
+		return err
+	}
+
+	return nil
+}
+
+// ListPendingTerminalEvents returns terminal jobs whose mandatory job event
+// was committed in metadata but not yet durably accepted by lib-streaming.
+func (jr *JobMongoDBRepository) ListPendingTerminalEvents(ctx context.Context, limit int) ([]*model.Job, error) {
+	_, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
+
+	ctx, span := tracer.Start(ctx, "mongodb.list_pending_terminal_events")
+	defer span.End()
+
+	span.SetAttributes(attribute.String("app.request.request_id", reqID))
+
+	if limit <= 0 || limit > maxJobPageLimit {
+		limit = defaultJobPageLimit
+	}
+
+	db, err := jr.getDatabase(ctx)
+	if err != nil {
+		libOpentelemetry.HandleSpanError(span, "Failed to get database", err)
+		return nil, fmt.Errorf("failed to get database connection: %w", err)
+	}
+
+	filter := bson.M{
+		"status":                        bson.M{"$in": bson.A{model.JobStatusCompleted, model.JobStatusFailed}},
+		"metadata.terminalEventPending": true,
+	}
+	limit64 := int64(limit)
+	opts := options.Find().SetSort(bson.D{{Key: "completed_at", Value: 1}, {Key: "created_at", Value: 1}}).SetLimit(limit64)
+
+	cur, err := db.Collection(strings.ToLower(constant.MongoCollectionJob)).Find(ctx, filter, opts)
+	if err != nil {
+		libOpentelemetry.HandleSpanError(span, "Failed to list pending terminal events", err)
+		return nil, fmt.Errorf("failed to list pending terminal events: %w", err)
+	}
+	defer cur.Close(ctx)
+
+	return jr.scanJobs(ctx, cur, span, limit)
+}
+
 // FindByID fetches a job by its ID scoped to an organization.
 func (jr *JobMongoDBRepository) FindByID(ctx context.Context, id uuid.UUID) (*model.Job, error) {
-	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	_, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "mongodb.find_job_by_id")
 	defer span.End()
@@ -392,7 +476,7 @@ func (jr *JobMongoDBRepository) FindByID(ctx context.Context, id uuid.UUID) (*mo
 // created within the specified time window (in minutes) for deduplication purposes.
 // Returns nil without error if no matching job is found.
 func (jr *JobMongoDBRepository) FindByRequestHashWithinWindow(ctx context.Context, requestHash string, windowMinutes int) (*model.Job, error) {
-	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	_, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "mongodb.find_job_by_request_hash_within_window")
 	defer span.End()
@@ -455,7 +539,7 @@ func (jr *JobMongoDBRepository) FindByRequestHashWithinWindow(ctx context.Contex
 // for a request hash in an organization. Returns nil without error when no active
 // matching job exists.
 func (jr *JobMongoDBRepository) FindActiveByRequestHash(ctx context.Context, requestHash string) (*model.Job, error) {
-	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	_, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "mongodb.find_active_job_by_request_hash")
 	defer span.End()
@@ -514,7 +598,7 @@ func (jr *JobMongoDBRepository) FindActiveByRequestHash(ctx context.Context, req
 // ExistsRunningByMappedFieldKey reports whether there is any running job (pending or processing)
 // that contains the specified key in its mapped_fields document for the given organization.
 func (jr *JobMongoDBRepository) ExistsRunningByMappedFieldKey(ctx context.Context, keyPattern string) (bool, error) {
-	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	_, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "mongodb.exists_running_job_by_mapped_field_key")
 	defer span.End()
@@ -574,7 +658,7 @@ func (jr *JobMongoDBRepository) List(ctx context.Context, filters *ListFilter) (
 		filters = &ListFilter{}
 	}
 
-	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	_, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "mongodb.list_jobs")
 	defer span.End()
@@ -593,20 +677,20 @@ func (jr *JobMongoDBRepository) List(ctx context.Context, filters *ListFilter) (
 	coll := db.Collection(strings.ToLower(constant.MongoCollectionJob))
 
 	queryFilter := jr.buildQueryFilter(filters)
-	opts := jr.buildPaginationOptions(filters)
+	opts, limit := jr.buildPaginationOptions(filters)
 
 	if err := setSpanAttributesFromValue(span, "app.request.repository_filter", queryFilter); err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to convert list filter to JSON", err)
 	}
 
-	cur, err := coll.Find(ctx, queryFilter, &opts)
+	cur, err := coll.Find(ctx, queryFilter, opts)
 	if err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to list jobs", err)
 		return nil, fmt.Errorf("failed to list jobs: %w", err)
 	}
 	defer cur.Close(ctx)
 
-	jobs, err := jr.scanJobs(ctx, cur, span, int(*opts.Limit))
+	jobs, err := jr.scanJobs(ctx, cur, span, int(limit))
 	if err != nil {
 		return nil, err
 	}
@@ -662,18 +746,19 @@ func (jr *JobMongoDBRepository) buildDateRange(from, to *time.Time) bson.M {
 }
 
 // buildPaginationOptions builds MongoDB pagination options
-func (jr *JobMongoDBRepository) buildPaginationOptions(filters *ListFilter) options.FindOptions {
+func (jr *JobMongoDBRepository) buildPaginationOptions(filters *ListFilter) (*options.FindOptionsBuilder, int64) {
 	limit := jr.calculateLimit(filters.Limit)
 	page := jr.calculatePage(filters.Page)
 	skip := int64((page - 1) * limit)
 	limit64 := int64(limit)
 	sortDirection := jr.calculateSortDirection(filters.SortOrder)
 
-	return options.FindOptions{
-		Limit: &limit64,
-		Skip:  &skip,
-		Sort:  bson.D{{Key: "created_at", Value: sortDirection}},
-	}
+	opts := options.Find().
+		SetLimit(limit64).
+		SetSkip(skip).
+		SetSort(bson.D{{Key: "created_at", Value: sortDirection}})
+
+	return opts, limit64
 }
 
 // calculateLimit calculates and validates the limit

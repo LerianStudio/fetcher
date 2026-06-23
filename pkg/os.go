@@ -99,10 +99,11 @@ func SetConfigFromEnvVars(s any) error {
 
 	v := reflect.ValueOf(s)
 
-	t := v.Type()
-	if t.Kind() != reflect.Ptr || v.IsNil() {
+	if v.Kind() != reflect.Pointer || v.IsNil() {
 		return errors.New("s must be a non-nil pointer")
 	}
+
+	t := v.Type()
 
 	e := t.Elem()
 	for i := 0; i < e.NumField(); i++ {

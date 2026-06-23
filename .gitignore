@@ -13,7 +13,9 @@ __debug_bin*
 # ----------------------------------------
 # Go: Workspace and Modules
 # ----------------------------------------
-go.work
+# go.work IS committed: it wires the parent (/v2) and engine (pkg/engine) modules for
+# local/CI dev. See docs/RELEASING.md. go.work.sum stays ignored — it is regenerable and
+# the parent go.sum already verifies every dependency (the engine module has none).
 go.work.sum
 # vendor/  # Uncomment if vendor directory should be ignored
 

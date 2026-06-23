@@ -1,35 +1,52 @@
-# Pull Request
-
-## Description
-<!-- Provide a brief description of the changes in this PR -->
-
-## Type of Change
-<!-- Check the appropriate box -->
-
-- [ ] Bug fix (non-breaking change that fixes an issue)
-- [ ] New feature (non-breaking change that adds functionality)
-- [ ] Breaking change (fix or feature that would cause existing functionality to change)
-- [ ] Documentation update
-- [ ] Refactoring (no functional changes)
-- [ ] CI/CD changes
-- [ ] Dependencies update
-
-## Checklist
-<!-- Please check each item after it's completed -->
-
-- [ ] I have tested these changes locally
-- [ ] I have updated the documentation accordingly
-- [ ] I have added necessary comments to the code, especially in complex areas
-- [ ] I have ensured that my changes adhere to the project's coding standards
-- [ ] I have checked for any potential security issues
-- [ ] I have ensured that all tests pass
-- [ ] I have confirmed this code is ready for review
-
-## Related Issues
-<!-- Link any related issues here using #issue_number -->
-
-## Additional Notes
-<!-- Add any additional context or notes for reviewers -->
+<table border="0" cellspacing="0" cellpadding="0">
+  <tr>
+    <td><img src="https://github.com/LerianStudio.png" width="72" alt="Lerian" /></td>
+    <td><h1>Fetcher</h1></td>
+  </tr>
+</table>
 
 ---
-**Note:** Please target your PR to the `develop` branch instead of `main`.
+
+## Description
+
+<!-- Summarize what this PR changes and why. -->
+
+## Type of Change
+
+- [ ] `feat`: New feature or capability
+- [ ] `fix`: Bug fix
+- [ ] `perf`: Performance improvement
+- [ ] `refactor`: Internal restructuring with no behavior change
+- [ ] `docs`: Documentation only
+- [ ] `style`: Formatting, whitespace, naming (no logic change)
+- [ ] `test`: Adding or updating tests
+- [ ] `ci`: CI pipeline or workflow changes
+- [ ] `build`: Build system, Dockerfile, Go module dependencies
+- [ ] `chore`: Maintenance, config, tooling
+- [ ] `revert`: Reverts a previous commit
+- [ ] `BREAKING CHANGE`: Consumers must update their integration
+
+## Breaking Changes
+
+None.
+
+## Testing
+
+- [ ] `make test` passes
+- [ ] `make test-int` passes if integration paths are exercised
+- [ ] `make lint` passes
+- [ ] `make sec` and `make vulncheck` pass
+
+**Test evidence / Actions run:** <!-- Optional: link to a CI run or screenshot -->
+
+## Architectural Checklist
+
+- [ ] No `panic()` in production paths
+- [ ] Timestamps use `time.Now().UTC()`
+- [ ] Errors wrapped with `%w`
+- [ ] Handlers stay thin (parse, validate, call service)
+- [ ] Infrastructure concerns kept in `internal/bootstrap`
+
+## Related Issues
+
+Closes #

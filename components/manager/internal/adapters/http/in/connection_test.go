@@ -3,25 +3,29 @@ package in
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
-	"fmt"
+	"github.com/LerianStudio/fetcher/pkg/engine"
+	"github.com/LerianStudio/fetcher/v2/components/manager/internal/services/command"
+	"github.com/LerianStudio/fetcher/v2/components/manager/internal/services/query"
+	pkgdatasource "github.com/LerianStudio/fetcher/v2/pkg/datasource"
+	"github.com/LerianStudio/fetcher/v2/pkg/enginecompat/schemacompat"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	"github.com/LerianStudio/fetcher/v2/pkg/model/datasource"
+	jobRepo "github.com/LerianStudio/fetcher/v2/pkg/mongodb/job"
+	cacheRepo "github.com/LerianStudio/fetcher/v2/pkg/ports/cache"
+	connRepo "github.com/LerianStudio/fetcher/v2/pkg/ports/connection"
+	"github.com/LerianStudio/fetcher/v2/pkg/testutil"
+	observability "github.com/LerianStudio/lib-observability"
 
-	"github.com/LerianStudio/fetcher/components/manager/internal/services/command"
-	"github.com/LerianStudio/fetcher/components/manager/internal/services/query"
-	"github.com/LerianStudio/fetcher/pkg/model"
-	"github.com/LerianStudio/fetcher/pkg/model/datasource"
-	jobRepo "github.com/LerianStudio/fetcher/pkg/mongodb/job"
-	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
+	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
 
-	"github.com/LerianStudio/fetcher/pkg/crypto"
-
-	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
+	libLog "github.com/LerianStudio/lib-observability/log"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -39,14 +43,9 @@ func setupConnectionTestApp() *fiber.App {
 	// Middleware to inject test context with logger and tracer
 	app.Use(func(c *fiber.Ctx) error {
 		logger := &libLog.GoLogger{Level: libLog.LevelDebug}
-		values := &libCommons.CustomContextKeyValue{
-			HeaderID: "test-request-id",
-			Logger:   logger,
-			Tracer:   otel.Tracer("test"),
-		}
-
-		ctx := c.UserContext()
-		ctx = context.WithValue(ctx, libCommons.CustomContextKey, values)
+		ctx := observability.ContextWithHeaderID(testutil.TestContext(), "test-request-id")
+		ctx = observability.ContextWithLogger(ctx, logger)
+		ctx = observability.ContextWithTracer(ctx, otel.Tracer("test"))
 		c.SetUserContext(ctx)
 
 		return c.Next()
@@ -110,7 +109,7 @@ func TestConnectionHandler_CreateConnection_Success(t *testing.T) {
 	// 3. Create connection
 	mockConnRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(testConn, nil)
 
-	createCmd := command.NewCreateConnection(mockConnRepo, mockCryptor)
+	createCmd := command.NewCreateConnection(mockCryptor, connectionEngineForConnRepo(t, mockConnRepo, nil))
 	handler := &ConnectionHandler{CreateCmd: createCmd}
 
 	app := setupConnectionTestApp()
@@ -245,7 +244,7 @@ func TestConnectionHandler_CreateConnection_Conflict(t *testing.T) {
 	mockCryptor.EXPECT().Encrypt(gomock.Any(), "secretpassword").Return("encrypted-password", "v1", nil)
 	mockConnRepo.EXPECT().FindByName(gomock.Any(), "test-connection").Return(existingConn, nil)
 
-	createCmd := command.NewCreateConnection(mockConnRepo, mockCryptor)
+	createCmd := command.NewCreateConnection(mockCryptor, connectionEngineForConnRepo(t, mockConnRepo, nil))
 	handler := &ConnectionHandler{CreateCmd: createCmd}
 
 	app := setupConnectionTestApp()
@@ -275,7 +274,7 @@ func TestConnectionHandler_CreateConnection_InternalError(t *testing.T) {
 	mockConnRepo.EXPECT().FindByName(gomock.Any(), "test-connection").Return(nil, nil)
 	mockConnRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil, assert.AnError)
 
-	createCmd := command.NewCreateConnection(mockConnRepo, mockCryptor)
+	createCmd := command.NewCreateConnection(mockCryptor, connectionEngineForConnRepo(t, mockConnRepo, nil))
 	handler := &ConnectionHandler{CreateCmd: createCmd}
 
 	app := setupConnectionTestApp()
@@ -309,7 +308,7 @@ func TestConnectionHandler_GetConnection_Success(t *testing.T) {
 
 	mockConnRepo.EXPECT().FindByID(gomock.Any(), connID).Return(testConn, nil)
 
-	getQuery := query.NewGetConnection(mockConnRepo, nil, nil)
+	getQuery := query.NewGetConnection(nil, nil, scopeAuthorityEngine(t, mockConnRepo))
 	handler := &ConnectionHandler{GetQuery: getQuery}
 
 	app := setupConnectionTestApp()
@@ -341,7 +340,7 @@ func TestConnectionHandler_GetConnection_NotFound(t *testing.T) {
 	// Service returns nil for not found
 	mockConnRepo.EXPECT().FindByID(gomock.Any(), connID).Return(nil, nil)
 
-	getQuery := query.NewGetConnection(mockConnRepo, nil, nil)
+	getQuery := query.NewGetConnection(nil, nil, scopeAuthorityEngine(t, mockConnRepo))
 	handler := &ConnectionHandler{GetQuery: getQuery}
 
 	app := setupConnectionTestApp()
@@ -422,7 +421,7 @@ func TestConnectionHandler_ListConnections_Success(t *testing.T) {
 	// ListConnections service: no productName header -> calls connRepo.List directly
 	mockConnRepo.EXPECT().List(gomock.Any(), gomock.Any()).Return(conns, int64(2), nil)
 
-	listQuery := query.NewListConnections(mockConnRepo, nil)
+	listQuery := query.NewListConnections(nil, scopeAuthorityEngine(t, mockConnRepo))
 	handler := &ConnectionHandler{ListQuery: listQuery}
 
 	app := setupConnectionTestApp()
@@ -454,7 +453,7 @@ func TestConnectionHandler_ListConnections_EmptyList(t *testing.T) {
 	// Service returns nil list, which gets converted to empty slice
 	mockConnRepo.EXPECT().List(gomock.Any(), gomock.Any()).Return(nil, int64(0), nil)
 
-	listQuery := query.NewListConnections(mockConnRepo, nil)
+	listQuery := query.NewListConnections(nil, scopeAuthorityEngine(t, mockConnRepo))
 	handler := &ConnectionHandler{ListQuery: listQuery}
 
 	app := setupConnectionTestApp()
@@ -485,7 +484,7 @@ func TestConnectionHandler_ListConnections_InvalidPaginationParams(t *testing.T)
 
 	// The handler validates query params before calling the service,
 	// so no mock expectations needed for invalid params
-	listQuery := query.NewListConnections(mockConnRepo, nil)
+	listQuery := query.NewListConnections(nil, scopeAuthorityEngine(t, mockConnRepo))
 	handler := &ConnectionHandler{ListQuery: listQuery}
 
 	app := setupConnectionTestApp()
@@ -537,7 +536,7 @@ func TestConnectionHandler_ListConnections_WithProductNameFilter(t *testing.T) {
 	// ListConnections service: with productName header -> filters.ProductName is set
 	mockConnRepo.EXPECT().List(gomock.Any(), gomock.Any()).Return(conns, int64(2), nil)
 
-	listQuery := query.NewListConnections(mockConnRepo, nil)
+	listQuery := query.NewListConnections(nil, scopeAuthorityEngine(t, mockConnRepo))
 	handler := &ConnectionHandler{ListQuery: listQuery}
 
 	app := setupConnectionTestApp()
@@ -624,7 +623,7 @@ func TestConnectionHandler_UpdateConnection_Success(t *testing.T) {
 	// 4. Update connection
 	mockConnRepo.EXPECT().Update(gomock.Any(), gomock.Any()).Return(updatedConn, nil)
 
-	updateCmd := command.NewUpdateConnection(mockConnRepo, mockJobRepo, mockCryptor)
+	updateCmd := command.NewUpdateConnection(mockCryptor, connectionEngineForJobRepo(t, mockConnRepo, mockJobRepo))
 	handler := &ConnectionHandler{UpdateCmd: updateCmd}
 
 	app := setupConnectionTestApp()
@@ -660,7 +659,7 @@ func TestConnectionHandler_UpdateConnection_NotFound(t *testing.T) {
 	// Service finds no connection -> not found
 	mockConnRepo.EXPECT().FindByID(gomock.Any(), connID).Return(nil, nil)
 
-	updateCmd := command.NewUpdateConnection(mockConnRepo, mockJobRepo, mockCryptor)
+	updateCmd := command.NewUpdateConnection(mockCryptor, connectionEngineForJobRepo(t, mockConnRepo, mockJobRepo))
 	handler := &ConnectionHandler{UpdateCmd: updateCmd}
 
 	app := setupConnectionTestApp()
@@ -732,7 +731,7 @@ func TestConnectionHandler_UpdateConnection_Conflict_ActiveJobs(t *testing.T) {
 	mockConnRepo.EXPECT().FindByID(gomock.Any(), connID).Return(testConn, nil)
 	mockJobRepo.EXPECT().ExistsRunningByMappedFieldKey(gomock.Any(), "test-connection").Return(true, nil)
 
-	updateCmd := command.NewUpdateConnection(mockConnRepo, mockJobRepo, mockCryptor)
+	updateCmd := command.NewUpdateConnection(mockCryptor, connectionEngineForJobRepo(t, mockConnRepo, mockJobRepo))
 	handler := &ConnectionHandler{UpdateCmd: updateCmd}
 
 	app := setupConnectionTestApp()
@@ -773,7 +772,7 @@ func TestConnectionHandler_DeleteConnection_Success(t *testing.T) {
 	// 3. Delete connection
 	mockConnRepo.EXPECT().Delete(gomock.Any(), connID, gomock.Any()).Return(nil)
 
-	deleteCmd := command.NewDeleteConnection(mockConnRepo, mockJobRepo)
+	deleteCmd := command.NewDeleteConnection(connectionEngineForJobRepo(t, mockConnRepo, mockJobRepo))
 	handler := &ConnectionHandler{DeleteCmd: deleteCmd}
 
 	app := setupConnectionTestApp()
@@ -801,7 +800,7 @@ func TestConnectionHandler_DeleteConnection_NotFound(t *testing.T) {
 	// Service finds no connection -> not found
 	mockConnRepo.EXPECT().FindByID(gomock.Any(), connID).Return(nil, nil)
 
-	deleteCmd := command.NewDeleteConnection(mockConnRepo, mockJobRepo)
+	deleteCmd := command.NewDeleteConnection(connectionEngineForJobRepo(t, mockConnRepo, mockJobRepo))
 	handler := &ConnectionHandler{DeleteCmd: deleteCmd}
 
 	app := setupConnectionTestApp()
@@ -831,7 +830,7 @@ func TestConnectionHandler_DeleteConnection_Conflict_ActiveJobs(t *testing.T) {
 	mockConnRepo.EXPECT().FindByID(gomock.Any(), connID).Return(testConn, nil)
 	mockJobRepo.EXPECT().ExistsRunningByMappedFieldKey(gomock.Any(), "test-connection").Return(true, nil)
 
-	deleteCmd := command.NewDeleteConnection(mockConnRepo, mockJobRepo)
+	deleteCmd := command.NewDeleteConnection(connectionEngineForJobRepo(t, mockConnRepo, mockJobRepo))
 	handler := &ConnectionHandler{DeleteCmd: deleteCmd}
 
 	app := setupConnectionTestApp()
@@ -1095,7 +1094,6 @@ func TestConnectionHandler_ValidateSchema_Success(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCryptor := crypto.NewMockCryptor(ctrl)
 	mockCache := newNoopSchemaCache()
 
 	testConn := createTestConnection(uuid.New())
@@ -1112,7 +1110,7 @@ func TestConnectionHandler_ValidateSchema_Success(t *testing.T) {
 	failingFactory := func(_ context.Context, _ *model.Connection, _ crypto.Cryptor) (datasource.DataSource, error) {
 		return nil, fmt.Errorf("connection refused")
 	}
-	validateSchemaQuery := query.NewValidateSchema(mockConnRepo, mockCryptor, mockCache, failingFactory, nil)
+	validateSchemaQuery := query.NewValidateSchema(mockConnRepo, newSchemaEngineForTest(t, failingFactory, mockCache), nil)
 	handler := &ConnectionHandler{ValidateSchemaQuery: validateSchemaQuery}
 
 	app := setupConnectionTestApp()
@@ -1135,7 +1133,6 @@ func TestConnectionHandler_ValidateSchema_Failure_DataSourceNotFound(t *testing.
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCryptor := crypto.NewMockCryptor(ctrl)
 	mockCache := newNoopSchemaCache()
 
 	// Return a connection with a different config name so "unknown_ds" is not found in the map
@@ -1176,7 +1173,7 @@ func TestConnectionHandler_ValidateSchema_Failure_DataSourceNotFound(t *testing.
 		return nil, fmt.Errorf("connection refused")
 	}
 
-	validateSchemaQuery := query.NewValidateSchema(mockConnRepo, mockCryptor, mockCache, failingFactory, nil)
+	validateSchemaQuery := query.NewValidateSchema(mockConnRepo, newSchemaEngineForTest(t, failingFactory, mockCache), nil)
 	handler := &ConnectionHandler{ValidateSchemaQuery: validateSchemaQuery}
 
 	app := setupConnectionTestApp()
@@ -1255,13 +1252,12 @@ func TestConnectionHandler_ValidateSchema_InternalError(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCryptor := crypto.NewMockCryptor(ctrl)
 	mockCache := newNoopSchemaCache()
 
 	// FindByConfigNames returns an error -> internal server error
 	mockConnRepo.EXPECT().FindByConfigNames(gomock.Any(), gomock.Any()).Return(nil, assert.AnError)
 
-	validateSchemaQuery := query.NewValidateSchema(mockConnRepo, mockCryptor, mockCache, nil, nil)
+	validateSchemaQuery := query.NewValidateSchema(mockConnRepo, newSchemaEngineForTest(t, nil, mockCache), nil)
 	handler := &ConnectionHandler{ValidateSchemaQuery: validateSchemaQuery}
 
 	app := setupConnectionTestApp()
@@ -1338,6 +1334,31 @@ func TestConnectionHandler_ListConnections_HandlerDirectly_InvalidSortOrder(t *t
 // ============================================================================
 // Helpers
 // ============================================================================
+
+// newSchemaEngineForTest builds the schema-discovery Engine the schema services
+// delegate DISCOVERY to, mirroring the production schemaEngine wiring (a
+// schemacompat ConnectorFactory over the supplied datasource factory + the cache
+// behind the engine.SchemaCache port).
+func newSchemaEngineForTest(t *testing.T, factory pkgdatasource.DataSourceFactory, cache cacheRepo.SchemaCacheRepository) *engine.Engine {
+	t.Helper()
+
+	eng, err := engine.New(
+		engine.WithConnectorRegistry(schemaConnectorRegistryForTest{factory: schemacompat.NewConnectorFactory(factory, nil)}),
+		engine.WithConnectionStore(schemacompat.NewConnectionStore()),
+		engine.WithSchemaCache(schemacompat.NewSchemaCache(cache, 0)),
+	)
+	require.NoError(t, err)
+
+	return eng
+}
+
+type schemaConnectorRegistryForTest struct {
+	factory engine.ConnectorFactory
+}
+
+func (r schemaConnectorRegistryForTest) Connector(string) (engine.ConnectorFactory, bool) {
+	return r.factory, true
+}
 
 // noopSchemaCache is a simple in-test implementation of SchemaCacheRepository
 // that always returns cache miss. This avoids needing the gomock generated cache mock

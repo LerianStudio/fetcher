@@ -11,8 +11,8 @@ import (
 
 	goredis "github.com/redis/go-redis/v9"
 
-	"github.com/LerianStudio/fetcher/pkg/itestkit"
-	"github.com/LerianStudio/fetcher/pkg/itestkit/infra/redis"
+	"github.com/LerianStudio/fetcher/v2/pkg/itestkit"
+	"github.com/LerianStudio/fetcher/v2/pkg/itestkit/infra/redis"
 )
 
 func TestRedisInfra(t *testing.T) {

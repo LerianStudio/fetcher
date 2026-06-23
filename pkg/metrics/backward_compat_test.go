@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/LerianStudio/fetcher/pkg/testutil"
+	"github.com/LerianStudio/fetcher/v2/pkg/testutil"
 	tms3 "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/s3"
 	"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/valkey"
 

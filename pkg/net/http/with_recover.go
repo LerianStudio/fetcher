@@ -1,19 +1,18 @@
 package http
 
 import (
-	"fmt"
+	"context"
 	"net/http"
-	"runtime/debug"
 
-	"github.com/LerianStudio/fetcher/pkg"
-	"github.com/LerianStudio/fetcher/pkg/constant"
+	observability "github.com/LerianStudio/lib-observability"
 
-	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
+	"github.com/LerianStudio/fetcher/v2/pkg"
+	"github.com/LerianStudio/fetcher/v2/pkg/constant"
+
+	libLog "github.com/LerianStudio/lib-observability/log"
+	obsRuntime "github.com/LerianStudio/lib-observability/runtime"
 
 	"github.com/gofiber/fiber/v2"
-	"go.opentelemetry.io/otel/codes"
-	"go.opentelemetry.io/otel/trace"
 )
 
 type recoverMiddleware struct {
@@ -51,20 +50,11 @@ func WithRecover(opts ...RecoverMiddlewareOption) fiber.Handler {
 				// but fall back to the middleware logger (configured at startup) to ensure
 				// panic logs are never silently swallowed by a nop logger.
 				logger := mid.Logger
-				if ctxLogger := libCommons.NewLoggerFromContext(reqCtx); ctxLogger != nil && mid.Logger == nil {
+				if ctxLogger := observability.NewLoggerFromContext(reqCtx); ctxLogger != nil && mid.Logger == nil {
 					logger = ctxLogger
 				}
 
-				stack := debug.Stack()
-				panicErr := fmt.Errorf("panic recovered: %v", r)
-
-				logger.Log(reqCtx, libLog.LevelError, fmt.Sprintf("Panic recovered: %v\nStack trace:\n%s", r, string(stack)))
-
-				span := trace.SpanFromContext(reqCtx)
-				if span.IsRecording() {
-					span.RecordError(panicErr)
-					span.SetStatus(codes.Error, fmt.Sprintf("Panic: %v", r))
-				}
+				recordHTTPPanic(reqCtx, logger, r)
 
 				internalErr := pkg.InternalServerError{
 					Code:    constant.ErrInternalServer.Error(),
@@ -78,4 +68,10 @@ func WithRecover(opts ...RecoverMiddlewareOption) fiber.Handler {
 
 		return c.Next()
 	}
+}
+
+func recordHTTPPanic(ctx context.Context, logger libLog.Logger, recovered any) {
+	defer obsRuntime.RecoverWithPolicyAndContext(ctx, logger, "http", "fiber-recover-middleware", obsRuntime.KeepRunning)
+
+	panic(recovered)
 }

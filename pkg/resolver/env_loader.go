@@ -10,10 +10,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/LerianStudio/fetcher/pkg/datasource/sslmode"
-	"github.com/LerianStudio/fetcher/pkg/model"
+	"github.com/LerianStudio/fetcher/v2/pkg/datasource/sslmode"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
 
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
+	libLog "github.com/LerianStudio/lib-observability/log"
 )
 
 // LoadInternalConnectionsFromEnv scans DATASOURCE_{NAME}_* env vars and builds

@@ -7,16 +7,16 @@ import (
 	"strings"
 	"testing"
 
-	cacheRepo "github.com/LerianStudio/fetcher/components/manager/internal/adapters/cache"
-	commandSvc "github.com/LerianStudio/fetcher/components/manager/internal/services/command"
-	querySvc "github.com/LerianStudio/fetcher/components/manager/internal/services/query"
-	"github.com/LerianStudio/fetcher/pkg/constant"
-	"github.com/LerianStudio/fetcher/pkg/crypto"
-	"github.com/LerianStudio/fetcher/pkg/model"
-	datasourceModel "github.com/LerianStudio/fetcher/pkg/model/datasource"
-	jobRepo "github.com/LerianStudio/fetcher/pkg/mongodb/job"
-	nethttp "github.com/LerianStudio/fetcher/pkg/net/http"
-	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
+	cacheRepo "github.com/LerianStudio/fetcher/v2/components/manager/internal/adapters/cache"
+	commandSvc "github.com/LerianStudio/fetcher/v2/components/manager/internal/services/command"
+	querySvc "github.com/LerianStudio/fetcher/v2/components/manager/internal/services/query"
+	"github.com/LerianStudio/fetcher/v2/pkg/constant"
+	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	datasourceModel "github.com/LerianStudio/fetcher/v2/pkg/model/datasource"
+	jobRepo "github.com/LerianStudio/fetcher/v2/pkg/mongodb/job"
+	nethttp "github.com/LerianStudio/fetcher/v2/pkg/net/http"
+	connRepo "github.com/LerianStudio/fetcher/v2/pkg/ports/connection"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -41,7 +41,7 @@ func TestConnectionHandler_CreateConnection_RealHandlerSuccess(t *testing.T) {
 	})
 
 	handler := &ConnectionHandler{
-		CreateCmd: commandSvc.NewCreateConnection(mockConnRepo, mockCryptor),
+		CreateCmd: commandSvc.NewCreateConnection(mockCryptor, connectionEngineForConnRepo(t, mockConnRepo, nil)),
 	}
 	app.Post("/v1/management/connections", handler.CreateConnection)
 
@@ -86,7 +86,7 @@ func TestConnectionHandler_ListConnections_RealHandlerSuccess(t *testing.T) {
 	})
 
 	handler := &ConnectionHandler{
-		ListQuery: querySvc.NewListConnections(mockConnRepo, nil),
+		ListQuery: querySvc.NewListConnections(nil, scopeAuthorityEngine(t, mockConnRepo)),
 	}
 	app.Get("/v1/management/connections", handler.ListConnections)
 
@@ -126,7 +126,7 @@ func TestConnectionHandler_UpdateConnection_RealHandlerSuccess(t *testing.T) {
 	})
 
 	handler := &ConnectionHandler{
-		UpdateCmd: commandSvc.NewUpdateConnection(mockConnRepo, mockJobRepo, nil),
+		UpdateCmd: commandSvc.NewUpdateConnection(nil, connectionEngineForJobRepo(t, mockConnRepo, mockJobRepo)),
 	}
 	app.Patch("/v1/management/connections/:id", handler.UpdateConnection)
 
@@ -163,7 +163,7 @@ func TestConnectionHandler_ValidateSchema_RealHandlerFailureResponse(t *testing.
 	mockSchemaCache.EXPECT().Get(gomock.Any(), "db1").Return(model.NewDataSourceSchema("db1"), nil)
 
 	handler := &ConnectionHandler{
-		ValidateSchemaQuery: querySvc.NewValidateSchema(mockConnRepo, nil, mockSchemaCache, nil, nil),
+		ValidateSchemaQuery: querySvc.NewValidateSchema(mockConnRepo, newSchemaEngineForTest(t, nil, mockSchemaCache), nil),
 	}
 	app.Post("/v1/management/connections/validate-schema", handler.ValidateSchema)
 
@@ -201,9 +201,15 @@ func TestConnectionHandler_GetConnectionSchema_RealHandlerSuccess(t *testing.T) 
 	mockDataSource.EXPECT().Close(gomock.Any()).Return(nil)
 
 	handler := &ConnectionHandler{
-		GetSchemaQuery: querySvc.NewGetConnectionSchema(mockConnRepo, nil, func(_ context.Context, _ *model.Connection, _ crypto.Cryptor) (datasourceModel.DataSource, error) {
-			return mockDataSource, nil
-		}, nil, nil, false),
+		GetSchemaQuery: querySvc.NewGetConnectionSchema(
+			nil,
+			nil,
+			connectionEngineForConnRepo(t, mockConnRepo, nil),
+			newSchemaEngineForTest(t, func(_ context.Context, _ *model.Connection, _ crypto.Cryptor) (datasourceModel.DataSource, error) {
+				return mockDataSource, nil
+			}, nil),
+			false,
+		),
 	}
 	app.Get("/v1/management/connections/:id/schema", handler.GetConnectionSchema)
 

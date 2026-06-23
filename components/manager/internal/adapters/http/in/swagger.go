@@ -3,8 +3,8 @@ package in
 import (
 	"os"
 
-	"github.com/LerianStudio/fetcher/components/manager/api"
-	"github.com/LerianStudio/fetcher/pkg"
+	"github.com/LerianStudio/fetcher/v2/components/manager/api"
+	"github.com/LerianStudio/fetcher/v2/pkg"
 
 	"github.com/gofiber/fiber/v2"
 )

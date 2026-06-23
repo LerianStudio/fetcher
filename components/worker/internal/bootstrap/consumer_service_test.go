@@ -4,33 +4,32 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
+	"time"
 
-	workerRabbitMQ "github.com/LerianStudio/fetcher/components/worker/internal/adapters/rabbitmq"
-	"github.com/LerianStudio/fetcher/components/worker/internal/services"
-	"github.com/LerianStudio/fetcher/pkg/bootstrap/readyz"
-	pkgRabbitMQ "github.com/LerianStudio/fetcher/pkg/rabbitmq"
-	"github.com/LerianStudio/lib-commons/v5/commons"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
-	libOtel "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
+	workerRabbitMQ "github.com/LerianStudio/fetcher/v2/components/worker/internal/adapters/rabbitmq"
+	"github.com/LerianStudio/fetcher/v2/components/worker/internal/services"
+	"github.com/LerianStudio/fetcher/v2/pkg/bootstrap/readyz"
+	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
+	pkgRabbitMQ "github.com/LerianStudio/fetcher/v2/pkg/rabbitmq"
+	libOutbox "github.com/LerianStudio/lib-commons/v5/commons/outbox"
+	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
+	observability "github.com/LerianStudio/lib-observability"
+	libLog "github.com/LerianStudio/lib-observability/log"
+	libOtel "github.com/LerianStudio/lib-observability/tracing"
 	"github.com/google/uuid"
+	amqp "github.com/rabbitmq/amqp091-go"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+	tracesdk "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/mock/gomock"
 )
-
-type fakeLicenseTerminator struct {
-	called bool
-	msg    string
-}
-
-func (f *fakeLicenseTerminator) Terminate(msg string) {
-	f.called = true
-	f.msg = msg
-}
 
 func TestNewMultiQueueConsumerRegistersQueue(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -108,6 +107,205 @@ func TestHandlerGenerateReport_DelegatesToUseCase(t *testing.T) {
 			t.Fatalf("expected %v, got %v", wantErr, err)
 		}
 	})
+}
+
+func TestHandlerGenerateReportDelivery_VerifiesTenantBoundSignatures(t *testing.T) {
+	originalExtractExternalData := extractExternalData
+	t.Cleanup(func() { extractExternalData = originalExtractExternalData })
+
+	signer, err := crypto.NewHMACSigner([]byte("0123456789abcdef0123456789abcdef"), crypto.SignatureVersion)
+	if err != nil {
+		t.Fatalf("signer: %v", err)
+	}
+
+	body := []byte(`{"jobId":"123e4567-e89b-12d3-a456-426614174000"}`)
+	now := time.Now().Unix()
+	signatureFor := func(tenantID string) string {
+		return signer.Sign(pkgRabbitMQ.BuildMessageSignaturePayload(now, signer.SignatureVersion(), tenantID, "123e4567-e89b-12d3-a456-426614174000", "worker.exchange", "worker.key", body))
+	}
+	legacySignature := signer.Sign(crypto.BuildSignaturePayload(now, body))
+	oldTimestamp := time.Now().Add(-(pkgRabbitMQ.DefaultSignatureTimestampTolerance + time.Minute)).Unix()
+	oldLegacySignature := signer.Sign(crypto.BuildSignaturePayload(oldTimestamp, body))
+
+	tests := []struct {
+		name        string
+		headers     amqp.Table
+		ctxTenant   string
+		allowLegacy bool
+		wantHandled bool
+	}{
+		{
+			name: "valid tenant-bound signature",
+			headers: amqp.Table{
+				pkgRabbitMQ.HeaderTenantID:           "tenant-a",
+				pkgRabbitMQ.HeaderMessageSignature:   signatureFor("tenant-a"),
+				pkgRabbitMQ.HeaderSignatureTimestamp: strconv.FormatInt(now, 10),
+				pkgRabbitMQ.HeaderSignatureVersion:   signer.SignatureVersion(),
+			},
+			ctxTenant:   "tenant-a",
+			wantHandled: true,
+		},
+		{
+			name: "legacy body-only signature disabled rejects before handler",
+			headers: amqp.Table{
+				pkgRabbitMQ.HeaderTenantID:           "tenant-a",
+				pkgRabbitMQ.HeaderMessageSignature:   legacySignature,
+				pkgRabbitMQ.HeaderSignatureTimestamp: strconv.FormatInt(now, 10),
+				pkgRabbitMQ.HeaderSignatureVersion:   signer.SignatureVersion(),
+			},
+			ctxTenant: "tenant-a",
+		},
+		{
+			name: "legacy body-only signature enabled accepts matching tenant header",
+			headers: amqp.Table{
+				pkgRabbitMQ.HeaderTenantID:           "tenant-a",
+				pkgRabbitMQ.HeaderMessageSignature:   legacySignature,
+				pkgRabbitMQ.HeaderSignatureTimestamp: strconv.FormatInt(now, 10),
+				pkgRabbitMQ.HeaderSignatureVersion:   signer.SignatureVersion(),
+			},
+			ctxTenant:   "tenant-a",
+			allowLegacy: true,
+			wantHandled: true,
+		},
+		{
+			name: "tenant mismatch rejected before verification",
+			headers: amqp.Table{
+				pkgRabbitMQ.HeaderTenantID:           "tenant-b",
+				pkgRabbitMQ.HeaderMessageSignature:   signatureFor("tenant-b"),
+				pkgRabbitMQ.HeaderSignatureTimestamp: strconv.FormatInt(now, 10),
+				pkgRabbitMQ.HeaderSignatureVersion:   signer.SignatureVersion(),
+			},
+			ctxTenant: "tenant-a",
+		},
+		{
+			name: "missing tenant header rejected",
+			headers: amqp.Table{
+				pkgRabbitMQ.HeaderMessageSignature:   legacySignature,
+				pkgRabbitMQ.HeaderSignatureTimestamp: strconv.FormatInt(now, 10),
+				pkgRabbitMQ.HeaderSignatureVersion:   signer.SignatureVersion(),
+			},
+			ctxTenant: "tenant-a",
+		},
+		{
+			name: "legacy body-only signature enabled still rejects missing tenant header",
+			headers: amqp.Table{
+				pkgRabbitMQ.HeaderMessageSignature:   legacySignature,
+				pkgRabbitMQ.HeaderSignatureTimestamp: strconv.FormatInt(now, 10),
+				pkgRabbitMQ.HeaderSignatureVersion:   signer.SignatureVersion(),
+			},
+			ctxTenant:   "tenant-a",
+			allowLegacy: true,
+		},
+		{
+			name: "missing authoritative context rejected before verification",
+			headers: amqp.Table{
+				pkgRabbitMQ.HeaderTenantID:           "tenant-a",
+				pkgRabbitMQ.HeaderMessageSignature:   signatureFor("tenant-a"),
+				pkgRabbitMQ.HeaderSignatureTimestamp: strconv.FormatInt(now, 10),
+				pkgRabbitMQ.HeaderSignatureVersion:   signer.SignatureVersion(),
+			},
+		},
+		{
+			name: "tampered signature rejected",
+			headers: amqp.Table{
+				pkgRabbitMQ.HeaderTenantID:           "tenant-a",
+				pkgRabbitMQ.HeaderMessageSignature:   "tampered",
+				pkgRabbitMQ.HeaderSignatureTimestamp: strconv.FormatInt(now, 10),
+				pkgRabbitMQ.HeaderSignatureVersion:   signer.SignatureVersion(),
+			},
+			ctxTenant: "tenant-a",
+		},
+		{
+			name: "old legacy body-only signature rejected after tolerance",
+			headers: amqp.Table{
+				pkgRabbitMQ.HeaderTenantID:           "tenant-a",
+				pkgRabbitMQ.HeaderMessageSignature:   oldLegacySignature,
+				pkgRabbitMQ.HeaderSignatureTimestamp: strconv.FormatInt(oldTimestamp, 10),
+				pkgRabbitMQ.HeaderSignatureVersion:   signer.SignatureVersion(),
+			},
+			ctxTenant: "tenant-a",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var handled atomic.Bool
+			extractExternalData = func(*services.UseCase, context.Context, []byte, map[string]any) error {
+				handled.Store(true)
+				return nil
+			}
+
+			consumer := &MultiQueueConsumer{UseCase: &services.UseCase{}, logger: testBootstrapLogger(), messageVerifier: signer, allowLegacyBodySignatureFallback: tt.allowLegacy}
+			ctx := contextWithBootstrapTracking(t)
+			if tt.ctxTenant != "" {
+				ctx = tmcore.ContextWithTenantID(ctx, tt.ctxTenant)
+			}
+			err := consumer.handlerGenerateReportDelivery(ctx, amqp.Delivery{
+				Exchange:   "worker.exchange",
+				RoutingKey: "worker.key",
+				Body:       body,
+				Headers:    tt.headers,
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got := handled.Load(); got != tt.wantHandled {
+				t.Fatalf("handled = %v, want %v", got, tt.wantHandled)
+			}
+		})
+	}
+}
+
+func TestHandlerGenerateReportDelivery_ExtractsQueueTraceBeforeProcessing(t *testing.T) {
+	originalExtractExternalData := extractExternalData
+	originalTracerProvider := otel.GetTracerProvider()
+	originalPropagator := otel.GetTextMapPropagator()
+	tp := tracesdk.NewTracerProvider()
+
+	otel.SetTracerProvider(tp)
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+	t.Cleanup(func() {
+		extractExternalData = originalExtractExternalData
+		otel.SetTracerProvider(originalTracerProvider)
+		otel.SetTextMapPropagator(originalPropagator)
+		if err := tp.Shutdown(context.Background()); err != nil {
+			t.Fatalf("shutdown tracer provider: %v", err)
+		}
+	})
+
+	parentTraceID := "00112233445566778899aabbccddeeff"
+	var gotTraceID string
+
+	extractExternalData = func(_ *services.UseCase, gotCtx context.Context, _ []byte, _ map[string]any) error {
+		spanCtx := trace.SpanContextFromContext(gotCtx)
+		if spanCtx.IsValid() {
+			gotTraceID = spanCtx.TraceID().String()
+		}
+
+		return nil
+	}
+
+	consumer := &MultiQueueConsumer{
+		UseCase: &services.UseCase{},
+		logger:  testBootstrapLogger(),
+	}
+	ctx := tmcore.ContextWithTenantID(contextWithBootstrapTracking(t), "tenant-a")
+
+	err := consumer.handlerGenerateReportDelivery(ctx, amqp.Delivery{
+		Exchange:   "worker.exchange",
+		RoutingKey: "worker.key",
+		Body:       []byte(`{"jobId":"123e4567-e89b-12d3-a456-426614174000"}`),
+		Headers: amqp.Table{
+			pkgRabbitMQ.HeaderTenantID: "tenant-a",
+			"traceparent":              "00-" + parentTraceID + "-0123456789abcdef-01",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotTraceID != parentTraceID {
+		t.Fatalf("trace ID = %q, want %q", gotTraceID, parentTraceID)
+	}
 }
 
 func TestMultiQueueConsumerRun(t *testing.T) {
@@ -211,13 +409,12 @@ func TestServiceRun(t *testing.T) {
 		runLauncher = originalRunLauncher
 	})
 
-	t.Run("terminates license manager after launcher", func(t *testing.T) {
-		terminator := &fakeLicenseTerminator{}
+	t.Run("invokes launcher with consumer and logger", func(t *testing.T) {
 		consumer := &MultiQueueConsumer{}
 		logger := testBootstrapLogger()
 
 		called := false
-		runLauncher = func(gotLogger libLog.Logger, gotConsumer *MultiQueueConsumer, _ *HealthServer) {
+		runLauncher = func(gotLogger libLog.Logger, gotConsumer *MultiQueueConsumer, _ *HealthServer, _ *libOutbox.Dispatcher, _ *services.TerminalEventRepairer, _ *services.TenantConsumerReconciler) {
 			called = true
 			if gotLogger != logger {
 				t.Fatal("unexpected logger passed to launcher")
@@ -230,31 +427,6 @@ func TestServiceRun(t *testing.T) {
 		service := &Service{
 			MultiQueueConsumer: consumer,
 			Logger:             logger,
-			licenseShutdown:    terminator,
-		}
-
-		service.Run()
-
-		if !called {
-			t.Fatal("expected launcher to be invoked")
-		}
-		if !terminator.called {
-			t.Fatal("expected license terminator to be called")
-		}
-		if terminator.msg != "Consumers are done." {
-			t.Fatalf("unexpected terminate message: %s", terminator.msg)
-		}
-	})
-
-	t.Run("nil license terminator is allowed", func(t *testing.T) {
-		called := false
-		runLauncher = func(libLog.Logger, *MultiQueueConsumer, *HealthServer) {
-			called = true
-		}
-
-		service := &Service{
-			MultiQueueConsumer: &MultiQueueConsumer{},
-			Logger:             testBootstrapLogger(),
 		}
 
 		service.Run()
@@ -268,16 +440,9 @@ func TestServiceRun(t *testing.T) {
 func contextWithBootstrapTracking(t *testing.T) context.Context {
 	t.Helper()
 
-	requestID, err := commons.GenerateUUIDv7()
-	if err != nil {
-		requestID = uuid.New()
-	}
+	requestID := uuid.New()
+	ctx := observability.ContextWithHeaderID(context.Background(), requestID.String())
+	ctx = observability.ContextWithLogger(ctx, testBootstrapLogger())
 
-	values := &commons.CustomContextKeyValue{
-		HeaderID: requestID.String(),
-		Logger:   testBootstrapLogger(),
-		Tracer:   otel.Tracer("bootstrap-test"),
-	}
-
-	return context.WithValue(context.Background(), commons.CustomContextKey, values)
+	return observability.ContextWithTracer(ctx, otel.Tracer("bootstrap-test"))
 }

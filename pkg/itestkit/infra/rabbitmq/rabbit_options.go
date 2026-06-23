@@ -2,9 +2,10 @@ package rabbitmq
 
 import (
 	"io"
+	"net/netip"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/go-connections/nat"
+	"github.com/moby/moby/api/types/container"
+	mobyNetwork "github.com/moby/moby/api/types/network"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -41,11 +42,11 @@ func WithRabbitFixedPort(hostPort string) RabbitOption {
 		o.runOpts = append(o.runOpts, testcontainers.WithHostConfigModifier(
 			func(hc *container.HostConfig) {
 				if hc.PortBindings == nil {
-					hc.PortBindings = nat.PortMap{}
+					hc.PortBindings = mobyNetwork.PortMap{}
 				}
 
-				hc.PortBindings[nat.Port("5672/tcp")] = []nat.PortBinding{
-					{HostIP: "0.0.0.0", HostPort: hostPort},
+				hc.PortBindings[mobyNetwork.MustParsePort("5672/tcp")] = []mobyNetwork.PortBinding{
+					{HostIP: netip.MustParseAddr("0.0.0.0"), HostPort: hostPort},
 				}
 			},
 		))

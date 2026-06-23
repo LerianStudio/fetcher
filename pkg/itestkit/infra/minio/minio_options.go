@@ -1,8 +1,10 @@
 package minio
 
 import (
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/go-connections/nat"
+	"net/netip"
+
+	"github.com/moby/moby/api/types/container"
+	mobyNetwork "github.com/moby/moby/api/types/network"
 )
 
 // MinioOption is a functional option for configuring MinIO infrastructure.
@@ -33,11 +35,11 @@ func WithMinioFixedPort(hostPort string) MinioOption {
 	return func(o *minioOptions) {
 		o.hostConfigModifiers = append(o.hostConfigModifiers, func(hc *container.HostConfig) {
 			if hc.PortBindings == nil {
-				hc.PortBindings = nat.PortMap{}
+				hc.PortBindings = mobyNetwork.PortMap{}
 			}
 
-			hc.PortBindings[nat.Port("9000/tcp")] = []nat.PortBinding{
-				{HostIP: "0.0.0.0", HostPort: hostPort},
+			hc.PortBindings[mobyNetwork.MustParsePort("9000/tcp")] = []mobyNetwork.PortBinding{
+				{HostIP: netip.MustParseAddr("0.0.0.0"), HostPort: hostPort},
 			}
 		})
 	}

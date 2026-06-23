@@ -6,12 +6,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/LerianStudio/fetcher/pkg/model"
-	"github.com/LerianStudio/fetcher/pkg/net/http"
-	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	"github.com/LerianStudio/fetcher/v2/pkg/net/http"
+	connRepo "github.com/LerianStudio/fetcher/v2/pkg/ports/connection"
+	"github.com/LerianStudio/fetcher/v2/pkg/resolver"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
 
@@ -39,7 +41,7 @@ func TestListConnections_Execute_Success(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewListConnections(mockConnRepo, nil)
+	svc := NewListConnections(nil, scopeAuthorityEngine(t, mockConnRepo))
 
 	ctx := testContext()
 	filters := http.QueryHeader{
@@ -80,6 +82,100 @@ func TestListConnections_Execute_Success(t *testing.T) {
 	}
 }
 
+// TestListConnections_Execute_InternalMerge_FirstPage proves the internal-merge
+// branch: with a non-nil resolver and Page<=1, internal connections are resolved,
+// PREPENDED before the external (Engine-routed) list, and the total is
+// repoTotal + len(internal). This locks the resolver-merge contract the
+// migration touches but no existing test exercised (all passed nil resolver).
+func TestListConnections_Execute_InternalMerge_FirstPage(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockResolver := resolver.NewMockConnectionResolver(ctrl)
+
+	filters := http.QueryHeader{Limit: 10, Page: 1}
+
+	external := newListTestConnection(uuid.New(), "external-1", model.TypePostgreSQL)
+	mockConnRepo.EXPECT().List(gomock.Any(), filters).Return([]*model.Connection{external}, int64(1), nil)
+
+	internal := &model.Connection{ConfigName: "midaz_onboarding", Type: model.TypePostgreSQL}
+	mockResolver.EXPECT().ListInternalConnections(gomock.Any()).Return([]*model.Connection{internal}, nil)
+
+	svc := NewListConnections(mockResolver, scopeAuthorityEngine(t, mockConnRepo))
+
+	result, err := svc.Execute(testContext(), "", filters)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	items := result.Items.([]*model.ConnectionResponse)
+	require.Len(t, items, 2)
+	// Internal first, then external.
+	assert.Equal(t, "midaz_onboarding", items[0].ConfigName)
+	assert.Equal(t, "external-1", items[1].ConfigName)
+	// Total = repo total (1) + internal count (1).
+	assert.Equal(t, 2, result.Total)
+}
+
+// TestListConnections_Execute_InternalMerge_TypeFilter proves the internal
+// type-filter loop: when a type filter is set, internal connections of a
+// non-matching type are dropped from the merge (the external list is filtered by
+// the repo via the opaque params).
+func TestListConnections_Execute_InternalMerge_TypeFilter(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockResolver := resolver.NewMockConnectionResolver(ctrl)
+
+	filters := http.QueryHeader{Limit: 10, Page: 1, Type: "postgresql"}
+
+	mockConnRepo.EXPECT().List(gomock.Any(), filters).Return(nil, int64(0), nil)
+
+	pgInternal := &model.Connection{ConfigName: "midaz_onboarding", Type: model.TypePostgreSQL}
+	mongoInternal := &model.Connection{ConfigName: "plugin_crm", Type: model.TypeMongoDB}
+	mockResolver.EXPECT().ListInternalConnections(gomock.Any()).
+		Return([]*model.Connection{pgInternal, mongoInternal}, nil)
+
+	svc := NewListConnections(mockResolver, scopeAuthorityEngine(t, mockConnRepo))
+
+	result, err := svc.Execute(testContext(), "", filters)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	items := result.Items.([]*model.ConnectionResponse)
+	require.Len(t, items, 1, "only the postgres internal connection survives the type filter")
+	assert.Equal(t, "midaz_onboarding", items[0].ConfigName)
+	assert.Equal(t, 1, result.Total, "total = repo total (0) + filtered internal count (1)")
+}
+
+// TestListConnections_Execute_InternalMerge_SkippedAfterFirstPage proves the
+// Page<=1 guard: on page 2+ the resolver is NOT consulted (internal connections
+// only appear on the first page), so the total is the repo total alone.
+func TestListConnections_Execute_InternalMerge_SkippedAfterFirstPage(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockResolver := resolver.NewMockConnectionResolver(ctrl) // no ListInternalConnections expectation: page 2 skips it
+
+	filters := http.QueryHeader{Limit: 10, Page: 2}
+
+	external := newListTestConnection(uuid.New(), "external-2", model.TypePostgreSQL)
+	mockConnRepo.EXPECT().List(gomock.Any(), filters).Return([]*model.Connection{external}, int64(5), nil)
+
+	svc := NewListConnections(mockResolver, scopeAuthorityEngine(t, mockConnRepo))
+
+	result, err := svc.Execute(testContext(), "", filters)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	items := result.Items.([]*model.ConnectionResponse)
+	require.Len(t, items, 1)
+	assert.Equal(t, "external-2", items[0].ConfigName)
+	assert.Equal(t, 5, result.Total, "page 2: total is the repo total alone, no internal merge")
+}
+
 // TestListConnections_Execute_EmptyList tests that empty list returns empty slice, not error.
 func TestListConnections_Execute_EmptyList(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -87,7 +183,7 @@ func TestListConnections_Execute_EmptyList(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewListConnections(mockConnRepo, nil)
+	svc := NewListConnections(nil, scopeAuthorityEngine(t, mockConnRepo))
 
 	ctx := testContext()
 	filters := http.QueryHeader{
@@ -121,7 +217,7 @@ func TestListConnections_Execute_RepositoryError(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewListConnections(mockConnRepo, nil)
+	svc := NewListConnections(nil, scopeAuthorityEngine(t, mockConnRepo))
 
 	ctx := testContext()
 	filters := http.QueryHeader{
@@ -158,16 +254,15 @@ func TestNewListConnections(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewListConnections(mockConnRepo, nil)
+	svc := NewListConnections(nil, scopeAuthorityEngine(t, mockConnRepo))
 
 	if svc == nil {
 		t.Fatal("expected non-nil service")
 	}
 
-	if svc.connRepo == nil {
-		t.Fatal("expected connRepo to be set")
+	if svc.engine == nil {
+		t.Fatal("expected engine to be set")
 	}
-
 }
 
 // TestListConnections_Execute_TableDriven uses table-driven tests for various scenarios.
@@ -291,7 +386,7 @@ func TestListConnections_Execute_TableDriven(t *testing.T) {
 
 			tt.setupMocks(mockConnRepo, tt.filters)
 
-			svc := NewListConnections(mockConnRepo, nil)
+			svc := NewListConnections(nil, scopeAuthorityEngine(t, mockConnRepo))
 
 			result, err := svc.Execute(ctx, "", tt.filters)
 
@@ -326,7 +421,7 @@ func TestListConnections_Execute_OrganizationIsolation(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewListConnections(mockConnRepo, nil)
+	svc := NewListConnections(nil, scopeAuthorityEngine(t, mockConnRepo))
 
 	ctx := testContext()
 	filters := http.QueryHeader{
@@ -373,7 +468,7 @@ func TestListConnections_Execute_DifferentOrganizations(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewListConnections(mockConnRepo, nil)
+	svc := NewListConnections(nil, scopeAuthorityEngine(t, mockConnRepo))
 
 	ctx := testContext()
 	filters := http.QueryHeader{
@@ -430,7 +525,7 @@ func TestListConnections_Execute_WithMetadataFilter(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewListConnections(mockConnRepo, nil)
+	svc := NewListConnections(nil, scopeAuthorityEngine(t, mockConnRepo))
 
 	ctx := testContext()
 
@@ -470,7 +565,7 @@ func TestListConnections_Execute_WithDateFilters(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewListConnections(mockConnRepo, nil)
+	svc := NewListConnections(nil, scopeAuthorityEngine(t, mockConnRepo))
 
 	ctx := testContext()
 
@@ -528,7 +623,7 @@ func TestListConnections_Execute_WithSortOrder(t *testing.T) {
 
 			mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-			svc := NewListConnections(mockConnRepo, nil)
+			svc := NewListConnections(nil, scopeAuthorityEngine(t, mockConnRepo))
 
 			ctx := testContext()
 			filters := http.QueryHeader{
@@ -568,7 +663,7 @@ func TestListConnections_Execute_ConnectionTypes(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewListConnections(mockConnRepo, nil)
+	svc := NewListConnections(nil, scopeAuthorityEngine(t, mockConnRepo))
 
 	ctx := testContext()
 	filters := http.QueryHeader{
@@ -629,7 +724,7 @@ func TestListConnections_Execute_WithCursor(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewListConnections(mockConnRepo, nil)
+	svc := NewListConnections(nil, scopeAuthorityEngine(t, mockConnRepo))
 
 	ctx := testContext()
 	filters := http.QueryHeader{
@@ -665,7 +760,7 @@ func TestListConnections_Execute_EmptyFilters(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewListConnections(mockConnRepo, nil)
+	svc := NewListConnections(nil, scopeAuthorityEngine(t, mockConnRepo))
 
 	ctx := testContext()
 	filters := http.QueryHeader{} // Empty filters
@@ -732,7 +827,7 @@ func TestListConnections_Execute_Pagination(t *testing.T) {
 
 			mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-			svc := NewListConnections(mockConnRepo, nil)
+			svc := NewListConnections(nil, scopeAuthorityEngine(t, mockConnRepo))
 
 			ctx := testContext()
 			filters := http.QueryHeader{
@@ -775,7 +870,7 @@ func TestListConnections_Execute_ConnectionWithSSL(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewListConnections(mockConnRepo, nil)
+	svc := NewListConnections(nil, scopeAuthorityEngine(t, mockConnRepo))
 
 	ctx := testContext()
 	filters := http.QueryHeader{
@@ -876,7 +971,7 @@ func TestListConnections_Execute_ErrorScenarios(t *testing.T) {
 
 			mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-			svc := NewListConnections(mockConnRepo, nil)
+			svc := NewListConnections(nil, scopeAuthorityEngine(t, mockConnRepo))
 
 			ctx := testContext()
 			filters := http.QueryHeader{
@@ -910,7 +1005,7 @@ func TestListConnections_Execute_EmptyOrganizationID(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewListConnections(mockConnRepo, nil)
+	svc := NewListConnections(nil, scopeAuthorityEngine(t, mockConnRepo))
 
 	ctx := testContext()
 
@@ -942,7 +1037,7 @@ func TestListConnections_Execute_WithProductNameFilter(t *testing.T) {
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
 
-	svc := NewListConnections(mockConnRepo, nil)
+	svc := NewListConnections(nil, scopeAuthorityEngine(t, mockConnRepo))
 
 	ctx := testContext()
 	filters := http.QueryHeader{}

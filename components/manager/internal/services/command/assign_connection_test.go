@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/LerianStudio/fetcher/pkg"
-	"github.com/LerianStudio/fetcher/pkg/model"
-	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
+	"github.com/LerianStudio/fetcher/v2/pkg"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	connRepo "github.com/LerianStudio/fetcher/v2/pkg/ports/connection"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"

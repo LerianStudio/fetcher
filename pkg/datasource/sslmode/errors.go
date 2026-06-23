@@ -5,8 +5,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/LerianStudio/fetcher/pkg"
-	"github.com/LerianStudio/fetcher/pkg/constant"
+	"github.com/LerianStudio/fetcher/v2/pkg"
+	"github.com/LerianStudio/fetcher/v2/pkg/constant"
 )
 
 // ValidateWithHint validates a mode against valid modes and provides helpful error messages.

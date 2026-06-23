@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	portStorage "github.com/LerianStudio/fetcher/pkg/ports/storage"
-	simpleClient "github.com/LerianStudio/fetcher/pkg/seaweedfs"
-	"github.com/LerianStudio/fetcher/pkg/seaweedfs/external"
+	portStorage "github.com/LerianStudio/fetcher/v2/pkg/ports/storage"
+	simpleClient "github.com/LerianStudio/fetcher/v2/pkg/seaweedfs"
+	"github.com/LerianStudio/fetcher/v2/pkg/seaweedfs/external"
 )
 
 const (

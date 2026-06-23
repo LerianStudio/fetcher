@@ -7,15 +7,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/LerianStudio/fetcher/pkg"
-	"github.com/LerianStudio/fetcher/pkg/constant"
-	"github.com/LerianStudio/lib-commons/v5/commons"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
+	"github.com/LerianStudio/lib-observability"
+
+	"github.com/LerianStudio/fetcher/v2/pkg"
+	"github.com/LerianStudio/fetcher/v2/pkg/constant"
 	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
-	"go.mongodb.org/mongo-driver/bson/bsoncodec"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/readpref"
-	"go.mongodb.org/mongo-driver/x/mongo/driver/topology"
+	libLog "github.com/LerianStudio/lib-observability/log"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/readpref"
+	"go.mongodb.org/mongo-driver/v2/x/mongo/driver/topology"
 )
 
 const (
@@ -43,7 +44,7 @@ func ValidateFieldsInSchemaMongo(expectedFields []string, schema CollectionSchem
 
 //nolint:gocyclo // High complexity is inherent to comprehensive MongoDB error handling across multiple error types
 func MapMongoErrorToResponse(err error, ctx context.Context) error {
-	logger := commons.NewLoggerFromContext(ctx)
+	logger := observability.NewLoggerFromContext(ctx)
 
 	// Client-side cancellation / deadlines (HTTP layer)
 	// If the client closed the connection, you often can't write a response anyway.
@@ -58,12 +59,10 @@ func MapMongoErrorToResponse(err error, ctx context.Context) error {
 		return pkg.ValidateInternalError(constant.ErrServiceUnavailable, "")
 	}
 
-	// Server selection / network
-	if errors.Is(err, topology.ErrServerSelectionTimeout) {
-		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("MongoDB server selection timeout: %v", err))
-		return pkg.ValidateInternalError(constant.ErrServiceUnavailable, "")
-	}
-
+	// Server selection / network.
+	// Note: mongo-driver v2 removed the topology.ErrServerSelectionTimeout sentinel.
+	// Server-selection timeouts now surface as context.DeadlineExceeded (handled above
+	// under the timeout branch) or as a topology.ServerSelectionError (handled below).
 	var sse topology.ServerSelectionError
 	if errors.As(err, &sse) {
 		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("MongoDB server selection error: %v", err))
@@ -125,7 +124,7 @@ func MapMongoErrorToResponse(err error, ctx context.Context) error {
 	}
 
 	// Decode / BSON issues
-	var decodeErr bsoncodec.ValueDecoderError
+	var decodeErr bson.ValueDecoderError
 	if errors.As(err, &decodeErr) {
 		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("MongoDB decode error: %v", err))
 		return pkg.ValidateInternalError(constant.ErrInternalServer, "")

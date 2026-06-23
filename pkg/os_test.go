@@ -363,7 +363,6 @@ func TestEnsureConfigFromEnvVars(t *testing.T) {
 
 		cfg := &TestConfig{}
 		result, err := EnsureConfigFromEnvVars(cfg)
-
 		if err != nil {
 			t.Fatalf("EnsureConfigFromEnvVars() unexpected error: %v", err)
 		}

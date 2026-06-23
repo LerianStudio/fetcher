@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
+	libLog "github.com/LerianStudio/lib-observability/log"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/adaptor"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -338,7 +338,7 @@ func TestRunSelfProbe_NilLogger_DoesNotPanic(t *testing.T) {
 // should guard against future regressions.
 type panickingChecker struct{ name string }
 
-func (p *panickingChecker) Name() string                           { return p.name }
+func (p *panickingChecker) Name() string                            { return p.name }
 func (p *panickingChecker) Check(_ context.Context) DependencyCheck { panic("boom") }
 
 // Note: RunSelfProbe itself does not recover from panics — recovery is the

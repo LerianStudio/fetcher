@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/LerianStudio/fetcher/pkg/itestkit/addons/metricskit"
-	e2eshared "github.com/LerianStudio/fetcher/tests/shared"
+	"github.com/LerianStudio/fetcher/v2/pkg/itestkit/addons/metricskit"
+	e2eshared "github.com/LerianStudio/fetcher/v2/tests/shared"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

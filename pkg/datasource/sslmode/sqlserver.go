@@ -1,8 +1,8 @@
 package sslmode
 
 import (
-	"github.com/LerianStudio/fetcher/pkg"
-	"github.com/LerianStudio/fetcher/pkg/constant"
+	"github.com/LerianStudio/fetcher/v2/pkg"
+	"github.com/LerianStudio/fetcher/v2/pkg/constant"
 )
 
 // validSQLServerModes contains the allowlist of valid SQL Server encryption mode values.

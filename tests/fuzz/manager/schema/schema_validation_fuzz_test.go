@@ -7,8 +7,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/LerianStudio/fetcher/pkg/model"
-	"github.com/LerianStudio/fetcher/tests/fuzz/shared/generators"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	"github.com/LerianStudio/fetcher/v2/tests/fuzz/shared/generators"
 )
 
 func FuzzSchemaValidationRequestParsing(f *testing.F) {

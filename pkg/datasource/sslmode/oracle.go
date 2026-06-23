@@ -1,8 +1,8 @@
 package sslmode
 
 import (
-	"github.com/LerianStudio/fetcher/pkg"
-	"github.com/LerianStudio/fetcher/pkg/constant"
+	"github.com/LerianStudio/fetcher/v2/pkg"
+	"github.com/LerianStudio/fetcher/v2/pkg/constant"
 )
 
 // validOracleModes contains the allowlist of valid Oracle SSL mode values.

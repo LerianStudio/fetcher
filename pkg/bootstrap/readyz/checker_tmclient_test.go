@@ -2,17 +2,19 @@ package readyz
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"testing"
 	"time"
 
 	tmclient "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/client"
-	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
+// fakeTMClient is the shared Tenant-Manager-client double for the readyz
+// package. It is also used by tenant_handler_test.go and goleak_test.go,
+// which still exercise the live tenant-existence lookup path — so it keeps
+// the full tenants/err/delay shape even though the readiness checker no
+// longer issues a live call. The calls counter lets the readiness tests
+// assert that the nil-check probe never touches the Tenant Manager.
 type fakeTMClient struct {
 	tenants []*tmclient.TenantSummary
 	err     error
@@ -34,7 +36,10 @@ func (f *fakeTMClient) GetActiveTenantsByService(ctx context.Context, _ string) 
 	return f.tenants, f.err
 }
 
-func TestTenantManagerClientChecker_Up(t *testing.T) {
+func TestTenantManagerClientChecker_Up_DoesNotProbe(t *testing.T) {
+	// A configured client reports Up purely on the nil-check — the checker
+	// must NOT call the Tenant Manager (its breaker + request-path cache own
+	// liveness; /readyz only reports "client configured").
 	tm := &fakeTMClient{tenants: []*tmclient.TenantSummary{{ID: "t1", Name: "acme", Status: "active"}}}
 	c := NewTenantManagerClientChecker(tm, "fetcher", "https://tenants.prod.example.com", true)
 
@@ -42,8 +47,10 @@ func TestTenantManagerClientChecker_Up(t *testing.T) {
 
 	res := c.Check(context.Background())
 	assert.Equal(t, StatusUp, res.Status)
-	assert.Equal(t, "closed", res.BreakerState)
 	assert.Empty(t, res.Error)
+	assert.Empty(t, res.BreakerState, "nil-check probe never reports breaker state")
+	assert.Zero(t, res.LatencyMs, "nil-check probe issues no live call, so no latency")
+	assert.Zero(t, tm.calls, "readiness probe must not call the Tenant Manager")
 	if assert.NotNil(t, res.TLS) {
 		assert.True(t, *res.TLS)
 	}
@@ -58,56 +65,25 @@ func TestTenantManagerClientChecker_Disabled_Skipped(t *testing.T) {
 	assert.Empty(t, res.BreakerState, "skipped deps never carry breaker state")
 }
 
-func TestTenantManagerClientChecker_BreakerOpen(t *testing.T) {
-	// Wrap the sentinel to mirror real propagation — the client wraps with fmt.Errorf.
-	tm := &fakeTMClient{err: fmt.Errorf("get: %w", tmcore.ErrCircuitBreakerOpen)}
-	c := NewTenantManagerClientChecker(tm, "fetcher", "https://tm", true)
-
-	res := c.Check(context.Background())
-	assert.Equal(t, StatusDown, res.Status)
-	assert.Equal(t, "open", res.BreakerState)
-	assert.Equal(t, "circuit breaker open", res.Error)
-}
-
-func TestTenantManagerClientChecker_GenericError(t *testing.T) {
-	tm := &fakeTMClient{err: errors.New("unexpected http 500 from tenant manager")}
-	c := NewTenantManagerClientChecker(tm, "fetcher", "http://tm.local:8080", true)
-
-	res := c.Check(context.Background())
-	assert.Equal(t, StatusDown, res.Status)
-	assert.Equal(t, "closed", res.BreakerState, "non-breaker errors stay under closed")
-	assert.Contains(t, res.Error, "http 500")
-	if assert.NotNil(t, res.TLS) {
-		assert.False(t, *res.TLS)
-	}
-}
-
-func TestTenantManagerClientChecker_Timeout(t *testing.T) {
-	tm := &fakeTMClient{delay: 50 * time.Millisecond, err: context.DeadlineExceeded}
-	c := NewTenantManagerClientChecker(tm, "fetcher", "https://tm", true)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
-	defer cancel()
-
-	res := c.Check(ctx)
-	assert.Equal(t, StatusDown, res.Status)
-	assert.Equal(t, "timeout", res.Error)
-	assert.Equal(t, "closed", res.BreakerState)
-}
-
 func TestTenantManagerClientChecker_NilClient_Down(t *testing.T) {
 	c := NewTenantManagerClientChecker(nil, "fetcher", "https://tm", true)
 
 	res := c.Check(context.Background())
 	assert.Equal(t, StatusDown, res.Status)
 	assert.Contains(t, res.Error, "not initialized")
+	assert.Empty(t, res.BreakerState, "nil-check probe never reports breaker state")
 }
 
-func TestTenantManagerClientChecker_SanitizesError(t *testing.T) {
-	tm := &fakeTMClient{err: errors.New("dial https://admin:hunter2@tm.prod failed")}
-	c := NewTenantManagerClientChecker(tm, "fetcher", "https://tm", true)
+func TestTenantManagerClientChecker_NoTLS_HTTPUpstream(t *testing.T) {
+	// Even when the client never errors, an http:// upstream must surface
+	// TLS=false. The probe still issues no live call.
+	tm := &fakeTMClient{tenants: []*tmclient.TenantSummary{{ID: "t1"}}}
+	c := NewTenantManagerClientChecker(tm, "fetcher", "http://tm.local:8080", true)
 
 	res := c.Check(context.Background())
-	require.Equal(t, StatusDown, res.Status)
-	assert.NotContains(t, res.Error, "hunter2")
+	assert.Equal(t, StatusUp, res.Status)
+	assert.Zero(t, tm.calls, "readiness probe must not call the Tenant Manager")
+	if assert.NotNil(t, res.TLS) {
+		assert.False(t, *res.TLS)
+	}
 }

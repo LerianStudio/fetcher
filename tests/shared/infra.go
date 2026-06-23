@@ -6,12 +6,12 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/LerianStudio/fetcher/pkg/itestkit"
-	"github.com/LerianStudio/fetcher/pkg/itestkit/infra/minio"
-	"github.com/LerianStudio/fetcher/pkg/itestkit/infra/mongodb"
-	"github.com/LerianStudio/fetcher/pkg/itestkit/infra/rabbitmq"
-	"github.com/LerianStudio/fetcher/pkg/itestkit/infra/redis"
-	"github.com/LerianStudio/fetcher/pkg/itestkit/infra/seaweedfs"
+	"github.com/LerianStudio/fetcher/v2/pkg/itestkit"
+	"github.com/LerianStudio/fetcher/v2/pkg/itestkit/infra/minio"
+	"github.com/LerianStudio/fetcher/v2/pkg/itestkit/infra/mongodb"
+	"github.com/LerianStudio/fetcher/v2/pkg/itestkit/infra/rabbitmq"
+	"github.com/LerianStudio/fetcher/v2/pkg/itestkit/infra/redis"
+	"github.com/LerianStudio/fetcher/v2/pkg/itestkit/infra/seaweedfs"
 )
 
 // CoreInfra holds the core infrastructure components required for E2E tests.

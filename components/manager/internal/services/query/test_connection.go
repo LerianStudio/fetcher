@@ -7,20 +7,21 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/LerianStudio/fetcher/pkg"
-	"github.com/LerianStudio/fetcher/pkg/constant"
-	"github.com/LerianStudio/fetcher/pkg/crypto"
-	ds "github.com/LerianStudio/fetcher/pkg/datasource"
-	"github.com/LerianStudio/fetcher/pkg/model"
-	"github.com/LerianStudio/fetcher/pkg/model/datasource"
-	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
-	"github.com/LerianStudio/fetcher/pkg/resolver"
+	"github.com/LerianStudio/lib-observability"
 
-	"github.com/LerianStudio/lib-commons/v5/commons"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
+	"github.com/LerianStudio/fetcher/v2/pkg"
+	"github.com/LerianStudio/fetcher/v2/pkg/constant"
+	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
+	ds "github.com/LerianStudio/fetcher/v2/pkg/datasource"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	"github.com/LerianStudio/fetcher/v2/pkg/model/datasource"
+	connRepo "github.com/LerianStudio/fetcher/v2/pkg/ports/connection"
+	"github.com/LerianStudio/fetcher/v2/pkg/resolver"
+
 	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
 	valkey "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/valkey"
+	libLog "github.com/LerianStudio/lib-observability/log"
+	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
@@ -67,7 +68,7 @@ func NewTestConnection(
 }
 
 func (s *TestConnection) Execute(ctx context.Context, connectionID uuid.UUID) (*model.ConnectionTestResponse, error) {
-	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "service.test_connection")
 	defer span.End()

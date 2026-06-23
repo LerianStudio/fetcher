@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/LerianStudio/fetcher/pkg/model"
-	connPort "github.com/LerianStudio/fetcher/pkg/ports/connection"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	connPort "github.com/LerianStudio/fetcher/v2/pkg/ports/connection"
 	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"

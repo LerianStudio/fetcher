@@ -6,15 +6,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/LerianStudio/fetcher/pkg/constant"
-	"github.com/LerianStudio/fetcher/pkg/model"
-	sharedMongo "github.com/LerianStudio/fetcher/pkg/mongodb"
-	"github.com/LerianStudio/lib-commons/v5/commons"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
+	"github.com/LerianStudio/fetcher/v2/pkg/constant"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	sharedMongo "github.com/LerianStudio/fetcher/v2/pkg/mongodb"
+	observability "github.com/LerianStudio/lib-observability"
+	libLog "github.com/LerianStudio/lib-observability/log"
+	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -25,7 +25,7 @@ const (
 
 // EnsureIndexes creates MongoDB indexes tailored for the jobs collection workload.
 func (jr *JobMongoDBRepository) EnsureIndexes(ctx context.Context) error {
-	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "mongodb.ensure_job_indexes")
 	defer span.End()
@@ -89,6 +89,17 @@ func (jr *JobMongoDBRepository) EnsureIndexes(ctx context.Context) error {
 			Options: options.Index().
 				SetName("idx_job_hash_created"),
 		},
+		{
+			Keys: bson.D{
+				{Key: "metadata.terminalEventPending", Value: 1},
+				{Key: "status", Value: 1},
+				{Key: "completed_at", Value: 1},
+				{Key: "created_at", Value: 1},
+			},
+			Options: options.Index().
+				SetName("idx_job_terminal_event_repair").
+				SetPartialFilterExpression(bson.D{{Key: "metadata.terminalEventPending", Value: true}}),
+		},
 	}
 
 	span.SetAttributes(
@@ -151,7 +162,7 @@ func ensureUniqueActiveHashIndex(ctx context.Context, coll *mongo.Collection, lo
 	if state == uniqIndexLegacy {
 		logger.Log(ctx, libLog.LevelInfo, "Dropping legacy uniq_job_hash_active index for migration to dedup_active filter")
 
-		if _, dropErr := coll.Indexes().DropOne(ctx, "uniq_job_hash_active"); dropErr != nil {
+		if dropErr := coll.Indexes().DropOne(ctx, "uniq_job_hash_active"); dropErr != nil {
 			return fmt.Errorf("drop legacy uniq_job_hash_active: %w", dropErr)
 		}
 	}
@@ -323,7 +334,7 @@ func backfillDedupActive(ctx context.Context, coll *mongo.Collection, logger lib
 
 // DropIndexes removes custom indexes from the jobs collection.
 func (jr *JobMongoDBRepository) DropIndexes(ctx context.Context) error {
-	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "mongodb.drop_job_indexes")
 	defer span.End()
@@ -346,15 +357,14 @@ func (jr *JobMongoDBRepository) DropIndexes(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, indexDropTimeout)
 	defer cancel()
 
-	droppedIndexes, err := coll.Indexes().DropAll(ctx)
-	if err != nil {
+	// mongo-driver v2 DropAll returns only an error (v1 returned the server's bson.Raw reply).
+	if err := coll.Indexes().DropAll(ctx); err != nil {
 		libOpentelemetry.HandleSpanError(span, "Failed to drop job indexes", err)
 		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Failed to drop indexes for %s: %v", constant.MongoCollectionJob, err))
 
 		return err
 	}
 
-	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Dropped indexes: %v", droppedIndexes))
 	logger.Log(ctx, libLog.LevelInfo, fmt.Sprintf("Successfully dropped all custom indexes for %s collection", constant.MongoCollectionJob))
 
 	return nil

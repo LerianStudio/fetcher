@@ -6,8 +6,8 @@ package fetcher
 import (
 	"testing"
 
-	"github.com/LerianStudio/fetcher/pkg/model"
-	"github.com/LerianStudio/fetcher/pkg/model/job"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	"github.com/LerianStudio/fetcher/v2/pkg/model/job"
 )
 
 func FuzzDataRequestValidation(f *testing.F) {

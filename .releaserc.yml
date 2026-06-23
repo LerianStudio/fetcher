@@ -1,3 +1,13 @@
+# semantic-release manages the PARENT module (github.com/LerianStudio/fetcher/v2),
+# tagged v${version}. The engine submodule (github.com/LerianStudio/fetcher/pkg/engine,
+# tagged pkg/engine/vX.Y.Z) is cut in the SAME run by the @semantic-release/exec prepare
+# hook BEFORE @semantic-release/git makes the release commit — engine first, so the
+# parent's pinned require is always resolvable. See docs/RELEASING.md.
+
+# Parent tag format. Path-prefixed engine tags (pkg/engine/v*) do not match this glob,
+# so semantic-release never mistakes an engine tag for a parent release (req: no collision).
+tagFormat: "v${version}"
+
 plugins:
   - path: "@semantic-release/commit-analyzer"
     preset: conventionalcommits
@@ -27,10 +37,20 @@ plugins:
       - breaking: true
         release: major
 
-  # Plugin to version the CHANGELOG.md
+  # Engine-first: cut + push pkg/engine/vX.Y.Z, pin the parent require to it, drop the
+  # transient replace, and run the GOWORK=off resolution gate — all BEFORE the parent
+  # release commit. MUST be listed before @semantic-release/git so its prepare runs first.
+  - path: "@semantic-release/exec"
+    prepareCmd: "node scripts/release/engine-release.mjs prepare --parent-version ${nextRelease.version} --channel ${nextRelease.channel}"
+
+  # Plugin to version the CHANGELOG.md and carry the engine require-pin into the release
+  # commit. go.mod/go.sum/pkg/engine/CHANGELOG.md are written by the exec prepare hook above.
   - path: "@semantic-release/git"
     assets:
       - CHANGELOG.md
+      - go.mod
+      - go.sum
+      - pkg/engine/CHANGELOG.md
     message: "chore(release): ${nextRelease.version}\n\nChangelog atualizado."
 
   # Plugin to publish the CHANGELOG.md as an asset in the GitHub release
@@ -41,15 +61,6 @@ plugins:
     successComment: false
     failComment: false
     labels: []
-
-  # Plugin to perform the backmerge between the 'main' and 'develop' branches
-  - path: "@saithodev/semantic-release-backmerge"
-    backmergeBranches:
-      - from: main
-        to: develop
-    message: "chore(release): Preparations for next release [skip ci]"
-
-  - path: "@semantic-release/exec"
 
 branches:
   - name: main

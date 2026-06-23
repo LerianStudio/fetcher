@@ -6,9 +6,9 @@ import (
 	"time"
 
 	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/readpref"
 	amqp "github.com/rabbitmq/amqp091-go"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/readpref"
 )
 
 // TenantChecker is the per-tenant analogue of DependencyChecker, used by

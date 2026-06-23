@@ -4,12 +4,10 @@ import (
 	"testing"
 
 	middlewareAuth "github.com/LerianStudio/lib-auth/v2/auth/middleware"
-	"github.com/LerianStudio/lib-commons/v5/commons/log"
-	"github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
-	libLicense "github.com/LerianStudio/lib-license-go/v2/middleware"
+	"github.com/LerianStudio/lib-observability/log"
+	opentelemetry "github.com/LerianStudio/lib-observability/tracing"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // Note: Tests that call NewRoutes with app.Test() were removed because lib-commons
@@ -40,7 +38,6 @@ func TestNewRoutes_SignatureAcceptsTenantMiddleware(t *testing.T) {
 		lg log.Logger,
 		tl *opentelemetry.Telemetry,
 		auth *middlewareAuth.AuthClient,
-		licenseClient *libLicense.LicenseClient,
 		connectionHandler *ConnectionHandler,
 		migrationHandler *MigrationHandler,
 		fetcherHandler *FetcherHandler,
@@ -55,6 +52,4 @@ func TestNewRoutes_SignatureAcceptsTenantMiddleware(t *testing.T) {
 	// Also verify nil is a valid value for tenantMiddleware (single-tenant mode)
 	var nilHandler fiber.Handler
 	assert.Nil(t, nilHandler, "nil fiber.Handler should be valid for single-tenant mode")
-
-	_ = require.NoError // suppress unused import
 }

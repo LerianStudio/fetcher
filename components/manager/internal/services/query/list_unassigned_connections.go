@@ -4,12 +4,13 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/LerianStudio/fetcher/pkg/model"
-	"github.com/LerianStudio/fetcher/pkg/net/http"
-	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
+	"github.com/LerianStudio/lib-observability"
 
-	"github.com/LerianStudio/lib-commons/v5/commons"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	"github.com/LerianStudio/fetcher/v2/pkg/net/http"
+	connRepo "github.com/LerianStudio/fetcher/v2/pkg/ports/connection"
+
+	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
 
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -23,7 +24,7 @@ func NewListUnassignedConnections(connectionRepo connRepo.Repository) *ListUnass
 }
 
 func (s *ListUnassignedConnections) Execute(ctx context.Context, filters http.QueryHeader) (*model.Pagination, error) {
-	_, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	_, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "service.list_unassigned_connections")
 	defer span.End()

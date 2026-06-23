@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/LerianStudio/fetcher/pkg/model"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
 	"github.com/google/uuid"
 	"go.uber.org/mock/gomock"
 )
@@ -34,7 +34,7 @@ func TestExtractExternalData_ParseError_UpdatesJobAndPublishesNotification(t *te
 
 	// Expect failure notification to be published
 	mocks.rabbitPublisher.EXPECT().
-		Publish(gomock.Any(), "test-exchange", "job.failed.unknown", gomock.Any()).
+		Publish(gomock.Any(), "test-exchange", "job.failed", gomock.Any()).
 		DoAndReturn(func(_ interface{}, exchange, routingKey string, body []byte) error {
 			var notification JobNotificationMessage
 			if err := json.Unmarshal(body, &notification); err != nil {
@@ -94,8 +94,10 @@ func TestExtractExternalData_SkipsCompletedJob(t *testing.T) {
 	}
 }
 
-// TestExtractExternalData_SkipsProcessingJob tests that in-flight jobs are skipped on redelivery.
-func TestExtractExternalData_SkipsProcessingJob(t *testing.T) {
+// TestExtractExternalData_ProcessingJobDoesNotReprocessTerminalWork tests that
+// processing jobs are skipped explicitly; redelivery must not re-run extraction
+// unless a durable terminal-event marker is present.
+func TestExtractExternalData_ProcessingJobDoesNotReprocessTerminalWork(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
@@ -126,7 +128,7 @@ func TestExtractExternalData_SkipsProcessingJob(t *testing.T) {
 
 	err = uc.ExtractExternalData(ctx, body, nil)
 	if err != nil {
-		t.Fatalf("expected no error for in-flight job redelivery (should skip), got: %v", err)
+		t.Fatalf("expected no error for non-pending in-flight job redelivery, got: %v", err)
 	}
 }
 
@@ -187,7 +189,7 @@ func TestExtractExternalData_ConnectionNotFound(t *testing.T) {
 
 	// Expect failure notification to be published
 	mocks.rabbitPublisher.EXPECT().
-		Publish(gomock.Any(), "test-exchange", "job.failed.test-service", gomock.Any()).
+		Publish(gomock.Any(), "test-exchange", "job.failed", gomock.Any()).
 		Return(nil)
 
 	err = uc.ExtractExternalData(ctx, body, nil)
@@ -237,7 +239,7 @@ func TestExtractExternalData_JobNotFound(t *testing.T) {
 
 	// Expect failure notification
 	mocks.rabbitPublisher.EXPECT().
-		Publish(gomock.Any(), "test-exchange", "job.failed.test-service", gomock.Any()).
+		Publish(gomock.Any(), "test-exchange", "job.failed", gomock.Any()).
 		Return(nil)
 
 	err = uc.ExtractExternalData(ctx, body, nil)

@@ -7,9 +7,10 @@ import (
 	"encoding/base64"
 	"net"
 
-	"github.com/LerianStudio/fetcher/pkg/bootstrap/readyz"
-	"github.com/LerianStudio/fetcher/pkg/constant"
-	pkgRabbitmq "github.com/LerianStudio/fetcher/pkg/rabbitmq"
+	"github.com/LerianStudio/fetcher/v2/pkg/bootstrap/readyz"
+	"github.com/LerianStudio/fetcher/v2/pkg/constant"
+	pkgRabbitmq "github.com/LerianStudio/fetcher/v2/pkg/rabbitmq"
+	tmredis "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/redis"
 	"github.com/gofiber/fiber/v2"
 	"github.com/redis/go-redis/v9"
 )
@@ -129,6 +130,32 @@ func newReadyzRedisClient(cfg *Config) *redis.Client {
 	return redis.NewClient(opts)
 }
 
+func newReadyzMultiTenantRedisClient(cfg *Config) *redis.Client {
+	if cfg == nil || !cfg.MultiTenantEnabled || cfg.MultiTenantRedisHost == "" {
+		return nil
+	}
+
+	redisPort := cfg.MultiTenantRedisPort
+	if redisPort == "" {
+		redisPort = "6379"
+	}
+
+	// Use the tenant-manager Redis option builder instead of hand-rolled Redis
+	// options. The full NewTenantPubSubRedisClient helper pings immediately;
+	// /readyz must construct even when Redis is down so the checker can report it.
+	opts, err := tmredis.BuildOptions(tmredis.TenantPubSubRedisConfig{
+		Host:     cfg.MultiTenantRedisHost,
+		Port:     redisPort,
+		Password: cfg.MultiTenantRedisPassword,
+		TLS:      cfg.MultiTenantRedisTLS,
+	})
+	if err != nil {
+		return nil
+	}
+
+	return redis.NewClient(opts)
+}
+
 // redisURLFromCfg composes a URL used only for TLS posture detection.
 // Password and DB are intentionally omitted — only scheme and host:port
 // matter to detectRedisTLS.
@@ -138,62 +165,6 @@ func redisURLFromCfg(host, port string, useTLS bool) string {
 	}
 
 	return readyz.ComposeRedisURL(host, port, useTLS)
-}
-
-// multiTenantRedisURLFromCfg is the MT-Redis variant — same as
-// redisURLFromCfg but reads the MT-specific fields.
-func multiTenantRedisURLFromCfg(cfg *Config) string {
-	if cfg == nil {
-		return ""
-	}
-
-	return readyz.ComposeRedisURL(cfg.MultiTenantRedisHost, cfg.MultiTenantRedisPort, cfg.MultiTenantRedisTLS)
-}
-
-// newReadyzMultiTenantRedisClient builds a standalone *redis.Client for the
-// /readyz multi_tenant_redis dep so the probe is not coupled to the event
-// listener's Redis client lifecycle (Start/Stop). Returns nil when MT is
-// disabled or MULTI_TENANT_REDIS_HOST is unset; the caller must omit the
-// dep in that case.
-//
-// Mirrors initManagerEventDiscovery's TLS branch (config.go around the
-// MultiTenantRedisTLS block): TLS 1.2 floor, optional base64-encoded
-// MULTI_TENANT_REDIS_CA_CERT bundle. CA-cert decode failures fall back to
-// the system trust store with no error — bootstrap callers do not propagate
-// errors from the readyz client and erroring out would crash the manager.
-// A real TLS handshake failure surfaces as multi_tenant_redis=down via the
-// downstream Ping.
-func newReadyzMultiTenantRedisClient(cfg *Config) *redis.Client {
-	if cfg == nil || !cfg.MultiTenantEnabled || cfg.MultiTenantRedisHost == "" {
-		return nil
-	}
-
-	port := cfg.MultiTenantRedisPort
-	if port == "" {
-		port = "6379"
-	}
-
-	opts := &redis.Options{
-		Addr:     net.JoinHostPort(cfg.MultiTenantRedisHost, port),
-		Password: cfg.MultiTenantRedisPassword,
-	}
-
-	if cfg.MultiTenantRedisTLS {
-		tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
-
-		if cfg.MultiTenantRedisCACert != "" {
-			if caCert, err := base64.StdEncoding.DecodeString(cfg.MultiTenantRedisCACert); err == nil {
-				pool := x509.NewCertPool()
-				if pool.AppendCertsFromPEM(caCert) {
-					tlsCfg.RootCAs = pool
-				}
-			}
-		}
-
-		opts.TLSConfig = tlsCfg
-	}
-
-	return redis.NewClient(opts)
 }
 
 func applicationServiceName() string { return constant.ApplicationName }
@@ -257,21 +228,17 @@ func buildManagerReadyzCheckers(
 		))
 	}
 
-	// Multi-tenant event-discovery Redis: surfaces tenant Pub/Sub Redis
-	// health on the global /readyz so an MT deployment with a dead MT-Redis
-	// is visible as multi_tenant_redis=down (the schema-cache redis dep is
-	// a different host, so a healthy schema-cache cannot mask MT-Redis).
-	if cfg.MultiTenantEnabled && plat != nil && plat.multiTenantReadyzRedisClient != nil {
-		mtClient := plat.multiTenantReadyzRedisClient
-
-		checkers = append(checkers, readyz.NewRedisClientCheckerFromFn(
-			"multi_tenant_redis",
-			func(ctx context.Context) error { return mtClient.Ping(ctx).Err() },
-			multiTenantRedisURLFromCfg(cfg),
-		))
-	}
-
 	if cfg.MultiTenantEnabled && plat != nil {
+		if plat.readyzMultiTenantRedisClient != nil {
+			client := plat.readyzMultiTenantRedisClient
+
+			checkers = append(checkers, readyz.NewRedisClientCheckerFromFn(
+				"multi_tenant_redis",
+				func(ctx context.Context) error { return client.Ping(ctx).Err() },
+				redisURLFromCfg(cfg.MultiTenantRedisHost, cfg.MultiTenantRedisPort, cfg.MultiTenantRedisTLS),
+			))
+		}
+
 		checkers = append(checkers, readyz.NewTenantManagerClientChecker(
 			plat.tmClient,
 			applicationServiceName(),

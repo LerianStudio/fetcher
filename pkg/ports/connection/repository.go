@@ -5,8 +5,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/LerianStudio/fetcher/pkg/model"
-	"github.com/LerianStudio/fetcher/pkg/net/http"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	"github.com/LerianStudio/fetcher/v2/pkg/net/http"
 
 	"github.com/google/uuid"
 )

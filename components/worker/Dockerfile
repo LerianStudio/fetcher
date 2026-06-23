@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.4 
 
-FROM golang:1.26-alpine AS builder
+FROM golang:1.26.4-alpine AS builder
 
 # Install required packages: git is needed for private modules (e.g., from GitHub)
 RUN apk add --no-cache git
@@ -11,6 +11,11 @@ WORKDIR /fetcher
 
 # Copy only go.mod and go.sum first to cache dependencies
 COPY go.mod go.sum ./
+# The engine is a separate module. Before the first pkg/engine/v* tag exists, the root
+# go.mod pins it via a transient `replace => ./pkg/engine`, so its go.mod must be present
+# for `go mod download` to resolve the replace (the full source is copied with pkg/ below).
+# Post-release the require resolves from the proxy and this copy is a harmless no-op.
+COPY pkg/engine/go.mod ./pkg/engine/go.mod
 
 # Download Go modules, using the GitHub token secret only when it is available.
 RUN --mount=type=secret,id=github_token,required=false \
@@ -31,7 +36,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -tags netgo \
   -o /worker ./components/worker/cmd/app/main.go
 
 # Stage 2: Final minimal image with only the binary
-FROM alpine:3.23
+FROM alpine:3.24
 
 WORKDIR /app
 

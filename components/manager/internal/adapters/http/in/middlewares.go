@@ -1,17 +1,15 @@
 package in
 
 import (
-	"github.com/LerianStudio/fetcher/pkg"
-	"github.com/LerianStudio/fetcher/pkg/constant"
-	"github.com/LerianStudio/fetcher/pkg/net/http"
+	"github.com/LerianStudio/fetcher/v2/pkg"
+	"github.com/LerianStudio/fetcher/v2/pkg/constant"
+	"github.com/LerianStudio/fetcher/v2/pkg/net/http"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 )
 
-var (
-	UUIDPathParameter = "id"
-)
+var UUIDPathParameter = "id"
 
 // ParsePathParametersUUID convert and validate if the path parameter is UUID
 func ParsePathParametersUUID(c *fiber.Ctx) error {

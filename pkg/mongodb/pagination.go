@@ -1,16 +1,20 @@
 package mongodb
 
 import (
-	http "github.com/LerianStudio/fetcher/pkg/net/http"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo/options"
+	http "github.com/LerianStudio/fetcher/v2/pkg/net/http"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
 
 // BuildPaginationOptions builds MongoDB find options from query header filters.
 // It extracts limit, page, and sort_order to construct pagination.
 // Default sort is by created_at descending. If filters.SortOrder == "asc",
 // sort ascending (value 1); otherwise descending (value -1).
-func BuildPaginationOptions(filters http.QueryHeader) options.FindOptions {
+//
+// It returns the builder alongside the effective limit so callers can pre-size
+// result slices: mongo-driver v2's builder does not expose its fields for
+// read-back the way the v1 FindOptions struct did.
+func BuildPaginationOptions(filters http.QueryHeader) (*options.FindOptionsBuilder, int64) {
 	limit := int64(filters.Limit)
 	if limit < 0 {
 		limit = 0
@@ -31,11 +35,12 @@ func BuildPaginationOptions(filters http.QueryHeader) options.FindOptions {
 		sortValue = 1
 	}
 
-	return options.FindOptions{
-		Limit: &limit,
-		Skip:  &skip,
-		Sort:  bson.D{{Key: "created_at", Value: sortValue}},
-	}
+	opts := options.Find().
+		SetLimit(limit).
+		SetSkip(skip).
+		SetSort(bson.D{{Key: "created_at", Value: sortValue}})
+
+	return opts, limit
 }
 
 // AddDateRangeFilter adds created_at $gte/$lte conditions to the query filter

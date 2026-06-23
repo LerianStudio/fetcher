@@ -6,25 +6,47 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/LerianStudio/fetcher/pkg"
-	"github.com/LerianStudio/fetcher/pkg/constant"
-	"github.com/LerianStudio/fetcher/pkg/crypto"
-	"github.com/LerianStudio/fetcher/pkg/model"
-	"github.com/LerianStudio/fetcher/pkg/model/datasource"
-	cacheRepo "github.com/LerianStudio/fetcher/pkg/ports/cache"
-	connRepo "github.com/LerianStudio/fetcher/pkg/ports/connection"
+	"github.com/LerianStudio/fetcher/v2/pkg"
+	"github.com/LerianStudio/fetcher/v2/pkg/constant"
+	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
+	"github.com/LerianStudio/fetcher/v2/pkg/datasource/hostsafety"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	"github.com/LerianStudio/fetcher/v2/pkg/model/datasource"
+	cacheRepo "github.com/LerianStudio/fetcher/v2/pkg/ports/cache"
+	connRepo "github.com/LerianStudio/fetcher/v2/pkg/ports/connection"
+	"github.com/LerianStudio/fetcher/v2/pkg/resolver"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
 
+// newValidateSchemaSvc wires the ValidateSchema service the way the production
+// bootstrap does: connection resolution uses the repository (or resolver), and
+// schema DISCOVERY flows through the schema-discovery Engine built over the
+// supplied datasource factory + schema cache. The cache Get/Set and datasource
+// GetSchemaInfo/Close expectations are therefore exercised through the Engine's
+// SchemaCache port and ConnectorFactory, preserving the legacy hit/miss/fetch
+// behavior.
+func newValidateSchemaSvc(
+	t *testing.T,
+	mockConnRepo connRepo.Repository,
+	schemaCache cacheRepo.SchemaCacheRepository,
+	factory dsFactoryFunc,
+	connResolver resolver.ConnectionResolver,
+) *ValidateSchema {
+	t.Helper()
+
+	schemaEng := schemaDiscoveryEngine(t, factory, nil, schemaCache)
+
+	return NewValidateSchema(mockConnRepo, schemaEng, connResolver)
+}
+
 func TestValidateSchema_Success(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
 	connID := uuid.New()
@@ -47,7 +69,7 @@ func TestValidateSchema_Success(t *testing.T) {
 			},
 		}, nil)
 
-	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil, nil)
+	service := newValidateSchemaSvc(t, mockConnRepo, mockSchemaCache, nil, nil)
 
 	ctx := testContext()
 	request := model.SchemaValidationRequest{
@@ -71,14 +93,13 @@ func TestValidateSchema_DataSourceNotFound(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
 	mockConnRepo.EXPECT().
 		FindByConfigNames(gomock.Any(), gomock.Any()).
 		Return([]*model.Connection{}, nil) // No connections found
 
-	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil, nil)
+	service := newValidateSchemaSvc(t, mockConnRepo, mockSchemaCache, nil, nil)
 
 	ctx := testContext()
 	request := model.SchemaValidationRequest{
@@ -105,7 +126,6 @@ func TestValidateSchema_TableNotFound(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
 	connID := uuid.New()
@@ -124,7 +144,7 @@ func TestValidateSchema_TableNotFound(t *testing.T) {
 			Tables:     map[string]*model.TableSchema{}, // Empty tables
 		}, nil)
 
-	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil, nil)
+	service := newValidateSchemaSvc(t, mockConnRepo, mockSchemaCache, nil, nil)
 
 	ctx := testContext()
 	request := model.SchemaValidationRequest{
@@ -147,7 +167,6 @@ func TestValidateSchema_FieldNotFound(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
 	connID := uuid.New()
@@ -169,7 +188,7 @@ func TestValidateSchema_FieldNotFound(t *testing.T) {
 			},
 		}, nil)
 
-	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil, nil)
+	service := newValidateSchemaSvc(t, mockConnRepo, mockSchemaCache, nil, nil)
 
 	ctx := testContext()
 	request := model.SchemaValidationRequest{
@@ -193,7 +212,6 @@ func TestValidateSchema_MultipleErrors(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
 	connID := uuid.New()
@@ -215,7 +233,7 @@ func TestValidateSchema_MultipleErrors(t *testing.T) {
 			},
 		}, nil)
 
-	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil, nil)
+	service := newValidateSchemaSvc(t, mockConnRepo, mockSchemaCache, nil, nil)
 
 	ctx := testContext()
 	request := model.SchemaValidationRequest{
@@ -241,10 +259,9 @@ func TestValidateSchema_InvalidRequest_NilMappedFields(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
-	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil, nil)
+	service := newValidateSchemaSvc(t, mockConnRepo, mockSchemaCache, nil, nil)
 
 	ctx := testContext()
 	request := model.SchemaValidationRequest{
@@ -263,10 +280,9 @@ func TestValidateSchema_InvalidRequest_EmptyMappedFields(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
-	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil, nil)
+	service := newValidateSchemaSvc(t, mockConnRepo, mockSchemaCache, nil, nil)
 
 	ctx := testContext()
 	request := model.SchemaValidationRequest{
@@ -285,7 +301,6 @@ func TestValidateSchema_RepositoryError(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
 	dbError := errors.New("database connection failed")
@@ -293,7 +308,7 @@ func TestValidateSchema_RepositoryError(t *testing.T) {
 		FindByConfigNames(gomock.Any(), gomock.Any()).
 		Return(nil, dbError)
 
-	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil, nil)
+	service := newValidateSchemaSvc(t, mockConnRepo, mockSchemaCache, nil, nil)
 
 	ctx := testContext()
 	request := model.SchemaValidationRequest{
@@ -313,7 +328,6 @@ func TestValidateSchema_CacheError_ContinuesToFetch(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 	mockDataSource := datasource.NewMockDataSource(ctrl)
 
@@ -348,7 +362,7 @@ func TestValidateSchema_CacheError_ContinuesToFetch(t *testing.T) {
 		assert.Equal(t, "db1", conn.ConfigName)
 		return mockDataSource, nil
 	}
-	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, testFactory, nil)
+	service := newValidateSchemaSvc(t, mockConnRepo, mockSchemaCache, testFactory, nil)
 
 	ctx := testContext()
 	request := model.SchemaValidationRequest{
@@ -370,7 +384,6 @@ func TestValidateSchema_PartialConnectionsFound(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
 	connID := uuid.New()
@@ -391,7 +404,7 @@ func TestValidateSchema_PartialConnectionsFound(t *testing.T) {
 			},
 		}, nil)
 
-	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil, nil)
+	service := newValidateSchemaSvc(t, mockConnRepo, mockSchemaCache, nil, nil)
 
 	ctx := testContext()
 	request := model.SchemaValidationRequest{
@@ -422,15 +435,13 @@ func TestNewValidateSchema(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
-	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil, nil)
+	service := newValidateSchemaSvc(t, mockConnRepo, mockSchemaCache, nil, nil)
 
 	assert.NotNil(t, service)
 	assert.NotNil(t, service.connRepo)
-	assert.NotNil(t, service.cryptor)
-	assert.NotNil(t, service.schemaCache)
+	assert.NotNil(t, service.engine)
 }
 
 func TestValidateSchema_NoConnections_ReturnsSchemaEntityType(t *testing.T) {
@@ -438,14 +449,13 @@ func TestValidateSchema_NoConnections_ReturnsSchemaEntityType(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
 	mockConnRepo.EXPECT().
 		FindByConfigNames(gomock.Any(), gomock.Any()).
 		Return([]*model.Connection{}, nil)
 
-	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil, nil)
+	service := newValidateSchemaSvc(t, mockConnRepo, mockSchemaCache, nil, nil)
 
 	ctx := testContext()
 	request := model.SchemaValidationRequest{
@@ -468,7 +478,6 @@ func TestValidateSchema_MultipleDatasources_AllValid(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
 	connID1 := uuid.New()
@@ -499,7 +508,7 @@ func TestValidateSchema_MultipleDatasources_AllValid(t *testing.T) {
 			},
 		}, nil)
 
-	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil, nil)
+	service := newValidateSchemaSvc(t, mockConnRepo, mockSchemaCache, nil, nil)
 
 	ctx := testContext()
 	request := model.SchemaValidationRequest{
@@ -517,7 +526,10 @@ func TestValidateSchema_MultipleDatasources_AllValid(t *testing.T) {
 	assert.Empty(t, resp.Errors)
 }
 
-// TestEnsureDefaultSchemaForPostgreSQL tests the helper function for adding default schema.
+// TestEnsureDefaultSchemaForPostgreSQL tests the Manager's schemaScopeForConfig
+// (now delegating to tablenorm.SchemaScopeForTables) for adding the default schema.
+// The scope is derived from the table keys, so inputSchemas is no longer an input —
+// it is retained only to document the expected unique schemas.
 func TestEnsureDefaultSchemaForPostgreSQL(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -564,10 +576,10 @@ func TestEnsureDefaultSchemaForPostgreSQL(t *testing.T) {
 			expectPublic:  true,
 		},
 		{
-			name:          "empty tables returns original schemas",
+			name:          "empty tables yields empty scope",
 			tables:        map[string][]string{},
-			inputSchemas:  []string{"custom"},
-			expectSchemas: []string{"custom"},
+			inputSchemas:  []string{},
+			expectSchemas: []string{},
 			expectPublic:  false,
 		},
 		{
@@ -584,7 +596,7 @@ func TestEnsureDefaultSchemaForPostgreSQL(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := ensureDefaultSchemaForPostgreSQL(tt.tables, tt.inputSchemas)
+			result := schemaScopeForConfig(&model.Connection{Type: model.TypePostgreSQL}, tt.tables)
 
 			// Check if public is in result when expected
 			hasPublic := false
@@ -623,7 +635,6 @@ func TestValidateSchema_PostgreSQLWithUnqualifiedTables(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
 	connID := uuid.New()
@@ -645,7 +656,7 @@ func TestValidateSchema_PostgreSQLWithUnqualifiedTables(t *testing.T) {
 			},
 		}, nil)
 
-	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil, nil)
+	service := newValidateSchemaSvc(t, mockConnRepo, mockSchemaCache, nil, nil)
 
 	ctx := testContext()
 	// Request with unqualified table name
@@ -670,7 +681,6 @@ func TestValidateSchema_PostgreSQLWithMixedQualifiedTables(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
 	connID := uuid.New()
@@ -693,7 +703,7 @@ func TestValidateSchema_PostgreSQLWithMixedQualifiedTables(t *testing.T) {
 			},
 		}, nil)
 
-	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil, nil)
+	service := newValidateSchemaSvc(t, mockConnRepo, mockSchemaCache, nil, nil)
 
 	ctx := testContext()
 	// Request with mixed qualified/unqualified table names
@@ -725,8 +735,9 @@ func TestValidateSchema_NonPostgreSQLDoesNotAddPublicSchema(t *testing.T) {
 	}{
 		{name: "MySQL", dbType: model.TypeMySQL, schemaTableKey: "users", requestFields: []string{"id"}, schemaColumnKey: "id"},
 		{name: "MongoDB", dbType: model.TypeMongoDB, schemaTableKey: "users", requestFields: []string{"id"}, schemaColumnKey: "id"},
-		// Oracle's GetSchemaInfo normalizes table/column names to lowercase; validation normalizes to lowercase
-		{name: "Oracle", dbType: model.TypeOracle, schemaTableKey: "users", requestFields: []string{"id"}, schemaColumnKey: "id"},
+		// Oracle is UPPERCASE-canonical: the snapshot the connector writes (and thus the
+		// cache holds) is UPPERCASE, and validation normalizes the request to UPPERCASE.
+		{name: "Oracle", dbType: model.TypeOracle, schemaTableKey: "USERS", requestFields: []string{"id"}, schemaColumnKey: "ID"},
 		{name: "SQLServer", dbType: model.TypeSQLServer, schemaTableKey: "users", requestFields: []string{"id"}, schemaColumnKey: "id"},
 	}
 
@@ -736,7 +747,6 @@ func TestValidateSchema_NonPostgreSQLDoesNotAddPublicSchema(t *testing.T) {
 			defer ctrl.Finish()
 
 			mockConnRepo := connRepo.NewMockRepository(ctrl)
-			mockCrypto := crypto.NewMockCryptor(ctrl)
 			mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
 			connID := uuid.New()
@@ -757,7 +767,7 @@ func TestValidateSchema_NonPostgreSQLDoesNotAddPublicSchema(t *testing.T) {
 					},
 				}, nil)
 
-			service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil, nil)
+			service := newValidateSchemaSvc(t, mockConnRepo, mockSchemaCache, nil, nil)
 
 			ctx := testContext()
 			request := model.SchemaValidationRequest{
@@ -781,7 +791,6 @@ func TestValidateSchema_CacheSetError(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 	mockDataSource := datasource.NewMockDataSource(ctrl)
 
@@ -815,7 +824,7 @@ func TestValidateSchema_CacheSetError(t *testing.T) {
 		assert.Equal(t, "db1", conn.ConfigName)
 		return mockDataSource, nil
 	}
-	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, testFactory, nil)
+	service := newValidateSchemaSvc(t, mockConnRepo, mockSchemaCache, testFactory, nil)
 
 	ctx := testContext()
 	request := model.SchemaValidationRequest{
@@ -837,7 +846,6 @@ func TestValidateSchema_NilSchemaFromDatasource(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 	mockDataSource := datasource.NewMockDataSource(ctrl)
 
@@ -873,7 +881,7 @@ func TestValidateSchema_NilSchemaFromDatasource(t *testing.T) {
 	dsFactory := func(_ context.Context, _ *model.Connection, _ crypto.Cryptor) (datasource.DataSource, error) {
 		return mockDataSource, nil
 	}
-	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, dsFactory, nil)
+	service := newValidateSchemaSvc(t, mockConnRepo, mockSchemaCache, dsFactory, nil)
 
 	ctx := testContext()
 	request := model.SchemaValidationRequest{
@@ -896,7 +904,6 @@ func TestValidateSchema_NilDatasourceFactoryResult(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
 	connID := uuid.New()
@@ -913,7 +920,7 @@ func TestValidateSchema_NilDatasourceFactoryResult(t *testing.T) {
 	nilFactory := func(context.Context, *model.Connection, crypto.Cryptor) (datasource.DataSource, error) {
 		return nil, nil
 	}
-	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nilFactory, nil)
+	service := newValidateSchemaSvc(t, mockConnRepo, mockSchemaCache, nilFactory, nil)
 
 	ctx := testContext()
 	request := model.SchemaValidationRequest{
@@ -932,42 +939,13 @@ func TestValidateSchema_NilDatasourceFactoryResult(t *testing.T) {
 	assert.Equal(t, "db1", resp.Errors[0].DataSourceID)
 }
 
-func TestValidateSchema_NilDatasourceFactory_ReturnsInternalError(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := crypto.NewMockCryptor(ctrl)
-	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
-
-	connID := uuid.New()
-	conn := &model.Connection{ID: connID, ConfigName: "db1", Type: model.TypeMySQL, Host: "localhost", Port: 3306}
-
-	mockConnRepo.EXPECT().
-		FindByConfigNames(gomock.Any(), gomock.Any()).
-		Return([]*model.Connection{conn}, nil)
-
-	mockSchemaCache.EXPECT().
-		Get(gomock.Any(), "db1").
-		Return(nil, nil)
-
-	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil, nil)
-
-	ctx := testContext()
-	request := model.SchemaValidationRequest{
-		MappedFields: map[string]map[string][]string{
-			"db1": {"users": {"id"}},
-		},
-	}
-
-	resp, err := service.Execute(ctx, request)
-
-	assert.Nil(t, resp)
-	require.Error(t, err)
-
-	var internalErr pkg.InternalServerError
-	require.True(t, errors.As(err, &internalErr), "expected InternalServerError, got %T: %v", err, err)
-}
+// NOTE: the legacy TestValidateSchema_NilDatasourceFactory_ReturnsInternalError
+// is intentionally removed. The "datasource factory not configured" internal
+// misconfiguration no longer exists as a per-service condition: the factory is a
+// required dependency of the schema-discovery Engine wired once at bootstrap. A
+// nil factory now degrades to a per-datasource DATA_SOURCE_DOWN through the
+// Engine's redacted connector error (see TestValidateSchema_NilDatasourceFactoryResult),
+// which is the same observable behavior a misconfigured datasource would produce.
 
 // TestValidateSchema_EmptyConfigName tests validation with empty config name in request.
 func TestValidateSchema_EmptyConfigName(t *testing.T) {
@@ -975,10 +953,9 @@ func TestValidateSchema_EmptyConfigName(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
-	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil, nil)
+	service := newValidateSchemaSvc(t, mockConnRepo, mockSchemaCache, nil, nil)
 
 	ctx := testContext()
 
@@ -1002,7 +979,6 @@ func TestValidateSchema_LargeNumberOfTables(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
 	connID := uuid.New()
@@ -1032,7 +1008,7 @@ func TestValidateSchema_LargeNumberOfTables(t *testing.T) {
 			Tables:     tableSchemas,
 		}, nil)
 
-	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, nil, nil)
+	service := newValidateSchemaSvc(t, mockConnRepo, mockSchemaCache, nil, nil)
 
 	ctx := testContext()
 	request := model.SchemaValidationRequest{
@@ -1126,7 +1102,9 @@ func TestValidateTablesAgainstSchema_SQLServerQualifiedNames(t *testing.T) {
 
 // TestValidateTablesAgainstSchema_OracleQualifiedNames tests that Oracle
 // table name normalization handles uppercase storage and schema prefixes.
-// Oracle's GetSchemaInfo normalizes table names to lowercase for case-insensitive matching.
+// Oracle is UPPERCASE-canonical: the snapshot (and thus the schema the validator
+// queries) is UPPERCASE — matching the physical Oracle catalog and the extracted
+// result keys — and the request is normalized to UPPERCASE for the lookup.
 func TestValidateTablesAgainstSchema_OracleQualifiedNames(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -1136,42 +1114,42 @@ func TestValidateTablesAgainstSchema_OracleQualifiedNames(t *testing.T) {
 		errorType      string
 	}{
 		{
-			name: "lowercase users matches users in schema",
-			requestTables: map[string][]string{
-				"users": {"id", "name"},
-			},
-			schemaTables: map[string]*model.TableSchema{
-				"users": {TableName: "users", Columns: map[string]bool{"id": true, "name": true}},
-			},
-			expectedErrors: 0,
-		},
-		{
-			name: "USERS matches users in schema (converted to lowercase)",
+			name: "uppercase users matches USERS in schema",
 			requestTables: map[string][]string{
 				"USERS": {"ID", "NAME"},
 			},
 			schemaTables: map[string]*model.TableSchema{
-				"users": {TableName: "users", Columns: map[string]bool{"id": true, "name": true}},
+				"USERS": {TableName: "USERS", Columns: map[string]bool{"ID": true, "NAME": true}},
 			},
 			expectedErrors: 0,
 		},
 		{
-			name: "hr.employees matches hr.employees in schema (converted to lowercase)",
+			name: "lowercase users matches USERS in schema (converted to UPPERCASE)",
 			requestTables: map[string][]string{
-				"HR.EMPLOYEES": {"ID", "NAME"},
+				"users": {"id", "name"},
 			},
 			schemaTables: map[string]*model.TableSchema{
-				"hr.employees": {TableName: "hr.employees", Columns: map[string]bool{"id": true, "name": true}},
+				"USERS": {TableName: "USERS", Columns: map[string]bool{"ID": true, "NAME": true}},
 			},
 			expectedErrors: 0,
 		},
 		{
-			name: "mixed case Sales.Orders matches sales.orders in schema",
+			name: "hr.employees matches HR.EMPLOYEES in schema (converted to UPPERCASE)",
+			requestTables: map[string][]string{
+				"hr.employees": {"id", "name"},
+			},
+			schemaTables: map[string]*model.TableSchema{
+				"HR.EMPLOYEES": {TableName: "HR.EMPLOYEES", Columns: map[string]bool{"ID": true, "NAME": true}},
+			},
+			expectedErrors: 0,
+		},
+		{
+			name: "mixed case Sales.Orders matches SALES.ORDERS in schema",
 			requestTables: map[string][]string{
 				"Sales.Orders": {"ID"},
 			},
 			schemaTables: map[string]*model.TableSchema{
-				"sales.orders": {TableName: "sales.orders", Columns: map[string]bool{"id": true}},
+				"SALES.ORDERS": {TableName: "SALES.ORDERS", Columns: map[string]bool{"ID": true}},
 			},
 			expectedErrors: 0,
 		},
@@ -1181,7 +1159,7 @@ func TestValidateTablesAgainstSchema_OracleQualifiedNames(t *testing.T) {
 				"nonexistent": {"id"},
 			},
 			schemaTables: map[string]*model.TableSchema{
-				"users": {TableName: "users", Columns: map[string]bool{"id": true}},
+				"USERS": {TableName: "USERS", Columns: map[string]bool{"ID": true}},
 			},
 			expectedErrors: 1,
 			errorType:      model.ErrTypeTableNotFound,
@@ -1192,7 +1170,7 @@ func TestValidateTablesAgainstSchema_OracleQualifiedNames(t *testing.T) {
 				"users": {"id", "nonexistent"},
 			},
 			schemaTables: map[string]*model.TableSchema{
-				"users": {TableName: "users", Columns: map[string]bool{"id": true, "name": true}},
+				"USERS": {TableName: "USERS", Columns: map[string]bool{"ID": true, "NAME": true}},
 			},
 			expectedErrors: 1,
 			errorType:      model.ErrTypeFieldNotFound,
@@ -1216,89 +1194,9 @@ func TestValidateTablesAgainstSchema_OracleQualifiedNames(t *testing.T) {
 	}
 }
 
-// TestEnsureDefaultSchema tests the generic ensureDefaultSchema function
-// that works for both PostgreSQL and SQL Server.
-func TestEnsureDefaultSchema(t *testing.T) {
-	tests := []struct {
-		name          string
-		tables        map[string][]string
-		inputSchemas  []string
-		defaultSchema string
-		expectDefault bool
-	}{
-		{
-			name: "unqualified table adds default schema",
-			tables: map[string][]string{
-				"users": {"id", "name"},
-			},
-			inputSchemas:  []string{},
-			defaultSchema: "public",
-			expectDefault: true,
-		},
-		{
-			name: "qualified table does not add default schema",
-			tables: map[string][]string{
-				"custom.users": {"id", "name"},
-			},
-			inputSchemas:  []string{"custom"},
-			defaultSchema: "public",
-			expectDefault: false,
-		},
-		{
-			name: "mixed tables adds default schema",
-			tables: map[string][]string{
-				"users":         {"id", "name"},
-				"custom.orders": {"id", "total"},
-			},
-			inputSchemas:  []string{"custom"},
-			defaultSchema: "dbo",
-			expectDefault: true,
-		},
-		{
-			name: "default already included is not duplicated",
-			tables: map[string][]string{
-				"users": {"id", "name"},
-			},
-			inputSchemas:  []string{"dbo"},
-			defaultSchema: "dbo",
-			expectDefault: true,
-		},
-		{
-			name:          "empty tables returns original schemas",
-			tables:        map[string][]string{},
-			inputSchemas:  []string{"custom"},
-			defaultSchema: "public",
-			expectDefault: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := ensureDefaultSchema(tt.tables, tt.inputSchemas, tt.defaultSchema)
-
-			hasDefault := false
-			for _, s := range result {
-				if s == tt.defaultSchema {
-					hasDefault = true
-					break
-				}
-			}
-
-			if hasDefault != tt.expectDefault {
-				t.Errorf("expected default=%v, got default=%v in result %v", tt.expectDefault, hasDefault, result)
-			}
-
-			// Verify no duplicates
-			seen := make(map[string]bool)
-			for _, s := range result {
-				if seen[s] {
-					t.Errorf("duplicate schema %s in result %v", s, result)
-				}
-				seen[s] = true
-			}
-		})
-	}
-}
+// The generic ensureDefaultSchema helper was consolidated into
+// tablenorm.SchemaScopeForTables; its behavior is covered by
+// tablenorm.TestSchemaScopeForTables and TestEnsureDefaultSchemaForPostgreSQL above.
 
 // TestNormalizeTableNameForValidation tests the normalizeTableNameForValidation function
 // for all supported database types.
@@ -1309,30 +1207,30 @@ func TestNormalizeTableNameForValidation(t *testing.T) {
 		dbType    model.DBType
 		expected  string
 	}{
-		// Oracle tests - converts to lowercase (to match GetSchemaInfo normalization)
+		// Oracle tests - converts to UPPERCASE (matches physical catalog + result keys)
 		{
-			name:      "Oracle: lowercase stays lowercase",
-			tableName: "users",
+			name:      "Oracle: uppercase stays uppercase",
+			tableName: "USERS",
 			dbType:    model.TypeOracle,
-			expected:  "users",
+			expected:  "USERS",
 		},
 		{
-			name:      "Oracle: mixed case converts to lowercase",
+			name:      "Oracle: mixed case converts to uppercase",
 			tableName: "UserAccounts",
 			dbType:    model.TypeOracle,
-			expected:  "useraccounts",
+			expected:  "USERACCOUNTS",
 		},
 		{
-			name:      "Oracle: qualified name converts to lowercase",
-			tableName: "HR.EMPLOYEES",
+			name:      "Oracle: qualified name converts to uppercase",
+			tableName: "hr.employees",
 			dbType:    model.TypeOracle,
-			expected:  "hr.employees",
+			expected:  "HR.EMPLOYEES",
 		},
 		{
-			name:      "Oracle: uppercase converts to lowercase",
-			tableName: "TRANSACTIONS",
+			name:      "Oracle: lowercase converts to uppercase",
+			tableName: "transactions",
 			dbType:    model.TypeOracle,
-			expected:  "transactions",
+			expected:  "TRANSACTIONS",
 		},
 
 		// SQL Server tests - strips dbo prefix
@@ -1415,24 +1313,24 @@ func TestNormalizeFieldNameForValidation(t *testing.T) {
 		dbType    model.DBType
 		expected  string
 	}{
-		// Oracle tests - converts to lowercase (to match GetSchemaInfo normalization)
+		// Oracle tests - converts to UPPERCASE (matches physical catalog + result keys)
 		{
-			name:      "Oracle: lowercase stays lowercase",
-			fieldName: "id",
+			name:      "Oracle: uppercase stays uppercase",
+			fieldName: "ID",
 			dbType:    model.TypeOracle,
-			expected:  "id",
+			expected:  "ID",
 		},
 		{
-			name:      "Oracle: mixed case converts to lowercase",
+			name:      "Oracle: mixed case converts to uppercase",
 			fieldName: "firstName",
 			dbType:    model.TypeOracle,
-			expected:  "firstname",
+			expected:  "FIRSTNAME",
 		},
 		{
-			name:      "Oracle: uppercase converts to lowercase",
-			fieldName: "CREATED_AT",
+			name:      "Oracle: lowercase converts to uppercase",
+			fieldName: "created_at",
 			dbType:    model.TypeOracle,
-			expected:  "created_at",
+			expected:  "CREATED_AT",
 		},
 
 		// Other databases - no transformation (case preserved as stored)
@@ -1470,20 +1368,25 @@ func TestNormalizeFieldNameForValidation(t *testing.T) {
 	}
 }
 
-// TestValidateSchema_Execute_FactoryValidationErrorPropagates verifies Fix 4
-// for the validate_schema path: when the datasource factory returns a
-// pkg.ValidationError (FET-0414 host safety rejection) on cache miss, the
-// service must propagate it as a top-level error (HTTP 400 via the renderer)
-// instead of burying it as a per-datasource warning that yields a 200 with
-// model.NewDataSourceDownError. Otherwise the FET-0414 audit signal is lost
-// and the response shape masks an SSRF attempt as a transient connectivity
-// blip.
-func TestValidateSchema_Execute_FactoryValidationErrorPropagates(t *testing.T) {
+// TestValidateSchema_Execute_HostSafetyRejectionPropagates verifies the
+// validate_schema path surfaces a host-safety (SSRF / FET-0414) rejection as a
+// top-level error (HTTP 400 via the renderer) instead of burying it as a
+// per-datasource DATA_SOURCE_DOWN warning that yields a 200. The guard runs
+// HOST-side before discovery is delegated to the Engine: the Engine returns
+// transport-neutral errors, but typed pkg.ValidationErrors are preserved verbatim
+// and re-mapped host-side to 400 (validate_schema.go errors.As-propagates the
+// typed ValidationError). So a tenant connection whose host is denylisted is
+// rejected before any cache or datasource call — preserving the FET-0414 audit
+// signal and its 400 mapping. The datasource factory must NOT be invoked.
+func TestValidateSchema_Execute_HostSafetyRejectionPropagates(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
+	prev := hostsafety.IsEnabled()
+	hostsafety.SetHostSafetyEnabled(true)
+	defer hostsafety.SetHostSafetyEnabled(prev)
+
 	mockConnRepo := connRepo.NewMockRepository(ctrl)
-	mockCrypto := crypto.NewMockCryptor(ctrl)
 	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
 
 	connID := uuid.New()
@@ -1491,25 +1394,17 @@ func TestValidateSchema_Execute_FactoryValidationErrorPropagates(t *testing.T) {
 	mockConnRepo.EXPECT().
 		FindByConfigNames(gomock.Any(), []string{"midaz_onboarding"}).
 		Return([]*model.Connection{
-			{ID: connID, ConfigName: "midaz_onboarding", Type: model.TypePostgreSQL},
+			// A tenant connection (EncryptionKeyVersion != "") whose host is
+			// denylisted: the SSRF guard rejects it before discovery.
+			{ID: connID, ConfigName: "midaz_onboarding", Type: model.TypePostgreSQL, Host: "127.0.0.1", EncryptionKeyVersion: "v1"},
 		}, nil)
 
-	// Cache miss → control reaches the factory call site.
-	mockSchemaCache.EXPECT().
-		Get(gomock.Any(), "midaz_onboarding").
-		Return(nil, nil)
-
-	factoryErr := pkg.ValidationError{
-		EntityType: "connection",
-		Code:       "FET-0414",
-		Title:      "Forbidden Host",
-		Message:    "Host is not a valid external database endpoint",
-	}
 	stubFactory := func(ctx context.Context, conn *model.Connection, cryptor crypto.Cryptor) (datasource.DataSource, error) {
-		return nil, factoryErr
+		t.Fatal("factory must not be called when the host-safety guard rejects the connection")
+		return nil, nil
 	}
 
-	service := NewValidateSchema(mockConnRepo, mockCrypto, mockSchemaCache, stubFactory, nil)
+	service := newValidateSchemaSvc(t, mockConnRepo, mockSchemaCache, stubFactory, nil)
 
 	ctx := testContext()
 	request := model.SchemaValidationRequest{
@@ -1519,11 +1414,171 @@ func TestValidateSchema_Execute_FactoryValidationErrorPropagates(t *testing.T) {
 	}
 
 	resp, err := service.Execute(ctx, request)
-	require.Error(t, err, "factory ValidationError must surface as top-level error")
-	assert.Nil(t, resp, "validation response must be nil when guard rejects the host")
+	require.Error(t, err, "host-safety rejection must surface as top-level error")
+	assert.Nil(t, resp, "validation response must be nil when the guard rejects the host")
 
 	var ve pkg.ValidationError
 	require.True(t, errors.As(err, &ve),
-		"ValidateSchema must propagate pkg.ValidationError unchanged, got: %T %v", err, err)
-	assert.Equal(t, "FET-0414", ve.Code, "FET-0414 must survive validate-schema service layer")
+		"ValidateSchema must propagate the host-safety pkg.ValidationError unchanged, got: %T %v", err, err)
+	assert.Equal(t, "FET-0414", ve.Code, "FET-0414 must survive the validate-schema service layer")
+}
+
+// TestValidateSchema_PluginCRM_AutoDiscoversPhysicalCollections proves the
+// plugin_crm compatibility mapping is wired through the shared enginecompat
+// adapter on the service path: a logical CRM collection name ("holders") resolves
+// to the first physical collection matching the "<logical>_" prefix
+// ("holders_06c4f684") discovered from the real schema, so validation succeeds
+// against the logical request. This is the behavior the deleted legacy
+// transformPluginCRMTablesFromSchema produced, now sourced from
+// plugincrm.MapTablesForCRMCompatibility.
+func TestValidateSchema_PluginCRM_AutoDiscoversPhysicalCollections(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
+
+	connID := uuid.New()
+
+	mockConnRepo.EXPECT().
+		FindByConfigNames(gomock.Any(), []string{"plugin_crm"}).
+		Return([]*model.Connection{
+			{ID: connID, ConfigName: "plugin_crm", Type: model.TypeMongoDB},
+		}, nil)
+
+	// The real schema holds the PHYSICAL collection name with a UUID suffix; the
+	// request uses the LOGICAL name "holders".
+	mockSchemaCache.EXPECT().
+		Get(gomock.Any(), "plugin_crm").
+		Return(&model.DataSourceSchema{
+			ConfigName: "plugin_crm",
+			Tables: map[string]*model.TableSchema{
+				"holders_06c4f684": {TableName: "holders_06c4f684", Columns: map[string]bool{"id": true, "name": true}},
+			},
+		}, nil)
+
+	service := newValidateSchemaSvc(t, mockConnRepo, mockSchemaCache, nil, nil)
+
+	resp, err := service.Execute(testContext(), model.SchemaValidationRequest{
+		MappedFields: map[string]map[string][]string{
+			"plugin_crm": {"holders": {"id", "name"}},
+		},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.Equal(t, "success", resp.Status, "logical CRM name must auto-discover its physical collection")
+	assert.Empty(t, resp.Errors)
+}
+
+// TestValidateSchema_NonCRMSource_DoesNotAutoDiscover proves the CRM mapping is
+// gated to the plugin_crm source ONLY: an identically-shaped request against a
+// generic datasource does NOT auto-discover the physical collection, so the
+// logical "holders" name fails with TABLE_NOT_FOUND. This is the guard against
+// CRM policy leaking into generic datasource validation.
+func TestValidateSchema_NonCRMSource_DoesNotAutoDiscover(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
+
+	connID := uuid.New()
+
+	mockConnRepo.EXPECT().
+		FindByConfigNames(gomock.Any(), []string{"mongo_orders"}).
+		Return([]*model.Connection{
+			{ID: connID, ConfigName: "mongo_orders", Type: model.TypeMongoDB},
+		}, nil)
+
+	mockSchemaCache.EXPECT().
+		Get(gomock.Any(), "mongo_orders").
+		Return(&model.DataSourceSchema{
+			ConfigName: "mongo_orders",
+			Tables: map[string]*model.TableSchema{
+				"holders_06c4f684": {TableName: "holders_06c4f684", Columns: map[string]bool{"id": true}},
+			},
+		}, nil)
+
+	service := newValidateSchemaSvc(t, mockConnRepo, mockSchemaCache, nil, nil)
+
+	resp, err := service.Execute(testContext(), model.SchemaValidationRequest{
+		MappedFields: map[string]map[string][]string{
+			"mongo_orders": {"holders": {"id"}},
+		},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.Equal(t, "failure", resp.Status, "non-CRM source must not auto-discover physical collections")
+	require.Len(t, resp.Errors, 1)
+	assert.Equal(t, model.ErrTypeTableNotFound, resp.Errors[0].Type)
+	assert.Equal(t, "holders", resp.Errors[0].Table)
+}
+
+// TestValidateSchema_ResolverPath_Success proves connection resolution flows
+// through the resolver (internal + external datasources) when one is wired,
+// exactly as production does in multi-tenant mode.
+func TestValidateSchema_ResolverPath_Success(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
+	mockResolver := resolver.NewMockConnectionResolver(ctrl)
+
+	connID := uuid.New()
+	mockResolver.EXPECT().
+		ResolveConnections(gomock.Any(), []string{"midaz_onboarding"}).
+		Return([]*model.Connection{{ID: connID, ConfigName: "midaz_onboarding"}}, nil)
+
+	mockSchemaCache.EXPECT().
+		Get(gomock.Any(), "midaz_onboarding").
+		Return(&model.DataSourceSchema{
+			ConfigName: "midaz_onboarding",
+			Tables: map[string]*model.TableSchema{
+				"account": {TableName: "account", Columns: map[string]bool{"id": true}},
+			},
+		}, nil)
+
+	service := newValidateSchemaSvc(t, mockConnRepo, mockSchemaCache, nil, mockResolver)
+
+	resp, err := service.Execute(testContext(), model.SchemaValidationRequest{
+		MappedFields: map[string]map[string][]string{
+			"midaz_onboarding": {"account": {"id"}},
+		},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.Equal(t, "success", resp.Status)
+}
+
+// TestValidateSchema_ResolverPath_Error maps a resolver failure to the schema
+// internal error, preserving the legacy behavior.
+func TestValidateSchema_ResolverPath_Error(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockConnRepo := connRepo.NewMockRepository(ctrl)
+	mockSchemaCache := cacheRepo.NewMockSchemaCacheRepository(ctrl)
+	mockResolver := resolver.NewMockConnectionResolver(ctrl)
+
+	mockResolver.EXPECT().
+		ResolveConnections(gomock.Any(), gomock.Any()).
+		Return(nil, errors.New("tenant-manager unavailable"))
+
+	service := newValidateSchemaSvc(t, mockConnRepo, mockSchemaCache, nil, mockResolver)
+
+	resp, err := service.Execute(testContext(), model.SchemaValidationRequest{
+		MappedFields: map[string]map[string][]string{
+			"midaz_onboarding": {"account": {"id"}},
+		},
+	})
+
+	require.Error(t, err)
+	assert.Nil(t, resp)
+
+	var internalErr pkg.InternalServerError
+	require.True(t, errors.As(err, &internalErr), "expected InternalServerError, got %T: %v", err, err)
 }

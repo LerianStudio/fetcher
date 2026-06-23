@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	e2eshared "github.com/LerianStudio/fetcher/tests/shared"
+	e2eshared "github.com/LerianStudio/fetcher/v2/tests/shared"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

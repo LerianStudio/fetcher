@@ -6,15 +6,13 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/LerianStudio/lib-commons/v5/commons"
+	"github.com/LerianStudio/lib-observability"
 	"github.com/gofiber/fiber/v2"
 )
 
 // setRequestIDInContext sets the HeaderID (request ID) in the context using the commons library pattern
 func setRequestIDInContext(ctx context.Context, requestID string) context.Context {
-	return context.WithValue(ctx, commons.CustomContextKey, &commons.CustomContextKeyValue{
-		HeaderID: requestID,
-	})
+	return observability.ContextWithHeaderID(ctx, requestID)
 }
 
 func TestRequestIDHeader(t *testing.T) {

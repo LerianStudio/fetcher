@@ -11,8 +11,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/LerianStudio/fetcher/pkg/model"
-	"github.com/LerianStudio/fetcher/pkg/redis"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	"github.com/LerianStudio/fetcher/v2/pkg/redis"
 )
 
 // SchemaCache wraps a generic cache and adds schema-specific business logic.

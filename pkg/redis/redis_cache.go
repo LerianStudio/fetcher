@@ -7,11 +7,12 @@ import (
 	"fmt"
 	"time"
 
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
-	libOpentelemetry "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
-	"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/valkey"
+	"github.com/LerianStudio/lib-observability"
 
-	"github.com/LerianStudio/lib-commons/v5/commons"
+	"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/valkey"
+	libLog "github.com/LerianStudio/lib-observability/log"
+	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
+
 	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -66,7 +67,7 @@ func (c *RedisCache[T]) cachePattern(ctx context.Context) (string, error) {
 
 // Get retrieves a cached value by key.
 func (c *RedisCache[T]) Get(ctx context.Context, key string) (T, bool, error) {
-	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "cache.redis.get")
 	defer span.End()
@@ -117,7 +118,7 @@ func (c *RedisCache[T]) Get(ctx context.Context, key string) (T, bool, error) {
 
 // Set stores a value in the cache.
 func (c *RedisCache[T]) Set(ctx context.Context, key string, value T, ttl time.Duration) error {
-	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "cache.redis.set")
 	defer span.End()
@@ -160,7 +161,7 @@ func (c *RedisCache[T]) Set(ctx context.Context, key string, value T, ttl time.D
 
 // Delete removes a value from the cache.
 func (c *RedisCache[T]) Delete(ctx context.Context, key string) error {
-	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "cache.redis.delete")
 	defer span.End()
@@ -189,7 +190,7 @@ func (c *RedisCache[T]) Delete(ctx context.Context, key string) error {
 }
 
 func (c *RedisCache[T]) Clear(ctx context.Context) error {
-	logger, tracer, reqID, _ := commons.NewTrackingFromContext(ctx)
+	logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "cache.redis.clear")
 	defer span.End()

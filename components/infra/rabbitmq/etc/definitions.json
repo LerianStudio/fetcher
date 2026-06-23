@@ -59,6 +59,16 @@
         "x-message-ttl": 604800000,
         "x-max-length": 10000
       }
+    },
+    {
+      "name": "fetcher.job.completed.queue",
+      "vhost": "/",
+      "durable": true
+    },
+    {
+      "name": "fetcher.job.failed.queue",
+      "vhost": "/",
+      "durable": true
     }
   ],
   "bindings": [
@@ -75,6 +85,20 @@
       "destination": "fetcher.dlq",
       "destination_type": "queue",
       "routing_key": "fetcher.dlq.key"
+    },
+    {
+      "source": "fetcher.job.events",
+      "vhost": "/",
+      "destination": "fetcher.job.completed.queue",
+      "destination_type": "queue",
+      "routing_key": "job.completed"
+    },
+    {
+      "source": "fetcher.job.events",
+      "vhost": "/",
+      "destination": "fetcher.job.failed.queue",
+      "destination_type": "queue",
+      "routing_key": "job.failed"
     }
   ]
 }

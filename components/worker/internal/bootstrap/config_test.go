@@ -3,16 +3,26 @@ package bootstrap
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
-	"github.com/LerianStudio/fetcher/pkg/bootstrap/readyz"
+	workerRabbitMQ "github.com/LerianStudio/fetcher/v2/components/worker/internal/adapters/rabbitmq"
+	"github.com/LerianStudio/fetcher/v2/pkg/bootstrap/readyz"
+	"github.com/LerianStudio/fetcher/v2/pkg/constant"
+	pkgRabbitMQ "github.com/LerianStudio/fetcher/v2/pkg/rabbitmq"
+	"github.com/LerianStudio/fetcher/v2/pkg/testutil"
 	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
 	mongoDB "github.com/LerianStudio/lib-commons/v5/commons/mongo"
-	libOtel "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry"
-	libZap "github.com/LerianStudio/lib-commons/v5/commons/zap"
+	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
+	libLog "github.com/LerianStudio/lib-observability/log"
+	libOtel "github.com/LerianStudio/lib-observability/tracing"
+	libZap "github.com/LerianStudio/lib-observability/zap"
+	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 )
 
 func testBootstrapLogger() *libLog.GoLogger {
@@ -60,6 +70,155 @@ func TestWrapBootstrapError(t *testing.T) {
 	if got := err.Error(); got != "decode key: boom" {
 		t.Fatalf("unexpected wrapped error: %s", got)
 	}
+}
+
+func TestFetcherOperationalMongoModule_UsesSharedFetcherModule(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, constant.ModuleFetcherOperationalState, fetcherOperationalMongoModule())
+	assert.NotEqual(t, constant.ModuleWorker, fetcherOperationalMongoModule())
+}
+
+func TestWorkerMultiTenantConsumer_UsesConfiguredTenantManagerClientWithCircuitBreaker(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(server.Close)
+
+	cfg := &Config{
+		MultiTenantURL:                      server.URL,
+		MultiTenantServiceAPIKey:            "test-service-key",
+		MultiTenantAllowInsecureHTTP:        true,
+		MultiTenantCircuitBreakerThreshold:  1,
+		MultiTenantCircuitBreakerTimeoutSec: 30,
+		MultiTenantTimeout:                  1,
+		MultiTenantCacheTTLSec:              1,
+	}
+
+	tmClient, err := initTenantManagerClient(cfg, testBootstrapLogger())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, tmClient.Close()) })
+
+	consumer := newWorkerMultiTenantConsumer(workerMultiTenantConsumerConfig{
+		TenantClient: tmClient,
+		Service:      constant.ApplicationName,
+		Logger:       testBootstrapLogger(),
+	})
+	require.NotNil(t, consumer)
+	assert.Same(t, tmClient, consumer.tenantClient)
+
+	_, firstErr := tmClient.GetTenantConfig(testutil.TestContext(), "tenant-cb", constant.ApplicationName)
+	require.Error(t, firstErr)
+
+	_, secondErr := tmClient.GetTenantConfig(testutil.TestContext(), "tenant-cb", constant.ApplicationName)
+	require.ErrorIs(t, secondErr, tmcore.ErrCircuitBreakerOpen)
+}
+
+func TestWorkerMultiTenantConsumer_RegisterRejectsEmptyQueue(t *testing.T) {
+	t.Parallel()
+
+	consumer := newWorkerMultiTenantConsumer(workerMultiTenantConsumerConfig{
+		Service: constant.ApplicationName,
+		Logger:  testBootstrapLogger(),
+	})
+
+	err := consumer.Register(" ", func(context.Context, amqp.Delivery) error { return nil })
+	require.Error(t, err)
+	assert.True(t, strings.Contains(err.Error(), "queue name is required"))
+}
+
+func TestStreamingRabbitMQPublisher_UsesConfiguredRouteDestination(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	adapter := pkgRabbitMQ.NewMockAdapter(ctrl)
+	adapter.EXPECT().
+		ProducerDefault(gomock.Any(), "job.events", "job.completed", []byte(`{"status":"completed","metadata":{"source":"api"}}`), gomock.Any()).
+		Return(nil)
+
+	publisher := workerRabbitMQ.NewPublisherRoutesWithAdapter(adapter, testBootstrapLogger(), &libOtel.Telemetry{})
+	target := streamingRabbitMQPublisher{publisher: publisher}
+
+	err := target.Publish(context.Background(), "job.events", "job.completed", "application/json", []byte(`{"status":"completed","metadata":{"source":"api"}}`), nil)
+	require.NoError(t, err)
+}
+
+func TestStreamingRabbitMQPublisher_PingReportsBrokerHealth(t *testing.T) {
+	t.Parallel()
+
+	t.Run("healthy broker propagates success", func(t *testing.T) {
+		t.Parallel()
+
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		adapter := pkgRabbitMQ.NewMockAdapter(ctrl)
+		adapter.EXPECT().IsHealthy().Return(true)
+
+		publisher := workerRabbitMQ.NewPublisherRoutesWithAdapter(adapter, testBootstrapLogger(), &libOtel.Telemetry{})
+		target := streamingRabbitMQPublisher{publisher: publisher}
+
+		require.NoError(t, target.Ping(context.Background()))
+	})
+
+	t.Run("unhealthy broker propagates failure", func(t *testing.T) {
+		t.Parallel()
+
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		adapter := pkgRabbitMQ.NewMockAdapter(ctrl)
+		adapter.EXPECT().IsHealthy().Return(false)
+
+		publisher := workerRabbitMQ.NewPublisherRoutesWithAdapter(adapter, testBootstrapLogger(), &libOtel.Telemetry{})
+		target := streamingRabbitMQPublisher{publisher: publisher}
+
+		require.Error(t, target.Ping(context.Background()))
+	})
+
+	t.Run("nil publisher reports error", func(t *testing.T) {
+		t.Parallel()
+
+		target := streamingRabbitMQPublisher{}
+		require.Error(t, target.Ping(context.Background()))
+	})
+}
+
+func TestInitJobEventEmitter_DisabledFailsStartup(t *testing.T) {
+	t.Setenv("STREAMING_ENABLED", "false")
+	t.Setenv("STREAMING_BROKERS", "")
+	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "")
+
+	emitter, enabled, err := initJobEventEmitter(testutil.TestContext(), &Config{}, testBootstrapLogger(), &libOtel.Telemetry{}, nil, nil)
+	require.Error(t, err)
+	assert.Nil(t, emitter)
+	assert.False(t, enabled)
+	assert.Contains(t, err.Error(), "STREAMING_ENABLED=true is required")
+}
+
+func TestInitJobEventEmitter_EnabledRequiresOutboxRepository(t *testing.T) {
+	t.Setenv("STREAMING_ENABLED", "true")
+	t.Setenv("STREAMING_BROKERS", "broker:9092")
+	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.fetcher/worker")
+
+	telemetry, err := libOtel.NewTelemetry(libOtel.TelemetryConfig{Logger: testBootstrapLogger()})
+	require.NoError(t, err)
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	adapter := pkgRabbitMQ.NewMockAdapter(ctrl)
+	publisher := workerRabbitMQ.NewPublisherRoutesWithAdapter(adapter, testBootstrapLogger(), telemetry)
+
+	emitter, enabled, err := initJobEventEmitter(testutil.TestContext(), &Config{RabbitMQJobEventsExchange: "job.events", OtelLibraryName: "test"}, testBootstrapLogger(), telemetry, publisher, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "streaming outbox repository is required")
+	assert.False(t, enabled)
+	assert.Nil(t, emitter)
 }
 
 func TestInitWorker_ReturnsErrorWhenConfigLoadFails(t *testing.T) {
@@ -346,7 +505,7 @@ func TestInitMongoConnection_PassesTLSConfig(t *testing.T) {
 		MongoTLSCACert:  "dGVzdC1jYS1jZXJ0",
 	}
 
-	_, _ = initMongoConnection(context.Background(), cfg, testBootstrapLogger())
+	_, _ = initMongoConnection(testutil.TestContext(), cfg, testBootstrapLogger())
 
 	require.NotNil(t, capturedConfig.TLS, "TLS config should be set when MongoTLSCACert is non-empty")
 	assert.Equal(t, "dGVzdC1jYS1jZXJ0", capturedConfig.TLS.CACertBase64)
@@ -374,7 +533,7 @@ func TestInitMongoConnection_NoTLSWhenCertEmpty(t *testing.T) {
 		MongoTLSCACert:  "",
 	}
 
-	_, _ = initMongoConnection(context.Background(), cfg, testBootstrapLogger())
+	_, _ = initMongoConnection(testutil.TestContext(), cfg, testBootstrapLogger())
 
 	assert.Nil(t, capturedConfig.TLS, "TLS config should be nil when MongoTLSCACert is empty")
 }

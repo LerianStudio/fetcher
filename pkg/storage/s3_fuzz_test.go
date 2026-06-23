@@ -9,8 +9,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/LerianStudio/fetcher/pkg/storage"
-	"github.com/LerianStudio/fetcher/pkg/testutil"
+	"github.com/LerianStudio/fetcher/v2/pkg/storage"
+	"github.com/LerianStudio/fetcher/v2/pkg/testutil"
 )
 
 // FuzzS3ObjectName verifies that S3Repository.Get does not panic with arbitrary object names.

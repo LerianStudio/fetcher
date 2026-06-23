@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/LerianStudio/fetcher/pkg"
+	"github.com/LerianStudio/fetcher/v2/pkg"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 )

@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/LerianStudio/fetcher/pkg/model"
-	connPort "github.com/LerianStudio/fetcher/pkg/ports/connection"
+	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	connPort "github.com/LerianStudio/fetcher/v2/pkg/ports/connection"
 )
 
 // SingleTenantResolver resolves internal datasources from env vars (loaded at startup)

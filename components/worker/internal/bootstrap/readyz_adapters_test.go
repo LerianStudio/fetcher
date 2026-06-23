@@ -5,7 +5,7 @@ import (
 	"crypto/tls"
 	"testing"
 
-	"github.com/LerianStudio/fetcher/pkg/bootstrap/readyz"
+	"github.com/LerianStudio/fetcher/v2/pkg/bootstrap/readyz"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -147,44 +147,85 @@ func TestNewWorkerReadyzConfig_NilCfg_FallsBackToLoadConfig(t *testing.T) {
 	})
 }
 
-// TestNewReadyzMTRedis_TLS_EnablesTLSConfig is a regression for the
-// CodeRabbit PR #223 finding (#8): the worker's dedicated MT-Redis readyz
-// client built plaintext-only options even when MULTI_TENANT_REDIS_TLS=true,
-// so the readyz Ping failed with a TLS-on-plaintext error and reported
-// multi_tenant_redis=down on healthy TLS-only deployments. The fix mirrors
-// the manager's newReadyzMultiTenantRedisClient: opts.TLSConfig is populated
-// with TLS 1.2 as the floor.
-func TestNewReadyzMTRedis_TLS_EnablesTLSConfig(t *testing.T) {
-	cfg := &Config{
-		MultiTenantRedisHost: "mt-redis.local",
+func TestBuildWorkerReadyzCheckers_MultiTenantRedisRegistration(t *testing.T) {
+	client := newWorkerReadyzMultiTenantRedisClient(&Config{
+		MultiTenantEnabled:   true,
+		MultiTenantRedisHost: "localhost",
+		MultiTenantRedisPort: "6380",
 		MultiTenantRedisTLS:  true,
-	}
-
-	client := newReadyzMTRedis(cfg)
-	require.NotNil(t, client, "client must be returned for non-empty MULTI_TENANT_REDIS_HOST")
-
+	})
+	require.NotNil(t, client)
 	t.Cleanup(func() { _ = client.Close() })
 
-	opts := client.Options()
-	require.NotNil(t, opts.TLSConfig, "TLSConfig must be non-nil when MultiTenantRedisTLS=true")
-	assert.Equal(t, uint16(tls.VersionTLS12), opts.TLSConfig.MinVersion,
-		"TLS minimum version must be 1.2 to match the worker's main MT-Redis client")
+	checkers := buildWorkerReadyzCheckers(&workerReadyzDeps{
+		cfg: &Config{
+			MultiTenantEnabled:   true,
+			MultiTenantRedisHost: "localhost",
+			MultiTenantRedisPort: "6380",
+			MultiTenantRedisTLS:  true,
+		},
+		mtRedisClient: client,
+	})
+
+	checker := findCheckerByName(t, checkers, "multi_tenant_redis")
+	require.NotNil(t, checker, "multi-tenant Redis checker must be registered when MT is enabled and host is configured")
+	result := checker.Check(context.Background())
+	require.NotNil(t, result.TLS)
+	assert.True(t, *result.TLS)
 }
 
-// TestNewReadyzMTRedis_NoTLS_NilTLSConfig is the inverse:
-// MULTI_TENANT_REDIS_TLS=false leaves TLSConfig nil so the client speaks
-// plaintext. This is the local-dev path with no broker certificate.
-func TestNewReadyzMTRedis_NoTLS_NilTLSConfig(t *testing.T) {
+func TestNewWorkerReadyzDepsMT_IncludesMultiTenantRedisClient(t *testing.T) {
 	cfg := &Config{
-		MultiTenantRedisHost: "mt-redis.local",
-		MultiTenantRedisTLS:  false,
+		MultiTenantEnabled:   true,
+		MultiTenantRedisHost: "localhost",
+		MultiTenantRedisPort: "6380",
+		MultiTenantRedisTLS:  true,
 	}
+	deps := newWorkerReadyzDepsMT(cfg, nil, nil, nil, nil, nil)
+	t.Cleanup(deps.close)
 
-	client := newReadyzMTRedis(cfg)
+	require.NotNil(t, deps.mtRedisClient, "MT production deps must own a multi-tenant Redis checker client")
+	checkers := buildWorkerReadyzCheckers(deps)
+	require.NotNil(t, findCheckerByName(t, checkers, "multi_tenant_redis"))
+}
+
+func TestNewWorkerReadyzDepsST_DoesNotIncludeMultiTenantRedisClient(t *testing.T) {
+	cfg := &Config{
+		MultiTenantEnabled:   true,
+		MultiTenantRedisHost: "localhost",
+		MultiTenantRedisPort: "6380",
+	}
+	deps := newWorkerReadyzDepsST(cfg, nil, nil, nil)
+	t.Cleanup(deps.close)
+
+	assert.Nil(t, deps.mtRedisClient, "single-tenant deps builder must not own multi-tenant Redis readyz wiring")
+}
+
+func TestBuildWorkerReadyzCheckers_MultiTenantRedisOmittedWhenNotConfigured(t *testing.T) {
+	checkers := buildWorkerReadyzCheckers(&workerReadyzDeps{cfg: &Config{MultiTenantEnabled: true}})
+
+	assert.Nil(t, findCheckerByName(t, checkers, "multi_tenant_redis"))
+}
+
+func TestNewWorkerReadyzMultiTenantRedisClient_TLSPosture(t *testing.T) {
+	client := newWorkerReadyzMultiTenantRedisClient(&Config{
+		MultiTenantEnabled:   true,
+		MultiTenantRedisHost: "localhost",
+		MultiTenantRedisTLS:  true,
+	})
 	require.NotNil(t, client)
-
 	t.Cleanup(func() { _ = client.Close() })
 
-	opts := client.Options()
-	assert.Nil(t, opts.TLSConfig, "TLSConfig must be nil when MultiTenantRedisTLS=false")
+	config := client.Options().TLSConfig
+	require.NotNil(t, config)
+	assert.Equal(t, uint16(tls.VersionTLS12), config.MinVersion)
+
+	plainClient := newWorkerReadyzMultiTenantRedisClient(&Config{
+		MultiTenantEnabled:   true,
+		MultiTenantRedisHost: "localhost",
+		MultiTenantRedisTLS:  false,
+	})
+	require.NotNil(t, plainClient)
+	t.Cleanup(func() { _ = plainClient.Close() })
+	assert.Nil(t, plainClient.Options().TLSConfig)
 }

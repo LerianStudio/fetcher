@@ -9,7 +9,7 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	pg "github.com/testcontainers/testcontainers-go/modules/postgres"
 
-	"github.com/LerianStudio/fetcher/pkg/itestkit"
+	"github.com/LerianStudio/fetcher/v2/pkg/itestkit"
 )
 
 type PostgresConfig struct {

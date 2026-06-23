@@ -12,8 +12,8 @@ import (
 
 	_ "github.com/lib/pq"
 
-	"github.com/LerianStudio/fetcher/pkg/itestkit"
-	"github.com/LerianStudio/fetcher/pkg/itestkit/infra/postgres"
+	"github.com/LerianStudio/fetcher/v2/pkg/itestkit"
+	"github.com/LerianStudio/fetcher/v2/pkg/itestkit/infra/postgres"
 )
 
 func waitForDB(ctx context.Context, db *sql.DB) error {

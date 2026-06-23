@@ -7,13 +7,14 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/LerianStudio/fetcher/pkg/constant"
-	"github.com/LerianStudio/fetcher/pkg/model/job"
-	"github.com/LerianStudio/fetcher/pkg/schemautil"
+	"github.com/LerianStudio/lib-observability"
+
+	"github.com/LerianStudio/fetcher/v2/pkg/constant"
+	"github.com/LerianStudio/fetcher/v2/pkg/model/job"
+	"github.com/LerianStudio/fetcher/v2/pkg/schemautil"
 	"github.com/lib/pq"
 
-	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
+	libLog "github.com/LerianStudio/lib-observability/log"
 	"github.com/Masterminds/squirrel"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
@@ -222,7 +223,7 @@ func (ds *ExternalDataSource) CloseConnection() error {
 //	    fmt.Printf("User: %s\n", row["name"])
 //	}
 func (ds *ExternalDataSource) Query(ctx context.Context, schema []TableSchema, table string, fields []string, filter map[string][]any) ([]map[string]any, error) {
-	logger, tracer, reqId, _ := libCommons.NewTrackingFromContext(ctx)
+	logger, tracer, reqId, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "postgres.data_source.query")
 	defer span.End()
@@ -308,7 +309,7 @@ func (ds *ExternalDataSource) Query(ctx context.Context, schema []TableSchema, t
 //	    fmt.Printf("Table: %s, Columns: %d\n", ts.TableName, len(ts.Columns))
 //	}
 func (ds *ExternalDataSource) GetDatabaseSchema(ctx context.Context, schemas []string) ([]TableSchema, error) {
-	logger, tracer, reqId, _ := libCommons.NewTrackingFromContext(ctx)
+	logger, tracer, reqId, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "postgres.data_source.get_database_schema")
 	defer span.End()
@@ -827,7 +828,7 @@ func parseJSONBField(ctx context.Context, value any, logger libLog.Logger) any {
 //	fields, err := ds.ValidateTableAndFields(ctx, "users", []string{"*"}, schema)
 //	// fields = ["id", "name", "email", "created_at", ...]
 func (ds *ExternalDataSource) ValidateTableAndFields(ctx context.Context, tableName string, requestedFields []string, schema []TableSchema) ([]string, error) {
-	logger, tracer, reqId, _ := libCommons.NewTrackingFromContext(ctx)
+	logger, tracer, reqId, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "postgres.data_source.validate_table_and_fields")
 	defer span.End()
@@ -1023,7 +1024,7 @@ func applyFilter(queryBuilder squirrel.SelectBuilder, fieldName string, values [
 //	}
 //	results, err := ds.QueryWithAdvancedFilters(ctx, schema, "orders", []string{"*"}, filter)
 func (ds *ExternalDataSource) QueryWithAdvancedFilters(ctx context.Context, schema []TableSchema, table string, fields []string, filter map[string]job.FilterCondition) ([]map[string]any, error) {
-	logger, tracer, reqId, _ := libCommons.NewTrackingFromContext(ctx)
+	logger, tracer, reqId, _ := observability.NewTrackingFromContext(ctx)
 
 	ctx, span := tracer.Start(ctx, "postgres.data_source.query_with_advanced_filters")
 	defer span.End()

@@ -7,12 +7,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/LerianStudio/fetcher/pkg/itestkit/addons/e2ekit"
-	"github.com/LerianStudio/fetcher/pkg/itestkit/infra/minio"
-	"github.com/LerianStudio/fetcher/pkg/itestkit/infra/mongodb"
-	"github.com/LerianStudio/fetcher/pkg/itestkit/infra/rabbitmq"
-	"github.com/LerianStudio/fetcher/pkg/itestkit/infra/redis"
-	"github.com/LerianStudio/fetcher/pkg/itestkit/infra/seaweedfs"
+	"github.com/LerianStudio/fetcher/v2/pkg/itestkit/addons/e2ekit"
+	"github.com/LerianStudio/fetcher/v2/pkg/itestkit/infra/minio"
+	"github.com/LerianStudio/fetcher/v2/pkg/itestkit/infra/mongodb"
+	"github.com/LerianStudio/fetcher/v2/pkg/itestkit/infra/rabbitmq"
+	"github.com/LerianStudio/fetcher/v2/pkg/itestkit/infra/redis"
+	"github.com/LerianStudio/fetcher/v2/pkg/itestkit/infra/seaweedfs"
 )
 
 // TestOrganizationID is the default organization UUID used in all E2E test requests.
@@ -179,7 +179,7 @@ func (e *AppEnv) ManagerEnv() map[string]string {
 		"LOG_LEVEL":                            "debug",
 		"ENABLE_TELEMETRY":                     "true",
 		"OTEL_RESOURCE_SERVICE_NAME":           "fetcher",
-		"OTEL_LIBRARY_NAME":                    "github.com/LerianStudio/fetcher",
+		"OTEL_LIBRARY_NAME":                    "github.com/LerianStudio/fetcher/v2",
 		"OTEL_RESOURCE_SERVICE_VERSION":        "v1.0.0",
 		"OTEL_RESOURCE_DEPLOYMENT_ENVIRONMENT": "development",
 		"OTEL_EXPORTER_OTLP_ENDPOINT_PORT":     "4317",
@@ -189,8 +189,8 @@ func (e *AppEnv) ManagerEnv() map[string]string {
 		// SERVER_PORT (4006). DEPLOYMENT_MODE=local skips the bootstrap SaaS
 		// TLS validation; READYZ_DRAIN_DELAY_SEC is shortened to keep the
 		// drain e2e tests under suite-level timeouts.
-		"DEPLOYMENT_MODE":          "local",
-		"READYZ_DRAIN_DELAY_SEC":   "2",
+		"DEPLOYMENT_MODE":        "local",
+		"READYZ_DRAIN_DELAY_SEC": "2",
 	}
 }
 
@@ -221,10 +221,13 @@ func (e *AppEnv) WorkerEnv() map[string]string {
 		"RABBITMQ_FETCHER_WORK_QUEUE":          "fetcher.extract-external-data.queue",
 		"RABBITMQ_JOB_EVENTS_EXCHANGE":         "fetcher.job.events",
 		"RABBITMQ_NUMBERS_OF_WORKERS":          "1",
+		"STREAMING_ENABLED":                    "true",
+		"STREAMING_BROKERS":                    "localhost:9092",
+		"STREAMING_CLOUDEVENTS_SOURCE":         "//lerian.fetcher/worker",
 		"LOG_LEVEL":                            "debug",
 		"ENABLE_TELEMETRY":                     "true",
 		"OTEL_RESOURCE_SERVICE_NAME":           "fetcher",
-		"OTEL_LIBRARY_NAME":                    "github.com/LerianStudio/fetcher",
+		"OTEL_LIBRARY_NAME":                    "github.com/LerianStudio/fetcher/v2",
 		"OTEL_RESOURCE_SERVICE_VERSION":        "v1.0.0",
 		"OTEL_RESOURCE_DEPLOYMENT_ENVIRONMENT": "development",
 		"OTEL_EXPORTER_OTLP_ENDPOINT_PORT":     "4317",

@@ -3,8 +3,8 @@ package testutil
 import (
 	"context"
 
-	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
-	libLog "github.com/LerianStudio/lib-commons/v5/commons/log"
+	observability "github.com/LerianStudio/lib-observability"
+	libLog "github.com/LerianStudio/lib-observability/log"
 	"go.opentelemetry.io/otel"
 )
 
@@ -14,11 +14,8 @@ import (
 // tracking information from context.
 func TestContext() context.Context {
 	logger := &libLog.GoLogger{Level: libLog.LevelDebug}
-	values := &libCommons.CustomContextKeyValue{
-		HeaderID: "test-request-id",
-		Logger:   logger,
-		Tracer:   otel.Tracer("test"),
-	}
+	ctx := observability.ContextWithHeaderID(context.Background(), "test-request-id")
+	ctx = observability.ContextWithLogger(ctx, logger)
 
-	return context.WithValue(context.Background(), libCommons.CustomContextKey, values)
+	return observability.ContextWithTracer(ctx, otel.Tracer("test"))
 }
