@@ -90,6 +90,29 @@ function applyBump(base, bump) {
   return { major: base.major, minor: base.minor, patch: base.patch };
 }
 
+// Resolve the engine's release channel (''=stable, 'beta', 'rc'). The AUTHORITATIVE
+// source is the parent release version's prerelease identifier — "2.0.1-beta.1" → beta,
+// "2.0.1-rc.1" → rc, "2.0.1" → stable — passed to the prepare hook via --parent-version.
+//
+// Do NOT trust semantic-release's ${nextRelease.channel} (passed as --channel): that is
+// the DIST channel, which is EMPTY for the `develop` and `release-candidate` branches
+// because they configure `prerelease:`, not `channel:`. Reading it made every prerelease
+// parent release silently mint a STABLE engine tag (no engine prerelease tag ever existed
+// despite the "no-op prerelease bump" design). --channel survives only as the fallback for
+// the standalone `compute` dry-run (docs/RELEASING.md), invoked without a parent version.
+function resolveChannel(opts) {
+  const pv = opts['parent-version'];
+  if (pv && pv !== 'true') {
+    try {
+      return parseSemver(pv).preChannel || '';
+    } catch {
+      // Unparseable parent version — fall back to the explicit --channel below.
+    }
+  }
+  const raw = opts.channel;
+  return raw && raw !== 'true' && raw !== 'null' ? raw.trim() : '';
+}
+
 // Compute the engine's next version given the last engine tag, the bump implied by
 // pkg/engine commits, and the release channel. Mirrors semantic-release prerelease
 // semantics for the common cases; documented in docs/RELEASING.md.
@@ -262,9 +285,8 @@ function prependChangelog(version, channel, parentVersion) {
 }
 
 function doPrepare(opts) {
-  const rawChannel = opts.channel && opts.channel !== 'true' && opts.channel !== 'null' ? opts.channel : '';
-  const channel = rawChannel.trim();
-  const parentVersion = opts['parent-version'] || '';
+  const parentVersion = opts['parent-version'] && opts['parent-version'] !== 'true' ? opts['parent-version'] : '';
+  const channel = resolveChannel(opts);
 
   const lastTag = latestEngineTag();
   const bump = engineBumpSinceTag(lastTag);
@@ -336,8 +358,7 @@ function doPrepare(opts) {
 }
 
 function doCompute(opts) {
-  const rawChannel = opts.channel && opts.channel !== 'true' && opts.channel !== 'null' ? opts.channel : '';
-  const channel = rawChannel.trim();
+  const channel = resolveChannel(opts);
   const lastTag = latestEngineTag();
   const bump = engineBumpSinceTag(lastTag);
   const version = computeNextVersion(lastTag, bump, channel);
@@ -361,7 +382,7 @@ function main() {
 }
 
 // Pure helpers are exported for unit testing; main() runs only when executed directly.
-export { parseSemver, compareSemver, applyBump, computeNextVersion, engineReplaces, assertEngineWiring };
+export { parseSemver, compareSemver, applyBump, computeNextVersion, resolveChannel, engineReplaces, assertEngineWiring };
 
 if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
   main();
