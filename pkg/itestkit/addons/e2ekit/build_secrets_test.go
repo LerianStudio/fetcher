@@ -66,7 +66,12 @@ func TestBuildImageWithSecretsValidation(t *testing.T) {
 func TestCreateSecretTempFile_AllowsMissingEnv(t *testing.T) {
 	t.Parallel()
 
-	path, err := createSecretTempFile(BuildSecret{ID: "github", Env: "GITHUB_TOKEN"})
+	// Use a var guaranteed unset everywhere so the missing-env path is actually
+	// exercised. CI (notably the release pipeline) always sets GITHUB_TOKEN and
+	// similar, so naming a real var would write a non-empty file and fail here.
+	const missingEnv = "E2EKIT_MISSING_SECRET_ENV_DO_NOT_SET"
+
+	path, err := createSecretTempFile(BuildSecret{ID: "github", Env: missingEnv})
 	if err != nil {
 		t.Fatalf("expected missing env to produce empty secret file, got %v", err)
 	}
