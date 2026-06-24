@@ -1,3 +1,14 @@
+## [1.4.5](https://github.com/LerianStudio/fetcher/compare/v1.4.4...v1.4.5) (2026-06-24)
+
+
+### Bug Fixes
+
+* **ci:** add release-notes-generator and changelog plugins for maintenance ([#297](https://github.com/LerianStudio/fetcher/issues/297)) ([b56f745](https://github.com/LerianStudio/fetcher/commit/b56f745044515b983ac0ed10af28443a81589658))
+* **ci:** add release-notes-generator and changelog plugins to releaserc ([3d45a93](https://github.com/LerianStudio/fetcher/commit/3d45a93f28bfcf8a3532db44dfe767c41e8c3d29))
+* **ci:** disable gitops artifacts on maintenance release pipeline ([365d3a0](https://github.com/LerianStudio/fetcher/commit/365d3a0a570fa1d0d49409c781a4896f7d5f08fc))
+* **ci:** trigger gptchangelog on maintenance branch releases ([eaf14ac](https://github.com/LerianStudio/fetcher/commit/eaf14ac4d24573dd81bf2aafe189602f75af3fa0))
+* **ci:** use semantic-release plugins for changelog on maintenance branch ([e511747](https://github.com/LerianStudio/fetcher/commit/e511747d19cb44e0b64ed8427c35251207059e90))
+
 # Fetcher Changelog
 
 ## [1.4.1](https://github.com/LerianStudio/fetcher/releases/tag/v1.4.1)
@@ -72,4 +83,3 @@ Contributors: @bruno.souza, @brunoblsouza, @dependabot[bot], @ferr3ira-gabriel, 
 
 
 ## [v1.0.0]
-
