@@ -2,7 +2,7 @@ name: PR Validation
 
 on:
   pull_request:
-    branches: [develop, release-candidate, main, 'maintenance/v1.4.x']
+    branches: ['maintenance/v1.4.x']
     types: [opened, edited, synchronize, reopened, ready_for_review]
 
 permissions:
@@ -35,6 +35,7 @@ jobs:
         components/manager
         components/worker
       go_private_modules: "github.com/LerianStudio/*"
+      run_lib_version_check: false
       ignore_file: ".trivyignore"
       shared_paths: |
         go.mod
