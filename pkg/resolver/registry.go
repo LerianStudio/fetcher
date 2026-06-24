@@ -20,7 +20,7 @@ type InternalDSConfig struct {
 	// Service is the tenant-manager service name (e.g., "midaz", "plugin-crm").
 	Service string
 
-	// Module is the tenant-manager module name (e.g., "onboarding", "transaction", "crm").
+	// Module is the tenant-manager module name (e.g., "onboarding", "transaction", "crm-api").
 	Module string
 
 	// DBType is the database type for the datasource factory.
@@ -40,7 +40,7 @@ func NewInternalDatasourceRegistry() *InternalDatasourceRegistry {
 		datasources: map[string]InternalDSConfig{
 			"midaz_onboarding":  {Service: "ledger", Module: "onboarding", DBType: model.TypePostgreSQL},
 			"midaz_transaction": {Service: "ledger", Module: "transaction", DBType: model.TypePostgreSQL},
-			"plugin_crm":        {Service: "ledger", Module: "crm", DBType: model.TypeMongoDB},
+			"plugin_crm":        {Service: "plugin-crm", Module: "crm-api", DBType: model.TypeMongoDB},
 		},
 	}
 }
