@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -222,12 +223,17 @@ func InitWorker() (*Service, error) {
 	dsRegistry := resolver.NewInternalDatasourceRegistry()
 
 	if cfg.MultiTenantEnabled && cfg.MultiTenantURL != "" {
-		resolverTMClient, resolverTMErr := initTenantManagerClient(cfg, logger)
-		if resolverTMErr != nil {
-			return nil, fmt.Errorf("create tenant manager client for resolver: %w", resolverTMErr)
+		tenantAdapter, adapterErr := buildResolverTenantAdapter(
+			cfg.MultiTenantServiceAPIKey,
+			logger,
+			func(apiKey string) (*tmclient.Client, error) {
+				return initTenantManagerClientWithKey(cfg, logger, apiKey)
+			},
+		)
+		if adapterErr != nil {
+			return nil, adapterErr
 		}
 
-		tenantAdapter := resolver.NewTenantManagerAdapter(resolverTMClient)
 		service.ConnectionResolver = resolver.NewMultiTenantResolver(connectionRepository, dsRegistry, tenantAdapter)
 	} else {
 		// Single-tenant: load internal datasource connections from DATASOURCE_* env vars.
@@ -526,13 +532,72 @@ func resolveZapEnvironment(env string) libZap.Environment {
 	}
 }
 
-// initTenantManagerClient creates a Tenant Manager HTTP client with circuit breaker.
-// This is shared across MongoDB manager and MultiTenantConsumer to avoid duplicate instances.
+// buildResolverTenantAdapter builds the per-service tenant-manager adapter used
+// by the multi-tenant connection resolver. It loads per-service API keys from
+// MULTI_TENANT_SERVICE_API_KEY_* env vars and builds one client per service via
+// newClient, falling back to defaultKey (the fetcher's own-identity key) for any
+// service without a dedicated key. newClient is injected so this is unit-testable
+// without real config or HTTP. Loader and builder errors are wrapped with
+// context, never ignored. After building, it logs (token NAMES only, never key
+// values) which service tokens received a dedicated client.
+func buildResolverTenantAdapter(
+	defaultKey string,
+	logger libLog.Logger,
+	newClient func(apiKey string) (*tmclient.Client, error),
+) (*resolver.TenantManagerAdapter, error) {
+	serviceKeys, keysErr := resolver.LoadServiceAPIKeysFromEnv()
+	if keysErr != nil {
+		return nil, fmt.Errorf("load per-service tenant manager API keys for resolver: %w", keysErr)
+	}
+
+	serviceClients, defaultClient, buildErr := resolver.BuildServiceClients(serviceKeys, defaultKey, newClient)
+	if buildErr != nil {
+		return nil, fmt.Errorf("create per-service tenant manager clients for resolver: %w", buildErr)
+	}
+
+	logResolverServiceClients(logger, serviceClients)
+
+	return resolver.NewTenantManagerAdapterWithClients(serviceClients, defaultClient), nil
+}
+
+// logResolverServiceClients emits one startup info log naming the service tokens
+// that received a dedicated per-service tenant-manager client. It logs token
+// NAMES only (sorted, plus a count) and never any API key value, giving
+// operators confirmation that their intended per-service keys were picked up.
+func logResolverServiceClients(logger libLog.Logger, serviceClients map[string]*tmclient.Client) {
+	tokens := make([]string, 0, len(serviceClients))
+	for token := range serviceClients {
+		tokens = append(tokens, token)
+	}
+
+	sort.Strings(tokens)
+
+	logger.Log(context.Background(), libLog.LevelInfo, "resolver per-service tenant-manager clients configured",
+		libLog.Int("count", len(tokens)),
+		libLog.Any("tokens", tokens),
+	)
+}
+
+// initTenantManagerClient creates a Tenant Manager HTTP client with circuit
+// breaker, authenticated with the fetcher's own-identity service API key
+// (cfg.MultiTenantServiceAPIKey). This is shared across the MongoDB manager and
+// the MultiTenantConsumer to avoid duplicate instances. It delegates to
+// initTenantManagerClientWithKey so own-identity callers keep a single,
+// unchanged code path.
 func initTenantManagerClient(cfg *Config, logger libLog.Logger) (*tmclient.Client, error) {
+	return initTenantManagerClientWithKey(cfg, logger, cfg.MultiTenantServiceAPIKey)
+}
+
+// initTenantManagerClientWithKey creates a Tenant Manager HTTP client with
+// circuit breaker, authenticated with the supplied apiKey. Factoring the API
+// key out as a parameter lets the resolver adapter build one client per service
+// (each with its own per-service key) while own-identity callers continue to use
+// the fetcher's single MultiTenantServiceAPIKey via initTenantManagerClient.
+func initTenantManagerClientWithKey(cfg *Config, logger libLog.Logger, apiKey string) (*tmclient.Client, error) {
 	var clientOpts []tmclient.ClientOption
 
 	clientOpts = append(clientOpts,
-		tmclient.WithServiceAPIKey(cfg.MultiTenantServiceAPIKey),
+		tmclient.WithServiceAPIKey(apiKey),
 	)
 
 	// Allow plaintext HTTP when explicitly configured via MULTI_TENANT_ALLOW_INSECURE_HTTP.

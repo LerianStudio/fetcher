@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -569,12 +570,21 @@ func assembleService(
 	registry := resolver.NewInternalDatasourceRegistry()
 
 	if cfg.MultiTenantEnabled && cfg.MultiTenantURL != "" {
-		tmClient, tmErr := newTenantManagerClient(cfg.MultiTenantURL, logger, resolverTMClientOpts(cfg)...)
-		if tmErr != nil {
-			return nil, wrapBootstrapError("create tenant manager client for resolver", tmErr)
+		tenantAdapter, adapterErr := buildResolverTenantAdapter(
+			cfg.MultiTenantServiceAPIKey,
+			logger,
+			func(apiKey string) (*tmclient.Client, error) {
+				return newTenantManagerClient(
+					cfg.MultiTenantURL,
+					logger,
+					append(resolverTMClientBaseOpts(cfg), tmclient.WithServiceAPIKey(apiKey))...,
+				)
+			},
+		)
+		if adapterErr != nil {
+			return nil, adapterErr
 		}
 
-		tenantAdapter := resolver.NewTenantManagerAdapter(tmClient)
 		connResolver = resolver.NewMultiTenantResolver(repositories.connection, registry, tenantAdapter)
 	} else {
 		// Single-tenant: load internal datasource connections from DATASOURCE_* env vars.
@@ -999,16 +1009,65 @@ func resolveZapEnvironment(env string) zap.Environment {
 	}
 }
 
-// resolverTMClientOpts builds tmclient options for the ConnectionResolver's tenant-manager client.
-// Reuses the same circuit breaker and insecure HTTP settings as the middleware client.
-func resolverTMClientOpts(cfg *Config) []tmclient.ClientOption {
+// buildResolverTenantAdapter builds the per-service tenant-manager adapter used
+// by the multi-tenant connection resolver. It loads per-service API keys from
+// MULTI_TENANT_SERVICE_API_KEY_* env vars and builds one client per service via
+// the injected newClient closure, falling back to defaultKey (the fetcher's
+// own-identity key) for any service without a dedicated key. newClient is
+// injected so this is unit-testable without real HTTP and so tests can assert
+// exactly which keys reach client construction. Loader and builder errors are
+// wrapped with context, never ignored. After building, it logs (token NAMES
+// only, never key values) which service tokens received a dedicated client.
+func buildResolverTenantAdapter(
+	defaultKey string,
+	logger libLog.Logger,
+	newClient func(apiKey string) (*tmclient.Client, error),
+) (*resolver.TenantManagerAdapter, error) {
+	serviceKeys, keysErr := resolver.LoadServiceAPIKeysFromEnv()
+	if keysErr != nil {
+		return nil, wrapBootstrapError("load per-service tenant manager API keys for resolver", keysErr)
+	}
+
+	serviceClients, defaultClient, buildErr := resolver.BuildServiceClients(serviceKeys, defaultKey, newClient)
+	if buildErr != nil {
+		return nil, wrapBootstrapError("create per-service tenant manager clients for resolver", buildErr)
+	}
+
+	logResolverServiceClients(logger, serviceClients)
+
+	return resolver.NewTenantManagerAdapterWithClients(serviceClients, defaultClient), nil
+}
+
+// logResolverServiceClients emits one startup info log naming the service tokens
+// that received a dedicated per-service tenant-manager client. It logs token
+// NAMES only (sorted, plus a count) and never any API key value, giving
+// operators confirmation that their intended per-service keys were picked up.
+func logResolverServiceClients(logger libLog.Logger, serviceClients map[string]*tmclient.Client) {
+	tokens := make([]string, 0, len(serviceClients))
+	for token := range serviceClients {
+		tokens = append(tokens, token)
+	}
+
+	sort.Strings(tokens)
+
+	logger.Log(context.Background(), libLog.LevelInfo, "resolver per-service tenant-manager clients configured",
+		libLog.Int("count", len(tokens)),
+		libLog.Any("tokens", tokens),
+	)
+}
+
+// resolverTMClientBaseOpts builds the tmclient options for the Connection
+// resolver's tenant-manager client EXCEPT the service API key. Splitting the key
+// out lets the resolver adapter supply a per-service key while own-identity
+// callers append cfg.MultiTenantServiceAPIKey via resolverTMClientOpts. The API
+// key is an independent functional option (it sets a distinct field), so its
+// position in the slice is behavior-neutral.
+func resolverTMClientBaseOpts(cfg *Config) []tmclient.ClientOption {
 	var opts []tmclient.ClientOption
 
 	if cfg.MultiTenantAllowInsecureHTTP {
 		opts = append(opts, tmclient.WithAllowInsecureHTTP())
 	}
-
-	opts = append(opts, tmclient.WithServiceAPIKey(cfg.MultiTenantServiceAPIKey))
 
 	if cfg.MultiTenantTimeout > 0 {
 		opts = append(opts, tmclient.WithTimeout(time.Duration(cfg.MultiTenantTimeout)*time.Second))
@@ -1030,6 +1089,15 @@ func resolverTMClientOpts(cfg *Config) []tmclient.ClientOption {
 	}
 
 	return opts
+}
+
+// resolverTMClientOpts builds tmclient options for the ConnectionResolver's
+// tenant-manager client using the fetcher's own-identity service API key
+// (cfg.MultiTenantServiceAPIKey). Reuses the same circuit breaker and insecure
+// HTTP settings as the middleware client. Own-identity callers use this; the
+// resolver adapter builds per-service keys atop resolverTMClientBaseOpts.
+func resolverTMClientOpts(cfg *Config) []tmclient.ClientOption {
+	return append(resolverTMClientBaseOpts(cfg), tmclient.WithServiceAPIKey(cfg.MultiTenantServiceAPIKey))
 }
 
 // resolvedMaxTenantPools returns the configured value if > 0, or the default.
