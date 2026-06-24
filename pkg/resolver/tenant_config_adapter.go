@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Lerian Studio. All rights reserved.
+// Use of this source code is governed by the Elastic License 2.0
+// that can be found in the LICENSE file.
+
 package resolver
 
 import (
@@ -10,16 +14,36 @@ import (
 	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
 )
 
-// TenantManagerAdapter implements TenantConfigProvider by wrapping the
-// lib-commons tenant-manager client. It fetches per-tenant service connections
-// from the tenant-manager API via GetTenantConfig.
+// TenantManagerAdapter implements TenantConfigProvider by wrapping one or more
+// lib-commons tenant-manager clients. Each service may authenticate with its own
+// API key, so the adapter holds a per-service client map (keyed by the normalized
+// service token, see normalizeServiceToken) plus a default client used when no
+// per-service entry exists.
 type TenantManagerAdapter struct {
-	client *tmclient.Client
+	clients       map[string]*tmclient.Client // keyed by normalizeServiceToken(service)
+	defaultClient *tmclient.Client
 }
 
-// NewTenantManagerAdapter creates a TenantConfigProvider backed by the tenant-manager HTTP client.
-func NewTenantManagerAdapter(client *tmclient.Client) *TenantManagerAdapter {
-	return &TenantManagerAdapter{client: client}
+// NewTenantManagerAdapterWithClients creates a TenantConfigProvider backed by a
+// per-service client map and a default client. The map keys must be normalized
+// service tokens (normalizeServiceToken). GetServiceConnection selects the
+// client for a service by token, falling back to defaultClient when the service
+// has no dedicated entry. Either argument may be nil; if both resolve to nil for
+// a given service, GetServiceConnection returns an explicit error.
+func NewTenantManagerAdapterWithClients(clients map[string]*tmclient.Client, defaultClient *tmclient.Client) *TenantManagerAdapter {
+	return &TenantManagerAdapter{clients: clients, defaultClient: defaultClient}
+}
+
+// pickClient selects the tenant-manager client for a service: the per-service
+// entry (matched by normalized token) when present, otherwise the default
+// client. Returns nil when neither is configured; callers must turn that into
+// an explicit error rather than dereferencing it.
+func (a *TenantManagerAdapter) pickClient(service string) *tmclient.Client {
+	if c := a.clients[normalizeServiceToken(service)]; c != nil {
+		return c
+	}
+
+	return a.defaultClient
 }
 
 // GetServiceConnection fetches connection details for a service/module belonging to a tenant.
@@ -28,7 +52,12 @@ func NewTenantManagerAdapter(client *tmclient.Client) *TenantManagerAdapter {
 //
 // The TenantConfig.Databases map is keyed by module name directly (flat format).
 func (a *TenantManagerAdapter) GetServiceConnection(ctx context.Context, tenantID, service, module string) (*ServiceConnectionConfig, error) {
-	tenantConfig, err := a.client.GetTenantConfig(ctx, tenantID, service)
+	c := a.pickClient(service)
+	if c == nil {
+		return nil, fmt.Errorf("no tenant-manager client configured for service %q and no default", service)
+	}
+
+	tenantConfig, err := c.GetTenantConfig(ctx, tenantID, service)
 	if err != nil {
 		return nil, fmt.Errorf("get tenant config for %s/%s: %w", tenantID, service, err)
 	}

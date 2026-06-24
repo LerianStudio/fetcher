@@ -154,7 +154,7 @@ func TestMultiTenantResolver_ResolveConnections_MongoDBTLSAndMetadata(t *testing
 	mockTenantConfig := NewMockTenantConfigProvider(ctrl)
 
 	mockTenantConfig.EXPECT().
-		GetServiceConnection(gomock.Any(), tenantID.String(), "ledger", "crm").
+		GetServiceConnection(gomock.Any(), tenantID.String(), "plugin-crm", "crm-api").
 		Return(&ServiceConnectionConfig{
 			Host:             "docdb.cluster.amazonaws.com",
 			Port:             27017,
