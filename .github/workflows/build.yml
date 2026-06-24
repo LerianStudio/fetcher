@@ -25,16 +25,16 @@ jobs:
       enable_dockerhub: true
       enable_ghcr: true
       dockerhub_org: lerianstudio
-      enable_gitops_artifacts: true
-      # Helm dispatch configuration (triggers on production and RC releases)
-      enable_helm_dispatch: true
-      helm_repository: "LerianStudio/helm"
-      helm_chart: "fetcher"
-      helm_target_ref: "main"
-      helm_components_base_path: "components"
-      helm_env_file: ".env.example"
-      helm_detect_env_changes: true
-      helm_values_key_mappings: '{"fetcher-manager": "manager", "fetcher-worker": "worker"}'
+      # enable_gitops_artifacts: true
+      # Helm dispatch configuration (disabled on maintenance branch)
+      # enable_helm_dispatch: true
+      # helm_repository: "LerianStudio/helm"
+      # helm_chart: "fetcher"
+      # helm_target_ref: "main"
+      # helm_components_base_path: "components"
+      # helm_env_file: ".env.example"
+      # helm_detect_env_changes: true
+      # helm_values_key_mappings: '{"fetcher-manager": "manager", "fetcher-worker": "worker"}'
     secrets: inherit
 
   update_gitops:
