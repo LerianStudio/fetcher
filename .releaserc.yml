@@ -27,6 +27,12 @@ plugins:
       - breaking: true
         release: patch
 
+  - path: "@semantic-release/release-notes-generator"
+    preset: conventionalcommits
+
+  - path: "@semantic-release/changelog"
+    changelogFile: CHANGELOG.md
+
   - path: "@semantic-release/git"
     assets:
       - CHANGELOG.md

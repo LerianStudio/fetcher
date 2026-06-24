@@ -12,7 +12,7 @@ on:
   workflow_run:
     workflows: ["Release"]
     types: [completed]
-    branches: [main, 'maintenance/v1.4.x']
+    branches: [main]  # Only trigger for releases on main (stable releases)
   workflow_dispatch:  # Allow manual trigger for testing
 
 permissions:
