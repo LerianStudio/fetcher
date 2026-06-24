@@ -968,3 +968,4 @@ generate-master-key: ## Generate a new cryptographically secure master key
 	echo "IMPORTANT: Store this key securely. It cannot be recovered if lost." && \
 	echo "Add to your environment as APP_ENC_KEY."
 
+
