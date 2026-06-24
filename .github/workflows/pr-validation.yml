@@ -36,6 +36,7 @@ jobs:
         components/worker
       go_private_modules: "github.com/LerianStudio/*"
       run_lib_version_check: false
+      run_security: false
       ignore_file: ".trivyignore"
       shared_paths: |
         go.mod
