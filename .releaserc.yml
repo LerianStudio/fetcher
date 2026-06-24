@@ -7,11 +7,11 @@ plugins:
         - "BREAKING CHANGES"
     releaseRules:
       - type: feat
-        release: minor
+        release: patch
       - type: perf
-        release: minor
+        release: patch
       - type: build
-        release: minor
+        release: patch
       - type: chore
         release: patch
       - type: ci
@@ -19,21 +19,19 @@ plugins:
       - type: test
         release: patch
       - type: fix
-        release: patch # to hotfix scenarios
+        release: patch
       - type: refactor
-        release: minor
+        release: patch
       - type: docs
         release: patch
       - breaking: true
-        release: major
+        release: patch
 
-  # Plugin to version the CHANGELOG.md
   - path: "@semantic-release/git"
     assets:
       - CHANGELOG.md
     message: "chore(release): ${nextRelease.version}\n\nChangelog atualizado."
 
-  # Plugin to publish the CHANGELOG.md as an asset in the GitHub release
   - path: "@semantic-release/github"
     assets:
       - path: CHANGELOG.md
@@ -42,18 +40,7 @@ plugins:
     failComment: false
     labels: []
 
-  # Plugin to perform the backmerge between the 'main' and 'develop' branches
-  - path: "@saithodev/semantic-release-backmerge"
-    backmergeBranches:
-      - from: main
-        to: develop
-    message: "chore(release): Preparations for next release [skip ci]"
-
-  - path: "@semantic-release/exec"
-
 branches:
-  - name: main
-  - name: develop
-    prerelease: beta
-  - name: release-candidate
-    prerelease: rc
+  - name: maintenance/v1.4.x
+    range: 1.4.x
+    channel: 1.4.x
