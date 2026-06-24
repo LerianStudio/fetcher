@@ -42,6 +42,10 @@ plugins:
 
 branches:
   - name: main
+  - name: develop
+    prerelease: beta
+  - name: release-candidate
+    prerelease: rc
   - name: maintenance/v1.4.x
     range: 1.4.x
     channel: 1.4.x
