@@ -1,3 +1,11 @@
+## [1.4.7](https://github.com/LerianStudio/fetcher/compare/v1.4.6...v1.4.7) (2026-06-26)
+
+
+### Bug Fixes
+
+* **ci:** enable tag push trigger for maintenance build ([966c719](https://github.com/LerianStudio/fetcher/commit/966c719055f3187e13272cffb26f1930efe4bb67))
+* **ci:** enable tag push trigger for maintenance build ([#301](https://github.com/LerianStudio/fetcher/issues/301)) ([c7d013a](https://github.com/LerianStudio/fetcher/commit/c7d013a9c92e707e845a44f0225e639ea175efcb))
+
 ## [1.4.5](https://github.com/LerianStudio/fetcher/compare/v1.4.4...v1.4.5) (2026-06-26)
 
 
