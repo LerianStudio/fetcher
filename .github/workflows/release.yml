@@ -30,6 +30,7 @@ jobs:
       enable_changelog: true
       release_single_app: true
       app_name_prefix: "fetcher"
+      enable_gitops_update: false
       # enable_gitops_artifacts: true
       filter_paths: |
         components/manager
