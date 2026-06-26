@@ -14,6 +14,22 @@
 * **ci:** use semantic-release plugins for changelog on maintenance branch ([e511747](https://github.com/LerianStudio/fetcher/commit/e511747d19cb44e0b64ed8427c35251207059e90))
 * **worker:** always decrypt plugin_crm per-field PII regardless of projection ([73a80bf](https://github.com/LerianStudio/fetcher/commit/73a80bff4551c066db5da3de8ec543791b0ec6b2))
 
+## [1.4.5](https://github.com/LerianStudio/fetcher/compare/v1.4.4...v1.4.5) (2026-06-26)
+
+
+### Bug Fixes
+
+* change crm field decryption fetcher mode ([#300](https://github.com/LerianStudio/fetcher/issues/300)) ([fc7802d](https://github.com/LerianStudio/fetcher/commit/fc7802de45966e111b6da8b0216b1e9127d621c3))
+* **ci:** add release-notes-generator and changelog plugins for maintenance ([#297](https://github.com/LerianStudio/fetcher/issues/297)) ([b56f745](https://github.com/LerianStudio/fetcher/commit/b56f745044515b983ac0ed10af28443a81589658))
+* **ci:** add release-notes-generator and changelog plugins to releaserc ([3d45a93](https://github.com/LerianStudio/fetcher/commit/3d45a93f28bfcf8a3532db44dfe767c41e8c3d29))
+* **ci:** disable gitops artifacts on maintenance release pipeline ([365d3a0](https://github.com/LerianStudio/fetcher/commit/365d3a0a570fa1d0d49409c781a4896f7d5f08fc))
+* **ci:** disable helm dispatch and gitops artifacts on maintenance build ([0b821cd](https://github.com/LerianStudio/fetcher/commit/0b821cd18d7267b6b0438e61dcfd6e0eb6c01838))
+* **ci:** remove unused workflows and disable helm/gitops on maintenance ([#298](https://github.com/LerianStudio/fetcher/issues/298)) ([f1c780e](https://github.com/LerianStudio/fetcher/commit/f1c780eb3b7526c00c6d25b0bd21984c78c7d4b0))
+* **ci:** remove unused workflows from maintenance branch ([9093208](https://github.com/LerianStudio/fetcher/commit/9093208735ea8bd3771ff5ba8e895f0d13511eb7))
+* **ci:** trigger gptchangelog on maintenance branch releases ([eaf14ac](https://github.com/LerianStudio/fetcher/commit/eaf14ac4d24573dd81bf2aafe189602f75af3fa0))
+* **ci:** use semantic-release plugins for changelog on maintenance branch ([e511747](https://github.com/LerianStudio/fetcher/commit/e511747d19cb44e0b64ed8427c35251207059e90))
+* **worker:** always decrypt plugin_crm per-field PII regardless of projection ([73a80bf](https://github.com/LerianStudio/fetcher/commit/73a80bff4551c066db5da3de8ec543791b0ec6b2))
+
 ## [1.4.5](https://github.com/LerianStudio/fetcher/compare/v1.4.4...v1.4.5) (2026-06-24)
 
 
