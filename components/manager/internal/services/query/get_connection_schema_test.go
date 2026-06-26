@@ -695,7 +695,7 @@ func TestGetConnectionSchema_Execute_FactoryValidationErrorPropagates(t *testing
 		return nil, factoryErr
 	}
 
-	svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, stubFactory, nil, nil)
+	svc := NewGetConnectionSchema(mockConnRepo, mockCrypto, stubFactory, nil, nil, false)
 
 	_, err := svc.Execute(testContext(), connID)
 	require.Error(t, err)
