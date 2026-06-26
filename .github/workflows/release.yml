@@ -13,7 +13,8 @@ on:
       - '**/*.txt'
       - '*.txt'
       - '.github/**'
-    tags-ignore: ['**']
+    tags:
+      - 'v1.4.*'
 
 permissions:
   id-token: write
