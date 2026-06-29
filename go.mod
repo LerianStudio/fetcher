@@ -4,10 +4,10 @@ go 1.26.4
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
-	github.com/LerianStudio/lib-auth/v2 v2.8.1
+	github.com/LerianStudio/lib-auth/v2 v2.9.0
 	github.com/LerianStudio/lib-commons/v5 v5.8.0
 	github.com/LerianStudio/lib-observability v1.1.0
-	github.com/LerianStudio/lib-streaming v1.6.2
+	github.com/LerianStudio/lib-streaming v1.7.0
 	github.com/Masterminds/squirrel v1.5.4
 	github.com/Shopify/toxiproxy/v2 v2.12.0
 	github.com/alicebob/miniredis/v2 v2.38.0
@@ -43,7 +43,7 @@ require (
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.43.0
 	github.com/testcontainers/testcontainers-go/modules/rabbitmq v0.43.0
 	github.com/testcontainers/testcontainers-go/modules/redis v0.43.0
-	github.com/tryvium-travels/memongo v0.12.0
+	github.com/tryvium-travels/memongo v0.13.1
 	go.mongodb.org/mongo-driver v1.17.9 // indirect
 	go.mongodb.org/mongo-driver/v2 v2.7.0
 	go.opentelemetry.io/otel v1.44.0
