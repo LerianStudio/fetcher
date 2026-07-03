@@ -44,7 +44,7 @@ func TestInternalDatasourceRegistry_GetConfig(t *testing.T) {
 	}{
 		{"midaz_onboarding", "midaz_onboarding", true, "ledger", "onboarding", model.TypePostgreSQL},
 		{"midaz_transaction", "midaz_transaction", true, "ledger", "transaction", model.TypePostgreSQL},
-		{"plugin_crm", "plugin_crm", true, "ledger", "crm", model.TypeMongoDB},
+		{"plugin_crm", "plugin_crm", true, "plugin-crm", "crm-api", model.TypeMongoDB},
 		{"unknown returns false", "unknown", false, "", "", ""},
 	}
 

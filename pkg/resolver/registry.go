@@ -40,7 +40,7 @@ func NewInternalDatasourceRegistry() *InternalDatasourceRegistry {
 		datasources: map[string]InternalDSConfig{
 			"midaz_onboarding":  {Service: "ledger", Module: "onboarding", DBType: model.TypePostgreSQL},
 			"midaz_transaction": {Service: "ledger", Module: "transaction", DBType: model.TypePostgreSQL},
-			"plugin_crm":        {Service: "ledger", Module: "crm", DBType: model.TypeMongoDB},
+			"plugin_crm":        {Service: "plugin-crm", Module: "crm-api", DBType: model.TypeMongoDB},
 		},
 	}
 }
