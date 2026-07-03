@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 
 	"github.com/LerianStudio/lib-observability"
@@ -58,8 +59,8 @@ var (
 	) ([]map[string]any, error) {
 		return uc.queryPluginCRMCollectionWithFilters(ctx, dataSource, collection, fields, collectionFilters, logger)
 	}
-	decryptPluginCRMDataFn = func(uc *UseCase, logger libLog.Logger, collectionResult []map[string]any, fields []string) ([]map[string]any, error) {
-		return uc.decryptPluginCRMData(logger, collectionResult, fields)
+	decryptPluginCRMDataFn = func(uc *UseCase, logger libLog.Logger, collectionResult []map[string]any) ([]map[string]any, error) {
+		return uc.decryptPluginCRMData(logger, collectionResult)
 	}
 )
 
@@ -295,7 +296,7 @@ func (uc *UseCase) processPluginCRMCollection(
 
 	result["plugin_crm"][collection] = allResults
 
-	decryptedResult, err := decryptPluginCRMDataFn(uc, logger, result["plugin_crm"][collection], fields)
+	decryptedResult, err := decryptPluginCRMDataFn(uc, logger, result["plugin_crm"][collection])
 	if err != nil {
 		logger.Log(ctx, libLog.LevelError, fmt.Sprintf("Error decrypting data for collection %s: %s", collection, err.Error()))
 		return fmt.Errorf("error decrypting data for collection %s: %w", collection, err)
@@ -436,22 +437,9 @@ func (uc *UseCase) hashFilterValues(values []any, crypto *libCrypto.Crypto) []an
 // decryptPluginCRMData decrypts sensitive fields for plugin_crm database.
 // Note: ctx is intentionally omitted as the crypto layer receives its logger at construction time.
 // Add ctx if trace propagation is needed in the future.
-func (uc *UseCase) decryptPluginCRMData(logger libLog.Logger, collectionResult []map[string]any, fields []string) ([]map[string]any, error) {
-	needsDecryption := false
-
-	for _, field := range fields {
-		if isEncryptedField(field) {
-			needsDecryption = true
-			break
-		}
-
-		if strings.Contains(field, ".") {
-			needsDecryption = true
-			break
-		}
-	}
-
-	if !needsDecryption {
+func (uc *UseCase) decryptPluginCRMData(logger libLog.Logger, collectionResult []map[string]any) ([]map[string]any, error) {
+	// Empty collection: nothing to decrypt, skip key validation and cipher init.
+	if len(collectionResult) == 0 {
 		return collectionResult, nil
 	}
 
@@ -500,10 +488,8 @@ func isEncryptedField(field string) bool {
 
 // decryptRecord decrypts a single record's encrypted fields.
 func (uc *UseCase) decryptRecord(record map[string]any, crypto *libCrypto.Crypto) (map[string]any, error) {
-	decryptedRecord := make(map[string]any)
-	for k, v := range record {
-		decryptedRecord[k] = v
-	}
+	decryptedRecord := make(map[string]any, len(record))
+	maps.Copy(decryptedRecord, record)
 
 	if err := uc.decryptTopLevelFields(decryptedRecord, crypto); err != nil {
 		return nil, fmt.Errorf("failed to decrypt top-level fields: %w", err)
