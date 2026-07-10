@@ -42,7 +42,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.FetcherRequest"
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_v2_pkg_model.FetcherRequest"
                         }
                     }
                 ],
@@ -50,13 +50,13 @@ const docTemplate = `{
                     "200": {
                         "description": "Duplicate request - returning existing job",
                         "schema": {
-                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.FetcherResponse"
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_v2_pkg_model.FetcherResponse"
                         }
                     },
                     "202": {
                         "description": "Job created and queued for processing",
                         "schema": {
-                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.FetcherResponse"
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_v2_pkg_model.FetcherResponse"
                         }
                     },
                     "400": {
@@ -115,7 +115,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.JobResponse"
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_v2_pkg_model.JobResponse"
                         }
                     },
                     "400": {
@@ -239,7 +239,7 @@ const docTemplate = `{
                                         "items": {
                                             "type": "array",
                                             "items": {
-                                                "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.ConnectionResponse"
+                                                "$ref": "#/definitions/github_com_LerianStudio_fetcher_v2_pkg_model.ConnectionResponse"
                                             }
                                         },
                                         "limit": {
@@ -308,7 +308,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.ConnectionInput"
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_v2_pkg_model.ConnectionInput"
                         }
                     }
                 ],
@@ -400,7 +400,7 @@ const docTemplate = `{
                                         "items": {
                                             "type": "array",
                                             "items": {
-                                                "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.ConnectionResponse"
+                                                "$ref": "#/definitions/github_com_LerianStudio_fetcher_v2_pkg_model.ConnectionResponse"
                                             }
                                         },
                                         "limit": {
@@ -458,7 +458,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.SchemaValidationRequest"
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_v2_pkg_model.SchemaValidationRequest"
                         }
                     }
                 ],
@@ -466,7 +466,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Validation successful - all tables and fields exist",
                         "schema": {
-                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.SchemaValidationResponse"
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_v2_pkg_model.SchemaValidationResponse"
                         }
                     },
                     "400": {
@@ -478,7 +478,7 @@ const docTemplate = `{
                     "422": {
                         "description": "Validation failed - schema errors found (missing tables, fields, or unreachable datasources)",
                         "schema": {
-                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.SchemaValidationErrorResponse"
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_v2_pkg_model.SchemaValidationErrorResponse"
                         }
                     },
                     "500": {
@@ -519,7 +519,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.ConnectionResponse"
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_v2_pkg_model.ConnectionResponse"
                         }
                     },
                     "400": {
@@ -628,7 +628,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.ConnectionUpdateInput"
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_v2_pkg_model.ConnectionUpdateInput"
                         }
                     }
                 ],
@@ -636,7 +636,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.ConnectionResponse"
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_v2_pkg_model.ConnectionResponse"
                         }
                     },
                     "400": {
@@ -702,7 +702,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.ConnectionResponse"
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_v2_pkg_model.ConnectionResponse"
                         }
                     },
                     "400": {
@@ -761,7 +761,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.ConnectionSchemaResponse"
+                            "$ref": "#/definitions/github_com_LerianStudio_fetcher_v2_pkg_model.ConnectionSchemaResponse"
                         }
                     },
                     "400": {
@@ -866,7 +866,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_LerianStudio_fetcher_pkg_model.ConnectionInput": {
+        "github_com_LerianStudio_fetcher_v2_pkg_model.ConnectionInput": {
             "type": "object",
             "required": [
                 "configName",
@@ -911,7 +911,7 @@ const docTemplate = `{
                     "example": "my_schema"
                 },
                 "ssl": {
-                    "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.SSLInput"
+                    "$ref": "#/definitions/github_com_LerianStudio_fetcher_v2_pkg_model.SSLInput"
                 },
                 "type": {
                     "type": "string",
@@ -930,7 +930,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_LerianStudio_fetcher_pkg_model.ConnectionResponse": {
+        "github_com_LerianStudio_fetcher_v2_pkg_model.ConnectionResponse": {
             "type": "object",
             "properties": {
                 "configName": {
@@ -962,7 +962,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "ssl": {
-                    "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.SSLResponse"
+                    "$ref": "#/definitions/github_com_LerianStudio_fetcher_v2_pkg_model.SSLResponse"
                 },
                 "type": {
                     "type": "string"
@@ -975,7 +975,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_LerianStudio_fetcher_pkg_model.ConnectionSchemaResponse": {
+        "github_com_LerianStudio_fetcher_v2_pkg_model.ConnectionSchemaResponse": {
             "type": "object",
             "properties": {
                 "configName": {
@@ -990,7 +990,7 @@ const docTemplate = `{
                 "tables": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.TableDetails"
+                        "$ref": "#/definitions/github_com_LerianStudio_fetcher_v2_pkg_model.TableDetails"
                     }
                 },
                 "type": {
@@ -998,7 +998,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_LerianStudio_fetcher_pkg_model.ConnectionUpdateInput": {
+        "github_com_LerianStudio_fetcher_v2_pkg_model.ConnectionUpdateInput": {
             "type": "object",
             "properties": {
                 "configName": {
@@ -1034,7 +1034,7 @@ const docTemplate = `{
                     "example": "my_schema"
                 },
                 "ssl": {
-                    "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.SSLUpdateInput"
+                    "$ref": "#/definitions/github_com_LerianStudio_fetcher_v2_pkg_model.SSLUpdateInput"
                 },
                 "type": {
                     "type": "string",
@@ -1053,7 +1053,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_LerianStudio_fetcher_pkg_model.DataRequest": {
+        "github_com_LerianStudio_fetcher_v2_pkg_model.DataRequest": {
             "description": "DataRequest encapsulates field mappings and optional filters for data extraction.",
             "type": "object",
             "required": [
@@ -1061,7 +1061,7 @@ const docTemplate = `{
             ],
             "properties": {
                 "filters": {
-                    "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.NestedFilters"
+                    "$ref": "#/definitions/github_com_LerianStudio_fetcher_v2_pkg_model.NestedFilters"
                 },
                 "mappedFields": {
                     "type": "object",
@@ -1077,7 +1077,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_LerianStudio_fetcher_pkg_model.FetcherRequest": {
+        "github_com_LerianStudio_fetcher_v2_pkg_model.FetcherRequest": {
             "description": "FetcherRequest represents the request body for creating a new data extraction job.",
             "type": "object",
             "required": [
@@ -1085,7 +1085,7 @@ const docTemplate = `{
             ],
             "properties": {
                 "dataRequest": {
-                    "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.DataRequest"
+                    "$ref": "#/definitions/github_com_LerianStudio_fetcher_v2_pkg_model.DataRequest"
                 },
                 "metadata": {
                     "type": "object",
@@ -1093,7 +1093,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_LerianStudio_fetcher_pkg_model.FetcherResponse": {
+        "github_com_LerianStudio_fetcher_v2_pkg_model.FetcherResponse": {
             "description": "FetcherResponse represents the response after successfully creating a data extraction job.",
             "type": "object",
             "properties": {
@@ -1111,7 +1111,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_LerianStudio_fetcher_pkg_model.JobResponse": {
+        "github_com_LerianStudio_fetcher_v2_pkg_model.JobResponse": {
             "description": "JobResponse represents the complete information about a data extraction job.",
             "type": "object",
             "properties": {
@@ -1122,7 +1122,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "filters": {
-                    "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.NestedFilters"
+                    "$ref": "#/definitions/github_com_LerianStudio_fetcher_v2_pkg_model.NestedFilters"
                 },
                 "id": {
                     "type": "string"
@@ -1157,19 +1157,19 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_LerianStudio_fetcher_pkg_model.NestedFilters": {
+        "github_com_LerianStudio_fetcher_v2_pkg_model.NestedFilters": {
             "type": "object",
             "additionalProperties": {
                 "type": "object",
                 "additionalProperties": {
                     "type": "object",
                     "additionalProperties": {
-                        "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model_job.FilterCondition"
+                        "$ref": "#/definitions/github_com_LerianStudio_fetcher_v2_pkg_model_job.FilterCondition"
                     }
                 }
             }
         },
-        "github_com_LerianStudio_fetcher_pkg_model.SSLInput": {
+        "github_com_LerianStudio_fetcher_v2_pkg_model.SSLInput": {
             "type": "object",
             "properties": {
                 "ca": {
@@ -1188,7 +1188,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_LerianStudio_fetcher_pkg_model.SSLResponse": {
+        "github_com_LerianStudio_fetcher_v2_pkg_model.SSLResponse": {
             "type": "object",
             "properties": {
                 "mode": {
@@ -1196,7 +1196,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_LerianStudio_fetcher_pkg_model.SSLUpdateInput": {
+        "github_com_LerianStudio_fetcher_v2_pkg_model.SSLUpdateInput": {
             "type": "object",
             "properties": {
                 "ca": {
@@ -1215,7 +1215,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_LerianStudio_fetcher_pkg_model.SchemaValidationError": {
+        "github_com_LerianStudio_fetcher_v2_pkg_model.SchemaValidationError": {
             "type": "object",
             "properties": {
                 "dataSourceId": {
@@ -1232,7 +1232,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_LerianStudio_fetcher_pkg_model.SchemaValidationErrorResponse": {
+        "github_com_LerianStudio_fetcher_v2_pkg_model.SchemaValidationErrorResponse": {
             "type": "object",
             "properties": {
                 "code": {
@@ -1241,7 +1241,7 @@ const docTemplate = `{
                 "errors": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.SchemaValidationError"
+                        "$ref": "#/definitions/github_com_LerianStudio_fetcher_v2_pkg_model.SchemaValidationError"
                     }
                 },
                 "message": {
@@ -1252,7 +1252,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_LerianStudio_fetcher_pkg_model.SchemaValidationRequest": {
+        "github_com_LerianStudio_fetcher_v2_pkg_model.SchemaValidationRequest": {
             "description": "Request body for schema validation containing mapped fields per datasource.",
             "type": "object",
             "required": [
@@ -1274,13 +1274,13 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_LerianStudio_fetcher_pkg_model.SchemaValidationResponse": {
+        "github_com_LerianStudio_fetcher_v2_pkg_model.SchemaValidationResponse": {
             "type": "object",
             "properties": {
                 "errors": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_LerianStudio_fetcher_pkg_model.SchemaValidationError"
+                        "$ref": "#/definitions/github_com_LerianStudio_fetcher_v2_pkg_model.SchemaValidationError"
                     }
                 },
                 "message": {
@@ -1292,7 +1292,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_LerianStudio_fetcher_pkg_model.TableDetails": {
+        "github_com_LerianStudio_fetcher_v2_pkg_model.TableDetails": {
             "type": "object",
             "properties": {
                 "fields": {
@@ -1306,7 +1306,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_LerianStudio_fetcher_pkg_model_job.FilterCondition": {
+        "github_com_LerianStudio_fetcher_v2_pkg_model_job.FilterCondition": {
             "type": "object",
             "properties": {
                 "between": {
