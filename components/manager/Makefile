@@ -7,6 +7,9 @@ endif
 service_name := fetcher-manager
 bin_dir := ./.bin
 
+# Pinned swag version (keep in sync with root Makefile + go.mod)
+SWAG_VERSION ?= v1.16.6
+
 BLUE := \033[36m
 NC := \033[0m
 
@@ -150,3 +153,30 @@ set-env:
 	@echo "$(BLUE)Setting up environment files...$(NC)"
 	cp -r ./.env.example ./.env
 	@echo "$(BLUE)Environment files created successfully$(NC)"
+
+# Fail if committed api/swagger.{json,yaml} drift from a fresh swag regen.
+# Self-contained: uses `go run swag@$(SWAG_VERSION)` (no pre-installed swag,
+# no Docker, no node). Regenerates into a temp dir via the SAME root swag
+# invocation as `make generate-docs`, diffs only the swagger specs (docs.go is
+# excluded: swag derives its package name from the -o basename, and the Docker
+# openapi.yaml is out of scope). Writes nothing to the working tree.
+.PHONY: check-api-spec
+check-api-spec:
+	@echo "$(BLUE)Checking manager API spec is up-to-date...$(NC)"
+	@set -e; \
+	tmp="$$(mktemp -d)"; \
+	trap 'rm -rf "$$tmp"' EXIT; \
+	( cd ../.. && go run github.com/swaggo/swag/cmd/swag@$(SWAG_VERSION) init -g ./components/manager/cmd/app/main.go -d ./ -o "$$tmp" --parseDependency --parseInternal ); \
+	drift=0; \
+	for f in swagger.json swagger.yaml; do \
+		if ! diff -q "api/$$f" "$$tmp/$$f" >/dev/null 2>&1; then \
+			echo "ERROR: components/manager/api/$$f is out of date:"; \
+			diff -u "api/$$f" "$$tmp/$$f" || true; \
+			drift=1; \
+		fi; \
+	done; \
+	if [ "$$drift" -ne 0 ]; then \
+		echo "Run 'make generate-docs' from the repo root and commit components/manager/api/."; \
+		exit 1; \
+	fi; \
+	echo "$(BLUE)API spec is up-to-date$(NC)"
