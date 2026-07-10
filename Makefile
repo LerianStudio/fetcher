@@ -10,6 +10,9 @@ SERVICE_NAME := fetcher
 BIN_DIR := ./.bin
 ARTIFACTS_DIR := ./artifacts
 
+# Pinned dev-tool versions (keep in sync with go.mod)
+SWAG_VERSION ?= v1.16.6
+
 # Component directories
 INFRA_DIR := ./components/infra
 MANAGER_DIR := ./components/manager
@@ -796,11 +799,7 @@ ps:
 .PHONY: generate-docs
 generate-docs:
 	$(call print_title,Generating Swagger API documentation)
-	@if ! command -v swag >/dev/null 2>&1; then \
-		echo "Installing swag..."; \
-		go install github.com/swaggo/swag/cmd/swag@latest; \
-	fi
-	@swag init -g ./components/manager/cmd/app/main.go -d ./ -o ./components/manager/api --parseDependency --parseInternal
+	@go run github.com/swaggo/swag/cmd/swag@$(SWAG_VERSION) init -g ./components/manager/cmd/app/main.go -d ./ -o ./components/manager/api --parseDependency --parseInternal
 	@docker run --rm -v $(ROOT_DIR):/local --user $(shell id -u):$(shell id -g) openapitools/openapi-generator-cli:v5.1.1 generate -i /local/components/manager/api/swagger.json -g openapi-yaml -o /local/components/manager/api
 	@mv ./components/manager/api/openapi/openapi.yaml ./components/manager/api/openapi.yaml
 	@rm -rf ./components/manager/api/README.md ./components/manager/api/.openapi-generator* ./components/manager/api/openapi
@@ -824,7 +823,7 @@ dev-setup:
 	fi
 	@if ! command -v swag >/dev/null 2>&1; then \
 		echo "Installing swag..."; \
-		go install github.com/swaggo/swag/cmd/swag@latest; \
+		go install github.com/swaggo/swag/cmd/swag@$(SWAG_VERSION); \
 	fi
 	@if ! command -v mockgen >/dev/null 2>&1; then \
 		echo "Installing mockgen..."; \
