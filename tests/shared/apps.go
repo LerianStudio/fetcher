@@ -191,6 +191,9 @@ func (e *AppEnv) ManagerEnv() map[string]string {
 		// drain e2e tests under suite-level timeouts.
 		"DEPLOYMENT_MODE":        "local",
 		"READYZ_DRAIN_DELAY_SEC": "2",
+		// E2E infra (MongoDB/RabbitMQ/Redis via testcontainers) is plaintext; the
+		// service enforces TLS on internal datasources unless this bypass is set.
+		"ALLOW_INSECURE_TLS": "true",
 	}
 }
 
@@ -240,6 +243,9 @@ func (e *AppEnv) WorkerEnv() map[string]string {
 		"HEALTH_PORT":            strconv.Itoa(WorkerHealthPort),
 		"DEPLOYMENT_MODE":        "local",
 		"READYZ_DRAIN_DELAY_SEC": "2",
+		// E2E infra (MongoDB/RabbitMQ/Redis via testcontainers) is plaintext; the
+		// service enforces TLS on internal datasources unless this bypass is set.
+		"ALLOW_INSECURE_TLS": "true",
 	}
 
 	// S3-compatible storage — always uses S3 provider.
