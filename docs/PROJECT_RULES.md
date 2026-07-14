@@ -16,7 +16,7 @@ Fetcher is a **data extraction platform** built with Go following **Hexagonal Ar
 | **File Storage** | SeaweedFS (default) / S3-compatible | SeaweedFS 3.97 / AWS SDK v2 |
 | **Observability** | OpenTelemetry | v1.39.0 |
 | **Auth** | lib-auth | v2.8.0 |
-| **API Documentation** | Swagger/Swaggo | v1.16.6 |
+| **API Contract** | Huma + lib-commons OpenAPI wrapper | OpenAPI 3.1 |
 
 ### Supported External Databases
 
@@ -137,16 +137,20 @@ components/manager/
 ├── cmd/app/
 │   └── main.go                     # Application entry point
 ├── api/
-│   └── docs.go                     # Swagger documentation
+│   └── openapi.yaml                # Canonical Huma OpenAPI 3.1 contract
 └── internal/
     ├── adapters/
     │   └── http/in/
     │       ├── routes.go           # HTTP route definitions (Primary Adapter). Accepts optional tenantMiddleware for multi-tenant DB resolution.
+    │       ├── openapi.go          # Shared runtime/spec Huma assembly
+    │       ├── huma_connections.go # Typed connection operations
+    │       ├── huma_fetcher.go     # Typed fetcher job operations
+    │       ├── huma_migration.go   # Typed migration operations
     │       ├── middlewares.go      # HTTP middleware
+    │       ├── middleware_problem.go # RFC 9457 middleware bridge
     │       ├── connection.go       # Connection HTTP handlers
     │       ├── fetcher.go          # Fetcher job HTTP handlers
-    │       ├── migration.go        # Migration HTTP handlers (assign/unassigned)
-    │       └── swagger.go          # Swagger configuration
+    │       └── migration.go        # Migration HTTP handlers (assign/unassigned)
     ├── adapters/
     │   └── cache/
     │       ├── schema_cache_interface.go  # SchemaCacheRepository interface
@@ -215,7 +219,7 @@ components/manager/
 |--------|----------|-------------|
 | `GET` | `/health` | Health check |
 | `GET` | `/version` | Version info |
-| `GET` | `/swagger/*` | Swagger UI |
+| `GET` | `/swagger/*` | Scalar API reference and OpenAPI 3.1 contract (when enabled) |
 
 ---
 
@@ -1061,11 +1065,13 @@ sequenceDiagram
 
 ### Adding a New API Endpoint
 
-1. **Create handler** in `components/manager/internal/adapters/http/in/`:
-   - Add handler function with Swagger annotations
+1. **Create a typed Huma operation** in `components/manager/internal/adapters/http/in/huma_<domain>.go`:
+   - Add `doc` and `example` tags to request and response fields
+   - Map service errors with the lib-commons RFC 9457 problem model
 
-2. **Add route** in `components/manager/internal/adapters/http/in/routes.go`:
-   - Register the new endpoint
+2. **Register the operation** through the shared Huma assembly:
+   - Keep runtime and specification generation on the same `AssembleHumaAPI` path
+   - Apply the operation's authorization middleware and OpenAPI security responses
 
 3. **Create service** in `components/manager/internal/services/`:
    - If write operation: `command/<operation>.go`
@@ -1076,6 +1082,7 @@ sequenceDiagram
 
 5. **Generate docs**:
    - Run `make generate-docs`
+   - Run `make check-openapi`
 
 ### Adding a New Worker Queue
 
@@ -1199,8 +1206,11 @@ make up
 # Run tests
 make test
 
-# Generate Swagger docs
+# Generate the canonical Huma OpenAPI 3.1 specification
 make generate-docs
+
+# Fail if the committed specification differs from the shared Huma assembly
+make check-openapi
 ```
 
 ### Available Make Commands
@@ -1216,7 +1226,8 @@ make generate-docs
 | `make test` | Run all tests |
 | `make lint` | Run golangci-lint with auto-fix |
 | `make sec` | Run gosec security analysis |
-| `make generate-docs` | Generate Swagger documentation |
+| `make generate-docs` | Generate the canonical Huma OpenAPI 3.1 specification |
+| `make check-openapi` | Fail when the committed OpenAPI specification is stale |
 
 ### CI/CD Workflows
 
