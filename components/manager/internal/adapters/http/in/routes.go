@@ -1,6 +1,9 @@
 package in
 
 import (
+	"errors"
+	"strings"
+
 	"github.com/LerianStudio/fetcher/v2/pkg/bootstrap/readyz"
 	"github.com/LerianStudio/fetcher/v2/pkg/net/http"
 	middlewareAuth "github.com/LerianStudio/lib-auth/v2/auth/middleware"
@@ -9,9 +12,9 @@ import (
 	obsMiddleware "github.com/LerianStudio/lib-observability/middleware"
 	opentelemetry "github.com/LerianStudio/lib-observability/tracing"
 
+	"github.com/danielgtaylor/huma/v2"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
-	fiberSwagger "github.com/swaggo/fiber-swagger"
 )
 
 const (
@@ -35,7 +38,26 @@ func NewRoutes(
 	readyzHandler fiber.Handler,
 	readyzTenantHandler fiber.Handler,
 	metricsHandler fiber.Handler,
-) *fiber.App {
+	swaggerEnabled bool,
+) (*fiber.App, error) {
+	authEnabled, err := validateRuntimeSecurity(auth, ttMiddleware)
+	if err != nil {
+		return nil, err
+	}
+
+	if err = validateRuntimeHandlerGraph(connectionHandler, migrationHandler, fetcherHandler); err != nil {
+		return nil, err
+	}
+
+	handlers := NewOperationHandlers(connectionHandler, migrationHandler, fetcherHandler)
+
+	var authorize operationAuthorizer
+	if authEnabled {
+		authorize = func(resource, action string) fiber.Handler {
+			return auth.Authorize(applicationName, resource, action)
+		}
+	}
+
 	f := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
 		ErrorHandler: func(ctx *fiber.Ctx, err error) error {
@@ -48,9 +70,6 @@ func NewRoutes(
 	f.Use(tlMid.WithTelemetry(tl))
 	f.Use(cors.New())
 	f.Use(obsMiddleware.WithHTTPLogging(obsMiddleware.WithCustomLogger(lg)))
-
-	// Doc Swagger
-	f.Get("/swagger/*", WithSwaggerEnvConfig(), fiberSwagger.WrapHandler)
 
 	// /health is gated on the startup self-probe — returns 503 until
 	// RunSelfProbe flips the flag, so the kubelet restarts the pod when a
@@ -72,36 +91,155 @@ func NewRoutes(
 	// Version
 	f.Get("/version", commonsHttp.Version)
 
-	// Connections
-	f.Post("/v1/management/connections", auth.Authorize(applicationName, connectionsResource, "post"), WhenEnabled(ttMiddleware), connectionHandler.CreateConnection)
-	f.Get("/v1/management/connections", auth.Authorize(applicationName, connectionsResource, "get"), WhenEnabled(ttMiddleware), connectionHandler.ListConnections)
-	// Schema Validation - must be before :id routes to avoid conflict
-	f.Post("/v1/management/connections/validate-schema", auth.Authorize(applicationName, connectionsResource, "post"), WhenEnabled(ttMiddleware), connectionHandler.ValidateSchema)
-	// Migration - must be before :id routes to avoid conflict
-	f.Get("/v1/management/connections/unassigned", auth.Authorize(applicationName, connectionsResource, "get"), WhenEnabled(ttMiddleware), migrationHandler.ListUnassignedConnections)
-	f.Post("/v1/management/connections/:id/assign", auth.Authorize(applicationName, connectionsResource, "post"), WhenEnabled(ttMiddleware), migrationHandler.AssignConnectionToProduct)
-	f.Get("/v1/management/connections/:id", auth.Authorize(applicationName, connectionsResource, "get"), WhenEnabled(ttMiddleware), connectionHandler.GetConnection)
-	f.Post("/v1/management/connections/:id/test", auth.Authorize(applicationName, connectionsResource, "post"), WhenEnabled(ttMiddleware), connectionHandler.TestConnection)
-	f.Get("/v1/management/connections/:id/schema", auth.Authorize(applicationName, connectionsResource, "get"), WhenEnabled(ttMiddleware), connectionHandler.GetConnectionSchema)
-	f.Patch("/v1/management/connections/:id", auth.Authorize(applicationName, connectionsResource, "patch"), WhenEnabled(ttMiddleware), connectionHandler.UpdateConnection)
-	f.Delete("/v1/management/connections/:id", auth.Authorize(applicationName, connectionsResource, "delete"), WhenEnabled(ttMiddleware), connectionHandler.DeleteConnection)
-
-	// Fetcher
-	f.Post("/v1/fetcher", auth.Authorize(applicationName, fetcherResource, "post"), WhenEnabled(ttMiddleware), fetcherHandler.CreateJob)
-	f.Get("/v1/fetcher/:id", auth.Authorize(applicationName, fetcherResource, "get"), WhenEnabled(ttMiddleware), fetcherHandler.GetJob)
+	_, err = mountClientAPI(
+		f,
+		authEnabled,
+		handlers,
+		operationMiddlewareFactory(authorize, ttMiddleware),
+		lg,
+		swaggerEnabled,
+	)
+	if err != nil {
+		return nil, err
+	}
 
 	f.Use(tlMid.EndTracingSpans)
 
-	return f
+	return f, nil
 }
 
-// WhenEnabled is a helper that conditionally applies a middleware if it's not nil.
-func WhenEnabled(middleware fiber.Handler) fiber.Handler {
-	return func(c *fiber.Ctx) error {
-		if middleware == nil {
-			return c.Next()
+type operationAuthorizer func(resource, action string) fiber.Handler
+
+func validateRuntimeSecurity(auth *middlewareAuth.AuthClient, tenantMiddleware fiber.Handler) (bool, error) {
+	authEnabled := auth != nil && auth.Enabled && strings.TrimSpace(auth.Address) != ""
+	if auth != nil && auth.Enabled && !authEnabled {
+		return false, errors.New("auth middleware is enabled but its address is empty")
+	}
+
+	if tenantMiddleware != nil && !authEnabled {
+		return false, errors.New("tenant middleware requires effective authentication")
+	}
+
+	return authEnabled, nil
+}
+
+func validateRuntimeHandlerGraph(
+	connections *ConnectionHandler,
+	migration *MigrationHandler,
+	fetcher *FetcherHandler,
+) error {
+	if connections == nil {
+		return errors.New("connection handler is required")
+	}
+
+	connectionDependencies := []struct {
+		missing bool
+		name    string
+	}{
+		{connections.CreateCmd == nil, "create connection command"},
+		{connections.UpdateCmd == nil, "update connection command"},
+		{connections.DeleteCmd == nil, "delete connection command"},
+		{connections.GetQuery == nil, "get connection query"},
+		{connections.ListQuery == nil, "list connections query"},
+		{connections.TestQuery == nil, "test connection query"},
+		{connections.ValidateSchemaQuery == nil, "validate schema query"},
+		{connections.GetSchemaQuery == nil, "get connection schema query"},
+	}
+	for _, dependency := range connectionDependencies {
+		if dependency.missing {
+			return errors.New(dependency.name + " is required")
+		}
+	}
+
+	if migration == nil {
+		return errors.New("migration handler is required")
+	}
+
+	if migration.AssignCmd == nil {
+		return errors.New("assign connection command is required")
+	}
+
+	if migration.ListUnassignedQry == nil {
+		return errors.New("list unassigned connections query is required")
+	}
+
+	if fetcher == nil {
+		return errors.New("fetcher handler is required")
+	}
+
+	if fetcher.CreateJobCmd == nil {
+		return errors.New("create fetcher job command is required")
+	}
+
+	if fetcher.GetJobQuery == nil {
+		return errors.New("get fetcher job query is required")
+	}
+
+	return nil
+}
+
+func operationMiddlewareFactory(
+	authorize operationAuthorizer,
+	tenantMiddleware fiber.Handler,
+) OperationMiddlewareFactory {
+	return func(resource, action string) []fiber.Handler {
+		middlewares := make([]fiber.Handler, 0, 4)
+		if authorize != nil {
+			middlewares = append(middlewares, problemMiddlewareChain(
+				authorize(resource, action),
+			)...)
 		}
 
-		return middleware(c)
+		if tenantMiddleware != nil {
+			middlewares = append(middlewares, problemMiddlewareChain(tenantMiddleware)...)
+		}
+
+		return middlewares
 	}
+}
+
+func mountClientAPI(
+	app *fiber.App,
+	authEnabled bool,
+	handlers OperationHandlers,
+	middlewareFactory OperationMiddlewareFactory,
+	logger log.Logger,
+	swaggerEnabled bool,
+) (huma.API, error) {
+	if err := validateOperationCallbacks(handlers); err != nil {
+		return nil, err
+	}
+
+	api := AssembleHumaAPI(app, authEnabled, handlers, middlewareFactory)
+	ServeHumaSpec(app, api, logger, swaggerEnabled)
+
+	return api, nil
+}
+
+func validateOperationCallbacks(handlers OperationHandlers) error {
+	callbacks := []struct {
+		missing bool
+		name    string
+	}{
+		{handlers.CreateConnection == nil, "create connection"},
+		{handlers.ListConnections == nil, "list connections"},
+		{handlers.ValidateSchema == nil, "validate schema"},
+		{handlers.ListUnassignedConnections == nil, "list unassigned connections"},
+		{handlers.AssignConnection == nil, "assign connection"},
+		{handlers.GetConnection == nil, "get connection"},
+		{handlers.TestConnection == nil, "test connection"},
+		{handlers.GetConnectionSchema == nil, "get connection schema"},
+		{handlers.UpdateConnection == nil, "update connection"},
+		{handlers.DeleteConnection == nil, "delete connection"},
+		{handlers.CreateJob == nil, "create fetcher job"},
+		{handlers.GetJob == nil, "get fetcher job"},
+	}
+
+	for _, callback := range callbacks {
+		if callback.missing {
+			return errors.New(callback.name + " operation handler is required")
+		}
+	}
+
+	return nil
 }

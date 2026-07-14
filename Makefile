@@ -146,7 +146,8 @@ help:
 	@echo ""
 	@echo ""
 	@echo "Documentation Commands:"
-	@echo "  make generate-docs               - Generate Swagger documentation"
+	@echo "  make generate-docs               - Generate the canonical Huma OpenAPI 3.1 specification"
+	@echo "  make check-openapi               - Fail when the committed OpenAPI specification is stale"
 	@echo ""
 	@echo ""
 	@echo "Test Suite Aliases:"
@@ -230,8 +231,8 @@ set-env:
 # Deterministic, non-live quality gate. Mirrors the Lerian CI pattern
 # (cf. plugin-br-bank-transfer) restricted to steps that need no Docker
 # daemon, no live infrastructure, and no GITHUB_TOKEN — so it runs the
-# same locally and in CI. Docker-bound steps (generate-docs, test-e2e,
-# test-chaos) stay available standalone and run in their own CI stages.
+# same locally and in CI. Docker-bound steps (test-e2e, test-chaos) stay
+# available standalone and run in their own CI stages.
 .PHONY: ci
 ci:
 	$(call print_title,Running full CI pipeline)
@@ -240,6 +241,7 @@ ci:
 	@$(MAKE) vet
 	@$(MAKE) lint
 	@$(MAKE) sec
+	@$(MAKE) check-openapi
 	@$(MAKE) test-unit
 	@echo "[ok] CI pipeline passed"
 
@@ -795,20 +797,21 @@ ps:
 
 .PHONY: generate-docs
 generate-docs:
-	$(call print_title,Generating Swagger API documentation)
-	@if ! command -v swag >/dev/null 2>&1; then \
-		echo "Installing swag..."; \
-		go install github.com/swaggo/swag/cmd/swag@latest; \
-	fi
-	@swag init -g ./components/manager/cmd/app/main.go -d ./ -o ./components/manager/api --parseDependency --parseInternal
-	@docker run --rm -v $(ROOT_DIR):/local --user $(shell id -u):$(shell id -g) openapitools/openapi-generator-cli:v5.1.1 generate -i /local/components/manager/api/swagger.json -g openapi-yaml -o /local/components/manager/api
-	@mv ./components/manager/api/openapi/openapi.yaml ./components/manager/api/openapi.yaml
-	@rm -rf ./components/manager/api/README.md ./components/manager/api/.openapi-generator* ./components/manager/api/openapi
-	@if [ -f "$(ROOT_DIR)/scripts/package.json" ]; then \
-		echo "Installing npm dependencies for validation..."; \
-		cd $(ROOT_DIR)/scripts && npm install > /dev/null; \
-	fi
-	@echo "[ok] Swagger API documentation generated successfully"
+	$(call print_title,Generating canonical Huma OpenAPI specification)
+	@go run ./components/manager/cmd/huma-spec -output ./components/manager/api/openapi.yaml
+	@echo "[ok] OpenAPI 3.1 specification generated successfully"
+
+.PHONY: check-openapi
+check-openapi:
+	$(call print_title,Checking committed OpenAPI specification)
+	@tmp=$$(mktemp); \
+	trap 'rm -f "$$tmp"' EXIT; \
+	go run ./components/manager/cmd/huma-spec -output "$$tmp" || { echo "OpenAPI specification generation failed"; exit 1; }; \
+	cmp -s "$$tmp" ./components/manager/api/openapi.yaml || { \
+		echo "OpenAPI specification is stale; run 'make generate-docs'"; \
+		exit 1; \
+	}
+	@echo "[ok] Committed OpenAPI specification is current"
 
 #-------------------------------------------------------
 # Developer Helper Commands
@@ -821,10 +824,6 @@ dev-setup:
 	@if ! command -v golangci-lint >/dev/null 2>&1; then \
 		echo "Installing golangci-lint..."; \
 		go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest; \
-	fi
-	@if ! command -v swag >/dev/null 2>&1; then \
-		echo "Installing swag..."; \
-		go install github.com/swaggo/swag/cmd/swag@latest; \
 	fi
 	@if ! command -v mockgen >/dev/null 2>&1; then \
 		echo "Installing mockgen..."; \
@@ -1020,4 +1019,3 @@ generate-master-key: ## Generate a new cryptographically secure master key
 	echo "" && \
 	echo "IMPORTANT: Store this key securely. It cannot be recovered if lost." && \
 	echo "Add to your environment as APP_ENC_KEY."
-

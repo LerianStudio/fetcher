@@ -955,7 +955,7 @@ func initMongoConnection(ctx context.Context, cfg *Config, logger libLog.Logger)
 		URI:         mongoSource,
 		Database:    cfg.MongoDBName,
 		Logger:      logger,
-		MaxPoolSize: uint64(cfg.MaxPoolSize),
+		MaxPoolSize: libCommons.SafeIntToUint64(cfg.MaxPoolSize),
 	}
 
 	if cfg.MongoTLSCACert != "" {

@@ -16,7 +16,7 @@ import (
 // API keys. The token suffix after this prefix is the normalized service token
 // (e.g. MULTI_TENANT_SERVICE_API_KEY_PLUGIN_CRM → token "PLUGIN_CRM"). The bare
 // prefix without a trailing token is the default key and is handled elsewhere.
-const serviceAPIKeyEnvPrefix = "MULTI_TENANT_SERVICE_API_KEY_"
+const serviceAPIKeyEnvPrefix = "MULTI_TENANT_SERVICE_API_KEY_" // #nosec G101 -- environment variable name prefix, not a credential
 
 // normalizeServiceToken maps a tenant-manager service name to its env-token
 // form: hyphens become underscores and the result is upper-cased. For example
