@@ -1,5 +1,10 @@
 # Changelog — github.com/LerianStudio/fetcher/pkg/engine
 
+## pkg/engine 1.0.13
+
+Released alongside parent 3.0.0.
+
+
 ## pkg/engine 1.0.13-beta.5
 
 Released alongside parent 3.0.0-beta.1 (beta).
