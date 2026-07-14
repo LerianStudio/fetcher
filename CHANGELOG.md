@@ -1,5 +1,25 @@
 # Fetcher Changelog
 
+## [3.0.0](https://github.com/LerianStudio/fetcher/releases/tag/v3.0.0)
+
+Features:
+- Adopt `lib-commons` Huma wrapper for the manager, introducing a breaking change. (@fredcamaral)
+
+Fixes:
+- Address CodeRabbit review findings in the manager. (@fredcamaral)
+- Bound fuzz byte mutation in tests. (@fredcamaral)
+- Document controlled security inputs in the package. (@fredcamaral)
+- Convert Mongo pool size safely in the worker. (@fredcamaral)
+- Document OpenAPI artifact permissions in the manager. (@fredcamaral)
+
+Improvements:
+- Update `lib-streaming` to `v1.8.0`. (@fredcamaral)
+- Update Go builders to `1.26.5`. (@fredcamaral)
+
+[Compare changes](https://github.com/LerianStudio/fetcher/compare/v2.0.2...v3.0.0)
+
+---
+
 ## [2.0.2](https://github.com/LerianStudio/fetcher/releases/tag/v2.0.2)
 
 - Changelog for `fetcher` `v2.0.2`:
