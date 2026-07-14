@@ -29,6 +29,118 @@ func testManagerBootstrapLogger() *libLog.GoLogger {
 	return &libLog.GoLogger{Level: libLog.LevelError}
 }
 
+func TestValidateSecurityConfig_FailsClosed(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		cfg     Config
+		wantErr string
+	}{
+		{
+			name: "single tenant without auth is valid",
+			cfg:  Config{},
+		},
+		{
+			name: "disabled auth may retain an address",
+			cfg: Config{
+				AuthAddress: "http://plugin-auth:4000",
+			},
+		},
+		{
+			name: "enabled auth with address is valid",
+			cfg: Config{
+				AuthEnabled: true,
+				AuthAddress: "http://plugin-auth:4000",
+			},
+		},
+		{
+			name: "enabled auth without address is rejected",
+			cfg: Config{
+				AuthEnabled: true,
+			},
+			wantErr: "PLUGIN_AUTH_ADDRESS is required when PLUGIN_AUTH_ENABLED=true",
+		},
+		{
+			name: "enabled auth with whitespace address is rejected",
+			cfg: Config{
+				AuthEnabled: true,
+				AuthAddress: "  ",
+			},
+			wantErr: "PLUGIN_AUTH_ADDRESS is required when PLUGIN_AUTH_ENABLED=true",
+		},
+		{
+			name: "multi tenant without auth is rejected even when address exists",
+			cfg: Config{
+				AuthAddress:        "http://plugin-auth:4000",
+				MultiTenantEnabled: true,
+			},
+			wantErr: "PLUGIN_AUTH_ENABLED must be true when MULTI_TENANT_ENABLED=true",
+		},
+		{
+			name: "multi tenant without auth or address is rejected",
+			cfg: Config{
+				MultiTenantEnabled: true,
+			},
+			wantErr: "PLUGIN_AUTH_ENABLED must be true when MULTI_TENANT_ENABLED=true",
+		},
+		{
+			name: "multi tenant with auth but without address is rejected",
+			cfg: Config{
+				AuthEnabled:        true,
+				MultiTenantEnabled: true,
+			},
+			wantErr: "PLUGIN_AUTH_ADDRESS is required when PLUGIN_AUTH_ENABLED=true",
+		},
+		{
+			name: "multi tenant with effective auth is valid",
+			cfg: Config{
+				AuthEnabled:        true,
+				AuthAddress:        "http://plugin-auth:4000",
+				MultiTenantEnabled: true,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateSecurityConfig(&tt.cfg)
+			if tt.wantErr == "" {
+				require.NoError(t, err)
+
+				return
+			}
+
+			require.EqualError(t, err, tt.wantErr)
+		})
+	}
+}
+
+func TestInitServers_RejectsIneffectiveAuthBeforeInitializingDependencies(t *testing.T) {
+	originalLoadConfig := loadConfigFn
+	originalLoggerAndTelemetry := initLoggerAndTelemetryFn
+	t.Cleanup(func() {
+		loadConfigFn = originalLoadConfig
+		initLoggerAndTelemetryFn = originalLoggerAndTelemetry
+	})
+
+	loadConfigFn = func() (*Config, error) {
+		return &Config{AuthEnabled: true}, nil
+	}
+	loggerCalled := false
+	initLoggerAndTelemetryFn = func(*Config) (libLog.Logger, *libOtel.Telemetry, error) {
+		loggerCalled = true
+
+		return testManagerBootstrapLogger(), &libOtel.Telemetry{}, nil
+	}
+
+	service, err := InitServers()
+
+	assert.Nil(t, service)
+	require.EqualError(t, err, "PLUGIN_AUTH_ADDRESS is required when PLUGIN_AUTH_ENABLED=true")
+	assert.False(t, loggerCalled, "security validation must run before dependency initialization")
+}
+
 type stubSchemaCacheStore struct{}
 
 func (stubSchemaCacheStore) Get(context.Context, string) (model.DataSourceSchema, bool, error) {
@@ -411,6 +523,7 @@ func TestConfig_LoadFromEnvVars(t *testing.T) {
 			envVars: map[string]string{
 				"ENABLE_TELEMETRY":    "true",
 				"PLUGIN_AUTH_ENABLED": "true",
+				"SWAGGER_ENABLED":     "true",
 			},
 			validate: func(t *testing.T, cfg *Config) {
 				t.Helper()
@@ -419,6 +532,9 @@ func TestConfig_LoadFromEnvVars(t *testing.T) {
 				}
 				if !cfg.AuthEnabled {
 					t.Error("AuthEnabled should be true")
+				}
+				if !cfg.SwaggerEnabled {
+					t.Error("SwaggerEnabled should be true")
 				}
 			},
 		},
@@ -515,6 +631,9 @@ func TestConfig_LoadFromEnvVars(t *testing.T) {
 				}
 				if cfg.AuthEnabled {
 					t.Error("AuthEnabled should default to false")
+				}
+				if cfg.SwaggerEnabled {
+					t.Error("SwaggerEnabled should default to false")
 				}
 			},
 		},

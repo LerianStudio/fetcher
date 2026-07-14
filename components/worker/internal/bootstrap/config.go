@@ -2,9 +2,11 @@ package bootstrap
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -208,9 +210,17 @@ func InitWorker() (*Service, error) {
 
 	var sharedTMClient *tmclient.Client
 
-	// sharedTMOwned is flipped true once the returned Service owns the shared
-	// client's Close (Service.tmClientCloser). Until then, the deferred guard below
-	// closes the client on any aborted bootstrap so startup failure cannot leak it.
+	// perServiceTMClients holds the resolver's distinct per-service Tenant Manager
+	// clients (one per MULTI_TENANT_SERVICE_API_KEY_{SERVICE} env var), built in
+	// buildResolverTenantAdapter. They are separate from sharedTMClient and each
+	// starts its own in-memory cache cleanup goroutine, so they must be closed on
+	// shutdown alongside sharedTMClient. Nil/empty when no per-service keys are set.
+	var perServiceTMClients map[string]*tmclient.Client
+
+	// sharedTMOwned is flipped true once the returned Service owns the Close of the
+	// shared AND per-service clients (Service.tmClientCloser). Until then, the
+	// deferred guards below close those clients on any aborted bootstrap so a
+	// startup failure cannot leak them.
 	sharedTMOwned := false
 
 	if multiTenant {
@@ -260,7 +270,24 @@ func InitWorker() (*Service, error) {
 	dsRegistry := resolver.NewInternalDatasourceRegistry()
 
 	if multiTenant {
-		tenantAdapter := resolver.NewTenantManagerAdapter(sharedTMClient)
+		// Reuse the already-built, lifecycle-owned sharedTMClient as the default
+		// and build only the per-service clients from the environment.
+		tenantAdapter, serviceClients, adapterErr := buildResolverTenantAdapter(sharedTMClient, logger, func(apiKey string) (*tmclient.Client, error) {
+			return initTenantManagerClientWithKey(cfg, logger, apiKey)
+		})
+		if adapterErr != nil {
+			return nil, adapterErr
+		}
+
+		// The per-service clients each own an in-memory cache cleanup goroutine.
+		// They are handed to the Service for Close on graceful drain (see
+		// initMultiTenantWorkerService); until ownership transfers, this guard
+		// closes them on an aborted bootstrap. It shares sharedTMOwned because the
+		// Service takes ownership of the shared and per-service clients atomically.
+		perServiceTMClients = serviceClients
+
+		defer func() { closePerServiceTMClientsIfUnowned(ctx, logger, perServiceTMClients, &sharedTMOwned) }()
+
 		service.ConnectionResolver = resolver.NewMultiTenantResolver(repositories.connection, dsRegistry, tenantAdapter)
 	} else {
 		// Single-tenant: load internal datasource connections from DATASOURCE_* env vars.
@@ -273,12 +300,13 @@ func InitWorker() (*Service, error) {
 	// Branch: multi-tenant mode uses the worker multi-tenant consumer with per-tenant vhosts
 	// Single-tenant mode uses existing ConsumerRoutes with static RabbitMQ connection
 	if multiTenant {
-		mtService, mtErr := initMultiTenantWorkerService(ctx, cfg, logger, telemetry, service, mongoConnection, storageRepository, mongoManager, rabbitMQManager, repositories.streamingOutboxRepo, sharedTMClient, cryptoWithExternalHMAC, keyDeriver)
+		mtService, mtErr := initMultiTenantWorkerService(ctx, cfg, logger, telemetry, service, mongoConnection, storageRepository, mongoManager, rabbitMQManager, repositories.streamingOutboxRepo, sharedTMClient, perServiceTMClients, cryptoWithExternalHMAC, keyDeriver)
 		if mtErr != nil {
 			return nil, mtErr
 		}
 
-		// The Service now owns the shared client's Close; disarm the bootstrap guard.
+		// The Service now owns the Close of the shared and per-service clients;
+		// disarm the bootstrap guards.
 		sharedTMOwned = true
 
 		return mtService, nil
@@ -359,6 +387,67 @@ func newTMClientCloser(client *tmclient.Client) func() error {
 	return client.Close
 }
 
+// newTMClientChainCloser returns a single nil-safe Close closure that closes the
+// shared Tenant Manager client and each distinct per-service client exactly once.
+// The per-service clients (built by buildResolverTenantAdapter, keyed by service
+// token) each own an in-memory cache cleanup goroutine that only Close stops, so
+// they must be registered alongside sharedTMClient or they leak for the process
+// lifetime. The shared client and every per-service client are distinct pointers
+// (each is a separate tmclient.NewClient call), so no client is closed twice.
+// All closers run even if one errors; the errors are joined. Returns nil when
+// there is nothing to close (single-tenant mode with no per-service clients).
+func newTMClientChainCloser(shared *tmclient.Client, perService map[string]*tmclient.Client) func() error {
+	closers := make([]func() error, 0, len(perService)+1)
+
+	if c := newTMClientCloser(shared); c != nil {
+		closers = append(closers, c)
+	}
+
+	for _, client := range perService {
+		if c := newTMClientCloser(client); c != nil {
+			closers = append(closers, c)
+		}
+	}
+
+	if len(closers) == 0 {
+		return nil
+	}
+
+	return func() error {
+		errs := make([]error, 0, len(closers))
+
+		for _, closeFn := range closers {
+			if err := closeFn(); err != nil {
+				errs = append(errs, err)
+			}
+		}
+
+		return errors.Join(errs...)
+	}
+}
+
+// closePerServiceTMClientsIfUnowned is the deferred bootstrap leak guard for the
+// resolver's per-service Tenant Manager clients: it closes each of them only when
+// ownership was never transferred to the Service (i.e. bootstrap aborted before
+// returning a Service). It shares the sharedTMClient ownership flag because the
+// Service takes ownership of the shared and per-service clients atomically. Once
+// *owned is true, or the map is empty, it is a no-op.
+func closePerServiceTMClientsIfUnowned(ctx context.Context, logger libLog.Logger, clients map[string]*tmclient.Client, owned *bool) {
+	if owned != nil && *owned {
+		return
+	}
+
+	for token, client := range clients {
+		if client == nil {
+			continue
+		}
+
+		if closeErr := client.Close(); closeErr != nil {
+			logger.Log(ctx, libLog.LevelWarn, "failed to close per-service tenant manager client after aborted bootstrap", libLog.String("service_token", token), libLog.Err(closeErr))
+		}
+	}
+}
+
 func initMultiTenantWorkerService(
 	ctx context.Context,
 	cfg *Config,
@@ -371,6 +460,7 @@ func initMultiTenantWorkerService(
 	rabbitMQManager *tmrabbitmq.Manager,
 	streamingOutboxRepo libOutbox.OutboxRepository,
 	sharedTMClient *tmclient.Client,
+	perServiceTMClients map[string]*tmclient.Client,
 	cryptoWithExternalHMAC *crypto.HMACSigner,
 	keyDeriver *crypto.HKDFKeyDeriver,
 ) (*Service, error) {
@@ -430,8 +520,10 @@ func initMultiTenantWorkerService(
 		outboxDispatcher:   outboxDispatcher,
 		terminalRepairer:   services.NewTerminalEventRepairerWithTenantScope(service, logger, constant.ApplicationName, sharedTMClient, mongoManager),
 		reconciler:         reconciler,
-		// The Service is the single owner of the shared Tenant Manager client.
-		tmClientCloser: newTMClientCloser(sharedTMClient),
+		// The Service is the single owner of the shared Tenant Manager client AND
+		// the resolver's distinct per-service clients; the chain closer closes each
+		// exactly once on graceful drain.
+		tmClientCloser: newTMClientChainCloser(sharedTMClient, perServiceTMClients),
 	}, nil
 }
 
@@ -863,7 +955,7 @@ func initMongoConnection(ctx context.Context, cfg *Config, logger libLog.Logger)
 		URI:         mongoSource,
 		Database:    cfg.MongoDBName,
 		Logger:      logger,
-		MaxPoolSize: uint64(cfg.MaxPoolSize),
+		MaxPoolSize: libCommons.SafeIntToUint64(cfg.MaxPoolSize),
 	}
 
 	if cfg.MongoTLSCACert != "" {
@@ -901,11 +993,22 @@ func resolveZapEnvironment(env string) libZap.Environment {
 
 // initTenantManagerClient creates a Tenant Manager HTTP client with circuit breaker.
 // This is shared across MongoDB manager and MultiTenantConsumer to avoid duplicate instances.
+// It authenticates with the fetcher's own-identity service API key
+// (cfg.MultiTenantServiceAPIKey).
 func initTenantManagerClient(cfg *Config, logger libLog.Logger) (*tmclient.Client, error) {
+	return initTenantManagerClientWithKey(cfg, logger, cfg.MultiTenantServiceAPIKey)
+}
+
+// initTenantManagerClientWithKey creates a Tenant Manager HTTP client with
+// circuit breaker authenticating with the supplied service API key. Splitting
+// the key out of initTenantManagerClient lets the resolver build per-service
+// clients (one per MULTI_TENANT_SERVICE_API_KEY_{SERVICE}) while own-identity
+// callers keep using cfg.MultiTenantServiceAPIKey via initTenantManagerClient.
+func initTenantManagerClientWithKey(cfg *Config, logger libLog.Logger, apiKey string) (*tmclient.Client, error) {
 	var clientOpts []tmclient.ClientOption
 
 	clientOpts = append(clientOpts,
-		tmclient.WithServiceAPIKey(cfg.MultiTenantServiceAPIKey),
+		tmclient.WithServiceAPIKey(apiKey),
 	)
 
 	// Allow plaintext HTTP when explicitly configured via MULTI_TENANT_ALLOW_INSECURE_HTTP.
@@ -941,6 +1044,66 @@ func initTenantManagerClient(cfg *Config, logger libLog.Logger) (*tmclient.Clien
 	}
 
 	return client, nil
+}
+
+// buildResolverTenantAdapter builds the per-service tenant-manager adapter used
+// by the multi-tenant connection resolver.
+//
+// Unlike the manager, the worker consolidates the own-identity client into a
+// single sharedTMClient created in InitWorker (reused for the mongo/rabbitmq
+// managers, repositories, and the multi-tenant service, closed exactly once via
+// Service.tmClientCloser). This adapter therefore reuses that already-built
+// sharedTMClient as the default (passed in as defaultClient) and builds ONLY the
+// per-service clients from MULTI_TENANT_SERVICE_API_KEY_* env vars. Passing an
+// empty defaultKey to BuildServiceClients guarantees no second own-identity
+// client is created, preserving the "one owned TM client" invariant — building a
+// second default here would leak an unclosed client on every MT boot. newClient
+// is injected so this is unit-testable without real HTTP and so tests can assert
+// exactly which per-service keys reach client construction. Loader and builder
+// errors are wrapped with context, never ignored.
+//
+// It also returns the per-service clients map so the caller can register each
+// client's Close on the Service lifecycle: every per-service client owns an
+// in-memory cache cleanup goroutine that only Close stops, so an unregistered
+// client leaks a goroutine for the process lifetime. The map is nil on error.
+func buildResolverTenantAdapter(
+	defaultClient *tmclient.Client,
+	logger libLog.Logger,
+	newClient func(apiKey string) (*tmclient.Client, error),
+) (*resolver.TenantManagerAdapter, map[string]*tmclient.Client, error) {
+	serviceKeys, keysErr := resolver.LoadServiceAPIKeysFromEnv()
+	if keysErr != nil {
+		return nil, nil, wrapBootstrapError("load per-service tenant manager API keys for resolver", keysErr)
+	}
+
+	// defaultKey="" => BuildServiceClients builds no default; the already-built
+	// sharedTMClient is reused as the default instead.
+	serviceClients, _, buildErr := resolver.BuildServiceClients(serviceKeys, "", newClient)
+	if buildErr != nil {
+		return nil, nil, wrapBootstrapError("create per-service tenant manager clients for resolver", buildErr)
+	}
+
+	logResolverServiceClients(logger, serviceClients)
+
+	return resolver.NewTenantManagerAdapterWithClients(serviceClients, defaultClient), serviceClients, nil
+}
+
+// logResolverServiceClients emits one startup info log naming the service tokens
+// that received a dedicated per-service tenant-manager client. It logs token
+// NAMES only (sorted, plus a count) and never any API key value, giving
+// operators confirmation that their intended per-service keys were picked up.
+func logResolverServiceClients(logger libLog.Logger, serviceClients map[string]*tmclient.Client) {
+	tokens := make([]string, 0, len(serviceClients))
+	for token := range serviceClients {
+		tokens = append(tokens, token)
+	}
+
+	sort.Strings(tokens)
+
+	logger.Log(context.Background(), libLog.LevelInfo, "resolver per-service tenant-manager clients configured",
+		libLog.Int("count", len(tokens)),
+		libLog.Any("tokens", tokens),
+	)
 }
 
 // resolvedMaxTenantPools returns the configured value if > 0, or the default.

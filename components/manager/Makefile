@@ -47,7 +47,8 @@ info:
 	@echo "                                                                                                                         "
 	@echo "## App commands:"
 	@echo "                                                                                                                         "
-	@echo "  COMMAND=\"generate-docs\" 						  Generates Swagger API documentation and an OpenAPI Specification."
+	@echo "  COMMAND=\"generate-docs\" 						  Generates the canonical Huma OpenAPI 3.1 specification."
+	@echo "  COMMAND=\"check-openapi\" 						  Fails when the committed OpenAPI specification is stale."
 	@echo "                                                                                                                                       "
 	@echo "                                                                                                                                       "
 
@@ -85,10 +86,11 @@ ps:
 
 .PHONY: generate-docs
 generate-docs:
-	@swag init -g ./cmd/app/main.go -d ./ -o ./api --parseDependency --parseInternal
-	@docker run --rm -v $(pwd):/local --user $(shell id -u):$(shell id -g) openapitools/openapi-generator-cli:v5.1.1 generate -i ./manager/api/swagger.json -g openapi-yaml -o ./manager/api
-	@mv ./api/openapi/openapi.yaml ./api/openapi.yaml
-	@rm -rf ./api/README.md ./api/.openapi-generator* ./api/openapi
+	@$(MAKE) -C ../.. generate-docs
+
+.PHONY: check-openapi
+check-openapi:
+	@$(MAKE) -C ../.. check-openapi
 
 .PHONY: setup-git-hooks
 setup-git-hooks:

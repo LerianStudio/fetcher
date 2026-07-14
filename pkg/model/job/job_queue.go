@@ -1,20 +1,12 @@
 package job
 
 // JobQueuePayload represents the message structure for an extraction job.
-//
-// swagger:model JobQueuePayload
-//
-// @Description JobQueuePayload represents the message structure for an extraction job in RabbitMQ.
 type JobQueuePayload struct {
 	DataRequest DataRequest    `json:"data_request"`
 	Metadata    map[string]any `json:"metadata"`
 }
 
 // DataRequest encapsulates filtering criteria and field mappings for data extraction requests.
-//
-// swagger:model DataRequest
-//
-// @Description DataRequest encapsulates filtering criteria and field mappings for data extraction requests.
 type DataRequest struct {
 	Filters      map[string]map[string]map[string]FilterCondition `json:"filters"`
 	MappedFields map[string]map[string][]string                   `json:"mappedFields"`
@@ -25,59 +17,55 @@ type DataRequest struct {
 type FilterCondition struct {
 	// Equals specifies exact value matches. Multiple values treated as OR conditions.
 	// Example: {"eq": ["active", "pending"]} matches records where field equals "active" OR "pending"
-	Equals []any `json:"eq,omitempty"`
+	Equals []any `json:"eq,omitempty" doc:"Values that the field may equal." example:"[\"active\",\"pending\"]"`
 
 	// GreaterThan specifies values that must be greater than the provided value.
 	// Should contain exactly one value for comparison.
 	// Example: {"gt": [100]} matches records where field > 100
-	GreaterThan []any `json:"gt,omitempty"`
+	GreaterThan []any `json:"gt,omitempty" doc:"Single value that the field must be greater than." example:"[100]"`
 
 	// GreaterOrEqual specifies values that must be greater than or equal to the provided value.
 	// Should contain exactly one value for comparison.
 	// Example: {"gte": ["2025-06-01"]} matches records where field >= "2025-06-01"
-	GreaterOrEqual []any `json:"gte,omitempty"`
+	GreaterOrEqual []any `json:"gte,omitempty" doc:"Single value that the field must be greater than or equal to." example:"[\"2025-06-01\"]"`
 
 	// LessThan specifies values that must be less than the provided value.
 	// Should contain exactly one value for comparison.
 	// Example: {"lt": [1000]} matches records where field < 1000
-	LessThan []any `json:"lt,omitempty"`
+	LessThan []any `json:"lt,omitempty" doc:"Single value that the field must be less than." example:"[1000]"`
 
 	// LessOrEqual specifies values that must be less than or equal to the provided value.
 	// Should contain exactly one value for comparison.
 	// Example: {"lte": ["2025-06-30"]} matches records where field <= "2025-06-30"
-	LessOrEqual []any `json:"lte,omitempty"`
+	LessOrEqual []any `json:"lte,omitempty" doc:"Single value that the field must be less than or equal to." example:"[\"2025-06-30\"]"`
 
 	// Between specifies a range condition with exactly two values [min, max].
 	// Matches records where min <= field <= max
 	// Example: {"between": [100, 1000]} matches records where 100 <= field <= 1000
-	Between []any `json:"between,omitempty"`
+	Between []any `json:"between,omitempty" doc:"Inclusive lower and upper bounds for the field." example:"[100,1000]"`
 
 	// In specifies a list of values where the field must match any one of them.
 	// Multiple values treated as OR conditions.
 	// Example: {"in": ["active", "pending", "suspended"]} matches any of these statuses
-	In []any `json:"in,omitempty"`
+	In []any `json:"in,omitempty" doc:"Values that the field may match." example:"[\"active\",\"pending\",\"suspended\"]"`
 
 	// NotIn specifies a list of values where the field must NOT match any of them.
 	// Multiple values treated as AND NOT conditions.
 	// Example: {"nin": ["deleted", "archived"]} excludes these statuses
-	NotIn []any `json:"nin,omitempty"`
+	NotIn []any `json:"nin,omitempty" doc:"Values that the field must not match." example:"[\"deleted\",\"archived\"]"`
 
 	// NotEquals specifies values that must NOT match the provided value.
 	// Should contain exactly one value for comparison.
 	// Example: {"ne": ["active"]} excludes this status
-	NotEquals []any `json:"ne,omitempty"`
+	NotEquals []any `json:"ne,omitempty" doc:"Single value that the field must not equal." example:"[\"active\"]"`
 
 	// Like specifies values that must match the provided value using LIKE pattern matching.
 	// Should contain exactly one value for comparison.
 	// Example: {"like": ["%active%"]} matches any status containing "active"
-	Like []any `json:"like,omitempty"`
+	Like []any `json:"like,omitempty" doc:"Single LIKE pattern that the field must match." example:"[\"%active%\"]"`
 }
 
 // QueueMessage represents the structure for generating messages in the queue.
-//
-// swagger:model QueueMessage
-//
-// @Description QueueMessage represents the structure for generating messages in the queue.
 type QueueMessage struct {
 	Name string `json:"queue_name"`
 	Body string `json:"queue_body"`
