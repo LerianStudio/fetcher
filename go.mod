@@ -7,7 +7,7 @@ require (
 	github.com/LerianStudio/lib-auth/v2 v2.9.0
 	github.com/LerianStudio/lib-commons/v5 v5.10.0
 	github.com/LerianStudio/lib-observability v1.1.0
-	github.com/LerianStudio/lib-streaming v1.7.0
+	github.com/LerianStudio/lib-streaming v1.8.0
 	github.com/Masterminds/squirrel v1.5.4
 	github.com/Shopify/toxiproxy/v2 v2.12.0
 	github.com/alicebob/miniredis/v2 v2.38.0
