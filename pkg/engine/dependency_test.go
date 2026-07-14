@@ -339,10 +339,10 @@ func configuredForbiddenDependencyClasses(modulePath string) []forbiddenDependen
 		},
 		{
 			concern: "http",
-			name:    "swagger",
+			name:    "openapi",
 			patterns: []string{
-				"github.com/swaggo/swag",
-				"github.com/swaggo/fiber-swagger",
+				"github.com/danielgtaylor/huma",
+				"github.com/LerianStudio/lib-commons/v5/commons/net/http",
 			},
 		},
 
@@ -521,7 +521,7 @@ func requiredForbiddenClassNames() []string {
 		"manager_internals",
 		"worker_internals",
 		"fiber",
-		"swagger",
+		"openapi",
 		"rabbitmq",
 		"lib_streaming",
 		"mongodb",

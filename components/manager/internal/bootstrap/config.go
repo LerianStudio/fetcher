@@ -92,8 +92,9 @@ type Config struct {
 	RabbitMQGenerateReportQueue string `env:"RABBITMQ_FETCHER_WORK_QUEUE"`
 	RabbitMQTLS                 bool   `env:"RABBITMQ_TLS" default:"false"`
 	// Auth envs
-	AuthAddress string `env:"PLUGIN_AUTH_ADDRESS"`
-	AuthEnabled bool   `env:"PLUGIN_AUTH_ENABLED"`
+	AuthAddress    string `env:"PLUGIN_AUTH_ADDRESS"`
+	AuthEnabled    bool   `env:"PLUGIN_AUTH_ENABLED"`
+	SwaggerEnabled bool   `env:"SWAGGER_ENABLED"`
 	// Encryption
 	AppEncryptionKey        string `env:"APP_ENC_KEY"`
 	AppEncryptionKeyVersion string `env:"APP_ENC_KEY_VERSION"`
@@ -199,6 +200,10 @@ func InitServers() (*Service, error) {
 		return nil, err
 	}
 
+	if err = validateSecurityConfig(cfg); err != nil {
+		return nil, err
+	}
+
 	ctx := context.Background()
 
 	logger, telemetry, err := initLoggerAndTelemetryFn(cfg)
@@ -264,6 +269,22 @@ func InitServers() (*Service, error) {
 		cryptoDependencies.service,
 		platformDependencies,
 	)
+}
+
+func validateSecurityConfig(cfg *Config) error {
+	if cfg == nil {
+		return fmt.Errorf("manager config is required")
+	}
+
+	if cfg.MultiTenantEnabled && !cfg.AuthEnabled {
+		return fmt.Errorf("PLUGIN_AUTH_ENABLED must be true when MULTI_TENANT_ENABLED=true")
+	}
+
+	if cfg.AuthEnabled && strings.TrimSpace(cfg.AuthAddress) == "" {
+		return fmt.Errorf("PLUGIN_AUTH_ADDRESS is required when PLUGIN_AUTH_ENABLED=true")
+	}
+
+	return nil
 }
 
 func loadConfig() (*Config, error) {
@@ -660,7 +681,7 @@ func assembleService(
 
 	tenantFiberHandler := buildManagerTenantHandler(readyzCfg, cfg, platformDependencies)
 
-	httpApp := in2.NewRoutes(
+	httpApp, err := in2.NewRoutes(
 		logger,
 		telemetry,
 		platformDependencies.authClient,
@@ -671,7 +692,15 @@ func assembleService(
 		readyzHandler,
 		tenantFiberHandler,
 		readyz.NewMetricsHandler(),
+		cfg.SwaggerEnabled,
 	)
+	if err != nil {
+		if mtEventCleanup != nil {
+			mtEventCleanup()
+		}
+
+		return nil, wrapBootstrapError("build HTTP routes", err)
+	}
 
 	var shutdownHooks []func(context.Context) error
 
