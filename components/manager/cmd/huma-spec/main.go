@@ -38,6 +38,7 @@ func writeSpec(path string) error {
 		return fmt.Errorf("generate canonical OpenAPI spec: %w", err)
 	}
 
+	// #nosec G306 -- api/openapi.yaml is a public, versioned artifact.
 	if err := os.WriteFile(path, spec, 0o644); err != nil {
 		return fmt.Errorf("write OpenAPI spec %s: %w", path, err)
 	}
