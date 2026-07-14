@@ -806,7 +806,7 @@ check-openapi:
 	$(call print_title,Checking committed OpenAPI specification)
 	@tmp=$$(mktemp); \
 	trap 'rm -f "$$tmp"' EXIT; \
-	go run ./components/manager/cmd/huma-spec -output "$$tmp"; \
+	go run ./components/manager/cmd/huma-spec -output "$$tmp" || { echo "OpenAPI specification generation failed"; exit 1; }; \
 	cmp -s "$$tmp" ./components/manager/api/openapi.yaml || { \
 		echo "OpenAPI specification is stale; run 'make generate-docs'"; \
 		exit 1; \

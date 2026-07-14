@@ -191,7 +191,6 @@ func TestWithError_PreservesHistoricallyUnmappedErrors(t *testing.T) {
 	}
 
 	for name, mappedErr := range tests {
-		mappedErr := mappedErr
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 

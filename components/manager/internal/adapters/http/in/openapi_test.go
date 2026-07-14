@@ -81,6 +81,7 @@ func TestGenerateCanonicalSpec_IsDeterministic(t *testing.T) {
 	assert.True(t, bytes.Equal(first, second))
 	assert.Contains(t, string(first), "openapi: 3.1.0")
 	assert.Contains(t, string(first), "Elastic License 2.0 (Source Available)")
+	assert.NotContains(t, string(first), "\nservers:\n")
 }
 
 func TestRegisterHumaOperations_ExecutesTypedCallback(t *testing.T) {
@@ -230,8 +231,7 @@ func TestBuildHumaAPI_ConfiguresCanonicalDocument(t *testing.T) {
 	assert.Equal(t, "Elastic License 2.0 (Source Available)", doc.Info.License.Name)
 	assert.Equal(t, "Elastic-2.0", doc.Info.License.Identifier)
 	assert.Empty(t, doc.Info.License.URL)
-	require.Len(t, doc.Servers, 1)
-	assert.Equal(t, "http://localhost:4006", doc.Servers[0].URL)
+	assert.Empty(t, doc.Servers)
 	require.Contains(t, doc.Components.SecuritySchemes, bearerAuthSecurityScheme)
 	assert.Equal(t, []map[string][]string{{bearerAuthSecurityScheme: {}}}, doc.Security)
 	require.Len(t, doc.Tags, 3)

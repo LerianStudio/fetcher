@@ -24,7 +24,6 @@ func BuildHumaAPI(app *fiber.App, authEnabled bool) huma.API {
 		Title:       DocTitle,
 		Version:     DocVersion,
 		Description: DocDescription,
-		Servers:     []string{"http://localhost:4006"},
 	})
 
 	problem.Install()

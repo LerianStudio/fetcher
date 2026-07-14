@@ -668,18 +668,14 @@ components:
             - |-
               -----BEGIN CERTIFICATE-----
               ...
-          type:
-            - string
-            - "null"
+          type: string
         key:
           description: Optional PEM-encoded private key for the client certificate.
           examples:
             - |-
               -----BEGIN PRIVATE KEY-----
               ...
-          type:
-            - string
-            - "null"
+          type: string
         mode:
           description: Driver-specific SSL/TLS mode.
           examples:
@@ -688,8 +684,6 @@ components:
       required:
         - mode
         - ca
-        - cert
-        - key
       type: object
     SSLResponse:
       additionalProperties: false
@@ -1670,8 +1664,6 @@ paths:
         - Connections
 security:
   - BearerAuth: []
-servers:
-  - url: http://localhost:4006
 tags:
   - description: Database connection lifecycle and schema operations.
     name: Connections

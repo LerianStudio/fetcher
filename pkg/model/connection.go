@@ -479,8 +479,8 @@ type ConnectionInput struct {
 type SSLInput struct {
 	Mode string  `json:"mode" validate:"omitempty" doc:"Driver-specific SSL/TLS mode." example:"require"`
 	CA   string  `json:"ca" validate:"omitempty" doc:"PEM-encoded certificate authority used to verify the server." example:"-----BEGIN CERTIFICATE-----\n..."`
-	Cert *string `json:"cert" doc:"Optional PEM-encoded client certificate." example:"-----BEGIN CERTIFICATE-----\n..."`
-	Key  *string `json:"key" doc:"Optional PEM-encoded private key for the client certificate." example:"-----BEGIN PRIVATE KEY-----\n..."`
+	Cert *string `json:"cert,omitempty" doc:"Optional PEM-encoded client certificate." example:"-----BEGIN CERTIFICATE-----\n..."`
+	Key  *string `json:"key,omitempty" doc:"Optional PEM-encoded private key for the client certificate." example:"-----BEGIN PRIVATE KEY-----\n..."`
 }
 
 func (conn *ConnectionInput) ToMapWithMask() map[string]any {

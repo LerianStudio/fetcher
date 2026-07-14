@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/LerianStudio/fetcher/pkg/engine"
+	"github.com/LerianStudio/fetcher/v2/components/manager/internal/services/command"
+	"github.com/LerianStudio/fetcher/v2/components/manager/internal/services/query"
 	pkgdatasource "github.com/LerianStudio/fetcher/v2/pkg/datasource"
 	"github.com/LerianStudio/fetcher/v2/pkg/enginecompat/schemacompat"
 	"github.com/LerianStudio/fetcher/v2/pkg/model"
@@ -62,7 +64,7 @@ func validConnectionInput() string {
 		"host": "localhost",
 		"port": 5432,
 		"databaseName": "testdb",
-		"username": "testuser",
+		"userName": "testuser",
 		"password": "secretpassword"
 	}`
 }
@@ -134,15 +136,33 @@ func (n *noopSchemaCache) Close() error {
 }
 
 func TestNewConnectionHandlerPreservesDependencies(t *testing.T) {
-	handler := NewConnectionHandler(nil, nil, nil, nil, nil, nil, nil, nil)
+	createCmd := command.NewCreateConnection(nil, nil)
+	updateCmd := command.NewUpdateConnection(nil, nil)
+	deleteCmd := command.NewDeleteConnection(nil)
+	getQuery := query.NewGetConnection(nil, nil, nil)
+	listQuery := query.NewListConnections(nil, nil)
+	testQuery := query.NewTestConnection(nil, nil, nil, nil, nil, nil)
+	validateSchemaQuery := query.NewValidateSchema(nil, nil, nil)
+	getSchemaQuery := query.NewGetConnectionSchema(nil, nil, nil, nil, false)
+
+	handler := NewConnectionHandler(
+		createCmd,
+		updateCmd,
+		deleteCmd,
+		getQuery,
+		listQuery,
+		testQuery,
+		validateSchemaQuery,
+		getSchemaQuery,
+	)
 
 	assert.NotNil(t, handler)
-	assert.Nil(t, handler.CreateCmd)
-	assert.Nil(t, handler.UpdateCmd)
-	assert.Nil(t, handler.DeleteCmd)
-	assert.Nil(t, handler.GetQuery)
-	assert.Nil(t, handler.ListQuery)
-	assert.Nil(t, handler.TestQuery)
-	assert.Nil(t, handler.ValidateSchemaQuery)
-	assert.Nil(t, handler.GetSchemaQuery)
+	assert.Same(t, createCmd, handler.CreateCmd)
+	assert.Same(t, updateCmd, handler.UpdateCmd)
+	assert.Same(t, deleteCmd, handler.DeleteCmd)
+	assert.Same(t, getQuery, handler.GetQuery)
+	assert.Same(t, listQuery, handler.ListQuery)
+	assert.Same(t, testQuery, handler.TestQuery)
+	assert.Same(t, validateSchemaQuery, handler.ValidateSchemaQuery)
+	assert.Same(t, getSchemaQuery, handler.GetSchemaQuery)
 }

@@ -82,6 +82,14 @@ func TestHumaProtectedOperations_DocumentBearerProblems(t *testing.T) {
 	_, api := newHumaContractTestAPI(t, true)
 	require.Equal(t, []map[string][]string{{"BearerAuth": {}}}, api.OpenAPI().Security)
 
+	scheme, ok := api.OpenAPI().Components.SecuritySchemes["BearerAuth"]
+	require.True(t, ok)
+	require.NotNil(t, scheme)
+	assert.Equal(t, "http", scheme.Type)
+	assert.Equal(t, "bearer", scheme.Scheme)
+	assert.Equal(t, "JWT", scheme.BearerFormat)
+	assert.Equal(t, "JWT bearer token issued by the identity provider.", scheme.Description)
+
 	operations := []struct {
 		method string
 		path   string
@@ -120,6 +128,15 @@ func TestHumaProtectedOperations_DocumentBearerProblems(t *testing.T) {
 			assert.Equal(t, "#/components/schemas/Detail", mediaType.Schema.Ref)
 		}
 	}
+}
+
+func TestHumaSSLInput_DocumentsClientCredentialsAsOptional(t *testing.T) {
+	_, api := newHumaContractTestAPI(t, false)
+
+	schema := api.OpenAPI().Components.Schemas.Map()["SSLInput"]
+	require.NotNil(t, schema)
+	assert.NotContains(t, schema.Required, "cert")
+	assert.NotContains(t, schema.Required, "key")
 }
 
 func TestHumaConnectionLists_DocumentOnlyEffectiveFilters(t *testing.T) {
