@@ -3,7 +3,13 @@ name: Release
 on:
   push:
     branches: [develop, release-candidate, main]
-    tags: ['**']
+    # Service releases are tagged v<semver> (matches .releaserc.yml tagFormat "v${version}").
+    # The pkg/engine submodule has its own path-prefixed tag line (pkg/engine/v*), cut and
+    # pushed by the @semantic-release/exec prepare hook on every release. Matching '**' here
+    # re-triggered this workflow on that engine tag, and the service image build failed
+    # ("tag is needed when pushing to registry") because no service version is derivable
+    # from a pkg/engine/* tag name. Restrict to service tags so engine releases don't re-fire.
+    tags: ['v*']
 
 permissions:
   id-token: write
