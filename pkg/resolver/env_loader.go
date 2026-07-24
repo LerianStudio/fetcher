@@ -7,6 +7,7 @@ package resolver
 import (
 	"context"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -29,7 +30,19 @@ func LoadInternalConnectionsFromEnv(registry *InternalDatasourceRegistry, logger
 		}
 
 		configName := strings.SplitN(env, "=", 2)[1]
-		if configName == "" || !registry.IsInternal(configName) {
+		if configName == "" {
+			continue
+		}
+
+		if !registry.IsInternal(configName) {
+			accepted := registry.ListInternal()
+			sort.Strings(accepted)
+
+			logger.Log(context.Background(), libLog.LevelWarn, "DATASOURCE_*_CONFIG_NAME not in the internal registry, datasource skipped (check for a typo or unsupported name)",
+				libLog.String("config_name", configName),
+				libLog.String("accepted", strings.Join(accepted, ", ")),
+			)
+
 			continue
 		}
 
