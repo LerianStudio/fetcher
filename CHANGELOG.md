@@ -1,5 +1,20 @@
 # Fetcher Changelog
 
+## [3.1.0](https://github.com/LerianStudio/fetcher/releases/tag/v3.1.0)
+
+Fixes:
+- Skip `sumdb` for freshly-pushed engine tags during release preparation. (@fredcamaral)
+- Warn when `DATASOURCE_*_CONFIG_NAME` is outside the internal registry. (@fredcamaral)
+- Decrypt CRM `regulatory_fields` and `related_parties` PII. (@brunobls)
+
+Improvements:
+- Bump shared workflows to `v1.46.2`. (@bedatty)
+- Update Go to `1.26.5`, shared workflows to `v1.46.1`, and dependencies. (@fredcamaral)
+
+[Compare changes](https://github.com/LerianStudio/fetcher/compare/v3.0.2...v3.1.0)
+
+---
+
 ## [3.0.1](https://github.com/LerianStudio/fetcher/releases/tag/v3.0.1)
 
 Fixes:
