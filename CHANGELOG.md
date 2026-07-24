@@ -1,5 +1,80 @@
 # Fetcher Changelog
 
+## [3.0.0](https://github.com/LerianStudio/fetcher/releases/tag/v3.0.0)
+
+Features:
+- Adopt `lib-commons` Huma wrapper for the manager, introducing a breaking change. (@fredcamaral)
+
+Fixes:
+- Address CodeRabbit review findings in the manager. (@fredcamaral)
+- Bound fuzz byte mutation in tests. (@fredcamaral)
+- Document controlled security inputs in the package. (@fredcamaral)
+- Convert Mongo pool size safely in the worker. (@fredcamaral)
+- Document OpenAPI artifact permissions in the manager. (@fredcamaral)
+
+Improvements:
+- Update `lib-streaming` to `v1.8.0`. (@fredcamaral)
+- Update Go builders to `1.26.5`. (@fredcamaral)
+
+[Compare changes](https://github.com/LerianStudio/fetcher/compare/v2.0.2...v3.0.0)
+
+---
+
+## [2.0.2](https://github.com/LerianStudio/fetcher/releases/tag/v2.0.2)
+
+- Changelog for `fetcher` `v2.0.2`:
+
+Fixes:
+- Promote engine release channel fix to stable.
+- Ensure engine release channel follows the parent prerelease.
+
+Contributors: @fredcamaral, @lerian-studio
+
+[Compare changes](https://github.com/LerianStudio/fetcher/compare/v2.0.1...v2.0.2)
+
+---
+
+## [2.0.1](https://github.com/LerianStudio/fetcher/releases/tag/v2.0.1)
+
+- Updated `fetcher` to `v2.0.1`.
+- Updated `fetcher` to `v2.0.1-beta.1`.
+- Updated CHANGELOGs for `fetcher:v2.0.0`.
+
+Contributors: @fredcamaral, @lerian-studio.
+
+[Compare changes](https://github.com/LerianStudio/fetcher/compare/v2.0.0...v2.0.1)
+
+---
+
+## [2.0.0](https://github.com/LerianStudio/fetcher/releases/tag/v2.0.0)
+
+- Features:
+  - Migrated fetcher worker to use `lib-streaming` `v1.6` with empty tenant defaulting to single-tenant mode.
+  - Introduced `ENGINE_MAX_RESULT_BYTES` override and streaming broker health probe for enhanced worker performance.
+  - Implemented fetcher as a runtime engine, enabling execution via engine with host-side schema-name normalization.
+  - Added canonical result model and in-memory result sink to the engine.
+  - Enforced cancellation, timeout, and result-size limits in the engine runner.
+
+- Fixes:
+  - Made missing-env secret test deterministic in CI environments.
+  - Restored Database Connection Error fidelity on `/schema` endpoint.
+  - Hardened multi-tenant consumer and stabilized terminal event remediation in the worker.
+  - Remediated terminal repair and publish confirms for streaming publisher.
+  - Addressed CodeRabbit findings on fetcher as runtime engine PR.
+
+- Improvements:
+  - Removed `lib-license-go` enforcement as fetcher is public OSS.
+  - Bumped Lerian libs to latest stable versions, excluding `lib-streaming`.
+  - Added Elastic License 2.0 to the project.
+  - Improved documentation for fetcher embedded runtime and updated architecture documentation.
+  - Enhanced CI workflows with upgraded shared workflows and added Docker dependabot entries.
+
+Contributors: @bedatty, @brunobls, @fredcamaral, @jeffersonrodrigues92, @lerian-studio.
+
+[Compare changes](https://github.com/LerianStudio/fetcher/compare/v1.4.2...v2.0.0)
+
+---
+
 ## [1.4.2](https://github.com/LerianStudio/fetcher/releases/tag/v1.4.2)
 
 - Fixes:

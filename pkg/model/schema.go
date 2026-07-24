@@ -29,30 +29,26 @@ const (
 )
 
 // SchemaValidationRequest represents the POST /v1/management/connections/validate-schema request body.
-//
-// swagger:model SchemaValidationRequest
-//
-// @Description Request body for schema validation containing mapped fields per datasource.
 type SchemaValidationRequest struct {
 	// MappedFields maps datasource config names to their tables and fields
 	// Key: configName (e.g., "midaz_onboarding")
 	// Value: map of table names to field names
-	MappedFields map[string]map[string][]string `json:"mappedFields" validate:"required"`
+	MappedFields map[string]map[string][]string `json:"mappedFields" validate:"required" doc:"Maps each datasource configuration name to tables and the fields required from each table." example:"{\"midaz_onboarding\":{\"accounts\":[\"id\",\"name\"]}}"`
 }
 
 // SchemaValidationResponse represents the response for schema validation.
 type SchemaValidationResponse struct {
-	Status  string                  `json:"status"` // "success" or "failure"
-	Message string                  `json:"message"`
-	Errors  []SchemaValidationError `json:"errors,omitempty"`
+	Status  string                  `json:"status" doc:"Schema validation outcome." example:"success"` // "success" or "failure"
+	Message string                  `json:"message" doc:"Human-readable schema validation result." example:"Schema validation completed successfully"`
+	Errors  []SchemaValidationError `json:"errors,omitempty" doc:"Validation failures, omitted when every requested field is valid." example:"[{\"type\":\"FIELD_NOT_FOUND\",\"dataSourceId\":\"midaz_onboarding\",\"table\":\"accounts\",\"field\":\"external_id\"}]"`
 }
 
 // SchemaValidationError represents a single validation error in the response.
 type SchemaValidationError struct {
-	Type         string `json:"type"`
-	DataSourceID string `json:"dataSourceId"`
-	Table        string `json:"table,omitempty"`
-	Field        string `json:"field,omitempty"`
+	Type         string `json:"type" doc:"Machine-readable validation failure type." example:"FIELD_NOT_FOUND"`
+	DataSourceID string `json:"dataSourceId" doc:"Datasource configuration name where validation failed." example:"midaz_onboarding"`
+	Table        string `json:"table,omitempty" doc:"Table or collection where validation failed." example:"accounts"`
+	Field        string `json:"field,omitempty" doc:"Field that could not be found, when applicable." example:"external_id"`
 }
 
 // SchemaValidationErrorResponse represents a validation failure response (HTTP 422).
@@ -60,10 +56,10 @@ type SchemaValidationError struct {
 // with an additional Errors array containing detailed validation failures.
 // Note: Success responses use SchemaValidationResponse with a different structure.
 type SchemaValidationErrorResponse struct {
-	Title   string                  `json:"title"`
-	Code    string                  `json:"code"`
-	Message string                  `json:"message"`
-	Errors  []SchemaValidationError `json:"errors"`
+	Title   string                  `json:"title" doc:"Short summary of the validation failure." example:"Schema Validation Failed"`
+	Code    string                  `json:"code" doc:"Machine-readable application error code." example:"FET-1060"`
+	Message string                  `json:"message" doc:"Human-readable explanation of the validation failure." example:"One or more requested fields are unavailable"`
+	Errors  []SchemaValidationError `json:"errors" doc:"Detailed schema validation failures."`
 }
 
 // ToMapWithMask returns a masked version for logging.

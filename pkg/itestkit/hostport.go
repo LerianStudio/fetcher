@@ -24,6 +24,7 @@ func runDockerProbe(args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), dockerProbeTimeout)
 	defer cancel()
 
+	// #nosec G204 -- this private helper is called only with compile-time Docker arguments below; no shell or external input is involved.
 	out, err := exec.CommandContext(ctx, "docker", args...).Output()
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {

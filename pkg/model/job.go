@@ -253,23 +253,15 @@ func (r *Job) SetFailedStatus(failedMsg string) {
 }
 
 // FetcherRequest represents the POST /v1/fetcher request body.
-//
-// swagger:model FetcherRequest
-//
-// @Description FetcherRequest represents the request body for creating a new data extraction job.
 type FetcherRequest struct {
-	DataRequest DataRequest    `json:"dataRequest" validate:"required"`
-	Metadata    map[string]any `json:"metadata,omitempty"`
+	DataRequest DataRequest    `json:"dataRequest" validate:"required" doc:"Fields and filters to extract from configured data sources." example:"{\"mappedFields\":{\"ledger\":{\"transactions\":[\"id\",\"amount\"]}}}"`
+	Metadata    map[string]any `json:"metadata,omitempty" doc:"Caller-defined metadata stored with the job; source identifies the owning product." example:"{\"source\":\"payments\",\"correlationId\":\"settlement-2026-07-13\"}"`
 }
 
 // DataRequest represents the data extraction request structure.
-//
-// swagger:model DataRequest
-//
-// @Description DataRequest encapsulates field mappings and optional filters for data extraction.
 type DataRequest struct {
-	MappedFields map[string]map[string][]string `json:"mappedFields" validate:"required"`
-	Filters      NestedFilters                  `json:"filters,omitempty"`
+	MappedFields map[string]map[string][]string `json:"mappedFields" validate:"required" doc:"Fields to extract, grouped by data source and table." example:"{\"ledger\":{\"transactions\":[\"id\",\"amount\"]}}"`
+	Filters      NestedFilters                  `json:"filters,omitempty" doc:"Optional filter conditions grouped by data source, table, and field." example:"{\"ledger\":{\"transactions\":{\"status\":{\"eq\":[\"approved\"]}}}}"`
 }
 
 // ComputeRequestHash generates a SHA-256 hash of the request for idempotency checks.
@@ -297,33 +289,25 @@ func (r *FetcherRequest) ComputeRequestHash() (string, error) {
 }
 
 // FetcherResponse represents the POST /v1/fetcher response body.
-//
-// swagger:model FetcherResponse
-//
-// @Description FetcherResponse represents the response after successfully creating a data extraction job.
 type FetcherResponse struct {
-	JobID     uuid.UUID `json:"jobId"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"createdAt"`
-	Message   string    `json:"message"`
+	JobID     uuid.UUID `json:"jobId" doc:"Unique identifier of the extraction job." example:"01980a89-21f0-7d7e-a109-564b5c6f53ac"`
+	Status    string    `json:"status" doc:"Current processing status of the job." example:"pending"`
+	CreatedAt time.Time `json:"createdAt" doc:"UTC timestamp when the job was created." example:"2026-07-13T12:00:00Z"`
+	Message   string    `json:"message" doc:"Outcome of the create request." example:"Job created and queued for processing"`
 }
 
 // JobResponse represents the GET /v1/fetcher/:id response body.
-//
-// swagger:model JobResponse
-//
-// @Description JobResponse represents the complete information about a data extraction job.
 type JobResponse struct {
-	ID           uuid.UUID                      `json:"id"`
-	Metadata     map[string]any                 `json:"metadata,omitempty"`
-	MappedFields map[string]map[string][]string `json:"mappedFields"`
-	Filters      NestedFilters                  `json:"filters,omitempty"`
-	Status       string                         `json:"status"`
-	ResultPath   string                         `json:"resultPath,omitempty"`
-	ResultHmac   string                         `json:"resultHmac,omitempty"`
-	RequestHash  string                         `json:"requestHash,omitempty"`
-	CreatedAt    time.Time                      `json:"createdAt"`
-	CompletedAt  *time.Time                     `json:"completedAt,omitempty"`
+	ID           uuid.UUID                      `json:"id" doc:"Unique identifier of the extraction job." example:"01980a89-21f0-7d7e-a109-564b5c6f53ac"`
+	Metadata     map[string]any                 `json:"metadata,omitempty" doc:"Caller-defined public metadata stored with the job." example:"{\"source\":\"payments\",\"correlationId\":\"settlement-2026-07-13\"}"`
+	MappedFields map[string]map[string][]string `json:"mappedFields" doc:"Fields requested for extraction, grouped by data source and table." example:"{\"ledger\":{\"transactions\":[\"id\",\"amount\"]}}"`
+	Filters      NestedFilters                  `json:"filters,omitempty" doc:"Filter conditions applied to the extraction." example:"{\"ledger\":{\"transactions\":{\"status\":{\"eq\":[\"approved\"]}}}}"`
+	Status       string                         `json:"status" doc:"Current processing status of the job." example:"completed"`
+	ResultPath   string                         `json:"resultPath,omitempty" doc:"Storage path of the generated extraction result." example:"s3://fetcher-results/jobs/01980a89-21f0-7d7e-a109-564b5c6f53ac.json"`
+	ResultHmac   string                         `json:"resultHmac,omitempty" doc:"HMAC digest used to verify the result integrity." example:"9dc118e1d4efdcf0f45bb646c38c2a02e9c20b0fc2c75c1a9be0fae200bd9f93"`
+	RequestHash  string                         `json:"requestHash,omitempty" doc:"SHA-256 digest used to detect idempotent duplicate requests." example:"d7a8fbb307d7809469ca9abcb0082e4f8d5651e46d3cdb762d02d0bf37c9e592"`
+	CreatedAt    time.Time                      `json:"createdAt" doc:"UTC timestamp when the job was created." example:"2026-07-13T12:00:00Z"`
+	CompletedAt  *time.Time                     `json:"completedAt,omitempty" doc:"UTC timestamp when the job reached a terminal state." example:"2026-07-13T12:05:00Z"`
 }
 
 // NewJobResponseFrom creates a JobResponse from a Job entity.

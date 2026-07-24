@@ -15,8 +15,11 @@ permissions:
 
 jobs:
   validate:
-    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/go-pr-validation.yml@v1.36.5
+    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/go-pr-validation.yml@v1.46.2
     with:
+      enforce_source_branches: true
+      allowed_source_branches: 'hotfix/*|release-candidate'
+      target_branches_for_source_check: 'main'
       pr_title_scopes: |
         manager
         worker
@@ -28,7 +31,7 @@ jobs:
         docs
         tests
         migrations
-      go_version: "1.26.4"
+      go_version: "1.26.5"
       golangci_lint_version: "v2.6.2"
       app_name_prefix: "fetcher"
       filter_paths: |

@@ -14,7 +14,7 @@ Lerian Fetcher is an enterprise data extraction platform that unifies access to 
 ```bash
 make set-env              # Copy .env.example to .env for all components
 make generate-master-key  # Generate APP_ENC_KEY (REQUIRED before services start)
-make dev-setup            # Install tools (golangci-lint, swag, mockgen, gosec) + tidy
+make dev-setup            # Install tools (golangci-lint, mockgen, gosec) + tidy
 ```
 
 ### Build & Run
@@ -44,7 +44,8 @@ make lint           # golangci-lint with --fix (28 linters, max cyclomatic compl
 make format         # go fmt
 make tidy           # go mod tidy
 make sec            # gosec security analysis
-make generate-docs  # Regenerate Swagger docs (swag init)
+make generate-docs  # Regenerate the canonical Huma OpenAPI 3.1 specification
+make check-openapi  # Fail when the committed OpenAPI specification is stale
 ```
 
 ## Architecture
@@ -115,7 +116,7 @@ Async RabbitMQ consumer. Does NOT follow CQRS - uses a single `UseCase` struct i
 
 **CQRS services (Manager only):** Struct with `Execute()` method. Constructor `NewXxx(deps...)`. Dependencies are port interfaces, never concrete implementations.
 
-**HTTP handlers:** Thin handlers in `internal/adapters/http/in/` with Swagger annotations (swaggo). Extract org ID via `httpUtils.GetOrganizationID(c)`, product name from `X-Product-Name` header.
+**HTTP operations:** Typed Huma callbacks in `internal/adapters/http/in/huma_*.go`, registered through the single runtime/spec assembly. Preserve the request context installed by auth/tenant middleware and read the product name from the `X-Product-Name` header when required. Return errors through the lib-commons RFC 9457 problem model.
 
 **Error handling:** Use `pkg.ValidateBusinessError(constant.ErrXxx, "entityType", args...)` for business errors. Custom types in `pkg/errors.go` map to HTTP status codes.
 
@@ -165,7 +166,7 @@ Async RabbitMQ consumer. Does NOT follow CQRS - uses a single `UseCase` struct i
 | `components/manager/README.md` | Manager service (HTTP control plane, runs over the engine) |
 | `components/worker/README.md` | Worker service (async data plane, runs over the engine) |
 | `tests/e2e/README.md` | E2E test conventions, patterns, test catalog |
-| `components/manager/api/swagger.yaml` | OpenAPI specification |
+| `components/manager/api/openapi.yaml` | Canonical OpenAPI 3.1 specification |
 | `components/manager/api/requests.http` | API request examples for manual testing |
 | `.golangci.yml` | Full linter configuration (28 linters) |
 
@@ -173,11 +174,11 @@ Async RabbitMQ consumer. Does NOT follow CQRS - uses a single `UseCase` struct i
 
 ### Adding a new API endpoint
 
-1. Create handler in `components/manager/internal/adapters/http/in/` with Swagger annotations
-2. Register route in the routes file
+1. Add the typed callback and operation metadata in the appropriate `components/manager/internal/adapters/http/in/huma_*.go` file
+2. Register the operation through the shared Huma assembly in `huma_operations.go`
 3. Create command or query service in `internal/services/command/` or `internal/services/query/`
 4. Wire dependencies in `internal/bootstrap/`
-5. Run `make generate-docs`
+5. Run `make generate-docs` and `make check-openapi`
 
 ### Adding a new database adapter
 

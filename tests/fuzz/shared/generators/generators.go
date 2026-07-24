@@ -112,9 +112,13 @@ func mutateRemoveBytes(data []byte) []byte {
 func mutateInsertBytes(data []byte) []byte {
 	if len(data) > 0 {
 		pos := rand.Intn(len(data))      // #nosec G404
-		randByte := byte(rand.Intn(256)) // #nosec G404
+		randByte := byte(rand.Intn(256)) // #nosec G115 G404 -- Intn(256) is bounded to [0,255]; weak RNG is intentional for fuzz input
+		result := make([]byte, 0, len(data)+1)
+		result = append(result, data[:pos]...)
+		result = append(result, randByte)
+		result = append(result, data[pos:]...)
 
-		return append(data[:pos], append([]byte{randByte}, data[pos:]...)...)
+		return result
 	}
 
 	return data

@@ -232,14 +232,15 @@ Lerian Fetcher is built as a cloud-native platform following Hexagonal Architect
 | `GET` | `/health` | Liveness check |
 | `GET` | `/readyz` | Readiness check — parallel dependency probes (MongoDB, RabbitMQ, Redis; S3 on Worker), returns 503 while draining on SIGTERM |
 | `GET` | `/version` | Version info |
-| `GET` | `/swagger/*` | Swagger UI |
+| `GET` | `/swagger/docs` | Scalar API reference (`SWAGGER_ENABLED=true`) |
+| `GET` | `/swagger/openapi.{json,yaml}` | OpenAPI 3.1 contract (`SWAGGER_ENABLED=true`) |
 
 ### API Reference & Testing
 
 For hands-on API exploration and testing scenarios, the following resources are available:
 
 - **[`components/manager/api/requests.http`](components/manager/api/requests.http)**: Ready-to-use HTTP request examples covering all API endpoints — useful for quick testing with VS Code REST Client, IntelliJ, or similar tools.
-- **[`components/manager/api/swagger.yaml`](components/manager/api/swagger.yaml)**: Full OpenAPI specification for the Manager API, which can be imported into Postman, Insomnia, or any OpenAPI-compatible tool.
+- **[`components/manager/api/openapi.yaml`](components/manager/api/openapi.yaml)**: Canonical OpenAPI 3.1 specification for the Manager API, generated from the same Huma assembly used at runtime.
 - **[`tests/e2e/`](tests/e2e/)**: End-to-end test suite covering connection management, data extraction across all supported databases, filtering, multi-datasource/multi-schema scenarios, schema validation, and error handling. These tests serve as practical usage examples and can be referenced to understand expected behaviors and edge cases.
 
 ### Technical Highlights
@@ -315,7 +316,7 @@ Single-tenant deployments emit with stable tenant ID `single-tenant`; multi-tena
 
 5. **Access the API:**
    - REST API: `http://localhost:4006`
-   - Swagger UI: `http://localhost:4006/swagger/index.html`
+   - Scalar API reference (when enabled): `http://localhost:4006/swagger/docs`
    - RabbitMQ Management: `http://localhost:3008`
 
 ### Security

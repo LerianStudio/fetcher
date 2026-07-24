@@ -2,14 +2,18 @@ package services
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"strings"
 	"testing"
 
+	"github.com/LerianStudio/fetcher/v2/pkg"
 	modelJob "github.com/LerianStudio/fetcher/v2/pkg/model/job"
 	portDS "github.com/LerianStudio/fetcher/v2/pkg/ports/datasource"
 	libCrypto "github.com/LerianStudio/lib-commons/v5/commons/crypto"
 	libLog "github.com/LerianStudio/lib-observability/log"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
 
@@ -147,25 +151,25 @@ func TestHashFilterValues(t *testing.T) {
 	}
 }
 
-// TestDecryptPluginCRMData_NoDecryptionNeeded tests the edge case where no decryption is needed.
+// TestDecryptPluginCRMData_NoDecryptionNeeded tests records that contain no
+// encrypted content: decryption is content-driven, so the records round-trip
+// unchanged even though valid keys are configured.
 func TestDecryptPluginCRMData_NoDecryptionNeeded(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
 	mocks := newTestMocks(ctrl)
 	uc := newTestUseCase(mocks)
+	uc.SetCRMSecrets(crmTestEncryptKey, crmTestHashKey)
 	logger := testLogger()
 
-	// Fields that don't require decryption
-	fields := []string{"id", "status", "created_at"}
-
-	// Sample collection result
+	// Sample collection result with no encrypted content.
 	collectionResult := []map[string]any{
 		{"id": "123", "status": "active", "created_at": "2024-01-01"},
 		{"id": "456", "status": "inactive", "created_at": "2024-01-02"},
 	}
 
-	result, err := uc.decryptPluginCRMData(logger, collectionResult, fields)
+	result, err := uc.decryptPluginCRMData(logger, collectionResult)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -195,19 +199,18 @@ func TestDecryptPluginCRMData_WithEncryptedFields(t *testing.T) {
 	uc := newTestUseCase(mocks)
 	logger := testLogger()
 
-	// Fields that require decryption
-	fields := []string{"document", "name", "status"}
-
 	// Sample collection result
 	collectionResult := []map[string]any{
 		{"id": "123", "status": "active"},
 	}
 
-	// This should fail because we don't have the env vars set
-	_, err := uc.decryptPluginCRMData(logger, collectionResult, fields)
-	if err == nil {
-		t.Error("expected error due to missing env vars, got nil")
-	}
+	// newTestUseCase seeds non-empty but invalid CRM keys, so the missing-key
+	// preconditions pass and the failure surfaces at cipher initialization
+	// (FET-0064) as a fail-closed FailedPreconditionError.
+	_, err := uc.decryptPluginCRMData(logger, collectionResult)
+	var fpe pkg.FailedPreconditionError
+	require.ErrorAs(t, err, &fpe, "expected pkg.FailedPreconditionError")
+	assert.Equal(t, "FET-0064", fpe.Code, "expected cipher-init-failed error code")
 }
 
 // TestDecryptPluginCRMData_WithNestedField tests decryption with nested field paths.
@@ -219,22 +222,22 @@ func TestDecryptPluginCRMData_WithNestedField(t *testing.T) {
 	uc := newTestUseCase(mocks)
 	logger := testLogger()
 
-	// Fields with nested paths require decryption
-	fields := []string{"contact.primary_email", "id"}
-
 	// Sample collection result
 	collectionResult := []map[string]any{
 		{"id": "123", "contact": map[string]any{"primary_email": "test@example.com"}},
 	}
 
-	// This should fail because we don't have the env vars set
-	_, err := uc.decryptPluginCRMData(logger, collectionResult, fields)
-	if err == nil {
-		t.Error("expected error due to missing env vars, got nil")
-	}
+	// newTestUseCase seeds non-empty but invalid CRM keys, so the missing-key
+	// preconditions pass and the failure surfaces at cipher initialization
+	// (FET-0064) as a fail-closed FailedPreconditionError.
+	_, err := uc.decryptPluginCRMData(logger, collectionResult)
+	var fpe pkg.FailedPreconditionError
+	require.ErrorAs(t, err, &fpe, "expected pkg.FailedPreconditionError")
+	assert.Equal(t, "FET-0064", fpe.Code, "expected cipher-init-failed error code")
 }
 
-// TestDecryptPluginCRMData_EmptyResult tests decryption with empty result set.
+// TestDecryptPluginCRMData_EmptyResult tests that an empty result set short-circuits
+// before any key validation or cipher init, returning no error even with no keys set.
 func TestDecryptPluginCRMData_EmptyResult(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
@@ -243,16 +246,16 @@ func TestDecryptPluginCRMData_EmptyResult(t *testing.T) {
 	uc := newTestUseCase(mocks)
 	logger := testLogger()
 
-	// Fields that require decryption
-	fields := []string{"document", "name"}
-
-	// Empty collection result
+	// Empty collection result must short-circuit (no cipher init, no error).
 	collectionResult := []map[string]any{}
 
-	// Should not fail on empty result
-	_, err := uc.decryptPluginCRMData(logger, collectionResult, fields)
-	if err == nil {
-		t.Error("expected error due to missing env vars, got nil")
+	result, err := uc.decryptPluginCRMData(logger, collectionResult)
+	if err != nil {
+		t.Fatalf("expected no error for empty result, got: %v", err)
+	}
+
+	if len(result) != 0 {
+		t.Errorf("expected empty result, got %d records", len(result))
 	}
 }
 
@@ -665,6 +668,13 @@ func TestDecryptNestedFields(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "regulatory_fields present but not a map",
+			record: map[string]any{
+				"regulatory_fields": "not-a-map",
+			},
+			wantErr: false,
+		},
+		{
 			name: "legal_person field - not map",
 			record: map[string]any{
 				"legal_person": "not-a-map",
@@ -776,6 +786,56 @@ func TestDecryptBankingDetailsFields(t *testing.T) {
 	if err != nil {
 		t.Errorf("expected no error for nil/empty values, got: %v", err)
 	}
+}
+
+// TestDecryptRegulatoryFields tests regulatory_fields field decryption directly
+// (not via decryptNestedFields), mirroring TestDecryptBankingDetailsFields for
+// naming parity and discoverability among the decrypt*Fields sibling tests.
+func TestDecryptRegulatoryFields(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+	logger := testLogger()
+
+	crypto := &libCrypto.Crypto{
+		HashSecretKey:    crmTestHashKey,
+		EncryptSecretKey: crmTestEncryptKey,
+		Logger:           logger,
+	}
+	require.NoError(t, crypto.InitializeCipher(), "failed to initialize cipher")
+
+	t.Run("participant_document decrypts to plaintext", func(t *testing.T) {
+		t.Parallel()
+
+		const plainCNPJ = "12345678000199"
+
+		record := map[string]any{
+			"regulatory_fields": map[string]any{
+				"participant_document": mustEncrypt(t, crypto, plainCNPJ),
+			},
+		}
+
+		err := uc.decryptRegulatoryFields(record, crypto)
+		require.NoError(t, err, "decryptRegulatoryFields returned error")
+
+		regulatoryFields, ok := record["regulatory_fields"].(map[string]any)
+		require.True(t, ok, "regulatory_fields must remain a map, got %T", record["regulatory_fields"])
+		assert.Equal(t, plainCNPJ, regulatoryFields["participant_document"], "regulatory_fields.participant_document should decrypt to plaintext")
+	})
+
+	t.Run("regulatory_fields absent is a no-op", func(t *testing.T) {
+		t.Parallel()
+
+		record := map[string]any{"id": "holder-1"}
+
+		err := uc.decryptRegulatoryFields(record, crypto)
+		require.NoError(t, err, "decryptRegulatoryFields must be a no-op when regulatory_fields is absent")
+		assert.Equal(t, map[string]any{"id": "holder-1"}, record, "record must be unchanged")
+	})
 }
 
 // TestDecryptLegalPersonFields tests legal person field decryption.
@@ -1112,7 +1172,7 @@ func TestProcessPluginCRMCollection_WithOrganizationID(t *testing.T) {
 		}
 	}
 
-	decryptPluginCRMDataFn = func(_ *UseCase, _ libLog.Logger, collectionResult []map[string]any, fields []string) ([]map[string]any, error) {
+	decryptPluginCRMDataFn = func(_ *UseCase, _ libLog.Logger, collectionResult []map[string]any) ([]map[string]any, error) {
 		if len(collectionResult) != 2 {
 			t.Fatalf("expected 2 merged results, got %d: %+v", len(collectionResult), collectionResult)
 		}
@@ -1173,19 +1233,15 @@ func TestDecryptPluginCRMData_MissingHashSecretKey(t *testing.T) {
 	// Set only the encrypt key, not the hash key
 	uc.SetCRMSecrets("test-encrypt-key", "")
 
-	fields := []string{"document", "name"}
 	collectionResult := []map[string]any{
 		{"id": "123", "document": "encrypted-doc"},
 	}
 
-	_, err := uc.decryptPluginCRMData(logger, collectionResult, fields)
-	if err == nil {
-		t.Error("expected error when hash secret key is missing")
-	}
-
-	if err.Error() != "CRM hash secret key not configured" {
-		t.Errorf("unexpected error message: %v", err)
-	}
+	_, err := uc.decryptPluginCRMData(logger, collectionResult)
+	var fpe pkg.FailedPreconditionError
+	require.ErrorAs(t, err, &fpe, "expected pkg.FailedPreconditionError")
+	assert.Equal(t, "FET-0057", fpe.Code, "expected missing-hash-key error code")
+	assert.Equal(t, "CRM hash secret key not configured", fpe.Message, "unexpected error message")
 }
 
 // TestDecryptPluginCRMData_MissingEncryptSecretKey tests error when encrypt secret key is missing.
@@ -1200,19 +1256,40 @@ func TestDecryptPluginCRMData_MissingEncryptSecretKey(t *testing.T) {
 	// Set only the hash key, not the encrypt key
 	uc.SetCRMSecrets("", "test-hash-key")
 
-	fields := []string{"document", "name"}
 	collectionResult := []map[string]any{
 		{"id": "123", "document": "encrypted-doc"},
 	}
 
-	_, err := uc.decryptPluginCRMData(logger, collectionResult, fields)
-	if err == nil {
-		t.Error("expected error when encrypt secret key is missing")
+	_, err := uc.decryptPluginCRMData(logger, collectionResult)
+	var fpe pkg.FailedPreconditionError
+	require.ErrorAs(t, err, &fpe, "expected pkg.FailedPreconditionError")
+	assert.Equal(t, "FET-0058", fpe.Code, "expected missing-encrypt-key error code")
+	assert.Equal(t, "CRM encrypt secret key not configured", fpe.Message, "unexpected error message")
+}
+
+// TestDecryptPluginCRMData_MalformedCiphertext locks the fail-closed behavior of the
+// rewritten function: with valid keys configured but a known-encrypted field seeded
+// with non-decryptable bytes, decryption must surface a FailedPreconditionError with
+// code FET-0065 rather than silently passing the garbage through.
+func TestDecryptPluginCRMData_MalformedCiphertext(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+	uc.SetCRMSecrets(crmTestEncryptKey, crmTestHashKey)
+	logger := testLogger()
+
+	// `document` is a known encrypted field, but this value is plain garbage that
+	// is not valid AES-256-GCM ciphertext, so Decrypt must fail.
+	collectionResult := []map[string]any{
+		{"id": "123", "document": "this-is-not-valid-ciphertext"},
 	}
 
-	if err.Error() != "CRM encrypt secret key not configured" {
-		t.Errorf("unexpected error message: %v", err)
-	}
+	_, err := uc.decryptPluginCRMData(logger, collectionResult)
+	var fpe pkg.FailedPreconditionError
+	require.ErrorAs(t, err, &fpe, "expected pkg.FailedPreconditionError")
+	assert.Equal(t, "FET-0065", fpe.Code, "expected decryption-failure error code")
 }
 
 // TestQueryPluginCRM_EmptyCollections tests QueryPluginCRM with empty collections.
@@ -1597,16 +1674,13 @@ func TestDecryptPluginCRMData_WithValidCrypto(t *testing.T) {
 		"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 	)
 
-	// Fields that don't require decryption (non-encrypted fields)
-	fields := []string{"id", "status"}
-
 	// Sample collection result
 	collectionResult := []map[string]any{
 		{"id": "123", "status": "active"},
 		{"id": "456", "status": "inactive"},
 	}
 
-	result, err := uc.decryptPluginCRMData(logger, collectionResult, fields)
+	result, err := uc.decryptPluginCRMData(logger, collectionResult)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -1798,7 +1872,7 @@ func TestProcessPluginCRMCollection_TransformsCollectionAndDecryptsResult(t *tes
 		return []map[string]any{{"document": "encrypted-doc"}}, nil
 	}
 
-	decryptPluginCRMDataFn = func(_ *UseCase, _ libLog.Logger, collectionResult []map[string]any, _ []string) ([]map[string]any, error) {
+	decryptPluginCRMDataFn = func(_ *UseCase, _ libLog.Logger, collectionResult []map[string]any) ([]map[string]any, error) {
 		return []map[string]any{{"document": plainDocument}}, nil
 	}
 
@@ -1937,4 +2011,768 @@ func TestGetTableFilters_WithDeepNesting(t *testing.T) {
 	if len(result2) != 1 {
 		t.Errorf("expected 1 field for table2, got %d", len(result2))
 	}
+}
+
+// crmTestKeys are the valid hex keys (32 bytes / 64 hex chars) used to drive a
+// real encrypt/decrypt round-trip in TestDecryptPluginCRMData.
+const (
+	crmTestHashKey    = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	crmTestEncryptKey = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+)
+
+// mustEncrypt encrypts plain with the supplied crypto, failing the test on error.
+func mustEncrypt(t *testing.T, crypto *libCrypto.Crypto, plain string) string {
+	t.Helper()
+
+	cipher, err := crypto.Encrypt(&plain)
+	if err != nil {
+		t.Fatalf("failed to encrypt %q: %v", plain, err)
+	}
+
+	return *cipher
+}
+
+// TestDecryptPluginCRMData drives the REAL uc.decryptPluginCRMData (not the
+// decryptPluginCRMDataFn indirection hook) over a full encrypt -> decrypt
+// round-trip. It proves decryption is content-driven: encrypted PII is decrypted
+// regardless of whether the requested fields carry a dotted path.
+//
+// Coverage goal (fetcher-029, extended by fetcher-033): every field that plugin-crm
+// actually encrypts and the Fetcher actually decrypts must round-trip back to
+// plaintext. That is the set of 15 fields below, split across a holder-shaped record
+// and an alias-shaped record:
+//
+//	Top-level (decryptTopLevelFields):
+//	  1. document
+//	  2. name
+//	Nested contact (decryptContactFields):
+//	  3. contact.primary_email
+//	  4. contact.secondary_email
+//	  5. contact.mobile_phone
+//	  6. contact.other_phone
+//	Nested banking_details (decryptBankingDetailsFields):
+//	  7. banking_details.account
+//	  8. banking_details.iban
+//	Nested regulatory_fields (decryptRegulatoryFields):
+//	  9. regulatory_fields.participant_document
+//	Nested legal_person.representative (decryptLegalPersonFields):
+//	  10. legal_person.representative.name
+//	  11. legal_person.representative.document
+//	  12. legal_person.representative.email
+//	Nested natural_person (decryptNaturalPersonFields):
+//	  13. natural_person.mother_name
+//	  14. natural_person.father_name
+//
+// Note: `document` is the shared top-level handler for both holder and alias records,
+// so both shapes exercise it (15 distinct field positions across the two records).
+//
+// regulatory_fields.participant_document (fetcher-033 / CCS-0011): the deployed CRM
+// (midaz/components/crm v3) DOES encrypt this field, and dev-st runs with
+// KMS_VENDOR=none, meaning the CRM falls back to legacy AES-GCM with the same CRM
+// encrypt key the Fetcher already holds. decryptRegulatoryFields (extract_crm_data.go)
+// decrypts it via the same crypto primitive as banking_details.account, so it is now
+// asserted as decrypted below like every other field in this list.
+//
+// Not asserted here: related_parties[].document and related_parties[].name.
+// related_parties[].document IS decrypted in production (fetcher-033 / Epic 2.1),
+// by decryptRelatedParties — that coverage lives in its own dedicated tests, not
+// in this one: TestDecryptRelatedParties (direct unit coverage of
+// decryptRelatedParties) and TestDecryptNestedFields_RelatedPartiesDocument_DecryptsToPlaintext
+// (through the decryptNestedFields production entrypoint). related_parties[].name
+// (and role/start_date/end_date) are plaintext in the live CRM and are
+// intentionally never decrypted. This test's own fixtures simply don't put a
+// related_parties field on any case, so nothing related_parties-shaped is
+// asserted here.
+//
+// After fetcher-029, decryptPluginCRMData takes no `fields` parameter: plugin_crm
+// decryption is UNCONDITIONAL and content-driven — it walks the record and decrypts
+// every known encrypted field it finds, regardless of the requested field projection.
+// The case names still describe the record shapes (holder / alias / nested-only) they
+// exercise, but no field projection is fed to the function under test.
+func TestDecryptPluginCRMData(t *testing.T) {
+	tests := []struct {
+		name      string
+		buildRecs func(crypto *libCrypto.Crypto) []map[string]any
+		assertFn  func(t *testing.T, records []map[string]any)
+	}{
+		{
+			// Covers all PII the holder shape carries: top-level name+document, all
+			// four contact fields, regulatory_fields.participant_document, both
+			// natural_person fields, and all three legal_person.representative fields.
+			name: "non-dotted holder projection decrypts every holder PII field",
+			buildRecs: func(crypto *libCrypto.Crypto) []map[string]any {
+				return []map[string]any{
+					{
+						"_id":      "holder-1",
+						"type":     "natural_person",
+						"name":     mustEncrypt(t, crypto, "Ada Lovelace"),
+						"document": mustEncrypt(t, crypto, "11122233344"),
+						"contact": map[string]any{
+							"primary_email":   mustEncrypt(t, crypto, "ada@example.com"),
+							"secondary_email": mustEncrypt(t, crypto, "ada.alt@example.com"),
+							"mobile_phone":    mustEncrypt(t, crypto, "+5511999999999"),
+							"other_phone":     mustEncrypt(t, crypto, "+551133334444"),
+						},
+						"regulatory_fields": map[string]any{
+							"participant_document": mustEncrypt(t, crypto, "12345678000199"),
+						},
+						"natural_person": map[string]any{
+							"mother_name":   mustEncrypt(t, crypto, "Annabella Milbanke"),
+							"father_name":   mustEncrypt(t, crypto, "George Byron"),
+							"favorite_name": "Ada",
+						},
+						"legal_person": map[string]any{
+							"representative": map[string]any{
+								"name":     mustEncrypt(t, crypto, "Charles Babbage"),
+								"document": mustEncrypt(t, crypto, "55566677788"),
+								"email":    mustEncrypt(t, crypto, "charles@example.com"),
+								"role":     "director",
+							},
+						},
+					},
+				}
+			},
+			assertFn: func(t *testing.T, records []map[string]any) {
+				rec := records[0]
+
+				// Top-level encrypted fields (#1 name, #2 document).
+				assert.Equal(t, "Ada Lovelace", rec["name"], "name should decrypt to plaintext")
+				assert.Equal(t, "11122233344", rec["document"], "document should decrypt to plaintext")
+
+				// Nested contact (#3-#6).
+				contact, ok := rec["contact"].(map[string]any)
+				require.True(t, ok, "contact must remain a map, got %T", rec["contact"])
+				assert.Equal(t, "ada@example.com", contact["primary_email"], "contact.primary_email")
+				assert.Equal(t, "ada.alt@example.com", contact["secondary_email"], "contact.secondary_email")
+				assert.Equal(t, "+5511999999999", contact["mobile_phone"], "contact.mobile_phone")
+				assert.Equal(t, "+551133334444", contact["other_phone"], "contact.other_phone")
+
+				// Nested regulatory_fields (#9). fetcher-033: previously NOT asserted
+				// as decrypted (stale premise — the CRM does encrypt this field, and
+				// decryptRegulatoryFields now decrypts it in production).
+				regulatoryFields, ok := rec["regulatory_fields"].(map[string]any)
+				require.True(t, ok, "regulatory_fields must remain a map, got %T", rec["regulatory_fields"])
+				assert.Equal(t, "12345678000199", regulatoryFields["participant_document"], "regulatory_fields.participant_document should decrypt to plaintext")
+
+				// Nested natural_person (#13-#14).
+				np, ok := rec["natural_person"].(map[string]any)
+				require.True(t, ok, "natural_person must remain a map, got %T", rec["natural_person"])
+				assert.Equal(t, "Annabella Milbanke", np["mother_name"], "natural_person.mother_name")
+				assert.Equal(t, "George Byron", np["father_name"], "natural_person.father_name")
+				assert.Equal(t, "Ada", np["favorite_name"], "natural_person.favorite_name must stay plaintext")
+
+				// Nested legal_person.representative (#10-#12).
+				lp, ok := rec["legal_person"].(map[string]any)
+				require.True(t, ok, "legal_person must remain a map, got %T", rec["legal_person"])
+				rep, ok := lp["representative"].(map[string]any)
+				require.True(t, ok, "legal_person.representative must remain a map, got %T", lp["representative"])
+				assert.Equal(t, "Charles Babbage", rep["name"], "legal_person.representative.name")
+				assert.Equal(t, "55566677788", rep["document"], "legal_person.representative.document")
+				assert.Equal(t, "charles@example.com", rep["email"], "legal_person.representative.email")
+				assert.Equal(t, "director", rep["role"], "legal_person.representative.role must stay plaintext")
+
+				// Co-located structural/plaintext fields stay intact.
+				assert.Equal(t, "holder-1", rec["_id"], "_id must stay intact")
+				assert.Equal(t, "natural_person", rec["type"], "type must stay intact")
+			},
+		},
+		{
+			// Covers the alias shape: top-level document plus banking_details.account
+			// and banking_details.iban.
+			name: "non-dotted alias projection decrypts document and banking_details PII",
+			buildRecs: func(crypto *libCrypto.Crypto) []map[string]any {
+				return []map[string]any{
+					{
+						"_id":      "alias-1",
+						"type":     "alias",
+						"document": mustEncrypt(t, crypto, "99988877766"),
+						"banking_details": map[string]any{
+							"account": mustEncrypt(t, crypto, "1234567890"),
+							"iban":    mustEncrypt(t, crypto, "BR1500000000000010932840814P2"),
+							"branch":  "0001",
+						},
+					},
+				}
+			},
+			assertFn: func(t *testing.T, records []map[string]any) {
+				rec := records[0]
+
+				// Top-level document via the shared handler (#1 document).
+				assert.Equal(t, "99988877766", rec["document"], "alias document should decrypt to plaintext")
+
+				// Nested banking_details (#7-#8).
+				bd, ok := rec["banking_details"].(map[string]any)
+				require.True(t, ok, "banking_details must remain a map, got %T", rec["banking_details"])
+				assert.Equal(t, "1234567890", bd["account"], "banking_details.account")
+				assert.Equal(t, "BR1500000000000010932840814P2", bd["iban"], "banking_details.iban")
+				assert.Equal(t, "0001", bd["branch"], "banking_details.branch must stay plaintext")
+
+				// Co-located structural/plaintext fields stay intact.
+				assert.Equal(t, "alias-1", rec["_id"], "_id must stay intact")
+				assert.Equal(t, "alias", rec["type"], "type must stay intact")
+			},
+		},
+		{
+			// Non-regression control: a nested-only record must still decrypt its
+			// nested PII exactly as the holder/alias records above.
+			name: "dotted field control still decrypts nested PII (non-regression)",
+			buildRecs: func(crypto *libCrypto.Crypto) []map[string]any {
+				return []map[string]any{
+					{
+						"banking_details": map[string]any{
+							"account": mustEncrypt(t, crypto, "9999999999"),
+							"branch":  "0002",
+						},
+					},
+				}
+			},
+			assertFn: func(t *testing.T, records []map[string]any) {
+				bd, ok := records[0]["banking_details"].(map[string]any)
+				require.True(t, ok, "banking_details must remain a map, got %T", records[0]["banking_details"])
+				assert.Equal(t, "9999999999", bd["account"], "banking_details.account")
+				assert.Equal(t, "0002", bd["branch"], "banking_details.branch must stay plaintext")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			mocks := newTestMocks(ctrl)
+			uc := newTestUseCase(mocks)
+			uc.SetCRMSecrets(crmTestEncryptKey, crmTestHashKey)
+			logger := testLogger()
+
+			crypto := &libCrypto.Crypto{
+				HashSecretKey:    crmTestHashKey,
+				EncryptSecretKey: crmTestEncryptKey,
+				Logger:           logger,
+			}
+			require.NoError(t, crypto.InitializeCipher(), "failed to initialize cipher")
+
+			records := tt.buildRecs(crypto)
+
+			result, err := uc.decryptPluginCRMData(logger, records)
+			require.NoError(t, err, "decryptPluginCRMData returned error")
+			require.Len(t, result, len(records), "record count must be preserved")
+
+			tt.assertFn(t, result)
+		})
+	}
+}
+
+// TestDecryptNestedFields_RegulatoryFieldsParticipantDocument_DecryptsToPlaintext proves
+// the CCS-0011 round-trip fix: regulatory_fields.participant_document, encrypted with the
+// SAME runtime crypto primitive the Fetcher already uses to decrypt banking_details.account
+// (real AES-GCM encrypt/decrypt via *libCrypto.Crypto, not a mock), must decrypt to plaintext
+// through decryptNestedFields.
+func TestDecryptNestedFields_RegulatoryFieldsParticipantDocument_DecryptsToPlaintext(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mocks := newTestMocks(ctrl)
+	uc := newTestUseCase(mocks)
+	logger := testLogger()
+
+	crypto := &libCrypto.Crypto{
+		HashSecretKey:    crmTestHashKey,
+		EncryptSecretKey: crmTestEncryptKey,
+		Logger:           logger,
+	}
+	require.NoError(t, crypto.InitializeCipher(), "failed to initialize cipher")
+
+	const plainCNPJ = "12345678000199"
+
+	record := map[string]any{
+		"regulatory_fields": map[string]any{
+			"participant_document": mustEncrypt(t, crypto, plainCNPJ),
+		},
+	}
+
+	err := uc.decryptNestedFields(record, crypto)
+	require.NoError(t, err, "decryptNestedFields returned error")
+
+	regulatoryFields, ok := record["regulatory_fields"].(map[string]any)
+	require.True(t, ok, "regulatory_fields must remain a map, got %T", record["regulatory_fields"])
+	assert.Equal(t, plainCNPJ, regulatoryFields["participant_document"], "regulatory_fields.participant_document should decrypt to plaintext")
+}
+
+// TestDecryptNestedFields_RegulatoryFieldsAbsentOrKeyMissing_NoOpNoError covers the
+// no-op branches of decryptRegulatoryFields (fetcher-033, cases b/c): when the
+// regulatory_fields object itself is absent from the record, or it is present but
+// participant_document is either missing or explicitly nil, decryption must be a
+// no-op — no error, and the record (including any sibling plaintext data) must come
+// back byte-identical. It uses the same real *libCrypto.Crypto primitive as the
+// decrypting-path tests (never a mock), even though these branches never reach
+// Decrypt, so a future regression that starts invoking Decrypt on a nil/missing
+// value is still exercised against the real cipher.
+func TestDecryptNestedFields_RegulatoryFieldsAbsentOrKeyMissing_NoOpNoError(t *testing.T) {
+	t.Parallel()
+
+	crypto := &libCrypto.Crypto{
+		HashSecretKey:    crmTestHashKey,
+		EncryptSecretKey: crmTestEncryptKey,
+		Logger:           testLogger(),
+	}
+	require.NoError(t, crypto.InitializeCipher(), "failed to initialize cipher")
+
+	tests := []struct {
+		name   string
+		record map[string]any
+		want   map[string]any
+	}{
+		{
+			name:   "regulatory_fields object absent from record",
+			record: map[string]any{"id": "holder-1", "type": "natural_person"},
+			want:   map[string]any{"id": "holder-1", "type": "natural_person"},
+		},
+		{
+			name: "regulatory_fields present but participant_document key absent",
+			record: map[string]any{
+				"regulatory_fields": map[string]any{"other_field": "unrelated-value"},
+			},
+			want: map[string]any{
+				"regulatory_fields": map[string]any{"other_field": "unrelated-value"},
+			},
+		},
+		{
+			name: "regulatory_fields present with participant_document explicitly nil",
+			record: map[string]any{
+				"regulatory_fields": map[string]any{"participant_document": nil},
+			},
+			want: map[string]any{
+				"regulatory_fields": map[string]any{"participant_document": nil},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := runDecryptNestedFieldsWithFreshUseCase(t, crypto, tt.record)
+			require.NoError(t, err, "decryptNestedFields must be a no-op, not an error")
+			assert.Equal(t, tt.want, tt.record, "record must be unchanged when there is nothing to decrypt")
+		})
+	}
+}
+
+// runDecryptNestedFieldsWithFreshUseCase builds a fresh UseCase per call so parallel subtests
+// never share gomock controller state, and invokes decryptNestedFields on record.
+func runDecryptNestedFieldsWithFreshUseCase(t *testing.T, crypto *libCrypto.Crypto, record map[string]any) error {
+	t.Helper()
+
+	ctrl := gomock.NewController(t)
+	t.Cleanup(ctrl.Finish)
+
+	uc := newTestUseCase(newTestMocks(ctrl))
+
+	return uc.decryptNestedFields(record, crypto)
+}
+
+// TestDecryptNestedFields_RegulatoryFieldsParticipantDocument_InvalidCiphertext_ReturnsWrappedError
+// covers case (d): participant_document holds a value that cannot be decrypted by the
+// real *libCrypto.Crypto primitive the Fetcher uses in production (never a mock that
+// always "decrypts"). decryptNestedFields must propagate a non-nil error whose message
+// names the field path (regulatory_fields.participant_document) for operability, while
+// never echoing the raw, potentially-sensitive input value into the error string.
+func TestDecryptNestedFields_RegulatoryFieldsParticipantDocument_InvalidCiphertext_ReturnsWrappedError(t *testing.T) {
+	t.Parallel()
+
+	crypto := &libCrypto.Crypto{
+		HashSecretKey:    crmTestHashKey,
+		EncryptSecretKey: crmTestEncryptKey,
+		Logger:           testLogger(),
+	}
+	require.NoError(t, crypto.InitializeCipher(), "failed to initialize cipher")
+
+	// A real ciphertext, tampered by flipping one byte so AES-GCM authentication
+	// fails on Open — proves the failure path with a value that round-trips through
+	// base64 decoding but is not decryptable, distinct from the not-base64 case below.
+	tamperedCiphertext := tamperBase64Ciphertext(t, mustEncrypt(t, crypto, "98765432000188"))
+
+	tests := []struct {
+		name          string
+		rawCiphertext string
+	}{
+		{
+			name:          "not valid base64",
+			rawCiphertext: "this-is-not-valid-ciphertext",
+		},
+		{
+			name:          "valid base64 but tampered AES-GCM ciphertext fails authentication",
+			rawCiphertext: tamperedCiphertext,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			record := map[string]any{
+				"regulatory_fields": map[string]any{
+					"participant_document": tt.rawCiphertext,
+				},
+			}
+
+			err := runDecryptNestedFieldsWithFreshUseCase(t, crypto, record)
+
+			require.Error(t, err, "decryptNestedFields must return an error for undecryptable ciphertext")
+			assert.Contains(t, err.Error(), "regulatory_fields.participant_document",
+				"error must name the field path for operability")
+			assert.NotContains(t, err.Error(), tt.rawCiphertext,
+				"error must never echo the raw ciphertext value")
+		})
+	}
+}
+
+// tamperBase64Ciphertext flips one byte inside the decoded ciphertext (never touching
+// the nonce prefix) and re-encodes to base64, producing a value that decodes cleanly
+// but fails AES-GCM authentication on Open — the "valid base64, bad ciphertext" edge
+// distinct from a plain not-base64 string.
+func tamperBase64Ciphertext(t *testing.T, encoded string) string {
+	t.Helper()
+
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	require.NoError(t, err, "fixture ciphertext must be valid base64")
+	require.Greater(t, len(decoded), 12, "fixture ciphertext must be longer than the AES-GCM nonce")
+
+	tampered := make([]byte, len(decoded))
+	copy(tampered, decoded)
+	tampered[len(tampered)-1] ^= 0xFF // flip last byte, inside the ciphertext/tag, not the nonce
+
+	return base64.StdEncoding.EncodeToString(tampered)
+}
+
+// newRelatedPartiesCryptoForTest builds a real *libCrypto.Crypto (never a mock)
+// using the shared crmTestHashKey/crmTestEncryptKey fixture keys, matching the
+// primitive decryptRelatedParties uses in production.
+func newRelatedPartiesCryptoForTest(t *testing.T) *libCrypto.Crypto {
+	t.Helper()
+
+	crypto := &libCrypto.Crypto{
+		HashSecretKey:    crmTestHashKey,
+		EncryptSecretKey: crmTestEncryptKey,
+		Logger:           testLogger(),
+	}
+	require.NoError(t, crypto.InitializeCipher(), "failed to initialize cipher")
+
+	return crypto
+}
+
+// TestDecryptNestedFields_RelatedPartiesDocument_DecryptsToPlaintext proves the
+// fetcher-033 Phase 2 / Epic 2.1 wiring: related_parties[].document, encrypted with
+// the SAME runtime crypto primitive the Fetcher already uses to decrypt
+// banking_details.account and regulatory_fields.participant_document (real AES-GCM
+// encrypt/decrypt via *libCrypto.Crypto, not a mock), must decrypt to plaintext
+// through decryptNestedFields — the production entrypoint — while related_parties[].name
+// (plaintext in the live CRM) is left untouched.
+func TestDecryptNestedFields_RelatedPartiesDocument_DecryptsToPlaintext(t *testing.T) {
+	t.Parallel()
+
+	crypto := newRelatedPartiesCryptoForTest(t)
+
+	const (
+		plainDoc1  = "11122233344"
+		plainDoc2  = "55566677788"
+		plainName1 = "Joseph Roberts"
+		plainName2 = "Maria Silva"
+	)
+
+	record := map[string]any{
+		"related_parties": []any{
+			map[string]any{
+				"_id":      "rp-1",
+				"document": mustEncrypt(t, crypto, plainDoc1),
+				"name":     plainName1,
+				"role":     "LEGAL_REPRESENTATIVE",
+			},
+			map[string]any{
+				"_id":      "rp-2",
+				"document": mustEncrypt(t, crypto, plainDoc2),
+				"name":     plainName2,
+				"role":     "BENEFICIAL_OWNER",
+			},
+		},
+	}
+
+	err := runDecryptNestedFieldsWithFreshUseCase(t, crypto, record)
+	require.NoError(t, err, "decryptNestedFields returned error")
+
+	relatedParties, ok := record["related_parties"].([]any)
+	require.True(t, ok, "related_parties must remain a slice, got %T", record["related_parties"])
+	require.Len(t, relatedParties, 2)
+
+	party1, ok := relatedParties[0].(map[string]any)
+	require.True(t, ok, "related_parties[0] must remain a map, got %T", relatedParties[0])
+	assert.Equal(t, plainDoc1, party1["document"], "related_parties[0].document should decrypt to plaintext")
+	assert.Equal(t, plainName1, party1["name"], "related_parties[0].name must be left untouched (plaintext)")
+	assert.Equal(t, "LEGAL_REPRESENTATIVE", party1["role"])
+
+	party2, ok := relatedParties[1].(map[string]any)
+	require.True(t, ok, "related_parties[1] must remain a map, got %T", relatedParties[1])
+	assert.Equal(t, plainDoc2, party2["document"], "related_parties[1].document should decrypt to plaintext")
+	assert.Equal(t, plainName2, party2["name"], "related_parties[1].name must be left untouched (plaintext)")
+}
+
+// TestDecryptRelatedParties tests related_parties[].document decryption directly
+// (not via decryptNestedFields), mirroring TestDecryptRegulatoryFields for naming
+// parity and discoverability among the decrypt*Fields sibling tests. related_parties
+// is slice-shaped ([]any of map[string]any), unlike its map-shaped siblings, so this
+// covers slice-specific edge cases: absent list, empty list, non-map elements, and
+// per-element document absence/nil.
+func TestDecryptRelatedParties(t *testing.T) {
+	t.Parallel()
+
+	crypto := newRelatedPartiesCryptoForTest(t)
+
+	t.Run("multiple encrypted elements decrypt to plaintext, name untouched", func(t *testing.T) {
+		t.Parallel()
+
+		const plainDoc = "12345678901"
+		const plainName = "Ada Lovelace"
+
+		record := map[string]any{
+			"related_parties": []any{
+				map[string]any{
+					"document": mustEncrypt(t, crypto, plainDoc),
+					"name":     plainName,
+				},
+				map[string]any{
+					"document": mustEncrypt(t, crypto, plainDoc),
+					"name":     plainName,
+				},
+			},
+		}
+
+		err := runDecryptRelatedPartiesWithFreshUseCase(t, crypto, record)
+		require.NoError(t, err, "decryptRelatedParties returned error")
+
+		relatedParties, ok := record["related_parties"].([]any)
+		require.True(t, ok, "related_parties must remain a slice, got %T", record["related_parties"])
+		require.Len(t, relatedParties, 2)
+
+		for i, elem := range relatedParties {
+			party, ok := elem.(map[string]any)
+			require.True(t, ok, "related_parties[%d] must remain a map, got %T", i, elem)
+			assert.Equal(t, plainDoc, party["document"], "related_parties[%d].document should decrypt to plaintext", i)
+			assert.Equal(t, plainName, party["name"], "related_parties[%d].name must be left untouched (plaintext)", i)
+		}
+	})
+
+	t.Run("related_parties list absent is a no-op", func(t *testing.T) {
+		t.Parallel()
+
+		record := map[string]any{"id": "holder-1"}
+
+		err := runDecryptRelatedPartiesWithFreshUseCase(t, crypto, record)
+		require.NoError(t, err, "decryptRelatedParties must be a no-op when related_parties is absent")
+		assert.Equal(t, map[string]any{"id": "holder-1"}, record, "record must be unchanged")
+	})
+
+	t.Run("related_parties empty list is a no-op", func(t *testing.T) {
+		t.Parallel()
+
+		record := map[string]any{"related_parties": []any{}}
+
+		err := runDecryptRelatedPartiesWithFreshUseCase(t, crypto, record)
+		require.NoError(t, err, "decryptRelatedParties must be a no-op for an empty list")
+		assert.Equal(t, map[string]any{"related_parties": []any{}}, record, "record must be unchanged")
+	})
+
+	t.Run("related_parties wrong type is a no-op", func(t *testing.T) {
+		t.Parallel()
+
+		record := map[string]any{"related_parties": "not-a-slice"}
+
+		err := runDecryptRelatedPartiesWithFreshUseCase(t, crypto, record)
+		require.NoError(t, err, "decryptRelatedParties must be a no-op when related_parties is not a slice")
+		assert.Equal(t, map[string]any{"related_parties": "not-a-slice"}, record, "record must be unchanged")
+	})
+
+	t.Run("non-map element is skipped without error", func(t *testing.T) {
+		t.Parallel()
+
+		const plainDoc = "98765432100"
+
+		record := map[string]any{
+			"related_parties": []any{
+				"not-a-map",
+				map[string]any{"document": mustEncrypt(t, crypto, plainDoc), "name": "Grace Hopper"},
+				42,
+			},
+		}
+
+		err := runDecryptRelatedPartiesWithFreshUseCase(t, crypto, record)
+		require.NoError(t, err, "decryptRelatedParties must skip non-map elements without error")
+
+		relatedParties, ok := record["related_parties"].([]any)
+		require.True(t, ok)
+		require.Len(t, relatedParties, 3)
+		assert.Equal(t, "not-a-map", relatedParties[0])
+		party, ok := relatedParties[1].(map[string]any)
+		require.True(t, ok)
+		assert.Equal(t, plainDoc, party["document"])
+		assert.Equal(t, 42, relatedParties[2])
+	})
+
+	t.Run("document absent is skipped without error", func(t *testing.T) {
+		t.Parallel()
+
+		record := map[string]any{
+			"related_parties": []any{
+				map[string]any{"name": "no-document-field"},
+			},
+		}
+
+		err := runDecryptRelatedPartiesWithFreshUseCase(t, crypto, record)
+		require.NoError(t, err, "decryptRelatedParties must skip an element with no document key")
+
+		relatedParties, ok := record["related_parties"].([]any)
+		require.True(t, ok)
+		party, ok := relatedParties[0].(map[string]any)
+		require.True(t, ok)
+		assert.Equal(t, "no-document-field", party["name"])
+		_, exists := party["document"]
+		assert.False(t, exists, "document key must not be added when absent")
+	})
+
+	t.Run("document explicitly nil is skipped without error", func(t *testing.T) {
+		t.Parallel()
+
+		record := map[string]any{
+			"related_parties": []any{
+				map[string]any{"document": nil, "name": "nil-document"},
+			},
+		}
+
+		err := runDecryptRelatedPartiesWithFreshUseCase(t, crypto, record)
+		require.NoError(t, err, "decryptRelatedParties must skip an element with a nil document")
+
+		relatedParties, ok := record["related_parties"].([]any)
+		require.True(t, ok)
+		party, ok := relatedParties[0].(map[string]any)
+		require.True(t, ok)
+		assert.Nil(t, party["document"])
+		assert.Equal(t, "nil-document", party["name"])
+	})
+
+	t.Run("invalid ciphertext returns wrapped error naming the index and field, never the raw value", func(t *testing.T) {
+		t.Parallel()
+
+		tamperedCiphertext := tamperBase64Ciphertext(t, mustEncrypt(t, crypto, "11100022233"))
+
+		tests := []struct {
+			name          string
+			rawCiphertext string
+		}{
+			{name: "not valid base64", rawCiphertext: "this-is-not-valid-ciphertext"},
+			{name: "valid base64 but tampered AES-GCM ciphertext fails authentication", rawCiphertext: tamperedCiphertext},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+
+				record := map[string]any{
+					"related_parties": []any{
+						map[string]any{"document": tt.rawCiphertext, "name": "irrelevant"},
+					},
+				}
+
+				err := runDecryptRelatedPartiesWithFreshUseCase(t, crypto, record)
+
+				require.Error(t, err, "decryptRelatedParties must return an error for undecryptable ciphertext")
+				assert.Contains(t, err.Error(), "related_parties[0].document",
+					"error must name the index and field path for operability")
+				assert.NotContains(t, err.Error(), tt.rawCiphertext,
+					"error must never echo the raw ciphertext value")
+			})
+		}
+	})
+
+	t.Run("undecryptable document at non-zero index is named exactly, not index 0", func(t *testing.T) {
+		t.Parallel()
+
+		const plainDoc0 = "22233344455"
+
+		tamperedCiphertext := tamperBase64Ciphertext(t, mustEncrypt(t, crypto, "99988877766"))
+
+		record := map[string]any{
+			"related_parties": []any{
+				map[string]any{"document": mustEncrypt(t, crypto, plainDoc0), "name": "valid element"},
+				map[string]any{"document": tamperedCiphertext, "name": "undecryptable element"},
+			},
+		}
+
+		err := runDecryptRelatedPartiesWithFreshUseCase(t, crypto, record)
+
+		require.Error(t, err, "decryptRelatedParties must return an error when a non-zero-index element is undecryptable")
+		assert.Contains(t, err.Error(), "related_parties[1].document",
+			"error must name the dynamic loop index (1), not a hardcoded 0")
+		assert.NotContains(t, err.Error(), "related_parties[0].document",
+			"error must not misreport the valid element's index as the failing one")
+		assert.NotContains(t, err.Error(), tamperedCiphertext,
+			"error must never echo the raw ciphertext value")
+	})
+
+	t.Run("fails fast at first undecryptable index, later elements left unprocessed", func(t *testing.T) {
+		t.Parallel()
+
+		const (
+			plainDoc0 = "11111111111"
+			plainDoc2 = "33333333333"
+		)
+
+		undecryptable := tamperBase64Ciphertext(t, mustEncrypt(t, crypto, "22222222222"))
+		originalDoc2 := mustEncrypt(t, crypto, plainDoc2)
+
+		record := map[string]any{
+			"related_parties": []any{
+				map[string]any{"document": mustEncrypt(t, crypto, plainDoc0), "name": "first"},
+				map[string]any{"document": undecryptable, "name": "second"},
+				map[string]any{"document": originalDoc2, "name": "third"},
+			},
+		}
+
+		err := runDecryptRelatedPartiesWithFreshUseCase(t, crypto, record)
+
+		require.Error(t, err, "decryptRelatedParties must fail fast on the first undecryptable element")
+		assert.Contains(t, err.Error(), "related_parties[1].document",
+			"error must name the failing index")
+
+		relatedParties, ok := record["related_parties"].([]any)
+		require.True(t, ok, "related_parties must remain a slice, got %T", record["related_parties"])
+		require.Len(t, relatedParties, 3)
+
+		party0, ok := relatedParties[0].(map[string]any)
+		require.True(t, ok, "related_parties[0] must remain a map, got %T", relatedParties[0])
+		assert.Equal(t, plainDoc0, party0["document"],
+			"related_parties[0].document should have been decrypted before the fail-fast stop at index 1")
+
+		party2, ok := relatedParties[2].(map[string]any)
+		require.True(t, ok, "related_parties[2] must remain a map, got %T", relatedParties[2])
+		assert.Equal(t, originalDoc2, party2["document"],
+			"related_parties[2].document must be LEFT UNCHANGED (still ciphertext): this locks in the "+
+				"current fail-fast contract (stop at the first bad element, never reach later ones) so "+
+				"a future best-effort/collect-all refactor cannot silently change this behavior")
+	})
+}
+
+// runDecryptRelatedPartiesWithFreshUseCase builds a fresh UseCase per call so parallel
+// subtests never share gomock controller state, and invokes decryptRelatedParties on
+// record.
+func runDecryptRelatedPartiesWithFreshUseCase(t *testing.T, crypto *libCrypto.Crypto, record map[string]any) error {
+	t.Helper()
+
+	ctrl := gomock.NewController(t)
+	t.Cleanup(ctrl.Finish)
+
+	uc := newTestUseCase(newTestMocks(ctrl))
+
+	return uc.decryptRelatedParties(record, crypto)
 }

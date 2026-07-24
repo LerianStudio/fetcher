@@ -2,7 +2,7 @@
 
 The Manager is the Fetcher HTTP API server. It runs the synchronous control plane: connection CRUD, schema discovery and validation, connection testing, idempotency, rate limiting, license enforcement, and job dispatch onto RabbitMQ. The Worker does the actual extraction asynchronously.
 
-The Manager is built on [Fiber](https://gofiber.io) and serves on port `4006`. It follows Hexagonal Architecture with CQRS: commands mutate state, queries read it, and both depend only on port interfaces.
+The Manager is built on [Fiber](https://gofiber.io) with typed [Huma](https://huma.rocks) operations and serves on port `4006`. The same assembly drives runtime routing and the canonical OpenAPI 3.1 contract. It follows Hexagonal Architecture with CQRS: commands mutate state, queries read it, and both depend only on port interfaces.
 
 ## Table of Contents
 
@@ -37,7 +37,7 @@ The Manager wires **two** engine instances, each a focused authority:
 
 ```mermaid
 graph TB
-    subgraph Manager["Manager (Fiber, port 4006)"]
+    subgraph Manager["Manager (Fiber + Huma, port 4006)"]
         Handlers["HTTP handlers\ninternal/adapters/http/in"]
         CmdQ["CQRS commands & queries\ninternal/services"]
         ConnEng["connection engine\nbootstrap/connection_engine.go"]
@@ -121,7 +121,7 @@ graph LR
     Qry -. delegates rules .-> Engine
 ```
 
-- **Inbound adapters** (`internal/adapters/http/in/`) are thin Fiber handlers with Swagger annotations. They extract the organization ID via `httpUtils.GetOrganizationID(c)` and the product name from the `X-Product-Name` header, then call a service.
+- **Inbound adapters** (`internal/adapters/http/in/`) expose typed Huma callbacks over Fiber. Operation metadata, request/response schemas, and RFC 9457 errors come from the same assembly used to generate OpenAPI 3.1. The callbacks preserve the auth/tenant request context, read the `X-Product-Name` header when required, then call a service.
 - **Commands** (`internal/services/command/`) handle connection Create, Update, and Delete, plus job creation (`CreateFetcherJob`) and connection assignment (`AssignConnection`).
 - **Queries** (`internal/services/query/`) handle Get, List, Test, and Validate.
 - **Bootstrap** (`internal/bootstrap/`) wires dependencies, including the two engines, and holds configuration.
@@ -191,14 +191,14 @@ License enforcement is **fail-closed**: when `DEPLOYMENT_MODE` is not `local`, t
 | Path | Contents |
 |------|----------|
 | `cmd/app/main.go` | Entry point |
-| `internal/adapters/http/in/` | Fiber HTTP handlers (with Swagger annotations) |
+| `internal/adapters/http/in/` | Typed Huma operations and Fiber integration |
 | `internal/services/command/` | CQRS commands (Create, Update, Delete) |
 | `internal/services/query/` | CQRS queries (Get, List, Test, Validate) |
 | `internal/adapters/cache/` | Redis schema cache adapter |
 | `internal/bootstrap/` | Dependency injection, config, and engine wiring |
 | `internal/bootstrap/connection_engine.go` | Connection engine wiring |
 | `internal/bootstrap/schema_engine.go` | Schema engine wiring |
-| `api/swagger.yaml` | OpenAPI specification |
+| `api/openapi.yaml` | Canonical OpenAPI 3.1 specification |
 | `api/requests.http` | Manual API request examples |
 
 ## Configuration
@@ -218,3 +218,5 @@ make generate-master-key
 | other non-`local` | Enforced (fail-closed) | — |
 
 See `internal/bootstrap/config.go` for the full configuration surface and `../../README.md` for the project-wide quick start.
+
+Set `SWAGGER_ENABLED=true` to expose the Scalar reference at `/swagger/docs` and the OpenAPI 3.1 contract at `/swagger/openapi.json` or `/swagger/openapi.yaml`. The routes are absent when the flag is disabled.

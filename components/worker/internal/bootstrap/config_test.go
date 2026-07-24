@@ -19,6 +19,7 @@ import (
 	libLog "github.com/LerianStudio/lib-observability/log"
 	libOtel "github.com/LerianStudio/lib-observability/tracing"
 	libZap "github.com/LerianStudio/lib-observability/zap"
+	streaming "github.com/LerianStudio/lib-streaming"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -219,6 +220,66 @@ func TestInitJobEventEmitter_EnabledRequiresOutboxRepository(t *testing.T) {
 	assert.Contains(t, err.Error(), "streaming outbox repository is required")
 	assert.False(t, enabled)
 	assert.Nil(t, emitter)
+}
+
+func TestJobEventStreamingContract_UsesConfiguredSourceAndRabbitMQRoutes(t *testing.T) {
+	t.Setenv("STREAMING_ENABLED", "true")
+	t.Setenv("STREAMING_BROKERS", "unused:9092")
+	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.fetcher/worker")
+
+	streamingCfg, warnings, err := streaming.LoadConfig()
+	require.NoError(t, err)
+	assert.Empty(t, warnings)
+	assert.Equal(t, "//lerian.fetcher/worker", streamingCfg.CloudEventsSource)
+
+	policy := streaming.DeliveryPolicy{
+		Enabled: true,
+		Direct:  streaming.DirectModeSkip,
+		Outbox:  streaming.OutboxModeAlways,
+		DLQ:     streaming.DLQModeOnRoutableFailure,
+	}
+	catalog, err := streaming.NewCatalog(
+		streaming.EventDefinition{Key: "job.completed", ResourceType: "job", EventType: "completed", DefaultPolicy: policy},
+		streaming.EventDefinition{Key: "job.failed", ResourceType: "job", EventType: "failed", DefaultPolicy: policy},
+	)
+	require.NoError(t, err)
+
+	const target = "fetcher-job-events-rabbitmq"
+	routes, err := streaming.NewRouteTable(
+		streaming.RouteDefinition{
+			Key:           "job.completed.rabbitmq",
+			DefinitionKey: "job.completed",
+			Target:        target,
+			Destination:   streaming.RabbitMQRoute("job.events", "job.completed"),
+			Requirement:   streaming.RouteRequired,
+		},
+		streaming.RouteDefinition{
+			Key:           "job.failed.rabbitmq",
+			DefinitionKey: "job.failed",
+			Target:        target,
+			Destination:   streaming.RabbitMQRoute("job.events", "job.failed"),
+			Requirement:   streaming.RouteRequired,
+		},
+	)
+	require.NoError(t, err)
+
+	manifest, err := streaming.BuildManifest(streaming.PublisherDescriptor{
+		ServiceName:     "fetcher-worker",
+		SourceBase:      streamingCfg.CloudEventsSource,
+		OutboxSupported: true,
+	}, catalog, routes)
+	require.NoError(t, err)
+	require.Len(t, manifest.Events, 2)
+	assert.Equal(t, "lerian.fetcher-worker.job.completed", manifest.Events[0].Topic)
+	assert.Equal(t, "lerian.fetcher-worker.job.failed", manifest.Events[1].Topic)
+	require.Len(t, manifest.Routes, 2)
+	for _, route := range manifest.Routes {
+		assert.Equal(t, streaming.TransportRabbitMQ, route.Transport)
+	}
+	assert.ElementsMatch(t, []string{"job.events/job.completed", "job.events/job.failed"}, []string{
+		manifest.Routes[0].Destination,
+		manifest.Routes[1].Destination,
+	})
 }
 
 func TestInitWorker_ReturnsErrorWhenConfigLoadFails(t *testing.T) {

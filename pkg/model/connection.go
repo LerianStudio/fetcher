@@ -464,23 +464,23 @@ func (conn *Connection) ToMapWithMask() map[string]any {
 // Request, Response DTOs And Value Objects
 
 type ConnectionInput struct {
-	ConfigName   string          `json:"configName" validate:"required" example:"production-db" minLength:"3" maxLength:"100"`
-	Type         string          `json:"type" validate:"required,oneof=ORACLE SQL_SERVER POSTGRESQL MONGODB MYSQL" example:"POSTGRESQL"`
-	Host         string          `json:"host" validate:"required,hostname|ip,safe_host" example:"db.example.com"`
-	Port         int             `json:"port" validate:"required,min=1,max=65535" example:"5432"`
-	DatabaseName string          `json:"databaseName" validate:"required" example:"mydatabase"`
-	Schema       string          `json:"schema,omitempty" example:"my_schema"`
-	Username     string          `json:"userName" validate:"required" example:"dbuser"`
-	Password     string          `json:"password" validate:"required" example:"secretpassword"`
-	SSL          *SSLInput       `json:"ssl,omitempty"`
-	Metadata     *map[string]any `json:"metadata,omitempty"`
+	ConfigName   string          `json:"configName" validate:"required" doc:"Unique configuration name used to reference this connection." example:"production-db"`
+	Type         string          `json:"type" validate:"required,oneof=ORACLE SQL_SERVER POSTGRESQL MONGODB MYSQL" doc:"Database engine type." example:"POSTGRESQL"`
+	Host         string          `json:"host" validate:"required,hostname|ip,safe_host" doc:"Database server hostname or IP address." example:"db.example.com"`
+	Port         int             `json:"port" validate:"required,min=1,max=65535" doc:"Database server TCP port." example:"5432"`
+	DatabaseName string          `json:"databaseName" validate:"required" doc:"Database name to connect to." example:"mydatabase"`
+	Schema       string          `json:"schema,omitempty" doc:"Optional default database schema." example:"public"`
+	Username     string          `json:"userName" validate:"required" doc:"Database authentication username." example:"dbuser"`
+	Password     string          `json:"password" validate:"required" doc:"Database authentication password." example:"secretpassword"`
+	SSL          *SSLInput       `json:"ssl,omitempty" doc:"Optional SSL/TLS connection settings." example:"{\"mode\":\"require\",\"ca\":\"certificate-authority\"}"`
+	Metadata     *map[string]any `json:"metadata,omitempty" doc:"Optional application-defined connection metadata." example:"{\"environment\":\"production\",\"region\":\"us-east-1\"}"`
 }
 
 type SSLInput struct {
-	Mode string  `json:"mode" validate:"omitempty" example:"require"`
-	CA   string  `json:"ca" validate:"omitempty" example:"-----BEGIN CERTIFICATE-----\n..."`
-	Cert *string `json:"cert"`
-	Key  *string `json:"key"`
+	Mode string  `json:"mode" validate:"omitempty" doc:"Driver-specific SSL/TLS mode." example:"require"`
+	CA   string  `json:"ca" validate:"omitempty" doc:"PEM-encoded certificate authority used to verify the server." example:"-----BEGIN CERTIFICATE-----\n..."`
+	Cert *string `json:"cert,omitempty" doc:"Optional PEM-encoded client certificate." example:"-----BEGIN CERTIFICATE-----\n..."`
+	Key  *string `json:"key,omitempty" doc:"Optional PEM-encoded private key for the client certificate." example:"-----BEGIN PRIVATE KEY-----\n..."`
 }
 
 func (conn *ConnectionInput) ToMapWithMask() map[string]any {
@@ -540,25 +540,25 @@ func (s *SSLInput) IsEmpty() bool {
 // All fields are pointers to distinguish between "not provided" (nil) and "provided with value".
 // This enables true RFC 7396 JSON Merge Patch semantics.
 type ConnectionUpdateInput struct {
-	ConfigName   *string         `json:"configName,omitempty" validate:"omitempty,min=3,max=100" example:"production-db" minLength:"3" maxLength:"100"`
-	Type         *string         `json:"type,omitempty" validate:"omitempty,oneof=ORACLE SQL_SERVER POSTGRESQL MONGODB MYSQL" example:"POSTGRESQL"`
-	Host         *string         `json:"host,omitempty" validate:"omitempty,hostname|ip,safe_host" example:"db.example.com"`
-	Port         *int            `json:"port,omitempty" validate:"omitempty,min=1,max=65535" example:"5432"`
-	DatabaseName *string         `json:"databaseName,omitempty" validate:"omitempty" example:"mydatabase"`
-	Schema       *string         `json:"schema,omitempty" example:"my_schema"`
-	Username     *string         `json:"userName,omitempty" validate:"omitempty" example:"dbuser"`
-	Password     *string         `json:"password,omitempty" validate:"omitempty" example:"secretpassword"`
-	SSL          *SSLUpdateInput `json:"ssl,omitempty"`
-	Metadata     *map[string]any `json:"metadata,omitempty"`
+	ConfigName   *string         `json:"configName,omitempty" validate:"omitempty,min=3,max=100" doc:"New configuration name for the connection." example:"production-db"`
+	Type         *string         `json:"type,omitempty" validate:"omitempty,oneof=ORACLE SQL_SERVER POSTGRESQL MONGODB MYSQL" doc:"New database engine type." example:"POSTGRESQL"`
+	Host         *string         `json:"host,omitempty" validate:"omitempty,hostname|ip,safe_host" doc:"New database server hostname or IP address." example:"db.example.com"`
+	Port         *int            `json:"port,omitempty" validate:"omitempty,min=1,max=65535" doc:"New database server TCP port." example:"5432"`
+	DatabaseName *string         `json:"databaseName,omitempty" validate:"omitempty" doc:"New database name to connect to." example:"mydatabase"`
+	Schema       *string         `json:"schema,omitempty" doc:"New default database schema." example:"public"`
+	Username     *string         `json:"userName,omitempty" validate:"omitempty" doc:"New database authentication username." example:"dbuser"`
+	Password     *string         `json:"password,omitempty" validate:"omitempty" doc:"New database authentication password." example:"secretpassword"`
+	SSL          *SSLUpdateInput `json:"ssl,omitempty" doc:"SSL/TLS settings to update." example:"{\"mode\":\"verify-full\"}"`
+	Metadata     *map[string]any `json:"metadata,omitempty" doc:"Application-defined metadata that replaces the current metadata." example:"{\"environment\":\"production\",\"region\":\"us-east-1\"}"`
 }
 
 // SSLUpdateInput is the nested DTO for SSL configuration in PATCH requests.
 // All fields are pointers for partial update semantics.
 type SSLUpdateInput struct {
-	Mode *string `json:"mode,omitempty" validate:"omitempty" example:"require"`
-	CA   *string `json:"ca,omitempty" validate:"omitempty" example:"-----BEGIN CERTIFICATE-----\n..."`
-	Cert *string `json:"cert,omitempty"`
-	Key  *string `json:"key,omitempty"`
+	Mode *string `json:"mode,omitempty" validate:"omitempty" doc:"New driver-specific SSL/TLS mode." example:"require"`
+	CA   *string `json:"ca,omitempty" validate:"omitempty" doc:"New PEM-encoded certificate authority used to verify the server." example:"-----BEGIN CERTIFICATE-----\n..."`
+	Cert *string `json:"cert,omitempty" doc:"New PEM-encoded client certificate." example:"-----BEGIN CERTIFICATE-----\n..."`
+	Key  *string `json:"key,omitempty" doc:"New PEM-encoded private key for the client certificate." example:"-----BEGIN PRIVATE KEY-----\n..."`
 }
 
 // ToMapWithMask converts the ConnectionUpdateInput to a map with sensitive fields masked.
@@ -661,29 +661,29 @@ func (s *SSLUpdateInput) IsEmpty() bool {
 }
 
 type ConnectionResponse struct {
-	ID           uuid.UUID       `json:"id"`
-	ProductName  string          `json:"productName,omitempty"`
-	ConfigName   string          `json:"configName"`
-	Type         string          `json:"type"`
-	Host         string          `json:"host"`
-	Port         int             `json:"port"`
-	DatabaseName string          `json:"databaseName"`
-	Schema       *string         `json:"schema,omitempty"`
-	Username     string          `json:"userName"`
-	SSL          *SSLResponse    `json:"ssl,omitempty"`
-	Metadata     *map[string]any `json:"metadata,omitempty"`
-	CreatedAt    time.Time       `json:"createdAt"`
-	UpdatedAt    time.Time       `json:"updatedAt"`
+	ID           uuid.UUID       `json:"id" doc:"Unique connection identifier." example:"018f47a6-3e5f-7b9a-8c1d-2e3f4a5b6c7d"`
+	ProductName  string          `json:"productName,omitempty" doc:"Product that owns the connection." example:"midaz"`
+	ConfigName   string          `json:"configName" doc:"Configuration name used to reference the connection." example:"production-db"`
+	Type         string          `json:"type" doc:"Database engine type." example:"POSTGRESQL"`
+	Host         string          `json:"host" doc:"Database server hostname or IP address." example:"db.example.com"`
+	Port         int             `json:"port" doc:"Database server TCP port." example:"5432"`
+	DatabaseName string          `json:"databaseName" doc:"Connected database name." example:"mydatabase"`
+	Schema       *string         `json:"schema,omitempty" doc:"Default database schema, when configured." example:"public"`
+	Username     string          `json:"userName" doc:"Database authentication username." example:"dbuser"`
+	SSL          *SSLResponse    `json:"ssl,omitempty" doc:"Configured SSL/TLS settings with secrets omitted." example:"{\"mode\":\"require\"}"`
+	Metadata     *map[string]any `json:"metadata,omitempty" doc:"Application-defined connection metadata." example:"{\"environment\":\"production\",\"region\":\"us-east-1\"}"`
+	CreatedAt    time.Time       `json:"createdAt" doc:"Timestamp when the connection was created." example:"2026-01-15T10:30:00Z"`
+	UpdatedAt    time.Time       `json:"updatedAt" doc:"Timestamp when the connection was last updated." example:"2026-01-16T14:45:00Z"`
 }
 
 type ConnectionTestResponse struct {
-	Status    string `json:"status"`
-	Message   string `json:"message"`
-	LatencyMs int64  `json:"latencyMs"`
+	Status    string `json:"status" doc:"Connectivity test outcome." example:"success"`
+	Message   string `json:"message" doc:"Human-readable connectivity test result." example:"Connection established successfully"`
+	LatencyMs int64  `json:"latencyMs" doc:"Round-trip connection latency in milliseconds." example:"18"`
 }
 
 type SSLResponse struct {
-	Mode string `json:"mode,omitempty"`
+	Mode string `json:"mode,omitempty" doc:"Configured driver-specific SSL/TLS mode." example:"require"`
 }
 
 // NewConnectionResponseFrom maps a Connection to a ConnectionResponse.
@@ -718,19 +718,19 @@ func NewConnectionResponseFrom(conn *Connection) *ConnectionResponse {
 // ConnectionSchemaResponse is the response DTO for GET /v1/management/connections/{id}/schema.
 // It contains the connection details along with the list of tables/collections and their fields.
 type ConnectionSchemaResponse struct {
-	ID           string         `json:"id"`
-	ConfigName   string         `json:"configName"`
-	DatabaseName string         `json:"databaseName"`
-	Type         string         `json:"type"`
-	Tables       []TableDetails `json:"tables"`
+	ID           string         `json:"id" doc:"Unique connection identifier." example:"018f47a6-3e5f-7b9a-8c1d-2e3f4a5b6c7d"`
+	ConfigName   string         `json:"configName" doc:"Configuration name used to reference the connection." example:"production-db"`
+	DatabaseName string         `json:"databaseName" doc:"Database whose schema was discovered." example:"mydatabase"`
+	Type         string         `json:"type" doc:"Database engine type." example:"POSTGRESQL"`
+	Tables       []TableDetails `json:"tables" doc:"Discovered tables or collections and their fields." example:"[{\"name\":\"public.accounts\",\"fields\":[\"id\",\"name\",\"created_at\"]}]"`
 }
 
 // TableDetails contains information about a table or collection.
 // The Name field is the qualified name (e.g., "schema.table" for SQL databases
 // or "database.collection" for MongoDB).
 type TableDetails struct {
-	Name   string   `json:"name"`
-	Fields []string `json:"fields"`
+	Name   string   `json:"name" doc:"Qualified table or collection name." example:"public.accounts"`
+	Fields []string `json:"fields" doc:"Fields discovered in the table or collection." example:"[\"id\",\"name\",\"created_at\"]"`
 }
 
 // NewConnectionSchemaFrom creates a ConnectionSchemaResponse from a Connection and a list of tables.
