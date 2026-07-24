@@ -337,12 +337,18 @@ function doPrepare(opts) {
       }
     : {};
 
-  const off = { GOWORK: 'off', GOFLAGS: '-mod=mod' };
-  run('go', ['mod', 'download', `${ENGINE_MODULE}@v${version}`], { ...off, ...gitPrivateEnv });
-  run('go', ['mod', 'tidy'], { GOWORK: 'off', ...gitPrivateEnv });
-  run('go', ['build', './...'], { GOWORK: 'off', ...gitPrivateEnv });
+  // Skip the public checksum DB for our own engine module. sum.golang.org
+  // races on a tag pushed seconds ago (publish-then-consume in the same job)
+  // and returns 500 while it fetches the fresh tag; the proxy already serves
+  // the content — only sumdb verification is flaky. GONOSUMDB skips sumdb
+  // only (proxy/VCS resolution is unchanged) and is scoped to the engine
+  // module so every other dependency stays checksum-verified.
+  const baseEnv = { GOWORK: 'off', GONOSUMDB: ENGINE_MODULE };
+  run('go', ['mod', 'download', `${ENGINE_MODULE}@v${version}`], { ...baseEnv, GOFLAGS: '-mod=mod', ...gitPrivateEnv });
+  run('go', ['mod', 'tidy'], { ...baseEnv, ...gitPrivateEnv });
+  run('go', ['build', './...'], { ...baseEnv, ...gitPrivateEnv });
   if (process.env.ENGINE_RELEASE_SKIP_TESTS !== 'true') {
-    run('go', ['test', './...'], { GOWORK: 'off', ...gitPrivateEnv });
+    run('go', ['test', './...'], { ...baseEnv, ...gitPrivateEnv });
   }
 
   // 3b. Final wiring assertion on the exact go.mod that @semantic-release/git will
