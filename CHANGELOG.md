@@ -1,5 +1,14 @@
 # Fetcher Changelog
 
+## [3.0.1](https://github.com/LerianStudio/fetcher/releases/tag/v3.0.1)
+
+Fixes:
+- Decrypt CRM `regulatory_fields` and `related_parties` PII to ensure proper handling of sensitive information. (@arthurkz)
+
+[Compare changes](https://github.com/LerianStudio/fetcher/compare/v3.0.0...v3.0.1)
+
+---
+
 ## [3.0.0](https://github.com/LerianStudio/fetcher/releases/tag/v3.0.0)
 
 Features:
