@@ -1,14 +1,42 @@
 package resolver
 
 import (
+	"context"
 	"strconv"
 	"testing"
 
 	"github.com/LerianStudio/fetcher/v2/pkg/model"
 	"github.com/LerianStudio/fetcher/v2/pkg/testutil"
+	libLog "github.com/LerianStudio/lib-observability/log"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// capturingLogger records every Log call so tests can assert on emitted
+// warnings. It satisfies libLog.Logger; only Log is exercised here.
+type capturingLogger struct {
+	entries []capturedEntry
+}
+
+type capturedEntry struct {
+	level  libLog.Level
+	msg    string
+	fields map[string]any
+}
+
+func (c *capturingLogger) Log(_ context.Context, level libLog.Level, msg string, fields ...libLog.Field) {
+	m := make(map[string]any, len(fields))
+	for _, f := range fields {
+		m[f.Key] = f.Value
+	}
+
+	c.entries = append(c.entries, capturedEntry{level: level, msg: msg, fields: m})
+}
+
+func (c *capturingLogger) With(_ ...libLog.Field) libLog.Logger { return c }
+func (c *capturingLogger) WithGroup(_ string) libLog.Logger     { return c }
+func (c *capturingLogger) Enabled(_ libLog.Level) bool          { return true }
+func (c *capturingLogger) Sync(_ context.Context) error         { return nil }
 
 // setEnvDatasource is a tiny helper that registers the standard env-var set
 // for one internal datasource via t.Setenv (auto-cleanup at end of test).
@@ -250,6 +278,45 @@ func TestLoadInternalConnectionsFromEnv_NoSSLEnvVars_BackwardCompat(t *testing.T
 
 	require.Contains(t, conns, "midaz_onboarding")
 	assert.Nil(t, conns["midaz_onboarding"].SSL, "no SSLMODE -> SSL must remain nil (backward compat)")
+}
+
+func TestLoadInternalConnectionsFromEnv_UnknownConfigName_WarnsAndSkips(t *testing.T) {
+	// A typo'd CONFIG_NAME (not in the registry) must be skipped AND surface a
+	// WARN naming the value and the accepted set — issue #326.
+	setEnvDatasource(t, "midaz_onbaording", "postgresql", "rds.example.com", "onboarding", 5432, nil)
+
+	logger := &capturingLogger{}
+	conns := LoadInternalConnectionsFromEnv(NewInternalDatasourceRegistry(), logger)
+
+	assert.NotContains(t, conns, "midaz_onbaording", "unknown configName must not be loaded")
+
+	var warned *capturedEntry
+
+	for i := range logger.entries {
+		if logger.entries[i].fields["config_name"] == "midaz_onbaording" {
+			warned = &logger.entries[i]
+			break
+		}
+	}
+
+	require.NotNil(t, warned, "expected a WARN naming the unknown configName")
+	assert.Equal(t, libLog.LevelWarn, warned.level)
+	assert.Equal(t, "midaz_onboarding, midaz_transaction, plugin_crm", warned.fields["accepted"],
+		"WARN must name the accepted set, sorted and stable")
+}
+
+func TestLoadInternalConnectionsFromEnv_EmptyConfigName_StaysSilent(t *testing.T) {
+	// An empty CONFIG_NAME has no value to complain about — skip silently,
+	// no WARN (distinguishes a typo from a genuinely empty var).
+	t.Setenv("DATASOURCE_ghost_CONFIG_NAME", "")
+
+	logger := &capturingLogger{}
+	LoadInternalConnectionsFromEnv(NewInternalDatasourceRegistry(), logger)
+
+	for _, e := range logger.entries {
+		assert.NotEqual(t, "", e.fields["config_name"],
+			"empty CONFIG_NAME must be skipped before any log is emitted")
+	}
 }
 
 func TestLoadInternalConnectionsFromEnv_InvalidTypeSkipsBeforeSSLParse(t *testing.T) {
