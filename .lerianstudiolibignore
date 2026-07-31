@@ -8,3 +8,10 @@
 # a different Go module), so it reports a false "Outdated". Skip it until the check
 # distinguishes submodule tags from root-module releases.
 fetcher/pkg/engine
+
+# lib-observability v1 -> v2 and lib-streaming v1 -> v2 are major bumps with new
+# /v2 module paths (lib-observability is imported across 50+ files). Migrating
+# them is dedicated work, not something to fold into unrelated feature PRs.
+# Temporary skips until the migration PRs land.
+lib-observability|ttl:2026-08-31
+lib-streaming|ttl:2026-08-31
