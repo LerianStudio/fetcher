@@ -643,6 +643,16 @@ func (p streamingRabbitMQPublisher) Ping(ctx context.Context) error {
 	return p.publisher.Ping(ctx)
 }
 
+// jobEventSchemaVersion is the shared schema version of the job.completed and
+// job.failed event payloads. 2.0.0: the payload field casing changed from
+// camelCase to snake_case (jobId→job_id, executionTimeMs→execution_time_ms,
+// ...), a breaking payload change per the lib-streaming schema-versioning
+// contract. The major bump surfaces on the ce-schemaversion header; the
+// RabbitMQ routing keys stay "job.completed"/"job.failed" (explicit
+// RabbitMQRoute destinations — the ".v<major>" suffix applies only to derived
+// topics, which this transport does not use).
+const jobEventSchemaVersion = "2.0.0"
+
 func initJobEventEmitter(ctx context.Context, cfg *Config, logger libLog.Logger, telemetry *libOtel.Telemetry, publisher *rabbitmq.PublisherRoutes, outboxRepo libOutbox.OutboxRepository) (streaming.Emitter, bool, error) {
 	streamingCfg, warnings, err := streaming.LoadConfig()
 	if err != nil {
@@ -673,16 +683,9 @@ func initJobEventEmitter(ctx context.Context, cfg *Config, logger libLog.Logger,
 		DLQ:     streaming.DLQModeOnRoutableFailure,
 	}
 
-	// SchemaVersion 2.0.0: the payload field casing changed from camelCase to
-	// snake_case (jobId→job_id, executionTimeMs→execution_time_ms, ...), a
-	// breaking payload change per the lib-streaming schema-versioning contract.
-	// The major bump surfaces on the ce-schemaversion header; the RabbitMQ
-	// routing keys stay "job.completed"/"job.failed" (explicit RabbitMQRoute
-	// destinations below — the ".v<major>" suffix applies only to derived
-	// topics, which this transport does not use).
 	catalog, err := streaming.NewCatalog(
-		streaming.EventDefinition{Key: "job.completed", ResourceType: "job", EventType: "completed", SchemaVersion: "2.0.0", DefaultPolicy: terminalPolicy},
-		streaming.EventDefinition{Key: "job.failed", ResourceType: "job", EventType: "failed", SchemaVersion: "2.0.0", DefaultPolicy: terminalPolicy},
+		streaming.EventDefinition{Key: "job.completed", ResourceType: "job", EventType: "completed", SchemaVersion: jobEventSchemaVersion, DefaultPolicy: terminalPolicy},
+		streaming.EventDefinition{Key: "job.failed", ResourceType: "job", EventType: "failed", SchemaVersion: jobEventSchemaVersion, DefaultPolicy: terminalPolicy},
 	)
 	if err != nil {
 		return nil, false, fmt.Errorf("create job event streaming catalog: %w", err)
