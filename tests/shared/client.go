@@ -29,11 +29,11 @@ const (
 // Tests can consume this from NotificationsQueue to verify job completion asynchronously.
 type JobNotification struct {
 	// JobID is the unique identifier of the job.
-	JobID string `json:"jobId"`
+	JobID string `json:"job_id"`
 	// Status is the new status of the job (e.g., "completed", "failed").
 	Status string `json:"status"`
 	// EventType describes the type of event (e.g., "job.completed").
-	EventType string `json:"eventType"`
+	EventType string `json:"event_type"`
 }
 
 // ManagerClient provides a typed HTTP client for the Manager API.

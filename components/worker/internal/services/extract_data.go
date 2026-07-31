@@ -645,12 +645,12 @@ const resultStorageProtectionMode = "adapter-managed"
 //
 // It is a keyed signature (Signature), never an unkeyed content hash (Digest):
 // HMAC is one possible integrity SIGNATURE in the T-007 model.
-func resultIntegrity(documentHMAC string) *engine.ResultIntegrity {
+func resultIntegrity(documentHMAC string) *JobResultIntegrity {
 	if documentHMAC == "" {
 		return nil
 	}
 
-	return &engine.ResultIntegrity{
+	return &JobResultIntegrity{
 		Algorithm: "HMAC-SHA256",
 		Signature: documentHMAC,
 	}
@@ -663,8 +663,8 @@ func resultIntegrity(documentHMAC string) *engine.ResultIntegrity {
 // storage key the Worker uses carries no version label today (see Gate-8 seam), and
 // the field is omitempty so an unset version is honestly absent rather than a
 // fabricated zero. This describes the STORED RESULT only, never credentials.
-func resultProtection() *engine.ResultProtection {
-	return &engine.ResultProtection{
+func resultProtection() *JobResultProtection {
+	return &JobResultProtection{
 		Encrypted: true,
 		AppliedBy: engine.ProtectionAppliedByAdapter,
 		Mode:      resultStorageProtectionMode,

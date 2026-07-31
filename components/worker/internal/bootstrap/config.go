@@ -673,9 +673,16 @@ func initJobEventEmitter(ctx context.Context, cfg *Config, logger libLog.Logger,
 		DLQ:     streaming.DLQModeOnRoutableFailure,
 	}
 
+	// SchemaVersion 2.0.0: the payload field casing changed from camelCase to
+	// snake_case (jobId→job_id, executionTimeMs→execution_time_ms, ...), a
+	// breaking payload change per the lib-streaming schema-versioning contract.
+	// The major bump surfaces on the ce-schemaversion header; the RabbitMQ
+	// routing keys stay "job.completed"/"job.failed" (explicit RabbitMQRoute
+	// destinations below — the ".v<major>" suffix applies only to derived
+	// topics, which this transport does not use).
 	catalog, err := streaming.NewCatalog(
-		streaming.EventDefinition{Key: "job.completed", ResourceType: "job", EventType: "completed", DefaultPolicy: terminalPolicy},
-		streaming.EventDefinition{Key: "job.failed", ResourceType: "job", EventType: "failed", DefaultPolicy: terminalPolicy},
+		streaming.EventDefinition{Key: "job.completed", ResourceType: "job", EventType: "completed", SchemaVersion: "2.0.0", DefaultPolicy: terminalPolicy},
+		streaming.EventDefinition{Key: "job.failed", ResourceType: "job", EventType: "failed", SchemaVersion: "2.0.0", DefaultPolicy: terminalPolicy},
 	)
 	if err != nil {
 		return nil, false, fmt.Errorf("create job event streaming catalog: %w", err)

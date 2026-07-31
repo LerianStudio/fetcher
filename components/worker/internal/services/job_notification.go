@@ -18,6 +18,33 @@ import (
 	"github.com/google/uuid"
 )
 
+// JobResultIntegrity is the event-payload projection of the canonical T-007
+// integrity declaration (engine.ResultIntegrity). It exists so the published
+// job event contract owns its own snake_case json tags independently of the
+// engine package's internal serialization.
+type JobResultIntegrity struct {
+	// Algorithm names the integrity scheme (e.g. "HMAC-SHA256").
+	Algorithm string `json:"algorithm,omitempty"`
+	// Digest is the hex-encoded unkeyed content hash, when integrity is a digest.
+	Digest string `json:"digest,omitempty"`
+	// Signature is the hex-encoded keyed MAC, when integrity is a signature.
+	Signature string `json:"signature,omitempty"`
+}
+
+// JobResultProtection is the event-payload projection of the canonical T-007
+// confidentiality declaration (engine.ResultProtection), with snake_case json
+// tags owned by the job event contract.
+type JobResultProtection struct {
+	// Encrypted reports whether the result bytes are encrypted at rest.
+	Encrypted bool `json:"encrypted"`
+	// KeyVersion records which key version protected the bytes, when known.
+	KeyVersion int `json:"key_version,omitempty"`
+	// Mode names the encryption mode when applicable (e.g. "adapter-managed").
+	Mode string `json:"mode,omitempty"`
+	// AppliedBy names the accountable layer ("engine", "adapter", or "host").
+	AppliedBy engine.ProtectionApplier `json:"applied_by,omitempty"`
+}
+
 // JobResultData contains information about the extraction result.
 // All fields use omitempty to only include data when provided.
 type JobResultData struct {
@@ -25,10 +52,10 @@ type JobResultData struct {
 	Path string `json:"path,omitempty"`
 
 	// SizeBytes is the size of the result data in bytes (before encryption).
-	SizeBytes int64 `json:"sizeBytes,omitempty"`
+	SizeBytes int64 `json:"size_bytes,omitempty"`
 
 	// RowCount is the total number of records extracted across all tables.
-	RowCount int64 `json:"rowCount,omitempty"`
+	RowCount int64 `json:"row_count,omitempty"`
 
 	// Format is the output format (e.g., "json").
 	Format string `json:"format,omitempty"`
@@ -41,12 +68,12 @@ type JobResultData struct {
 	// It makes the tacit "what does the HMAC sign" convention EXPLICIT: the signature
 	// is the keyed HMAC-SHA256 over the PLAINTEXT extraction JSON (the same value as
 	// HMAC above). It is a keyed signature, never an unkeyed Digest.
-	Integrity *engine.ResultIntegrity `json:"integrity,omitempty"`
+	Integrity *JobResultIntegrity `json:"integrity,omitempty"`
 
 	// Protection is the canonical T-007 confidentiality declaration over the stored
 	// result bytes. It describes the STORED EXTRACTION RESULT only — never connection
 	// credentials (T-007 invariant: result-protection != credential-protection).
-	Protection *engine.ResultProtection `json:"protection,omitempty"`
+	Protection *JobResultProtection `json:"protection,omitempty"`
 }
 
 // JobNotificationOptions contains optional data for job notifications.
@@ -64,7 +91,7 @@ type JobNotificationOptions struct {
 // JobNotificationMessage represents the structure of a job event notification published to RabbitMQ.
 type JobNotificationMessage struct {
 	// JobID is the unique identifier of the job.
-	JobID uuid.UUID `json:"jobId"`
+	JobID uuid.UUID `json:"job_id"`
 
 	// Metadata contains additional metadata for the notification.
 	// It should include "source" to identify which service requested the job.
@@ -78,10 +105,10 @@ type JobNotificationMessage struct {
 	Result *JobResultData `json:"result,omitempty"`
 
 	// ExecutionTimeMs is the total execution time in milliseconds (optional).
-	ExecutionTimeMs int64 `json:"executionTimeMs,omitempty"`
+	ExecutionTimeMs int64 `json:"execution_time_ms,omitempty"`
 
 	// CompletedAt is the timestamp when the job completed (optional).
-	CompletedAt *time.Time `json:"completedAt,omitempty"`
+	CompletedAt *time.Time `json:"completed_at,omitempty"`
 }
 
 const (
