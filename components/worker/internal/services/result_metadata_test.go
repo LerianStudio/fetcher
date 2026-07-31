@@ -238,11 +238,11 @@ func TestCompleteJob_PublishesCanonicalMetadataInNotification(t *testing.T) {
 		Path:   "tenant/results/job.json",
 		HMAC:   "abc123",
 		Format: "json",
-		Integrity: &engine.ResultIntegrity{
+		Integrity: &JobResultIntegrity{
 			Algorithm: "HMAC-SHA256",
 			Signature: "abc123",
 		},
-		Protection: &engine.ResultProtection{
+		Protection: &JobResultProtection{
 			Encrypted: true,
 			AppliedBy: engine.ProtectionAppliedByAdapter,
 			Mode:      "adapter-managed",
@@ -265,9 +265,9 @@ func TestCompleteJob_PublishesCanonicalMetadataInNotification(t *testing.T) {
 
 	var notification struct {
 		Result struct {
-			HMAC       string                   `json:"hmac"`
-			Integrity  *engine.ResultIntegrity  `json:"integrity"`
-			Protection *engine.ResultProtection `json:"protection"`
+			HMAC       string               `json:"hmac"`
+			Integrity  *JobResultIntegrity  `json:"integrity"`
+			Protection *JobResultProtection `json:"protection"`
 		} `json:"result"`
 	}
 	require.NoError(t, json.Unmarshal(publishedPayload, &notification))

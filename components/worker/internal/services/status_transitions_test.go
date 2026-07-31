@@ -182,7 +182,7 @@ func TestExtractExternalData_EnginePath_ValidationError_FailureEventPayloadCompa
 	require.Error(t, uc.ExtractExternalData(testContext(), body, nil))
 
 	var notification struct {
-		JobID    string         `json:"jobId"`
+		JobID    string         `json:"job_id"`
 		Status   string         `json:"status"`
 		Metadata map[string]any `json:"metadata"`
 	}
