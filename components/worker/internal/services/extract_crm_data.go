@@ -378,6 +378,14 @@ func (uc *UseCase) decryptNestedFields(record map[string]any, crypto *libCrypto.
 		return fmt.Errorf("failed to decrypt banking details fields: %w", err)
 	}
 
+	if err := uc.decryptRegulatoryFields(record, crypto); err != nil {
+		return fmt.Errorf("failed to decrypt regulatory fields: %w", err)
+	}
+
+	if err := uc.decryptRelatedParties(record, crypto); err != nil {
+		return fmt.Errorf("failed to decrypt related parties: %w", err)
+	}
+
 	if err := uc.decryptLegalPersonFields(record, crypto); err != nil {
 		return fmt.Errorf("failed to decrypt legal person fields: %w", err)
 	}
@@ -427,6 +435,73 @@ func (uc *UseCase) decryptBankingDetailsFields(record map[string]any, crypto *li
 	}
 
 	record["banking_details"] = bankingDetails
+
+	return nil
+}
+
+// decryptRegulatoryFields decrypts fields within the regulatory_fields object,
+// mirroring decryptBankingDetailsFields and reusing the same *libCrypto.Crypto
+// instance. The CRM writes regulatory_fields.participant_document as legacy
+// AES-GCM ciphertext, so this reuses the existing decrypt path rather than
+// adding a new cipher scheme.
+//
+// It is fail-closed by design: a value that fails to decrypt returns an error
+// instead of passing the ciphertext through unchanged, because silent
+// ciphertext passthrough is the CCS-0011 failure this fixes. It handles only
+// participant_document; related_parties fields are not decrypted here.
+func (uc *UseCase) decryptRegulatoryFields(record map[string]any, crypto *libCrypto.Crypto) error {
+	regulatoryFields, ok := record["regulatory_fields"].(map[string]any)
+	if !ok {
+		return nil
+	}
+
+	regulatoryFieldNames := []string{"participant_document"}
+	for _, fieldName := range regulatoryFieldNames {
+		if fieldValue, exists := regulatoryFields[fieldName]; exists && fieldValue != nil {
+			if err := uc.decryptFieldValue(regulatoryFields, fieldName, fieldValue, crypto); err != nil {
+				return fmt.Errorf("failed to decrypt regulatory_fields.%s: %w", fieldName, err)
+			}
+		}
+	}
+
+	record["regulatory_fields"] = regulatoryFields
+
+	return nil
+}
+
+// decryptRelatedParties decrypts the document field of each element in the
+// related_parties slice, mirroring decryptRegulatoryFields and reusing the same
+// *libCrypto.Crypto instance and uc.decryptFieldValue helper. Unlike its map-shaped
+// siblings, related_parties is SLICE-shaped ([]any of map[string]any): live CRM data
+// verified each related_parties[].document is legacy AES-GCM ciphertext (the same key
+// that already decrypts banking_details.account and regulatory_fields.participant_document),
+// while related_parties[].name and other fields (role/start_date/end_date) are plaintext
+// and are never touched here.
+//
+// It is tolerant of shape drift by design: an absent or wrong-typed related_parties
+// value, or a non-map element, is a no-op rather than an error, since a malformed
+// container is not itself sensitive data. It is fail-closed on the sensitive field
+// itself, though: a document value present but undecryptable returns an error
+// (never silent ciphertext passthrough), naming the element index and field path but
+// never the raw value, to avoid leaking PII into logs/errors.
+func (uc *UseCase) decryptRelatedParties(record map[string]any, crypto *libCrypto.Crypto) error {
+	relatedParties, ok := record["related_parties"].([]any)
+	if !ok {
+		return nil
+	}
+
+	for i := range relatedParties {
+		party, ok := relatedParties[i].(map[string]any)
+		if !ok {
+			continue
+		}
+
+		if fieldValue, exists := party["document"]; exists && fieldValue != nil {
+			if err := uc.decryptFieldValue(party, "document", fieldValue, crypto); err != nil {
+				return fmt.Errorf("failed to decrypt related_parties[%d].document: %w", i, err)
+			}
+		}
+	}
 
 	return nil
 }
