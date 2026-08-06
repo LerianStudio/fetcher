@@ -1,3 +1,13 @@
+## [1.4.8](https://github.com/LerianStudio/fetcher/compare/v1.4.7...v1.4.8) (2026-08-06)
+
+
+### Bug Fixes
+
+* **ci:** disable gitops update on maintenance releases ([27f090e](https://github.com/LerianStudio/fetcher/commit/27f090e2489528f655aa9d9f3436b6b7cb844310))
+* **ci:** disable gitops update on maintenance releases ([#302](https://github.com/LerianStudio/fetcher/issues/302)) ([16af2d7](https://github.com/LerianStudio/fetcher/commit/16af2d7f475736134f5f5102d62e52a70ee4bbfa))
+* **worker:** decrypt CRM regulatory_fields + related_parties PII ([df6b4e7](https://github.com/LerianStudio/fetcher/commit/df6b4e7b8d3ff97d841f1f09cc2abeb08316d859)), closes [#320](https://github.com/LerianStudio/fetcher/issues/320)
+* **worker:** decrypt CRM regulatory_fields + related_parties PII ([#344](https://github.com/LerianStudio/fetcher/issues/344)) ([7dff6ec](https://github.com/LerianStudio/fetcher/commit/7dff6ec621701cf0792e67506fac3e2cf1ac6ad3))
+
 ## [1.4.7](https://github.com/LerianStudio/fetcher/compare/v1.4.6...v1.4.7) (2026-06-26)
 
 
