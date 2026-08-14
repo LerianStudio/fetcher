@@ -1,0 +1,101 @@
+# =============================================================================
+# Access-Manager permission-declaration manifest for fetcher (slug: fetcher).
+# =============================================================================
+# This is fetcher's client-side, SEMANTIC source of truth for its RBAC under the
+# Access-Manager "Inversão de Responsabilidade" (RI): instead of fetcher's
+# permissions living centrally in the plugin-access-manager Casdoor seed /
+# init_data.json, fetcher declares them HERE and the platform publishes this
+# manifest (one S3 object per service, keyed by `service:`) at release time for
+# the tenant-manager to reconcile into Casdoor.
+#
+# Reference (form): the already-merged br-sisbajud manifest
+#   internal/auth/declaration/permissions.yaml (PR LerianStudio/br-sisbajud#204),
+#   whose shape mirrors lib-auth auth/declaration.DeclarationManifest. See also the
+#   flowker pilot (PR LerianStudio/flowker#298).
+#
+# GOLDEN RULES (identical to the br-sisbajud reference):
+#   - resources are BARE            -> reconciler composes "fetcher/{resource}".
+#   - role names are BARE           -> reconciler composes "fetcher/{name}".
+#                                      Declaring "fetcher/editor" would double-prefix.
+#   - granted_to groups are BARE    -> reconciler composes "lerian/{group}".
+#   - actions are the EXACT string  -> the value passed to lib-auth's
+#     passed to Authorize              AuthClient.Authorize(appName, resource, action),
+#                                      so the reconciled "{service}/{resource}:{action}"
+#                                      permission matches the live runtime guard.
+#
+# DERIVATION (see the PR body for the full file:line table):
+#   - app identity (service:) = the applicationName const "fetcher"
+#     (components/manager/internal/adapters/http/in/routes.go:21).
+#   - resources = the connectionsResource ("connections") and fetcherResource
+#     ("fetcher") consts (routes.go:22-23).
+#   - the SINGLE authorize site is auth.Authorize(applicationName, resource, action)
+#     (routes.go:57), wired per-route through operationMiddlewareFactory ->
+#     registerTypedOperation(..., resource, action, ...) (huma_operations.go:128-142).
+#   - Only (resource, action) pairs with a live guard are declared here.
+#
+# ### FETCHER TEAM: PLEASE CONFIRM — TWO NON-STANDARD ITEMS ###
+#   1) ACTIONS ARE HTTP METHODS, NOT SEMANTIC VERBS. Unlike flowker/br-sisbajud
+#      (which pass semantic verbs like create/read/list), fetcher passes the raw
+#      HTTP method as the action:
+#        huma_connections.go:457/493/528 -> connections "post"
+#        huma_connections.go:480/512/539 -> connections "get"
+#        huma_connections.go:556         -> connections "patch"
+#        huma_connections.go:579         -> connections "delete"
+#        huma_migration.go:203/228       -> connections "get" / "post"
+#        huma_fetcher.go:155/185         -> fetcher     "post" / "get"
+#      lib-auth/v2 forwards this action string VERBATIM to POST /v1/authorize
+#      (middleware.go:302-345, requestBody{"resource","action"}) — there is NO
+#      HTTP->semantic normalization. Declaring semantic verbs here would reconcile
+#      permissions Casdoor never checks and 403 every request, so this manifest
+#      mirrors the ACTUAL enforced strings. To adopt the semantic-verb standard,
+#      migrate the guards to semantic actions AND update this file together.
+#      NOTE: several distinct operations collapse onto one guard pair — e.g.
+#      create-connection, validate-schema, test-connection and assign-connection
+#      all enforce connections:post. That coarseness is fetcher's real RBAC today.
+#   2) ROLES ARE INFERRED. fetcher ships NO Casdoor seed and defines NO roles or
+#      group bindings in code. The viewer/contributor/editor ladder and the grants
+#      below are an INFERRED standard CRUD ladder (read/list -> all three;
+#      create/update -> contributor + editor; delete -> editor only). Confirm the
+#      real role model / group names against the target Casdoor.
+service: fetcher
+version: 1
+permissions:
+  # --- connections (routes.go:22 connectionsResource) -------------------------
+  # get:   list + get + get-schema (huma_connections.go:480/512/539) and the
+  #        migration list-unassigned route (huma_migration.go:203).
+  # post:  create + validate-schema + test (huma_connections.go:457/493/528) and
+  #        the migration assign route (huma_migration.go:228).
+  # patch: update (huma_connections.go:556).  delete: delete (huma_connections.go:579).
+  - { resource: connections, action: get,    effect: allow, roles: [viewer, contributor, editor] }
+  - { resource: connections, action: post,   effect: allow, roles: [contributor, editor] }
+  - { resource: connections, action: patch,  effect: allow, roles: [contributor, editor] }
+  - { resource: connections, action: delete, effect: allow, roles: [editor] }
+
+  # --- fetcher (routes.go:23 fetcherResource) ---------------------------------
+  # get: get-fetcher-job (huma_fetcher.go:185).  post: create-fetcher-job (huma_fetcher.go:155).
+  - { resource: fetcher, action: get,    effect: allow, roles: [viewer, contributor, editor] }
+  - { resource: fetcher, action: post,   effect: allow, roles: [contributor, editor] }
+roles:
+  # Each role binds to its same-named lerian-owned group (bare -> reconciler
+  # composes "lerian/{group}"), mirroring the br-sisbajud reference's
+  # role -> same-named-group convention.
+  # NOTE (inferred): fetcher declares no roles or group bindings in code. The
+  # fetcher-viewer / fetcher-contributor / fetcher-editor group names below follow
+  # the platform naming convention; confirm against the target Casdoor.
+  - name: viewer
+    granted_to:
+      - group: fetcher-viewer
+  - name: contributor
+    granted_to:
+      - group: fetcher-contributor
+  - name: editor
+    granted_to:
+      - group: fetcher-editor
+# m2m: fetcher's machine-to-machine contract.
+#   No evidence found in the source of a Lerian token-endpoint M2M flow — neither
+#   fetcher calling a downstream Lerian service AS a client, nor another service
+#   calling fetcher AS an M2M target. (The "midaz"/"ledger" strings in the code are
+#   OpenAPI doc examples of connection productName, not service calls.) Set exposed
+#   false pending team confirmation.
+m2m:
+  exposed: false
