@@ -26,6 +26,10 @@
 # operator + admin; delete -> admin only) and must be confirmed by the owning team
 # before the reconciler seeds it.
 service: fetcher
+# version: REQUIRED by the manifest schema, integer >= 1. Advisory only: it is
+# excluded from the canonical content hash, so bumping it with identical content
+# is a no-op publish.
+version: 1
 permissions:
   # connections (components/manager/internal/adapters/http/in/huma_connections.go:457, huma_migration.go:203)
   - { resource: connections, action: get,    effect: allow, roles: [admin, operator, viewer] }  ### TEAM: please confirm ###
@@ -36,3 +40,31 @@ permissions:
   # fetcher (components/manager/internal/adapters/http/in/huma_fetcher.go:154)
   - { resource: fetcher, action: get,  effect: allow, roles: [admin, operator, viewer] }  ### TEAM: please confirm ###
   - { resource: fetcher, action: post, effect: allow, roles: [admin, operator] }  ### TEAM: please confirm ###
+
+# roles: REQUIRED - every role referenced by a permission above MUST be declared
+# here or the reconciler rejects the manifest ("references undeclared role").
+# Role names are BARE; the reconciler composes "fetcher/{name}". Each role binds
+# to its same-named lerian-owned group (groups are BARE; the reconciler composes
+# the "lerian/" owner), following the platform naming convention used by the
+# already-merged lender manifest. This repo has no Casdoor seed, so the group
+# names follow convention only. ### TEAM: please confirm these group names ###
+roles:
+  - name: admin
+    granted_to:
+      - group: fetcher-admin
+  - name: operator
+    granted_to:
+      - group: fetcher-operator
+  - name: viewer
+    granted_to:
+      - group: fetcher-viewer
+
+# m2m: fetcher's bilateral machine-to-machine contract.
+#   exposed: no evidence another Lerian service calls fetcher AS an M2M target
+#            (no repo declares fetcher in an M2M target config; Matcher/Reporter
+#            embed pkg/engine in-process, not over HTTP). Set false.
+#   needs:   fetcher has no outbound M2M/client-credentials wiring (no M2M client
+#            code in components/ or pkg/), so no targets are declared.
+#   ### TEAM: please confirm ###
+m2m:
+  exposed: false
