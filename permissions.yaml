@@ -1,0 +1,70 @@
+# Access-Manager RI permission-declaration manifest for fetcher (slug: fetcher).
+#
+# Under the Access-Manager Responsibility Inversion (RI), fetcher declares its
+# own RBAC here instead of having it live centrally in the plugin-access-manager
+# Casdoor seed. The platform publishes this manifest (one S3 object per service,
+# keyed by the top-level `service:`) for the tenant-manager to reconcile into
+# Casdoor.
+#
+# fetcher enforces authorization: every protected Huma operation runs
+# auth.Authorize(applicationName, resource, action) via the lib-auth authorize
+# middleware (components/manager/internal/adapters/http/in/routes.go:56-57), wired
+# per route through operationMiddlewareFactory. applicationName is the constant
+# "fetcher" (routes.go:21). The (resource, action) pairs below are the distinct
+# guarded tuples enforced by the route table; actions are the verbatim strings the
+# authorizer receives (the repo uses HTTP-verb action strings), NOT invented verbs.
+#
+# Keys mirror the yaml tags on lib-auth/v3 auth/declaration.DeclarationManifest.
+# Everything the central reconciler prefixes is declared BARE here:
+#   - resources: bare; the reconciler composes the "{service}/" prefix, so the
+#     resulting permission is "{service}/{resource}:{action}".
+#   - roles: bare business roles; the reconciler composes "{service}/{name}".
+#
+# NOTE: this repo defines NO role catalog (there is no casdoor_seed.go and no
+# init_data.json). Every role grant below is therefore INFERRED from a standard
+# viewer ⊂ operator ⊂ admin CRUD ladder (read/list -> all three; create/update ->
+# operator + admin; delete -> admin only) and must be confirmed by the owning team
+# before the reconciler seeds it.
+service: fetcher
+# version: REQUIRED by the manifest schema, integer >= 1. Advisory only: it is
+# excluded from the canonical content hash, so bumping it with identical content
+# is a no-op publish.
+version: 1
+permissions:
+  # connections (components/manager/internal/adapters/http/in/huma_connections.go:457, huma_migration.go:203)
+  - { resource: connections, action: get,    effect: allow, roles: [admin, operator, viewer] }  ### TEAM: please confirm ###
+  - { resource: connections, action: post,   effect: allow, roles: [admin, operator] }  ### TEAM: please confirm ###
+  - { resource: connections, action: patch,  effect: allow, roles: [admin, operator] }  ### TEAM: please confirm ###
+  - { resource: connections, action: delete, effect: allow, roles: [admin] }  ### TEAM: please confirm ###
+
+  # fetcher (components/manager/internal/adapters/http/in/huma_fetcher.go:154)
+  - { resource: fetcher, action: get,  effect: allow, roles: [admin, operator, viewer] }  ### TEAM: please confirm ###
+  - { resource: fetcher, action: post, effect: allow, roles: [admin, operator] }  ### TEAM: please confirm ###
+
+# roles: REQUIRED - every role referenced by a permission above MUST be declared
+# here or the reconciler rejects the manifest ("references undeclared role").
+# Role names are BARE; the reconciler composes "fetcher/{name}". Each role binds
+# to its same-named lerian-owned group (groups are BARE; the reconciler composes
+# the "lerian/" owner), following the platform naming convention used by the
+# already-merged lender manifest. This repo has no Casdoor seed, so the group
+# names follow convention only. ### TEAM: please confirm these group names ###
+roles:
+  - name: admin
+    granted_to:
+      - group: fetcher-admin
+  - name: operator
+    granted_to:
+      - group: fetcher-operator
+  - name: viewer
+    granted_to:
+      - group: fetcher-viewer
+
+# m2m: fetcher's bilateral machine-to-machine contract.
+#   exposed: no evidence another Lerian service calls fetcher AS an M2M target
+#            (no repo declares fetcher in an M2M target config; Matcher/Reporter
+#            embed pkg/engine in-process, not over HTTP). Set false.
+#   needs:   fetcher has no outbound M2M/client-credentials wiring (no M2M client
+#            code in components/ or pkg/), so no targets are declared.
+#   ### TEAM: please confirm ###
+m2m:
+  exposed: false
