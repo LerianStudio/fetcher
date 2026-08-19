@@ -212,42 +212,42 @@ func TestEngineDependencyBoundary_TenantRuntimeShells_PolicyIsFutureSafe(t *test
 	}{
 		{
 			name:       "safe tenant manager core primitive is explicitly allowed",
-			importPath: "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core",
+			importPath: "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/core",
 			wantBlock:  false,
 		},
 		{
 			name:       "future tenant manager core subpackage is blocked",
-			importPath: "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core/runtime/new-shell",
+			importPath: "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/core/runtime/new-shell",
 			wantBlock:  true,
 		},
 		{
 			name:       "safe dispatch layer core primitive is explicitly allowed",
-			importPath: "github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/core",
+			importPath: "github.com/LerianStudio/lib-commons/v6/commons/dispatch-layer/core",
 			wantBlock:  false,
 		},
 		{
 			name:       "future dispatch layer core subpackage is blocked",
-			importPath: "github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/core/runtime/new-shell",
+			importPath: "github.com/LerianStudio/lib-commons/v6/commons/dispatch-layer/core/runtime/new-shell",
 			wantBlock:  true,
 		},
 		{
 			name:       "known concrete tenant manager shell is blocked",
-			importPath: "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/rabbitmq",
+			importPath: "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/rabbitmq",
 			wantBlock:  true,
 		},
 		{
 			name:       "known concrete dispatch layer shell is blocked",
-			importPath: "github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/middleware",
+			importPath: "github.com/LerianStudio/lib-commons/v6/commons/dispatch-layer/middleware",
 			wantBlock:  true,
 		},
 		{
 			name:       "future tenant manager concrete shell is blocked by prefix",
-			importPath: "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/runtime/new-shell",
+			importPath: "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/runtime/new-shell",
 			wantBlock:  true,
 		},
 		{
 			name:       "future dispatch layer concrete shell is blocked by prefix",
-			importPath: "github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/runtime/new-shell",
+			importPath: "github.com/LerianStudio/lib-commons/v6/commons/dispatch-layer/runtime/new-shell",
 			wantBlock:  true,
 		},
 	}
@@ -342,7 +342,7 @@ func configuredForbiddenDependencyClasses(modulePath string) []forbiddenDependen
 			name:    "openapi",
 			patterns: []string{
 				"github.com/danielgtaylor/huma",
-				"github.com/LerianStudio/lib-commons/v5/commons/net/http",
+				"github.com/LerianStudio/lib-commons/v6/commons/net/http",
 			},
 		},
 
@@ -476,12 +476,12 @@ func configuredForbiddenDependencyClasses(modulePath string) []forbiddenDependen
 			concern: "tenant_runtime",
 			name:    "tenant_runtime_shells",
 			patterns: []string{
-				"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer",
-				"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager",
+				"github.com/LerianStudio/lib-commons/v6/commons/dispatch-layer",
+				"github.com/LerianStudio/lib-commons/v6/commons/tenant-manager",
 			},
 			allowedPatterns: []string{
-				"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer/core",
-				"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core",
+				"github.com/LerianStudio/lib-commons/v6/commons/dispatch-layer/core",
+				"github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/core",
 			},
 		},
 
@@ -552,8 +552,8 @@ func requiredDockerRuntimePatterns() []string {
 
 func requiredTenantRuntimeShellPatterns() []string {
 	return []string{
-		"github.com/LerianStudio/lib-commons/v5/commons/dispatch-layer",
-		"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager",
+		"github.com/LerianStudio/lib-commons/v6/commons/dispatch-layer",
+		"github.com/LerianStudio/lib-commons/v6/commons/tenant-manager",
 	}
 }
 

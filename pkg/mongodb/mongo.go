@@ -7,12 +7,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/LerianStudio/lib-observability"
+	observability "github.com/LerianStudio/lib-observability/v2"
 
 	"github.com/LerianStudio/fetcher/v2/pkg"
 	"github.com/LerianStudio/fetcher/v2/pkg/constant"
-	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
-	libLog "github.com/LerianStudio/lib-observability/log"
+	tmcore "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/core"
+	libLog "github.com/LerianStudio/lib-observability/v2/log"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/readpref"

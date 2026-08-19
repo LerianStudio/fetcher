@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	tmclient "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/client"
-	libLog "github.com/LerianStudio/lib-observability/log"
-	"github.com/gofiber/fiber/v2"
+	tmclient "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/client"
+	libLog "github.com/LerianStudio/lib-observability/v2/log"
+	"github.com/gofiber/fiber/v3"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 )
@@ -142,7 +142,7 @@ func TestHandler_Fiber_Drain_NoGoroutineLeaks(t *testing.T) {
 	app.Get("/readyz", h.Fiber())
 
 	req := httptest.NewRequest("GET", "/readyz", nil)
-	resp, err := app.Test(req, 2000)
+	resp, err := app.Test(req, fiber.TestConfig{Timeout: 2 * time.Second, FailOnTimeout: true})
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
 
@@ -221,7 +221,7 @@ func TestTenantHandler_Fiber_NoGoroutineLeaks(t *testing.T) {
 	app.Get("/readyz/tenant/:id", h.Fiber())
 
 	req := httptest.NewRequest("GET", "/readyz/tenant/t1", nil)
-	resp, err := app.Test(req, 3_000)
+	resp, err := app.Test(req, fiber.TestConfig{Timeout: 3 * time.Second, FailOnTimeout: true})
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
 

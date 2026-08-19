@@ -11,9 +11,9 @@ import (
 
 	"github.com/LerianStudio/fetcher/v2/pkg"
 	"github.com/LerianStudio/fetcher/v2/pkg/constant"
-	"github.com/LerianStudio/lib-commons/v5/commons/net/http/problem"
+	"github.com/LerianStudio/lib-commons/v6/commons/net/http/problem"
 	"github.com/danielgtaylor/huma/v2"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -22,7 +22,7 @@ func TestWithError_RendersCodedRFC9457Problem(t *testing.T) {
 	t.Parallel()
 
 	app := fiber.New()
-	app.Get("/test", func(c *fiber.Ctx) error {
+	app.Get("/test", func(c fiber.Ctx) error {
 		return WithError(c, pkg.ValidationError{
 			Code:    constant.ErrInvalidPathParameter.Error(),
 			Title:   "Invalid Path Parameter",
@@ -155,7 +155,7 @@ func TestWithError_ScrubsUnrecognizedInternalError(t *testing.T) {
 	t.Parallel()
 
 	app := fiber.New()
-	app.Get("/test", func(c *fiber.Ctx) error {
+	app.Get("/test", func(c fiber.Ctx) error {
 		return WithError(c, errors.New("secret database address"))
 	})
 
@@ -195,7 +195,7 @@ func TestWithError_PreservesHistoricallyUnmappedErrors(t *testing.T) {
 			t.Parallel()
 
 			app := fiber.New()
-			app.Get("/test", func(c *fiber.Ctx) error { return WithError(c, mappedErr) })
+			app.Get("/test", func(c fiber.Ctx) error { return WithError(c, mappedErr) })
 			resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/test", nil))
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, resp.Body.Close()) })
@@ -349,7 +349,7 @@ func TestWithError(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			app := fiber.New()
-			app.Get("/test", func(c *fiber.Ctx) error {
+			app.Get("/test", func(c fiber.Ctx) error {
 				return WithError(c, tt.err)
 			})
 
@@ -425,7 +425,7 @@ func TestWithError_ValidateStructResultRendersAs400(t *testing.T) {
 
 			// Drive the same handler shape: ValidateStruct error → WithError.
 			app := fiber.New()
-			app.Get("/test", func(c *fiber.Ctx) error {
+			app.Get("/test", func(c fiber.Ctx) error {
 				return WithError(c, err)
 			})
 

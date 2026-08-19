@@ -6,8 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/LerianStudio/lib-observability"
-	"github.com/gofiber/fiber/v2"
+	observability "github.com/LerianStudio/lib-observability/v2"
+	"github.com/gofiber/fiber/v3"
 )
 
 // setRequestIDInContext sets the HeaderID (request ID) in the context using the commons library pattern
@@ -20,10 +20,10 @@ func TestRequestIDHeader(t *testing.T) {
 		app := fiber.New()
 
 		app.Use(RequestIDHeader(""))
-		app.Get("/test", func(c *fiber.Ctx) error {
+		app.Get("/test", func(c fiber.Ctx) error {
 			// Set a request ID in context
-			ctx := setRequestIDInContext(c.UserContext(), "req-789")
-			c.SetUserContext(ctx)
+			ctx := setRequestIDInContext(c.Context(), "req-789")
+			c.SetContext(ctx)
 			return c.SendString("ok")
 		})
 
@@ -44,9 +44,9 @@ func TestRequestIDHeader(t *testing.T) {
 		app := fiber.New()
 
 		app.Use(RequestIDHeader("X-Custom-Request-Id"))
-		app.Get("/test", func(c *fiber.Ctx) error {
-			ctx := setRequestIDInContext(c.UserContext(), "custom-req-id")
-			c.SetUserContext(ctx)
+		app.Get("/test", func(c fiber.Ctx) error {
+			ctx := setRequestIDInContext(c.Context(), "custom-req-id")
+			c.SetContext(ctx)
 			return c.SendString("ok")
 		})
 
@@ -67,7 +67,7 @@ func TestRequestIDHeader(t *testing.T) {
 		app := fiber.New()
 
 		app.Use(RequestIDHeader(""))
-		app.Get("/test", func(c *fiber.Ctx) error {
+		app.Get("/test", func(c fiber.Ctx) error {
 			// Don't set any tracking context - lib will generate UUID
 			return c.SendString("ok")
 		})
@@ -94,7 +94,7 @@ func TestRequestIDHeader(t *testing.T) {
 		app := fiber.New()
 
 		app.Use(RequestIDHeader(""))
-		app.Get("/test", func(c *fiber.Ctx) error {
+		app.Get("/test", func(c fiber.Ctx) error {
 			return fiber.ErrBadRequest
 		})
 
@@ -114,9 +114,9 @@ func TestRequestIDHeader(t *testing.T) {
 		app := fiber.New()
 
 		app.Use(RequestIDHeader(""))
-		app.Get("/test", func(c *fiber.Ctx) error {
+		app.Get("/test", func(c fiber.Ctx) error {
 			// Set a plain context without tracking
-			c.SetUserContext(context.Background())
+			c.SetContext(context.Background())
 			return c.SendString("ok")
 		})
 

@@ -1,8 +1,8 @@
 package http
 
 import (
-	"github.com/LerianStudio/lib-observability"
-	"github.com/gofiber/fiber/v2"
+	observability "github.com/LerianStudio/lib-observability/v2"
+	"github.com/gofiber/fiber/v3"
 )
 
 // RequestIDHeader add requestId to response header
@@ -15,10 +15,10 @@ func RequestIDHeader(headerName string) fiber.Handler {
 		headerName = "X-Request-Id"
 	}
 
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		err := c.Next()
 
-		ctx := c.UserContext()
+		ctx := c.Context()
 
 		_, _, requestId, _ := observability.NewTrackingFromContext(ctx)
 

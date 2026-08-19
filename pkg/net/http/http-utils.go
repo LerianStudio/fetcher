@@ -8,8 +8,8 @@ import (
 
 	"github.com/LerianStudio/fetcher/v2/pkg"
 	"github.com/LerianStudio/fetcher/v2/pkg/constant"
-	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
-	"github.com/gofiber/fiber/v2"
+	libCommons "github.com/LerianStudio/lib-commons/v6/commons"
+	"github.com/gofiber/fiber/v3"
 )
 
 // QueryHeader entity from query parameter from get apis
@@ -266,7 +266,7 @@ func validateProductName(productName string) error {
 // GetProductName extracts X-Product-Name header (optional).
 // Returns empty string if the header is not provided.
 // Returns error if the header is provided but is empty, whitespace-only, or has invalid format.
-func GetProductName(c *fiber.Ctx) (string, error) {
+func GetProductName(c fiber.Ctx) (string, error) {
 	raw := c.Get("X-Product-Name")
 	if raw == "" {
 		return "", nil // header not provided
@@ -293,7 +293,7 @@ func GetProductName(c *fiber.Ctx) (string, error) {
 
 // GetRequiredProductName extracts X-Product-Name header (required).
 // Returns error if the header is missing, empty, whitespace-only, or has invalid format.
-func GetRequiredProductName(c *fiber.Ctx) (string, error) {
+func GetRequiredProductName(c fiber.Ctx) (string, error) {
 	productName := strings.TrimSpace(c.Get("X-Product-Name"))
 	if productName == "" {
 		return "", pkg.ValidationError{

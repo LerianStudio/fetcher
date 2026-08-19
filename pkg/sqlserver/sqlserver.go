@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/LerianStudio/fetcher/v2/pkg/constant"
-	libLog "github.com/LerianStudio/lib-observability/log"
+	libLog "github.com/LerianStudio/lib-observability/v2/log"
 	_ "github.com/microsoft/go-mssqldb" // SQL Server driver
 )
 

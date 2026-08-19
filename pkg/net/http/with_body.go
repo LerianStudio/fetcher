@@ -12,11 +12,11 @@ import (
 
 	"github.com/LerianStudio/fetcher/v2/pkg"
 	"github.com/LerianStudio/fetcher/v2/pkg/datasource/hostsafety"
-	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
+	libCommons "github.com/LerianStudio/lib-commons/v6/commons"
 	"github.com/go-playground/locales/en"
 	ut "github.com/go-playground/universal-translator"
 	"github.com/go-playground/validator/v10"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
 
 	cn "github.com/LerianStudio/fetcher/v2/pkg/constant"
@@ -30,7 +30,7 @@ var UUIDPathParameters = []string{
 // DecodeHandlerFunc is a handler which works with withBody decorator.
 // It receives a struct which was decoded by withBody decorator before.
 // Ex: json -> withBody -> DecodeHandlerFunc.
-type DecodeHandlerFunc func(p any, c *fiber.Ctx) error
+type DecodeHandlerFunc func(p any, c fiber.Ctx) error
 
 // PayloadContextValue is a wrapper type used to keep Context.Locals safe.
 type PayloadContextValue string
@@ -63,7 +63,7 @@ func WithBody(s any, h DecodeHandlerFunc) fiber.Handler {
 
 // FiberHandlerFunc is a method on the decoderHandler struct. It decodes the incoming request's body to a Go struct,
 // validates it, checks for any extraneous fields not defined in the struct, and finally calls the wrapped handler function.
-func (d *decoderHandler) FiberHandlerFunc(c *fiber.Ctx) error {
+func (d *decoderHandler) FiberHandlerFunc(c fiber.Ctx) error {
 	var s any
 
 	if d.constructor != nil {
@@ -481,14 +481,16 @@ func parseMetadata(s any, originalMap map[string]any) {
 }
 
 // ParseUUIDPathParameters globally, considering all path parameters are UUIDs
-func ParseUUIDPathParameters(c *fiber.Ctx) error {
-	params := c.AllParams()
-
+func ParseUUIDPathParameters(c fiber.Ctx) error {
 	var invalidUUIDs []string
 
 	validPathParamsMap := make(map[string]any)
 
-	for param, value := range params {
+	// Fiber v3 dropped the AllParams() bulk accessor; the matched route carries
+	// the param keys and Params() resolves each value.
+	for _, param := range c.Route().Params {
+		value := c.Params(param)
+
 		if !libCommons.Contains[string](UUIDPathParameters, param) {
 			validPathParamsMap[param] = value
 			continue

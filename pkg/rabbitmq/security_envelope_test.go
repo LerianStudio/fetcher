@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
-	libConstants "github.com/LerianStudio/lib-commons/v5/commons/constants"
-	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
-	libLog "github.com/LerianStudio/lib-observability/log"
+	libConstants "github.com/LerianStudio/lib-commons/v6/commons/constants"
+	tmcore "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/core"
+	libLog "github.com/LerianStudio/lib-observability/v2/log"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"

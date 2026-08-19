@@ -9,7 +9,7 @@ import (
 	"os"
 	"strings"
 
-	tmclient "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/client"
+	tmclient "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/client"
 )
 
 // serviceAPIKeyEnvPrefix is the env-var prefix for per-service tenant-manager

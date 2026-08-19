@@ -1,5 +1,5 @@
 // Package hostsafety is a thin adapter over
-// github.com/LerianStudio/lib-commons/v5/commons/security/ssrf that adds two
+// github.com/LerianStudio/lib-commons/v6/commons/security/ssrf that adds two
 // Fetcher-specific concerns the canonical library does NOT have:
 //
 //  1. A bootstrap-time gate (SetHostSafetyEnabled / IsEnabled) so the guard is
@@ -24,7 +24,7 @@ import (
 	"strings"
 	"sync/atomic"
 
-	libSSRF "github.com/LerianStudio/lib-commons/v5/commons/security/ssrf"
+	libSSRF "github.com/LerianStudio/lib-commons/v6/commons/security/ssrf"
 
 	"github.com/LerianStudio/fetcher/v2/pkg"
 	"github.com/LerianStudio/fetcher/v2/pkg/constant"

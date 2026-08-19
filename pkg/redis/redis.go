@@ -8,8 +8,8 @@ import (
 	"net"
 	"time"
 
-	libRedis "github.com/LerianStudio/lib-commons/v5/commons/redis"
-	libLog "github.com/LerianStudio/lib-observability/log"
+	libRedis "github.com/LerianStudio/lib-commons/v6/commons/redis"
+	libLog "github.com/LerianStudio/lib-observability/v2/log"
 	"github.com/redis/go-redis/v9"
 )
 

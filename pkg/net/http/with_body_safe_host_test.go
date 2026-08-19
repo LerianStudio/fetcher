@@ -16,7 +16,7 @@ import (
 	"github.com/LerianStudio/fetcher/v2/pkg/datasource/hostsafety"
 	"github.com/LerianStudio/fetcher/v2/pkg/model"
 	fetcherhttp "github.com/LerianStudio/fetcher/v2/pkg/net/http"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -89,7 +89,7 @@ func TestSafeHostValidatorTag(t *testing.T) {
 			t.Cleanup(func() { hostsafety.SetHostSafetyEnabled(false) })
 
 			app := fiber.New()
-			app.Post("/test", fetcherhttp.WithBody(&hostInput{}, func(_ any, c *fiber.Ctx) error {
+			app.Post("/test", fetcherhttp.WithBody(&hostInput{}, func(_ any, c fiber.Ctx) error {
 				return c.SendStatus(stdhttp.StatusOK)
 			}))
 
@@ -97,7 +97,7 @@ func TestSafeHostValidatorTag(t *testing.T) {
 			req := httptest.NewRequest(stdhttp.MethodPost, "/test", bytes.NewBuffer(body))
 			req.Header.Set("Content-Type", "application/json")
 
-			resp, err := app.Test(req, -1)
+			resp, err := app.Test(req, fiber.TestConfig{Timeout: 0})
 			require.NoError(t, err)
 			assert.Equal(t, tc.wantStatusCode, resp.StatusCode, "host=%q safety=%v", tc.host, tc.safetyEnabled)
 

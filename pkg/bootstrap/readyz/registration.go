@@ -1,7 +1,7 @@
 package readyz
 
 import (
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 )
 
 // TenantHandler is a fiber.Handler dedicated to /readyz/tenant/:id. The
@@ -12,7 +12,7 @@ type TenantHandler fiber.Handler
 // StubTenantHandler responds 200 with a skipped DependencyCheck. Used as a
 // placeholder until the per-tenant prober is wired.
 func StubTenantHandler() fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		return c.Status(fiber.StatusOK).JSON(DependencyCheck{
 			Status: StatusSkipped,
 			Reason: "pending Gate 6 implementation",
@@ -29,7 +29,7 @@ func StubTenantHandler() fiber.Handler {
 //	IsSelfProbeOK() == true  → 200 {"status":"healthy"}
 //	IsSelfProbeOK() == false → 503 {"status":"unhealthy","reason":"self-probe failed"}
 func HealthHandler() fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		if !IsSelfProbeOK() {
 			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
 				"status": "unhealthy",

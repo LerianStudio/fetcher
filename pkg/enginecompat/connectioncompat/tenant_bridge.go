@@ -8,8 +8,8 @@ import (
 
 	"github.com/LerianStudio/fetcher/pkg/engine"
 
-	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
-	"github.com/LerianStudio/lib-observability"
+	tmcore "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/core"
+	observability "github.com/LerianStudio/lib-observability/v2"
 )
 
 // SingleTenantID is the tenant identity used when the Manager runs in

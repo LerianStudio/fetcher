@@ -12,7 +12,7 @@ import (
 
 	"github.com/LerianStudio/fetcher/v2/pkg/storage"
 	"github.com/LerianStudio/fetcher/v2/pkg/testutil"
-	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
+	tmcore "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/core"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

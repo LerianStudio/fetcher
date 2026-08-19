@@ -14,9 +14,9 @@ import (
 	"github.com/LerianStudio/fetcher/v2/pkg/model"
 	"github.com/LerianStudio/fetcher/v2/pkg/mongodb"
 
-	libMongo "github.com/LerianStudio/lib-commons/v5/commons/mongo"
-	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
-	libLog "github.com/LerianStudio/lib-observability/log"
+	libMongo "github.com/LerianStudio/lib-commons/v6/commons/mongo"
+	tmcore "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/core"
+	libLog "github.com/LerianStudio/lib-observability/v2/log"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"

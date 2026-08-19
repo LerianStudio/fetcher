@@ -19,7 +19,7 @@ import (
 	"github.com/LerianStudio/fetcher/v2/pkg/model"
 	"github.com/LerianStudio/fetcher/v2/pkg/model/datasource"
 	"github.com/LerianStudio/fetcher/v2/pkg/model/job"
-	"github.com/LerianStudio/lib-observability/log"
+	"github.com/LerianStudio/lib-observability/v2/log"
 
 	"github.com/google/uuid"
 )

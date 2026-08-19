@@ -6,7 +6,7 @@ import (
 
 	"github.com/LerianStudio/fetcher/v2/pkg/model"
 	connPort "github.com/LerianStudio/fetcher/v2/pkg/ports/connection"
-	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
+	tmcore "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/core"
 )
 
 // ServiceConnectionConfig holds connection details returned by the tenant-manager.

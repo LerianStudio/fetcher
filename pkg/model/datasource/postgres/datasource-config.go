@@ -5,15 +5,15 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/LerianStudio/lib-observability"
+	observability "github.com/LerianStudio/lib-observability/v2"
 
 	"github.com/LerianStudio/fetcher/v2/pkg/model"
 	"github.com/LerianStudio/fetcher/v2/pkg/model/datasource"
 	"github.com/LerianStudio/fetcher/v2/pkg/model/job"
 	"github.com/LerianStudio/fetcher/v2/pkg/postgres"
-	libConstant "github.com/LerianStudio/lib-commons/v5/commons/constants"
-	libLog "github.com/LerianStudio/lib-observability/log"
-	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
+	libConstant "github.com/LerianStudio/lib-commons/v6/commons/constants"
+	libLog "github.com/LerianStudio/lib-observability/v2/log"
+	libOpentelemetry "github.com/LerianStudio/lib-observability/v2/tracing"
 	"go.opentelemetry.io/otel/attribute"
 )
 

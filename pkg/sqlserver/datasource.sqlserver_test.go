@@ -6,12 +6,12 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/LerianStudio/lib-observability"
+	observability "github.com/LerianStudio/lib-observability/v2"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/LerianStudio/fetcher/v2/pkg/model/job"
 	"github.com/LerianStudio/fetcher/v2/pkg/testutil"
-	libLog "github.com/LerianStudio/lib-observability/log"
+	libLog "github.com/LerianStudio/lib-observability/v2/log"
 	"github.com/Masterminds/squirrel"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"

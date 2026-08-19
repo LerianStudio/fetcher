@@ -9,7 +9,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 )
@@ -73,7 +73,7 @@ func TestWithBody(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			app := fiber.New()
-			app.Post("/test", WithBody(&TestStruct{}, func(p any, c *fiber.Ctx) error {
+			app.Post("/test", WithBody(&TestStruct{}, func(p any, c fiber.Ctx) error {
 				return c.SendStatus(http.StatusOK)
 			}))
 
@@ -118,7 +118,7 @@ func TestWithBodyMetadata(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			app := fiber.New()
-			app.Post("/test", WithBody(&TestMetadataStruct{}, func(p any, c *fiber.Ctx) error {
+			app.Post("/test", WithBody(&TestMetadataStruct{}, func(p any, c fiber.Ctx) error {
 				return c.SendStatus(http.StatusOK)
 			}))
 
@@ -374,7 +374,7 @@ func TestParseUUIDPathParameters(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			app := fiber.New()
-			app.Get("/test/:id", ParseUUIDPathParameters, func(c *fiber.Ctx) error {
+			app.Get("/test/:id", ParseUUIDPathParameters, func(c fiber.Ctx) error {
 				// Check if UUID was parsed and stored in locals
 				if idVal := c.Locals("id"); idVal != nil {
 					if _, ok := idVal.(uuid.UUID); !ok {
@@ -383,7 +383,7 @@ func TestParseUUIDPathParameters(t *testing.T) {
 				}
 				return c.SendStatus(http.StatusOK)
 			})
-			app.Get("/other/:name", ParseUUIDPathParameters, func(c *fiber.Ctx) error {
+			app.Get("/other/:name", ParseUUIDPathParameters, func(c fiber.Ctx) error {
 				return c.SendStatus(http.StatusOK)
 			})
 
@@ -691,7 +691,7 @@ func TestWithBodyDecodeHandlerFunc(t *testing.T) {
 		app := fiber.New()
 		var receivedData *TestStruct
 
-		app.Post("/test", WithBody(&TestStruct{}, func(p any, c *fiber.Ctx) error {
+		app.Post("/test", WithBody(&TestStruct{}, func(p any, c fiber.Ctx) error {
 			receivedData = p.(*TestStruct)
 			return c.JSON(receivedData)
 		}))
@@ -713,7 +713,7 @@ func TestWithBodyDecodeHandlerFunc(t *testing.T) {
 
 func TestDecoderHandlerStruct(t *testing.T) {
 	t.Run("decoder handler fields", func(t *testing.T) {
-		handler := func(p any, c *fiber.Ctx) error {
+		handler := func(p any, c fiber.Ctx) error {
 			return nil
 		}
 		constructor := func() any {
@@ -736,7 +736,7 @@ func TestWithBodyNilConstructor(t *testing.T) {
 	t.Run("uses newOfType when constructor is nil", func(t *testing.T) {
 		app := fiber.New()
 
-		app.Post("/test", WithBody(&TestStruct{}, func(p any, c *fiber.Ctx) error {
+		app.Post("/test", WithBody(&TestStruct{}, func(p any, c fiber.Ctx) error {
 			assert.NotNil(t, p)
 			return c.SendStatus(http.StatusOK)
 		}))
@@ -788,7 +788,7 @@ func TestMalformedJSON(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			app := fiber.New()
-			app.Post("/test", WithBody(&TestStruct{}, func(p any, c *fiber.Ctx) error {
+			app.Post("/test", WithBody(&TestStruct{}, func(p any, c fiber.Ctx) error {
 				return c.SendStatus(http.StatusOK)
 			}))
 
@@ -848,7 +848,7 @@ func TestNestedStructValidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			app := fiber.New()
-			app.Post("/test", WithBody(&Person{}, func(p any, c *fiber.Ctx) error {
+			app.Post("/test", WithBody(&Person{}, func(p any, c fiber.Ctx) error {
 				return c.SendStatus(http.StatusOK)
 			}))
 
@@ -947,7 +947,7 @@ func TestWithBodyWithConstructor(t *testing.T) {
 		}
 
 		d := &decoderHandler{
-			handler: func(p any, c *fiber.Ctx) error {
+			handler: func(p any, c fiber.Ctx) error {
 				return c.SendStatus(http.StatusOK)
 			},
 			constructor:  constructor,

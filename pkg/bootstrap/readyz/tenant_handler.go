@@ -6,9 +6,9 @@ import (
 	"sync"
 	"time"
 
-	tmclient "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/client"
-	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
-	"github.com/gofiber/fiber/v2"
+	tmclient "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/client"
+	tmcore "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/core"
+	"github.com/gofiber/fiber/v3"
 )
 
 // tenantExistenceTimeout matches PerDepTimeout("tenant_manager") so the
@@ -43,7 +43,7 @@ func NewTenantHandler(cfg *Config, tmClient TMClient, service string, checkers .
 }
 
 func (h *TenantFiberHandler) Fiber() fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		if IsDraining() {
 			return c.Status(fiber.StatusServiceUnavailable).
 				JSON(h.drainingResponse(""))
@@ -60,7 +60,7 @@ func (h *TenantFiberHandler) Fiber() fiber.Handler {
 				JSON(fiber.Map{"error": "tenant manager client not configured"})
 		}
 
-		vctx, cancel := context.WithTimeout(c.UserContext(), tenantExistenceTimeout)
+		vctx, cancel := context.WithTimeout(c.Context(), tenantExistenceTimeout)
 		defer cancel()
 
 		tenants, err := h.tmClient.GetActiveTenantsByService(vctx, h.service)
@@ -79,7 +79,7 @@ func (h *TenantFiberHandler) Fiber() fiber.Handler {
 				JSON(fiber.Map{"error": "tenant not found", "tenant_id": id})
 		}
 
-		runCtx := tmcore.ContextWithTenantID(c.UserContext(), id)
+		runCtx := tmcore.ContextWithTenantID(c.Context(), id)
 		resp := h.runTenantChecks(runCtx, id)
 
 		status := fiber.StatusOK
@@ -223,7 +223,7 @@ func tenantExists(tenants []*tmclient.TenantSummary, id string) bool {
 // multi-tenant mode is disabled, so operators can distinguish "MT disabled"
 // from "route missing" without reading code.
 func NewDisabledTenantHandler() fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).
 			JSON(fiber.Map{"error": "multi-tenant mode is disabled"})
 	}

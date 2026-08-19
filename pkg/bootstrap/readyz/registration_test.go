@@ -6,8 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -23,7 +24,7 @@ func TestHealthHandler_ReturnsHealthyWhenSelfProbeOK(t *testing.T) {
 	app.Get("/health", HealthHandler())
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
-	res, err := app.Test(req, 2000)
+	res, err := app.Test(req, fiber.TestConfig{Timeout: 2 * time.Second, FailOnTimeout: true})
 	require.NoError(t, err)
 
 	defer res.Body.Close()
@@ -49,7 +50,7 @@ func TestHealthHandler_Returns503WhenSelfProbeFailed(t *testing.T) {
 	app.Get("/health", HealthHandler())
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
-	res, err := app.Test(req, 2000)
+	res, err := app.Test(req, fiber.TestConfig{Timeout: 2 * time.Second, FailOnTimeout: true})
 	require.NoError(t, err)
 
 	defer res.Body.Close()
@@ -77,7 +78,7 @@ func TestHealthHandler_StateFlipsMidLifecycle(t *testing.T) {
 	app.Get("/health", HealthHandler())
 
 	// 503 before flip.
-	res, err := app.Test(httptest.NewRequest(http.MethodGet, "/health", nil), 2000)
+	res, err := app.Test(httptest.NewRequest(http.MethodGet, "/health", nil), fiber.TestConfig{Timeout: 2 * time.Second, FailOnTimeout: true})
 	require.NoError(t, err)
 	_ = res.Body.Close()
 	assert.Equal(t, fiber.StatusServiceUnavailable, res.StatusCode)
@@ -85,7 +86,7 @@ func TestHealthHandler_StateFlipsMidLifecycle(t *testing.T) {
 	// Flip → 200.
 	SetSelfProbe(true)
 
-	res, err = app.Test(httptest.NewRequest(http.MethodGet, "/health", nil), 2000)
+	res, err = app.Test(httptest.NewRequest(http.MethodGet, "/health", nil), fiber.TestConfig{Timeout: 2 * time.Second, FailOnTimeout: true})
 	require.NoError(t, err)
 	_ = res.Body.Close()
 	assert.Equal(t, fiber.StatusOK, res.StatusCode)
@@ -93,7 +94,7 @@ func TestHealthHandler_StateFlipsMidLifecycle(t *testing.T) {
 	// Flip back → 503.
 	SetSelfProbe(false)
 
-	res, err = app.Test(httptest.NewRequest(http.MethodGet, "/health", nil), 2000)
+	res, err = app.Test(httptest.NewRequest(http.MethodGet, "/health", nil), fiber.TestConfig{Timeout: 2 * time.Second, FailOnTimeout: true})
 	require.NoError(t, err)
 	_ = res.Body.Close()
 	assert.Equal(t, fiber.StatusServiceUnavailable, res.StatusCode)
@@ -109,7 +110,7 @@ func TestHealthPassthrough_DelegatesToHealthHandler(t *testing.T) {
 	app := fiber.New()
 	app.Get("/health", HealthPassthrough())
 
-	res, err := app.Test(httptest.NewRequest(http.MethodGet, "/health", nil), 2000)
+	res, err := app.Test(httptest.NewRequest(http.MethodGet, "/health", nil), fiber.TestConfig{Timeout: 2 * time.Second, FailOnTimeout: true})
 	require.NoError(t, err)
 	_ = res.Body.Close()
 	assert.Equal(t, fiber.StatusServiceUnavailable, res.StatusCode)

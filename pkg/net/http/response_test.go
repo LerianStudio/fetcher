@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/LerianStudio/fetcher/v2/pkg"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -36,7 +36,7 @@ func TestUnauthorized(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			app := fiber.New()
-			app.Get("/test", func(c *fiber.Ctx) error {
+			app.Get("/test", func(c fiber.Ctx) error {
 				return Unauthorized(c, tt.code, tt.title, tt.message)
 			})
 
@@ -82,7 +82,7 @@ func TestForbidden(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			app := fiber.New()
-			app.Get("/test", func(c *fiber.Ctx) error {
+			app.Get("/test", func(c fiber.Ctx) error {
 				return Forbidden(c, tt.code, tt.title, tt.message)
 			})
 
@@ -126,7 +126,7 @@ func TestBadRequest(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			app := fiber.New()
-			app.Get("/test", func(c *fiber.Ctx) error {
+			app.Get("/test", func(c fiber.Ctx) error {
 				return BadRequest(c, tt.payload)
 			})
 
@@ -158,7 +158,7 @@ func TestCreated(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			app := fiber.New()
-			app.Post("/test", func(c *fiber.Ctx) error {
+			app.Post("/test", func(c fiber.Ctx) error {
 				return Created(c, tt.payload)
 			})
 
@@ -194,7 +194,7 @@ func TestOK(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			app := fiber.New()
-			app.Get("/test", func(c *fiber.Ctx) error {
+			app.Get("/test", func(c fiber.Ctx) error {
 				return OK(c, tt.payload)
 			})
 
@@ -210,7 +210,7 @@ func TestOK(t *testing.T) {
 
 func TestNoContent(t *testing.T) {
 	app := fiber.New()
-	app.Delete("/test", func(c *fiber.Ctx) error {
+	app.Delete("/test", func(c fiber.Ctx) error {
 		return NoContent(c)
 	})
 
@@ -243,7 +243,7 @@ func TestAccepted(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			app := fiber.New()
-			app.Post("/test", func(c *fiber.Ctx) error {
+			app.Post("/test", func(c fiber.Ctx) error {
 				return Accepted(c, tt.payload)
 			})
 
@@ -275,7 +275,7 @@ func TestPartialContent(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			app := fiber.New()
-			app.Get("/test", func(c *fiber.Ctx) error {
+			app.Get("/test", func(c fiber.Ctx) error {
 				return PartialContent(c, tt.payload)
 			})
 
@@ -291,7 +291,7 @@ func TestPartialContent(t *testing.T) {
 
 func TestRangeNotSatisfiable(t *testing.T) {
 	app := fiber.New()
-	app.Get("/test", func(c *fiber.Ctx) error {
+	app.Get("/test", func(c fiber.Ctx) error {
 		return RangeNotSatisfiable(c)
 	})
 
@@ -327,7 +327,7 @@ func TestNotFound(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			app := fiber.New()
-			app.Get("/test", func(c *fiber.Ctx) error {
+			app.Get("/test", func(c fiber.Ctx) error {
 				return NotFound(c, tt.code, tt.title, tt.message)
 			})
 
@@ -373,7 +373,7 @@ func TestConflict(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			app := fiber.New()
-			app.Post("/test", func(c *fiber.Ctx) error {
+			app.Post("/test", func(c fiber.Ctx) error {
 				return Conflict(c, tt.code, tt.title, tt.message)
 			})
 
@@ -413,7 +413,7 @@ func TestNotImplemented(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			app := fiber.New()
-			app.Get("/test", func(c *fiber.Ctx) error {
+			app.Get("/test", func(c fiber.Ctx) error {
 				return NotImplemented(c, tt.message)
 			})
 
@@ -459,7 +459,7 @@ func TestUnprocessableEntity(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			app := fiber.New()
-			app.Post("/test", func(c *fiber.Ctx) error {
+			app.Post("/test", func(c fiber.Ctx) error {
 				return UnprocessableEntity(c, tt.code, tt.title, tt.message)
 			})
 
@@ -505,7 +505,7 @@ func TestInternalServerError(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			app := fiber.New()
-			app.Get("/test", func(c *fiber.Ctx) error {
+			app.Get("/test", func(c fiber.Ctx) error {
 				return InternalServerError(c, tt.code, tt.title, tt.message)
 			})
 
@@ -553,7 +553,7 @@ func TestJSONResponseError(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			app := fiber.New()
-			app.Get("/test", func(c *fiber.Ctx) error {
+			app.Get("/test", func(c fiber.Ctx) error {
 				return JSONResponseError(c, tt.err)
 			})
 
@@ -603,7 +603,7 @@ func TestJSONResponseErrorWithStatusCode(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			app := fiber.New()
-			app.Get("/test", func(c *fiber.Ctx) error {
+			app.Get("/test", func(c fiber.Ctx) error {
 				return JSONResponseErrorWithStatusCode(c, tt.err)
 			})
 
@@ -656,7 +656,7 @@ func TestJSONResponse(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			app := fiber.New()
-			app.Get("/test", func(c *fiber.Ctx) error {
+			app.Get("/test", func(c fiber.Ctx) error {
 				return JSONResponse(c, tt.statusCode, tt.payload)
 			})
 

@@ -7,11 +7,11 @@ import (
 	"sync"
 	"time"
 
-	observability "github.com/LerianStudio/lib-observability"
+	observability "github.com/LerianStudio/lib-observability/v2"
 
-	"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/valkey"
-	libLog "github.com/LerianStudio/lib-observability/log"
-	obsRuntime "github.com/LerianStudio/lib-observability/runtime"
+	"github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/valkey"
+	libLog "github.com/LerianStudio/lib-observability/v2/log"
+	obsRuntime "github.com/LerianStudio/lib-observability/v2/runtime"
 	"go.opentelemetry.io/otel/attribute"
 )
 

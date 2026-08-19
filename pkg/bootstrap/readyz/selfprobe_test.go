@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	libLog "github.com/LerianStudio/lib-observability/log"
-	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/adaptor"
+	libLog "github.com/LerianStudio/lib-observability/v2/log"
+	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/adaptor"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -123,7 +123,7 @@ func scrapeSelfProbeResult(t *testing.T, dep string) (float64, bool) {
 	app.Get("/metrics", h)
 
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
-	res, err := app.Test(req, 2000)
+	res, err := app.Test(req, fiber.TestConfig{Timeout: 2 * time.Second, FailOnTimeout: true})
 	require.NoError(t, err)
 
 	defer res.Body.Close()
