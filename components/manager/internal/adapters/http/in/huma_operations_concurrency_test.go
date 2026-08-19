@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -43,14 +43,14 @@ func TestCaptureFiberContext_IsolatesConcurrentRequests(t *testing.T) {
 	const requestCount = 16
 
 	app := fiber.New()
-	app.Use(func(fiberCtx *fiber.Ctx) error {
+	app.Use(func(fiberCtx fiber.Ctx) error {
 		sentinel := fiberCtx.Get(bridgeSentinelHeader)
 		requestContext := context.WithValue(
-			fiberCtx.UserContext(),
+			fiberCtx.Context(),
 			bridgeSentinelContextKey{},
 			sentinel,
 		)
-		fiberCtx.SetUserContext(requestContext)
+		fiberCtx.SetContext(requestContext)
 
 		return fiberCtx.Next()
 	})

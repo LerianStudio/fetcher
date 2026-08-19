@@ -9,12 +9,12 @@ import (
 	"github.com/LerianStudio/fetcher/v2/pkg/constant"
 	"github.com/LerianStudio/fetcher/v2/pkg/model"
 	httpUtils "github.com/LerianStudio/fetcher/v2/pkg/net/http"
-	observability "github.com/LerianStudio/lib-observability"
-	libLog "github.com/LerianStudio/lib-observability/log"
-	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
+	observability "github.com/LerianStudio/lib-observability/v2"
+	libLog "github.com/LerianStudio/lib-observability/v2/log"
+	libOpentelemetry "github.com/LerianStudio/lib-observability/v2/tracing"
 
 	"github.com/danielgtaylor/huma/v2"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -60,13 +60,13 @@ func bindMigrationExecutors(
 			return nil, err
 		}
 
-		ctx = fiberCtx.UserContext()
+		ctx = fiberCtx.Context()
 		logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 		ctx, span := tracer.Start(ctx, "handler.list_unassigned_connections")
 		defer span.End()
 
-		fiberCtx.SetUserContext(ctx)
+		fiberCtx.SetContext(ctx)
 		span.SetAttributes(attribute.String("app.request.request_id", reqID))
 
 		query, err := httpUtils.ValidateParameters(fiberCtx.Queries())
@@ -112,13 +112,13 @@ func bindMigrationExecutors(
 			return nil, err
 		}
 
-		ctx = fiberCtx.UserContext()
+		ctx = fiberCtx.Context()
 		logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 		ctx, span := tracer.Start(ctx, "handler.assign_connection_to_product")
 		defer span.End()
 
-		fiberCtx.SetUserContext(ctx)
+		fiberCtx.SetContext(ctx)
 
 		connectionID, err := parseID(input.ID, "connection")
 		if err != nil {

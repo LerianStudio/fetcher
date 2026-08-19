@@ -7,8 +7,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/LerianStudio/lib-observability"
-
 	"github.com/LerianStudio/fetcher/v2/pkg"
 	"github.com/LerianStudio/fetcher/v2/pkg/constant"
 	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
@@ -18,10 +16,11 @@ import (
 	connRepo "github.com/LerianStudio/fetcher/v2/pkg/ports/connection"
 	"github.com/LerianStudio/fetcher/v2/pkg/resolver"
 
-	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
-	valkey "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/valkey"
-	libLog "github.com/LerianStudio/lib-observability/log"
-	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
+	tmcore "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/core"
+	valkey "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/valkey"
+	observability "github.com/LerianStudio/lib-observability/v2"
+	libLog "github.com/LerianStudio/lib-observability/v2/log"
+	libOpentelemetry "github.com/LerianStudio/lib-observability/v2/tracing"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"

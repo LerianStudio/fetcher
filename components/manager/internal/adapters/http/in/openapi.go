@@ -1,12 +1,12 @@
 package in
 
 import (
-	"github.com/LerianStudio/lib-commons/v5/commons/net/http/openapi"
-	"github.com/LerianStudio/lib-commons/v5/commons/net/http/problem"
-	libLog "github.com/LerianStudio/lib-observability/log"
+	"github.com/LerianStudio/lib-commons/v6/commons/net/http/openapi"
+	"github.com/LerianStudio/lib-commons/v6/commons/net/http/problem"
+	libLog "github.com/LerianStudio/lib-observability/v2/log"
 
 	"github.com/danielgtaylor/huma/v2"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 )
 
 const (

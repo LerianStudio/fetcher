@@ -14,7 +14,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humafiber"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
 )
 
@@ -97,6 +97,23 @@ type OperationHandlers struct {
 
 type OperationMiddlewareFactory func(resource, action string) []fiber.Handler
 
+// fiberChain adapts a non-empty handler chain to Fiber v3's route-registration
+// shape, which takes the first handler positionally and the remainder as ...any.
+// Execution order is preserved, so auth stays ahead of the tenant and callback
+// middlewares.
+//
+// The remainder is widened one element at a time on purpose: Fiber panics on an
+// argument it cannot convert to a Handler, so handing it a []fiber.Handler as a
+// single value would fail at route-registration time rather than compile time.
+func fiberChain(chain []fiber.Handler) (fiber.Handler, []any) {
+	trailing := make([]any, len(chain)-1)
+	for i, handler := range chain[1:] {
+		trailing[i] = handler
+	}
+
+	return chain[0], trailing
+}
+
 // NewOperationHandlers binds the HTTP contract to the existing application
 // services without retaining the legacy Fiber response rail.
 func NewOperationHandlers(
@@ -137,7 +154,8 @@ func registerTypedOperation[I, O any](
 	if middlewareFactory != nil {
 		middlewares := middlewareFactory(resource, action)
 		if len(middlewares) > 0 {
-			app.Add(op.Method, fiberPath(op.Path), middlewares...)
+			first, trailing := fiberChain(middlewares)
+			app.Add([]string{op.Method}, fiberPath(op.Path), first, trailing...)
 		}
 	}
 
@@ -152,16 +170,25 @@ func registerTypedOperation[I, O any](
 	huma.Register(api, op, handler)
 }
 
+// captureFiberContext republishes the Fiber request context under
+// fiberContextKey so Huma operation handlers can reach it.
+//
+// Unwrap (not UnwrapV2) is required: the API is built by the lib-commons Huma
+// wrapper, which binds the Fiber v3 adapter, and the v2 unwrap would not match
+// the context that adapter creates. The mismatch is invisible to the compiler
+// on both sides — UnwrapV2 returns a Fiber v2 Ctx whose Context() is the
+// fasthttp request context rather than the Go one, and the fiberContext type
+// assertion below would then simply fail at runtime on every request.
 func captureFiberContext(humaCtx huma.Context, next func(huma.Context)) {
-	fiberCtx := humafiber.UnwrapV2(humaCtx)
-	ctx := context.WithValue(fiberCtx.UserContext(), fiberContextKey{}, fiberCtx)
+	fiberCtx := humafiber.Unwrap(humaCtx)
+	ctx := context.WithValue(fiberCtx.Context(), fiberContextKey{}, fiberCtx)
 	next(huma.WithContext(humaCtx, ctx))
 }
 
 type fiberContextKey struct{}
 
-func fiberContext(ctx context.Context) (*fiber.Ctx, error) {
-	fiberCtx, ok := ctx.Value(fiberContextKey{}).(*fiber.Ctx)
+func fiberContext(ctx context.Context) (fiber.Ctx, error) {
+	fiberCtx, ok := ctx.Value(fiberContextKey{}).(fiber.Ctx)
 	if !ok || fiberCtx == nil {
 		return nil, httpUtils.MapError(pkg.InternalServerError{
 			Code:    constant.ErrInternalServer.Error(),

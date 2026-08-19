@@ -17,10 +17,10 @@ import (
 	"github.com/LerianStudio/fetcher/v2/pkg/model"
 	jobRepo "github.com/LerianStudio/fetcher/v2/pkg/mongodb/job"
 	connRepo "github.com/LerianStudio/fetcher/v2/pkg/ports/connection"
-	commonsopenapi "github.com/LerianStudio/lib-commons/v5/commons/net/http/openapi"
-	"github.com/LerianStudio/lib-commons/v5/commons/net/http/problem"
+	commonsopenapi "github.com/LerianStudio/lib-commons/v6/commons/net/http/openapi"
+	"github.com/LerianStudio/lib-commons/v6/commons/net/http/problem"
 	"github.com/danielgtaylor/huma/v2"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -682,7 +682,7 @@ func TestFetcherOperationsApplyTheirAuthorizationMiddleware(t *testing.T) {
 	factory := func(resource, action string) []fiber.Handler {
 		registered = append(registered, resource+":"+action)
 
-		return []fiber.Handler{func(c *fiber.Ctx) error {
+		return []fiber.Handler{func(c fiber.Ctx) error {
 			middlewareRuns++
 
 			return c.Next()

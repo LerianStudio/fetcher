@@ -5,14 +5,14 @@ import (
 	"github.com/LerianStudio/fetcher/v2/pkg/constant"
 	"github.com/LerianStudio/fetcher/v2/pkg/net/http"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
 )
 
 var UUIDPathParameter = "id"
 
 // ParsePathParametersUUID convert and validate if the path parameter is UUID
-func ParsePathParametersUUID(c *fiber.Ctx) error {
+func ParsePathParametersUUID(c fiber.Ctx) error {
 	pathParam := c.Params(UUIDPathParameter)
 
 	if pkg.IsNilOrEmpty(&pathParam) {

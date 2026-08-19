@@ -5,10 +5,10 @@ import (
 	"testing"
 
 	"github.com/LerianStudio/fetcher/v2/pkg/testutil"
-	observability "github.com/LerianStudio/lib-observability"
+	observability "github.com/LerianStudio/lib-observability/v2"
 
-	libLog "github.com/LerianStudio/lib-observability/log"
-	"github.com/gofiber/fiber/v2"
+	libLog "github.com/LerianStudio/lib-observability/v2/log"
+	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -22,12 +22,12 @@ func setupMiddlewareTestApp() *fiber.App {
 	})
 
 	// Middleware to inject test context with logger and tracer
-	app.Use(func(c *fiber.Ctx) error {
+	app.Use(func(c fiber.Ctx) error {
 		logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 		ctx := observability.ContextWithHeaderID(testutil.TestContext(), "test-request-id")
 		ctx = observability.ContextWithLogger(ctx, logger)
 		ctx = observability.ContextWithTracer(ctx, otel.Tracer("test"))
-		c.SetUserContext(ctx)
+		c.SetContext(ctx)
 
 		return c.Next()
 	})
@@ -44,7 +44,7 @@ func TestParsePathParametersUUID_ValidUUID(t *testing.T) {
 	validUUID := uuid.New()
 
 	// Setup route with middleware
-	app.Get("/test/:id", ParsePathParametersUUID, func(c *fiber.Ctx) error {
+	app.Get("/test/:id", ParsePathParametersUUID, func(c fiber.Ctx) error {
 		// Verify UUID was stored in locals
 		storedID := c.Locals(UUIDPathParameter)
 		assert.NotNil(t, storedID)
@@ -103,7 +103,7 @@ func TestParsePathParametersUUID_InvalidUUID(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			app := setupMiddlewareTestApp()
 
-			app.Get("/test/:id", ParsePathParametersUUID, func(c *fiber.Ctx) error {
+			app.Get("/test/:id", ParsePathParametersUUID, func(c fiber.Ctx) error {
 				return c.SendStatus(fiber.StatusOK)
 			})
 
@@ -123,7 +123,7 @@ func TestParsePathParametersUUID_EmptyPathParameter(t *testing.T) {
 
 	// When path parameter is empty (route matches but param is empty)
 	// This simulates a route like /test/:id where :id matches empty string
-	app.Get("/test/:id", ParsePathParametersUUID, func(c *fiber.Ctx) error {
+	app.Get("/test/:id", ParsePathParametersUUID, func(c fiber.Ctx) error {
 		return c.SendStatus(fiber.StatusOK)
 	})
 
@@ -144,7 +144,7 @@ func TestParsePathParametersUUID_MultipleCalls(t *testing.T) {
 	callCount := 0
 	var lastStoredID uuid.UUID
 
-	app.Get("/test/:id", ParsePathParametersUUID, func(c *fiber.Ctx) error {
+	app.Get("/test/:id", ParsePathParametersUUID, func(c fiber.Ctx) error {
 		callCount++
 		storedID := c.Locals(UUIDPathParameter)
 		lastStoredID = storedID.(uuid.UUID)
@@ -203,7 +203,7 @@ func TestParsePathParametersUUID_UUIDVersions(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			app := setupMiddlewareTestApp()
 
-			app.Get("/test/:id", ParsePathParametersUUID, func(c *fiber.Ctx) error {
+			app.Get("/test/:id", ParsePathParametersUUID, func(c fiber.Ctx) error {
 				return c.SendStatus(fiber.StatusOK)
 			})
 

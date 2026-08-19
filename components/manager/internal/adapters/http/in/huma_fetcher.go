@@ -6,11 +6,11 @@ import (
 	"net/http"
 
 	"github.com/LerianStudio/fetcher/v2/pkg/model"
-	observability "github.com/LerianStudio/lib-observability"
-	libLog "github.com/LerianStudio/lib-observability/log"
-	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
+	observability "github.com/LerianStudio/lib-observability/v2"
+	libLog "github.com/LerianStudio/lib-observability/v2/log"
+	libOpentelemetry "github.com/LerianStudio/lib-observability/v2/tracing"
 	"github.com/danielgtaylor/huma/v2"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -30,7 +30,7 @@ func bindFetcherHandlers(handlers *OperationHandlers, handler *FetcherHandler) {
 		ctx, span := tracer.Start(ctx, "handler.create_fetcher_job")
 		defer span.End()
 
-		fiberCtx.SetUserContext(ctx)
+		fiberCtx.SetContext(ctx)
 		span.SetAttributes(attribute.String("app.request.request_id", requestID))
 
 		request, err := decodeJSON[model.FetcherRequest](input.RawBody, "fetcher")
@@ -88,7 +88,7 @@ func bindFetcherHandlers(handlers *OperationHandlers, handler *FetcherHandler) {
 		ctx, span := tracer.Start(ctx, "handler.get_fetcher_job")
 		defer span.End()
 
-		fiberCtx.SetUserContext(ctx)
+		fiberCtx.SetContext(ctx)
 		span.SetAttributes(attribute.String("app.request.request_id", requestID))
 
 		id, err := parseID(input.ID, "job")

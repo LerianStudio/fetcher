@@ -4,10 +4,10 @@ import (
 	"time"
 
 	"github.com/LerianStudio/fetcher/v2/pkg/model"
-	observability "github.com/LerianStudio/lib-observability"
-	libLog "github.com/LerianStudio/lib-observability/log"
+	observability "github.com/LerianStudio/lib-observability/v2"
+	libLog "github.com/LerianStudio/lib-observability/v2/log"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
 )
@@ -17,12 +17,12 @@ func setupMigrationTestApp() *fiber.App {
 		BodyLimit: 10 * 1024,
 	})
 
-	app.Use(func(c *fiber.Ctx) error {
+	app.Use(func(c fiber.Ctx) error {
 		logger := &libLog.GoLogger{Level: libLog.LevelDebug}
-		ctx := observability.ContextWithHeaderID(c.UserContext(), "test-request-id")
+		ctx := observability.ContextWithHeaderID(c.Context(), "test-request-id")
 		ctx = observability.ContextWithLogger(ctx, logger)
 		ctx = observability.ContextWithTracer(ctx, otel.Tracer("test"))
-		c.SetUserContext(ctx)
+		c.SetContext(ctx)
 
 		return c.Next()
 	})

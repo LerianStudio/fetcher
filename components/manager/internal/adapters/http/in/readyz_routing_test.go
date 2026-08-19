@@ -5,9 +5,10 @@ import (
 	"io"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/LerianStudio/fetcher/v2/pkg/bootstrap/readyz"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -50,7 +51,7 @@ func TestReadyzRoutes_NoAuthRequired(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest("GET", tc.path, nil)
 			// NO Authorization header — this is the whole point.
-			res, err := app.Test(req, 2000)
+			res, err := app.Test(req, fiber.TestConfig{Timeout: 2 * time.Second, FailOnTimeout: true})
 			require.NoError(t, err)
 
 			defer res.Body.Close()
@@ -77,7 +78,7 @@ func TestRoutes_MetricsEndpoint_Unauthenticated(t *testing.T) {
 	app.Get("/metrics", readyz.NewMetricsHandler())
 
 	req := httptest.NewRequest("GET", "/metrics", nil)
-	res, err := app.Test(req, 2000)
+	res, err := app.Test(req, fiber.TestConfig{Timeout: 2 * time.Second, FailOnTimeout: true})
 	require.NoError(t, err)
 
 	defer res.Body.Close()
@@ -100,7 +101,7 @@ func TestReadyzTenantDisabled_ReturnsBadRequest(t *testing.T) {
 	app.Get("/readyz/tenant/:id", readyz.NewDisabledTenantHandler())
 
 	req := httptest.NewRequest("GET", "/readyz/tenant/tenant-xyz", nil)
-	res, err := app.Test(req, 2000)
+	res, err := app.Test(req, fiber.TestConfig{Timeout: 2 * time.Second, FailOnTimeout: true})
 	require.NoError(t, err)
 
 	defer res.Body.Close()

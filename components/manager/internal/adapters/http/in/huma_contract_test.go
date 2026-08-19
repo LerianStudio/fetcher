@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/LerianStudio/lib-commons/v5/commons/net/http/problem"
+	"github.com/LerianStudio/lib-commons/v6/commons/net/http/problem"
 
 	"github.com/danielgtaylor/huma/v2"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

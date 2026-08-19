@@ -4,14 +4,13 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/LerianStudio/lib-observability"
-
 	"github.com/LerianStudio/fetcher/pkg/engine"
 	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
 	"github.com/LerianStudio/fetcher/v2/pkg/enginecompat/connectioncompat"
 	"github.com/LerianStudio/fetcher/v2/pkg/model"
 
-	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
+	observability "github.com/LerianStudio/lib-observability/v2"
+	libOpentelemetry "github.com/LerianStudio/lib-observability/v2/tracing"
 
 	"go.opentelemetry.io/otel/attribute"
 )

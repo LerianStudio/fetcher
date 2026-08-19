@@ -1,8 +1,8 @@
 package bootstrap
 
 import (
-	"github.com/LerianStudio/lib-commons/v5/commons"
-	"github.com/LerianStudio/lib-observability/log"
+	"github.com/LerianStudio/lib-commons/v6/commons"
+	"github.com/LerianStudio/lib-observability/v2/log"
 )
 
 // Service is the application glue where we put all top-level components to be used.

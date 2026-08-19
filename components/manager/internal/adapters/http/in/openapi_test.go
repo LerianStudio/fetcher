@@ -10,10 +10,10 @@ import (
 	"testing"
 
 	"github.com/LerianStudio/fetcher/v2/pkg/model"
-	"github.com/LerianStudio/lib-commons/v5/commons/net/http/problem"
+	"github.com/LerianStudio/lib-commons/v6/commons/net/http/problem"
 
 	"github.com/danielgtaylor/huma/v2"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -202,10 +202,17 @@ func TestRegisterHumaOperations_DocumentsEveryPublicDTOField(t *testing.T) {
 		"JobResponse":              {"id", "metadata", "mappedFields", "filters", "status", "resultPath", "resultHmac", "requestHash", "createdAt", "completedAt"},
 	}
 
+	// The only schemas allowed alongside fetcher's own DTOs are the RFC 9457
+	// problem-model ones owned by lib-commons. Naming them keeps the count a
+	// tripwire: an unexpected schema reaching the public contract still fails.
+	problemModelSchemas := []string{"Detail", "ErrorDetail", "Upstream"}
+
 	schemas := api.OpenAPI().Components.Schemas.Map()
-	require.Len(t, schemas, len(publicDTOFields)+2)
-	require.Contains(t, schemas, "Detail")
-	require.Contains(t, schemas, "ErrorDetail")
+	require.Len(t, schemas, len(publicDTOFields)+len(problemModelSchemas))
+
+	for _, schemaName := range problemModelSchemas {
+		require.Contains(t, schemas, schemaName)
+	}
 	for schemaName, fields := range publicDTOFields {
 		t.Run(schemaName, func(t *testing.T) {
 			schema := schemas[schemaName]
