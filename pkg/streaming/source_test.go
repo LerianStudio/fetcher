@@ -17,7 +17,6 @@ func TestRequireRosterSource(t *testing.T) {
 		wantErr    bool
 	}{
 		{name: "roster name", configured: constant.ApplicationName},
-		{name: "empty", configured: "", wantErr: true},
 		// Every case below is grammar-legal under lib-streaming's own source
 		// validation, and every one of them is still wrong: the provisioned
 		// topic, DLQ and ACL are named for the roster name alone.
@@ -48,6 +47,21 @@ func TestRequireRosterSource(t *testing.T) {
 			require.NoError(t, err)
 		})
 	}
+}
+
+// TestRequireRosterSourceEmptyNamesBothRequiredVariables covers the case an
+// operator hits most: the streaming block was never configured at all. Naming
+// only the source would send them through a second deploy to discover that
+// STREAMING_ENABLED is refused too.
+func TestRequireRosterSourceEmptyNamesBothRequiredVariables(t *testing.T) {
+	t.Parallel()
+
+	err := RequireRosterSource("", constant.ApplicationName)
+
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrSourceNotRoster)
+	assert.Contains(t, err.Error(), "STREAMING_CLOUDEVENTS_SOURCE")
+	assert.Contains(t, err.Error(), "STREAMING_ENABLED")
 }
 
 // TestRosterNameIsTheApplicationName pins the value the gate enforces. The

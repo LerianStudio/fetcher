@@ -242,6 +242,21 @@ func TestInitJobEventEmitter_EnabledRequiresOutboxRepository(t *testing.T) {
 	assert.Nil(t, emitter)
 }
 
+// TestJobEventStreamingContract_CeTypeValues pins the literal ce-type header
+// carried by every job event. v3 inserted the source segment into ce-type
+// ("studio.lerian.<source>.<resourceType>.<eventType>"), so these strings
+// changed on the wire even though the exchange and routing keys did not — and
+// nothing in fetcher pinned any ce-* header before, which is how the change went
+// unnoticed until review. Any consumer matching on ce-type matches these exact
+// values, so a future library bump must break this test rather than their
+// subscriptions.
+func TestJobEventStreamingContract_CeTypeValues(t *testing.T) {
+	assert.Equal(t, "studio.lerian.fetcher.job.completed",
+		streaming.CloudEventsType(constant.ApplicationName, "job", "completed"))
+	assert.Equal(t, "studio.lerian.fetcher.job.failed",
+		streaming.CloudEventsType(constant.ApplicationName, "job", "failed"))
+}
+
 func TestJobEventStreamingContract_UsesConfiguredSourceAndRabbitMQRoutes(t *testing.T) {
 	t.Setenv("STREAMING_ENABLED", "true")
 	t.Setenv("STREAMING_BROKERS", "unused:9092")
@@ -290,21 +305,25 @@ func TestJobEventStreamingContract_UsesConfiguredSourceAndRabbitMQRoutes(t *test
 	}, catalog, routes)
 	require.NoError(t, err)
 
+	// These assertions pin an INHERITED library contract, not a published
+	// artifact. Fetcher does not serve an event manifest anywhere — the
+	// lib-streaming manifest handler is deliberately not mounted — so the topic
+	// names below are never read by anything and no broker topic is provisioned
+	// from them. They are asserted only to catch the library silently changing
+	// how it derives names from the ce-source, which is the same derivation the
+	// roster-source gate protects.
+	//
 	// One topic per application: a definition no longer carries a topic of its
 	// own, only an eventKey selector inside the application's single stream.
-	// The topic names below are derived from the ce-source, which is why the
-	// roster-source gate is a startup precondition and not a style rule.
 	assert.Equal(t, "lerian.streaming.fetcher", manifest.Topic)
 	assert.Equal(t, "lerian.streaming.fetcher.dlq", manifest.DLQTopic)
-	assert.Empty(t, manifest.CommandsTopic, "fetcher emits facts only, so no commands queue should be advertised")
+	assert.Empty(t, manifest.CommandsTopic, "fetcher emits facts only, so no commands queue should be derived")
 
 	require.Len(t, manifest.Events, 2)
 	assert.Equal(t, "job.completed", manifest.Events[0].EventKey)
 	assert.Equal(t, "job.failed", manifest.Events[1].EventKey)
 
-	// The RabbitMQ exchange below is what fetcher actually writes. The derived
-	// Kafka topic names above are advertised by the manifest contract but carry
-	// no traffic while every route is a RabbitMQ destination.
+	// The RabbitMQ exchange below is what fetcher actually writes.
 	require.Len(t, manifest.Routes, 2)
 	for _, route := range manifest.Routes {
 		assert.Equal(t, streaming.TransportRabbitMQ, route.Transport)

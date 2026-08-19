@@ -26,23 +26,33 @@ var ErrSourceNotRoster = errors.New("streaming: configured ce-source is not this
 //
 // Fetcher's own job events currently ride a RabbitMQ exchange rather than a
 // Kafka topic, so a wrong source here corrupts event identity rather than
-// destroying delivery: every consumer keying off ce-source stops matching, and
-// the DLQ a failed publish falls back to carries a name nothing owns. The day
-// fetcher gains a Kafka route, the same misconfiguration becomes total silent
-// event loss instead. Equality against the roster name is what forecloses both,
-// which is why this is an equality test and not a shape test.
+// destroying delivery: the source lands on both the ce-source and the ce-type
+// header of every event, so every consumer matching on either stops matching.
+// The day fetcher gains a Kafka route, the same misconfiguration becomes total
+// silent event loss instead. Equality against the roster name is what forecloses
+// both, which is why this is an equality test and not a shape test.
 //
 // This is checked whether or not streaming is ENABLED. lib-streaming skips its
 // own source validation entirely for a disabled config, so a source left over
 // from the pre-v3 URI shape would otherwise sit in an env file until someone
 // flipped the flag.
 func RequireRosterSource(configured, roster string) error {
-	if configured != roster {
+	if configured == roster {
+		return nil
+	}
+
+	// An empty source usually means the streaming block was never configured at
+	// all, so name the other required variable too. Reporting only this one sends
+	// the operator through a second deploy to discover the second refusal.
+	if configured == "" {
 		return fmt.Errorf(
-			"%w: STREAMING_CLOUDEVENTS_SOURCE must be %q, got %q — the broker topics and ACLs are provisioned for the roster name only",
-			ErrSourceNotRoster, roster, configured,
+			"%w: STREAMING_CLOUDEVENTS_SOURCE is required and must be %q; STREAMING_ENABLED must also be true for the mandatory job event notifications",
+			ErrSourceNotRoster, roster,
 		)
 	}
 
-	return nil
+	return fmt.Errorf(
+		"%w: STREAMING_CLOUDEVENTS_SOURCE must be %q, got %q — the broker topics and ACLs are provisioned for the roster name only",
+		ErrSourceNotRoster, roster, configured,
+	)
 }
