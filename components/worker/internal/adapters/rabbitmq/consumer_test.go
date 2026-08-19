@@ -8,9 +8,9 @@ import (
 
 	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
 	"github.com/LerianStudio/fetcher/v2/pkg/rabbitmq"
-	libRabbitmq "github.com/LerianStudio/lib-commons/v5/commons/rabbitmq"
-	"github.com/LerianStudio/lib-observability/log"
-	opentelemetry "github.com/LerianStudio/lib-observability/tracing"
+	libRabbitmq "github.com/LerianStudio/lib-commons/v6/commons/rabbitmq"
+	"github.com/LerianStudio/lib-observability/v2/log"
+	opentelemetry "github.com/LerianStudio/lib-observability/v2/tracing"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/mock/gomock"
 )

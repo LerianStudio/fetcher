@@ -13,7 +13,7 @@ import (
 	"github.com/LerianStudio/fetcher/v2/pkg/constant"
 	"github.com/LerianStudio/fetcher/v2/pkg/model"
 	modelJob "github.com/LerianStudio/fetcher/v2/pkg/model/job"
-	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
+	tmcore "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/core"
 	"github.com/google/uuid"
 	"go.uber.org/mock/gomock"
 )

@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/LerianStudio/fetcher/v2/pkg/bootstrap/readyz"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -45,7 +45,7 @@ func TestHealthServer_ServesReadyzWithNilDeps(t *testing.T) {
 	srv := NewHealthServer(cfg, nil, nil, nil)
 
 	req := httptest.NewRequest("GET", "/readyz", nil)
-	res, err := srv.App().Test(req, 2000)
+	res, err := srv.App().Test(req, fiber.TestConfig{Timeout: 2 * time.Second, FailOnTimeout: true})
 	require.NoError(t, err)
 	defer res.Body.Close()
 
@@ -87,7 +87,7 @@ func TestHealthServer_ServesHealthAndMetrics(t *testing.T) {
 
 	for _, tc := range tests {
 		req := httptest.NewRequest("GET", tc.path, nil)
-		res, err := srv.App().Test(req, 2000)
+		res, err := srv.App().Test(req, fiber.TestConfig{Timeout: 2 * time.Second, FailOnTimeout: true})
 		require.NoError(t, err, "path %s", tc.path)
 		_ = res.Body.Close()
 		assert.Equal(t, tc.want, res.StatusCode, "path %s", tc.path)
@@ -101,7 +101,7 @@ func TestHealthServer_DoesNotExposeUnauthenticatedStreamingManifest(t *testing.T
 	paths := []string{"/streaming", "/streaming/manifest", "/manifest"}
 	for _, path := range paths {
 		req := httptest.NewRequest("GET", path, nil)
-		res, err := srv.App().Test(req, 2000)
+		res, err := srv.App().Test(req, fiber.TestConfig{Timeout: 2 * time.Second, FailOnTimeout: true})
 		require.NoError(t, err, "path %s", path)
 		_ = res.Body.Close()
 
@@ -120,7 +120,7 @@ func TestHealthServer_HealthReturns503BeforeSelfProbe(t *testing.T) {
 	srv := NewHealthServer(cfg, nil, nil, nil)
 
 	req := httptest.NewRequest("GET", "/health", nil)
-	res, err := srv.App().Test(req, 2000)
+	res, err := srv.App().Test(req, fiber.TestConfig{Timeout: 2 * time.Second, FailOnTimeout: true})
 	require.NoError(t, err)
 	defer res.Body.Close()
 
@@ -146,7 +146,7 @@ func TestHealthServer_HealthReturns200AfterSelfProbe(t *testing.T) {
 	srv := NewHealthServer(cfg, nil, nil, nil)
 
 	req := httptest.NewRequest("GET", "/health", nil)
-	res, err := srv.App().Test(req, 2000)
+	res, err := srv.App().Test(req, fiber.TestConfig{Timeout: 2 * time.Second, FailOnTimeout: true})
 	require.NoError(t, err)
 	defer res.Body.Close()
 
@@ -179,13 +179,13 @@ func TestHealthServer_MetricsEndpoint_ServesPrometheus(t *testing.T) {
 	// least one observation recorded — Prometheus only surfaces a series
 	// after the first emit for that label tuple.
 	readyzReq := httptest.NewRequest("GET", "/readyz", nil)
-	readyzRes, err := srv.App().Test(readyzReq, 2000)
+	readyzRes, err := srv.App().Test(readyzReq, fiber.TestConfig{Timeout: 2 * time.Second, FailOnTimeout: true})
 	require.NoError(t, err)
 	_ = readyzRes.Body.Close()
 
 	// Now scrape /metrics and verify the exposition output.
 	req := httptest.NewRequest("GET", "/metrics", nil)
-	res, err := srv.App().Test(req, 2000)
+	res, err := srv.App().Test(req, fiber.TestConfig{Timeout: 2 * time.Second, FailOnTimeout: true})
 	require.NoError(t, err)
 	defer res.Body.Close()
 
@@ -215,7 +215,7 @@ func TestHealthServer_DrainingReturns503(t *testing.T) {
 	srv := NewHealthServer(cfg, nil, nil, nil)
 
 	req := httptest.NewRequest("GET", "/readyz", nil)
-	res, err := srv.App().Test(req, 2000)
+	res, err := srv.App().Test(req, fiber.TestConfig{Timeout: 2 * time.Second, FailOnTimeout: true})
 	require.NoError(t, err)
 	defer res.Body.Close()
 

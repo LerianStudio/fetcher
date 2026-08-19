@@ -8,16 +8,15 @@ import (
 	"maps"
 	"strings"
 
-	"github.com/LerianStudio/lib-observability"
-
 	"github.com/LerianStudio/fetcher/v2/pkg"
 	"github.com/LerianStudio/fetcher/v2/pkg/model"
 	modelDatasource "github.com/LerianStudio/fetcher/v2/pkg/model/datasource"
 	modelJob "github.com/LerianStudio/fetcher/v2/pkg/model/job"
 	portDS "github.com/LerianStudio/fetcher/v2/pkg/ports/datasource"
-	libCrypto "github.com/LerianStudio/lib-commons/v5/commons/crypto"
-	libLog "github.com/LerianStudio/lib-observability/log"
-	libOtel "github.com/LerianStudio/lib-observability/tracing"
+	libCrypto "github.com/LerianStudio/lib-commons/v6/commons/crypto"
+	observability "github.com/LerianStudio/lib-observability/v2"
+	libLog "github.com/LerianStudio/lib-observability/v2/log"
+	libOtel "github.com/LerianStudio/lib-observability/v2/tracing"
 	"go.opentelemetry.io/otel/attribute"
 )
 

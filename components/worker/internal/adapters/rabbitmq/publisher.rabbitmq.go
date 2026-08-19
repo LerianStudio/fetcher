@@ -6,16 +6,16 @@ import (
 	"fmt"
 	"sync"
 
-	observability "github.com/LerianStudio/lib-observability"
+	observability "github.com/LerianStudio/lib-observability/v2"
 
 	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
 	portPublisher "github.com/LerianStudio/fetcher/v2/pkg/ports/publisher"
 	"github.com/LerianStudio/fetcher/v2/pkg/rabbitmq"
-	libRabbitmq "github.com/LerianStudio/lib-commons/v5/commons/rabbitmq"
-	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
-	obsConstants "github.com/LerianStudio/lib-observability/constants"
-	libLog "github.com/LerianStudio/lib-observability/log"
-	opentelemetry "github.com/LerianStudio/lib-observability/tracing"
+	libRabbitmq "github.com/LerianStudio/lib-commons/v6/commons/rabbitmq"
+	tmcore "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/core"
+	obsConstants "github.com/LerianStudio/lib-observability/v2/constants"
+	libLog "github.com/LerianStudio/lib-observability/v2/log"
+	opentelemetry "github.com/LerianStudio/lib-observability/v2/tracing"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"go.opentelemetry.io/otel/attribute"
 )

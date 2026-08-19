@@ -6,11 +6,11 @@ import (
 	"time"
 
 	"github.com/LerianStudio/fetcher/v2/pkg/bootstrap/readyz"
-	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
-	libCommonsServer "github.com/LerianStudio/lib-commons/v5/commons/server"
-	libLog "github.com/LerianStudio/lib-observability/log"
-	libOtel "github.com/LerianStudio/lib-observability/tracing"
-	"github.com/gofiber/fiber/v2"
+	libCommons "github.com/LerianStudio/lib-commons/v6/commons"
+	libCommonsServer "github.com/LerianStudio/lib-commons/v6/commons/server"
+	libLog "github.com/LerianStudio/lib-observability/v2/log"
+	libOtel "github.com/LerianStudio/lib-observability/v2/tracing"
+	"github.com/gofiber/fiber/v3"
 )
 
 const defaultHealthPort = 4007
@@ -64,8 +64,15 @@ func NewHealthServer(
 	checkers := buildWorkerReadyzCheckers(deps)
 	handler := readyz.NewHandler(readyzCfg, checkers...)
 
-	app := fiber.New(fiber.Config{
-		DisableStartupMessage: true,
+	app := fiber.New()
+
+	// Fiber v3 moved startup-banner suppression off fiber.Config and onto the
+	// Listen call, but ServerManager owns Listen and passes no ListenConfig, so
+	// the pre-startup hook is the only seam that keeps boot silent here.
+	app.Hooks().OnPreStartupMessage(func(data *fiber.PreStartupMessageData) error {
+		data.PreventDefault = true
+
+		return nil
 	})
 
 	app.Get("/health", readyz.HealthHandler())

@@ -7,9 +7,9 @@ import (
 
 	"github.com/LerianStudio/fetcher/v2/pkg/model"
 	jobPort "github.com/LerianStudio/fetcher/v2/pkg/ports/job"
-	tmclient "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/client"
-	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
-	streaming "github.com/LerianStudio/lib-streaming"
+	tmclient "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/client"
+	tmcore "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/core"
+	streaming "github.com/LerianStudio/lib-streaming/v2"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"go.mongodb.org/mongo-driver/v2/mongo"

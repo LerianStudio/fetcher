@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	tmclient "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/client"
-	libLog "github.com/LerianStudio/lib-observability/log"
+	tmclient "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/client"
+	libLog "github.com/LerianStudio/lib-observability/v2/log"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
@@ -240,7 +240,7 @@ func TestTenantConsumerReconciler_TMFlapping_Converges(t *testing.T) {
 		goleak.IgnoreTopFunction("github.com/testcontainers/testcontainers-go.(*Reaper).connect.func1"),
 		// tmclient's in-memory config cache runs a background TTL cleanup loop
 		// with no Close hook; not owned by the reconciler.
-		goleak.IgnoreTopFunction("github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/cache.(*InMemoryCache).cleanupLoop"),
+		goleak.IgnoreTopFunction("github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/cache.(*InMemoryCache).cleanupLoop"),
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)

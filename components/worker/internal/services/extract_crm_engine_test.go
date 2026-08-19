@@ -13,7 +13,7 @@ import (
 	modelDatasource "github.com/LerianStudio/fetcher/v2/pkg/model/datasource"
 	modelJob "github.com/LerianStudio/fetcher/v2/pkg/model/job"
 	portDS "github.com/LerianStudio/fetcher/v2/pkg/ports/datasource"
-	libLog "github.com/LerianStudio/lib-observability/log"
+	libLog "github.com/LerianStudio/lib-observability/v2/log"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
