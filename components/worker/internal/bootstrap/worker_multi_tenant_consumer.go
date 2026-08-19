@@ -157,7 +157,11 @@ func (c *workerMultiTenantConsumer) Register(queueName string, handler tmconsume
 		}
 	}
 
-	for _, tenantID := range c.cache.TenantIDs() {
+	// Cache keys are stored as the Tenant Manager returned them, so a dashed
+	// UUID must collapse to the canonical spelling here or it would key a
+	// second knownTenants entry (and a second consumer) for the same tenant.
+	for _, cachedID := range c.cache.TenantIDs() {
+		tenantID := multitenant.Canonical(strings.TrimSpace(cachedID))
 		if !c.knownTenants[tenantID] {
 			c.knownTenants[tenantID] = true
 			startTenants = append(startTenants, tenantID)
@@ -373,6 +377,8 @@ func (c *workerMultiTenantConsumer) tenantKnown(tenantID string) bool {
 }
 
 func (c *workerMultiTenantConsumer) markTenantKnown(tenantID string) {
+	tenantID = multitenant.Canonical(strings.TrimSpace(tenantID))
+
 	c.mu.Lock()
 	c.knownTenants[tenantID] = true
 	c.mu.Unlock()
