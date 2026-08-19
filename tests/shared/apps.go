@@ -226,7 +226,7 @@ func (e *AppEnv) WorkerEnv() map[string]string {
 		"RABBITMQ_NUMBERS_OF_WORKERS":          "1",
 		"STREAMING_ENABLED":                    "true",
 		"STREAMING_BROKERS":                    "localhost:9092",
-		"STREAMING_CLOUDEVENTS_SOURCE":         "//lerian.fetcher/worker",
+		"STREAMING_CLOUDEVENTS_SOURCE":         "fetcher",
 		"LOG_LEVEL":                            "debug",
 		"ENABLE_TELEMETRY":                     "true",
 		"OTEL_RESOURCE_SERVICE_NAME":           "fetcher",

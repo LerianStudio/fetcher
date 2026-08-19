@@ -12,7 +12,7 @@ import (
 	"github.com/LerianStudio/fetcher/v2/pkg/ports/job"
 	"github.com/LerianStudio/fetcher/v2/pkg/ports/storage"
 	"github.com/LerianStudio/fetcher/v2/pkg/resolver"
-	streaming "github.com/LerianStudio/lib-streaming/v2"
+	streaming "github.com/LerianStudio/lib-streaming/v3"
 )
 
 // EngineRunner is the Worker's seam onto the embedded Engine's synchronous
