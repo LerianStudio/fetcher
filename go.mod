@@ -176,7 +176,7 @@ require (
 	go.uber.org/atomic v1.11.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.28.0 // indirect
-	golang.org/x/mod v0.38.0 // indirect
+	golang.org/x/mod v0.40.0 // indirect
 	golang.org/x/net v0.57.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
@@ -190,7 +190,7 @@ require (
 )
 
 require (
-	github.com/LerianStudio/lib-streaming/v2 v2.1.0
+	github.com/LerianStudio/lib-streaming/v3 v3.0.0
 	github.com/gofiber/fiber/v3 v3.4.0
 )
 
