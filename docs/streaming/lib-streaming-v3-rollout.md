@@ -251,3 +251,26 @@ previous value.
 Consumers should keep accepting the v3 `ce-source` and `ce-type` values across a
 rollback rather than switching back, so the same consumer survives both
 directions without a coordinated redeploy.
+
+---
+
+## 5. Residual risks and known gaps
+
+**Version skew during a rolling deploy is near-silent.** While Manager and Worker
+pods run different builds, a Worker can receive a job message whose AMQP envelope
+its build does not agree with. That takes the same path as a cross-tenant replay:
+the message is rejected, acknowledged, and the only trace is one log line. There
+is no metric and no DLQ, so a skew window that drops work looks identical to a
+quiet period on every dashboard.
+
+Two consequences for the deploy:
+
+- Keep the skew window short, and prefer quiescing intake (which you are doing
+  anyway for the outbox drain) over relying on both builds interoperating.
+- If job counts look wrong afterwards, the evidence is in Worker logs, not in
+  metrics. Search for the tenant-header mismatch and signature-verification
+  messages.
+
+Closing this gap means a counter on envelope-rejection paths, keyed by reason.
+That is a follow-up, not part of this migration — but it is the reason a skewed
+rollout is worth avoiding rather than measuring.
