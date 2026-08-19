@@ -250,6 +250,18 @@ func TestEngineDependencyBoundary_TenantRuntimeShells_PolicyIsFutureSafe(t *test
 			importPath: "github.com/LerianStudio/lib-commons/v6/commons/dispatch-layer/runtime/new-shell",
 			wantBlock:  true,
 		},
+		// The rail must survive the next lib-commons major without an edit. These
+		// two carry a major this repo does not depend on yet.
+		{
+			name:       "next-major concrete tenant manager shell is still blocked",
+			importPath: "github.com/LerianStudio/lib-commons/v7/commons/tenant-manager/rabbitmq",
+			wantBlock:  true,
+		},
+		{
+			name:       "next-major tenant manager core primitive is still allowed",
+			importPath: "github.com/LerianStudio/lib-commons/v7/commons/tenant-manager/core",
+			wantBlock:  false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -342,7 +354,7 @@ func configuredForbiddenDependencyClasses(modulePath string) []forbiddenDependen
 			name:    "openapi",
 			patterns: []string{
 				"github.com/danielgtaylor/huma",
-				"github.com/LerianStudio/lib-commons/v6/commons/net/http",
+				"github.com/LerianStudio/lib-commons/commons/net/http",
 			},
 		},
 
@@ -476,12 +488,12 @@ func configuredForbiddenDependencyClasses(modulePath string) []forbiddenDependen
 			concern: "tenant_runtime",
 			name:    "tenant_runtime_shells",
 			patterns: []string{
-				"github.com/LerianStudio/lib-commons/v6/commons/dispatch-layer",
-				"github.com/LerianStudio/lib-commons/v6/commons/tenant-manager",
+				"github.com/LerianStudio/lib-commons/commons/dispatch-layer",
+				"github.com/LerianStudio/lib-commons/commons/tenant-manager",
 			},
 			allowedPatterns: []string{
-				"github.com/LerianStudio/lib-commons/v6/commons/dispatch-layer/core",
-				"github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/core",
+				"github.com/LerianStudio/lib-commons/commons/dispatch-layer/core",
+				"github.com/LerianStudio/lib-commons/commons/tenant-manager/core",
 			},
 		},
 
@@ -552,8 +564,8 @@ func requiredDockerRuntimePatterns() []string {
 
 func requiredTenantRuntimeShellPatterns() []string {
 	return []string{
-		"github.com/LerianStudio/lib-commons/v6/commons/dispatch-layer",
-		"github.com/LerianStudio/lib-commons/v6/commons/tenant-manager",
+		"github.com/LerianStudio/lib-commons/commons/dispatch-layer",
+		"github.com/LerianStudio/lib-commons/commons/tenant-manager",
 	}
 }
 
@@ -721,11 +733,35 @@ func isModuleLocalImportPath(importPath, modulePath string) bool {
 	return importPath == modulePath || strings.HasPrefix(importPath, modulePath+"/")
 }
 
+// lerianMajorVersionSegment matches the /vN major-version segment a Lerian
+// module carries directly after its name, e.g. the "/v6" in
+// "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager".
+var lerianMajorVersionSegment = regexp.MustCompile(`^(github\.com/LerianStudio/[^/]+)/v[0-9]+(/|$)`)
+
+// stripLerianMajorVersion removes the major-version segment from a Lerian import
+// path so a rail pattern can be written once instead of once per major.
+//
+// Patterns for third-party modules already avoid the problem by naming the module
+// root ("github.com/gofiber/fiber" prefix-matches "github.com/gofiber/fiber/v3"),
+// but the lib-commons rails deliberately name individual SUBPACKAGES — the whole
+// point is that tenant-manager/core is allowed while tenant-manager/rabbitmq is
+// not. A subpackage pattern cannot prefix-match past the version segment, so
+// without this the rail silently stops blocking anything the day lib-commons cuts
+// a major, which is exactly when the boundary most needs enforcing.
+//
+// Only the segment immediately after a LerianStudio module name is stripped, so a
+// legitimate directory named "v2" deeper in a path is untouched.
+func stripLerianMajorVersion(importPath string) string {
+	return lerianMajorVersionSegment.ReplaceAllString(importPath, "${1}${2}")
+}
+
 func (dependencyClass forbiddenDependencyClass) matches(importPath string) bool {
+	normalized := stripLerianMajorVersion(importPath)
+
 	for _, pattern := range dependencyClass.patterns {
-		if importPath == pattern || strings.HasPrefix(importPath, pattern+"/") {
+		if normalized == pattern || strings.HasPrefix(normalized, pattern+"/") {
 			for _, allowedPattern := range dependencyClass.allowedPatterns {
-				if importPath == allowedPattern {
+				if normalized == allowedPattern {
 					return false
 				}
 			}
