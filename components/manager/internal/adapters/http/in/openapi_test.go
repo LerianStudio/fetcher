@@ -237,15 +237,18 @@ func TestAssembleHumaAPI_BoundsUpstreamSchema(t *testing.T) {
 	upstream := api.OpenAPI().Components.Schemas.Map()["Upstream"]
 	require.NotNil(t, upstream)
 
+	// Literal wire limits (64/512 runes plus the one-rune truncation mark),
+	// asserted independently of the production constants so drift in either
+	// place fails the test instead of cancelling out.
 	code := upstream.Properties["code"]
 	require.NotNil(t, code)
 	require.NotNil(t, code.MaxLength, "Upstream.code must advertise its wire bound")
-	assert.Equal(t, upstreamCodeMaxLength, *code.MaxLength)
+	assert.Equal(t, 65, *code.MaxLength)
 
 	message := upstream.Properties["message"]
 	require.NotNil(t, message)
 	require.NotNil(t, message.MaxLength, "Upstream.message must advertise its wire bound")
-	assert.Equal(t, upstreamMessageMaxLength, *message.MaxLength)
+	assert.Equal(t, 513, *message.MaxLength)
 }
 
 func TestBuildHumaAPI_ConfiguresCanonicalDocument(t *testing.T) {
