@@ -62,6 +62,34 @@
 | Behavioral impact if unset | Worker startup fails fast (fail-closed wiring). There is no silent degradation and no legacy fallback — a missing or `false` `STREAMING_ENABLED` blocks the Worker from starting. |
 | Decision | Accepted as the new v2.0.0 contract. Operators must set `STREAMING_ENABLED=true` and provision the `fetcher.job.events` exchange before upgrade. |
 
+## Breaking change: job event `ce-source` is now `fetcher`
+
+| Field | Value |
+|-------|-------|
+| Owner | Platform Engineering / Fetcher maintainers |
+| Since | lib-streaming v3 migration |
+| Scope | The `ce-source` CloudEvents header on every `job.completed` / `job.failed` event, and `STREAMING_CLOUDEVENTS_SOURCE`. |
+| Legacy behavior | Source was the URI-shaped `//lerian.fetcher/worker`. lib-streaming v2 silently folded non-conforming sources into a topic segment. |
+| New behavior | Source must be exactly `fetcher` — Fetcher's roster name. lib-streaming v3 REJECTS a non-conforming source instead of folding it, and Fetcher additionally pins it to the roster name at startup (`pkg/streaming.RequireRosterSource`), enforced whether or not streaming is enabled. Any other value refuses to boot. |
+| Impact | Consumers that filter, route, or audit on `ce-source` stop matching until they accept `fetcher`. Consumers bound on the exchange and routing key, or deduping on `ce-id`, are unaffected: `fetcher.job.events`, `job.completed` / `job.failed`, and the `ce-id` format are all unchanged. |
+| Why pinned to equality | The ce-source is the sole input to the topic, DLQ and ACL names the platform provisions, and those grants are literal patterns on the roster name. A grammar-legal near-miss (`fetcher-worker`) passes lib-streaming's own validation while being unpublishable by construction. Fetcher's RabbitMQ transport makes today's failure mode a corrupted event identity rather than total loss; the equality gate forecloses the loss case before a Kafka route ever exists. |
+| Deploy note | Operators MUST set `STREAMING_CLOUDEVENTS_SOURCE=fetcher` as part of the v3 deploy. Ordering, including the mandatory outbox drain, is in [`docs/streaming/lib-streaming-v3-rollout.md`](streaming/lib-streaming-v3-rollout.md). |
+| Decision | Accepted. Source pinning is fleet policy across Lerian services, not a Fetcher-local choice. |
+
+## Breaking change: streaming outbox envelope version 1 -> 2 requires a drain
+
+| Field | Value |
+|-------|-------|
+| Owner | Platform Engineering / Fetcher maintainers |
+| Since | lib-streaming v3 migration |
+| Scope | Persisted rows in the `streaming_outbox_events` collection with `event_type` `lerian.streaming.publish`. |
+| Legacy behavior | lib-streaming v1 and v2 wrote outbox envelope version `1`. |
+| New behavior | v3 writes version `2` and validates the persisted version by strict equality. A version-1 row is rejected as `ErrInvalidOutboxEnvelope`, classified non-retryable: marked failed, never redelivered. |
+| Impact | Any undelivered job event at deploy time is lost, not delayed. The terminal-event repairer does NOT cover it: the `terminalEventPending` flag is cleared once the outbox row is durably written, so a stuck row whose job flag is already cleared has no repair path. |
+| Notable | Unlike services whose destination also changed, Fetcher's persisted destination is identical across versions (same exchange, same routing key), and the envelope and event structs are unchanged. A version-1 row would have delivered correctly; it is refused purely on the version integer. |
+| Required action | Drain the outbox to zero on the pre-v3 build before deploying, in every tenant database. Full procedure in [`docs/streaming/lib-streaming-v3-rollout.md`](streaming/lib-streaming-v3-rollout.md). |
+| Decision | Accepted. Strict version equality is the upstream contract; the drain is the deploy-time cost of it. |
+
 ## Behavior delta: Manager schema discovery + validation use UPPERCASE-canonical Oracle identifiers
 
 | Field | Value |
