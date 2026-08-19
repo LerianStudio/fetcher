@@ -1,7 +1,6 @@
 package http
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -12,196 +11,14 @@ import (
 
 	"github.com/LerianStudio/fetcher/v2/pkg"
 	"github.com/LerianStudio/fetcher/v2/pkg/datasource/hostsafety"
-	libCommons "github.com/LerianStudio/lib-commons/v6/commons"
 	"github.com/go-playground/locales/en"
 	ut "github.com/go-playground/universal-translator"
 	"github.com/go-playground/validator/v10"
-	"github.com/gofiber/fiber/v3"
-	"github.com/google/uuid"
 
 	cn "github.com/LerianStudio/fetcher/v2/pkg/constant"
 	en2 "github.com/go-playground/validator/v10/translations/en"
 )
 
-var UUIDPathParameters = []string{
-	"id",
-}
-
-// DecodeHandlerFunc is a handler which works with withBody decorator.
-// It receives a struct which was decoded by withBody decorator before.
-// Ex: json -> withBody -> DecodeHandlerFunc.
-type DecodeHandlerFunc func(p any, c fiber.Ctx) error
-
-// PayloadContextValue is a wrapper type used to keep Context.Locals safe.
-type PayloadContextValue string
-
-// ConstructorFunc representing a constructor of any type.
-type ConstructorFunc func() any
-
-// decoderHandler decodes payload coming from requests.
-type decoderHandler struct {
-	handler      DecodeHandlerFunc
-	constructor  ConstructorFunc
-	structSource any
-}
-
-func newOfType(s any) any {
-	t := reflect.TypeOf(s)
-	v := reflect.New(t.Elem())
-
-	return v.Interface()
-}
-
-func WithBody(s any, h DecodeHandlerFunc) fiber.Handler {
-	d := &decoderHandler{
-		handler:      h,
-		structSource: s,
-	}
-
-	return d.FiberHandlerFunc
-}
-
-// FiberHandlerFunc is a method on the decoderHandler struct. It decodes the incoming request's body to a Go struct,
-// validates it, checks for any extraneous fields not defined in the struct, and finally calls the wrapped handler function.
-func (d *decoderHandler) FiberHandlerFunc(c fiber.Ctx) error {
-	var s any
-
-	if d.constructor != nil {
-		s = d.constructor()
-	} else {
-		s = newOfType(d.structSource)
-	}
-
-	bodyBytes := c.Body() // Get the body bytes
-
-	if err := json.Unmarshal(bodyBytes, s); err != nil {
-		return fmt.Errorf("failed to unmarshal request body: %w", err)
-	}
-
-	marshaled, err := json.Marshal(s)
-	if err != nil {
-		return fmt.Errorf("failed to marshal decoded struct: %w", err)
-	}
-
-	var originalMap, marshaledMap map[string]any
-
-	if err := json.Unmarshal(bodyBytes, &originalMap); err != nil {
-		return fmt.Errorf("failed to unmarshal request body to map: %w", err)
-	}
-
-	if err := json.Unmarshal(marshaled, &marshaledMap); err != nil {
-		return fmt.Errorf("failed to unmarshal marshaled struct to map: %w", err)
-	}
-
-	diffFields := findUnknownFields(originalMap, marshaledMap)
-
-	if len(diffFields) > 0 {
-		err := pkg.ValidateBadRequestFieldsError(pkg.FieldValidations{}, pkg.FieldValidations{}, "", diffFields)
-		return BadRequest(c, err)
-	}
-
-	if err := ValidateStruct(s); err != nil {
-		if errors.Is(err, ErrValidatorInit) {
-			return fiber.NewError(fiber.StatusInternalServerError, "request validator initialization failed")
-		}
-
-		return BadRequest(c, err)
-	}
-
-	c.Locals("fields", diffFields)
-
-	parseMetadata(s, originalMap)
-
-	return d.handler(s, c)
-}
-
-// findUnknownFields finds fields that are present in the original map but not in the marshaled map.
-func findUnknownFields(original, marshaled map[string]any) map[string]any {
-	diffFields := make(map[string]any)
-
-	numKinds := libCommons.GetMapNumKinds()
-
-	for key, value := range original {
-		if numKinds[reflect.ValueOf(value).Kind()] && value == 0.0 {
-			continue
-		}
-
-		marshaledValue, ok := marshaled[key]
-		if !ok {
-			// If the key is not present in the marshaled map, marking as difference
-			diffFields[key] = value
-			continue
-		}
-
-		// Check for nested structures and direct value comparison
-		switch originalValue := value.(type) {
-		case map[string]any:
-			if marshaledMap, ok := marshaledValue.(map[string]any); ok {
-				nestedDiff := findUnknownFields(originalValue, marshaledMap)
-				if len(nestedDiff) > 0 {
-					diffFields[key] = nestedDiff
-				}
-			} else if !reflect.DeepEqual(originalValue, marshaledValue) {
-				// If types mismatch (map vs non-map), marking as difference
-				diffFields[key] = value
-			}
-
-		case []any:
-			if marshaledArray, ok := marshaledValue.([]any); ok {
-				arrayDiff := compareSlices(originalValue, marshaledArray)
-				if len(arrayDiff) > 0 {
-					diffFields[key] = arrayDiff
-				}
-			} else if !reflect.DeepEqual(originalValue, marshaledValue) {
-				// If types mismatch (slice vs non-slice), marking as difference
-				diffFields[key] = value
-			}
-
-		default:
-			// Using reflect.DeepEqual for simple types (strings, ints, etc.)
-			if !reflect.DeepEqual(value, marshaledValue) {
-				diffFields[key] = value
-			}
-		}
-	}
-
-	return diffFields
-}
-
-// compareSlices compares two slices and returns differences.
-func compareSlices(original, marshaled []any) []any {
-	var diff []any
-
-	// Iterate through the original slice and check differences
-	for i, item := range original {
-		if i >= len(marshaled) {
-			// If marshaled slice is shorter, the original item is missing
-			diff = append(diff, item)
-		} else {
-			tmpMarshaled := marshaled[i]
-			// Compare individual items at the same index
-			if originalMap, ok := item.(map[string]any); ok {
-				if marshaledMap, ok := tmpMarshaled.(map[string]any); ok {
-					nestedDiff := findUnknownFields(originalMap, marshaledMap)
-					if len(nestedDiff) > 0 {
-						diff = append(diff, nestedDiff)
-					}
-				}
-			} else if !reflect.DeepEqual(item, tmpMarshaled) {
-				diff = append(diff, item)
-			}
-		}
-	}
-
-	// Check if marshaled slice is longer
-	for i := len(original); i < len(marshaled); i++ {
-		diff = append(diff, marshaled[i])
-	}
-
-	return diff
-}
-
-// cachedValidator and cachedTranslator are initialized once and reused across requests.
 var (
 	cachedValidator   *validator.Validate
 	cachedTranslator  ut.Translator
@@ -459,60 +276,4 @@ func formatErrorFieldName(text string) string {
 	}
 
 	return text
-}
-
-// parseMetadata For compliance with RFC7396 JSON Merge Patch
-func parseMetadata(s any, originalMap map[string]any) {
-	val := reflect.ValueOf(s)
-	if val.Kind() != reflect.Pointer || val.Elem().Kind() != reflect.Struct {
-		return
-	}
-
-	val = val.Elem()
-
-	metadataField := val.FieldByName("Metadata")
-	if !metadataField.IsValid() || !metadataField.CanSet() {
-		return
-	}
-
-	if _, exists := originalMap["metadata"]; !exists {
-		metadataField.Set(reflect.ValueOf(make(map[string]any)))
-	}
-}
-
-// ParseUUIDPathParameters globally, considering all path parameters are UUIDs
-func ParseUUIDPathParameters(c fiber.Ctx) error {
-	var invalidUUIDs []string
-
-	validPathParamsMap := make(map[string]any)
-
-	// Fiber v3 dropped the AllParams() bulk accessor; the matched route carries
-	// the param keys and Params() resolves each value.
-	for _, param := range c.Route().Params {
-		value := c.Params(param)
-
-		if !libCommons.Contains[string](UUIDPathParameters, param) {
-			validPathParamsMap[param] = value
-			continue
-		}
-
-		parsedUUID, err := uuid.Parse(value)
-		if err != nil {
-			invalidUUIDs = append(invalidUUIDs, param)
-			continue
-		}
-
-		validPathParamsMap[param] = parsedUUID
-	}
-
-	for param, value := range validPathParamsMap {
-		c.Locals(param, value)
-	}
-
-	if len(invalidUUIDs) > 0 {
-		err := pkg.ValidateBusinessError(cn.ErrInvalidPathParameter, "", strings.Join(invalidUUIDs, ", "))
-		return WithError(c, err)
-	}
-
-	return c.Next()
 }
