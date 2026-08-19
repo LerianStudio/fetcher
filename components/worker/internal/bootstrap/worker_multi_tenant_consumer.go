@@ -7,17 +7,18 @@ import (
 	"sync"
 	"time"
 
-	libBackoff "github.com/LerianStudio/lib-commons/v5/commons/backoff"
-	tmclient "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/client"
-	tmconsumer "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/consumer"
-	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
-	tmevent "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/event"
-	tmrabbitmq "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/rabbitmq"
-	"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/tenantcache"
-	observability "github.com/LerianStudio/lib-observability"
-	libLog "github.com/LerianStudio/lib-observability/log"
-	obsRuntime "github.com/LerianStudio/lib-observability/runtime"
-	libOtel "github.com/LerianStudio/lib-observability/tracing"
+	"github.com/LerianStudio/fetcher/v2/pkg/multitenant"
+	libBackoff "github.com/LerianStudio/lib-commons/v6/commons/backoff"
+	tmclient "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/client"
+	tmconsumer "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/consumer"
+	tmcore "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/core"
+	tmevent "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/event"
+	tmrabbitmq "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/rabbitmq"
+	"github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/tenantcache"
+	observability "github.com/LerianStudio/lib-observability/v2"
+	libLog "github.com/LerianStudio/lib-observability/v2/log"
+	obsRuntime "github.com/LerianStudio/lib-observability/v2/runtime"
+	libOtel "github.com/LerianStudio/lib-observability/v2/tracing"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
@@ -156,7 +157,11 @@ func (c *workerMultiTenantConsumer) Register(queueName string, handler tmconsume
 		}
 	}
 
-	for _, tenantID := range c.cache.TenantIDs() {
+	// Cache keys are stored as the Tenant Manager returned them, so a dashed
+	// UUID must collapse to the canonical spelling here or it would key a
+	// second knownTenants entry (and a second consumer) for the same tenant.
+	for _, cachedID := range c.cache.TenantIDs() {
+		tenantID := multitenant.Canonical(strings.TrimSpace(cachedID))
 		if !c.knownTenants[tenantID] {
 			c.knownTenants[tenantID] = true
 			startTenants = append(startTenants, tenantID)
@@ -214,7 +219,12 @@ func (c *workerMultiTenantConsumer) Close() error {
 }
 
 func (c *workerMultiTenantConsumer) EnsureConsumerStarted(ctx context.Context, tenantID string) {
-	tenantID = strings.TrimSpace(tenantID)
+	// Canonicalize at the boundary so every tenant-keyed map below is keyed one
+	// way only. The IDs reaching this method come from both the tenant cache and
+	// the tenant context, and lib-commons does not guarantee those agree on UUID
+	// spelling — two spellings of one tenant would start two consumers on the
+	// same queue.
+	tenantID = multitenant.Canonical(strings.TrimSpace(tenantID))
 	if tenantID == "" {
 		return
 	}
@@ -278,7 +288,9 @@ func (c *workerMultiTenantConsumer) EnsureConsumerStarted(ctx context.Context, t
 }
 
 func (c *workerMultiTenantConsumer) StopConsumer(tenantID string) {
-	tenantID = strings.TrimSpace(tenantID)
+	// Must canonicalize with the same rule EnsureConsumerStarted keyed by, or a
+	// stop request in the other spelling silently leaves the consumer running.
+	tenantID = multitenant.Canonical(strings.TrimSpace(tenantID))
 	if tenantID == "" {
 		return
 	}
@@ -316,6 +328,8 @@ func (c *workerMultiTenantConsumer) hasHandlers() bool {
 }
 
 func (c *workerMultiTenantConsumer) OwnsTenant(tenantID string) bool {
+	tenantID = multitenant.Canonical(strings.TrimSpace(tenantID))
+
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -363,6 +377,8 @@ func (c *workerMultiTenantConsumer) tenantKnown(tenantID string) bool {
 }
 
 func (c *workerMultiTenantConsumer) markTenantKnown(tenantID string) {
+	tenantID = multitenant.Canonical(strings.TrimSpace(tenantID))
+
 	c.mu.Lock()
 	c.knownTenants[tenantID] = true
 	c.mu.Unlock()

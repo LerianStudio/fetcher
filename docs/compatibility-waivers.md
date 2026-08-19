@@ -62,6 +62,38 @@
 | Behavioral impact if unset | Worker startup fails fast (fail-closed wiring). There is no silent degradation and no legacy fallback — a missing or `false` `STREAMING_ENABLED` blocks the Worker from starting. |
 | Decision | Accepted as the new v2.0.0 contract. Operators must set `STREAMING_ENABLED=true` and provision the `fetcher.job.events` exchange before upgrade. |
 
+## Breaking change: job event `ce-source` and `ce-type` both change
+
+| Field | Value |
+|-------|-------|
+| Owner | Platform Engineering / Fetcher maintainers |
+| Since | lib-streaming v3 migration |
+| Scope | The `ce-source` **and `ce-type`** CloudEvents headers on every `job.completed` / `job.failed` event, and the `STREAMING_CLOUDEVENTS_SOURCE` variable. Both headers reach the AMQP message headers verbatim. |
+| Legacy behavior | Source was the URI-shaped `//lerian.fetcher/worker`, which lib-streaming v2 silently folded into a topic segment. `ce-type` was `studio.lerian.<resourceType>.<eventType>` — `studio.lerian.job.completed` and `studio.lerian.job.failed`. |
+| New behavior | Source must be exactly `fetcher` — Fetcher's roster name. v3 REJECTS a non-conforming source instead of folding it, and Fetcher additionally pins it to the roster name at startup (`pkg/streaming.RequireRosterSource`), enforced whether or not streaming is enabled; any other value refuses to boot. v3 also inserts the source into `ce-type`, which becomes `studio.lerian.<source>.<resourceType>.<eventType>` — `studio.lerian.fetcher.job.completed` and `studio.lerian.fetcher.job.failed`. |
+| Impact | Consumers that filter, route, or audit on `ce-source` **or `ce-type`** stop matching until they accept the new values. Consumers bound on the exchange and routing key, or deduping on `ce-id`, are unaffected: `fetcher.job.events`, `job.completed` / `job.failed`, and the `ce-id` format are all unchanged. |
+| Why the `ce-type` change happened upstream | Without the source segment, two services publishing the same resource and event names produce byte-identical `ce-type` values — a homonym collision the v3 topic collapse makes reachable in practice. |
+| Why pinned to equality | The ce-source is the sole input to the topic, DLQ and ACL names the platform provisions, and those grants are literal patterns on the roster name. A grammar-legal near-miss (`fetcher-worker`) passes lib-streaming's own validation while being unpublishable by construction. Fetcher's RabbitMQ transport makes today's failure mode a corrupted event identity — on both headers — rather than total loss; the equality gate forecloses the loss case before a Kafka route ever exists. |
+| Regression guard | `TestJobEventStreamingContract_CeTypeValues` pins both literal `ce-type` values through the exported `streaming.CloudEventsType` facade. No `ce-*` header was pinned before v3, which is why this change was nearly missed. |
+| Deploy note | Operators MUST set `STREAMING_CLOUDEVENTS_SOURCE=fetcher` as part of the v3 deploy, and consumers MUST accept the new `ce-source` and `ce-type` values first. Widen consumer matching rather than switching it, so the same consumer survives a rollback. Ordering, including the mandatory outbox drain, is in [`docs/streaming/lib-streaming-v3-rollout.md`](streaming/lib-streaming-v3-rollout.md). |
+| Decision | Accepted. Source pinning is fleet policy across Lerian services, not a Fetcher-local choice. |
+
+## Breaking change: streaming outbox envelope version 1 -> 2 requires a drain
+
+| Field | Value |
+|-------|-------|
+| Owner | Platform Engineering / Fetcher maintainers |
+| Since | lib-streaming v3 migration |
+| Scope | Persisted rows in the `streaming_outbox_events` collection with `event_type` `lerian.streaming.publish`. |
+| Legacy behavior | lib-streaming v1 and v2 wrote outbox envelope version `1`. |
+| New behavior | v3 writes version `2` and validates the persisted version by strict equality. A version-1 row is rejected as `ErrInvalidOutboxEnvelope`. Fetcher wires no retry classifier on the outbox dispatcher, so that error is treated as RETRYABLE: the row is retried each dispatch cycle until it exhausts the dispatch-attempt ceiling (10 by default), then marked failed. The version check is deterministic, so the retries cannot succeed. |
+| Impact | Any undelivered job event at deploy time is ultimately lost, not delayed. The terminal-event repairer does NOT cover it: the `terminalEventPending` flag is cleared once the outbox row is durably written, so a stuck row whose job flag is already cleared has no repair path. |
+| Repair window | Because the error is retryable, an affected row stays in the collection as `PENDING`/`FAILED` with a climbing `attempts` count and its payload intact until the ceiling is reached. Leaving it retryable is deliberate: for mandatory job events a narrower window is the wrong direction, since classifying the error non-retryable would convert a recoverable state into an immediate silent write-off. |
+| Notable | Unlike services whose destination also changed, Fetcher's persisted destination is identical across versions (same exchange, same routing key), and the envelope and event structs are unchanged. A version-1 row would have delivered correctly under v2; under v3 it is refused on the version integer, and its stale `event.source` is the only other field needing repair — `ce-source` and `ce-type` are both derived from it at publish time. |
+| Pre-existing `INVALID` rows | `INVALID` is terminal and is counted by the drain predicate, so a deployment that already holds such rows can never drain to zero by waiting. They need manual disposition before the deploy. |
+| Required action | Drain the outbox to zero on the pre-v3 build before deploying, in every tenant database. Full procedure in [`docs/streaming/lib-streaming-v3-rollout.md`](streaming/lib-streaming-v3-rollout.md). |
+| Decision | Accepted. Strict version equality is the upstream contract; the drain is the deploy-time cost of it. |
+
 ## Behavior delta: Manager schema discovery + validation use UPPERCASE-canonical Oracle identifiers
 
 | Field | Value |

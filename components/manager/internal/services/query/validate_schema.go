@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	observability "github.com/LerianStudio/lib-observability"
+	observability "github.com/LerianStudio/lib-observability/v2"
 
 	"github.com/LerianStudio/fetcher/pkg/engine"
 	"github.com/LerianStudio/fetcher/v2/pkg"
@@ -16,8 +16,8 @@ import (
 	connRepo "github.com/LerianStudio/fetcher/v2/pkg/ports/connection"
 	"github.com/LerianStudio/fetcher/v2/pkg/resolver"
 
-	libLog "github.com/LerianStudio/lib-observability/log"
-	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
+	libLog "github.com/LerianStudio/lib-observability/v2/log"
+	libOpentelemetry "github.com/LerianStudio/lib-observability/v2/tracing"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"

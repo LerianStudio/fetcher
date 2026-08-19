@@ -4,9 +4,9 @@ import (
 	"context"
 
 	"github.com/LerianStudio/fetcher/v2/components/worker/internal/services"
-	"github.com/LerianStudio/lib-commons/v5/commons"
-	libOutbox "github.com/LerianStudio/lib-commons/v5/commons/outbox"
-	libLog "github.com/LerianStudio/lib-observability/log"
+	"github.com/LerianStudio/lib-commons/v6/commons"
+	libOutbox "github.com/LerianStudio/lib-commons/v6/commons/outbox"
+	libLog "github.com/LerianStudio/lib-observability/v2/log"
 )
 
 // runLauncher launches the consumer and (when present) the health-port

@@ -7,14 +7,14 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/LerianStudio/lib-observability"
+	observability "github.com/LerianStudio/lib-observability/v2"
 
 	"github.com/LerianStudio/fetcher/v2/pkg"
 	"github.com/LerianStudio/fetcher/v2/pkg/constant"
 	portStorage "github.com/LerianStudio/fetcher/v2/pkg/ports/storage"
-	tms3 "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/s3"
-	libLog "github.com/LerianStudio/lib-observability/log"
-	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
+	tms3 "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/s3"
+	libLog "github.com/LerianStudio/lib-observability/v2/log"
+	libOpentelemetry "github.com/LerianStudio/lib-observability/v2/tracing"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsConfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"

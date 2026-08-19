@@ -15,9 +15,9 @@ import (
 	"github.com/LerianStudio/fetcher/v2/pkg/model"
 	httpUtils "github.com/LerianStudio/fetcher/v2/pkg/net/http"
 	connRepo "github.com/LerianStudio/fetcher/v2/pkg/ports/connection"
-	"github.com/LerianStudio/lib-commons/v5/commons/net/http/problem"
+	"github.com/LerianStudio/lib-commons/v6/commons/net/http/problem"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -115,7 +115,7 @@ func TestHumaMigration_CallbacksExecuteAndSerialize(t *testing.T) {
 			return nil
 		}
 
-		return []fiber.Handler{func(ctx *fiber.Ctx) error {
+		return []fiber.Handler{func(ctx fiber.Ctx) error {
 			postMiddlewareCalled = true
 			assert.Equal(t, "midaz", ctx.Get("X-Product-Name"))
 			return ctx.Next()

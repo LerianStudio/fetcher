@@ -7,14 +7,14 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/LerianStudio/lib-observability"
+	observability "github.com/LerianStudio/lib-observability/v2"
 
 	"github.com/LerianStudio/fetcher/v2/pkg/constant"
 	"github.com/LerianStudio/fetcher/v2/pkg/model/job"
 	"github.com/LerianStudio/fetcher/v2/pkg/schemautil"
 	"github.com/lib/pq"
 
-	libLog "github.com/LerianStudio/lib-observability/log"
+	libLog "github.com/LerianStudio/lib-observability/v2/log"
 	"github.com/Masterminds/squirrel"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"

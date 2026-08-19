@@ -10,9 +10,9 @@ import (
 	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
 	"github.com/LerianStudio/fetcher/v2/pkg/enginecompat/connectioncompat"
 	"github.com/LerianStudio/fetcher/v2/pkg/model"
-	observability "github.com/LerianStudio/lib-observability"
+	observability "github.com/LerianStudio/lib-observability/v2"
 
-	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
+	libOpentelemetry "github.com/LerianStudio/lib-observability/v2/tracing"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"

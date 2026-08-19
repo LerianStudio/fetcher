@@ -9,8 +9,8 @@ import (
 	"github.com/LerianStudio/fetcher/v2/pkg/model/job"
 	"github.com/LerianStudio/fetcher/v2/pkg/sqlserver"
 	"github.com/LerianStudio/fetcher/v2/pkg/testutil"
-	libConstant "github.com/LerianStudio/lib-commons/v5/commons/constants"
-	"github.com/LerianStudio/lib-observability/log"
+	libConstant "github.com/LerianStudio/lib-commons/v6/commons/constants"
+	"github.com/LerianStudio/lib-observability/v2/log"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/mock/gomock"
 )

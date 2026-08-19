@@ -6,14 +6,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 )
 
 // CreateTestApp creates a minimal Fiber app for fuzzing
 func CreateTestApp() *fiber.App {
 	return fiber.New(fiber.Config{
-		DisableStartupMessage: true,
-		ErrorHandler: func(c *fiber.Ctx, err error) error {
+		ErrorHandler: func(c fiber.Ctx, err error) error {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		},
 	})

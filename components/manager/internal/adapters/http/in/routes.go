@@ -6,15 +6,15 @@ import (
 
 	"github.com/LerianStudio/fetcher/v2/pkg/bootstrap/readyz"
 	"github.com/LerianStudio/fetcher/v2/pkg/net/http"
-	middlewareAuth "github.com/LerianStudio/lib-auth/v2/auth/middleware"
-	commonsHttp "github.com/LerianStudio/lib-commons/v5/commons/net/http"
-	"github.com/LerianStudio/lib-observability/log"
-	obsMiddleware "github.com/LerianStudio/lib-observability/middleware"
-	opentelemetry "github.com/LerianStudio/lib-observability/tracing"
+	middlewareAuth "github.com/LerianStudio/lib-auth/v3/auth/middleware"
+	commonsHttp "github.com/LerianStudio/lib-commons/v6/commons/net/http"
+	"github.com/LerianStudio/lib-observability/v2/log"
+	obsMiddleware "github.com/LerianStudio/lib-observability/v2/middleware"
+	opentelemetry "github.com/LerianStudio/lib-observability/v2/tracing"
 
 	"github.com/danielgtaylor/huma/v2"
-	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/cors"
 )
 
 const (
@@ -59,11 +59,20 @@ func NewRoutes(
 	}
 
 	f := fiber.New(fiber.Config{
-		DisableStartupMessage: true,
-		ErrorHandler: func(ctx *fiber.Ctx, err error) error {
+		ErrorHandler: func(ctx fiber.Ctx, err error) error {
 			return commonsHttp.FiberErrorHandler(ctx, err)
 		},
 	})
+
+	// Fiber v3 moved startup-banner suppression off fiber.Config and onto the
+	// Listen call, but ServerManager owns Listen and passes no ListenConfig, so
+	// the pre-startup hook is the only seam that keeps boot silent here.
+	f.Hooks().OnPreStartupMessage(func(data *fiber.PreStartupMessageData) error {
+		data.PreventDefault = true
+
+		return nil
+	})
+
 	tlMid := obsMiddleware.NewTelemetryMiddleware(tl)
 
 	f.Use(http.WithRecover(http.WithRecoverLogger(lg)))

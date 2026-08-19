@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"testing"
 
-	tmconsumer "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/consumer"
-	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
-	tmmongo "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/mongo"
-	"github.com/LerianStudio/lib-observability/log"
+	tmconsumer "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/consumer"
+	tmcore "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/core"
+	tmmongo "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/mongo"
+	"github.com/LerianStudio/lib-observability/v2/log"
 	amqp "github.com/rabbitmq/amqp091-go"
 
 	"github.com/stretchr/testify/assert"

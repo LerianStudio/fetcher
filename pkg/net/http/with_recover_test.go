@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 )
 
 func TestWithRecover(t *testing.T) {
@@ -18,7 +18,7 @@ func TestWithRecover(t *testing.T) {
 	}{
 		{
 			name: "no panic returns normally",
-			handler: func(c *fiber.Ctx) error {
+			handler: func(c fiber.Ctx) error {
 				return c.SendString("OK")
 			},
 			wantStatusCode: http.StatusOK,
@@ -26,7 +26,7 @@ func TestWithRecover(t *testing.T) {
 		},
 		{
 			name: "panic with string is recovered",
-			handler: func(c *fiber.Ctx) error {
+			handler: func(c fiber.Ctx) error {
 				panic("test panic")
 			},
 			wantStatusCode: http.StatusInternalServerError,
@@ -34,7 +34,7 @@ func TestWithRecover(t *testing.T) {
 		},
 		{
 			name: "panic with error is recovered",
-			handler: func(c *fiber.Ctx) error {
+			handler: func(c fiber.Ctx) error {
 				panic(fiber.NewError(fiber.StatusBadRequest, "bad request panic"))
 			},
 			wantStatusCode: http.StatusInternalServerError,
@@ -42,7 +42,7 @@ func TestWithRecover(t *testing.T) {
 		},
 		{
 			name: "panic with int value is recovered",
-			handler: func(c *fiber.Ctx) error {
+			handler: func(c fiber.Ctx) error {
 				panic(42)
 			},
 			wantStatusCode: http.StatusInternalServerError,

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
+	tmcore "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/core"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/assert"
 	"go.mongodb.org/mongo-driver/v2/mongo"

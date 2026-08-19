@@ -3,8 +3,8 @@ package pkg
 import (
 	"context"
 
-	observability "github.com/LerianStudio/lib-observability"
-	"github.com/LerianStudio/lib-observability/log"
+	observability "github.com/LerianStudio/lib-observability/v2"
+	"github.com/LerianStudio/lib-observability/v2/log"
 	"go.opentelemetry.io/otel/trace"
 )
 

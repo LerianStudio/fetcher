@@ -3,7 +3,7 @@ package readyz
 import (
 	"context"
 
-	tmclient "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/client"
+	tmclient "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/client"
 )
 
 // TMClient is the narrow Tenant-Manager-client surface used by the

@@ -22,24 +22,25 @@ import (
 	portStorage "github.com/LerianStudio/fetcher/v2/pkg/ports/storage"
 	"github.com/LerianStudio/fetcher/v2/pkg/resolver"
 	pkgStorage "github.com/LerianStudio/fetcher/v2/pkg/storage"
+	pkgStreaming "github.com/LerianStudio/fetcher/v2/pkg/streaming"
 
-	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
-	libCircuitBreaker "github.com/LerianStudio/lib-commons/v5/commons/circuitbreaker"
-	mongoDB "github.com/LerianStudio/lib-commons/v5/commons/mongo"
-	libOutbox "github.com/LerianStudio/lib-commons/v5/commons/outbox"
-	libOutboxMongo "github.com/LerianStudio/lib-commons/v5/commons/outbox/mongo"
-	libRabbitMQ "github.com/LerianStudio/lib-commons/v5/commons/rabbitmq"
-	tmclient "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/client"
-	tmevent "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/event"
-	tmmongo "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/mongo"
-	tmrabbitmq "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/rabbitmq"
-	tmredis "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/redis"
-	"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/tenantcache"
-	libLog "github.com/LerianStudio/lib-observability/log"
-	obsRuntime "github.com/LerianStudio/lib-observability/runtime"
-	libOtel "github.com/LerianStudio/lib-observability/tracing"
-	libZap "github.com/LerianStudio/lib-observability/zap"
-	streaming "github.com/LerianStudio/lib-streaming"
+	libCommons "github.com/LerianStudio/lib-commons/v6/commons"
+	libCircuitBreaker "github.com/LerianStudio/lib-commons/v6/commons/circuitbreaker"
+	mongoDB "github.com/LerianStudio/lib-commons/v6/commons/mongo"
+	libOutbox "github.com/LerianStudio/lib-commons/v6/commons/outbox"
+	libOutboxMongo "github.com/LerianStudio/lib-commons/v6/commons/outbox/mongo"
+	libRabbitMQ "github.com/LerianStudio/lib-commons/v6/commons/rabbitmq"
+	tmclient "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/client"
+	tmevent "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/event"
+	tmmongo "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/mongo"
+	tmrabbitmq "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/rabbitmq"
+	tmredis "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/redis"
+	"github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/tenantcache"
+	libLog "github.com/LerianStudio/lib-observability/v2/log"
+	obsRuntime "github.com/LerianStudio/lib-observability/v2/runtime"
+	libOtel "github.com/LerianStudio/lib-observability/v2/tracing"
+	libZap "github.com/LerianStudio/lib-observability/v2/zap"
+	streaming "github.com/LerianStudio/lib-streaming/v3"
 	mongoDriver "go.mongodb.org/mongo-driver/v2/mongo"
 )
 
@@ -661,6 +662,14 @@ func initJobEventEmitter(ctx context.Context, cfg *Config, logger libLog.Logger,
 
 	for _, warning := range warnings {
 		logger.Log(ctx, libLog.LevelWarn, warning)
+	}
+
+	// Source pinning runs BEFORE the enabled check, deliberately. lib-streaming
+	// skips its own source validation for a disabled config, so a source that is
+	// wrong — or still carries the pre-v3 URI shape — would otherwise stay
+	// invisible until an operator flipped STREAMING_ENABLED in production.
+	if err := pkgStreaming.RequireRosterSource(streamingCfg.CloudEventsSource, constant.ApplicationName); err != nil {
+		return nil, false, err
 	}
 
 	// Deliberate deviation from the lib-streaming default pattern: we do NOT fall

@@ -10,13 +10,13 @@ import (
 	"github.com/LerianStudio/fetcher/v2/pkg/constant"
 	"github.com/LerianStudio/fetcher/v2/pkg/model"
 	httpUtils "github.com/LerianStudio/fetcher/v2/pkg/net/http"
-	"github.com/LerianStudio/lib-commons/v5/commons/net/http/problem"
-	observability "github.com/LerianStudio/lib-observability"
-	libLog "github.com/LerianStudio/lib-observability/log"
-	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
+	"github.com/LerianStudio/lib-commons/v6/commons/net/http/problem"
+	observability "github.com/LerianStudio/lib-observability/v2"
+	libLog "github.com/LerianStudio/lib-observability/v2/log"
+	libOpentelemetry "github.com/LerianStudio/lib-observability/v2/tracing"
 
 	"github.com/danielgtaylor/huma/v2"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -38,13 +38,13 @@ func createConnectionCallback(connectionHandler *ConnectionHandler) func(context
 			return nil, err
 		}
 
-		ctx = fiberCtx.UserContext()
+		ctx = fiberCtx.Context()
 		logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 		ctx, span := tracer.Start(ctx, "handler.create_connection")
 		defer span.End()
 
-		fiberCtx.SetUserContext(ctx)
+		fiberCtx.SetContext(ctx)
 
 		productName, err := httpUtils.GetRequiredProductName(fiberCtx)
 		if err != nil {
@@ -105,13 +105,13 @@ func listConnectionsCallback(connectionHandler *ConnectionHandler) func(context.
 			return nil, err
 		}
 
-		ctx = fiberCtx.UserContext()
+		ctx = fiberCtx.Context()
 		logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 		ctx, span := tracer.Start(ctx, "handler.list_connection")
 		defer span.End()
 
-		fiberCtx.SetUserContext(ctx)
+		fiberCtx.SetContext(ctx)
 
 		productName, err := httpUtils.GetProductName(fiberCtx)
 		if err != nil {
@@ -155,13 +155,13 @@ func validateSchemaCallback(connectionHandler *ConnectionHandler) func(context.C
 			return nil, err
 		}
 
-		ctx = fiberCtx.UserContext()
+		ctx = fiberCtx.Context()
 		logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 		ctx, span := tracer.Start(ctx, "handler.validate_schema")
 		defer span.End()
 
-		fiberCtx.SetUserContext(ctx)
+		fiberCtx.SetContext(ctx)
 		span.SetAttributes(attribute.String("app.request.request_id", reqID))
 
 		request, err := decodeJSON[model.SchemaValidationRequest](input.RawBody, "schema")
@@ -225,13 +225,13 @@ func getConnectionCallback(connectionHandler *ConnectionHandler) func(context.Co
 			return nil, err
 		}
 
-		ctx = fiberCtx.UserContext()
+		ctx = fiberCtx.Context()
 		logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 		ctx, span := tracer.Start(ctx, "handler.get_connection")
 		defer span.End()
 
-		fiberCtx.SetUserContext(ctx)
+		fiberCtx.SetContext(ctx)
 		span.SetAttributes(attribute.String("app.request.request_id", reqID))
 
 		id, err := parseID(input.ID, "connection")
@@ -264,13 +264,13 @@ func testConnectionCallback(connectionHandler *ConnectionHandler) func(context.C
 			return nil, err
 		}
 
-		ctx = fiberCtx.UserContext()
+		ctx = fiberCtx.Context()
 		logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 		ctx, span := tracer.Start(ctx, "handler.test_connection")
 		defer span.End()
 
-		fiberCtx.SetUserContext(ctx)
+		fiberCtx.SetContext(ctx)
 		span.SetAttributes(attribute.String("app.request.request_id", reqID))
 
 		id, err := parseID(input.ID, "connection")
@@ -303,13 +303,13 @@ func getConnectionSchemaCallback(connectionHandler *ConnectionHandler) func(cont
 			return nil, err
 		}
 
-		ctx = fiberCtx.UserContext()
+		ctx = fiberCtx.Context()
 		logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 		ctx, span := tracer.Start(ctx, "handler.get_connection_schema")
 		defer span.End()
 
-		fiberCtx.SetUserContext(ctx)
+		fiberCtx.SetContext(ctx)
 		span.SetAttributes(attribute.String("app.request.request_id", reqID))
 
 		id, err := parseID(input.ID, "connection")
@@ -342,13 +342,13 @@ func updateConnectionCallback(connectionHandler *ConnectionHandler) func(context
 			return nil, err
 		}
 
-		ctx = fiberCtx.UserContext()
+		ctx = fiberCtx.Context()
 		logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 		ctx, span := tracer.Start(ctx, "handler.update_connection")
 		defer span.End()
 
-		fiberCtx.SetUserContext(ctx)
+		fiberCtx.SetContext(ctx)
 		span.SetAttributes(attribute.String("app.request.request_id", reqID))
 
 		id, err := parseID(input.ID, "connection")
@@ -406,13 +406,13 @@ func deleteConnectionCallback(connectionHandler *ConnectionHandler) func(context
 			return nil, err
 		}
 
-		ctx = fiberCtx.UserContext()
+		ctx = fiberCtx.Context()
 		logger, tracer, reqID, _ := observability.NewTrackingFromContext(ctx)
 
 		ctx, span := tracer.Start(ctx, "handler.delete_connection")
 		defer span.End()
 
-		fiberCtx.SetUserContext(ctx)
+		fiberCtx.SetContext(ctx)
 		span.SetAttributes(attribute.String("app.request.request_id", reqID))
 
 		id, err := parseID(input.ID, "connection")

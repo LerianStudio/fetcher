@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 )
 
 // drainingDepName is the synthetic dependency emitted while the process is
@@ -41,7 +41,7 @@ func NewHandler(cfg *Config, checkers ...DependencyChecker) *Handler {
 // is emitted (with metrics) so alerts still rate() during rolling deploys.
 // Otherwise probes run in parallel; "healthy" → 200, "unhealthy" → 503.
 func (h *Handler) Fiber() fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		if IsDraining() {
 			emitCheckDuration(drainingDepName, StatusDown, 0)
 			emitCheckStatus(drainingDepName, StatusDown)
@@ -49,7 +49,7 @@ func (h *Handler) Fiber() fiber.Handler {
 			return c.Status(fiber.StatusServiceUnavailable).JSON(h.buildDrainingResponse())
 		}
 
-		resp := h.Run(c.UserContext())
+		resp := h.Run(c.Context())
 		if resp.Status == TopStatusHealthy {
 			return c.Status(fiber.StatusOK).JSON(resp)
 		}

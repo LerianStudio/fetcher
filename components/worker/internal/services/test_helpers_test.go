@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	libLog "github.com/LerianStudio/lib-observability/log"
-	streaming "github.com/LerianStudio/lib-streaming"
+	libLog "github.com/LerianStudio/lib-observability/v2/log"
+	streaming "github.com/LerianStudio/lib-streaming/v3"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
 

@@ -13,10 +13,10 @@ import (
 	"github.com/LerianStudio/fetcher/v2/pkg/model"
 	cacheRepo "github.com/LerianStudio/fetcher/v2/pkg/ports/cache"
 	"github.com/LerianStudio/fetcher/v2/pkg/testutil"
-	observability "github.com/LerianStudio/lib-observability"
-	libLog "github.com/LerianStudio/lib-observability/log"
+	observability "github.com/LerianStudio/lib-observability/v2"
+	libLog "github.com/LerianStudio/lib-observability/v2/log"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -25,12 +25,12 @@ import (
 
 func setupConnectionTestApp() *fiber.App {
 	app := fiber.New(fiber.Config{BodyLimit: 10 * 1024})
-	app.Use(func(c *fiber.Ctx) error {
+	app.Use(func(c fiber.Ctx) error {
 		logger := &libLog.GoLogger{Level: libLog.LevelDebug}
 		ctx := observability.ContextWithHeaderID(testutil.TestContext(), "test-request-id")
 		ctx = observability.ContextWithLogger(ctx, logger)
 		ctx = observability.ContextWithTracer(ctx, otel.Tracer("test"))
-		c.SetUserContext(ctx)
+		c.SetContext(ctx)
 
 		return c.Next()
 	})

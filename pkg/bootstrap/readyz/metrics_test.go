@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -23,11 +23,11 @@ import (
 func scrapeMetrics(t *testing.T) string {
 	t.Helper()
 
-	app := fiber.New(fiber.Config{DisableStartupMessage: true})
+	app := fiber.New()
 	app.Get("/metrics", NewMetricsHandler())
 
 	req := httptest.NewRequest("GET", "/metrics", nil)
-	res, err := app.Test(req, 2000)
+	res, err := app.Test(req, fiber.TestConfig{Timeout: 2 * time.Second, FailOnTimeout: true})
 	require.NoError(t, err)
 
 	defer res.Body.Close()
@@ -299,11 +299,11 @@ func TestHandler_DrainPath_EmitsDrainingMetric(t *testing.T) {
 		&fakeChecker{name: "irrelevant", out: DependencyCheck{Status: StatusUp}},
 	)
 
-	app := fiber.New(fiber.Config{DisableStartupMessage: true})
+	app := fiber.New()
 	app.Get("/readyz", h.Fiber())
 
 	req := httptest.NewRequest("GET", "/readyz", nil)
-	res, err := app.Test(req, 2000)
+	res, err := app.Test(req, fiber.TestConfig{Timeout: 2 * time.Second, FailOnTimeout: true})
 	require.NoError(t, err)
 	defer res.Body.Close()
 
@@ -350,14 +350,14 @@ func TestHandler_ConcurrentRuns_NoMetricRaces(t *testing.T) {
 func TestRegistration_MetricsEndpoint_ReturnsPrometheusExposition(t *testing.T) {
 	SetDraining(false)
 
-	app := fiber.New(fiber.Config{DisableStartupMessage: true})
+	app := fiber.New()
 	h := NewHandler(baseCfg(),
 		&fakeChecker{name: "wired_test", out: DependencyCheck{Status: StatusUp}},
 	)
 	Register(app, h)
 
 	req := httptest.NewRequest("GET", "/metrics", nil)
-	res, err := app.Test(req, 2000)
+	res, err := app.Test(req, fiber.TestConfig{Timeout: 2 * time.Second, FailOnTimeout: true})
 	require.NoError(t, err)
 	defer res.Body.Close()
 

@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/LerianStudio/fetcher/v2/pkg/model/job"
-	"github.com/LerianStudio/lib-observability/log"
+	"github.com/LerianStudio/lib-observability/v2/log"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

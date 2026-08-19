@@ -8,12 +8,12 @@ import (
 
 	"github.com/LerianStudio/fetcher/pkg/engine"
 	"github.com/LerianStudio/fetcher/v2/pkg"
-	libOutbox "github.com/LerianStudio/lib-commons/v5/commons/outbox"
-	"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
-	observability "github.com/LerianStudio/lib-observability"
-	streaming "github.com/LerianStudio/lib-streaming"
+	libOutbox "github.com/LerianStudio/lib-commons/v6/commons/outbox"
+	"github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/core"
+	observability "github.com/LerianStudio/lib-observability/v2"
+	streaming "github.com/LerianStudio/lib-streaming/v3"
 
-	libLog "github.com/LerianStudio/lib-observability/log"
+	libLog "github.com/LerianStudio/lib-observability/v2/log"
 
 	"github.com/google/uuid"
 )

@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	libLog "github.com/LerianStudio/lib-observability/log"
+	libLog "github.com/LerianStudio/lib-observability/v2/log"
 )
 
 // RunSelfProbe runs every checker once at startup in parallel under

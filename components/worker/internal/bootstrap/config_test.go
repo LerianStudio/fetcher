@@ -12,14 +12,15 @@ import (
 	"github.com/LerianStudio/fetcher/v2/pkg/bootstrap/readyz"
 	"github.com/LerianStudio/fetcher/v2/pkg/constant"
 	pkgRabbitMQ "github.com/LerianStudio/fetcher/v2/pkg/rabbitmq"
+	pkgStreaming "github.com/LerianStudio/fetcher/v2/pkg/streaming"
 	"github.com/LerianStudio/fetcher/v2/pkg/testutil"
-	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
-	mongoDB "github.com/LerianStudio/lib-commons/v5/commons/mongo"
-	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
-	libLog "github.com/LerianStudio/lib-observability/log"
-	libOtel "github.com/LerianStudio/lib-observability/tracing"
-	libZap "github.com/LerianStudio/lib-observability/zap"
-	streaming "github.com/LerianStudio/lib-streaming"
+	libCommons "github.com/LerianStudio/lib-commons/v6/commons"
+	mongoDB "github.com/LerianStudio/lib-commons/v6/commons/mongo"
+	tmcore "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/core"
+	libLog "github.com/LerianStudio/lib-observability/v2/log"
+	libOtel "github.com/LerianStudio/lib-observability/v2/tracing"
+	libZap "github.com/LerianStudio/lib-observability/v2/zap"
+	streaming "github.com/LerianStudio/lib-streaming/v3"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -192,7 +193,7 @@ func TestStreamingRabbitMQPublisher_PingReportsBrokerHealth(t *testing.T) {
 func TestInitJobEventEmitter_DisabledFailsStartup(t *testing.T) {
 	t.Setenv("STREAMING_ENABLED", "false")
 	t.Setenv("STREAMING_BROKERS", "")
-	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "")
+	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", constant.ApplicationName)
 
 	emitter, enabled, err := initJobEventEmitter(testutil.TestContext(), &Config{}, testBootstrapLogger(), &libOtel.Telemetry{}, nil, nil)
 	require.Error(t, err)
@@ -201,10 +202,29 @@ func TestInitJobEventEmitter_DisabledFailsStartup(t *testing.T) {
 	assert.Contains(t, err.Error(), "STREAMING_ENABLED=true is required")
 }
 
+// TestInitJobEventEmitter_RejectsNonRosterSourceEvenWhenDisabled pins the
+// ordering of the two startup gates. lib-streaming skips its own source
+// validation for a disabled config, so if the roster check ran after the
+// enabled check a wrong ce-source would sit unnoticed in an env file until an
+// operator turned streaming on in production. The source gate must therefore
+// fire first, and its error — not the enabled error — must be what surfaces.
+func TestInitJobEventEmitter_RejectsNonRosterSourceEvenWhenDisabled(t *testing.T) {
+	t.Setenv("STREAMING_ENABLED", "false")
+	t.Setenv("STREAMING_BROKERS", "")
+	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "fetcher-worker")
+
+	emitter, enabled, err := initJobEventEmitter(testutil.TestContext(), &Config{}, testBootstrapLogger(), &libOtel.Telemetry{}, nil, nil)
+	require.Error(t, err)
+	require.ErrorIs(t, err, pkgStreaming.ErrSourceNotRoster)
+	assert.Nil(t, emitter)
+	assert.False(t, enabled)
+	assert.NotContains(t, err.Error(), "STREAMING_ENABLED=true is required")
+}
+
 func TestInitJobEventEmitter_EnabledRequiresOutboxRepository(t *testing.T) {
 	t.Setenv("STREAMING_ENABLED", "true")
 	t.Setenv("STREAMING_BROKERS", "broker:9092")
-	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.fetcher/worker")
+	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "fetcher")
 
 	telemetry, err := libOtel.NewTelemetry(libOtel.TelemetryConfig{Logger: testBootstrapLogger()})
 	require.NoError(t, err)
@@ -222,15 +242,30 @@ func TestInitJobEventEmitter_EnabledRequiresOutboxRepository(t *testing.T) {
 	assert.Nil(t, emitter)
 }
 
+// TestJobEventStreamingContract_CeTypeValues pins the literal ce-type header
+// carried by every job event. v3 inserted the source segment into ce-type
+// ("studio.lerian.<source>.<resourceType>.<eventType>"), so these strings
+// changed on the wire even though the exchange and routing keys did not — and
+// nothing in fetcher pinned any ce-* header before, which is how the change went
+// unnoticed until review. Any consumer matching on ce-type matches these exact
+// values, so a future library bump must break this test rather than their
+// subscriptions.
+func TestJobEventStreamingContract_CeTypeValues(t *testing.T) {
+	assert.Equal(t, "studio.lerian.fetcher.job.completed",
+		streaming.CloudEventsType(constant.ApplicationName, "job", "completed"))
+	assert.Equal(t, "studio.lerian.fetcher.job.failed",
+		streaming.CloudEventsType(constant.ApplicationName, "job", "failed"))
+}
+
 func TestJobEventStreamingContract_UsesConfiguredSourceAndRabbitMQRoutes(t *testing.T) {
 	t.Setenv("STREAMING_ENABLED", "true")
 	t.Setenv("STREAMING_BROKERS", "unused:9092")
-	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.fetcher/worker")
+	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "fetcher")
 
 	streamingCfg, warnings, err := streaming.LoadConfig()
 	require.NoError(t, err)
 	assert.Empty(t, warnings)
-	assert.Equal(t, "//lerian.fetcher/worker", streamingCfg.CloudEventsSource)
+	assert.Equal(t, "fetcher", streamingCfg.CloudEventsSource)
 
 	policy := streaming.DeliveryPolicy{
 		Enabled: true,
@@ -265,13 +300,30 @@ func TestJobEventStreamingContract_UsesConfiguredSourceAndRabbitMQRoutes(t *test
 
 	manifest, err := streaming.BuildManifest(streaming.PublisherDescriptor{
 		ServiceName:     "fetcher-worker",
-		SourceBase:      streamingCfg.CloudEventsSource,
+		Source:          streamingCfg.CloudEventsSource,
 		OutboxSupported: true,
 	}, catalog, routes)
 	require.NoError(t, err)
+
+	// These assertions pin an INHERITED library contract, not a published
+	// artifact. Fetcher does not serve an event manifest anywhere — the
+	// lib-streaming manifest handler is deliberately not mounted — so the topic
+	// names below are never read by anything and no broker topic is provisioned
+	// from them. They are asserted only to catch the library silently changing
+	// how it derives names from the ce-source, which is the same derivation the
+	// roster-source gate protects.
+	//
+	// One topic per application: a definition no longer carries a topic of its
+	// own, only an eventKey selector inside the application's single stream.
+	assert.Equal(t, "lerian.streaming.fetcher", manifest.Topic)
+	assert.Equal(t, "lerian.streaming.fetcher.dlq", manifest.DLQTopic)
+	assert.Empty(t, manifest.CommandsTopic, "fetcher emits facts only, so no commands queue should be derived")
+
 	require.Len(t, manifest.Events, 2)
-	assert.Equal(t, "lerian.fetcher-worker.job.completed", manifest.Events[0].Topic)
-	assert.Equal(t, "lerian.fetcher-worker.job.failed", manifest.Events[1].Topic)
+	assert.Equal(t, "job.completed", manifest.Events[0].EventKey)
+	assert.Equal(t, "job.failed", manifest.Events[1].EventKey)
+
+	// The RabbitMQ exchange below is what fetcher actually writes.
 	require.Len(t, manifest.Routes, 2)
 	for _, route := range manifest.Routes {
 		assert.Equal(t, streaming.TransportRabbitMQ, route.Transport)

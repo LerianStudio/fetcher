@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	tmclient "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/client"
-	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
-	"github.com/gofiber/fiber/v2"
+	tmclient "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/client"
+	tmcore "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/core"
+	"github.com/gofiber/fiber/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
@@ -50,7 +50,7 @@ func (s *staticTenantChecker) CheckForTenant(ctx context.Context, id string) Dep
 }
 
 func newApp(h *TenantFiberHandler) *fiber.App {
-	app := fiber.New(fiber.Config{DisableStartupMessage: true})
+	app := fiber.New()
 	app.Get("/readyz/tenant/:id", h.Fiber())
 
 	return app
@@ -60,7 +60,7 @@ func doReq(t *testing.T, app *fiber.App, path string) (int, []byte) {
 	t.Helper()
 	req := httptest.NewRequest("GET", path, nil)
 
-	resp, err := app.Test(req, 3_000)
+	resp, err := app.Test(req, fiber.TestConfig{Timeout: 3 * time.Second, FailOnTimeout: true})
 	require.NoError(t, err)
 
 	body, err := io.ReadAll(resp.Body)
@@ -191,11 +191,11 @@ func TestTenantHandler_DrainingShortCircuits(t *testing.T) {
 }
 
 func TestDisabledTenantHandler_Returns400(t *testing.T) {
-	app := fiber.New(fiber.Config{DisableStartupMessage: true})
+	app := fiber.New()
 	app.Get("/readyz/tenant/:id", NewDisabledTenantHandler())
 
 	req := httptest.NewRequest("GET", "/readyz/tenant/t1", nil)
-	resp, err := app.Test(req, 3_000)
+	resp, err := app.Test(req, fiber.TestConfig{Timeout: 3 * time.Second, FailOnTimeout: true})
 	require.NoError(t, err)
 
 	body, _ := io.ReadAll(resp.Body)

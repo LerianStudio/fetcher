@@ -9,8 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/LerianStudio/lib-observability"
-
 	"github.com/LerianStudio/fetcher/v2/pkg"
 	"github.com/LerianStudio/fetcher/v2/pkg/constant"
 	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
@@ -21,9 +19,10 @@ import (
 	"github.com/LerianStudio/fetcher/v2/pkg/ports/messaging"
 	"github.com/LerianStudio/fetcher/v2/pkg/resolver"
 
-	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
-	libLog "github.com/LerianStudio/lib-observability/log"
-	libOpentelemetry "github.com/LerianStudio/lib-observability/tracing"
+	tmcore "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/core"
+	observability "github.com/LerianStudio/lib-observability/v2"
+	libLog "github.com/LerianStudio/lib-observability/v2/log"
+	libOpentelemetry "github.com/LerianStudio/lib-observability/v2/tracing"
 
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.opentelemetry.io/otel/attribute"

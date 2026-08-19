@@ -10,21 +10,22 @@ import (
 	"syscall"
 	"time"
 
-	observability "github.com/LerianStudio/lib-observability"
+	observability "github.com/LerianStudio/lib-observability/v2"
 
 	"github.com/LerianStudio/fetcher/v2/components/worker/internal/adapters/rabbitmq"
 	"github.com/LerianStudio/fetcher/v2/components/worker/internal/services"
 	"github.com/LerianStudio/fetcher/v2/pkg/bootstrap/readyz"
 	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
+	"github.com/LerianStudio/fetcher/v2/pkg/multitenant"
 	pkgRabbitmq "github.com/LerianStudio/fetcher/v2/pkg/rabbitmq"
-	tmconsumer "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/consumer"
-	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
-	tmmongo "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/mongo"
-	libLog "github.com/LerianStudio/lib-observability/log"
-	obsRuntime "github.com/LerianStudio/lib-observability/runtime"
-	opentelemetry "github.com/LerianStudio/lib-observability/tracing"
+	tmconsumer "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/consumer"
+	tmcore "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/core"
+	tmmongo "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/mongo"
+	libLog "github.com/LerianStudio/lib-observability/v2/log"
+	obsRuntime "github.com/LerianStudio/lib-observability/v2/runtime"
+	opentelemetry "github.com/LerianStudio/lib-observability/v2/tracing"
 
-	"github.com/LerianStudio/lib-commons/v5/commons"
+	"github.com/LerianStudio/lib-commons/v6/commons"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -323,7 +324,11 @@ func validateAuthoritativeTenantHeader(ctx context.Context, headers map[string]a
 		return fmt.Errorf("tenant header %s is required for authoritative tenant %s", pkgRabbitmq.HeaderTenantID, authoritativeTenantID)
 	}
 
-	if headerTenantID != authoritativeTenantID {
+	// Compare canonical forms. The authoritative ID comes from the tenant context
+	// and the header from the publisher, and lib-commons does not guarantee the two
+	// use the same UUID spelling; a dashed-vs-dashless mismatch on the same tenant
+	// would otherwise read as a cross-tenant replay and reject a legitimate message.
+	if multitenant.Canonical(headerTenantID) != multitenant.Canonical(authoritativeTenantID) {
 		return fmt.Errorf("tenant header %s=%q does not match authoritative tenant %q", pkgRabbitmq.HeaderTenantID, headerTenantID, authoritativeTenantID)
 	}
 

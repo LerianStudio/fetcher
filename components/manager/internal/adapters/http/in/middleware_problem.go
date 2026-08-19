@@ -9,7 +9,7 @@ import (
 	"github.com/LerianStudio/fetcher/v2/pkg"
 	httpUtils "github.com/LerianStudio/fetcher/v2/pkg/net/http"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 )
 
 // problemMiddlewareChain wraps a Fiber middleware that signals failure by
@@ -19,7 +19,7 @@ import (
 func problemMiddlewareChain(middleware fiber.Handler) []fiber.Handler {
 	markerKey := new(byte)
 
-	wrapped := func(c *fiber.Ctx) error {
+	wrapped := func(c fiber.Ctx) error {
 		err := middleware(c)
 		if passed, _ := c.Locals(markerKey).(bool); passed {
 			return err
@@ -74,7 +74,7 @@ func problemMiddlewareChain(middleware fiber.Handler) []fiber.Handler {
 		})
 	}
 
-	marker := func(c *fiber.Ctx) error {
+	marker := func(c fiber.Ctx) error {
 		c.Locals(markerKey, true)
 		return c.Next()
 	}

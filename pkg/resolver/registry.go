@@ -6,6 +6,7 @@ package resolver
 
 import (
 	"github.com/LerianStudio/fetcher/v2/pkg/model"
+	"github.com/LerianStudio/fetcher/v2/pkg/multitenant"
 	"github.com/google/uuid"
 )
 
@@ -75,16 +76,24 @@ func (r *InternalDatasourceRegistry) GetAllConfigs() map[string]InternalDSConfig
 // GetDeterministicID generates a stable UUID v5 for an internal datasource
 // scoped to a specific tenant. The same tenant+configName always produces the
 // same UUID, and different tenants produce different UUIDs.
+//
+// The tenant ID is canonicalized first because this UUID is an identity, not a
+// cache key: the two UUID spellings of one tenant hash to two different
+// datasource IDs, so a caller holding the dashed form would derive an ID that
+// resolves to nothing. Canonicalizing is a no-op on the dashless IDs Access
+// Manager tokens actually carry, so no existing derived ID changes value.
 func (r *InternalDatasourceRegistry) GetDeterministicID(tenantID, configName string) uuid.UUID {
-	return uuid.NewSHA1(InternalDatasourceNamespace, []byte(tenantID+"/"+configName))
+	return uuid.NewSHA1(InternalDatasourceNamespace, []byte(multitenant.Canonical(tenantID)+"/"+configName))
 }
 
 // FindConfigByID performs a reverse lookup: given a UUID and tenantID, it checks
 // whether the UUID matches any internal datasource for that tenant.
 // Returns the configName, config, and true if found; empty values and false otherwise.
 func (r *InternalDatasourceRegistry) FindConfigByID(id uuid.UUID, tenantID string) (string, InternalDSConfig, bool) {
+	// Delegate rather than repeat the derivation: a second inline copy is how the
+	// forward and reverse lookups drift apart.
 	for name, cfg := range r.datasources {
-		if uuid.NewSHA1(InternalDatasourceNamespace, []byte(tenantID+"/"+name)) == id {
+		if r.GetDeterministicID(tenantID, name) == id {
 			return name, cfg, true
 		}
 	}

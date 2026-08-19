@@ -5,18 +5,14 @@
 package http_test
 
 import (
-	"bytes"
 	"encoding/json"
 	"io"
-	stdhttp "net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/LerianStudio/fetcher/v2/pkg/datasource/hostsafety"
 	"github.com/LerianStudio/fetcher/v2/pkg/model"
 	fetcherhttp "github.com/LerianStudio/fetcher/v2/pkg/net/http"
-	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -33,53 +29,57 @@ func TestSafeHostValidatorTag(t *testing.T) {
 	// The validator is initialized once per process via sync.Once. The
 	// `safe_host` registered closure reads hostSafetyEnabled fresh on each
 	// call, so toggling the flag between subtests works as expected.
+	//
+	// Driven through ValidateStruct, which is the call shape the Manager's Huma
+	// handlers actually use. This matrix is the only coverage of the
+	// hostSafetyEnabled flag itself — the sibling tests below all run with it on.
 	cases := []struct {
-		name           string
-		host           string
-		safetyEnabled  bool
-		wantStatusCode int
+		name          string
+		host          string
+		safetyEnabled bool
+		wantRejected  bool
 	}{
 		{
-			name:           "flag off allows loopback IP literal",
-			host:           "127.0.0.1",
-			safetyEnabled:  false,
-			wantStatusCode: stdhttp.StatusOK,
+			name:          "flag off allows loopback IP literal",
+			host:          "127.0.0.1",
+			safetyEnabled: false,
+			wantRejected:  false,
 		},
 		{
-			name:           "flag off allows RFC1918 IP literal",
-			host:           "10.0.0.1",
-			safetyEnabled:  false,
-			wantStatusCode: stdhttp.StatusOK,
+			name:          "flag off allows RFC1918 IP literal",
+			host:          "10.0.0.1",
+			safetyEnabled: false,
+			wantRejected:  false,
 		},
 		{
-			name:           "flag on rejects loopback IP literal",
-			host:           "127.0.0.1",
-			safetyEnabled:  true,
-			wantStatusCode: stdhttp.StatusBadRequest,
+			name:          "flag on rejects loopback IP literal",
+			host:          "127.0.0.1",
+			safetyEnabled: true,
+			wantRejected:  true,
 		},
 		{
-			name:           "flag on rejects RFC1918 IP literal",
-			host:           "10.0.0.1",
-			safetyEnabled:  true,
-			wantStatusCode: stdhttp.StatusBadRequest,
+			name:          "flag on rejects RFC1918 IP literal",
+			host:          "10.0.0.1",
+			safetyEnabled: true,
+			wantRejected:  true,
 		},
 		{
-			name:           "flag on rejects link-local IMDS literal",
-			host:           "169.254.169.254",
-			safetyEnabled:  true,
-			wantStatusCode: stdhttp.StatusBadRequest,
+			name:          "flag on rejects link-local IMDS literal",
+			host:          "169.254.169.254",
+			safetyEnabled: true,
+			wantRejected:  true,
 		},
 		{
-			name:           "flag on accepts public IPv4 literal",
-			host:           "8.8.8.8",
-			safetyEnabled:  true,
-			wantStatusCode: stdhttp.StatusOK,
+			name:          "flag on accepts public IPv4 literal",
+			host:          "8.8.8.8",
+			safetyEnabled: true,
+			wantRejected:  false,
 		},
 		{
-			name:           "flag on accepts public hostname (DNS deferred to factory)",
-			host:           "db.example.com",
-			safetyEnabled:  true,
-			wantStatusCode: stdhttp.StatusOK,
+			name:          "flag on accepts public hostname (DNS deferred to factory)",
+			host:          "db.example.com",
+			safetyEnabled: true,
+			wantRejected:  false,
 		},
 	}
 
@@ -88,25 +88,19 @@ func TestSafeHostValidatorTag(t *testing.T) {
 			hostsafety.SetHostSafetyEnabled(tc.safetyEnabled)
 			t.Cleanup(func() { hostsafety.SetHostSafetyEnabled(false) })
 
-			app := fiber.New()
-			app.Post("/test", fetcherhttp.WithBody(&hostInput{}, func(_ any, c *fiber.Ctx) error {
-				return c.SendStatus(stdhttp.StatusOK)
-			}))
+			err := fetcherhttp.ValidateStruct(&hostInput{Host: tc.host})
 
-			body := []byte(`{"host":"` + tc.host + `"}`)
-			req := httptest.NewRequest(stdhttp.MethodPost, "/test", bytes.NewBuffer(body))
-			req.Header.Set("Content-Type", "application/json")
+			if !tc.wantRejected {
+				assert.NoError(t, err, "host=%q safety=%v", tc.host, tc.safetyEnabled)
 
-			resp, err := app.Test(req, -1)
-			require.NoError(t, err)
-			assert.Equal(t, tc.wantStatusCode, resp.StatusCode, "host=%q safety=%v", tc.host, tc.safetyEnabled)
-
-			// When the guard rejects, the body must surface FET-0414 verbatim
-			// so clients can branch on the code. Mensagem genérica intencional
-			// — see docs/PROJECT_RULES.md § "Error Surface".
-			if tc.wantStatusCode == stdhttp.StatusBadRequest && tc.safetyEnabled {
-				assertSSRFErrorBody(t, resp.Body)
+				return
 			}
+
+			require.Error(t, err, "host=%q safety=%v", tc.host, tc.safetyEnabled)
+			// The rejection must surface FET-0414 verbatim so clients can branch
+			// on the code. Mensagem genérica intencional — see
+			// docs/PROJECT_RULES.md § "Error Surface".
+			assert.Contains(t, err.Error(), "FET-0414")
 		})
 	}
 }

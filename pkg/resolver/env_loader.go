@@ -14,7 +14,7 @@ import (
 	"github.com/LerianStudio/fetcher/v2/pkg/datasource/sslmode"
 	"github.com/LerianStudio/fetcher/v2/pkg/model"
 
-	libLog "github.com/LerianStudio/lib-observability/log"
+	libLog "github.com/LerianStudio/lib-observability/v2/log"
 )
 
 // LoadInternalConnectionsFromEnv scans DATASOURCE_{NAME}_* env vars and builds

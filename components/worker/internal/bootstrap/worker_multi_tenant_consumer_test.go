@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/LerianStudio/fetcher/v2/pkg/testutil"
-	tmconsumer "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/consumer"
-	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
-	"github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/tenantcache"
+	tmconsumer "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/consumer"
+	tmcore "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/core"
+	"github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/tenantcache"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

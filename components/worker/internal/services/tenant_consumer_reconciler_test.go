@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	tmclient "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/client"
+	tmclient "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/client"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 )

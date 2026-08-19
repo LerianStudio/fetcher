@@ -10,12 +10,12 @@ import (
 	"time"
 
 	"github.com/LerianStudio/fetcher/v2/pkg/model"
-	"github.com/LerianStudio/lib-commons/v5/commons"
-	tmclient "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/client"
-	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
-	observability "github.com/LerianStudio/lib-observability"
-	libLog "github.com/LerianStudio/lib-observability/log"
-	obsRuntime "github.com/LerianStudio/lib-observability/runtime"
+	"github.com/LerianStudio/lib-commons/v6/commons"
+	tmclient "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/client"
+	tmcore "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/core"
+	observability "github.com/LerianStudio/lib-observability/v2"
+	libLog "github.com/LerianStudio/lib-observability/v2/log"
+	obsRuntime "github.com/LerianStudio/lib-observability/v2/runtime"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 )
 

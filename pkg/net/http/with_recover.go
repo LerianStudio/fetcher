@@ -4,15 +4,15 @@ import (
 	"context"
 	"net/http"
 
-	observability "github.com/LerianStudio/lib-observability"
+	observability "github.com/LerianStudio/lib-observability/v2"
 
 	"github.com/LerianStudio/fetcher/v2/pkg"
 	"github.com/LerianStudio/fetcher/v2/pkg/constant"
 
-	libLog "github.com/LerianStudio/lib-observability/log"
-	obsRuntime "github.com/LerianStudio/lib-observability/runtime"
+	libLog "github.com/LerianStudio/lib-observability/v2/log"
+	obsRuntime "github.com/LerianStudio/lib-observability/v2/runtime"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 )
 
 type recoverMiddleware struct {
@@ -41,10 +41,10 @@ func buildRecoverOpts(opts ...RecoverMiddlewareOption) *recoverMiddleware {
 func WithRecover(opts ...RecoverMiddlewareOption) fiber.Handler {
 	mid := buildRecoverOpts(opts...)
 
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		defer func() {
 			if r := recover(); r != nil {
-				reqCtx := c.UserContext()
+				reqCtx := c.Context()
 
 				// Prefer the request-scoped logger from context when explicitly injected,
 				// but fall back to the middleware logger (configured at startup) to ensure

@@ -8,10 +8,10 @@ import (
 
 	connectionCommand "github.com/LerianStudio/fetcher/v2/components/manager/internal/services/command"
 	connectionQuery "github.com/LerianStudio/fetcher/v2/components/manager/internal/services/query"
-	middlewareAuth "github.com/LerianStudio/lib-auth/v2/auth/middleware"
-	"github.com/LerianStudio/lib-observability/log"
-	opentelemetry "github.com/LerianStudio/lib-observability/tracing"
-	"github.com/gofiber/fiber/v2"
+	middlewareAuth "github.com/LerianStudio/lib-auth/v3/auth/middleware"
+	"github.com/LerianStudio/lib-observability/v2/log"
+	opentelemetry "github.com/LerianStudio/lib-observability/v2/tracing"
+	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -77,7 +77,7 @@ func TestValidateRuntimeSecurity_UsesEffectiveAuth(t *testing.T) {
 		},
 		{
 			name: "tenant middleware requires effective auth",
-			tenant: func(c *fiber.Ctx) error {
+			tenant: func(c fiber.Ctx) error {
 				return c.Next()
 			},
 			wantErr: "tenant middleware requires effective authentication",
@@ -311,7 +311,7 @@ func TestOperationMiddlewareFactory_OrdersAuthTenantAndCallback(t *testing.T) {
 			app := fiber.New()
 			events := make([]string, 0, 3)
 			authorize := func(_, _ string) fiber.Handler {
-				return func(c *fiber.Ctx) error {
+				return func(c fiber.Ctx) error {
 					events = append(events, "auth")
 					if tt.rejectAuth {
 						return c.Status(http.StatusUnauthorized).SendString("denied")
@@ -320,7 +320,7 @@ func TestOperationMiddlewareFactory_OrdersAuthTenantAndCallback(t *testing.T) {
 					return c.Next()
 				}
 			}
-			tenant := func(c *fiber.Ctx) error {
+			tenant := func(c fiber.Ctx) error {
 				events = append(events, "tenant")
 
 				return c.Next()

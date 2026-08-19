@@ -10,8 +10,8 @@ import (
 	"net/url"
 	"strings"
 
-	tmclient "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/client"
-	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
+	tmclient "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/client"
+	tmcore "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/core"
 )
 
 // TenantManagerAdapter implements TenantConfigProvider by wrapping one or more

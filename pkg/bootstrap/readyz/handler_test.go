@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
@@ -188,7 +188,7 @@ func TestHandler_Fiber_DrainingReturns503AndSkipsCheckers(t *testing.T) {
 	SetDraining(true)
 
 	req := httptest.NewRequest("GET", "/readyz", nil)
-	res, err := app.Test(req, 2000)
+	res, err := app.Test(req, fiber.TestConfig{Timeout: 2 * time.Second, FailOnTimeout: true})
 	require.NoError(t, err)
 	defer res.Body.Close()
 
@@ -231,7 +231,7 @@ func TestHandler_Fiber_HealthyPath_Returns200(t *testing.T) {
 	app.Get("/readyz", h.Fiber())
 
 	req := httptest.NewRequest("GET", "/readyz", nil)
-	res, err := app.Test(req, 2000)
+	res, err := app.Test(req, fiber.TestConfig{Timeout: 2 * time.Second, FailOnTimeout: true})
 	require.NoError(t, err)
 	defer res.Body.Close()
 
@@ -258,7 +258,7 @@ func TestHandler_Fiber_UnhealthyPath_Returns503(t *testing.T) {
 	app.Get("/readyz", h.Fiber())
 
 	req := httptest.NewRequest("GET", "/readyz", nil)
-	res, err := app.Test(req, 2000)
+	res, err := app.Test(req, fiber.TestConfig{Timeout: 2 * time.Second, FailOnTimeout: true})
 	require.NoError(t, err)
 	defer res.Body.Close()
 
@@ -414,7 +414,7 @@ func TestRegistration_StubTenantHandler_ReturnsSkipped(t *testing.T) {
 	app.Get("/readyz/tenant/:id", StubTenantHandler())
 
 	req := httptest.NewRequest("GET", "/readyz/tenant/abc", nil)
-	res, err := app.Test(req, 1000)
+	res, err := app.Test(req, fiber.TestConfig{Timeout: time.Second, FailOnTimeout: true})
 	require.NoError(t, err)
 	defer res.Body.Close()
 
@@ -451,7 +451,7 @@ func TestRegistration_Register_WiresAllRoutes(t *testing.T) {
 
 	for _, path := range []string{"/health", "/readyz", "/metrics", "/readyz/tenant/foo"} {
 		req := httptest.NewRequest("GET", path, nil)
-		res, err := app.Test(req, 2000)
+		res, err := app.Test(req, fiber.TestConfig{Timeout: 2 * time.Second, FailOnTimeout: true})
 		require.NoError(t, err, "path %s", path)
 		_ = res.Body.Close()
 		assert.Equal(t, fiber.StatusOK, res.StatusCode, "path %s", path)

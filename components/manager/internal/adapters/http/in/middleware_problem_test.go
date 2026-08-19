@@ -9,21 +9,22 @@ import (
 	"github.com/LerianStudio/fetcher/v2/pkg"
 	"github.com/LerianStudio/fetcher/v2/pkg/constant"
 	httpUtils "github.com/LerianStudio/fetcher/v2/pkg/net/http"
-	"github.com/LerianStudio/lib-commons/v5/commons/net/http/problem"
+	"github.com/LerianStudio/lib-commons/v6/commons/net/http/problem"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestProblemMiddlewareChain_NormalizesShortCircuitResponse(t *testing.T) {
 	app := fiber.New()
-	chain := problemMiddlewareChain(func(c *fiber.Ctx) error {
+	chain := problemMiddlewareChain(func(c fiber.Ctx) error {
 		return c.Status(http.StatusUnauthorized).SendString("Missing Token")
 	})
-	app.Get("/test", append(chain, func(c *fiber.Ctx) error {
+	first, trailing := fiberChain(append(chain, func(c fiber.Ctx) error {
 		return c.SendStatus(http.StatusNoContent)
-	})...)
+	}))
+	app.Get("/test", first, trailing...)
 
 	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/test", nil))
 	require.NoError(t, err)
@@ -43,13 +44,14 @@ func TestProblemMiddlewareChain_NormalizesShortCircuitResponse(t *testing.T) {
 
 func TestProblemMiddlewareChain_DoesNotRewriteDownstreamProblem(t *testing.T) {
 	app := fiber.New()
-	chain := problemMiddlewareChain(func(c *fiber.Ctx) error { return c.Next() })
-	app.Get("/test", append(chain, func(c *fiber.Ctx) error {
+	chain := problemMiddlewareChain(func(c fiber.Ctx) error { return c.Next() })
+	first, trailing := fiberChain(append(chain, func(c fiber.Ctx) error {
 		return httpUtils.WithError(c, pkg.ValidationError{
 			Code:    constant.ErrBadRequest.Error(),
 			Message: "domain validation failed",
 		})
-	})...)
+	}))
+	app.Get("/test", first, trailing...)
 
 	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/test", nil))
 	require.NoError(t, err)
@@ -69,20 +71,21 @@ func TestProblemMiddlewareChain_DoesNotRewriteDownstreamProblem(t *testing.T) {
 
 func TestProblemMiddlewareChain_NestedAuthPassDoesNotMaskTenantFailure(t *testing.T) {
 	app := fiber.New()
-	authChain := problemMiddlewareChain(func(c *fiber.Ctx) error {
+	authChain := problemMiddlewareChain(func(c fiber.Ctx) error {
 		return c.Next()
 	})
-	tenantChain := problemMiddlewareChain(func(c *fiber.Ctx) error {
+	tenantChain := problemMiddlewareChain(func(c fiber.Ctx) error {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
 			"code":    constant.ErrBadRequest.Error(),
 			"message": "tenant header is required",
 		})
 	})
 	handlers := append(authChain, tenantChain...)
-	handlers = append(handlers, func(c *fiber.Ctx) error {
+	handlers = append(handlers, func(c fiber.Ctx) error {
 		return c.SendStatus(http.StatusNoContent)
 	})
-	app.Get("/test", handlers...)
+	first, trailing := fiberChain(handlers)
+	app.Get("/test", first, trailing...)
 
 	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/test", nil))
 	require.NoError(t, err)
