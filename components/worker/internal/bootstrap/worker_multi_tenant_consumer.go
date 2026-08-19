@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/LerianStudio/fetcher/v2/pkg/multitenant"
 	libBackoff "github.com/LerianStudio/lib-commons/v6/commons/backoff"
 	tmclient "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/client"
 	tmconsumer "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/consumer"
@@ -214,7 +215,12 @@ func (c *workerMultiTenantConsumer) Close() error {
 }
 
 func (c *workerMultiTenantConsumer) EnsureConsumerStarted(ctx context.Context, tenantID string) {
-	tenantID = strings.TrimSpace(tenantID)
+	// Canonicalize at the boundary so every tenant-keyed map below is keyed one
+	// way only. The IDs reaching this method come from both the tenant cache and
+	// the tenant context, and lib-commons does not guarantee those agree on UUID
+	// spelling — two spellings of one tenant would start two consumers on the
+	// same queue.
+	tenantID = multitenant.Canonical(strings.TrimSpace(tenantID))
 	if tenantID == "" {
 		return
 	}
@@ -278,7 +284,9 @@ func (c *workerMultiTenantConsumer) EnsureConsumerStarted(ctx context.Context, t
 }
 
 func (c *workerMultiTenantConsumer) StopConsumer(tenantID string) {
-	tenantID = strings.TrimSpace(tenantID)
+	// Must canonicalize with the same rule EnsureConsumerStarted keyed by, or a
+	// stop request in the other spelling silently leaves the consumer running.
+	tenantID = multitenant.Canonical(strings.TrimSpace(tenantID))
 	if tenantID == "" {
 		return
 	}
@@ -316,6 +324,8 @@ func (c *workerMultiTenantConsumer) hasHandlers() bool {
 }
 
 func (c *workerMultiTenantConsumer) OwnsTenant(tenantID string) bool {
+	tenantID = multitenant.Canonical(strings.TrimSpace(tenantID))
+
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 

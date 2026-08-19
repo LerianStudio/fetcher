@@ -16,6 +16,7 @@ import (
 	"github.com/LerianStudio/fetcher/v2/components/worker/internal/services"
 	"github.com/LerianStudio/fetcher/v2/pkg/bootstrap/readyz"
 	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
+	"github.com/LerianStudio/fetcher/v2/pkg/multitenant"
 	pkgRabbitmq "github.com/LerianStudio/fetcher/v2/pkg/rabbitmq"
 	tmconsumer "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/consumer"
 	tmcore "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/core"
@@ -323,7 +324,11 @@ func validateAuthoritativeTenantHeader(ctx context.Context, headers map[string]a
 		return fmt.Errorf("tenant header %s is required for authoritative tenant %s", pkgRabbitmq.HeaderTenantID, authoritativeTenantID)
 	}
 
-	if headerTenantID != authoritativeTenantID {
+	// Compare canonical forms. The authoritative ID comes from the tenant context
+	// and the header from the publisher, and lib-commons does not guarantee the two
+	// use the same UUID spelling; a dashed-vs-dashless mismatch on the same tenant
+	// would otherwise read as a cross-tenant replay and reject a legitimate message.
+	if multitenant.Canonical(headerTenantID) != multitenant.Canonical(authoritativeTenantID) {
 		return fmt.Errorf("tenant header %s=%q does not match authoritative tenant %q", pkgRabbitmq.HeaderTenantID, headerTenantID, authoritativeTenantID)
 	}
 
