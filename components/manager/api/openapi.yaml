@@ -835,11 +835,13 @@ components:
           description: The upstream provider's own error code, verbatim.
           examples:
             - E4001
+          maxLength: 65
           type: string
         message:
           description: The upstream provider's own error message, verbatim (bounded, never its raw response body).
           examples:
             - account not found at provider
+          maxLength: 513
           type: string
       type: object
   securitySchemes:

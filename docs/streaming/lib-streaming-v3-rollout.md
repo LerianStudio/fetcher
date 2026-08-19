@@ -267,7 +267,7 @@ Two consequences for the deploy:
 
 - Keep the skew window short, and prefer quiescing intake (which you are doing
   anyway for the outbox drain) over relying on both builds interoperating.
-- If job counts look wrong afterwards, the evidence is in Worker logs, not in
+- If job counts look wrong afterward, the evidence is in Worker logs, not in
   metrics. Search for the tenant-header mismatch and signature-verification
   messages.
 

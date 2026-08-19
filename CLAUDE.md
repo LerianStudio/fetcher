@@ -120,7 +120,7 @@ Async RabbitMQ consumer. Does NOT follow CQRS - uses a single `UseCase` struct i
 
 **Error handling:** Use `pkg.ValidateBusinessError(constant.ErrXxx, "entityType", args...)` for business errors. Custom types in `pkg/errors.go` map to HTTP status codes.
 
-**Context propagation:** Use `commons.NewTrackingFromContext(ctx)` for logger, tracer, requestID. Start OTel spans: `ctx, span := tracer.Start(ctx, "service.op"); defer span.End()`.
+**Context propagation:** Use `observability.NewTrackingFromContext(ctx)` (lib-observability v2) for logger, tracer, requestID. Start OTel spans: `ctx, span := tracer.Start(ctx, "service.op"); defer span.End()`.
 
 **Mocking:** `go.uber.org/mock` with `mockgen`. Mock files are `*.mock.go` alongside interfaces. Interfaces have `//go:generate mockgen` directives.
 

@@ -227,6 +227,27 @@ func TestRegisterHumaOperations_DocumentsEveryPublicDTOField(t *testing.T) {
 	}
 }
 
+// TestAssembleHumaAPI_BoundsUpstreamSchema pins the published Upstream limits
+// to the wire truncation lib-commons enforces (64/512 runes plus a one-rune
+// truncation mark). If lib-commons changes its bound, this fails instead of
+// the contract silently drifting from the behavior.
+func TestAssembleHumaAPI_BoundsUpstreamSchema(t *testing.T) {
+	api := AssembleHumaAPI(fiber.New(), true, OperationHandlers{}, nil)
+
+	upstream := api.OpenAPI().Components.Schemas.Map()["Upstream"]
+	require.NotNil(t, upstream)
+
+	code := upstream.Properties["code"]
+	require.NotNil(t, code)
+	require.NotNil(t, code.MaxLength, "Upstream.code must advertise its wire bound")
+	assert.Equal(t, upstreamCodeMaxLength, *code.MaxLength)
+
+	message := upstream.Properties["message"]
+	require.NotNil(t, message)
+	require.NotNil(t, message.MaxLength, "Upstream.message must advertise its wire bound")
+	assert.Equal(t, upstreamMessageMaxLength, *message.MaxLength)
+}
+
 func TestBuildHumaAPI_ConfiguresCanonicalDocument(t *testing.T) {
 	api := BuildHumaAPI(fiber.New(), true)
 	doc := api.OpenAPI()

@@ -63,8 +63,40 @@ func AssembleHumaAPI(
 ) huma.API {
 	api := BuildHumaAPI(app, authEnabled)
 	RegisterHumaOperations(app, api, handlers, middlewareFactory)
+	boundUpstreamSchema(api)
 
 	return api
+}
+
+// Wire-format bounds lib-commons enforces on the Upstream problem member at
+// encoding time (problem.MarshalJSON truncates to 64/512 runes and appends a
+// one-rune truncation mark). The schema must advertise the same contract, but
+// huma reflects the shared Detail type and lib-commons carries the bound only
+// in prose, so the maxLength is stamped here after operation registration.
+const (
+	upstreamCodeMaxLength    = 64 + 1
+	upstreamMessageMaxLength = 512 + 1
+)
+
+// boundUpstreamSchema pins the lib-commons upstream truncation bounds onto the
+// reflected Upstream schema so the published contract states the limit instead
+// of merely describing it. A missing schema (an assembly with no operations)
+// is a no-op, never a panic.
+func boundUpstreamSchema(api huma.API) {
+	schema := api.OpenAPI().Components.Schemas.Map()["Upstream"]
+	if schema == nil {
+		return
+	}
+
+	if code, ok := schema.Properties["code"]; ok && code != nil {
+		limit := upstreamCodeMaxLength
+		code.MaxLength = &limit
+	}
+
+	if message, ok := schema.Properties["message"]; ok && message != nil {
+		limit := upstreamMessageMaxLength
+		message.MaxLength = &limit
+	}
 }
 
 // GenerateCanonicalSpec renders the deterministic auth-enabled client
