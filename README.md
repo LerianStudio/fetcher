@@ -276,7 +276,7 @@ Worker startup fails closed unless lib-streaming is enabled for mandatory `job.c
 |----------|-------------|---------|
 | `STREAMING_ENABLED` | Must be `true` for Worker job notifications | `false` in lib-streaming; Fetcher Worker requires `true` |
 | `STREAMING_BROKERS` | Kafka/Redpanda bootstrap servers used by lib-streaming config validation | `localhost:9092` |
-| `STREAMING_CLOUDEVENTS_SOURCE` | CloudEvents source for Fetcher Worker events. Must be exactly `fetcher` — Fetcher's roster name. Checked at startup whether or not streaming is enabled; anything else refuses to boot. See [the v3 rollout runbook](docs/streaming/lib-streaming-v3-rollout.md). | `fetcher` |
+| `STREAMING_CLOUDEVENTS_SOURCE` | CloudEvents source for Fetcher Worker events. Must be set to exactly `fetcher` — Fetcher's roster name. Checked at startup whether or not streaming is enabled; any other value, including unset, refuses to boot. It also forms the `ce-type` header (`studio.lerian.fetcher.job.<status>`). See [the v3 rollout runbook](docs/streaming/lib-streaming-v3-rollout.md). | none — required |
 | `RABBITMQ_JOB_EVENTS_EXCHANGE` | RabbitMQ exchange used by the streaming RabbitMQ route target | `fetcher.job.events` |
 | `RABBITMQ_ALLOW_LEGACY_BODY_SIGNATURE_FALLBACK` | Temporary migration flag for pre-envelope body-only HMAC signatures | `false` |
 

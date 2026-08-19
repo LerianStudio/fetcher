@@ -11,14 +11,17 @@ Scope: the **Worker** only. The Manager emits no streaming events.
 
 ## 1. What actually changes on the wire
 
-Almost nothing, and that is the point of reading this section before the next one.
+Where the events go does not change. Two CloudEvents headers do.
 
 | | Before (v2) | After (v3) |
 |---|---|---|
 | Destination | RabbitMQ exchange `fetcher.job.events` | unchanged |
 | Routing keys | `job.completed` / `job.failed` | unchanged |
 | Payload shape | snake_case, `ce-schemaversion` `2.0.0` | unchanged |
+| `ce-id` | `fetcher.job.<status>.<jobID>` | unchanged |
 | `ce-source` | `//lerian.fetcher/worker` | **`fetcher`** |
+| `ce-type` (completed) | `studio.lerian.job.completed` | **`studio.lerian.fetcher.job.completed`** |
+| `ce-type` (failed) | `studio.lerian.job.failed` | **`studio.lerian.fetcher.job.failed`** |
 | Persisted outbox envelope | version `1` | version `2` |
 
 Fetcher publishes its job events to a RabbitMQ exchange, not to a Kafka topic.
@@ -26,24 +29,45 @@ The v3 "one topic per producing application" change therefore does **not** move
 fetcher's traffic: every route is an explicit RabbitMQ destination, and v3 keeps
 explicit destinations intact.
 
-**No Kafka or Redpanda topic needs to be provisioned for fetcher.** The event
-manifest advertises the derived names `lerian.streaming.fetcher` and
-`lerian.streaming.fetcher.dlq` because the manifest contract derives them from
-the ce-source, but fetcher writes neither while all of its routes are RabbitMQ.
+**No Kafka or Redpanda topic needs to be provisioned for fetcher, and fetcher
+publishes no event manifest.** The lib-streaming manifest handler is deliberately
+not mounted — serving event topology from the Worker's probe port would leak it,
+and the 404 is pinned by test. The derived names `lerian.streaming.fetcher` and
+`lerian.streaming.fetcher.dlq` exist only as an assertion in fetcher's own
+contract test, to catch the library changing how it derives names from the
+ce-source. Nothing writes them, nothing reads them, and no Lerian tooling
+provisions topics from manifests in any case.
+
 `STREAMING_BROKERS` must still be set to something non-empty — lib-streaming's
 config validation requires it when streaming is enabled — but nothing dials it:
 the Kafka transport adapter is only constructed for a Kafka-kind route.
 
-### Consumer impact: `ce-source`
+### Consumer impact: `ce-source` and `ce-type`
 
-The only consumer-visible change is the `ce-source` header, which goes from
-`//lerian.fetcher/worker` to `fetcher`. Any consumer that filters, routes, or
-audits on `ce-source` must accept the new value **before** the v3 deploy.
+Both changed headers reach the AMQP message headers verbatim, so this is a real
+consumer-visible change, not an internal one.
+
+`ce-source` goes from `//lerian.fetcher/worker` to `fetcher`. `ce-type` gains the
+source as a new segment — v3 composes it as
+`studio.lerian.<source>.<resourceType>.<eventType>` rather than
+`studio.lerian.<resourceType>.<eventType>` — so both event types are renamed on
+the wire. The segment was added upstream because without it two services
+publishing the same resource and event names produce byte-identical ce-type
+values.
+
+**Any consumer that filters, routes, or audits on `ce-source` or `ce-type` must
+accept the new values before the v3 deploy.** Widen the match rather than
+switching it, so the same consumer survives a rollback.
+
 Consumers that bind on the exchange and routing key, or that dedupe on `ce-id`,
-are unaffected — both are unchanged.
+are unaffected — both are unchanged. `ce-id` remains
+`fetcher.job.<status>.<jobID>` and remains the only dedup anchor. Delivery is
+still at-least-once.
 
-`ce-id` remains `fetcher.job.<status>.<jobID>`, and it remains the only
-dedup anchor. Delivery is still at-least-once.
+Fetcher pins both `ce-type` values in `TestJobEventStreamingContract_CeTypeValues`
+so a future library bump breaks the build rather than a subscription. Nothing
+pinned any `ce-*` header before v3, which is how this change nearly shipped
+undocumented.
 
 ---
 
@@ -57,9 +81,23 @@ not a fallback). Both majors validate the persisted envelope's `version` field
 by **strict equality**, in opposite directions: v2 accepts only version 1, v3
 accepts only version 2. Neither tolerates the other's rows.
 
-A rejected row surfaces as `ErrInvalidOutboxEnvelope`, which is classified
-**non-retryable**. It is not retried and not redelivered — it is marked failed
-and left there. The job event is lost, permanently.
+A rejected row surfaces as `ErrInvalidOutboxEnvelope`. Fetcher wires **no retry
+classifier** on the outbox dispatcher, so that error is treated as **retryable**:
+the row is retried on every dispatch cycle until it exhausts the dispatch-attempt
+ceiling (10 by default), and only then is it marked failed. It will never
+succeed — the version check is deterministic — so the retries are certain to be
+wasted, but they are not instantaneous.
+
+That is a feature here, not an oversight. **It buys a repair window.** Between the
+deploy and the ceiling, an affected row is still sitting in the collection as
+`PENDING` or `FAILED` with a climbing `attempts` count, holding its full payload.
+That is precisely the window in which the two-field repair described in §3 is
+viable. Leaving the error retryable is deliberate: for mandatory job events, a
+narrower window is the wrong direction — classifying it non-retryable would
+convert a recoverable state into an immediate, silent write-off.
+
+The window is not generous, and it is not a substitute for the drain. Once the
+ceiling is reached the row is failed and the job event is lost.
 
 ### (a) Quiesce job intake on the **v2** build, keeping the Worker running
 
@@ -90,6 +128,14 @@ db.streaming_outbox_events.countDocuments({
 Wait until this returns `0` everywhere. `PUBLISHED` is the only terminal-success
 state; `PENDING`, `PROCESSING`, `FAILED` and `INVALID` are all rows that have not
 shipped yet.
+
+> **`INVALID` rows never drain.** The predicate above counts them, and the relay
+> will not retry them — `INVALID` is a terminal state. A deployment that already
+> has `INVALID` rows can therefore never reach zero by waiting. Those rows need
+> manual disposition before the deploy: establish why each one was rejected, and
+> either repair or consciously write it off. Do not work around this by narrowing
+> the predicate to exclude `INVALID` — that hides exactly the rows most likely to
+> represent a lost job event.
 
 ### (c) Set the new ce-source and roll out v3
 
@@ -148,12 +194,19 @@ It is refused *purely* on the integer in its `version` field.
 
 That makes a manual repair genuinely conceivable for fetcher, unlike elsewhere:
 rewriting `version` to `2` and `event.source` to `fetcher` would produce a valid,
-correctly-addressed envelope. Two fields, both mechanical.
+correctly-addressed envelope. Two fields, both mechanical. `ce-source` and
+`ce-type` are both derived from `event.source` at publish time, so fixing that one
+field corrects both headers — there is no third edit.
+
+And because `ErrInvalidOutboxEnvelope` is retryable here (see §2), there is an
+actual window to do it in: an affected row stays in the collection with its
+payload intact until the dispatch-attempt ceiling is reached. Repair it before
+then and the relay ships it on the next cycle with no further intervention.
 
 **Do not treat that as the plan.** It is data surgery on a durable store on the
-money-adjacent path, per row, under time pressure, and it is only correct if you
-have confirmed nothing else in the row is stale. The drain costs a wait. Keep the
-repair knowledge for the incident where the drain was already skipped.
+money-adjacent path, per row, against a closing window, and it is only correct if
+you have confirmed nothing else in the row is stale. The drain costs a wait. Keep
+the repair knowledge for the incident where the drain was already skipped.
 
 ### If the drain does not reach zero
 
@@ -189,10 +242,12 @@ pre-existing delivery problem the deploy would have converted into data loss.
 ## 4. Rollback
 
 Rolling back from v3 to v2 has the same hazard in the opposite direction:
-version-2 rows written by v3 are rejected by a v2 relay, non-retryably. If a
-rollback is needed, apply the same procedure — quiesce intake, drain to zero on
-v3, then deploy v2 and restore `STREAMING_CLOUDEVENTS_SOURCE` to its previous
-value.
+version-2 rows written by v3 are rejected by a v2 relay, with the same retryable
+classification and the same finite window before the attempt ceiling writes them
+off. If a rollback is needed, apply the same procedure — quiesce intake, drain to
+zero on v3, then deploy v2 and restore `STREAMING_CLOUDEVENTS_SOURCE` to its
+previous value.
 
-Consumers accepting `ce-source` `fetcher` should keep accepting it across a
-rollback, so widen consumer matching rather than switching it.
+Consumers should keep accepting the v3 `ce-source` and `ce-type` values across a
+rollback rather than switching back, so the same consumer survives both
+directions without a coordinated redeploy.
