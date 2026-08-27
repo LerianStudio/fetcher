@@ -109,5 +109,9 @@ func extractJobID(body []byte) string {
 		return jobID
 	}
 
+	if jobID, ok := payload["job_id"].(string); ok {
+		return jobID
+	}
+
 	return ""
 }

@@ -23,12 +23,6 @@
   ],
   "exchanges": [
     {
-      "name": "fetcher.extract-external-data.exchange",
-      "vhost": "/",
-      "type": "direct",
-      "durable": true
-    },
-    {
       "name": "fetcher.dlx",
       "vhost": "/",
       "type": "direct",
@@ -48,7 +42,7 @@
       "durable": true,
       "arguments": {
         "x-dead-letter-exchange": "fetcher.dlx",
-        "x-dead-letter-routing-key": "fetcher.dlq.key"
+        "x-dead-letter-routing-key": "fetcher.dlq"
       }
     },
     {
@@ -73,18 +67,11 @@
   ],
   "bindings": [
     {
-      "source": "fetcher.extract-external-data.exchange",
-      "vhost": "/",
-      "destination": "fetcher.extract-external-data.queue",
-      "destination_type": "queue",
-      "routing_key": "fetcher.job.key"
-    },
-    {
       "source": "fetcher.dlx",
       "vhost": "/",
       "destination": "fetcher.dlq",
       "destination_type": "queue",
-      "routing_key": "fetcher.dlq.key"
+      "routing_key": "fetcher.dlq"
     },
     {
       "source": "fetcher.job.events",

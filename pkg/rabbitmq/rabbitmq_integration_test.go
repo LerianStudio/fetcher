@@ -27,7 +27,6 @@ type stressTestConfig struct {
 	PortHost   string
 	User       string
 	Pass       string
-	Exchange   string
 	Queue      string
 	RoutingKey string
 	HealthURL  string
@@ -44,7 +43,6 @@ func loadStressConfig(t *testing.T) stressTestConfig {
 		PortHost:   getenv("RABBITMQ_PORT_HOST", "3008"),
 		User:       getenv("RABBITMQ_DEFAULT_USER", "plugin"),
 		Pass:       getenv("RABBITMQ_DEFAULT_PASS", "Lerian@123"),
-		Exchange:   getenv("RABBITMQ_EXCHANGE", "fetcher.extract-external-data.exchange"),
 		Queue:      getenv("RABBITMQ_FETCHER_WORK_QUEUE", "fetcher.extract-external-data.queue"),
 		RoutingKey: "fetcher.job.key",
 		HealthURL:  getenv("RABBITMQ_HEALTH_CHECK_URL", "http://fetcher-rabbitmq:3008"),
@@ -96,6 +94,13 @@ func TestRabbitMQStressProducerAndConsumer(t *testing.T) {
 
 	ch := conn.Channel
 	queueName := fmt.Sprintf("%s.integration-%d", cfg.Queue, time.Now().UTC().UnixNano())
+	exchangeName := fmt.Sprintf("fetcher.integration.%d", time.Now().UTC().UnixNano())
+
+	// The stress test owns its exchange. Production work commands deliberately
+	// use RabbitMQ's default exchange and route by queue name.
+	if err := ch.ExchangeDeclare(exchangeName, "direct", false, true, false, false, nil); err != nil {
+		t.Fatalf("failed to declare integration exchange: %v", err)
+	}
 
 	// Declare a temporary queue for the test messages
 	if _, err := ch.QueueDeclare(queueName, false, true, false, false, nil); err != nil {
@@ -103,7 +108,7 @@ func TestRabbitMQStressProducerAndConsumer(t *testing.T) {
 	}
 
 	// Bind the queue to the exchange with the routing key
-	if err := ch.QueueBind(queueName, cfg.RoutingKey, cfg.Exchange, false, nil); err != nil {
+	if err := ch.QueueBind(queueName, cfg.RoutingKey, exchangeName, false, nil); err != nil {
 		t.Fatalf("failed to bind queue to exchange: %v", err)
 	}
 
@@ -165,7 +170,7 @@ func TestRabbitMQStressProducerAndConsumer(t *testing.T) {
 
 	producerErrCh := make(chan error, 1)
 	go func() {
-		producerErrCh <- runProducerStress(adapter, cfg.Exchange, cfg.RoutingKey, totalMessages)
+		producerErrCh <- runProducerStress(adapter, exchangeName, cfg.RoutingKey, totalMessages)
 	}()
 
 	waitCh := make(chan struct{})

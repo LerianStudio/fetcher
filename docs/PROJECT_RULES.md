@@ -112,7 +112,7 @@ fetcher/
 |------|------|---------|
 | **Queue** | `fetcher.extract-external-data.queue` | Main job processing (with DLQ support) |
 | **Queue** | `fetcher.dlq` | Dead letter queue (7-day TTL, max 10,000 messages) |
-| **Exchange** | `fetcher.extract-external-data.exchange` | Direct exchange for job routing |
+| **Routing** | RabbitMQ default exchange | Manager publishes work using the queue name as the routing key |
 | **Exchange** | `fetcher.dlx` | Dead letter exchange |
 | **Exchange** | `fetcher.job.events` | Topic exchange for job notifications |
 
