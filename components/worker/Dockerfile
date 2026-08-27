@@ -40,8 +40,11 @@ FROM alpine:3.24.1
 
 WORKDIR /app
 
-# Install certificates/timezone data required for TLS connections
-RUN apk add --no-cache zlib ca-certificates tzdata && \
+# Install certificates/timezone data and the patched OpenSSL runtime
+RUN apk add --no-cache \
+      'libcrypto3>=3.5.8-r0' \
+      'libssl3>=3.5.8-r0' \
+      zlib ca-certificates tzdata && \
   update-ca-certificates
 
 # Create a non-root user for security
