@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.4 
 
-FROM golang:1.26.6-alpine AS builder
+FROM golang:1.27.0-alpine AS builder
 
 # Install required packages: git is needed for private modules (e.g., from GitHub)
 RUN apk add --no-cache git
