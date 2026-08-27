@@ -69,7 +69,7 @@ EXPOSE 4019
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD curl -f http://localhost:4007/health || exit 1
+  CMD ["curl", "-f", "http://localhost:4007/health"]
 
 # Set the entrypoint to the worker binary
 ENTRYPOINT ["/app/worker"]
