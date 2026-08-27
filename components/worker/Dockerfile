@@ -36,12 +36,19 @@ RUN CGO_ENABLED=0 GOOS=linux go build -tags netgo \
   -o /worker ./components/worker/cmd/app/main.go
 
 # Stage 2: Final minimal image with only the binary
-FROM alpine:3.24
+FROM alpine:3.24.1
 
 WORKDIR /app
 
-# Install certificates/timezone data required for TLS connections
-RUN apk add --no-cache zlib ca-certificates tzdata && \
+# Install certificates/timezone data, patched OpenSSL runtime, and curl for health checks.
+# Refresh these pins together from Alpine v3.24/main when security patches land.
+RUN apk add --no-cache \
+      libcrypto3=3.5.8-r0 \
+      libssl3=3.5.8-r0 \
+      zlib=1.3.2-r0 \
+      ca-certificates=20260611-r0 \
+      tzdata=2026c-r0 \
+      curl=8.21.0-r0 && \
   update-ca-certificates
 
 # Create a non-root user for security
@@ -59,6 +66,10 @@ USER appuser
 
 # Expose the application port
 EXPOSE 4019
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD ["curl", "-f", "http://localhost:4007/health"]
 
 # Set the entrypoint to the worker binary
 ENTRYPOINT ["/app/worker"]

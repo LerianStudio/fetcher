@@ -35,12 +35,19 @@ RUN CGO_ENABLED=0 GOOS=linux go build -tags netgo \
   -o /manager ./components/manager/cmd/app/main.go
 
 # Stage 2: Final image using minimal runtime dependencies
-FROM alpine:3.24
+FROM alpine:3.24.1
 
 WORKDIR /app
 
-# Install certificates/timezone data and curl for health checks
-RUN apk add --no-cache zlib ca-certificates tzdata curl && \
+# Install certificates/timezone data, patched OpenSSL runtime, and curl for health checks.
+# Refresh these pins together from Alpine v3.24/main when security patches land.
+RUN apk add --no-cache \
+      libcrypto3=3.5.8-r0 \
+      libssl3=3.5.8-r0 \
+      zlib=1.3.2-r0 \
+      ca-certificates=20260611-r0 \
+      tzdata=2026c-r0 \
+      curl=8.21.0-r0 && \
   update-ca-certificates
 
 # Create a non-root user for security

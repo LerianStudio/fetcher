@@ -283,4 +283,26 @@ func TestVerifyMessageSignature_RejectsFutureTimestampBeyondSkew(t *testing.T) {
 	assert.ErrorIs(t, err, ErrSignatureFromFuture)
 }
 
+func TestExtractJobIDSupportsCommandAndPublicEventPayloads(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "private command camelCase", body: `{"jobId":"job-123"}`, want: "job-123"},
+		{name: "public event snake_case", body: `{"job_id":"job-456"}`, want: "job-456"},
+		{name: "camelCase takes precedence", body: `{"jobId":"job-123","job_id":"job-456"}`, want: "job-123"},
+		{name: "invalid JSON", body: `{`, want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, extractJobID([]byte(tt.body)))
+		})
+	}
+}
+
 func libLogNop() libLog.Logger { return libLog.NewNop() }

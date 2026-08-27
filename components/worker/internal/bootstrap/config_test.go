@@ -267,36 +267,16 @@ func TestJobEventStreamingContract_UsesConfiguredSourceAndRabbitMQRoutes(t *test
 	assert.Empty(t, warnings)
 	assert.Equal(t, "fetcher", streamingCfg.CloudEventsSource)
 
-	policy := streaming.DeliveryPolicy{
-		Enabled: true,
-		Direct:  streaming.DirectModeSkip,
-		Outbox:  streaming.OutboxModeAlways,
-		DLQ:     streaming.DLQModeOnRoutableFailure,
+	catalog, routes, err := buildJobEventStreamingContract("job.events")
+	require.NoError(t, err)
+	for _, definition := range catalog.Definitions() {
+		assert.Equal(t, streaming.DLQModeOnRoutableFailure, definition.DefaultPolicy.DLQ)
 	}
-	catalog, err := streaming.NewCatalog(
-		streaming.EventDefinition{Key: "job.completed", ResourceType: "job", EventType: "completed", DefaultPolicy: policy},
-		streaming.EventDefinition{Key: "job.failed", ResourceType: "job", EventType: "failed", DefaultPolicy: policy},
-	)
-	require.NoError(t, err)
 
-	const target = "fetcher-job-events-rabbitmq"
-	routes, err := streaming.NewRouteTable(
-		streaming.RouteDefinition{
-			Key:           "job.completed.rabbitmq",
-			DefinitionKey: "job.completed",
-			Target:        target,
-			Destination:   streaming.RabbitMQRoute("job.events", "job.completed"),
-			Requirement:   streaming.RouteRequired,
-		},
-		streaming.RouteDefinition{
-			Key:           "job.failed.rabbitmq",
-			DefinitionKey: "job.failed",
-			Target:        target,
-			Destination:   streaming.RabbitMQRoute("job.events", "job.failed"),
-			Requirement:   streaming.RouteRequired,
-		},
-	)
-	require.NoError(t, err)
+	for _, route := range routes.Definitions() {
+		require.NotNil(t, route.DLQ)
+		assert.Equal(t, streaming.RabbitMQRoute("fetcher.dlx", "fetcher.dlq"), *route.DLQ)
+	}
 
 	manifest, err := streaming.BuildManifest(streaming.PublisherDescriptor{
 		ServiceName:     "fetcher-worker",

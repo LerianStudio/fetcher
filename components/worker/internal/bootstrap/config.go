@@ -652,7 +652,59 @@ func (p streamingRabbitMQPublisher) Ping(ctx context.Context) error {
 // RabbitMQ routing keys stay "job.completed"/"job.failed" (explicit
 // RabbitMQRoute destinations — the ".v<major>" suffix applies only to derived
 // topics, which this transport does not use).
-const jobEventSchemaVersion = "2.0.0"
+const (
+	jobEventSchemaVersion = "2.0.0"
+	jobEventTargetName    = "fetcher-job-events-rabbitmq"
+)
+
+func buildJobEventStreamingContract(exchange string) (streaming.Catalog, streaming.RouteTable, error) {
+	terminalPolicy := streaming.DeliveryPolicy{
+		Enabled: true,
+		Direct:  streaming.DirectModeSkip,
+		Outbox:  streaming.OutboxModeAlways,
+		DLQ:     streaming.DLQModeOnRoutableFailure,
+	}
+
+	catalog, err := streaming.NewCatalog(
+		streaming.EventDefinition{Key: "job.completed", ResourceType: "job", EventType: "completed", SchemaVersion: jobEventSchemaVersion, DefaultPolicy: terminalPolicy},
+		streaming.EventDefinition{Key: "job.failed", ResourceType: "job", EventType: "failed", SchemaVersion: jobEventSchemaVersion, DefaultPolicy: terminalPolicy},
+	)
+	if err != nil {
+		return streaming.Catalog{}, streaming.RouteTable{}, fmt.Errorf("create job event streaming catalog: %w", err)
+	}
+
+	// Job notifications intentionally use stable lib-streaming event keys. Source
+	// belongs to the event payload metadata, never the RabbitMQ routing key.
+	routes, err := streaming.NewRouteTable(
+		streaming.RouteDefinition{
+			Key:           "job.completed.rabbitmq",
+			DefinitionKey: "job.completed",
+			Target:        jobEventTargetName,
+			Destination:   streaming.RabbitMQRoute(exchange, "job.completed"),
+			DLQ:           rabbitMQDestination("fetcher.dlx", "fetcher.dlq"),
+			Requirement:   streaming.RouteRequired,
+		},
+		streaming.RouteDefinition{
+			Key:           "job.failed.rabbitmq",
+			DefinitionKey: "job.failed",
+			Target:        jobEventTargetName,
+			Destination:   streaming.RabbitMQRoute(exchange, "job.failed"),
+			DLQ:           rabbitMQDestination("fetcher.dlx", "fetcher.dlq"),
+			Requirement:   streaming.RouteRequired,
+		},
+	)
+	if err != nil {
+		return streaming.Catalog{}, streaming.RouteTable{}, fmt.Errorf("create job event streaming routes: %w", err)
+	}
+
+	return catalog, routes, nil
+}
+
+func rabbitMQDestination(exchange, routingKey string) *streaming.Destination {
+	destination := streaming.RabbitMQRoute(exchange, routingKey)
+
+	return &destination
+}
 
 func initJobEventEmitter(ctx context.Context, cfg *Config, logger libLog.Logger, telemetry *libOtel.Telemetry, publisher *rabbitmq.PublisherRoutes, outboxRepo libOutbox.OutboxRepository) (streaming.Emitter, bool, error) {
 	streamingCfg, warnings, err := streaming.LoadConfig()
@@ -685,39 +737,9 @@ func initJobEventEmitter(ctx context.Context, cfg *Config, logger libLog.Logger,
 		return nil, false, fmt.Errorf("RABBITMQ_JOB_EVENTS_EXCHANGE is required for mandatory job event notifications")
 	}
 
-	terminalPolicy := streaming.DeliveryPolicy{
-		Enabled: true,
-		Direct:  streaming.DirectModeSkip,
-		Outbox:  streaming.OutboxModeAlways,
-		DLQ:     streaming.DLQModeOnRoutableFailure,
-	}
-
-	catalog, err := streaming.NewCatalog(
-		streaming.EventDefinition{Key: "job.completed", ResourceType: "job", EventType: "completed", SchemaVersion: jobEventSchemaVersion, DefaultPolicy: terminalPolicy},
-		streaming.EventDefinition{Key: "job.failed", ResourceType: "job", EventType: "failed", SchemaVersion: jobEventSchemaVersion, DefaultPolicy: terminalPolicy},
-	)
+	catalog, routes, err := buildJobEventStreamingContract(cfg.RabbitMQJobEventsExchange)
 	if err != nil {
-		return nil, false, fmt.Errorf("create job event streaming catalog: %w", err)
-	}
-
-	targetName := "fetcher-job-events-rabbitmq"
-	// Job notifications intentionally use stable lib-streaming event keys. Source
-	// belongs to the event payload metadata, never the RabbitMQ routing key.
-	routes := []streaming.RouteDefinition{
-		{
-			Key:           "job.completed.rabbitmq",
-			DefinitionKey: "job.completed",
-			Target:        targetName,
-			Destination:   streaming.RabbitMQRoute(cfg.RabbitMQJobEventsExchange, "job.completed"),
-			Requirement:   streaming.RouteRequired,
-		},
-		{
-			Key:           "job.failed.rabbitmq",
-			DefinitionKey: "job.failed",
-			Target:        targetName,
-			Destination:   streaming.RabbitMQRoute(cfg.RabbitMQJobEventsExchange, "job.failed"),
-			Requirement:   streaming.RouteRequired,
-		},
+		return nil, false, err
 	}
 
 	if outboxRepo == nil {
@@ -732,10 +754,10 @@ func initJobEventEmitter(ctx context.Context, cfg *Config, logger libLog.Logger,
 	emitter, err := streaming.NewBuilder().
 		Source(streamingCfg.CloudEventsSource).
 		Catalog(catalog).
-		Routes(routes...).
+		Routes(routes.Definitions()...).
 		OutboxRepository(outboxRepo).
 		CircuitBreakerManager(cbManager).
-		RabbitMQTarget(targetName, streamingRabbitMQPublisher{publisher: publisher}).
+		RabbitMQTarget(jobEventTargetName, streamingRabbitMQPublisher{publisher: publisher}).
 		Logger(logger).
 		MetricsFactory(telemetry.MetricsFactory).
 		Tracer(telemetry.TracerProvider.Tracer(cfg.OtelLibraryName)).
