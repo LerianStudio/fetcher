@@ -39,11 +39,15 @@ FROM alpine:3.24.1
 
 WORKDIR /app
 
-# Install certificates/timezone data, patched OpenSSL runtime, and curl for health checks
+# Install certificates/timezone data, patched OpenSSL runtime, and curl for health checks.
+# Refresh these pins together from Alpine v3.24/main when security patches land.
 RUN apk add --no-cache \
-      'libcrypto3>=3.5.8-r0' \
-      'libssl3>=3.5.8-r0' \
-      zlib ca-certificates tzdata curl && \
+      libcrypto3=3.5.8-r0 \
+      libssl3=3.5.8-r0 \
+      zlib=1.3.2-r0 \
+      ca-certificates=20260611-r0 \
+      tzdata=2026c-r0 \
+      curl=8.21.0-r0 && \
   update-ca-certificates
 
 # Create a non-root user for security
