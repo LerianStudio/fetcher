@@ -59,7 +59,6 @@ func newTestUseCase(mocks *testMocks) *UseCase {
 		JobRepository:            mocks.jobRepo,
 		ConnectionRepository:     mocks.connRepo,
 		Cryptor:                  mocks.cryptor,
-		FileTTL:                  "1h",
 		JobEventEmitter:          publisherBackedJobEmitter{publisher: mocks.rabbitPublisher, exchange: "test-exchange"},
 		JobEventStreamingEnabled: true,
 	}

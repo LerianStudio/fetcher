@@ -1,4 +1,4 @@
-# Lerian Fetcher: Enterprise-Grade Data Extraction Adapter
+# Lerian Fetcher: Data Extraction Adapter
 
 Lerian Fetcher is a centralized data extraction platform designed to abstract and unify access to external data sources. It provides a secure, reliable, and scalable interface for Lerian products to connect, validate, and extract data from multiple database types — available both as standalone services and as an **embedded runtime engine** that host applications import in-process.
 
@@ -6,7 +6,7 @@ Lerian Fetcher is a centralized data extraction platform designed to abstract an
 
 - **Unified Data Access**: Single interface for extracting data from PostgreSQL, MySQL, Oracle, SQL Server, and MongoDB
 - **Run It Your Way**: Deploy as standalone Manager + Worker services, or embed the **Fetcher Engine** (`pkg/engine`) directly in your application — no separate service, queue, or storage stack required
-- **Enterprise Security**: Password encryption, SSL/TLS support per database, message signing with replay protection, and SSRF host validation
+- **Security**: Password encryption, SSL/TLS support per database, message signing with replay protection, and SSRF host validation
 - **Developer-Friendly**: Clean REST API with comprehensive OpenAPI documentation and advanced filtering capabilities
 - **Battle-Tested Reliability**: Circuit breaker pattern, connection pooling, readiness probing, and graceful error handling for production workloads
 
@@ -65,7 +65,7 @@ The Engine depends only on host-provided interfaces. Only one is always required
 |------|-----------|------------|
 | `ConnectorRegistry` | **Always** | `engine.New` fails — extraction is impossible |
 | `CredentialProtector` | Only with `WithEncryptedPersistence(true)` | Credentials are not encrypted at rest |
-| `ConnectionStore` | Optional | Connection CRUD returns a "not configured" error |
+| `ConnectionStore` | Optional for `engine.New` only | Everything that resolves a connection returns a "not configured" error: connection CRUD, `TestConnection`, schema discovery/validation, `PlanExtraction` and `ExecuteExtraction`. Only `Limits`, `AuthorizeConnectionAccess` and `CheckActiveExecutions` still work |
 | `SchemaCache` | Optional | Schema is always discovered live |
 | `ResultSink` | Optional | Store mode unavailable; extraction runs in Direct mode |
 | `ExecutionStore` | Optional | No durable execution-state tracking |
@@ -182,7 +182,7 @@ Lerian Fetcher is built as a cloud-native platform following Hexagonal Architect
 
    - Consumes jobs from RabbitMQ queue
    - Extracts data from configured external databases
-   - Encrypts and stores results in configurable object storage (SeaweedFS or S3-compatible)
+   - Encrypts and stores results in S3-compatible object storage (SeaweedFS through its S3 gateway, AWS S3, or MinIO)
    - Publishes job completion/failure notifications
    - Configurable worker concurrency (default: 5)
 
@@ -190,7 +190,7 @@ Lerian Fetcher is built as a cloud-native platform following Hexagonal Architect
 
    - MongoDB for primary metadata storage
    - RabbitMQ for message queuing with DLQ support
-   - SeaweedFS for distributed file storage (default) or any S3-compatible service (AWS S3, MinIO)
+   - SeaweedFS for distributed file storage, reached through its S3 gateway, or any other S3-compatible service (AWS S3, MinIO)
    - Valkey/Redis for caching
    - KEDA for Kubernetes event-driven autoscaling
 
@@ -266,7 +266,7 @@ For hands-on API exploration and testing scenarios, the following resources are 
 - **Field Projection**: Select specific fields or use `["*"]` for all fields
 - **JSON/BSON Parsing**: Automatic parsing of JSON fields in relational databases
 - **Deduplication**: 5-minute window for duplicate job detection
-- **Result Storage**: Encrypted results stored in pluggable object storage (SeaweedFS or S3-compatible) with configurable TTL
+- **Result Storage**: Encrypted results stored in S3-compatible object storage (SeaweedFS through its S3 gateway, AWS S3, or MinIO). Fetcher applies no expiry — set a lifecycle policy on the bucket to control retention
 
 ### Worker Job Event Streaming
 
@@ -321,13 +321,14 @@ Single-tenant deployments emit with stable tenant ID `single-tenant`; multi-tena
 
 ### Security
 
-Fetcher uses a single master key (`APP_ENC_KEY`) to derive three cryptographically independent keys via HKDF (RFC 5869). This means you only need to manage one secret, but the system internally separates concerns:
+Fetcher uses a single master key (`APP_ENC_KEY`) to derive four cryptographically independent keys via HKDF (RFC 5869). This means you only need to manage one secret, but the system internally separates concerns:
 
 | Derived Key | Purpose |
 |-------------|---------|
 | **Credential Key** | AES-256-GCM encryption of database passwords stored in MongoDB |
 | **Internal HMAC Key** | HMAC-SHA256 signing of RabbitMQ messages between Manager and Worker, preventing message tampering |
 | **External HMAC Key** | HMAC-SHA256 signing of extracted data documents, enabling consumers to verify authenticity |
+| **Storage Encryption Key** | AES-256-GCM encryption of extracted results before they are written to object storage. Consumers that read those results, such as Reporter, derive the same key from the same master key |
 
 #### Generating the Master Key
 

@@ -15,7 +15,7 @@ Fetcher is a **data extraction platform** built with Go following **Hexagonal Ar
 | **Observability Libs** | lib-observability | v2.1.3 |
 | **Event Streaming** | lib-streaming (RabbitMQ target) | v3.0.0 — mandatory for Worker job events |
 | **Primary Database** | MongoDB | Latest |
-| **File Storage** | SeaweedFS (default) / S3-compatible | SeaweedFS 3.97 / AWS SDK v2 |
+| **File Storage** | S3-compatible (SeaweedFS S3 gateway in the bundled infrastructure) | SeaweedFS 3.97 / AWS SDK v2 |
 | **Observability** | OpenTelemetry | v1.39.0 |
 | **Auth** | lib-auth | v3.3.0 |
 | **API Contract** | Huma + lib-commons OpenAPI wrapper | OpenAPI 3.1 |
@@ -234,7 +234,7 @@ components/manager/
 **Responsibilities:**
 - Consume jobs from RabbitMQ queue
 - Extract data from configured external databases
-- Encrypt and store results in configurable object storage (SeaweedFS or S3-compatible)
+- Encrypt and store results in S3-compatible object storage (SeaweedFS S3 gateway, AWS S3, or MinIO)
 - Publish job completion/failure notifications
 
 **Important:** This component has **NO HTTP routes** - it operates purely as a message consumer.
@@ -306,6 +306,8 @@ The **embedded runtime engine** is the importable, infrastructure-free core that
 
 - **Required:** `ConnectorRegistry`, `CredentialProtector`
 - **Optional:** `ConnectionStore`, `ExecutionStore`, `ResultSink`, `SchemaCache`, `ActiveExecutionChecker`, `Observability`
+
+`ConnectionStore` is optional for `engine.New` only. Every operation that resolves a connection guards on it — connection CRUD, `TestConnection`, `DiscoverSchema`/`DiscoverSchemaFresh`, `ValidateSchema`, `PlanExtraction` and `ExecuteExtraction` — and returns `connection store is not configured` without it. Only `Limits`, `AuthorizeConnectionAccess` and `CheckActiveExecutions` work without it.
 
 **Boundary contract (build-enforced).** `dependency_test.go` runs `go list -deps` and **fails the build** if the engine transitively imports any infrastructure. Forbidden imports include: Fiber, swag, amqp091-go, lib-streaming, mongo-driver, go-redis, SQL drivers (pgx/mysql/mssqldb/go-ora/lib-pq), `database/sql`, `os/exec`, `plugin`, `net/http`, `net/rpc`, aws-sdk-go-v2, `pkg/seaweedfs`, the local infra packages (`pkg/rabbitmq`, `pkg/storage`, `pkg/mongodb`, `pkg/redis`, `pkg/net/http`, `pkg/postgres`, `pkg/mysql`, `pkg/oracle`, `pkg/sqlserver`, `pkg/datasource`, `pkg/ratelimit`, `pkg/bootstrap/readyz`), lib-auth, lib-license-go, `components/*/internal`, and `deployments/helm/infra`. Rationale: the engine must embed in any host without pulling in infrastructure.
 
@@ -473,18 +475,18 @@ Resilient RabbitMQ adapter with connection management and message publishing.
 
 ### storage (`pkg/storage/`)
 
-Provider-agnostic storage factory that selects between SeaweedFS and S3-compatible backends at startup.
+Storage factory. It can build either a native SeaweedFS HTTP repository or an S3-compatible one, but the Worker always asks for the S3 provider: no environment variable selects between them, so SeaweedFS is reached through its S3 gateway like any other S3-compatible service.
 
 | File | Purpose |
 |------|---------|
-| `factory.go` | `NewRepository()` factory — selects backend from `STORAGE_PROVIDER` env var (`"seaweedfs"` or `"s3"`) |
+| `factory.go` | `NewRepository()` factory — selects the backend from the caller-supplied `ProviderConfig.Provider` field (`"seaweedfs"` or `"s3"`); the Worker passes `"s3"` |
 | `s3.go` | `S3Repository` — AWS SDK v2 implementation; supports AWS S3, MinIO, SeaweedFS S3, and any S3-compatible service |
 
-SSL for S3 is controlled by the URL scheme of `OBJECT_STORAGE_ENDPOINT` (`http://` → no SSL, `https://` → SSL). The factory defaults to SeaweedFS when `STORAGE_PROVIDER` is empty.
+SSL for S3 is controlled by the URL scheme of `OBJECT_STORAGE_ENDPOINT` (`http://` → no SSL, `https://` → SSL). The factory falls back to SeaweedFS when the caller leaves `Provider` empty, which the Worker never does.
 
 ### seaweedfs (`pkg/seaweedfs/`)
 
-SeaweedFS HTTP client. Used directly by `pkg/storage` when `STORAGE_PROVIDER=seaweedfs`.
+SeaweedFS HTTP client. Used by `pkg/storage` when a caller asks for the `seaweedfs` provider; the Worker does not, so this path carries no production traffic.
 
 | File | Purpose |
 |------|---------|
@@ -961,7 +963,7 @@ sequenceDiagram
 
         UseCase->>Cryptor: Encrypt(results) + HMAC
         Cryptor-->>UseCase: encryptedData
-        UseCase->>Storage: Store(encryptedData, TTL)
+        UseCase->>Storage: Store(encryptedData)
         Storage-->>UseCase: fileId
 
         UseCase->>JobRepo: UpdateStatus(COMPLETED, resultUrl)
@@ -1015,7 +1017,7 @@ sequenceDiagram
 │      2. Parse job details                                                │
 │      3. Find connections by config name                                  │
 │      4. Query each external database                                     │
-│      5. Encrypt & store results in object storage (SeaweedFS or S3)      │
+│      5. Encrypt & store results in S3-compatible object storage         │
 │      6. Update job status in MongoDB                                     │
 │      7. Publish notification to RabbitMQ topic                           │
 │      8. ACK message                                                      │
@@ -1037,7 +1039,7 @@ sequenceDiagram
 | Redis/Valkey | Manager | Rate limiting (connection tests), schema caching |
 | RabbitMQ `fetcher.extract-external-data.queue` | Manager (publish), Worker (consume) | Job dispatch |
 | RabbitMQ `fetcher.job.events` exchange | Worker (publish) | Job status notifications |
-| Object storage `external_data` bucket (SeaweedFS or S3) | Worker | Store encrypted extracted data |
+| Object storage `external_data` bucket (S3-compatible) | Worker | Store encrypted extracted data |
 | Encryption keys (env vars) | Manager, Worker | Encrypt/decrypt passwords & data |
 
 ---

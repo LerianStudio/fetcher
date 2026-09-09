@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Lerian Fetcher is an enterprise data extraction platform that unifies access to PostgreSQL, MySQL, Oracle, SQL Server, and MongoDB. It ships in two forms: as standalone Manager + Worker services, and as an **embedded runtime engine** (`pkg/engine`) that other Lerian products (Matcher, Reporter) import in-process.
+Lerian Fetcher is a data extraction platform that unifies access to PostgreSQL, MySQL, Oracle, SQL Server, and MongoDB. It ships in two forms: as standalone Manager + Worker services, and as an **embedded runtime engine** (`pkg/engine`) that other Lerian products (Matcher, Reporter) import in-process.
 
 - **Module:** `github.com/LerianStudio/fetcher/v2`
 - **Go version:** Source of truth is `go.mod`; do not rely on stale toolchain guidance elsewhere.

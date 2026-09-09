@@ -42,7 +42,7 @@ func skipIfS3NotEnabled(t *testing.T) {
 }
 
 // TestS3Storage_JobCompletesSuccessfully validates the full extraction workflow when the
-// Worker is configured with STORAGE_PROVIDER=s3. The job must complete successfully and
+// Worker's object storage points at MinIO. The job must complete successfully and
 // return a non-empty result_path in the expected bucket.
 //
 // This test acts as a smoke test: if S3 is misconfigured (wrong endpoint, bad credentials,

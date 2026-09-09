@@ -62,9 +62,6 @@ type UseCase struct {
 	// External consumers can use this signature to verify data integrity.
 	DocumentSigner crypto.Signer
 
-	// FileTTL defines the Time To Live for file (e.g., "1m", "1h", "7d", "30d"). Empty means no TTL.
-	FileTTL string
-
 	// JobEventEmitter publishes past-tense job business events through lib-streaming.
 	// This is the public job notification event contract; legacy direct RabbitMQ
 	// routing is not used for completed/failed business notifications.

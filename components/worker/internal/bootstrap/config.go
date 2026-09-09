@@ -89,9 +89,6 @@ type Config struct {
 	ObjectStorageAccessKeyID  string `env:"OBJECT_STORAGE_ACCESS_KEY_ID"`
 	ObjectStorageSecretKey    string `env:"OBJECT_STORAGE_SECRET_KEY"`
 	ObjectStorageUsePathStyle bool   `env:"OBJECT_STORAGE_USE_PATH_STYLE"`
-	// ObjectStorageTTL is the file TTL for storage backends that support it (e.g., SeaweedFS).
-	// S3 ignores this — use lifecycle policies instead. Format: "1h", "7d", "6M".
-	ObjectStorageTTL string `env:"OBJECT_STORAGE_TTL"`
 	// OBJECT_STORAGE_DISABLE_SSL omitted — SSL controlled by endpoint URL scheme.
 	// MongoDB
 	MongoURI          string `env:"MONGO_URI"`
@@ -255,7 +252,6 @@ func InitWorker() (*Service, error) {
 		Cryptor:              cryptoService,
 		DocumentSigner:       cryptoWithExternalHMAC,
 		JobEventEmitter:      streaming.NewNoopEmitter(),
-		FileTTL:              cfg.ObjectStorageTTL,
 	}
 	service.SetStorageEncryptDerivedKey(keyDeriver.GetStorageEncryptKey())
 	service.SetCRMSecrets(cfg.CryptoEncryptSecretKeyPluginCRM, cfg.CryptoHashSecretKeyPluginCRM)
@@ -295,8 +291,6 @@ func InitWorker() (*Service, error) {
 		envConnections := resolver.LoadInternalConnectionsFromEnv(dsRegistry, logger)
 		service.ConnectionResolver = resolver.NewSingleTenantResolver(repositories.connection, dsRegistry, envConnections)
 	}
-
-	logFileTTL(logger, cfg)
 
 	// Branch: multi-tenant mode uses the worker multi-tenant consumer with per-tenant vhosts
 	// Single-tenant mode uses existing ConsumerRoutes with static RabbitMQ connection
@@ -1004,15 +998,6 @@ func initMongoConnection(ctx context.Context, cfg *Config, logger libLog.Logger)
 	}
 
 	return newMongoClient(ctx, mongoCfg)
-}
-
-// logFileTTL logs the configured file TTL for storage.
-func logFileTTL(logger libLog.Logger, cfg *Config) {
-	if cfg.ObjectStorageTTL != "" {
-		logger.Log(context.Background(), libLog.LevelInfo, fmt.Sprintf("Files will expire after: %s", cfg.ObjectStorageTTL))
-	} else {
-		logger.Log(context.Background(), libLog.LevelInfo, "Files will be stored permanently (no TTL — use S3 lifecycle policies for expiration)")
-	}
 }
 
 func resolveZapEnvironment(env string) libZap.Environment {
