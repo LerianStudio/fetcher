@@ -321,13 +321,14 @@ Single-tenant deployments emit with stable tenant ID `single-tenant`; multi-tena
 
 ### Security
 
-Fetcher uses a single master key (`APP_ENC_KEY`) to derive three cryptographically independent keys via HKDF (RFC 5869). This means you only need to manage one secret, but the system internally separates concerns:
+Fetcher uses a single master key (`APP_ENC_KEY`) to derive four cryptographically independent keys via HKDF (RFC 5869). This means you only need to manage one secret, but the system internally separates concerns:
 
 | Derived Key | Purpose |
 |-------------|---------|
 | **Credential Key** | AES-256-GCM encryption of database passwords stored in MongoDB |
 | **Internal HMAC Key** | HMAC-SHA256 signing of RabbitMQ messages between Manager and Worker, preventing message tampering |
 | **External HMAC Key** | HMAC-SHA256 signing of extracted data documents, enabling consumers to verify authenticity |
+| **Storage Encryption Key** | AES-256-GCM encryption of extracted results before they are written to object storage. Consumers that read those results, such as Reporter, derive the same key from the same master key |
 
 #### Generating the Master Key
 
