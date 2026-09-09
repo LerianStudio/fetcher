@@ -307,6 +307,8 @@ The **embedded runtime engine** is the importable, infrastructure-free core that
 - **Required:** `ConnectorRegistry`, `CredentialProtector`
 - **Optional:** `ConnectionStore`, `ExecutionStore`, `ResultSink`, `SchemaCache`, `ActiveExecutionChecker`, `Observability`
 
+`ConnectionStore` is optional for `engine.New` only. Every operation that resolves a connection guards on it — connection CRUD, `TestConnection`, `DiscoverSchema`/`DiscoverSchemaFresh`, `ValidateSchema`, `PlanExtraction` and `ExecuteExtraction` — and returns `connection store is not configured` without it. Only `Limits`, `AuthorizeConnectionAccess` and `CheckActiveExecutions` work without it.
+
 **Boundary contract (build-enforced).** `dependency_test.go` runs `go list -deps` and **fails the build** if the engine transitively imports any infrastructure. Forbidden imports include: Fiber, swag, amqp091-go, lib-streaming, mongo-driver, go-redis, SQL drivers (pgx/mysql/mssqldb/go-ora/lib-pq), `database/sql`, `os/exec`, `plugin`, `net/http`, `net/rpc`, aws-sdk-go-v2, `pkg/seaweedfs`, the local infra packages (`pkg/rabbitmq`, `pkg/storage`, `pkg/mongodb`, `pkg/redis`, `pkg/net/http`, `pkg/postgres`, `pkg/mysql`, `pkg/oracle`, `pkg/sqlserver`, `pkg/datasource`, `pkg/ratelimit`, `pkg/bootstrap/readyz`), lib-auth, lib-license-go, `components/*/internal`, and `deployments/helm/infra`. Rationale: the engine must embed in any host without pulling in infrastructure.
 
 **Execution modes:**

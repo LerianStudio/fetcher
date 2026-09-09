@@ -65,7 +65,7 @@ The Engine depends only on host-provided interfaces. Only one is always required
 |------|-----------|------------|
 | `ConnectorRegistry` | **Always** | `engine.New` fails — extraction is impossible |
 | `CredentialProtector` | Only with `WithEncryptedPersistence(true)` | Credentials are not encrypted at rest |
-| `ConnectionStore` | Optional | Connection CRUD returns a "not configured" error |
+| `ConnectionStore` | Optional for `engine.New` only | Everything that resolves a connection returns a "not configured" error: connection CRUD, `TestConnection`, schema discovery/validation, `PlanExtraction` and `ExecuteExtraction`. Only `Limits`, `AuthorizeConnectionAccess` and `CheckActiveExecutions` still work |
 | `SchemaCache` | Optional | Schema is always discovered live |
 | `ResultSink` | Optional | Store mode unavailable; extraction runs in Direct mode |
 | `ExecutionStore` | Optional | No durable execution-state tracking |
