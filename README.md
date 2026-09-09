@@ -1,4 +1,4 @@
-# Lerian Fetcher: Enterprise-Grade Data Extraction Adapter
+# Lerian Fetcher: Data Extraction Adapter
 
 Lerian Fetcher is a centralized data extraction platform designed to abstract and unify access to external data sources. It provides a secure, reliable, and scalable interface for Lerian products to connect, validate, and extract data from multiple database types — available both as standalone services and as an **embedded runtime engine** that host applications import in-process.
 
@@ -6,7 +6,7 @@ Lerian Fetcher is a centralized data extraction platform designed to abstract an
 
 - **Unified Data Access**: Single interface for extracting data from PostgreSQL, MySQL, Oracle, SQL Server, and MongoDB
 - **Run It Your Way**: Deploy as standalone Manager + Worker services, or embed the **Fetcher Engine** (`pkg/engine`) directly in your application — no separate service, queue, or storage stack required
-- **Enterprise Security**: Password encryption, SSL/TLS support per database, message signing with replay protection, and SSRF host validation
+- **Security**: Password encryption, SSL/TLS support per database, message signing with replay protection, and SSRF host validation
 - **Developer-Friendly**: Clean REST API with comprehensive OpenAPI documentation and advanced filtering capabilities
 - **Battle-Tested Reliability**: Circuit breaker pattern, connection pooling, readiness probing, and graceful error handling for production workloads
 
