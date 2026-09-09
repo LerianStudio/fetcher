@@ -30,7 +30,7 @@ func TestEngineDependencyBoundary_BlocksForbiddenImports(t *testing.T) {
 	repoRoot := mustRepositoryRoot(t)
 	modulePath := mustModulePathFromGoMod(t, repoRoot)
 	requiredClassNames := requiredForbiddenClassNames()
-	configuredClasses := configuredForbiddenDependencyClasses(modulePath)
+	configuredClasses := configuredForbiddenDependencyClasses(hostModuleBase(modulePath))
 
 	assertForbiddenConfigComplete(t, requiredClassNames, configuredClasses)
 
@@ -128,13 +128,13 @@ func TestEngineDependencyBoundary_ReadsModulePathFromGoMod(t *testing.T) {
 		t.Fatalf("module path read from go.mod is empty")
 	}
 
-	configuredClasses := configuredForbiddenDependencyClasses(modulePath)
+	configuredClasses := configuredForbiddenDependencyClasses(hostModuleBase(modulePath))
 	for _, dependencyClass := range configuredClasses {
 		if dependencyClass.name != "local_infrastructure_shells" {
 			continue
 		}
-		if !slices.Contains(dependencyClass.patterns, modulePath+"/pkg/rabbitmq") {
-			t.Fatalf("local infrastructure boundary patterns do not use module path read from go.mod: %#v", dependencyClass.patterns)
+		if !slices.Contains(dependencyClass.patterns, hostModuleBase(modulePath)+"/pkg/rabbitmq") {
+			t.Fatalf("local infrastructure boundary patterns do not use the host module base derived from go.mod: %#v", dependencyClass.patterns)
 		}
 		return
 	}
@@ -142,11 +142,73 @@ func TestEngineDependencyBoundary_ReadsModulePathFromGoMod(t *testing.T) {
 	t.Fatalf("local infrastructure dependency boundary class is not configured")
 }
 
+// TestEngineDependencyBoundary_HostInfrastructurePathsAreBlocked feeds the
+// denylist the import paths it exists to forbid: the host module's concrete
+// infrastructure packages and service internals, exactly as go list -deps
+// reports them. Once pkg/engine became its own module these patterns had to be
+// rooted at the HOST module rather than at the engine module, or every one of
+// them names a package under pkg/engine that cannot exist and the class blocks
+// nothing. The /v3 rows keep the rail alive across the host's next major.
+func TestEngineDependencyBoundary_HostInfrastructurePathsAreBlocked(t *testing.T) {
+	t.Parallel()
+
+	configuredClasses := configuredForbiddenDependencyClasses(hostModuleBase(mustModulePathFromGoMod(t, mustRepositoryRoot(t))))
+
+	blocked := []struct {
+		className  string
+		importPath string
+	}{
+		{"local_infrastructure_shells", "github.com/LerianStudio/fetcher/v2/pkg/storage"},
+		{"local_infrastructure_shells", "github.com/LerianStudio/fetcher/v2/pkg/datasource"},
+		{"local_infrastructure_shells", "github.com/LerianStudio/fetcher/v2/pkg/rabbitmq"},
+		{"local_infrastructure_shells", "github.com/LerianStudio/fetcher/v2/pkg/mongodb"},
+		{"local_infrastructure_shells", "github.com/LerianStudio/fetcher/v2/pkg/redis"},
+		{"local_infrastructure_shells", "github.com/LerianStudio/fetcher/v2/pkg/postgres"},
+		{"local_infrastructure_shells", "github.com/LerianStudio/fetcher/v2/pkg/bootstrap/readyz"},
+		{"local_infrastructure_shells", "github.com/LerianStudio/fetcher/v3/pkg/storage"},
+		{"seaweedfs", "github.com/LerianStudio/fetcher/v2/pkg/seaweedfs"},
+		{"manager_internals", "github.com/LerianStudio/fetcher/v2/components/manager/internal/bootstrap"},
+		{"worker_internals", "github.com/LerianStudio/fetcher/v2/components/worker/internal/services"},
+		{"deployment", "github.com/LerianStudio/fetcher/v2/components/infra"},
+	}
+
+	for _, tt := range blocked {
+		tt := tt
+		t.Run(tt.className+"/"+tt.importPath, func(t *testing.T) {
+			t.Parallel()
+
+			dependencyClass := mustForbiddenDependencyClass(t, configuredClasses, tt.className)
+			if !dependencyClass.matches(tt.importPath) {
+				t.Fatalf("%s must block host infrastructure import %q; patterns: %#v", tt.className, tt.importPath, dependencyClass.patterns)
+			}
+		})
+	}
+
+	// The engine module's own packages must survive every class: the host base is
+	// a prefix of the engine module path, so an over-broad pattern would forbid
+	// the engine from importing itself.
+	for _, engineLocal := range []string{
+		"github.com/LerianStudio/fetcher/pkg/engine",
+		"github.com/LerianStudio/fetcher/pkg/engine/memory",
+	} {
+		engineLocal := engineLocal
+		t.Run("engine_local/"+engineLocal, func(t *testing.T) {
+			t.Parallel()
+
+			for _, dependencyClass := range configuredClasses {
+				if dependencyClass.matches(engineLocal) {
+					t.Fatalf("class %s must not block the engine's own package %q", dependencyClass.name, engineLocal)
+				}
+			}
+		})
+	}
+}
+
 func TestEngineDependencyBoundary_TenantRuntimeShells_RequiredPatternsConfigured(t *testing.T) {
 	t.Parallel()
 
 	modulePath := mustModulePathFromGoMod(t, mustRepositoryRoot(t))
-	configuredClasses := configuredForbiddenDependencyClasses(modulePath)
+	configuredClasses := configuredForbiddenDependencyClasses(hostModuleBase(modulePath))
 	tenantRuntimeShells := mustForbiddenDependencyClass(t, configuredClasses, "tenant_runtime_shells")
 
 	for _, requiredPattern := range requiredTenantRuntimeShellPatterns() {
@@ -165,7 +227,7 @@ func TestEngineDependencyBoundary_ExternalDeploymentRuntime_RequiredPatternsConf
 	t.Parallel()
 
 	modulePath := mustModulePathFromGoMod(t, mustRepositoryRoot(t))
-	configuredClasses := configuredForbiddenDependencyClasses(modulePath)
+	configuredClasses := configuredForbiddenDependencyClasses(hostModuleBase(modulePath))
 	deploymentRuntime := mustForbiddenDependencyClass(t, configuredClasses, "external_deployment_runtime")
 
 	for _, requiredPattern := range requiredExternalDeploymentRuntimePatterns() {
@@ -184,7 +246,7 @@ func TestEngineDependencyBoundary_DockerRuntime_RequiredPatternsConfigured(t *te
 	t.Parallel()
 
 	modulePath := mustModulePathFromGoMod(t, mustRepositoryRoot(t))
-	configuredClasses := configuredForbiddenDependencyClasses(modulePath)
+	configuredClasses := configuredForbiddenDependencyClasses(hostModuleBase(modulePath))
 	dockerRuntime := mustForbiddenDependencyClass(t, configuredClasses, "docker_runtime")
 
 	for _, requiredPattern := range requiredDockerRuntimePatterns() {
@@ -203,7 +265,7 @@ func TestEngineDependencyBoundary_TenantRuntimeShells_PolicyIsFutureSafe(t *test
 	t.Parallel()
 
 	modulePath := mustModulePathFromGoMod(t, mustRepositoryRoot(t))
-	tenantRuntimeShells := mustForbiddenDependencyClass(t, configuredForbiddenDependencyClasses(modulePath), "tenant_runtime_shells")
+	tenantRuntimeShells := mustForbiddenDependencyClass(t, configuredForbiddenDependencyClasses(hostModuleBase(modulePath)), "tenant_runtime_shells")
 
 	tests := []struct {
 		name       string
@@ -323,21 +385,36 @@ func TestEngineDependencyBoundary_GoListEnvReplacesInheritedGoFlags(t *testing.T
 // no longer run from here. The dependency-boundary tests below stay in the engine
 // module, where they belong.
 
-func configuredForbiddenDependencyClasses(modulePath string) []forbiddenDependencyClass {
+// hostModuleBase returns the import path of the module that HOSTS the engine,
+// with no major-version segment. The denylist patterns that name concrete
+// infrastructure (pkg/storage, pkg/datasource, components/*/internal, ...) live
+// in that host module, but mustModulePathFromGoMod reads the ENGINE module's
+// go.mod — the nearest one to this test — so those patterns must be re-rooted
+// here. Rooted at the engine module instead, each pattern names a package under
+// pkg/engine that cannot exist, and the class silently blocks nothing.
+//
+// matches() strips a Lerian major-version segment from every candidate import
+// path, so the base is deliberately returned without one and covers the host's
+// current major and its next.
+func hostModuleBase(engineModulePath string) string {
+	return strings.TrimSuffix(engineModulePath, "/pkg/engine")
+}
+
+func configuredForbiddenDependencyClasses(hostBase string) []forbiddenDependencyClass {
 	return []forbiddenDependencyClass{
 		// Service internals: Engine must not reach into compatibility shells.
 		{
 			concern: "service_internals",
 			name:    "manager_internals",
 			patterns: []string{
-				modulePath + "/components/manager/internal",
+				hostBase + "/components/manager/internal",
 			},
 		},
 		{
 			concern: "service_internals",
 			name:    "worker_internals",
 			patterns: []string{
-				modulePath + "/components/worker/internal",
+				hostBase + "/components/worker/internal",
 			},
 		},
 
@@ -436,7 +513,7 @@ func configuredForbiddenDependencyClasses(modulePath string) []forbiddenDependen
 			concern: "storage",
 			name:    "seaweedfs",
 			patterns: []string{
-				modulePath + "/pkg/seaweedfs",
+				hostBase + "/pkg/seaweedfs",
 			},
 		},
 		{
@@ -465,19 +542,19 @@ func configuredForbiddenDependencyClasses(modulePath string) []forbiddenDependen
 			concern: "local_shells",
 			name:    "local_infrastructure_shells",
 			patterns: []string{
-				modulePath + "/pkg/rabbitmq",
-				modulePath + "/pkg/storage",
-				modulePath + "/pkg/mongodb",
-				modulePath + "/pkg/redis",
-				modulePath + "/pkg/net/http",
-				modulePath + "/pkg/seaweedfs",
-				modulePath + "/pkg/postgres",
-				modulePath + "/pkg/mysql",
-				modulePath + "/pkg/oracle",
-				modulePath + "/pkg/sqlserver",
-				modulePath + "/pkg/datasource",
-				modulePath + "/pkg/ratelimit",
-				modulePath + "/pkg/bootstrap/readyz",
+				hostBase + "/pkg/rabbitmq",
+				hostBase + "/pkg/storage",
+				hostBase + "/pkg/mongodb",
+				hostBase + "/pkg/redis",
+				hostBase + "/pkg/net/http",
+				hostBase + "/pkg/seaweedfs",
+				hostBase + "/pkg/postgres",
+				hostBase + "/pkg/mysql",
+				hostBase + "/pkg/oracle",
+				hostBase + "/pkg/sqlserver",
+				hostBase + "/pkg/datasource",
+				hostBase + "/pkg/ratelimit",
+				hostBase + "/pkg/bootstrap/readyz",
 			},
 		},
 
@@ -502,9 +579,9 @@ func configuredForbiddenDependencyClasses(modulePath string) []forbiddenDependen
 			concern: "deployment",
 			name:    "deployment",
 			patterns: []string{
-				modulePath + "/components/infra",
-				modulePath + "/deployments",
-				modulePath + "/helm",
+				hostBase + "/components/infra",
+				hostBase + "/deployments",
+				hostBase + "/helm",
 			},
 		},
 
