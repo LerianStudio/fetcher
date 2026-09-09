@@ -329,7 +329,6 @@ func TestPublishJobNotification_PublisherNotConfigured(t *testing.T) {
 		JobRepository:            mocks.jobRepo,
 		ConnectionRepository:     mocks.connRepo,
 		Cryptor:                  mocks.cryptor,
-		FileTTL:                  "1h",
 		JobEventEmitter:          nil,
 		JobEventStreamingEnabled: true,
 	}
@@ -526,7 +525,6 @@ func TestPublishJobNotification_EmptyExchange(t *testing.T) {
 		JobRepository:            mocks.jobRepo,
 		ConnectionRepository:     mocks.connRepo,
 		Cryptor:                  mocks.cryptor,
-		FileTTL:                  "1h",
 		JobEventEmitter:          nil,
 		JobEventStreamingEnabled: true,
 	}

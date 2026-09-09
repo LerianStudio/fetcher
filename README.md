@@ -266,7 +266,7 @@ For hands-on API exploration and testing scenarios, the following resources are 
 - **Field Projection**: Select specific fields or use `["*"]` for all fields
 - **JSON/BSON Parsing**: Automatic parsing of JSON fields in relational databases
 - **Deduplication**: 5-minute window for duplicate job detection
-- **Result Storage**: Encrypted results stored in pluggable object storage (SeaweedFS or S3-compatible) with configurable TTL
+- **Result Storage**: Encrypted results stored in pluggable object storage (SeaweedFS or S3-compatible). Fetcher applies no expiry — set a lifecycle policy on the bucket to control retention
 
 ### Worker Job Event Streaming
 

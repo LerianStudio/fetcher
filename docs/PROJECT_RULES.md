@@ -961,7 +961,7 @@ sequenceDiagram
 
         UseCase->>Cryptor: Encrypt(results) + HMAC
         Cryptor-->>UseCase: encryptedData
-        UseCase->>Storage: Store(encryptedData, TTL)
+        UseCase->>Storage: Store(encryptedData)
         Storage-->>UseCase: fileId
 
         UseCase->>JobRepo: UpdateStatus(COMPLETED, resultUrl)
