@@ -47,7 +47,7 @@ RUN apk add --no-cache \
       zlib=1.3.2-r0 \
       ca-certificates=20260611-r0 \
       tzdata=2026c-r0 \
-      curl=8.21.0-r0 && \
+      curl=8.22.0-r0 && \
   update-ca-certificates
 
 # Create a non-root user for security
