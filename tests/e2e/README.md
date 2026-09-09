@@ -74,7 +74,7 @@ E2E_REUSE_INFRA=true E2E_MANAGER_URL=http://localhost:4006 go test -v -tags e2e 
 | `E2E_ENABLE_ORACLE` | `false` | Enable Oracle infrastructure for Oracle-specific tests |
 | `E2E_ENABLE_MSSQL` | `false` | Enable SQL Server infrastructure for MSSQL-specific tests |
 | `E2E_ENABLE_MONGODB` | `false` | Enable MongoDB source infrastructure for MongoDB extraction tests |
-| `E2E_ENABLE_S3` | `false` | Start MinIO and configure Worker with `STORAGE_PROVIDER=s3` to validate S3 object storage |
+| `E2E_ENABLE_S3` | `false` | Start MinIO and point the Worker's `OBJECT_STORAGE_*` settings at it to validate S3 object storage |
 | `E2E_INFRA_ONLY` | `false` | Start infrastructure only and block (for debugging Manager/Worker in IDE) |
 | `E2E_REUSE_INFRA` | `false` | Skip container creation, connect to already-running infrastructure |
 | `E2E_SKIP_MANAGER` | `false` | Skip Manager container, use external Manager at `E2E_MANAGER_URL` |
