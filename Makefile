@@ -261,7 +261,7 @@ build-manager:
 	@mkdir -p $(ARTIFACTS_DIR)/docker/manager
 	@CGO_ENABLED=0 GOOS=linux go build -tags netgo \
 	  -ldflags='-w -s -extldflags "-static"' \
-	  -o $(ARTIFACTS_DIR)/docker/manager/manager ./components/manager/cmd/app/main.go
+	  -o $(ARTIFACTS_DIR)/docker/manager/manager ./components/manager/cmd/app
 	@docker build -t $(MANAGER_IMAGE) -f components/manager/Dockerfile.local .
 	@echo "[ok] Manager image built successfully ($(MANAGER_IMAGE))"
 

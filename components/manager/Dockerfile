@@ -29,10 +29,15 @@ RUN --mount=type=secret,id=github_token,required=false \
 COPY pkg/ pkg/
 COPY components/manager/ components/manager/
 
-# Build the binary
-RUN CGO_ENABLED=0 GOOS=linux go build -tags netgo \
-  -ldflags='-w -s -extldflags "-static"' \
-  -o /manager ./components/manager/cmd/app/main.go
+ARG VERSION=dev
+ARG REVISION=unknown
+ARG BUILD_TIME=unknown
+
+# -X stamps the build identity into package main; a build without the three
+# --build-arg reports "dev"/"unknown".
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -buildvcs=false -tags netgo \
+  -ldflags="-w -s -extldflags '-static' -X main.version=${VERSION} -X main.revision=${REVISION} -X main.buildTime=${BUILD_TIME}" \
+  -o /manager ./components/manager/cmd/app
 
 # Stage 2: Final image using minimal runtime dependencies
 FROM alpine:3.24.1
