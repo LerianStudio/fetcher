@@ -9,15 +9,15 @@ Fetcher is a **data extraction platform** built with Go following **Hexagonal Ar
 | Category | Technology | Version |
 |----------|------------|---------|
 | **Language** | Go | Source of truth: `go.mod` |
-| **Web Framework** | Fiber | v3.4.0 |
-| **Message Queue** | RabbitMQ (amqp091-go) | v1.13.0 |
-| **Shared Platform Libs** | lib-commons | v6.7.0 |
-| **Observability Libs** | lib-observability | v2.1.3 |
-| **Event Streaming** | lib-streaming (RabbitMQ target) | v3.0.0 — mandatory for Worker job events |
+| **Web Framework** | Fiber | v3.5.0 |
+| **Message Queue** | RabbitMQ (amqp091-go) | v1.14.0 |
+| **Shared Platform Libs** | lib-commons | v7.8.0 |
+| **Observability Libs** | lib-observability | v4.6.0 |
+| **Event Streaming** | lib-streaming (RabbitMQ target) | v4.1.0 — mandatory for Worker job events |
 | **Primary Database** | MongoDB | Latest |
 | **File Storage** | S3-compatible (SeaweedFS S3 gateway in the bundled infrastructure) | SeaweedFS 3.97 / AWS SDK v2 |
-| **Observability** | OpenTelemetry | v1.39.0 |
-| **Auth** | lib-auth | v3.3.0 |
+| **Observability** | OpenTelemetry | v1.46.0 |
+| **Auth** | lib-auth | v4.2.0 |
 | **API Contract** | Huma + lib-commons OpenAPI wrapper | OpenAPI 3.1 |
 
 ### Supported External Databases
@@ -1282,12 +1282,12 @@ Both layers read the same package-level flag (`hostsafety.SetHostSafetyEnabled`)
 
 ### Denylist — Source of Truth
 
-The denylist of blocked IP networks and hostname literals lives in [`github.com/LerianStudio/lib-commons/v6/commons/security/ssrf`](https://github.com/LerianStudio/lib-commons/tree/main/commons/security/ssrf). Fetcher inherits updates on `go mod tidy`; the local adapter at [`pkg/datasource/hostsafety/hostsafety.go`](../pkg/datasource/hostsafety/hostsafety.go) only owns:
+The denylist of blocked IP networks and hostname literals lives in [`github.com/LerianStudio/lib-commons/v7/commons/security/ssrf`](https://github.com/LerianStudio/lib-commons/tree/main/commons/security/ssrf). Fetcher inherits updates on `go mod tidy`; the local adapter at [`pkg/datasource/hostsafety/hostsafety.go`](../pkg/datasource/hostsafety/hostsafety.go) only owns:
 
 1. The bootstrap-time gate (`SetHostSafetyEnabled` / `IsEnabled`).
 2. The internal-datasource bypass (`EncryptionKeyVersion == ""` short-circuit).
 
-All blocklist semantics — CIDR matching, hostname literal matching, IPv4-mapped IPv6 unmap, fail-closed on unparseable IPs — are owned by libSSRF and exercised by `libSSRF.IsBlockedIP(net.IP)` and `libSSRF.IsBlockedHostname(string)`. Updating the denylist means bumping `lib-commons/v6` in `go.mod`, NOT editing the adapter.
+All blocklist semantics — CIDR matching, hostname literal matching, IPv4-mapped IPv6 unmap, fail-closed on unparseable IPs — are owned by libSSRF and exercised by `libSSRF.IsBlockedIP(net.IP)` and `libSSRF.IsBlockedHostname(string)`. Updating the denylist means bumping `lib-commons/v7` in `go.mod`, NOT editing the adapter.
 
 Coverage categories enforced by libSSRF (non-exhaustive, see the upstream source for the canonical list):
 

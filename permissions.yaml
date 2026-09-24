@@ -14,7 +14,7 @@
 # guarded tuples enforced by the route table; actions are the verbatim strings the
 # authorizer receives (the repo uses HTTP-verb action strings), NOT invented verbs.
 #
-# Keys mirror the yaml tags on lib-auth/v3 auth/declaration.DeclarationManifest.
+# Keys mirror the yaml tags on lib-auth/v4 auth/declaration.DeclarationManifest.
 # Everything the central reconciler prefixes is declared BARE here:
 #   - resources: bare; the reconciler composes the "{service}/" prefix, so the
 #     resulting permission is "{service}/{resource}:{action}".
