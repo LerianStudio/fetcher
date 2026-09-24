@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	observability "github.com/LerianStudio/lib-observability/v2"
+	observability "github.com/LerianStudio/lib-observability/v4"
 
 	"github.com/LerianStudio/fetcher/v2/pkg"
 	"github.com/LerianStudio/fetcher/v2/pkg/constant"
@@ -16,7 +16,7 @@ import (
 	"github.com/LerianStudio/fetcher/v2/pkg/net/http"
 	portsConnection "github.com/LerianStudio/fetcher/v2/pkg/ports/connection"
 
-	libOpentelemetry "github.com/LerianStudio/lib-observability/v2/tracing"
+	libOpentelemetry "github.com/LerianStudio/lib-observability/v4/tracing"
 
 	"github.com/google/uuid"
 	"go.mongodb.org/mongo-driver/v2/bson"

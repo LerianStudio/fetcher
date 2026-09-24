@@ -13,13 +13,14 @@ import (
 	"github.com/LerianStudio/fetcher/v2/pkg/model"
 	portCache "github.com/LerianStudio/fetcher/v2/pkg/ports/cache"
 	redisCache "github.com/LerianStudio/fetcher/v2/pkg/redis"
-	libCommons "github.com/LerianStudio/lib-commons/v6/commons"
-	libMongo "github.com/LerianStudio/lib-commons/v6/commons/mongo"
-	tmclient "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/client"
-	tmcore "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/core"
-	libLog "github.com/LerianStudio/lib-observability/v2/log"
-	libOtel "github.com/LerianStudio/lib-observability/v2/tracing"
-	"github.com/LerianStudio/lib-observability/v2/zap"
+	libCommons "github.com/LerianStudio/lib-commons/v7/commons"
+	libMongo "github.com/LerianStudio/lib-commons/v7/commons/mongo"
+	obs "github.com/LerianStudio/lib-commons/v7/commons/obs"
+	tmclient "github.com/LerianStudio/lib-commons/v7/commons/tenant-manager/client"
+	tmcore "github.com/LerianStudio/lib-commons/v7/commons/tenant-manager/core"
+	libLog "github.com/LerianStudio/lib-observability/v4/log"
+	libOtel "github.com/LerianStudio/lib-observability/v4/tracing"
+	"github.com/LerianStudio/lib-observability/v4/zap"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -929,7 +930,7 @@ func TestInitPlatformDependencies_MultiTenant_CreatesTMPublisher(t *testing.T) {
 		return stubSchemaCacheStore{}, nil
 	}
 
-	newTenantManagerClient = func(string, libLog.Logger, ...tmclient.ClientOption) (*tmclient.Client, error) {
+	newTenantManagerClient = func(string, obs.Logger, ...tmclient.ClientOption) (*tmclient.Client, error) {
 		return &tmclient.Client{}, nil
 	}
 
@@ -966,7 +967,7 @@ func TestInitPlatformDependencies_MultiTenant_TMClientError(t *testing.T) {
 		return stubSchemaCacheStore{}, nil
 	}
 
-	newTenantManagerClient = func(string, libLog.Logger, ...tmclient.ClientOption) (*tmclient.Client, error) {
+	newTenantManagerClient = func(string, obs.Logger, ...tmclient.ClientOption) (*tmclient.Client, error) {
 		return nil, errors.New("tm client init failed")
 	}
 
@@ -1014,6 +1015,7 @@ type stubRabbitMQChannel struct {
 	publishCount       int
 	confirmCalls       int
 	notifyPublishCalls int
+	notifyReturnCalls  int
 	closeCalls         int
 }
 
@@ -1049,6 +1051,11 @@ func (s *stubRabbitMQChannel) NotifyPublish(receiver chan amqp.Confirmation) cha
 	return receiver
 }
 
+func (s *stubRabbitMQChannel) NotifyReturn(receiver chan amqp.Return) chan amqp.Return {
+	s.notifyReturnCalls++
+	return receiver
+}
+
 func (s *stubRabbitMQChannel) NotifyClose(receiver chan *amqp.Error) chan *amqp.Error {
 	return receiver
 }
@@ -1081,6 +1088,8 @@ func TestMultiTenantPublisher_ProducerDefault_ClosesTenantChannelAfterEachPublis
 	assert.Equal(t, 1, secondChannel.confirmCalls)
 	assert.Equal(t, 1, firstChannel.notifyPublishCalls)
 	assert.Equal(t, 1, secondChannel.notifyPublishCalls)
+	assert.Equal(t, 1, firstChannel.notifyReturnCalls)
+	assert.Equal(t, 1, secondChannel.notifyReturnCalls)
 	assert.Equal(t, 1, firstChannel.closeCalls)
 	assert.Equal(t, 1, secondChannel.closeCalls)
 	assert.True(t, firstChannel.closed)
@@ -1170,7 +1179,7 @@ func TestInitMultiTenantMiddleware(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			newTenantManagerClient = originalNewTenantManagerClient
 			if tt.wantErr != "" {
-				newTenantManagerClient = func(string, libLog.Logger, ...tmclient.ClientOption) (*tmclient.Client, error) {
+				newTenantManagerClient = func(string, obs.Logger, ...tmclient.ClientOption) (*tmclient.Client, error) {
 					return nil, errors.New(tt.wantErr)
 				}
 			}

@@ -31,23 +31,23 @@ import (
 	redisCache "github.com/LerianStudio/fetcher/v2/pkg/redis"
 	"github.com/LerianStudio/fetcher/v2/pkg/resolver"
 
-	"github.com/LerianStudio/lib-auth/v3/auth/middleware"
-	libCommons "github.com/LerianStudio/lib-commons/v6/commons"
-	libMongo "github.com/LerianStudio/lib-commons/v6/commons/mongo"
-	libRabbitmq "github.com/LerianStudio/lib-commons/v6/commons/rabbitmq"
-	tmclient "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/client"
-	tmcore "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/core"
-	tmevent "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/event"
-	tmmiddleware "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/middleware"
-	tmmongo "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/mongo"
-	tmrabbitmq "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/rabbitmq"
-	tmredis "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/redis"
-	"github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/tenantcache"
-	observability "github.com/LerianStudio/lib-observability/v2"
-	libLog "github.com/LerianStudio/lib-observability/v2/log"
-	obsRuntime "github.com/LerianStudio/lib-observability/v2/runtime"
-	libOtel "github.com/LerianStudio/lib-observability/v2/tracing"
-	"github.com/LerianStudio/lib-observability/v2/zap"
+	"github.com/LerianStudio/lib-auth/v4/auth/middleware"
+	libCommons "github.com/LerianStudio/lib-commons/v7/commons"
+	libMongo "github.com/LerianStudio/lib-commons/v7/commons/mongo"
+	libRabbitmq "github.com/LerianStudio/lib-commons/v7/commons/rabbitmq"
+	tmclient "github.com/LerianStudio/lib-commons/v7/commons/tenant-manager/client"
+	tmcore "github.com/LerianStudio/lib-commons/v7/commons/tenant-manager/core"
+	tmevent "github.com/LerianStudio/lib-commons/v7/commons/tenant-manager/event"
+	tmmiddleware "github.com/LerianStudio/lib-commons/v7/commons/tenant-manager/middleware"
+	tmmongo "github.com/LerianStudio/lib-commons/v7/commons/tenant-manager/mongo"
+	tmrabbitmq "github.com/LerianStudio/lib-commons/v7/commons/tenant-manager/rabbitmq"
+	tmredis "github.com/LerianStudio/lib-commons/v7/commons/tenant-manager/redis"
+	"github.com/LerianStudio/lib-commons/v7/commons/tenant-manager/tenantcache"
+	observability "github.com/LerianStudio/lib-observability/v4"
+	libLog "github.com/LerianStudio/lib-observability/v4/log"
+	obsRuntime "github.com/LerianStudio/lib-observability/v4/runtime"
+	libOtel "github.com/LerianStudio/lib-observability/v4/tracing"
+	"github.com/LerianStudio/lib-observability/v4/zap"
 	"github.com/gofiber/fiber/v3"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/redis/go-redis/v9"
@@ -530,8 +530,6 @@ func initPlatformDependencies(cfg *Config, logger libLog.Logger, messageSigner c
 		return nil, wrapBootstrapError("initialize auth logger", authLogErr)
 	}
 
-	var authLogger libLog.Logger = authLoggerV4
-
 	schemaCacheTTL := getSchemaCacheTTL(cfg.SchemaCacheTTLSeconds)
 
 	genericCache, errCache := newSchemaCacheStore(
@@ -554,7 +552,7 @@ func initPlatformDependencies(cfg *Config, logger libLog.Logger, messageSigner c
 	return &managerPlatformDependencies{
 		rabbitPublisher:              rabbitPublisher,
 		rabbitMQCleanup:              rabbitMQCleanup,
-		authClient:                   middleware.NewAuthClient(cfg.AuthAddress, cfg.AuthEnabled, &authLogger),
+		authClient:                   middleware.NewAuthClient(cfg.AuthAddress, cfg.AuthEnabled, authLoggerV4),
 		connectionTestStore:          ratelimit.New(10, time.Minute),
 		schemaCache:                  cacheAdapter.NewSchemaCache(genericCache, schemaCacheTTL),
 		rabbitMQAdapter:              rabbitAdapter,

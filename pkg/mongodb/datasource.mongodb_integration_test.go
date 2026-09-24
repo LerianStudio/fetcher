@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	observability "github.com/LerianStudio/lib-observability/v2"
+	observability "github.com/LerianStudio/lib-observability/v4"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

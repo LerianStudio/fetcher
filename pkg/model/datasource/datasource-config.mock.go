@@ -10,7 +10,7 @@ import (
 
 	model "github.com/LerianStudio/fetcher/v2/pkg/model"
 	job "github.com/LerianStudio/fetcher/v2/pkg/model/job"
-	log "github.com/LerianStudio/lib-observability/v2/log"
+	log "github.com/LerianStudio/lib-observability/v4/log"
 	gomock "go.uber.org/mock/gomock"
 )
 

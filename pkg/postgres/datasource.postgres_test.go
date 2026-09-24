@@ -6,11 +6,11 @@ import (
 	"errors"
 	"testing"
 
-	observability "github.com/LerianStudio/lib-observability/v2"
+	observability "github.com/LerianStudio/lib-observability/v4"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/LerianStudio/fetcher/v2/pkg/model/job"
-	libLog "github.com/LerianStudio/lib-observability/v2/log"
+	libLog "github.com/LerianStudio/lib-observability/v4/log"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"

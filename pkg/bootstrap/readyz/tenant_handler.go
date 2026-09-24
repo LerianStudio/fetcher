@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	tmclient "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/client"
-	tmcore "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/core"
+	tmclient "github.com/LerianStudio/lib-commons/v7/commons/tenant-manager/client"
+	tmcore "github.com/LerianStudio/lib-commons/v7/commons/tenant-manager/core"
 	"github.com/gofiber/fiber/v3"
 )
 

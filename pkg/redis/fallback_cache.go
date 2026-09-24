@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	observability "github.com/LerianStudio/lib-observability/v2"
-	libLog "github.com/LerianStudio/lib-observability/v2/log"
-	obsRuntime "github.com/LerianStudio/lib-observability/v2/runtime"
+	observability "github.com/LerianStudio/lib-observability/v4"
+	libLog "github.com/LerianStudio/lib-observability/v4/log"
+	obsRuntime "github.com/LerianStudio/lib-observability/v4/runtime"
 	"go.opentelemetry.io/otel/attribute"
 )
 

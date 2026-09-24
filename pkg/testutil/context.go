@@ -3,8 +3,8 @@ package testutil
 import (
 	"context"
 
-	observability "github.com/LerianStudio/lib-observability/v2"
-	libLog "github.com/LerianStudio/lib-observability/v2/log"
+	observability "github.com/LerianStudio/lib-observability/v4"
+	libLog "github.com/LerianStudio/lib-observability/v4/log"
 	"go.opentelemetry.io/otel"
 )
 

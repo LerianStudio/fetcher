@@ -19,10 +19,10 @@ import (
 	"github.com/LerianStudio/fetcher/v2/pkg/ports/messaging"
 	"github.com/LerianStudio/fetcher/v2/pkg/resolver"
 
-	tmcore "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/core"
-	observability "github.com/LerianStudio/lib-observability/v2"
-	libLog "github.com/LerianStudio/lib-observability/v2/log"
-	libOpentelemetry "github.com/LerianStudio/lib-observability/v2/tracing"
+	tmcore "github.com/LerianStudio/lib-commons/v7/commons/tenant-manager/core"
+	observability "github.com/LerianStudio/lib-observability/v4"
+	libLog "github.com/LerianStudio/lib-observability/v4/log"
+	libOpentelemetry "github.com/LerianStudio/lib-observability/v4/tracing"
 
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.opentelemetry.io/otel/attribute"

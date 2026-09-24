@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/valkey"
-	observability "github.com/LerianStudio/lib-observability/v2"
-	libLog "github.com/LerianStudio/lib-observability/v2/log"
-	libOpentelemetry "github.com/LerianStudio/lib-observability/v2/tracing"
+	"github.com/LerianStudio/lib-commons/v7/commons/tenant-manager/valkey"
+	observability "github.com/LerianStudio/lib-observability/v4"
+	libLog "github.com/LerianStudio/lib-observability/v4/log"
+	libOpentelemetry "github.com/LerianStudio/lib-observability/v4/tracing"
 
 	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/otel/attribute"

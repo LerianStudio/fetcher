@@ -8,8 +8,8 @@ import (
 	"github.com/LerianStudio/fetcher/v2/pkg/net/http"
 	connRepo "github.com/LerianStudio/fetcher/v2/pkg/ports/connection"
 
-	observability "github.com/LerianStudio/lib-observability/v2"
-	libOpentelemetry "github.com/LerianStudio/lib-observability/v2/tracing"
+	observability "github.com/LerianStudio/lib-observability/v4"
+	libOpentelemetry "github.com/LerianStudio/lib-observability/v4/tracing"
 
 	"go.opentelemetry.io/otel/attribute"
 )

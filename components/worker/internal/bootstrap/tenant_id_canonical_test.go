@@ -7,8 +7,8 @@ import (
 
 	pkgRabbitmq "github.com/LerianStudio/fetcher/v2/pkg/rabbitmq"
 	"github.com/LerianStudio/fetcher/v2/pkg/testutil"
-	tmcore "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/core"
-	"github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/tenantcache"
+	tmcore "github.com/LerianStudio/lib-commons/v7/commons/tenant-manager/core"
+	"github.com/LerianStudio/lib-commons/v7/commons/tenant-manager/tenantcache"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

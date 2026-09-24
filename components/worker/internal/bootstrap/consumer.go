@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"time"
 
-	observability "github.com/LerianStudio/lib-observability/v2"
+	observability "github.com/LerianStudio/lib-observability/v4"
 
 	"github.com/LerianStudio/fetcher/v2/components/worker/internal/adapters/rabbitmq"
 	"github.com/LerianStudio/fetcher/v2/components/worker/internal/services"
@@ -18,14 +18,14 @@ import (
 	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
 	"github.com/LerianStudio/fetcher/v2/pkg/multitenant"
 	pkgRabbitmq "github.com/LerianStudio/fetcher/v2/pkg/rabbitmq"
-	tmconsumer "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/consumer"
-	tmcore "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/core"
-	tmmongo "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/mongo"
-	libLog "github.com/LerianStudio/lib-observability/v2/log"
-	obsRuntime "github.com/LerianStudio/lib-observability/v2/runtime"
-	opentelemetry "github.com/LerianStudio/lib-observability/v2/tracing"
+	tmconsumer "github.com/LerianStudio/lib-commons/v7/commons/tenant-manager/consumer"
+	tmcore "github.com/LerianStudio/lib-commons/v7/commons/tenant-manager/core"
+	tmmongo "github.com/LerianStudio/lib-commons/v7/commons/tenant-manager/mongo"
+	libLog "github.com/LerianStudio/lib-observability/v4/log"
+	obsRuntime "github.com/LerianStudio/lib-observability/v4/runtime"
+	opentelemetry "github.com/LerianStudio/lib-observability/v4/tracing"
 
-	"github.com/LerianStudio/lib-commons/v6/commons"
+	"github.com/LerianStudio/lib-commons/v7/commons"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"go.opentelemetry.io/otel/attribute"
 )

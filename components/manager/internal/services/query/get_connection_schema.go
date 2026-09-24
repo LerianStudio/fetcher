@@ -13,10 +13,10 @@ import (
 	"github.com/LerianStudio/fetcher/v2/pkg/enginecompat/connectioncompat"
 	"github.com/LerianStudio/fetcher/v2/pkg/model"
 	"github.com/LerianStudio/fetcher/v2/pkg/resolver"
-	observability "github.com/LerianStudio/lib-observability/v2"
+	observability "github.com/LerianStudio/lib-observability/v4"
 
-	tmcore "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/core"
-	libOpentelemetry "github.com/LerianStudio/lib-observability/v2/tracing"
+	tmcore "github.com/LerianStudio/lib-commons/v7/commons/tenant-manager/core"
+	libOpentelemetry "github.com/LerianStudio/lib-observability/v4/tracing"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"

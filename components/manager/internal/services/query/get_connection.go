@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	observability "github.com/LerianStudio/lib-observability/v2"
+	observability "github.com/LerianStudio/lib-observability/v4"
 
 	"github.com/LerianStudio/fetcher/pkg/engine"
 	"github.com/LerianStudio/fetcher/v2/pkg"
@@ -13,8 +13,8 @@ import (
 	"github.com/LerianStudio/fetcher/v2/pkg/model"
 	"github.com/LerianStudio/fetcher/v2/pkg/resolver"
 
-	tmcore "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/core"
-	libOpentelemetry "github.com/LerianStudio/lib-observability/v2/tracing"
+	tmcore "github.com/LerianStudio/lib-commons/v7/commons/tenant-manager/core"
+	libOpentelemetry "github.com/LerianStudio/lib-observability/v4/tracing"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"

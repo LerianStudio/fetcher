@@ -2,7 +2,7 @@
 package multitenant
 
 import (
-	tmcore "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/core"
+	tmcore "github.com/LerianStudio/lib-commons/v7/commons/tenant-manager/core"
 )
 
 // Canonical normalizes a tenant ID to the one spelling fetcher keys everything

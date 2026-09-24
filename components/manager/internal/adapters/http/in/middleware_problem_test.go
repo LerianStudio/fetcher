@@ -9,7 +9,7 @@ import (
 	"github.com/LerianStudio/fetcher/v2/pkg"
 	"github.com/LerianStudio/fetcher/v2/pkg/constant"
 	httpUtils "github.com/LerianStudio/fetcher/v2/pkg/net/http"
-	"github.com/LerianStudio/lib-commons/v6/commons/net/http/problem"
+	"github.com/LerianStudio/lib-commons/v7/commons/net/http/problem"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/stretchr/testify/assert"

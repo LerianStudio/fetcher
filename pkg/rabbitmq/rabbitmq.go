@@ -13,18 +13,18 @@ import (
 	"sync/atomic"
 	"time"
 
-	observability "github.com/LerianStudio/lib-observability/v2"
+	observability "github.com/LerianStudio/lib-observability/v4"
 
-	libCommons "github.com/LerianStudio/lib-commons/v6/commons"
-	libBackoff "github.com/LerianStudio/lib-commons/v6/commons/backoff"
-	libCircuitBreaker "github.com/LerianStudio/lib-commons/v6/commons/circuitbreaker"
-	libConstants "github.com/LerianStudio/lib-commons/v6/commons/constants"
-	libRabbitmq "github.com/LerianStudio/lib-commons/v6/commons/rabbitmq"
-	obsConstants "github.com/LerianStudio/lib-observability/v2/constants"
-	libLog "github.com/LerianStudio/lib-observability/v2/log"
-	obsMetrics "github.com/LerianStudio/lib-observability/v2/metrics"
-	obsRuntime "github.com/LerianStudio/lib-observability/v2/runtime"
-	libOpentelemetry "github.com/LerianStudio/lib-observability/v2/tracing"
+	libCommons "github.com/LerianStudio/lib-commons/v7/commons"
+	libBackoff "github.com/LerianStudio/lib-commons/v7/commons/backoff"
+	libCircuitBreaker "github.com/LerianStudio/lib-commons/v7/commons/circuitbreaker"
+	libConstants "github.com/LerianStudio/lib-commons/v7/commons/constants"
+	libRabbitmq "github.com/LerianStudio/lib-commons/v7/commons/rabbitmq"
+	obsConstants "github.com/LerianStudio/lib-observability/v4/constants"
+	libLog "github.com/LerianStudio/lib-observability/v4/log"
+	obsMetrics "github.com/LerianStudio/lib-observability/v4/metrics"
+	obsRuntime "github.com/LerianStudio/lib-observability/v4/runtime"
+	libOpentelemetry "github.com/LerianStudio/lib-observability/v4/tracing"
 
 	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
 
@@ -155,6 +155,7 @@ const (
 	attrMessagingSignatureTimestamp    = "messaging.signature.timestamp"
 	attrReasonCircuitBreakerOpen       = "circuit_breaker_open"
 	attrReasonMaxRetriesExceeded       = "max_retries_exceeded"
+	attrReasonUnroutable               = "unroutable"
 	attrReasonSignatureVerifierMissing = "signature_verifier_not_configured"
 	attrReasonSignatureFailed          = "signature_verification_failed"
 	attrReasonPanic                    = "panic"
@@ -404,7 +405,7 @@ func NewRabbitMQAdapter(c *libRabbitmq.RabbitMQConnection) *RabbitMQAdapter {
 // NewRabbitMQAdapterWithOptions initializes a new RabbitMQAdapter with the provided RabbitMQ connection and options.
 func NewRabbitMQAdapterWithOptions(c *libRabbitmq.RabbitMQConnection, opts AdapterOptions) *RabbitMQAdapter {
 	adapter := &rabbitmqConnectionAdapter{conn: c}
-	breakerManager := newRabbitMQCircuitBreakerManager(c.Logger, opts)
+	breakerManager := newRabbitMQCircuitBreakerManager(libLog.Adapt(c.Logger), opts)
 
 	prmq := &RabbitMQAdapter{
 		conn:           adapter,
@@ -414,7 +415,7 @@ func NewRabbitMQAdapterWithOptions(c *libRabbitmq.RabbitMQConnection, opts Adapt
 
 	// Initialize metrics if meter provider is available
 	if opts.MeterProvider != nil {
-		prmq.initMetrics(opts.MeterProvider, c.Logger)
+		prmq.initMetrics(opts.MeterProvider, libLog.Adapt(c.Logger))
 	}
 
 	ch, err := adapter.EnsureChannel()
@@ -423,7 +424,7 @@ func NewRabbitMQAdapterWithOptions(c *libRabbitmq.RabbitMQConnection, opts Adapt
 		c.Logger.Log(context.Background(), libLog.LevelWarn, "RabbitMQ connection will be retried on first message publish")
 	} else {
 		prmq.channel = ch
-		prmq.startChannelWatcher(c.Logger, ch)
+		prmq.startChannelWatcher(libLog.Adapt(c.Logger), ch)
 		c.Logger.Log(context.Background(), libLog.LevelInfo, "RabbitMQ producer connected successfully")
 	}
 
@@ -775,7 +776,7 @@ func (prmq *RabbitMQAdapter) confirmablePublisherForChannel(ch amqpChannel) (con
 
 func (prmq *RabbitMQAdapter) optionsLogger() libLog.Logger {
 	if adapter, ok := prmq.conn.(*rabbitmqConnectionAdapter); ok && adapter.conn != nil && adapter.conn.Logger != nil {
-		return adapter.conn.Logger
+		return libLog.Adapt(adapter.conn.Logger)
 	}
 
 	return libLog.NewNop()
@@ -851,14 +852,43 @@ func (prmq *RabbitMQAdapter) ProducerDefault(ctx context.Context, exchange, key 
 			attribute.Int(attrAttempt, attempt),
 		)
 
+		var returned error
+
 		err := prmq.executeWithCircuitBreaker(func() error {
 			channel, err := prmq.ensureChannel(spanProducer, logger)
 			if err != nil {
 				return fmt.Errorf("rabbitmq ensure channel for publish: %w", err)
 			}
 
-			return publish(channel)
+			// The broker answered: the routing key has no queue, the channel is
+			// healthy. Returning nil records a success on the breaker; a failure
+			// would open it for every other routing key, and a retry cannot route it.
+			if err := publish(channel); err != nil {
+				if errors.Is(err, libRabbitmq.ErrPublishReturned) {
+					returned = err
+
+					return nil
+				}
+
+				return err
+			}
+
+			return nil
 		})
+
+		if returned != nil {
+			prmq.recordPublishFailure(ctx,
+				attribute.String(attrExchange, exchange),
+				attribute.String(attrRoutingKey, key),
+				attribute.String(attrReason, attrReasonUnroutable),
+			)
+
+			libOpentelemetry.HandleSpanError(spanProducer, "Message returned as unroutable by broker", returned)
+			logger.Log(context.Background(), libLog.LevelError, fmt.Sprintf("Failed to publish message: %s", returned))
+
+			return returned
+		}
+
 		if err == nil {
 			latencyMs := float64(time.Since(startTime).Milliseconds())
 			prmq.recordPublishLatency(ctx, latencyMs,

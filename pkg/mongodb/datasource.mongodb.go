@@ -7,14 +7,14 @@ import (
 	"maps"
 	"strings"
 
-	observability "github.com/LerianStudio/lib-observability/v2"
+	observability "github.com/LerianStudio/lib-observability/v4"
 
 	"github.com/LerianStudio/fetcher/v2/pkg/constant"
 	"github.com/LerianStudio/fetcher/v2/pkg/model/job"
-	libMongo "github.com/LerianStudio/lib-commons/v6/commons/mongo"
-	libLog "github.com/LerianStudio/lib-observability/v2/log"
+	libMongo "github.com/LerianStudio/lib-commons/v7/commons/mongo"
+	libLog "github.com/LerianStudio/lib-observability/v4/log"
 
-	libOpentelemetry "github.com/LerianStudio/lib-observability/v2/tracing"
+	libOpentelemetry "github.com/LerianStudio/lib-observability/v4/tracing"
 	"github.com/google/uuid"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"

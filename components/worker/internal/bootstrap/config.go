@@ -24,23 +24,23 @@ import (
 	pkgStorage "github.com/LerianStudio/fetcher/v2/pkg/storage"
 	pkgStreaming "github.com/LerianStudio/fetcher/v2/pkg/streaming"
 
-	libCommons "github.com/LerianStudio/lib-commons/v6/commons"
-	libCircuitBreaker "github.com/LerianStudio/lib-commons/v6/commons/circuitbreaker"
-	mongoDB "github.com/LerianStudio/lib-commons/v6/commons/mongo"
-	libOutbox "github.com/LerianStudio/lib-commons/v6/commons/outbox"
-	libOutboxMongo "github.com/LerianStudio/lib-commons/v6/commons/outbox/mongo"
-	libRabbitMQ "github.com/LerianStudio/lib-commons/v6/commons/rabbitmq"
-	tmclient "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/client"
-	tmevent "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/event"
-	tmmongo "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/mongo"
-	tmrabbitmq "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/rabbitmq"
-	tmredis "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/redis"
-	"github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/tenantcache"
-	libLog "github.com/LerianStudio/lib-observability/v2/log"
-	obsRuntime "github.com/LerianStudio/lib-observability/v2/runtime"
-	libOtel "github.com/LerianStudio/lib-observability/v2/tracing"
-	libZap "github.com/LerianStudio/lib-observability/v2/zap"
-	streaming "github.com/LerianStudio/lib-streaming/v3"
+	libCommons "github.com/LerianStudio/lib-commons/v7/commons"
+	libCircuitBreaker "github.com/LerianStudio/lib-commons/v7/commons/circuitbreaker"
+	mongoDB "github.com/LerianStudio/lib-commons/v7/commons/mongo"
+	libOutbox "github.com/LerianStudio/lib-commons/v7/commons/outbox"
+	libOutboxMongo "github.com/LerianStudio/lib-commons/v7/commons/outbox/mongo"
+	libRabbitMQ "github.com/LerianStudio/lib-commons/v7/commons/rabbitmq"
+	tmclient "github.com/LerianStudio/lib-commons/v7/commons/tenant-manager/client"
+	tmevent "github.com/LerianStudio/lib-commons/v7/commons/tenant-manager/event"
+	tmmongo "github.com/LerianStudio/lib-commons/v7/commons/tenant-manager/mongo"
+	tmrabbitmq "github.com/LerianStudio/lib-commons/v7/commons/tenant-manager/rabbitmq"
+	tmredis "github.com/LerianStudio/lib-commons/v7/commons/tenant-manager/redis"
+	"github.com/LerianStudio/lib-commons/v7/commons/tenant-manager/tenantcache"
+	libLog "github.com/LerianStudio/lib-observability/v4/log"
+	obsRuntime "github.com/LerianStudio/lib-observability/v4/runtime"
+	libOtel "github.com/LerianStudio/lib-observability/v4/tracing"
+	libZap "github.com/LerianStudio/lib-observability/v4/zap"
+	streaming "github.com/LerianStudio/lib-streaming/v4"
 	mongoDriver "go.mongodb.org/mongo-driver/v2/mongo"
 )
 
@@ -753,7 +753,7 @@ func initJobEventEmitter(ctx context.Context, cfg *Config, logger libLog.Logger,
 		CircuitBreakerManager(cbManager).
 		RabbitMQTarget(jobEventTargetName, streamingRabbitMQPublisher{publisher: publisher}).
 		Logger(logger).
-		MetricsFactory(telemetry.MetricsFactory).
+		MetricsRecorder(telemetry.MetricsFactory).
 		Tracer(telemetry.TracerProvider.Tracer(cfg.OtelLibraryName)).
 		Build(ctx)
 	if err != nil {

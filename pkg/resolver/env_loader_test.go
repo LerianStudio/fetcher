@@ -7,7 +7,7 @@ import (
 
 	"github.com/LerianStudio/fetcher/v2/pkg/model"
 	"github.com/LerianStudio/fetcher/v2/pkg/testutil"
-	libLog "github.com/LerianStudio/lib-observability/v2/log"
+	libLog "github.com/LerianStudio/lib-observability/v4/log"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -19,24 +19,24 @@ type capturingLogger struct {
 }
 
 type capturedEntry struct {
-	level  libLog.Level
+	level  int
 	msg    string
 	fields map[string]any
 }
 
-func (c *capturingLogger) Log(_ context.Context, level libLog.Level, msg string, fields ...libLog.Field) {
+func (c *capturingLogger) Log(_ context.Context, level int, msg string, fields ...any) {
 	m := make(map[string]any, len(fields))
-	for _, f := range fields {
+	for _, f := range libLog.Fields(fields...) {
 		m[f.Key] = f.Value
 	}
 
 	c.entries = append(c.entries, capturedEntry{level: level, msg: msg, fields: m})
 }
 
-func (c *capturingLogger) With(_ ...libLog.Field) libLog.Logger { return c }
-func (c *capturingLogger) WithGroup(_ string) libLog.Logger     { return c }
-func (c *capturingLogger) Enabled(_ libLog.Level) bool          { return true }
-func (c *capturingLogger) Sync(_ context.Context) error         { return nil }
+func (c *capturingLogger) With(_ ...any) libLog.Logger      { return c }
+func (c *capturingLogger) WithGroup(_ string) libLog.Logger { return c }
+func (c *capturingLogger) Enabled(_ int) bool               { return true }
+func (c *capturingLogger) Sync(_ context.Context) error     { return nil }
 
 // setEnvDatasource is a tiny helper that registers the standard env-var set
 // for one internal datasource via t.Setenv (auto-cleanup at end of test).

@@ -4,8 +4,8 @@ import (
 	"testing"
 
 	"github.com/LerianStudio/fetcher/v2/components/worker/internal/services"
-	libOutbox "github.com/LerianStudio/lib-commons/v6/commons/outbox"
-	libLog "github.com/LerianStudio/lib-observability/v2/log"
+	libOutbox "github.com/LerianStudio/lib-commons/v7/commons/outbox"
+	libLog "github.com/LerianStudio/lib-observability/v4/log"
 	"github.com/stretchr/testify/assert"
 )
 

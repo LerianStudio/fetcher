@@ -6,11 +6,11 @@ import (
 
 	"github.com/LerianStudio/fetcher/v2/pkg/bootstrap/readyz"
 	"github.com/LerianStudio/fetcher/v2/pkg/net/http"
-	middlewareAuth "github.com/LerianStudio/lib-auth/v3/auth/middleware"
-	commonsHttp "github.com/LerianStudio/lib-commons/v6/commons/net/http"
-	"github.com/LerianStudio/lib-observability/v2/log"
-	obsMiddleware "github.com/LerianStudio/lib-observability/v2/middleware"
-	opentelemetry "github.com/LerianStudio/lib-observability/v2/tracing"
+	middlewareAuth "github.com/LerianStudio/lib-auth/v4/auth/middleware"
+	commonsHttp "github.com/LerianStudio/lib-commons/v7/commons/net/http"
+	"github.com/LerianStudio/lib-observability/v4/log"
+	obsMiddleware "github.com/LerianStudio/lib-observability/v4/middleware"
+	opentelemetry "github.com/LerianStudio/lib-observability/v4/tracing"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/gofiber/fiber/v3"
@@ -97,8 +97,9 @@ func NewRoutes(
 		f.Get("/metrics", metricsHandler)
 	}
 
-	// Version
-	f.Get("/version", commonsHttp.Version)
+	// Version. buildinfo.Handler replaces this once the Dockerfile stamps the
+	// binary; swapped in before that it would answer "dev", not the deployed tag.
+	f.Get("/version", commonsHttp.Version) //nolint:staticcheck // replaced by buildinfo.Handler in the identity PR (FC-3)
 
 	_, err = mountClientAPI(
 		f,

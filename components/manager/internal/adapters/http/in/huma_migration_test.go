@@ -15,7 +15,7 @@ import (
 	"github.com/LerianStudio/fetcher/v2/pkg/model"
 	httpUtils "github.com/LerianStudio/fetcher/v2/pkg/net/http"
 	connRepo "github.com/LerianStudio/fetcher/v2/pkg/ports/connection"
-	"github.com/LerianStudio/lib-commons/v6/commons/net/http/problem"
+	"github.com/LerianStudio/lib-commons/v7/commons/net/http/problem"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"

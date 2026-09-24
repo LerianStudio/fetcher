@@ -11,8 +11,8 @@ import (
 	"github.com/LerianStudio/fetcher/v2/pkg/model/job"
 	"github.com/LerianStudio/fetcher/v2/pkg/oracle"
 	"github.com/LerianStudio/fetcher/v2/pkg/testutil"
-	libConstant "github.com/LerianStudio/lib-commons/v6/commons/constants"
-	"github.com/LerianStudio/lib-observability/v2/log"
+	libConstant "github.com/LerianStudio/lib-commons/v7/commons/constants"
+	"github.com/LerianStudio/lib-observability/v4/log"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/mock/gomock"
 )

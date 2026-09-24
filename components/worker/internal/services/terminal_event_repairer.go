@@ -10,12 +10,12 @@ import (
 	"time"
 
 	"github.com/LerianStudio/fetcher/v2/pkg/model"
-	"github.com/LerianStudio/lib-commons/v6/commons"
-	tmclient "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/client"
-	tmcore "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/core"
-	observability "github.com/LerianStudio/lib-observability/v2"
-	libLog "github.com/LerianStudio/lib-observability/v2/log"
-	obsRuntime "github.com/LerianStudio/lib-observability/v2/runtime"
+	"github.com/LerianStudio/lib-commons/v7/commons"
+	tmclient "github.com/LerianStudio/lib-commons/v7/commons/tenant-manager/client"
+	tmcore "github.com/LerianStudio/lib-commons/v7/commons/tenant-manager/core"
+	observability "github.com/LerianStudio/lib-observability/v4"
+	libLog "github.com/LerianStudio/lib-observability/v4/log"
+	obsRuntime "github.com/LerianStudio/lib-observability/v4/runtime"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 )
 
@@ -80,7 +80,7 @@ func (r *TerminalEventRepairer) Run(launcher *commons.Launcher) error {
 
 	logger := r.logger
 	if launcher != nil && launcher.Logger != nil {
-		logger = launcher.Logger
+		logger = libLog.Adapt(launcher.Logger)
 	}
 
 	ctx := observability.ContextWithLogger(context.Background(), logger)
