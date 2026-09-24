@@ -46,8 +46,8 @@ RUN apk add --no-cache \
       libcrypto3=3.5.8-r0 \
       libssl3=3.5.8-r0 \
       zlib=1.3.2-r0 \
-      ca-certificates=20260611-r0 \
-      tzdata=2026c-r0 \
+      ca-certificates=20260909-r0 \
+      tzdata=2026d-r0 \
       curl=8.22.0-r0 && \
   update-ca-certificates
 
