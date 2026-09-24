@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"testing"
 
-	tmconsumer "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/consumer"
-	tmcore "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/core"
-	tmmongo "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/mongo"
-	"github.com/LerianStudio/lib-observability/v2/log"
+	tmconsumer "github.com/LerianStudio/lib-commons/v7/commons/tenant-manager/consumer"
+	tmcore "github.com/LerianStudio/lib-commons/v7/commons/tenant-manager/core"
+	tmmongo "github.com/LerianStudio/lib-commons/v7/commons/tenant-manager/mongo"
+	"github.com/LerianStudio/lib-observability/v4/log"
 	amqp "github.com/rabbitmq/amqp091-go"
 
 	"github.com/stretchr/testify/assert"
@@ -45,14 +45,14 @@ func (m *mockMultiTenantConsumer) Close() error {
 }
 
 // mockBootstrapLogger is a minimal logger for bootstrap package tests
-// that satisfies the log.Logger interface from lib-commons v4.
+// that satisfies the log.Logger interface from lib-observability v4.
 type mockBootstrapLogger struct{}
 
-func (m *mockBootstrapLogger) Enabled(_ log.Level) bool                                     { return true }
-func (m *mockBootstrapLogger) Log(_ context.Context, _ log.Level, _ string, _ ...log.Field) {}
-func (m *mockBootstrapLogger) With(_ ...log.Field) log.Logger                               { return m }
-func (m *mockBootstrapLogger) WithGroup(_ string) log.Logger                                { return m }
-func (m *mockBootstrapLogger) Sync(_ context.Context) error                                 { return nil }
+func (m *mockBootstrapLogger) Enabled(_ int) bool                               { return true }
+func (m *mockBootstrapLogger) Log(_ context.Context, _ int, _ string, _ ...any) {}
+func (m *mockBootstrapLogger) With(_ ...any) log.Logger                         { return m }
+func (m *mockBootstrapLogger) WithGroup(_ string) log.Logger                    { return m }
+func (m *mockBootstrapLogger) Sync(_ context.Context) error                     { return nil }
 
 func TestNewMultiQueueConsumerMultiTenant_SetsFields(t *testing.T) {
 	mockConsumer := &mockMultiTenantConsumer{}

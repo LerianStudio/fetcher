@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	libLog "github.com/LerianStudio/lib-observability/v2/log"
+	libLog "github.com/LerianStudio/lib-observability/v4/log"
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/adaptor"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -30,22 +30,22 @@ type capturingLogger struct {
 }
 
 type logEntry struct {
-	level  libLog.Level
+	level  int
 	msg    string
 	fields []libLog.Field
 }
 
-func (c *capturingLogger) Log(_ context.Context, level libLog.Level, msg string, fields ...libLog.Field) {
+func (c *capturingLogger) Log(_ context.Context, level int, msg string, fields ...any) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.entries = append(c.entries, logEntry{level: level, msg: msg, fields: fields})
+	c.entries = append(c.entries, logEntry{level: level, msg: msg, fields: libLog.Fields(fields...)})
 }
 
-func (c *capturingLogger) With(_ ...libLog.Field) libLog.Logger { return c }
-func (c *capturingLogger) WithGroup(_ string) libLog.Logger     { return c }
-func (c *capturingLogger) Enabled(_ libLog.Level) bool          { return true }
-func (c *capturingLogger) Sync(_ context.Context) error         { return nil }
+func (c *capturingLogger) With(_ ...any) libLog.Logger      { return c }
+func (c *capturingLogger) WithGroup(_ string) libLog.Logger { return c }
+func (c *capturingLogger) Enabled(_ int) bool               { return true }
+func (c *capturingLogger) Sync(_ context.Context) error     { return nil }
 
 func (c *capturingLogger) hasMessage(msg string) bool {
 	c.mu.Lock()

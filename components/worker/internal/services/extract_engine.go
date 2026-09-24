@@ -19,9 +19,9 @@ import (
 	"github.com/LerianStudio/fetcher/v2/pkg/enginecompat/tablenorm"
 	"github.com/LerianStudio/fetcher/v2/pkg/model"
 	modelJob "github.com/LerianStudio/fetcher/v2/pkg/model/job"
-	observability "github.com/LerianStudio/lib-observability/v2"
-	libLog "github.com/LerianStudio/lib-observability/v2/log"
-	libOtel "github.com/LerianStudio/lib-observability/v2/tracing"
+	observability "github.com/LerianStudio/lib-observability/v4"
+	libLog "github.com/LerianStudio/lib-observability/v4/log"
+	libOtel "github.com/LerianStudio/lib-observability/v4/tracing"
 )
 
 // extractInto fills result with the extracted data for the message. After the

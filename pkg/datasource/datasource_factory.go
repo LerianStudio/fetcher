@@ -8,7 +8,7 @@ import (
 	"net/url"
 	"strings"
 
-	observability "github.com/LerianStudio/lib-observability/v2"
+	observability "github.com/LerianStudio/lib-observability/v4"
 
 	"github.com/LerianStudio/fetcher/v2/pkg/constant"
 	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
@@ -26,8 +26,8 @@ import (
 	"github.com/LerianStudio/fetcher/v2/pkg/oracle"
 	"github.com/LerianStudio/fetcher/v2/pkg/postgres"
 	"github.com/LerianStudio/fetcher/v2/pkg/sqlserver"
-	libLog "github.com/LerianStudio/lib-observability/v2/log"
-	libOpentelemetry "github.com/LerianStudio/lib-observability/v2/tracing"
+	libLog "github.com/LerianStudio/lib-observability/v4/log"
+	libOpentelemetry "github.com/LerianStudio/lib-observability/v4/tracing"
 
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"

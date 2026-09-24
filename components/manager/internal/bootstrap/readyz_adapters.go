@@ -10,7 +10,7 @@ import (
 	"github.com/LerianStudio/fetcher/v2/pkg/bootstrap/readyz"
 	"github.com/LerianStudio/fetcher/v2/pkg/constant"
 	pkgRabbitmq "github.com/LerianStudio/fetcher/v2/pkg/rabbitmq"
-	tmredis "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/redis"
+	tmredis "github.com/LerianStudio/lib-commons/v7/commons/tenant-manager/redis"
 	"github.com/gofiber/fiber/v3"
 	"github.com/redis/go-redis/v9"
 )

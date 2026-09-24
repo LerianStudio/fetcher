@@ -7,12 +7,13 @@ import (
 
 	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
 	"github.com/LerianStudio/fetcher/v2/pkg/rabbitmq"
-	libConstants "github.com/LerianStudio/lib-commons/v6/commons/constants"
-	tmcore "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/core"
-	observability "github.com/LerianStudio/lib-observability/v2"
-	obsConstants "github.com/LerianStudio/lib-observability/v2/constants"
-	"github.com/LerianStudio/lib-observability/v2/log"
-	opentelemetry "github.com/LerianStudio/lib-observability/v2/tracing"
+	libConstants "github.com/LerianStudio/lib-commons/v7/commons/constants"
+	libRabbitmq "github.com/LerianStudio/lib-commons/v7/commons/rabbitmq"
+	tmcore "github.com/LerianStudio/lib-commons/v7/commons/tenant-manager/core"
+	observability "github.com/LerianStudio/lib-observability/v4"
+	obsConstants "github.com/LerianStudio/lib-observability/v4/constants"
+	"github.com/LerianStudio/lib-observability/v4/log"
+	opentelemetry "github.com/LerianStudio/lib-observability/v4/tracing"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -57,6 +58,7 @@ type mockChannel struct {
 	confirmation       amqp.Confirmation
 	returned           *amqp.Return
 	publishConfirmCh   chan amqp.Confirmation
+	publishReturnCh    chan amqp.Return
 	closed             bool
 }
 
@@ -69,6 +71,13 @@ func (m *mockChannel) PublishWithContext(_ context.Context, _, _ string, _, _ bo
 	m.published = msg
 	if m.publishErr != nil {
 		return m.publishErr
+	}
+
+	// The broker announces an unroutable message before it acknowledges it, and
+	// the publisher drains stale returns before publishing: a return delivered
+	// at registration time would never be seen.
+	if m.returned != nil && m.publishReturnCh != nil {
+		m.publishReturnCh <- *m.returned
 	}
 
 	if m.publishConfirmCh != nil {
@@ -98,9 +107,7 @@ func (m *mockChannel) NotifyClose(receiver chan *amqp.Error) chan *amqp.Error {
 }
 
 func (m *mockChannel) NotifyReturn(receiver chan amqp.Return) chan amqp.Return {
-	if m.returned != nil {
-		receiver <- *m.returned
-	}
+	m.publishReturnCh = receiver
 	return receiver
 }
 
@@ -451,4 +458,25 @@ func TestPublish_MultiTenant_PublishError(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to publish message")
+}
+
+// A broker ACK is a receipt for a discard when no queue is bound to the routing
+// key. lib-commons registers a basic.return listener on every confirmed publish,
+// so an unroutable terminal job event fails instead of vanishing.
+func TestPublish_MultiTenant_ReturnsErrorWhenBrokerReturnsMessage(t *testing.T) {
+	t.Parallel()
+
+	mockCh := &mockChannel{returned: &amqp.Return{
+		Exchange:   "test-exchange",
+		RoutingKey: "job.completed",
+		ReplyCode:  312,
+		ReplyText:  "NO_ROUTE",
+	}}
+	publisher := NewPublisherRoutesMultiTenant(&mockRabbitMQManager{channel: mockCh}, log.NewNop(), nil, nil)
+
+	ctx := tmcore.ContextWithTenantID(context.Background(), "tenant-123")
+	err := publisher.Publish(ctx, "test-exchange", "job.completed", []byte(`{"status":"completed"}`))
+
+	require.ErrorIs(t, err, libRabbitmq.ErrPublishReturned)
+	assert.Contains(t, err.Error(), "NO_ROUTE")
 }

@@ -7,12 +7,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/LerianStudio/lib-commons/v6/commons"
-	libBackoff "github.com/LerianStudio/lib-commons/v6/commons/backoff"
-	observability "github.com/LerianStudio/lib-observability/v2"
-	libLog "github.com/LerianStudio/lib-observability/v2/log"
-	obsRuntime "github.com/LerianStudio/lib-observability/v2/runtime"
-	libOtel "github.com/LerianStudio/lib-observability/v2/tracing"
+	"github.com/LerianStudio/lib-commons/v7/commons"
+	libBackoff "github.com/LerianStudio/lib-commons/v7/commons/backoff"
+	observability "github.com/LerianStudio/lib-observability/v4"
+	libLog "github.com/LerianStudio/lib-observability/v4/log"
+	obsRuntime "github.com/LerianStudio/lib-observability/v4/runtime"
+	libOtel "github.com/LerianStudio/lib-observability/v4/tracing"
 	"go.opentelemetry.io/otel/attribute"
 	otelmetric "go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/metric/noop"
@@ -230,7 +230,7 @@ func (r *TenantConsumerReconciler) Run(launcher *commons.Launcher) error {
 
 	logger := r.logger
 	if launcher != nil && launcher.Logger != nil {
-		logger = launcher.Logger
+		logger = libLog.Adapt(launcher.Logger)
 	}
 
 	ctx := observability.ContextWithLogger(context.Background(), logger)

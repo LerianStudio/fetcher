@@ -13,10 +13,10 @@ import (
 	modelDatasource "github.com/LerianStudio/fetcher/v2/pkg/model/datasource"
 	modelJob "github.com/LerianStudio/fetcher/v2/pkg/model/job"
 	portDS "github.com/LerianStudio/fetcher/v2/pkg/ports/datasource"
-	libCrypto "github.com/LerianStudio/lib-commons/v6/commons/crypto"
-	observability "github.com/LerianStudio/lib-observability/v2"
-	libLog "github.com/LerianStudio/lib-observability/v2/log"
-	libOtel "github.com/LerianStudio/lib-observability/v2/tracing"
+	libCrypto "github.com/LerianStudio/lib-commons/v7/commons/crypto"
+	observability "github.com/LerianStudio/lib-observability/v4"
+	libLog "github.com/LerianStudio/lib-observability/v4/log"
+	libOtel "github.com/LerianStudio/lib-observability/v4/tracing"
 	"go.opentelemetry.io/otel/attribute"
 )
 

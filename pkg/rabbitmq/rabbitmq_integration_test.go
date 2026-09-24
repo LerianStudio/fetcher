@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	libRabbitmq "github.com/LerianStudio/lib-commons/v6/commons/rabbitmq"
-	libLog "github.com/LerianStudio/lib-observability/v2/log"
+	libRabbitmq "github.com/LerianStudio/lib-commons/v7/commons/rabbitmq"
+	libLog "github.com/LerianStudio/lib-observability/v4/log"
 )
 
 // stressTestConfig groups the RabbitMQ configuration required for the integration test.

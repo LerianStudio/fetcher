@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
-	libConstants "github.com/LerianStudio/lib-commons/v6/commons/constants"
-	tmcore "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/core"
-	libOpentelemetry "github.com/LerianStudio/lib-observability/v2/tracing"
+	libConstants "github.com/LerianStudio/lib-commons/v7/commons/constants"
+	tmcore "github.com/LerianStudio/lib-commons/v7/commons/tenant-manager/core"
+	libOpentelemetry "github.com/LerianStudio/lib-observability/v4/tracing"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 

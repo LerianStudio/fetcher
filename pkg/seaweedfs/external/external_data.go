@@ -4,13 +4,13 @@ import (
 	"context"
 	"fmt"
 
-	observability "github.com/LerianStudio/lib-observability/v2"
+	observability "github.com/LerianStudio/lib-observability/v4"
 
 	portStorage "github.com/LerianStudio/fetcher/v2/pkg/ports/storage"
 	"github.com/LerianStudio/fetcher/v2/pkg/seaweedfs"
-	tms3 "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/s3"
-	libLog "github.com/LerianStudio/lib-observability/v2/log"
-	libOpentelemetry "github.com/LerianStudio/lib-observability/v2/tracing"
+	tms3 "github.com/LerianStudio/lib-commons/v7/commons/tenant-manager/s3"
+	libLog "github.com/LerianStudio/lib-observability/v4/log"
+	libOpentelemetry "github.com/LerianStudio/lib-observability/v4/tracing"
 	"go.opentelemetry.io/otel/attribute"
 )
 

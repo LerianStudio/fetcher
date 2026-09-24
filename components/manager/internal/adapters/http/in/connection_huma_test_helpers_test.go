@@ -13,8 +13,8 @@ import (
 	"github.com/LerianStudio/fetcher/v2/pkg/model"
 	cacheRepo "github.com/LerianStudio/fetcher/v2/pkg/ports/cache"
 	"github.com/LerianStudio/fetcher/v2/pkg/testutil"
-	observability "github.com/LerianStudio/lib-observability/v2"
-	libLog "github.com/LerianStudio/lib-observability/v2/log"
+	observability "github.com/LerianStudio/lib-observability/v4"
+	libLog "github.com/LerianStudio/lib-observability/v4/log"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"

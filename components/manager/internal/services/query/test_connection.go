@@ -16,11 +16,11 @@ import (
 	connRepo "github.com/LerianStudio/fetcher/v2/pkg/ports/connection"
 	"github.com/LerianStudio/fetcher/v2/pkg/resolver"
 
-	tmcore "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/core"
-	valkey "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/valkey"
-	observability "github.com/LerianStudio/lib-observability/v2"
-	libLog "github.com/LerianStudio/lib-observability/v2/log"
-	libOpentelemetry "github.com/LerianStudio/lib-observability/v2/tracing"
+	tmcore "github.com/LerianStudio/lib-commons/v7/commons/tenant-manager/core"
+	valkey "github.com/LerianStudio/lib-commons/v7/commons/tenant-manager/valkey"
+	observability "github.com/LerianStudio/lib-observability/v4"
+	libLog "github.com/LerianStudio/lib-observability/v4/log"
+	libOpentelemetry "github.com/LerianStudio/lib-observability/v4/tracing"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"

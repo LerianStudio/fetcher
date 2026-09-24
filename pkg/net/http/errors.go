@@ -8,7 +8,7 @@ import (
 
 	"github.com/LerianStudio/fetcher/v2/pkg"
 	"github.com/LerianStudio/fetcher/v2/pkg/constant"
-	"github.com/LerianStudio/lib-commons/v6/commons/net/http/problem"
+	"github.com/LerianStudio/lib-commons/v7/commons/net/http/problem"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/gofiber/fiber/v3"

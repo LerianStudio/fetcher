@@ -8,10 +8,11 @@ import (
 	"time"
 
 	"github.com/LerianStudio/fetcher/v2/pkg/crypto"
-	libCircuitBreaker "github.com/LerianStudio/lib-commons/v6/commons/circuitbreaker"
-	libConstants "github.com/LerianStudio/lib-commons/v6/commons/constants"
-	observability "github.com/LerianStudio/lib-observability/v2"
-	libLog "github.com/LerianStudio/lib-observability/v2/log"
+	libCircuitBreaker "github.com/LerianStudio/lib-commons/v7/commons/circuitbreaker"
+	libConstants "github.com/LerianStudio/lib-commons/v7/commons/constants"
+	libRabbitmq "github.com/LerianStudio/lib-commons/v7/commons/rabbitmq"
+	observability "github.com/LerianStudio/lib-observability/v4"
+	libLog "github.com/LerianStudio/lib-observability/v4/log"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -422,9 +423,45 @@ func TestRabbitMQAdapter_ProducerDefault_ReusesConfirmablePublisherWithoutClosin
 	require.Len(t, channel.published, 2)
 	assert.Equal(t, 1, channel.confirmCalls)
 	assert.Equal(t, 1, channel.notifyPublishCalls)
-	assert.Equal(t, 0, channel.notifyReturnCalls)
+	// The confirmable publisher registers one basic.return listener per shared
+	// channel, so an unroutable job event surfaces as an error, not silence.
+	assert.Equal(t, 1, channel.notifyReturnCalls)
 	assert.Equal(t, 0, channel.closeCalls)
 	assert.False(t, channel.closed)
+}
+
+// A broker that hands a message back has answered: the routing key has no
+// queue, the channel is fine. Retrying it, tearing the channel down and
+// counting the failure toward the breaker would let one missing queue stop
+// publishing for every other routing key.
+func TestRabbitMQAdapter_ProducerDefault_UnroutableMessageIsTerminal(t *testing.T) {
+	t.Parallel()
+
+	channel := newTestAMQPChannel()
+	channel.returned = &amqp.Return{
+		Exchange:   "",
+		RoutingKey: "fetcher-jobs",
+		ReplyCode:  312,
+		ReplyText:  "NO_ROUTE",
+	}
+
+	conn := &testRabbitConnection{channel: channel}
+	adapter := newTestAdapter(conn)
+	ctx := testContextWithHeader("req-unroutable")
+
+	publishes := DefaultCircuitBreakerThreshold + 1
+	for range publishes {
+		err := adapter.ProducerDefault(ctx, "", "fetcher-jobs", []byte(`{"n":1}`), nil)
+		require.ErrorIs(t, err, libRabbitmq.ErrPublishReturned)
+		assert.Contains(t, err.Error(), "fetcher-jobs")
+	}
+
+	assert.Equal(t, publishes, channel.publishAttempts, "an unroutable message must not be retried")
+	assert.Equal(t, 0, channel.closeCalls, "the channel is healthy and must not be invalidated")
+	assert.Equal(t, CircuitClosed, adapter.CircuitBreakerState())
+
+	channel.returned = nil
+	require.NoError(t, adapter.ProducerDefault(ctx, "", "fetcher-jobs", []byte(`{"n":2}`), nil))
 }
 
 func TestRabbitMQAdapter_ProducerDefault_RetriesOnFailure(t *testing.T) {

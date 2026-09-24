@@ -14,7 +14,7 @@ import (
 	"github.com/LerianStudio/fetcher/v2/pkg/model"
 	modelDatasource "github.com/LerianStudio/fetcher/v2/pkg/model/datasource"
 	modelJob "github.com/LerianStudio/fetcher/v2/pkg/model/job"
-	libLog "github.com/LerianStudio/lib-observability/v2/log"
+	libLog "github.com/LerianStudio/lib-observability/v4/log"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
