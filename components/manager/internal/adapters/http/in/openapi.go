@@ -64,6 +64,7 @@ func AssembleHumaAPI(
 	api := BuildHumaAPI(app, authEnabled)
 	RegisterHumaOperations(app, api, handlers, middlewareFactory)
 	boundUpstreamSchema(api)
+	dropUnreturnable422(api)
 
 	return api
 }
@@ -116,4 +117,31 @@ func ServeHumaSpec(app *fiber.App, api huma.API, logger libLog.Logger, enabled b
 	}
 
 	openapi.ServeSpec(app, api, logger, "/swagger", DocTitle)
+}
+
+// These operations bind their parameters outside Huma (by hand from the Fiber
+// context, or with SkipValidateParams) and only ever answer 400; the generator
+// stamps 422 on every operation with a restricted parameter. Deleting it here
+// keeps the spec describing the API.
+var unvalidatedParamOperations = map[string]struct{}{
+	"list-connections":             {},
+	"list-unassigned-connections":  {},
+	"assign-connection-to-product": {},
+}
+
+// dropUnreturnable422 removes the 422 response from the operations that never
+// return it, keyed by OperationID so a path rename cannot silently miss them.
+// A path without that verb, or an absent operation, is a no-op.
+func dropUnreturnable422(api huma.API) {
+	for _, item := range api.OpenAPI().Paths {
+		for _, op := range []*huma.Operation{item.Get, item.Post} {
+			if op == nil {
+				continue
+			}
+
+			if _, ok := unvalidatedParamOperations[op.OperationID]; ok {
+				delete(op.Responses, "422")
+			}
+		}
+	}
 }

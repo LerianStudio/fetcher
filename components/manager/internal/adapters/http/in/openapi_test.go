@@ -306,3 +306,31 @@ func TestServeHumaSpec_IsExplicitlyGated(t *testing.T) {
 		})
 	}
 }
+
+// TestAssembleHumaAPI_DropsUnreturnable422 pins the invariant that make
+// check-openapi cannot see: it compares bytes, so deleting the hook and
+// recommitting the regenerated spec would stay green. These operations bind
+// their parameters outside Huma and only ever answer 400.
+func TestAssembleHumaAPI_DropsUnreturnable422(t *testing.T) {
+	doc := AssembleHumaAPI(fiber.New(), true, OperationHandlers{}, nil).OpenAPI()
+
+	for _, tc := range []struct {
+		op *huma.Operation
+		id string
+	}{
+		{doc.Paths["/v1/management/connections"].Get, "list-connections"},
+		{doc.Paths["/v1/management/connections/unassigned"].Get, "list-unassigned-connections"},
+		{doc.Paths["/v1/management/connections/{id}/assign"].Post, "assign-connection-to-product"},
+	} {
+		require.NotNil(t, tc.op, tc.id)
+		assert.Equal(t, tc.id, tc.op.OperationID)
+		assert.NotContains(t, tc.op.Responses, "422", tc.id)
+		assert.Contains(t, tc.op.Responses, "400", tc.id)
+	}
+
+	// validate-schema declares 422 itself and does answer it.
+	validateSchema := doc.Paths["/v1/management/connections/validate-schema"].Post
+	require.NotNil(t, validateSchema)
+	assert.Equal(t, "validate-schema", validateSchema.OperationID)
+	assert.Contains(t, validateSchema.Responses, "422")
+}
