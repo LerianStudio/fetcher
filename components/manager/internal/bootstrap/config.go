@@ -33,6 +33,7 @@ import (
 
 	"github.com/LerianStudio/lib-auth/v4/auth/middleware"
 	libCommons "github.com/LerianStudio/lib-commons/v7/commons"
+	"github.com/LerianStudio/lib-commons/v7/commons/buildinfo"
 	libMongo "github.com/LerianStudio/lib-commons/v7/commons/mongo"
 	libRabbitmq "github.com/LerianStudio/lib-commons/v7/commons/rabbitmq"
 	tmclient "github.com/LerianStudio/lib-commons/v7/commons/tenant-manager/client"
@@ -67,7 +68,6 @@ type Config struct {
 	// Otel and telemetry configuration envs
 	OtelServiceName         string `env:"OTEL_RESOURCE_SERVICE_NAME" envDefault:"fetcher"`
 	OtelLibraryName         string `env:"OTEL_LIBRARY_NAME"`
-	OtelServiceVersion      string `env:"OTEL_RESOURCE_SERVICE_VERSION"`
 	OtelDeploymentEnv       string `env:"OTEL_RESOURCE_DEPLOYMENT_ENVIRONMENT"`
 	OtelColExporterEndpoint string `env:"OTEL_EXPORTER_OTLP_ENDPOINT"`
 	EnableTelemetry         bool   `env:"ENABLE_TELEMETRY"`
@@ -309,7 +309,8 @@ func initLoggerAndTelemetry(cfg *Config) (libLog.Logger, *libOtel.Telemetry, err
 	telemetry, err := newManagerTelemetry(libOtel.TelemetryConfig{
 		LibraryName:               cfg.OtelLibraryName,
 		ServiceName:               cfg.OtelServiceName,
-		ServiceVersion:            cfg.OtelServiceVersion,
+		ServiceVersion:            buildinfo.Get().Version,
+		ServiceRevision:           buildinfo.Get().Revision,
 		DeploymentEnv:             cfg.OtelDeploymentEnv,
 		CollectorExporterEndpoint: cfg.OtelColExporterEndpoint,
 		EnableTelemetry:           cfg.EnableTelemetry,
@@ -1187,15 +1188,10 @@ func newReadyzConfig(cfg *Config) *readyz.Config {
 		mode = readyz.DeploymentModeLocal
 	}
 
-	version := cfg.OtelServiceVersion
-	if version == "" {
-		version = "unknown"
-	}
-
 	return &readyz.Config{
 		DeploymentMode: mode,
 		DrainDelay:     drain,
-		Identity:       readyz.Identity{Version: version},
+		Identity:       readyz.IdentityFromBuild(),
 	}
 }
 

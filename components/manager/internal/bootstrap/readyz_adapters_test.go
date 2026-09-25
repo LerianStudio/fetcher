@@ -111,9 +111,6 @@ func TestNewReadyzConfig_NilCfg_FallsBackToLoadConfig(t *testing.T) {
 	require.NotPanics(t, func() {
 		got := newReadyzConfig(nil)
 		require.NotNil(t, got)
-		// Sanity: LoadConfig sets Version (defaulting to "unknown" in absence
-		// of OTEL_RESOURCE_SERVICE_VERSION / VERSION).
-		assert.NotEmpty(t, got.Version)
 	})
 }
 

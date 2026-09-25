@@ -25,6 +25,7 @@ import (
 	pkgStreaming "github.com/LerianStudio/fetcher/v2/pkg/streaming"
 
 	libCommons "github.com/LerianStudio/lib-commons/v7/commons"
+	"github.com/LerianStudio/lib-commons/v7/commons/buildinfo"
 	libCircuitBreaker "github.com/LerianStudio/lib-commons/v7/commons/circuitbreaker"
 	mongoDB "github.com/LerianStudio/lib-commons/v7/commons/mongo"
 	libOutbox "github.com/LerianStudio/lib-commons/v7/commons/outbox"
@@ -75,7 +76,6 @@ type Config struct {
 	// Otel Collector configurations
 	OtelServiceName         string `env:"OTEL_RESOURCE_SERVICE_NAME" envDefault:"fetcher-worker"`
 	OtelLibraryName         string `env:"OTEL_LIBRARY_NAME"`
-	OtelServiceVersion      string `env:"OTEL_RESOURCE_SERVICE_VERSION"`
 	OtelDeploymentEnv       string `env:"OTEL_RESOURCE_DEPLOYMENT_ENVIRONMENT"`
 	OtelColExporterEndpoint string `env:"OTEL_EXPORTER_OTLP_ENDPOINT"`
 	EnableTelemetry         bool   `env:"ENABLE_TELEMETRY"`
@@ -886,7 +886,8 @@ func initObservability(cfg *Config) (libLog.Logger, *libOtel.Telemetry, error) {
 	telemetry, err := newTelemetry(libOtel.TelemetryConfig{
 		LibraryName:               cfg.OtelLibraryName,
 		ServiceName:               cfg.OtelServiceName,
-		ServiceVersion:            cfg.OtelServiceVersion,
+		ServiceVersion:            buildinfo.Get().Version,
+		ServiceRevision:           buildinfo.Get().Revision,
 		DeploymentEnv:             cfg.OtelDeploymentEnv,
 		CollectorExporterEndpoint: cfg.OtelColExporterEndpoint,
 		EnableTelemetry:           cfg.EnableTelemetry,

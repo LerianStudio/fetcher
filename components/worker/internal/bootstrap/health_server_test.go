@@ -40,7 +40,6 @@ func TestHealthServer_ServesReadyzWithNilDeps(t *testing.T) {
 		HealthPort:          4007,
 		DeploymentMode:      "local",
 		ReadyzDrainDelaySec: 12,
-		OtelServiceVersion:  "test-v1",
 	}
 	srv := NewHealthServer(cfg, nil, nil, nil)
 
@@ -58,7 +57,7 @@ func TestHealthServer_ServesReadyzWithNilDeps(t *testing.T) {
 	require.NoError(t, json.Unmarshal(body, &parsed))
 
 	assert.Equal(t, readyz.TopStatusHealthy, parsed.Status)
-	assert.Equal(t, "test-v1", parsed.Version)
+	assert.Equal(t, "dev", parsed.Version)
 	assert.Equal(t, "local", parsed.DeploymentMode)
 	assert.Empty(t, parsed.Checks)
 }
@@ -236,7 +235,8 @@ func TestNewWorkerReadyzConfig_AppliesDefaults(t *testing.T) {
 	assert.Equal(t, readyz.DeploymentModeLocal, got.DeploymentMode)
 	assert.Equal(t, defaultHealthPort, got.HealthPort)
 	assert.Equal(t, defaultReadyzDrainDelay, got.DrainDelay)
-	assert.Equal(t, "unknown", got.Version)
+	// The test binary carries no -X stamp, so the identity is the FC-1 fallback.
+	assert.Equal(t, readyz.Identity{Version: "dev", Revision: "unknown", BuildTime: "unknown"}, got.Identity)
 }
 
 func TestNewWorkerReadyzConfig_HonoursCustomValues(t *testing.T) {
@@ -244,12 +244,10 @@ func TestNewWorkerReadyzConfig_HonoursCustomValues(t *testing.T) {
 		DeploymentMode:      "saas",
 		HealthPort:          8080,
 		ReadyzDrainDelaySec: 20,
-		OtelServiceVersion:  "9.9.9",
 	}
 	got := newWorkerReadyzConfig(cfg)
 
 	assert.Equal(t, readyz.DeploymentModeSaaS, got.DeploymentMode)
 	assert.Equal(t, 8080, got.HealthPort)
 	assert.Equal(t, 20*time.Second, got.DrainDelay)
-	assert.Equal(t, "9.9.9", got.Version)
 }

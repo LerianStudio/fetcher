@@ -148,11 +148,6 @@ func newWorkerReadyzConfig(cfg *Config) *readyz.Config {
 
 	drain := defaultDrain(cfg.ReadyzDrainDelaySec)
 
-	version := cfg.OtelServiceVersion
-	if version == "" {
-		version = "unknown"
-	}
-
 	port := cfg.HealthPort
 	if port <= 0 || port > 65535 {
 		port = defaultHealthPort
@@ -162,6 +157,6 @@ func newWorkerReadyzConfig(cfg *Config) *readyz.Config {
 		DeploymentMode: mode,
 		HealthPort:     port,
 		DrainDelay:     drain,
-		Identity:       readyz.Identity{Version: version},
+		Identity:       readyz.IdentityFromBuild(),
 	}
 }
