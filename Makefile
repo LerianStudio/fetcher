@@ -261,7 +261,7 @@ build-manager:
 	@mkdir -p $(ARTIFACTS_DIR)/docker/manager
 	@CGO_ENABLED=0 GOOS=linux go build -tags netgo \
 	  -ldflags='-w -s -extldflags "-static"' \
-	  -o $(ARTIFACTS_DIR)/docker/manager/manager ./components/manager/cmd/app/main.go
+	  -o $(ARTIFACTS_DIR)/docker/manager/manager ./components/manager/cmd/app
 	@docker build -t $(MANAGER_IMAGE) -f components/manager/Dockerfile.local .
 	@echo "[ok] Manager image built successfully ($(MANAGER_IMAGE))"
 
@@ -271,7 +271,7 @@ build-worker:
 	@mkdir -p $(ARTIFACTS_DIR)/docker/worker
 	@CGO_ENABLED=0 GOOS=linux go build -tags netgo \
 	  -ldflags='-w -s -extldflags "-static"' \
-	  -o $(ARTIFACTS_DIR)/docker/worker/worker ./components/worker/cmd/app/main.go
+	  -o $(ARTIFACTS_DIR)/docker/worker/worker ./components/worker/cmd/app
 	@docker build -t $(WORKER_IMAGE) -f components/worker/Dockerfile.local .
 	@echo "[ok] Worker image built successfully ($(WORKER_IMAGE))"
 

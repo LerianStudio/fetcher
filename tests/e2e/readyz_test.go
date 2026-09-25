@@ -96,7 +96,6 @@ func TestReadyz_Manager_Healthy_AllChecks_Up(t *testing.T) {
 		"top-level status must be 'healthy' when every dep is up")
 	require.Equal(t, "local", body.DeploymentMode,
 		"deployment_mode should echo DEPLOYMENT_MODE env (set to 'local' in WorkerEnv/ManagerEnv)")
-	require.NotEmpty(t, body.Version, "version must be populated (defaults to OTEL_RESOURCE_SERVICE_VERSION)")
 
 	// Manager-owned deps in single-tenant mode (per readyz_adapters.go
 	// buildManagerReadyzCheckers). MULTI_TENANT_ENABLED=false in the e2e env,

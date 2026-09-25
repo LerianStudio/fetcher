@@ -16,6 +16,9 @@ jobs:
   pipeline:
     uses: LerianStudio/github-actions-shared-workflows/.github/workflows/go-release.yml@tier-2
     with:
+      # Fails the release when either component Dockerfile loses its ARG
+      # REVISION, so an image without a compiled identity cannot ship.
+      require_build_identity: true
       enable_changelog: ${{ github.ref == 'refs/heads/main' }}
       release_single_app: true
       app_name_prefix: "fetcher"

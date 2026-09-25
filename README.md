@@ -231,9 +231,11 @@ Lerian Fetcher is built as a cloud-native platform following Hexagonal Architect
 |--------|----------|-------------|
 | `GET` | `/health` | Liveness check |
 | `GET` | `/readyz` | Readiness check — parallel dependency probes (MongoDB, RabbitMQ, Redis; S3 on Worker), returns 503 while draining on SIGTERM |
-| `GET` | `/version` | Version info |
+| `GET` | `/version` | Compiled build identity (version, revision, build time) — lib-commons `buildinfo` JSON, no dependency manifest |
 | `GET` | `/swagger/docs` | Scalar API reference (`SWAGGER_ENABLED=true`) |
 | `GET` | `/swagger/openapi.{json,yaml}` | OpenAPI 3.1 contract (`SWAGGER_ENABLED=true`) |
+
+The Worker answers the same `/version` alongside its probes on `HEALTH_PORT` (default `4007`). The identity is stamped into the binary at image build time; a binary built without the release build args reports `"version": "dev"`, and `revision` falls back to the Go VCS stamp of the checkout, reading `"unknown"` only when no VCS metadata is available either (the Dockerfiles pass `-buildvcs=false`). The dependency manifest is not in the HTTP body — read it with `docker run <image> --version`, or `kubectl exec <pod> -- /app/manager --version` in a cluster.
 
 ### API Reference & Testing
 

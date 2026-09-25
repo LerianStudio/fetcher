@@ -25,6 +25,7 @@ import (
 	pkgStreaming "github.com/LerianStudio/fetcher/v2/pkg/streaming"
 
 	libCommons "github.com/LerianStudio/lib-commons/v7/commons"
+	"github.com/LerianStudio/lib-commons/v7/commons/buildinfo"
 	libCircuitBreaker "github.com/LerianStudio/lib-commons/v7/commons/circuitbreaker"
 	mongoDB "github.com/LerianStudio/lib-commons/v7/commons/mongo"
 	libOutbox "github.com/LerianStudio/lib-commons/v7/commons/outbox"
@@ -73,9 +74,8 @@ type Config struct {
 	RabbitMQTLS                              bool   `env:"RABBITMQ_TLS" default:"false"`
 	RabbitMQAllowLegacyBodySignatureFallback bool   `env:"RABBITMQ_ALLOW_LEGACY_BODY_SIGNATURE_FALLBACK" default:"false"`
 	// Otel Collector configurations
-	OtelServiceName         string `env:"OTEL_RESOURCE_SERVICE_NAME"`
+	OtelServiceName         string `env:"OTEL_RESOURCE_SERVICE_NAME" envDefault:"fetcher-worker"`
 	OtelLibraryName         string `env:"OTEL_LIBRARY_NAME"`
-	OtelServiceVersion      string `env:"OTEL_RESOURCE_SERVICE_VERSION"`
 	OtelDeploymentEnv       string `env:"OTEL_RESOURCE_DEPLOYMENT_ENVIRONMENT"`
 	OtelColExporterEndpoint string `env:"OTEL_EXPORTER_OTLP_ENDPOINT"`
 	EnableTelemetry         bool   `env:"ENABLE_TELEMETRY"`
@@ -868,6 +868,24 @@ func buildStreamingOutboxDispatcher(ctx context.Context, logger libLog.Logger, t
 	return dispatcher, nil
 }
 
+// workerTelemetryConfig is the OTel resource the worker publishes. Pure, so a
+// test can read the identity it carries without starting telemetry.
+func workerTelemetryConfig(cfg *Config, logger libLog.Logger) libOtel.TelemetryConfig {
+	build := buildinfo.Get()
+
+	return libOtel.TelemetryConfig{
+		LibraryName:               cfg.OtelLibraryName,
+		ServiceName:               cfg.OtelServiceName,
+		ServiceVersion:            build.Version,
+		ServiceRevision:           build.Revision,
+		DeploymentEnv:             cfg.OtelDeploymentEnv,
+		CollectorExporterEndpoint: cfg.OtelColExporterEndpoint,
+		EnableTelemetry:           cfg.EnableTelemetry,
+		InsecureExporter:          cfg.OtelInsecureExporter,
+		Logger:                    logger,
+	}
+}
+
 // initObservability initializes the logger and telemetry pipeline.
 func initObservability(cfg *Config) (libLog.Logger, *libOtel.Telemetry, error) {
 	logger, err := newZapLogger(libZap.Config{
@@ -883,16 +901,7 @@ func initObservability(cfg *Config) (libLog.Logger, *libOtel.Telemetry, error) {
 		return nil, nil, err
 	}
 
-	telemetry, err := newTelemetry(libOtel.TelemetryConfig{
-		LibraryName:               cfg.OtelLibraryName,
-		ServiceName:               cfg.OtelServiceName,
-		ServiceVersion:            cfg.OtelServiceVersion,
-		DeploymentEnv:             cfg.OtelDeploymentEnv,
-		CollectorExporterEndpoint: cfg.OtelColExporterEndpoint,
-		EnableTelemetry:           cfg.EnableTelemetry,
-		InsecureExporter:          cfg.OtelInsecureExporter,
-		Logger:                    logger,
-	})
+	telemetry, err := newTelemetry(workerTelemetryConfig(cfg, logger))
 	if err != nil {
 		return nil, nil, fmt.Errorf("initialize telemetry: %w", err)
 	}

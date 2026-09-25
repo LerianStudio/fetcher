@@ -33,6 +33,7 @@ import (
 
 	"github.com/LerianStudio/lib-auth/v4/auth/middleware"
 	libCommons "github.com/LerianStudio/lib-commons/v7/commons"
+	"github.com/LerianStudio/lib-commons/v7/commons/buildinfo"
 	libMongo "github.com/LerianStudio/lib-commons/v7/commons/mongo"
 	libRabbitmq "github.com/LerianStudio/lib-commons/v7/commons/rabbitmq"
 	tmclient "github.com/LerianStudio/lib-commons/v7/commons/tenant-manager/client"
@@ -65,9 +66,8 @@ type Config struct {
 	ServerAddress string `env:"SERVER_ADDRESS"`
 	LogLevel      string `env:"LOG_LEVEL"`
 	// Otel and telemetry configuration envs
-	OtelServiceName         string `env:"OTEL_RESOURCE_SERVICE_NAME"`
+	OtelServiceName         string `env:"OTEL_RESOURCE_SERVICE_NAME" envDefault:"fetcher"`
 	OtelLibraryName         string `env:"OTEL_LIBRARY_NAME"`
-	OtelServiceVersion      string `env:"OTEL_RESOURCE_SERVICE_VERSION"`
 	OtelDeploymentEnv       string `env:"OTEL_RESOURCE_DEPLOYMENT_ENVIRONMENT"`
 	OtelColExporterEndpoint string `env:"OTEL_EXPORTER_OTLP_ENDPOINT"`
 	EnableTelemetry         bool   `env:"ENABLE_TELEMETRY"`
@@ -306,16 +306,7 @@ func initLoggerAndTelemetry(cfg *Config) (libLog.Logger, *libOtel.Telemetry, err
 		return nil, nil, err
 	}
 
-	telemetry, err := newManagerTelemetry(libOtel.TelemetryConfig{
-		LibraryName:               cfg.OtelLibraryName,
-		ServiceName:               cfg.OtelServiceName,
-		ServiceVersion:            cfg.OtelServiceVersion,
-		DeploymentEnv:             cfg.OtelDeploymentEnv,
-		CollectorExporterEndpoint: cfg.OtelColExporterEndpoint,
-		EnableTelemetry:           cfg.EnableTelemetry,
-		InsecureExporter:          cfg.OtelInsecureExporter,
-		Logger:                    logger,
-	})
+	telemetry, err := newManagerTelemetry(managerTelemetryConfig(cfg, logger))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -327,6 +318,24 @@ func initLoggerAndTelemetry(cfg *Config) (libLog.Logger, *libOtel.Telemetry, err
 	obsRuntime.InitPanicMetrics(telemetry.MetricsFactory, logger)
 
 	return logger, telemetry, nil
+}
+
+// managerTelemetryConfig is the OTel resource the manager publishes. Pure, so
+// a test can read the identity it carries without starting telemetry.
+func managerTelemetryConfig(cfg *Config, logger libLog.Logger) libOtel.TelemetryConfig {
+	build := buildinfo.Get()
+
+	return libOtel.TelemetryConfig{
+		LibraryName:               cfg.OtelLibraryName,
+		ServiceName:               cfg.OtelServiceName,
+		ServiceVersion:            build.Version,
+		ServiceRevision:           build.Revision,
+		DeploymentEnv:             cfg.OtelDeploymentEnv,
+		CollectorExporterEndpoint: cfg.OtelColExporterEndpoint,
+		EnableTelemetry:           cfg.EnableTelemetry,
+		InsecureExporter:          cfg.OtelInsecureExporter,
+		Logger:                    logger,
+	}
 }
 
 func initMongoRepositories(ctx context.Context, cfg *Config, logger libLog.Logger) (*managerRepositories, error) {
@@ -690,6 +699,7 @@ func assembleService(
 		readyzHandler,
 		tenantFiberHandler,
 		readyz.NewMetricsHandler(),
+		cfg.OtelServiceName,
 		cfg.SwaggerEnabled,
 	)
 	if err != nil {
@@ -1186,15 +1196,10 @@ func newReadyzConfig(cfg *Config) *readyz.Config {
 		mode = readyz.DeploymentModeLocal
 	}
 
-	version := cfg.OtelServiceVersion
-	if version == "" {
-		version = "unknown"
-	}
-
 	return &readyz.Config{
 		DeploymentMode: mode,
 		DrainDelay:     drain,
-		Version:        version,
+		Identity:       readyz.IdentityFromBuild(),
 	}
 }
 

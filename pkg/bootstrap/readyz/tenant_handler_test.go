@@ -77,7 +77,7 @@ func TestTenantHandler_HappyPath(t *testing.T) {
 	mongoCk := &staticTenantChecker{name: "mongodb", check: DependencyCheck{Status: StatusUp}}
 	rabbitCk := &staticTenantChecker{name: "rabbitmq", check: DependencyCheck{Status: StatusUp}}
 
-	cfg := &Config{DeploymentMode: DeploymentModeLocal, Version: "v1.0.0"}
+	cfg := &Config{DeploymentMode: DeploymentModeLocal, Identity: Identity{Version: "v1.0.0"}}
 	h := NewTenantHandler(cfg, tm, "fetcher", mongoCk, rabbitCk)
 	app := newApp(h)
 

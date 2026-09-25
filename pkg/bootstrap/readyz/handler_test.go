@@ -43,7 +43,7 @@ func baseCfg() *Config {
 		DeploymentMode: DeploymentModeLocal,
 		HealthPort:     4007,
 		DrainDelay:     12 * time.Second,
-		Version:        "test-1.0.0",
+		Identity:       Identity{Version: "test-1.0.0", Revision: "test-rev", BuildTime: "test-time"},
 	}
 }
 
@@ -70,6 +70,8 @@ func TestHandler_Run_AllUp_IsHealthy(t *testing.T) {
 
 	assert.Equal(t, TopStatusHealthy, resp.Status)
 	assert.Equal(t, "test-1.0.0", resp.Version)
+	assert.Equal(t, "test-rev", resp.Revision)
+	assert.Equal(t, "test-time", resp.BuildTime)
 	assert.Equal(t, DeploymentModeLocal, resp.DeploymentMode)
 	require.Contains(t, resp.Checks, "mongodb")
 	require.Contains(t, resp.Checks, "redis")
@@ -244,6 +246,8 @@ func TestHandler_Fiber_HealthyPath_Returns200(t *testing.T) {
 	require.NoError(t, json.Unmarshal(body, &parsed))
 	assert.Equal(t, TopStatusHealthy, parsed.Status)
 	assert.Equal(t, "test-1.0.0", parsed.Version)
+	assert.Equal(t, "test-rev", parsed.Revision)
+	assert.Equal(t, "test-time", parsed.BuildTime)
 	assert.Equal(t, DeploymentModeLocal, parsed.DeploymentMode)
 }
 

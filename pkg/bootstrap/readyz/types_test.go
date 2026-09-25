@@ -102,7 +102,7 @@ func TestReadyzResponse_JSON_HealthyShape(t *testing.T) {
 			"mongodb": {Status: StatusUp, LatencyMs: 3, TLS: TLSPtr(true)},
 			"redis":   {Status: StatusSkipped, Reason: "REDIS_ENABLED=false"},
 		},
-		Version:        "1.2.3",
+		Identity:       Identity{Version: "1.2.3", Revision: "abc123", BuildTime: "2026-09-24T00:00:00Z"},
 		DeploymentMode: DeploymentModeSaaS,
 	}
 
@@ -112,6 +112,8 @@ func TestReadyzResponse_JSON_HealthyShape(t *testing.T) {
 	s := string(body)
 	assert.True(t, strings.Contains(s, `"status":"healthy"`), s)
 	assert.Contains(t, s, `"version":"1.2.3"`)
+	assert.Contains(t, s, `"revision":"abc123"`)
+	assert.Contains(t, s, `"buildTime":"2026-09-24T00:00:00Z"`)
 	assert.Contains(t, s, `"deployment_mode":"saas"`)
 	assert.Contains(t, s, `"mongodb"`)
 	assert.Contains(t, s, `"redis"`)

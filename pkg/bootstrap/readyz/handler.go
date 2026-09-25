@@ -69,7 +69,7 @@ func (h *Handler) Run(ctx context.Context) ReadyzResponse {
 		return ReadyzResponse{
 			Status:         TopStatusHealthy,
 			Checks:         checks,
-			Version:        h.cfg.Version,
+			Identity:       h.cfg.Identity,
 			DeploymentMode: h.cfg.DeploymentMode,
 		}
 	}
@@ -124,7 +124,7 @@ func (h *Handler) Run(ctx context.Context) ReadyzResponse {
 	return ReadyzResponse{
 		Status:         aggregateStatus(checks),
 		Checks:         checks,
-		Version:        h.cfg.Version,
+		Identity:       h.cfg.Identity,
 		DeploymentMode: h.cfg.DeploymentMode,
 	}
 }
@@ -185,7 +185,7 @@ func (h *Handler) buildDrainingResponse() ReadyzResponse {
 				Reason: "graceful drain in progress",
 			},
 		},
-		Version:        h.cfg.Version,
+		Identity:       h.cfg.Identity,
 		DeploymentMode: h.cfg.DeploymentMode,
 	}
 }

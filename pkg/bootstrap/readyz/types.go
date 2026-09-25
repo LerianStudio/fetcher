@@ -26,6 +26,16 @@ type DependencyCheck struct {
 	BreakerState string `json:"breaker_state,omitempty"`
 }
 
+// Identity is the build identity compiled into the process, repeated in the
+// /readyz body so an operator reads version and revision without a second
+// request. Field names follow the /version contract, not the snake_case of
+// the neighbouring keys.
+type Identity struct {
+	Version   string `json:"version"`
+	Revision  string `json:"revision"`
+	BuildTime string `json:"buildTime"`
+}
+
 // ReadyzResponse is the top-level /readyz response.
 //
 // Status is "healthy" iff every entry in Checks has Status in
@@ -33,11 +43,11 @@ type DependencyCheck struct {
 // and HTTP 503. TenantID is populated only on /readyz/tenant/:id and
 // omitted from the global response to keep the shape stable for dashboards.
 type ReadyzResponse struct {
-	Status         string                     `json:"status"`
-	Checks         map[string]DependencyCheck `json:"checks"`
-	Version        string                     `json:"version"`
-	DeploymentMode string                     `json:"deployment_mode"`
-	TenantID       string                     `json:"tenant_id,omitempty"`
+	Status string                     `json:"status"`
+	Checks map[string]DependencyCheck `json:"checks"`
+	Identity
+	DeploymentMode string `json:"deployment_mode"`
+	TenantID       string `json:"tenant_id,omitempty"`
 }
 
 const (

@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/LerianStudio/lib-commons/v7/commons/buildinfo"
 )
 
 // DeploymentMode values drive SaaS-specific TLS enforcement.
@@ -36,9 +38,9 @@ type Config struct {
 	// teardown.
 	DrainDelay time.Duration
 
-	// Version is resolved once at startup and emitted in every /readyz
+	// Identity is the compiled build identity, emitted in every /readyz
 	// response.
-	Version string
+	Identity
 }
 
 // LoadConfig falls back to sane defaults on missing or invalid input rather
@@ -49,7 +51,7 @@ func LoadConfig() *Config {
 		DeploymentMode: resolveDeploymentMode(os.Getenv("DEPLOYMENT_MODE")),
 		HealthPort:     resolveHealthPort(os.Getenv("HEALTH_PORT")),
 		DrainDelay:     resolveDrainDelay(os.Getenv("READYZ_DRAIN_DELAY_SEC")),
-		Version:        resolveVersion(),
+		Identity:       IdentityFromBuild(),
 	}
 }
 
@@ -104,17 +106,11 @@ func resolveDrainDelay(v string) time.Duration {
 	return time.Duration(parsed) * time.Second
 }
 
-// resolveVersion picks the service version from OTEL_RESOURCE_SERVICE_VERSION
-// (source of truth for OTEL resource attributes), falling back to VERSION
-// for legacy compatibility, then "unknown".
-func resolveVersion() string {
-	if v := strings.TrimSpace(os.Getenv("OTEL_RESOURCE_SERVICE_VERSION")); v != "" {
-		return v
-	}
+// IdentityFromBuild reads the identity linked into the binary. Callers that
+// build a Config by hand use it so every /readyz answers the same values as
+// /version.
+func IdentityFromBuild() Identity {
+	b := buildinfo.Get()
 
-	if v := strings.TrimSpace(os.Getenv("VERSION")); v != "" {
-		return v
-	}
-
-	return "unknown"
+	return Identity{Version: b.Version, Revision: b.Revision, BuildTime: b.BuildTime}
 }
