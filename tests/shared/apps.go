@@ -229,7 +229,7 @@ func (e *AppEnv) WorkerEnv() map[string]string {
 		"STREAMING_CLOUDEVENTS_SOURCE":         "fetcher",
 		"LOG_LEVEL":                            "debug",
 		"ENABLE_TELEMETRY":                     "true",
-		"OTEL_RESOURCE_SERVICE_NAME":           "fetcher",
+		"OTEL_RESOURCE_SERVICE_NAME":           "fetcher-worker",
 		"OTEL_LIBRARY_NAME":                    "github.com/LerianStudio/fetcher/v2",
 		"OTEL_RESOURCE_SERVICE_VERSION":        "v1.0.0",
 		"OTEL_RESOURCE_DEPLOYMENT_ENVIRONMENT": "development",

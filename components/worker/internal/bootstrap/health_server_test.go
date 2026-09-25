@@ -81,6 +81,7 @@ func TestHealthServer_ServesHealthAndMetrics(t *testing.T) {
 		want int
 	}{
 		{"/health", fiber.StatusOK},
+		{"/version", fiber.StatusOK},
 		{"/metrics", fiber.StatusOK},
 		{"/readyz/tenant/foo", fiber.StatusBadRequest},
 	}

@@ -73,7 +73,7 @@ type Config struct {
 	RabbitMQTLS                              bool   `env:"RABBITMQ_TLS" default:"false"`
 	RabbitMQAllowLegacyBodySignatureFallback bool   `env:"RABBITMQ_ALLOW_LEGACY_BODY_SIGNATURE_FALLBACK" default:"false"`
 	// Otel Collector configurations
-	OtelServiceName         string `env:"OTEL_RESOURCE_SERVICE_NAME"`
+	OtelServiceName         string `env:"OTEL_RESOURCE_SERVICE_NAME" envDefault:"fetcher-worker"`
 	OtelLibraryName         string `env:"OTEL_LIBRARY_NAME"`
 	OtelServiceVersion      string `env:"OTEL_RESOURCE_SERVICE_VERSION"`
 	OtelDeploymentEnv       string `env:"OTEL_RESOURCE_DEPLOYMENT_ENVIRONMENT"`

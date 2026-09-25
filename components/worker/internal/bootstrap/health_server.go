@@ -7,6 +7,7 @@ import (
 
 	"github.com/LerianStudio/fetcher/v2/pkg/bootstrap/readyz"
 	libCommons "github.com/LerianStudio/lib-commons/v7/commons"
+	"github.com/LerianStudio/lib-commons/v7/commons/buildinfo"
 	libCommonsServer "github.com/LerianStudio/lib-commons/v7/commons/server"
 	libLog "github.com/LerianStudio/lib-observability/v4/log"
 	libOtel "github.com/LerianStudio/lib-observability/v4/tracing"
@@ -14,6 +15,10 @@ import (
 )
 
 const defaultHealthPort = 4007
+
+// defaultWorkerServiceName matches OTEL_RESOURCE_SERVICE_NAME's envDefault, so
+// the nil-cfg seam reports the same name a loaded Config would.
+const defaultWorkerServiceName = "fetcher-worker"
 
 // defaultReadyzDrainDelay matches the default kube-proxy sync window.
 const defaultReadyzDrainDelay = 12 * time.Second
@@ -32,7 +37,7 @@ func defaultDrain(sec int) time.Duration {
 }
 
 // HealthServer is a worker-side micro-HTTP server that exposes /health,
-// /readyz, /readyz/tenant/:id and /metrics. The worker is a RabbitMQ
+// /readyz, /readyz/tenant/:id, /metrics and /version. The worker is a RabbitMQ
 // consumer with no primary HTTP server, but Kubernetes still needs a
 // readiness endpoint to schedule tenant events and reap dead pods.
 // It runs under the same Launcher lifecycle as the consumer, so a single
@@ -50,7 +55,8 @@ type HealthServer struct {
 	telemetry *libOtel.Telemetry
 }
 
-// NewHealthServer mounts /health, /readyz, /readyz/tenant/:id and /metrics.
+// NewHealthServer mounts /health, /readyz, /readyz/tenant/:id, /metrics and
+// /version.
 // /readyz/tenant/:id falls back to a 400 disabled handler when MT is off or
 // any MT prerequisite is missing. deps may be nil — the server still works
 // with an empty checker set, so a misconfigured bootstrap is not fatal.
@@ -79,6 +85,11 @@ func NewHealthServer(
 	app.Get("/readyz", handler.Fiber())
 	app.Get("/readyz/tenant/:id", buildWorkerTenantHandler(readyzCfg, deps))
 	app.Get("/metrics", readyz.NewMetricsHandler())
+
+	// Same unauthenticated probe surface and port as /health and /readyz: the
+	// body is the lib's build identity (FC-3), and the dependency manifest is
+	// not served here, only through "worker --version".
+	app.Get("/version", buildinfo.Handler(workerServiceName(cfg)))
 
 	// readyzCfg.HealthPort is already normalised so misconfigured values
 	// (0, negative, >65535) collapse to the safe default rather than
@@ -109,6 +120,16 @@ func (s *HealthServer) Run(_ *libCommons.Launcher) error {
 	manager.StartWithGracefulShutdown()
 
 	return nil
+}
+
+// workerServiceName is the same name that feeds the OTel resource. A nil cfg
+// is the test seam newWorkerReadyzConfig already tolerates.
+func workerServiceName(cfg *Config) string {
+	if cfg == nil {
+		return defaultWorkerServiceName
+	}
+
+	return cfg.OtelServiceName
 }
 
 // newWorkerReadyzConfig forwards the worker's Config into readyz.Config,
