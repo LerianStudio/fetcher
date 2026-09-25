@@ -306,17 +306,7 @@ func initLoggerAndTelemetry(cfg *Config) (libLog.Logger, *libOtel.Telemetry, err
 		return nil, nil, err
 	}
 
-	telemetry, err := newManagerTelemetry(libOtel.TelemetryConfig{
-		LibraryName:               cfg.OtelLibraryName,
-		ServiceName:               cfg.OtelServiceName,
-		ServiceVersion:            buildinfo.Get().Version,
-		ServiceRevision:           buildinfo.Get().Revision,
-		DeploymentEnv:             cfg.OtelDeploymentEnv,
-		CollectorExporterEndpoint: cfg.OtelColExporterEndpoint,
-		EnableTelemetry:           cfg.EnableTelemetry,
-		InsecureExporter:          cfg.OtelInsecureExporter,
-		Logger:                    logger,
-	})
+	telemetry, err := newManagerTelemetry(managerTelemetryConfig(cfg, logger))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -328,6 +318,24 @@ func initLoggerAndTelemetry(cfg *Config) (libLog.Logger, *libOtel.Telemetry, err
 	obsRuntime.InitPanicMetrics(telemetry.MetricsFactory, logger)
 
 	return logger, telemetry, nil
+}
+
+// managerTelemetryConfig is the OTel resource the manager publishes. Pure, so
+// a test can read the identity it carries without starting telemetry.
+func managerTelemetryConfig(cfg *Config, logger libLog.Logger) libOtel.TelemetryConfig {
+	build := buildinfo.Get()
+
+	return libOtel.TelemetryConfig{
+		LibraryName:               cfg.OtelLibraryName,
+		ServiceName:               cfg.OtelServiceName,
+		ServiceVersion:            build.Version,
+		ServiceRevision:           build.Revision,
+		DeploymentEnv:             cfg.OtelDeploymentEnv,
+		CollectorExporterEndpoint: cfg.OtelColExporterEndpoint,
+		EnableTelemetry:           cfg.EnableTelemetry,
+		InsecureExporter:          cfg.OtelInsecureExporter,
+		Logger:                    logger,
+	}
 }
 
 func initMongoRepositories(ctx context.Context, cfg *Config, logger libLog.Logger) (*managerRepositories, error) {

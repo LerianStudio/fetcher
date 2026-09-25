@@ -868,6 +868,24 @@ func buildStreamingOutboxDispatcher(ctx context.Context, logger libLog.Logger, t
 	return dispatcher, nil
 }
 
+// workerTelemetryConfig is the OTel resource the worker publishes. Pure, so a
+// test can read the identity it carries without starting telemetry.
+func workerTelemetryConfig(cfg *Config, logger libLog.Logger) libOtel.TelemetryConfig {
+	build := buildinfo.Get()
+
+	return libOtel.TelemetryConfig{
+		LibraryName:               cfg.OtelLibraryName,
+		ServiceName:               cfg.OtelServiceName,
+		ServiceVersion:            build.Version,
+		ServiceRevision:           build.Revision,
+		DeploymentEnv:             cfg.OtelDeploymentEnv,
+		CollectorExporterEndpoint: cfg.OtelColExporterEndpoint,
+		EnableTelemetry:           cfg.EnableTelemetry,
+		InsecureExporter:          cfg.OtelInsecureExporter,
+		Logger:                    logger,
+	}
+}
+
 // initObservability initializes the logger and telemetry pipeline.
 func initObservability(cfg *Config) (libLog.Logger, *libOtel.Telemetry, error) {
 	logger, err := newZapLogger(libZap.Config{
@@ -883,17 +901,7 @@ func initObservability(cfg *Config) (libLog.Logger, *libOtel.Telemetry, error) {
 		return nil, nil, err
 	}
 
-	telemetry, err := newTelemetry(libOtel.TelemetryConfig{
-		LibraryName:               cfg.OtelLibraryName,
-		ServiceName:               cfg.OtelServiceName,
-		ServiceVersion:            buildinfo.Get().Version,
-		ServiceRevision:           buildinfo.Get().Revision,
-		DeploymentEnv:             cfg.OtelDeploymentEnv,
-		CollectorExporterEndpoint: cfg.OtelColExporterEndpoint,
-		EnableTelemetry:           cfg.EnableTelemetry,
-		InsecureExporter:          cfg.OtelInsecureExporter,
-		Logger:                    logger,
-	})
+	telemetry, err := newTelemetry(workerTelemetryConfig(cfg, logger))
 	if err != nil {
 		return nil, nil, fmt.Errorf("initialize telemetry: %w", err)
 	}

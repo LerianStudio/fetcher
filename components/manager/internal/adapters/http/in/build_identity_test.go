@@ -7,19 +7,34 @@ import (
 	"testing"
 	"time"
 
-	"github.com/LerianStudio/lib-commons/v7/commons/buildinfo"
 	"github.com/gofiber/fiber/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
+// newProductionRoutes builds the manager's real route table — the one
+// bootstrap wires. Registering buildinfo.Handler on a throwaway fiber.App
+// would assert the lib, not that this service serves /version.
+func newProductionRoutes(t *testing.T, serviceName string) *fiber.App {
+	t.Helper()
+
+	app, err := NewRoutes(
+		nil, nil, nil,
+		validConnections(), validMigration(), validFetcher(),
+		nil, nil, nil, nil,
+		serviceName,
+		false,
+	)
+	require.NoError(t, err)
+
+	return app
+}
+
 // TestVersionRoute_ServesTheBuildIdentityContract pins the body a client of
-// GET /version reads. The handler is registered the way NewRoutes registers
-// it — invoking NewRoutes would drag telemetry in, as routes_test.go explains.
-// Sequential on purpose: the build identity is process-global (Decision 8).
+// GET /version reads. Sequential on purpose: the build identity is
+// process-global (Decision 8).
 func TestVersionRoute_ServesTheBuildIdentityContract(t *testing.T) {
-	app := fiber.New()
-	app.Get("/version", buildinfo.Handler("fetcher-test"))
+	app := newProductionRoutes(t, "fetcher-test")
 
 	res, err := app.Test(httptest.NewRequest("GET", "/version", nil),
 		fiber.TestConfig{Timeout: 2 * time.Second, FailOnTimeout: true})

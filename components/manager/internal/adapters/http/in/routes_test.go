@@ -26,8 +26,7 @@ func TestNewRoutes_Constants(t *testing.T) {
 
 // TestNewRoutes_SignatureAcceptsTenantMiddleware is a compile-time signature
 // assertion: a type alias must match NewRoutes's parameter list, including
-// the readyz / metrics handler trio. Avoids invoking NewRoutes to keep the
-// telemetry race at bay.
+// the readyz / metrics handler trio.
 func TestNewRoutes_SignatureAcceptsTenantMiddleware(t *testing.T) {
 	// Verify NewRoutes function signature includes tenantMiddleware parameter.
 	// This is a compile-time assertion: if NewRoutes does not accept fiber.Handler
@@ -100,33 +99,37 @@ func TestValidateRuntimeSecurity_UsesEffectiveAuth(t *testing.T) {
 	}
 }
 
+// The three handler graphs NewRoutes requires, fully populated. Shared with
+// build_identity_test.go, which needs them to build the production routes.
+func validConnections() *ConnectionHandler {
+	return &ConnectionHandler{
+		CreateCmd:           &connectionCommand.CreateConnection{},
+		UpdateCmd:           &connectionCommand.UpdateConnection{},
+		DeleteCmd:           &connectionCommand.DeleteConnection{},
+		GetQuery:            &connectionQuery.GetConnection{},
+		ListQuery:           &connectionQuery.ListConnections{},
+		TestQuery:           &connectionQuery.TestConnection{},
+		ValidateSchemaQuery: &connectionQuery.ValidateSchema{},
+		GetSchemaQuery:      &connectionQuery.GetConnectionSchema{},
+	}
+}
+
+func validMigration() *MigrationHandler {
+	return &MigrationHandler{
+		AssignCmd:         &connectionCommand.AssignConnection{},
+		ListUnassignedQry: &connectionQuery.ListUnassignedConnections{},
+	}
+}
+
+func validFetcher() *FetcherHandler {
+	return &FetcherHandler{
+		CreateJobCmd: &connectionCommand.CreateFetcherJob{},
+		GetJobQuery:  &connectionQuery.GetJob{},
+	}
+}
+
 func TestValidateRuntimeHandlerGraph_RejectsMissingDependencies(t *testing.T) {
 	t.Parallel()
-
-	validConnections := func() *ConnectionHandler {
-		return &ConnectionHandler{
-			CreateCmd:           &connectionCommand.CreateConnection{},
-			UpdateCmd:           &connectionCommand.UpdateConnection{},
-			DeleteCmd:           &connectionCommand.DeleteConnection{},
-			GetQuery:            &connectionQuery.GetConnection{},
-			ListQuery:           &connectionQuery.ListConnections{},
-			TestQuery:           &connectionQuery.TestConnection{},
-			ValidateSchemaQuery: &connectionQuery.ValidateSchema{},
-			GetSchemaQuery:      &connectionQuery.GetConnectionSchema{},
-		}
-	}
-	validMigration := func() *MigrationHandler {
-		return &MigrationHandler{
-			AssignCmd:         &connectionCommand.AssignConnection{},
-			ListUnassignedQry: &connectionQuery.ListUnassignedConnections{},
-		}
-	}
-	validFetcher := func() *FetcherHandler {
-		return &FetcherHandler{
-			CreateJobCmd: &connectionCommand.CreateFetcherJob{},
-			GetJobQuery:  &connectionQuery.GetJob{},
-		}
-	}
 
 	tests := []struct {
 		name    string
