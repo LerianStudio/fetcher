@@ -43,7 +43,7 @@ GET {{baseUrl}}/health
 
 ###
 
-### Version Info
+### Build Identity (version, revision, build time)
 GET {{baseUrl}}/version
 
 ### =============================================================================

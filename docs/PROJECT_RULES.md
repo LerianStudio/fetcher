@@ -220,7 +220,7 @@ components/manager/
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/health` | Health check |
-| `GET` | `/version` | Version info |
+| `GET` | `/version` | Compiled build identity (version, revision, build time) — lib-commons `buildinfo` JSON, no dependency manifest |
 | `GET` | `/swagger/*` | Scalar API reference and OpenAPI 3.1 contract (when enabled) |
 
 ---
@@ -237,7 +237,7 @@ components/manager/
 - Encrypt and store results in S3-compatible object storage (SeaweedFS S3 gateway, AWS S3, or MinIO)
 - Publish job completion/failure notifications
 
-**Important:** This component has **NO HTTP routes** - it operates purely as a message consumer.
+**Important:** This component exposes **no business API** — it is a message consumer. It serves only probes on `HEALTH_PORT` (default `4007`): `/health`, `/readyz`, `/readyz/tenant/:id`, `/metrics`, `/version`.
 
 **Entry Point:** `components/worker/cmd/app/main.go`
 
