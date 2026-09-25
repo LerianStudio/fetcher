@@ -7,6 +7,7 @@ import (
 	"github.com/LerianStudio/fetcher/v2/pkg/bootstrap/readyz"
 	"github.com/LerianStudio/fetcher/v2/pkg/net/http"
 	middlewareAuth "github.com/LerianStudio/lib-auth/v4/auth/middleware"
+	"github.com/LerianStudio/lib-commons/v7/commons/buildinfo"
 	commonsHttp "github.com/LerianStudio/lib-commons/v7/commons/net/http"
 	"github.com/LerianStudio/lib-observability/v4/log"
 	obsMiddleware "github.com/LerianStudio/lib-observability/v4/middleware"
@@ -38,6 +39,7 @@ func NewRoutes(
 	readyzHandler fiber.Handler,
 	readyzTenantHandler fiber.Handler,
 	metricsHandler fiber.Handler,
+	serviceName string,
 	swaggerEnabled bool,
 ) (*fiber.App, error) {
 	authEnabled, err := validateRuntimeSecurity(auth, ttMiddleware)
@@ -97,9 +99,9 @@ func NewRoutes(
 		f.Get("/metrics", metricsHandler)
 	}
 
-	// Version. buildinfo.Handler replaces this once the Dockerfile stamps the
-	// binary; swapped in before that it would answer "dev", not the deployed tag.
-	f.Get("/version", commonsHttp.Version) //nolint:staticcheck // replaced by buildinfo.Handler in the identity PR (FC-3)
+	// The body is the lib's build identity (FC-3); the dependency manifest is
+	// not served here, only through "<binary> --version".
+	f.Get("/version", buildinfo.Handler(serviceName))
 
 	_, err = mountClientAPI(
 		f,

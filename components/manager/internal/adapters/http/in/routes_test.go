@@ -43,6 +43,7 @@ func TestNewRoutes_SignatureAcceptsTenantMiddleware(t *testing.T) {
 		readyzHandler fiber.Handler,
 		readyzTenantHandler fiber.Handler,
 		metricsHandler fiber.Handler,
+		serviceName string,
 		swaggerEnabled bool,
 	) (*fiber.App, error)
 

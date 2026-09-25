@@ -65,7 +65,7 @@ type Config struct {
 	ServerAddress string `env:"SERVER_ADDRESS"`
 	LogLevel      string `env:"LOG_LEVEL"`
 	// Otel and telemetry configuration envs
-	OtelServiceName         string `env:"OTEL_RESOURCE_SERVICE_NAME"`
+	OtelServiceName         string `env:"OTEL_RESOURCE_SERVICE_NAME" envDefault:"fetcher"`
 	OtelLibraryName         string `env:"OTEL_LIBRARY_NAME"`
 	OtelServiceVersion      string `env:"OTEL_RESOURCE_SERVICE_VERSION"`
 	OtelDeploymentEnv       string `env:"OTEL_RESOURCE_DEPLOYMENT_ENVIRONMENT"`
@@ -690,6 +690,7 @@ func assembleService(
 		readyzHandler,
 		tenantFiberHandler,
 		readyz.NewMetricsHandler(),
+		cfg.OtelServiceName,
 		cfg.SwaggerEnabled,
 	)
 	if err != nil {
