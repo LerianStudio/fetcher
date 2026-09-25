@@ -162,6 +162,6 @@ func newWorkerReadyzConfig(cfg *Config) *readyz.Config {
 		DeploymentMode: mode,
 		HealthPort:     port,
 		DrainDelay:     drain,
-		Version:        version,
+		Identity:       readyz.Identity{Version: version},
 	}
 }

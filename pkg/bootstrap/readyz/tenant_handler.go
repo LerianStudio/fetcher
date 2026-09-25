@@ -101,7 +101,7 @@ func (h *TenantFiberHandler) runTenantChecks(ctx context.Context, tenantID strin
 		return ReadyzResponse{
 			Status:         TopStatusHealthy,
 			Checks:         checks,
-			Version:        h.cfg.Version,
+			Identity:       h.cfg.Identity,
 			DeploymentMode: h.cfg.DeploymentMode,
 			TenantID:       tenantID,
 		}
@@ -154,7 +154,7 @@ func (h *TenantFiberHandler) runTenantChecks(ctx context.Context, tenantID strin
 	return ReadyzResponse{
 		Status:         aggregateStatus(checks),
 		Checks:         checks,
-		Version:        h.cfg.Version,
+		Identity:       h.cfg.Identity,
 		DeploymentMode: h.cfg.DeploymentMode,
 		TenantID:       tenantID,
 	}
@@ -203,7 +203,7 @@ func (h *TenantFiberHandler) drainingResponse(tenantID string) ReadyzResponse {
 				Reason: "graceful drain in progress",
 			},
 		},
-		Version:        h.cfg.Version,
+		Identity:       h.cfg.Identity,
 		DeploymentMode: h.cfg.DeploymentMode,
 		TenantID:       tenantID,
 	}

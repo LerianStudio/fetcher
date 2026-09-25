@@ -28,7 +28,7 @@ func TestReadyzRoutes_NoAuthRequired(t *testing.T) {
 
 	cfg := &readyz.Config{
 		DeploymentMode: readyz.DeploymentModeLocal,
-		Version:        "test",
+		Identity:       readyz.Identity{Version: "test"},
 	}
 	h := readyz.NewHandler(cfg,
 		readyz.NewNAChecker("mongodb", "routing-test: not probed", nil),

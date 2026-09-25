@@ -71,51 +71,28 @@ func TestResolveDrainDelay(t *testing.T) {
 	}
 }
 
-func TestResolveVersion_Precedence(t *testing.T) {
-	t.Run("OTEL_RESOURCE_SERVICE_VERSION wins", func(t *testing.T) {
-		t.Setenv("OTEL_RESOURCE_SERVICE_VERSION", "1.2.3")
-		t.Setenv("VERSION", "0.0.0")
-		assert.Equal(t, "1.2.3", resolveVersion())
-	})
-
-	t.Run("VERSION used when OTEL unset", func(t *testing.T) {
-		t.Setenv("OTEL_RESOURCE_SERVICE_VERSION", "")
-		t.Setenv("VERSION", "v4.5.6")
-		assert.Equal(t, "v4.5.6", resolveVersion())
-	})
-
-	t.Run("unknown when both unset", func(t *testing.T) {
-		t.Setenv("OTEL_RESOURCE_SERVICE_VERSION", "")
-		t.Setenv("VERSION", "")
-		assert.Equal(t, "unknown", resolveVersion())
-	})
-}
-
 func TestLoadConfig_AppliesDefaults(t *testing.T) {
 	t.Setenv("DEPLOYMENT_MODE", "")
 	t.Setenv("HEALTH_PORT", "")
 	t.Setenv("READYZ_DRAIN_DELAY_SEC", "")
-	t.Setenv("OTEL_RESOURCE_SERVICE_VERSION", "")
-	t.Setenv("VERSION", "")
 
 	cfg := LoadConfig()
 
 	assert.Equal(t, DeploymentModeLocal, cfg.DeploymentMode)
 	assert.Equal(t, 4007, cfg.HealthPort)
 	assert.Equal(t, 12*time.Second, cfg.DrainDelay)
-	assert.Equal(t, "unknown", cfg.Version)
+	// The test binary carries no -X stamp, so the identity is the FC-1 fallback.
+	assert.Equal(t, Identity{Version: "dev", Revision: "unknown", BuildTime: "unknown"}, cfg.Identity)
 }
 
 func TestLoadConfig_ReadsEnv(t *testing.T) {
 	t.Setenv("DEPLOYMENT_MODE", "saas")
 	t.Setenv("HEALTH_PORT", "5555")
 	t.Setenv("READYZ_DRAIN_DELAY_SEC", "7")
-	t.Setenv("OTEL_RESOURCE_SERVICE_VERSION", "9.9.9")
 
 	cfg := LoadConfig()
 
 	assert.Equal(t, DeploymentModeSaaS, cfg.DeploymentMode)
 	assert.Equal(t, 5555, cfg.HealthPort)
 	assert.Equal(t, 7*time.Second, cfg.DrainDelay)
-	assert.Equal(t, "9.9.9", cfg.Version)
 }

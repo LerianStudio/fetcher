@@ -1195,7 +1195,7 @@ func newReadyzConfig(cfg *Config) *readyz.Config {
 	return &readyz.Config{
 		DeploymentMode: mode,
 		DrainDelay:     drain,
-		Version:        version,
+		Identity:       readyz.Identity{Version: version},
 	}
 }
 
