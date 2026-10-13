@@ -34,8 +34,8 @@ github.com/LerianStudio/lib-auth/v5 v5.7.0 h1:VtQFgFelEkpR/+OMUgO8U0eF5p5mKkW7p3
 github.com/LerianStudio/lib-auth/v5 v5.7.0/go.mod h1:H+MSvuIO6qVy12c/JxdLs+mBh+K5d6Gn5ZXCRILhCcc=
 github.com/LerianStudio/lib-commons/v7 v7.15.0 h1:0XPrAI+aQp8uEDycf51J4wHabKKSV4y8Lc4DvQccTnw=
 github.com/LerianStudio/lib-commons/v7 v7.15.0/go.mod h1:yiM1YTFYCTJCmXF68UsNzSm6W2zFm7enLT6IMTKdshY=
-github.com/LerianStudio/lib-observability/v4 v4.6.0 h1:arGS9QYsJU22Is71nyvyiTJBB0yJC9kDn7wj/GjjykM=
-github.com/LerianStudio/lib-observability/v4 v4.6.0/go.mod h1:1lyiF3+b0TpUrJvhs5y6NFDFr4czEZCD3wiVGeuGPto=
+github.com/LerianStudio/lib-observability/v4 v4.6.1 h1:qpzNxzxPzIfSJZKypx82rdOixjf0gGSxSffYnpfFevA=
+github.com/LerianStudio/lib-observability/v4 v4.6.1/go.mod h1:1lyiF3+b0TpUrJvhs5y6NFDFr4czEZCD3wiVGeuGPto=
 github.com/LerianStudio/lib-streaming/v4 v4.1.0 h1:A8laTdWdbXXb+HnDEblzZ2pH7V12zbu27NPEOYrD/9Q=
 github.com/LerianStudio/lib-streaming/v4 v4.1.0/go.mod h1:BnPl7O/A8xriPz2IIOOWaO0N9w3EjrCPYePsP6Q5mEY=
 github.com/Masterminds/squirrel v1.5.4 h1:uUcX/aBc8O7Fg9kaISIUsHXdKuqehiXAMQTYX8afzqM=

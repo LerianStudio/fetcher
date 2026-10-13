@@ -12,7 +12,7 @@ Fetcher is a **data extraction platform** built with Go following **Hexagonal Ar
 | **Web Framework** | Fiber | v3.5.0 |
 | **Message Queue** | RabbitMQ (amqp091-go) | v1.14.0 |
 | **Shared Platform Libs** | lib-commons | v7.15.0 |
-| **Observability Libs** | lib-observability | v4.6.0 |
+| **Observability Libs** | lib-observability | v4.6.1 |
 | **Event Streaming** | lib-streaming (RabbitMQ target) | v4.1.0 — mandatory for Worker job events |
 | **Primary Database** | MongoDB | Latest |
 | **File Storage** | S3-compatible (SeaweedFS S3 gateway in the bundled infrastructure) | SeaweedFS 3.97 / AWS SDK v2 |
