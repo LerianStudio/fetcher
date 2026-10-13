@@ -48,7 +48,7 @@ require (
 	go.opentelemetry.io/otel/trace v1.46.0
 	go.uber.org/goleak v1.3.0
 	go.uber.org/mock v0.6.0
-	golang.org/x/crypto v0.56.0
+	golang.org/x/crypto v0.57.0
 	golang.org/x/sync v0.23.0
 	golang.org/x/time v0.15.0
 )
@@ -171,11 +171,11 @@ require (
 	go.uber.org/atomic v1.11.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.28.0 // indirect
-	golang.org/x/mod v0.40.0 // indirect
-	golang.org/x/net v0.58.0 // indirect
+	golang.org/x/mod v0.41.0 // indirect
+	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/oauth2 v0.37.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/text v0.41.0 // indirect
+	golang.org/x/sys v0.48.0 // indirect
+	golang.org/x/text v0.42.0 // indirect
 	google.golang.org/api v0.297.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260819154853-08b0e4226688 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260819154853-08b0e4226688 // indirect
@@ -184,8 +184,8 @@ require (
 )
 
 require (
-	github.com/LerianStudio/lib-auth/v4 v4.2.0
-	github.com/LerianStudio/lib-commons/v7 v7.8.0
+	github.com/LerianStudio/lib-auth/v5 v5.7.0
+	github.com/LerianStudio/lib-commons/v7 v7.15.0
 	github.com/LerianStudio/lib-observability/v4 v4.6.0
 	github.com/LerianStudio/lib-streaming/v4 v4.1.0
 	github.com/gofiber/fiber/v3 v3.5.0

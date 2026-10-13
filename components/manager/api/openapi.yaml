@@ -362,7 +362,7 @@ components:
         - mappedFields
       type: object
     Detail:
-      additionalProperties: false
+      additionalProperties: true
       properties:
         code:
           description: "Stable, machine-readable domain error code scoped to the emitting service (format: <SERVICE>-NNNN)."
