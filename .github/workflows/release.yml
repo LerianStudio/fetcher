@@ -29,6 +29,8 @@ jobs:
       shared_paths: |
         go.mod
         go.sum
+        permissions.yaml
+        permissions_embed.go
         pkg/
         Makefile
       enable_helm_dispatch: true
