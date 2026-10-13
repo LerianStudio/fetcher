@@ -205,4 +205,5 @@ require (
 	go.opentelemetry.io/contrib/instrumentation/runtime v0.71.0 // indirect
 	go.uber.org/zap/exp v0.3.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
+	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
