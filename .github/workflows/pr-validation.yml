@@ -28,7 +28,7 @@ jobs:
         docs
         tests
         migrations
-      go_version: "1.26.6"
+      go_version: "1.26.9"
       golangci_lint_version: "v2.6.2"
       app_name_prefix: "fetcher"
       filter_paths: |
