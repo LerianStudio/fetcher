@@ -8,6 +8,7 @@ import (
 
 	"github.com/LerianStudio/fetcher/v2/pkg"
 	httpUtils "github.com/LerianStudio/fetcher/v2/pkg/net/http"
+	"github.com/LerianStudio/lib-commons/v7/commons"
 
 	"github.com/gofiber/fiber/v3"
 )
@@ -35,6 +36,15 @@ func problemMiddlewareChain(middleware fiber.Handler) []fiber.Handler {
 			var fiberErr *fiber.Error
 			if errors.As(err, &fiberErr) {
 				status = fiberErr.Code
+			}
+
+			// lib-auth v5 returns its refusals instead of writing them; when the
+			// Access Manager answered with a coded error, the domain code travels
+			// as a commons.Response next to the *fiber.Error. Keep it, as the
+			// body lib-auth v4 used to write carried it.
+			var accessManagerErr commons.Response
+			if errors.As(err, &accessManagerErr) {
+				code = strings.TrimSpace(accessManagerErr.Code)
 			}
 		}
 
