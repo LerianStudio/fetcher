@@ -8,7 +8,7 @@ import (
 
 	connectionCommand "github.com/LerianStudio/fetcher/v2/components/manager/internal/services/command"
 	connectionQuery "github.com/LerianStudio/fetcher/v2/components/manager/internal/services/query"
-	middlewareAuth "github.com/LerianStudio/lib-auth/v4/auth/middleware"
+	middlewareAuth "github.com/LerianStudio/lib-auth/v5/auth/middleware"
 	"github.com/LerianStudio/lib-observability/v4/log"
 	opentelemetry "github.com/LerianStudio/lib-observability/v4/tracing"
 	"github.com/gofiber/fiber/v3"

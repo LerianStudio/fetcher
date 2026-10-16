@@ -6,7 +6,7 @@ import (
 
 	"github.com/LerianStudio/fetcher/v2/pkg/bootstrap/readyz"
 	"github.com/LerianStudio/fetcher/v2/pkg/net/http"
-	middlewareAuth "github.com/LerianStudio/lib-auth/v4/auth/middleware"
+	middlewareAuth "github.com/LerianStudio/lib-auth/v5/auth/middleware"
 	"github.com/LerianStudio/lib-commons/v7/commons/buildinfo"
 	commonsHttp "github.com/LerianStudio/lib-commons/v7/commons/net/http"
 	"github.com/LerianStudio/lib-observability/v4/log"
