@@ -28,8 +28,8 @@ github.com/AzureAD/microsoft-authentication-library-for-go v1.6.0 h1:XRzhVemXdgv
 github.com/AzureAD/microsoft-authentication-library-for-go v1.6.0/go.mod h1:HKpQxkWaGLJ+D/5H8QRpyQXA1eKjxkFlOMwck5+33Jk=
 github.com/DATA-DOG/go-sqlmock v1.5.2 h1:OcvFkGmslmlZibjAjaHm3L//6LiuBgolP7OputlJIzU=
 github.com/DATA-DOG/go-sqlmock v1.5.2/go.mod h1:88MAG/4G7SMwSE3CeA0ZKzrT5CiOU3OJ+JlNzwDqpNU=
-github.com/LerianStudio/fetcher/pkg/engine v1.2.4-beta.8 h1:QPTF0021WhDoLIC9lSbcI/7Xp+kRmtOC3japxbV+JOM=
-github.com/LerianStudio/fetcher/pkg/engine v1.2.4-beta.8/go.mod h1:ex3px6OrMEm0t1algxzKpcmquK+a1y/6ESVlhlbZxxI=
+github.com/LerianStudio/fetcher/pkg/engine v1.2.4-beta.9 h1:TSkmrNQ8ImiaesypLqzM0ROR3Q92iPzLmnsGiGj1YlM=
+github.com/LerianStudio/fetcher/pkg/engine v1.2.4-beta.9/go.mod h1:pPb4IzRCspH3+j3RhMKypSPuJRYgo5Sx1kwCucX4qg0=
 github.com/LerianStudio/lib-auth/v5 v5.8.0 h1:TPnlP3WRleaF1K4MqKlZ6ftZRRSnYzQH5O0oXXtJbXw=
 github.com/LerianStudio/lib-auth/v5 v5.8.0/go.mod h1:H+MSvuIO6qVy12c/JxdLs+mBh+K5d6Gn5ZXCRILhCcc=
 github.com/LerianStudio/lib-commons/v7 v7.15.0 h1:0XPrAI+aQp8uEDycf51J4wHabKKSV4y8Lc4DvQccTnw=
