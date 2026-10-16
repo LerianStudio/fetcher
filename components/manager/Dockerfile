@@ -28,6 +28,9 @@ RUN --mount=type=secret,id=github_token,required=false \
 # Copy only necessary source files for manager component
 COPY pkg/ pkg/
 COPY components/manager/ components/manager/
+# The repo-root package that embeds the access-manager permission manifest the
+# Manager publishes at boot (//go:embed cannot reach a parent directory).
+COPY permissions.yaml permissions_embed.go ./
 
 ARG VERSION=dev
 ARG REVISION=unknown

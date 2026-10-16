@@ -220,3 +220,23 @@ make generate-master-key
 See `internal/bootstrap/config.go` for the full configuration surface and `../../README.md` for the project-wide quick start.
 
 Set `SWAGGER_ENABLED=true` to expose the Scalar reference at `/swagger/docs` and the OpenAPI 3.1 contract at `/swagger/openapi.json` or `/swagger/openapi.yaml`. The routes are absent when the flag is disabled.
+
+### Access Manager permission declaration
+
+The repo-root `permissions.yaml` declares the authorization surface the Manager enforces under the `fetcher` slug. It is compiled into the binary (`//go:embed`) and, when enabled, published to the identity service at boot by lib-auth's declaration publisher (`internal/bootstrap/permission_declaration.go`), so the Access Manager learns fetcher's RBAC from fetcher instead of from its own seed. Only the Manager publishes: the Worker serves none of the declared routes.
+
+It is **off by default**. With `IDP_DECLARATION_ENABLED` unset, or anything other than `true`, nothing else is read and the boot is unchanged.
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `IDP_DECLARATION_ENABLED` | no | Master switch. `true` publishes the manifest at boot; anything else is a no-op. Default: unset. |
+| `IDP_HOST` | when enabled | Identity service base URL, an absolute `http(s)` URL. |
+| `IDP_M2M_CLIENT_ID` | when enabled | M2M client id the publish authenticates with. |
+| `IDP_M2M_CLIENT_SECRET` | when enabled | M2M client secret. Never logged. |
+| `PLUGIN_AUTH_ENABLED` | when enabled | Must be `true`: the identity endpoint is M2M-guarded and the token is minted with the Manager's own auth client. |
+| `PLUGIN_AUTH_ADDRESS` | when enabled | Auth service address the token is minted from. It is the same client the routes authorize with, so `PLUGIN_AUTH_HOST` is not read. |
+
+Failure policy:
+
+- **Configuration error, fail closed.** With the switch on, a missing `IDP_*` value, `PLUGIN_AUTH_ENABLED` not `true`, an empty `PLUGIN_AUTH_ADDRESS`, or an embedded manifest that does not validate aborts the boot with the variable named.
+- **Runtime error, fail open.** An unreachable identity service, a rejected publish or a token that cannot be minted is logged and the Manager keeps serving. Whatever the Access Manager already holds keeps enforcing.

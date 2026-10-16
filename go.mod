@@ -186,9 +186,10 @@ require (
 require (
 	github.com/LerianStudio/lib-auth/v5 v5.8.0
 	github.com/LerianStudio/lib-commons/v7 v7.15.0
-	github.com/LerianStudio/lib-observability/v4 v4.6.1
-	github.com/LerianStudio/lib-streaming/v4 v4.1.0
+	github.com/LerianStudio/lib-observability/v4 v4.7.0
+	github.com/LerianStudio/lib-streaming/v4 v4.2.0
 	github.com/gofiber/fiber/v3 v3.5.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (

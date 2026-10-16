@@ -710,7 +710,25 @@ func assembleService(
 		return nil, wrapBootstrapError("build HTTP routes", err)
 	}
 
-	var shutdownHooks []func(context.Context) error
+	// Off by default (IDP_DECLARATION_ENABLED unset): a no-op. On, a
+	// configuration error aborts the boot; a runtime publish failure does not.
+	// See permission_declaration.go.
+	declarationStop, err := initPermissionDeclaration(context.Background(), logger, platformDependencies.authClient)
+	if err != nil {
+		if mtEventCleanup != nil {
+			mtEventCleanup()
+		}
+
+		return nil, err
+	}
+
+	// First hook: stop publishing before the dependencies below are released.
+	shutdownHooks := []func(context.Context) error{
+		func(context.Context) error {
+			declarationStop()
+			return nil
+		},
+	}
 
 	if platformDependencies.rabbitMQCleanup != nil {
 		cleanup := platformDependencies.rabbitMQCleanup
