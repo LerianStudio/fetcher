@@ -189,6 +189,7 @@ require (
 	github.com/LerianStudio/lib-observability/v4 v4.6.1
 	github.com/LerianStudio/lib-streaming/v4 v4.1.0
 	github.com/gofiber/fiber/v3 v3.5.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -205,5 +206,4 @@ require (
 	go.opentelemetry.io/contrib/instrumentation/runtime v0.71.0 // indirect
 	go.uber.org/zap/exp v0.3.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

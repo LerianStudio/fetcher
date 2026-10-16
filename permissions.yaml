@@ -20,11 +20,14 @@
 #     resulting permission is "{service}/{resource}:{action}".
 #   - roles: bare business roles; the reconciler composes "{service}/{name}".
 #
-# NOTE: this repo defines NO role catalog (there is no casdoor_seed.go and no
-# init_data.json). Every role grant below is therefore INFERRED from a standard
-# viewer ⊂ operator ⊂ admin CRUD ladder (read/list -> all three; create/update ->
-# operator + admin; delete -> admin only) and must be confirmed by the owning team
-# before the reconciler seeds it.
+# Role grants are NOT inferred: they reproduce, pair for pair, what the
+# access-manager seed (caradhras deploy/pam-seed/init_data.json) grants today, so
+# a reconcile that replaces the seeded RBAC with this manifest removes nobody's
+# access. The seed writes resources x actions as a cartesian product; only the
+# pairs with a live route are declared here, and every one of them matches:
+#   fetcher-editor-role      (admin-group, fetcher-editor-group) -> admin
+#   fetcher-contributor-role (fetcher-contributor-group)         -> operator
+#   fetcher-viewer-role      (fetcher-viewer-group)              -> viewer
 service: fetcher
 # version: REQUIRED by the manifest schema, integer >= 1. Advisory only: it is
 # excluded from the canonical content hash, so bumping it with identical content
@@ -32,39 +35,39 @@ service: fetcher
 version: 1
 permissions:
   # connections (components/manager/internal/adapters/http/in/huma_connections.go:457, huma_migration.go:203)
-  - { resource: connections, action: get,    effect: allow, roles: [admin, operator, viewer] }  ### TEAM: please confirm ###
-  - { resource: connections, action: post,   effect: allow, roles: [admin, operator] }  ### TEAM: please confirm ###
-  - { resource: connections, action: patch,  effect: allow, roles: [admin, operator] }  ### TEAM: please confirm ###
-  - { resource: connections, action: delete, effect: allow, roles: [admin] }  ### TEAM: please confirm ###
+  - { resource: connections, action: get,    effect: allow, roles: [admin, operator, viewer] }
+  - { resource: connections, action: post,   effect: allow, roles: [admin, operator] }
+  - { resource: connections, action: patch,  effect: allow, roles: [admin, operator] }
+  - { resource: connections, action: delete, effect: allow, roles: [admin] }
 
   # fetcher (components/manager/internal/adapters/http/in/huma_fetcher.go:154)
-  - { resource: fetcher, action: get,  effect: allow, roles: [admin, operator, viewer] }  ### TEAM: please confirm ###
-  - { resource: fetcher, action: post, effect: allow, roles: [admin, operator] }  ### TEAM: please confirm ###
+  - { resource: fetcher, action: get,  effect: allow, roles: [admin, operator, viewer] }
+  - { resource: fetcher, action: post, effect: allow, roles: [admin, operator] }
 
 # roles: REQUIRED - every role referenced by a permission above MUST be declared
 # here or the reconciler rejects the manifest ("references undeclared role").
-# Role names are BARE; the reconciler composes "fetcher/{name}". Each role binds
-# to its same-named lerian-owned group (groups are BARE; the reconciler composes
-# the "lerian/" owner), following the platform naming convention used by the
-# already-merged lender manifest. This repo has no Casdoor seed, so the group
-# names follow convention only. ### TEAM: please confirm these group names ###
+# Role names are BARE; the reconciler composes "fetcher/{name}". Groups are BARE
+# too (the reconciler composes the "lerian/" owner) and are the seed's groups,
+# "-group" suffix included: a name without it makes the reconciler create a new,
+# empty group and leave the role with no members.
 roles:
   - name: admin
     granted_to:
-      - group: fetcher-admin
+      - group: fetcher-editor-group
+      # seed: fetcher-editor-role -> lerian/admin-group, the platform admin group.
+      - group: admin-group
   - name: operator
     granted_to:
-      - group: fetcher-operator
+      - group: fetcher-contributor-group
   - name: viewer
     granted_to:
-      - group: fetcher-viewer
+      - group: fetcher-viewer-group
 
 # m2m: fetcher's bilateral machine-to-machine contract.
-#   exposed: no evidence another Lerian service calls fetcher AS an M2M target
-#            (no repo declares fetcher in an M2M target config; Matcher/Reporter
-#            embed pkg/engine in-process, not over HTTP). Set false.
-#   needs:   fetcher has no outbound M2M/client-credentials wiring (no M2M client
-#            code in components/ or pkg/), so no targets are declared.
-#   ### TEAM: please confirm ###
+#   exposed: false. No Lerian service calls fetcher over HTTP as an M2M target:
+#            Matcher and Reporter embed pkg/engine in-process, and no repo reads
+#            a fetcher M2M client (the FETCHER_M2M_* keys still in reporter's
+#            gitops values are read by no reporter code, v4.5.0 or develop).
+#   needs:   none. fetcher has no outbound M2M client.
 m2m:
   exposed: false
